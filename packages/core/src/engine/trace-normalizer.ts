@@ -69,6 +69,11 @@ export interface NormalizeTraceResult {
  * This is exact because JSON array serialization is the concatenation of independently
  * serialized element strings separated by commas and wrapped in brackets.
  *
+ * Invariant note: this exactness relies on current JSON serialization behavior and
+ * object construction order in this module. If serialization strategy changes,
+ * parity tests in trace-normalizer.test.ts are expected to fail and should trigger
+ * a review of the incremental byte-budget logic.
+ *
  * Sentinel entries are exempt from the reserved-prefix drop rule.
  * The sentinel data contains submitted, stored_before_sentinel, discarded, and reason fields.
  */

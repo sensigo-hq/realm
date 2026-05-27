@@ -168,6 +168,13 @@ describe('normalizeTrace', () => {
 
   // ─── byte-budget boundary correctness ────────────────────────────────────
   //
+  // Guardrail note:
+  // These tests codify the invariant that incremental byte accounting is exact
+  // under current JSON array serialization behavior and object construction
+  // order used by the normalizer. If serialization strategy changes later,
+  // parity tests in this section are expected to fail and should trigger
+  // a review of byte-budget logic rather than a blind threshold update.
+  //
   // Fixtures are engineered to exact known byte sizes.
   //
   // 96 entries with event='x' and data={k:'A'.repeat(490)} — all ASCII:
