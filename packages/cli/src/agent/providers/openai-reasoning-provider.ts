@@ -16,14 +16,15 @@ function resolveMaxCompletionTokens(model: string): number {
 
 /**
  * OpenAI reasoning model provider for realm agent.
- * Handles the o1/o3 model families, which differ from standard chat completions:
+ * Handles the o1-series (o1, o1-mini, o1-preview), which differ from standard chat completions:
  * - No `response_format` parameter (JSON enforced via system prompt + retry).
  * - System prompt content is folded into the first user message — the safe
- *   universal approach for the full o1/o3 lineage. (o1 originally rejected the
+ *   universal approach for the full o1 lineage. (o1 originally rejected the
  *   system role; later versions accept it as a developer role, but prepending
  *   to the user message works uniformly across all revisions.)
  * - Tool calling is not supported — this class extends LlmProvider, not
  *   ToolCapableLlmProvider, so `isToolCapable` returns false for these instances.
+ *   o3 and later support tools and route to OpenAIProvider instead.
  */
 export class OpenAIReasoningProvider extends LlmProvider {
   private readonly model: string;
@@ -55,7 +56,7 @@ export class OpenAIReasoningProvider extends LlmProvider {
       apiKey: process.env['OPENAI_API_KEY'],
     });
 
-    // Fold system prompt into the user message — safe for all o1/o3 API revisions.
+    // Fold system prompt into the user message — safe for all o1-series API revisions.
     const systemPrompt = buildSystemPrompt(inputSchema);
     const userContent = `${systemPrompt}\n\n${prompt}`;
 

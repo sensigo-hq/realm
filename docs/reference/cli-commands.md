@@ -183,6 +183,12 @@ OPENAI_API_KEY=gsk_... realm agent --workflow ./my-workflow \
   --base-url https://api.groq.com/openai/v1
 ```
 
+**OpenAI reasoning models:** o1-series models (o1, o1-mini, o1-preview) do not support tool
+calling. If your workflow uses MCP tool-enabled steps, `realm agent` exits at startup with an
+error when an o1-series model is selected. Use `--model gpt-4o` (or any non-o1 model) or
+`--provider anthropic` to run tool-enabled workflows. All other OpenAI models — including o3,
+o3-mini, and o4-mini — support tool-enabled steps.
+
 **Custom providers:** use `--provider-module` to supply a fully custom LLM implementation.
 The module must export an instance (not a class) extending `LlmProvider` from
 `@sensigo/realm-cli/agent`:
