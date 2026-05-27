@@ -208,7 +208,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     if (!isToolCapable(deps.provider)) {
       throw new Error(
         'This workflow uses MCP tool-enabled steps, but the configured LLM provider does not support tool calling. ' +
-          'Reasoning models (o1, o3) and custom non-tool providers cannot run tool-enabled steps. ' +
+          'Reasoning models (o1-series) and custom non-tool providers cannot run tool-enabled steps. ' +
           'Use --provider openai with a standard chat model (e.g. gpt-4o), or --provider anthropic.',
       );
     }

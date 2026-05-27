@@ -84,6 +84,20 @@ describe('AnthropicProvider.callStep', () => {
     await provider.callStep('prompt');
     expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('response_format');
   });
+
+  it('callStep sends max_tokens: 8192 for claude-sonnet-4-5', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    await provider.callStep('prompt');
+    expect(mockCreate.mock.calls[0][0].max_tokens).toBe(8192);
+  });
+
+  it('callStep sends max_tokens: 4096 for claude-3-opus-20240229', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
+    const provider = new AnthropicProvider('claude-3-opus-20240229');
+    await provider.callStep('prompt');
+    expect(mockCreate.mock.calls[0][0].max_tokens).toBe(4096);
+  });
 });
 
 // =========================================================================
@@ -91,6 +105,22 @@ describe('AnthropicProvider.callStep', () => {
 // =========================================================================
 describe('AnthropicProvider.callStepWithTools', () => {
   beforeEach(() => mockCreate.mockReset());
+
+  // -----------------------------------------------------------------------
+  // 0. max_tokens is model-aware in the main loop call
+  // -----------------------------------------------------------------------
+  it('callStepWithTools main loop sends max_tokens: 8192 for claude-sonnet-4-5', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"answer":"done"}'));
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    await provider.callStepWithTools('prompt', [], _NOOP_EXECUTOR, {
+      inputSchema: {
+        type: 'object',
+        properties: { answer: { type: 'string' } },
+        required: ['answer'],
+      },
+    });
+    expect(mockCreate.mock.calls[0][0].max_tokens).toBe(8192);
+  });
 
   // -----------------------------------------------------------------------
   // 1. Basic tool call loop

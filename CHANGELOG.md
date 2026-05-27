@@ -238,10 +238,24 @@ All notable changes to this project are documented here.
   leaving `hasTransport` false and preventing the bidirectional Slack gate from ever connecting.
   One-way `notify_*` adapter notifications were unaffected because `SlackAdapter` registration
   in the adapter registry is independent of the transport options.
+- `realm agent`: o3/o3-mini/o4-mini misrouted to `OpenAIReasoningProvider` — the `REASONING_MODELS`
+  regex `/^o[1-4](-|$)/i` was too broad, sending o3, o3-mini, and o4-mini through the o1-only path.
+  These models support the standard Chat Completions API including tool calling. Narrowed to
+  `/^o1(-|$)/i`; o3, o3-mini, and o4-mini now route to `OpenAIProvider` and support tool-enabled steps.
+- `realm agent`: missing `max_completion_tokens` on o1-series API calls — `OpenAIReasoningProvider`
+  omitted the field, leaving the model to use an uncontrolled API default. Now sends
+  `max_completion_tokens: 65536` for o1-mini and `32768` for o1/o1-preview.
+- `realm agent`: hardcoded `max_tokens: 4096` in `AnthropicProvider` — all three call sites used a
+  fixed ceiling insufficient for Claude 3.5 and Claude 4 family models (which support 8192 output
+  tokens). Now resolved dynamically: Claude 3.5/Claude 4 → 8192, others → 4096.
+- `realm agent`: `callStepWithTools` suppressed `response_format: json_object` when no input schema
+  was present — the field was gated on `jsonMode && inputSchema !== undefined`. Schema presence and
+  JSON mode are independent concerns; `response_format` now follows `jsonMode` alone, consistent
+  with `callStep`.
 
 ### Tests
 
-962 tests across all packages (639 core, 243 CLI, 33 MCP, 47 testing).
+989 tests across all packages (639 core, 270 CLI, 33 MCP, 47 testing).
 
 ---
 

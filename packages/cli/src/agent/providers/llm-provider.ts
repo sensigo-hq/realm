@@ -86,10 +86,11 @@ export async function resolveProvider(
   }
 
   if (provider === 'openai') {
-    // Match o1, o1-mini, o1-preview, o3, o3-mini, o4-mini, etc. The user has
-    // explicitly declared the model name, so matching on name is the correct
-    // signal here — not an internal allowlist.
-    const REASONING_MODELS = /^o[1-4](-|$)/i;
+    // Match o1, o1-mini, o1-preview — the o1 generation requires the special-case
+    // provider (no tool support, system prompt folded into user message).
+    // o3, o3-mini, and o4-mini support the standard Chat Completions API including
+    // function calling, so they route to OpenAIProvider.
+    const REASONING_MODELS = /^o1(-|$)/i;
     if (modelFlag !== undefined && REASONING_MODELS.test(modelFlag)) {
       const { OpenAIReasoningProvider } = await import('./openai-reasoning-provider.js');
       return new OpenAIReasoningProvider(modelFlag);
