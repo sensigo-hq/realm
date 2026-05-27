@@ -282,6 +282,166 @@ describe('executeStep', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // output_schema validation
+  // ---------------------------------------------------------------------------
+
+  it('output_schema: fails when agent submits output missing required field', async () => {
+    const dispatchCalled = vi.fn();
+    const spy: StepDispatcher = async (step, input, run, _signal) => {
+      dispatchCalled();
+      return echoDispatcher(step, input, run, _signal);
+    };
+
+    const schemaDefinition: WorkflowDefinition = {
+      ...definition,
+      steps: {
+        ...definition.steps,
+        'step-one': {
+          ...definition.steps['step-one']!,
+          execution: 'agent',
+          output_schema: {
+            type: 'object',
+            required: ['summary'],
+            properties: { summary: { type: 'string' } },
+          },
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, schemaDefinition, {
+      runId: run.id,
+      command: 'step-one',
+      input: {}, // missing required 'summary' field
+      dispatcher: spy,
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(dispatchCalled).not.toHaveBeenCalled();
+    expect(envelope.agent_action).toBe('provide_input');
+    // The step was never claimed — it is still eligible and appears in next_actions
+    // so the agent can immediately correct and re-submit it.
+    expect(envelope.next_actions).toHaveLength(1);
+
+    const runAfter = await store.get(run.id);
+    expect(runAfter.in_progress_steps).not.toContain('step-one');
+  });
+
+  it('output_schema: passes when agent submits valid output', async () => {
+    const schemaDefinition: WorkflowDefinition = {
+      ...definition,
+      steps: {
+        ...definition.steps,
+        'step-one': {
+          ...definition.steps['step-one']!,
+          execution: 'agent',
+          output_schema: {
+            type: 'object',
+            required: ['summary'],
+            properties: { summary: { type: 'string' } },
+          },
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, schemaDefinition, {
+      runId: run.id,
+      command: 'step-one',
+      input: { summary: 'all good' },
+      dispatcher: echoDispatcher,
+    });
+
+    expect(envelope.status).toBe('ok');
+  });
+
+  it('output_schema: validation guard skips auto steps at runtime', async () => {
+    const schemaDefinition: WorkflowDefinition = {
+      ...definition,
+      steps: {
+        ...definition.steps,
+        'step-one': {
+          ...definition.steps['step-one']!,
+          // execution: 'auto' (unchanged) — YAML loader would reject this, but
+          // the runtime guard must correctly skip auto steps.
+          output_schema: {
+            type: 'object',
+            required: ['summary'],
+            properties: { summary: { type: 'string' } },
+          },
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, schemaDefinition, {
+      runId: run.id,
+      command: 'step-one',
+      input: {}, // would fail schema if the guard ran
+      dispatcher: echoDispatcher,
+    });
+
+    expect(envelope.status).toBe('ok');
+  });
+
+  it('output_schema: step can be re-submitted after failed validation', async () => {
+    const schemaDefinition: WorkflowDefinition = {
+      ...definition,
+      steps: {
+        ...definition.steps,
+        'step-one': {
+          ...definition.steps['step-one']!,
+          execution: 'agent',
+          output_schema: {
+            type: 'object',
+            required: ['summary'],
+            properties: { summary: { type: 'string' } },
+          },
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // First call with invalid input — should fail
+    const first = await executeStep(store, schemaDefinition, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: echoDispatcher,
+    });
+    expect(first.status).toBe('error');
+
+    // Second call with valid input — step was never claimed, so it can be re-submitted
+    const second = await executeStep(store, schemaDefinition, {
+      runId: run.id,
+      command: 'step-one',
+      input: { summary: 'corrected' },
+      dispatcher: echoDispatcher,
+    });
+    expect(second.status).toBe('ok');
+  });
+
+  // ---------------------------------------------------------------------------
   // Adapter dispatch (uses_service)
   // ---------------------------------------------------------------------------
 

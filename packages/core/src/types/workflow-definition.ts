@@ -106,6 +106,22 @@ export interface StepDefinition {
    */
   config?: Record<string, unknown>;
   input_schema?: JsonSchema;
+  /**
+   * Validates the agent's submitted output (the params passed to `execute_step`)
+   * against this JSON Schema before the engine claims the step.
+   * Only valid on `execution: 'agent'` steps. Declaring `output_schema` on an
+   * `execution: 'auto'` step is a loader error.
+   *
+   * Validation runs pre-claim. If it fails the engine returns
+   * `agent_action: 'provide_input'` and the step remains unclaimed —
+   * the agent can correct its output and re-submit without side effects.
+   *
+   * For gate steps (`trust: 'human_confirmed'` or `trust: 'human_reviewed'`),
+   * the schema validates before the gate opens. `submitHumanResponse` commits
+   * the previewed payload unchanged — the human always sees a schema-conformant
+   * payload.
+   */
+  output_schema?: JsonSchema;
   preconditions?: string[];
   trust?: TrustLevel;
   timeout_seconds?: number;

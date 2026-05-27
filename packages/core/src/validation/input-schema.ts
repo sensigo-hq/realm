@@ -25,3 +25,26 @@ export function validateInputSchema(
     });
   }
 }
+
+/**
+ * Validates the agent's submitted output against the step's declared JSON Schema.
+ * Throws WorkflowError(VALIDATION_OUTPUT_SCHEMA) on failure.
+ */
+export function validateOutputSchema(
+  output: Record<string, unknown>,
+  schema: JsonSchema,
+  stepId: string,
+): void {
+  const ajv = new Ajv();
+  const valid = ajv.validate(schema as object, output);
+  if (!valid) {
+    throw new WorkflowError(`Output validation failed for step '${stepId}'`, {
+      code: 'VALIDATION_OUTPUT_SCHEMA',
+      category: 'VALIDATION',
+      agentAction: 'provide_input',
+      retryable: false,
+      details: { errors: ajv.errors ?? [] },
+      stepId,
+    });
+  }
+}
