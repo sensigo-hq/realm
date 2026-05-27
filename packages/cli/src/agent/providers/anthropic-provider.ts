@@ -19,6 +19,18 @@ import {
 } from './agent-utils.js';
 
 /**
+ * Returns the maximum output tokens for the given Anthropic model.
+ * The Anthropic Messages API requires max_tokens — this must always produce a valid value.
+ * Source: https://docs.anthropic.com/en/docs/about-claude/models/all-models
+ */
+function resolveMaxTokens(model: string): number {
+  // claude-3.5 and claude-4 families support 8192 output tokens.
+  // Matches: claude-3-5-*, claude-3.5-*, claude-<name>-4-*, etc.
+  if (/claude-(3[-.]5|[a-z]+-4)/i.test(model)) return 8192;
+  return 4096; // safe fallback for claude-3 and any unrecognised model
+}
+
+/**
  * Anthropic LLM provider for realm agent.
  * Uses the Messages API and extracts JSON from the first text content block.
  * Retries once if the model returns non-JSON content.
@@ -57,7 +69,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const response = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (client.messages.create as (opts: Record<string, unknown>) => Promise<any>)({
         model: this.model,
-        max_tokens: 4096,
+        max_tokens: resolveMaxTokens(this.model),
         system: systemPrompt,
         messages: [{ role: 'user', content: userContent }],
       });
@@ -148,7 +160,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     const buildMainCallOpts = (): Record<string, unknown> => {
       const opts: Record<string, unknown> = {
         model: this.model,
-        max_tokens: 4096,
+        max_tokens: resolveMaxTokens(this.model),
         system,
         messages: history,
       };
@@ -162,7 +174,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const final = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (client.messages.create as (opts: Record<string, unknown>) => Promise<any>)({
         model: this.model,
-        max_tokens: 4096,
+        max_tokens: resolveMaxTokens(this.model),
         system,
         messages: history,
         tool_choice: { type: 'none' },

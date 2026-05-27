@@ -88,6 +88,13 @@ describe('OpenAIProvider.callStep', () => {
       response_format: { type: 'json_object' },
     });
   });
+
+  it('callStep with --base-url: response_format is NOT sent to compat endpoints', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
+    const provider = new OpenAIProvider('gpt-4o', 'https://compat.endpoint.com');
+    await provider.callStep('prompt');
+    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('response_format');
+  });
 });
 
 // =========================================================================
@@ -371,15 +378,27 @@ describe('OpenAIProvider.callStepWithTools', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 13. inputSchema absent → response_format is not included in the request
+  // 13. compat endpoint (--base-url), inputSchema absent → response_format is NOT present
   // -----------------------------------------------------------------------
-  it('inputSchema absent → response_format is not present in request', async () => {
+  it('compat endpoint (--base-url), inputSchema absent → response_format is NOT present', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
+
+    const provider = new OpenAIProvider('gpt-4o', 'https://compat.endpoint.com');
+    await provider.callStepWithTools('prompt', [], NOOP_EXECUTOR, {});
+
+    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('response_format');
+  });
+
+  // -----------------------------------------------------------------------
+  // 13b. native endpoint, inputSchema absent → response_format IS present
+  // -----------------------------------------------------------------------
+  it('native endpoint, inputSchema absent → response_format IS present', async () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
 
     const provider = new OpenAIProvider('gpt-4o');
     await provider.callStepWithTools('prompt', [], NOOP_EXECUTOR, {});
 
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('response_format');
+    expect(mockCreate.mock.calls[0][0].response_format).toEqual({ type: 'json_object' });
   });
 
   // -----------------------------------------------------------------------

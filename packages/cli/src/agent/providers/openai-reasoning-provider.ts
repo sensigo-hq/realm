@@ -1,7 +1,18 @@
-// openai-reasoning-provider.ts — OpenAI reasoning model provider (o1/o3) for realm agent.
-// Extends LlmProvider (not ToolCapableLlmProvider) — reasoning models do not support the tools parameter.
+// openai-reasoning-provider.ts — OpenAI reasoning model provider (o1-series) for realm agent.
+// Extends LlmProvider (not ToolCapableLlmProvider) — o1-series models do not support the tools parameter.
 import { LlmProvider } from './llm-provider.js';
 import { buildSystemPrompt } from './agent-utils.js';
+
+/**
+ * Returns the max_completion_tokens for the given OpenAI reasoning model.
+ * For o1-series models this covers both reasoning tokens and visible output.
+ * Source: https://platform.openai.com/docs/models
+ */
+function resolveMaxCompletionTokens(model: string): number {
+  if (/^o1-mini/i.test(model)) return 65536;
+  // o1, o1-preview, and any other o1 variant default to 32768.
+  return 32768;
+}
 
 /**
  * OpenAI reasoning model provider for realm agent.
@@ -55,6 +66,7 @@ export class OpenAIReasoningProvider extends LlmProvider {
       const response = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (client.chat.completions.create as (opts: Record<string, unknown>) => Promise<any>)({
         model: this.model,
+        max_completion_tokens: resolveMaxCompletionTokens(this.model),
         messages: msgs,
       });
       return (response.choices[0]?.message?.content as string | undefined) ?? '';

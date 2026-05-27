@@ -74,6 +74,37 @@ describe('OpenAIReasoningProvider.callStep', () => {
   });
 
   // -----------------------------------------------------------------------
+  // 4b. Does NOT send max_tokens (uses max_completion_tokens instead)
+  // -----------------------------------------------------------------------
+  it('callStep does NOT send max_tokens (only max_completion_tokens)', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
+    const provider = new OpenAIReasoningProvider('o1-mini');
+    await provider.callStep('prompt');
+    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('max_tokens');
+    expect(mockCreate.mock.calls[0][0]).toHaveProperty('max_completion_tokens');
+  });
+
+  // -----------------------------------------------------------------------
+  // 4c. max_completion_tokens: 65536 for o1-mini
+  // -----------------------------------------------------------------------
+  it('callStep sends max_completion_tokens: 65536 for o1-mini', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
+    const provider = new OpenAIReasoningProvider('o1-mini');
+    await provider.callStep('prompt');
+    expect(mockCreate.mock.calls[0][0].max_completion_tokens).toBe(65536);
+  });
+
+  // -----------------------------------------------------------------------
+  // 4d. max_completion_tokens: 32768 for o1
+  // -----------------------------------------------------------------------
+  it('callStep sends max_completion_tokens: 32768 for o1', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
+    const provider = new OpenAIReasoningProvider('o1');
+    await provider.callStep('prompt');
+    expect(mockCreate.mock.calls[0][0].max_completion_tokens).toBe(32768);
+  });
+
+  // -----------------------------------------------------------------------
   // 5. System prompt folded into user message (no system role)
   // -----------------------------------------------------------------------
   it('callStep folds system prompt into the user message (no system role)', async () => {
@@ -138,16 +169,40 @@ describe('resolveProvider routing for reasoning models', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 9. o3 routes to OpenAIReasoningProvider
+  // 9. o3 routes to OpenAIProvider (NOT OpenAIReasoningProvider)
   // -----------------------------------------------------------------------
-  it('resolveProvider routes o3 to OpenAIReasoningProvider', async () => {
+  it('resolveProvider routes o3 to OpenAIProvider, not OpenAIReasoningProvider', async () => {
+    const { OpenAIProvider } = await import('./openai-provider.js');
     const provider = await resolveProvider('openai', 'o3');
-    expect(provider).toBeInstanceOf(OpenAIReasoningProvider);
-    expect(provider).not.toBeInstanceOf(ToolCapableLlmProvider);
+    expect(provider).not.toBeInstanceOf(OpenAIReasoningProvider);
+    expect(provider).toBeInstanceOf(ToolCapableLlmProvider);
+    expect(provider).toBeInstanceOf(OpenAIProvider);
   });
 
   // -----------------------------------------------------------------------
-  // 10. gpt-4o routes to OpenAIProvider (regression guard)
+  // 10. o3-mini routes to OpenAIProvider
+  // -----------------------------------------------------------------------
+  it('resolveProvider routes o3-mini to OpenAIProvider, not OpenAIReasoningProvider', async () => {
+    const { OpenAIProvider } = await import('./openai-provider.js');
+    const provider = await resolveProvider('openai', 'o3-mini');
+    expect(provider).not.toBeInstanceOf(OpenAIReasoningProvider);
+    expect(provider).toBeInstanceOf(ToolCapableLlmProvider);
+    expect(provider).toBeInstanceOf(OpenAIProvider);
+  });
+
+  // -----------------------------------------------------------------------
+  // 11. o4-mini routes to OpenAIProvider
+  // -----------------------------------------------------------------------
+  it('resolveProvider routes o4-mini to OpenAIProvider, not OpenAIReasoningProvider', async () => {
+    const { OpenAIProvider } = await import('./openai-provider.js');
+    const provider = await resolveProvider('openai', 'o4-mini');
+    expect(provider).not.toBeInstanceOf(OpenAIReasoningProvider);
+    expect(provider).toBeInstanceOf(ToolCapableLlmProvider);
+    expect(provider).toBeInstanceOf(OpenAIProvider);
+  });
+
+  // -----------------------------------------------------------------------
+  // 12. gpt-4o routes to OpenAIProvider (regression guard)
   // -----------------------------------------------------------------------
   it('resolveProvider routes gpt-4o to OpenAIProvider (regression guard)', async () => {
     const { OpenAIProvider } = await import('./openai-provider.js');
