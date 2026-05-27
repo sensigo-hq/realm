@@ -2,7 +2,12 @@
 // run state update, and ResponseEnvelope construction for the DAG execution model.
 // Includes: step claiming, step-level retry, step timeouts, human gate mechanics,
 // auto-chaining with fan-out, and registry-based dispatch for adapter and handler steps.
-import type { RunRecord, EvidenceSnapshot, WorkflowContextSnapshot } from '../types/run-record.js';
+import type {
+  RunRecord,
+  EvidenceSnapshot,
+  WorkflowContextSnapshot,
+  AgentTraceEntry,
+} from '../types/run-record.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import type { ResponseEnvelope, NextAction } from '../types/response-envelope.js';
 import { WorkflowError } from '../types/workflow-error.js';
@@ -56,6 +61,12 @@ export interface ExecuteStepOptions {
    * Present (possibly []) when tools were declared — threads through to captureEvidence.
    */
   stepMeta?: { toolCalls?: ToolCallRecord[] };
+  /**
+   * Optional agent-submitted trace entries for this step.
+   * Silently dropped for non-agent steps. When present on agent steps, the
+   * normalizer canonicalizes and persists them in the EvidenceSnapshot.
+   */
+  trace?: AgentTraceEntry[];
 }
 
 export interface SubmitGateOptions {
@@ -79,6 +90,8 @@ export interface ExecuteChainOptions {
    * Present (possibly []) when tools were declared — threads through to captureEvidence.
    */
   stepMeta?: { toolCalls?: ToolCallRecord[] };
+  /** @see ExecuteStepOptions.trace */
+  trace?: AgentTraceEntry[];
 }
 
 function delayMs(ms: number): Promise<void> {
@@ -635,6 +648,10 @@ export async function executeStep(
       ...(resolvedParams !== undefined ? { resolvedParams } : {}),
       ...(options.stepMeta?.toolCalls !== undefined
         ? { toolCalls: options.stepMeta.toolCalls }
+        : {}),
+      // Gate trace to agent steps only — drop silently for auto/adapter/handler steps.
+      ...(stepDef?.execution === 'agent' && options.trace !== undefined
+        ? { trace: options.trace }
         : {}),
     });
     const snap: EvidenceSnapshot =

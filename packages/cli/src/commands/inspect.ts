@@ -127,6 +127,17 @@ export async function inspectRun(
         lines.push(`     Resolved: ${formatSummary(lastSnap.resolved_params)}`);
       }
       lines.push(`     Output: ${formatSummary(lastSnap.output_summary)}`);
+      if (lastSnap.trace !== undefined) {
+        lines.push(`     Trace:  ${lastSnap.trace.length} entries (not hashed).`);
+        if (lastSnap.trace_summary?.truncated) {
+          const s = lastSnap.trace_summary;
+          lines.push(
+            chalk.yellow(
+              `     ⚠ Trace truncated (${s.truncation_reason ?? 'unknown'}): ${s.stored_entries} stored, ${s.discarded_overflow_entries} discarded.`,
+            ),
+          );
+        }
+      }
       if (lastSnap.diagnostics !== undefined) {
         lines.push(chalk.dim(`     Diagnostics: ${formatDiagnostics(lastSnap.diagnostics)}`));
       }
@@ -155,6 +166,17 @@ export async function inspectRun(
           lines.push(`     Resolved: ${formatSummary(snap.resolved_params)}`);
         }
         lines.push(`     Output: ${formatSummary(snap.output_summary)}`);
+        if (snap.trace !== undefined) {
+          lines.push(`     Trace:  ${snap.trace.length} entries (not hashed).`);
+          if (snap.trace_summary?.truncated) {
+            const s = snap.trace_summary;
+            lines.push(
+              chalk.yellow(
+                `     ⚠ Trace truncated (${s.truncation_reason ?? 'unknown'}): ${s.stored_entries} stored, ${s.discarded_overflow_entries} discarded.`,
+              ),
+            );
+          }
+        }
         if (snap.tool_calls === undefined) {
           // callStep path — print nothing
         } else if (snap.tool_calls.length === 0) {

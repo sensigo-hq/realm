@@ -152,6 +152,65 @@ describe('mcp tool handlers', () => {
     expect(finalRun.run_phase).toBe('completed');
   });
 
+  it('handleExecuteStep accepts a top-level trace and persists it in evidence', async () => {
+    const workflowStore = new JsonWorkflowStore(workflowDir);
+    await workflowStore.register(makeAgentDef());
+    const runStore = new JsonFileStore(runDir);
+
+    const startResult = await handleStartRun(
+      { workflow_id: 'agent-wf', params: {} },
+      { runStore, workflowStore },
+    );
+
+    const result = await handleExecuteStep(
+      {
+        run_id: startResult.run_id,
+        command: 'step-agent',
+        params: { result: 'done' },
+        trace: [
+          { event: 'search_called', data: { query: 'hello' } },
+          { event: 'search_returned', data: { count: 3 } },
+        ],
+      },
+      { runStore, workflowStore },
+    );
+
+    expect(result.status).toBe('ok');
+    const snap = result.evidence.find((e) => e.step_id === 'step-agent');
+    expect(snap?.trace).toBeDefined();
+    expect(snap?.trace).toHaveLength(2);
+    expect(snap?.trace![0]!.event).toBe('search_called');
+    expect(snap?.trace_digest).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('trace is not merged into params — trace content does not appear in output_summary', async () => {
+    const workflowStore = new JsonWorkflowStore(workflowDir);
+    await workflowStore.register(makeAgentDef());
+    const runStore = new JsonFileStore(runDir);
+
+    const startResult = await handleStartRun(
+      { workflow_id: 'agent-wf', params: {} },
+      { runStore, workflowStore },
+    );
+
+    const result = await handleExecuteStep(
+      {
+        run_id: startResult.run_id,
+        command: 'step-agent',
+        params: { result: 'done' },
+        trace: [{ event: 'should_not_be_in_params', data: { secret: 'leaked?' } }],
+      },
+      { runStore, workflowStore },
+    );
+
+    expect(result.status).toBe('ok');
+    const snap = result.evidence.find((e) => e.step_id === 'step-agent');
+    // output_summary comes from params only — trace fields must not appear in it
+    expect(snap?.output_summary).not.toHaveProperty('trace');
+    expect(snap?.output_summary).not.toHaveProperty('event');
+    expect(snap?.output_summary).toEqual({ result: 'done' });
+  });
+
   it('handleSubmitHumanResponse advances a gate-waiting run', async () => {
     const workflowStore = new JsonWorkflowStore(workflowDir);
     await workflowStore.register(makeGateDef());
