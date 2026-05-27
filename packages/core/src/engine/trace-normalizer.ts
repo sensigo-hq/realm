@@ -62,7 +62,12 @@ export interface NormalizeTraceResult {
  *
  * Normalization precedes the reserved-prefix check so that whitespace-padded variants
  * like "  trace.internal" are caught and dropped correctly.
- * Byte limit uses UTF-8 byte count (Buffer.byteLength) rather than JS string length.
+ * Byte limit uses incremental UTF-8 byte accounting: the serialized array size is
+ * maintained as a running counter rather than re-serializing the full array each
+ * iteration. The counter starts at 2 (empty JSON array `[]`) and grows by
+ * Buffer.byteLength(JSON.stringify(candidate)) + comma overhead per accepted entry.
+ * This is exact because JSON array serialization is the concatenation of independently
+ * serialized element strings separated by commas and wrapped in brackets.
  *
  * Sentinel entries are exempt from the reserved-prefix drop rule.
  * The sentinel data contains submitted, stored_before_sentinel, discarded, and reason fields.
@@ -75,6 +80,9 @@ export function normalizeTrace(input: AgentTraceEntry[]): NormalizeTraceResult {
   let truncationReason: 'count_limit' | 'byte_limit' | undefined;
 
   const stored: TraceEntry[] = [];
+  // Incremental UTF-8 byte accounting for the serialized array form.
+  // Starts at 2 for the empty array (`[]`); grows by candidateBytes + commaBytes on each accept.
+  let currentArrayBytes = 2;
 
   for (const entry of input) {
     // Normalize event first so whitespace-padded reserved-prefix events are caught below.
@@ -109,14 +117,20 @@ export function normalizeTrace(input: AgentTraceEntry[]): NormalizeTraceResult {
       continue;
     }
 
-    // Byte limit check: measure UTF-8 byte size including seq-assigned candidate.
-    if (Buffer.byteLength(JSON.stringify([...stored, candidate]), 'utf8') > MAX_BYTES) {
+    // Byte limit check: compute candidate bytes once and check the prospective array total.
+    // Incrementally tracking the array byte count is exact because JSON.stringify on an array
+    // equals '[' + elements.join(',') + ']' — element serializations are independent of context.
+    const candidateStr = JSON.stringify(candidate);
+    const candidateBytes = Buffer.byteLength(candidateStr, 'utf8');
+    const commaBytes = stored.length > 0 ? 1 : 0;
+    if (currentArrayBytes + commaBytes + candidateBytes > MAX_BYTES) {
       truncated = true;
       truncationReason = 'byte_limit';
       discardedOverflow++;
       continue;
     }
 
+    currentArrayBytes += commaBytes + candidateBytes;
     stored.push(candidate);
   }
 

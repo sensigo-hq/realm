@@ -166,6 +166,70 @@ describe('normalizeTrace', () => {
     expect(entries.length).toBeLessThan(120);
   });
 
+  // ─── byte-budget boundary correctness ────────────────────────────────────
+  //
+  // Fixtures are engineered to exact known byte sizes.
+  //
+  // 96 entries with event='x' and data={k:'A'.repeat(490)} — all ASCII:
+  //   seq 1-9  → {"seq":N,"event":"x","data":{"k":"..."}} = 527 bytes each
+  //   seq 10-96 → 528 bytes each
+  //   Array total: 2 + 9×527 + 87×528 + 95 commas = 50776 bytes
+  //
+  // Entry 97 (seq=97, 2-digit): fixed overhead = {"seq":97,"event":"x","data":{"k":""}} + value
+  //   prefix ("{"seq":97,"event":"x","data":{"k":"") = 35 bytes
+  //   suffix ("}}") = 3 bytes
+  //   fixed overhead = 38 bytes
+  //
+  //   With 385-char value: 423 bytes → prospective = 50776 + 1 + 423 = 51200 = MAX_BYTES → fits
+  //   With 386-char value: 424 bytes → prospective = 50776 + 1 + 424 = 51201 > MAX_BYTES → rejected
+
+  it('boundary: candidate that exactly fills the byte budget is stored (no truncation)', () => {
+    const PRELUDE_VAL = 'A'.repeat(490);
+    const prelude = Array.from({ length: 96 }, () => ({ event: 'x', data: { k: PRELUDE_VAL } }));
+    // Entry 97 sized to exactly fill remaining budget.
+    const exactFit = { event: 'x', data: { k: 'B'.repeat(385) } };
+
+    const { entries, summary } = normalizeTrace([...prelude, exactFit]);
+
+    expect(summary.truncated).toBe(false);
+    expect(entries).toHaveLength(97);
+    expect(entries[96]!.data!['k']).toHaveLength(385);
+    // Parity: the stored array serializes to exactly MAX_BYTES.
+    expect(Buffer.byteLength(JSON.stringify(entries), 'utf8')).toBe(50 * 1024);
+  });
+
+  it('boundary: candidate that exceeds byte budget by 1 byte triggers byte_limit', () => {
+    const PRELUDE_VAL = 'A'.repeat(490);
+    const prelude = Array.from({ length: 96 }, () => ({ event: 'x', data: { k: PRELUDE_VAL } }));
+    // Entry 97 sized to exceed by exactly 1 byte.
+    const overBy1 = { event: 'x', data: { k: 'B'.repeat(386) } };
+
+    const { entries, summary } = normalizeTrace([...prelude, overBy1]);
+
+    expect(summary.truncated).toBe(true);
+    expect(summary.truncation_reason).toBe('byte_limit');
+    // 96 prelude entries stored + 1 sentinel = 97 total; entry 97 was rejected.
+    expect(entries).toHaveLength(97);
+    expect(entries[96]!.event).toBe('trace.truncated');
+    expect(summary.discarded_overflow_entries).toBe(1);
+    // The stored payload (without sentinel) is within budget.
+    const payload = entries.slice(0, 96);
+    expect(Buffer.byteLength(JSON.stringify(payload), 'utf8')).toBe(50776);
+  });
+
+  it('parity: stored payload entries are within budget after byte_limit truncation', () => {
+    const bigVal = 'A'.repeat(490);
+    const input = Array.from({ length: 100 }, () => ({ event: 'x', data: { k: bigVal } }));
+    const { entries, summary } = normalizeTrace(input);
+
+    expect(summary.truncated).toBe(true);
+    expect(summary.truncation_reason).toBe('byte_limit');
+
+    // All stored entries excluding the sentinel must fit within 50 KB.
+    const payload = entries.filter((e) => e.event !== 'trace.truncated');
+    expect(Buffer.byteLength(JSON.stringify(payload), 'utf8')).toBeLessThanOrEqual(50 * 1024);
+  });
+
   // ─── first-trigger semantics ──────────────────────────────────────────────
 
   it('count_limit fires before byte_limit when entry count reaches 100 first', () => {
