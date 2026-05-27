@@ -71,13 +71,14 @@ Minimal call:
 
 Each step:
 
-| Field             | Required | Description                                                                           |
-| ----------------- | -------- | ------------------------------------------------------------------------------------- |
-| `id`              | Yes      | Unique identifier. Snake_case verb-noun. No spaces.                                   |
-| `description`     | Yes      | What a correct output looks like (acceptance criterion).                              |
-| `input_schema`    | No       | JSON Schema for the fields this step's output must include.                           |
-| `depends_on`      | No       | Array with **at most one** step ID this step depends on. Controls execution ordering. |
-| `timeout_seconds` | No       | Positive integer. If omitted, no timeout is enforced.                                 |
+| Field             | Required | Description                                                                                                                                                                                                          |
+| ----------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`              | Yes      | Unique identifier. Snake_case verb-noun. No spaces.                                                                                                                                                                  |
+| `description`     | Yes      | What a correct output looks like (acceptance criterion).                                                                                                                                                             |
+| `input_schema`    | No       | JSON Schema for the fields this step's output must include. Also drives the `call_with.params` skeleton returned to the agent in `next_actions`.                                                                     |
+| `output_schema`   | No       | JSON Schema validated against the agent's submitted params before the engine claims the step. Failed validation returns `agent_action: provide_input`; the step remains unclaimed and is immediately re-submittable. |
+| `depends_on`      | No       | Array with **at most one** step ID this step depends on. Controls execution ordering.                                                                                                                                |
+| `timeout_seconds` | No       | Positive integer. If omitted, no timeout is enforced.                                                                                                                                                                |
 
 ## Step Design Guidelines
 
