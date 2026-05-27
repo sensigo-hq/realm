@@ -217,4 +217,39 @@ describe('normalizeTrace', () => {
     const { digest: d2 } = normalizeTrace([{ event: 'beta' }]);
     expect(d1).not.toBe(d2);
   });
+
+  // ─── correction 1: normalize-before-prefix-check ─────────────────────────
+
+  it('drops whitespace-padded reserved-prefix event after normalization', () => {
+    // "  trace.internal  " normalizes to "trace.internal" → reserved → dropped.
+    const { entries, summary } = normalizeTrace([
+      { event: '  trace.internal  ' },
+      { event: '  trace.engine_event' },
+      { event: '\ttrace.tab_padded\t' },
+      { event: 'legit' },
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.event).toBe('legit');
+    expect(summary.discarded_reserved_event_entries).toBe(3);
+  });
+
+  // ─── correction 2: UTF-8 byte limit ──────────────────────────────────────
+
+  it('byte limit is enforced using UTF-8 byte count, not JS string length', () => {
+    // U+1F600 (😀) is 1 JS char in some representations but takes 4 UTF-8 bytes.
+    // A string of 200 emoji repeated 5 times per entry should trigger byte_limit
+    // well before count_limit (100 entries) because UTF-8 size > JS string length.
+    const emojiPayload = '😀'.repeat(200); // 200 * 4 bytes = 800 bytes per entry (UTF-8)
+    const input = Array.from({ length: 80 }, (_, i) => ({
+      event: `ev_${i}`,
+      data: { payload: emojiPayload },
+    }));
+    const { summary } = normalizeTrace(input);
+    // Should hit byte_limit before count_limit (count_limit = 100 > 80 entries).
+    expect(summary.truncation_reason).toBe('byte_limit');
+    expect(summary.truncated).toBe(true);
+    // Fewer entries should be stored when measured by UTF-8 bytes vs JS length.
+    // With UTF-8, 800+ bytes per entry, max is ~62 entries before 50KB is hit.
+    expect(summary.stored_entries).toBeLessThan(80);
+  });
 });

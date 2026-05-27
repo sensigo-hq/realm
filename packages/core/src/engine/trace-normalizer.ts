@@ -53,12 +53,16 @@ export interface NormalizeTraceResult {
  * Canonicalizes agent-submitted trace entries in a single pass.
  *
  * Rules applied in order:
- *   1. Drop entries whose event starts with "trace." (reserved engine namespace).
- *   2. Normalize event: trim whitespace; replace empty with "unknown_event"; cap to 100 chars.
+ *   1. Normalize event: trim whitespace; replace empty with "unknown_event"; cap to 100 chars.
+ *   2. Drop entries whose normalized event starts with "trace." (reserved engine namespace).
  *   3. Normalize data: keep first 20 keys; cap string values to 500 chars; drop non-primitive values.
- *   4. Apply hard limits (first-trigger wins): max 100 entries, max 50 KB serialized.
+ *   4. Apply hard limits (first-trigger wins): max 100 entries, max 50 KB UTF-8 bytes.
  *   5. Assign seq numbers (1-based, monotonically increasing) after filtering.
  *   6. Append a sentinel entry if truncation occurred.
+ *
+ * Normalization precedes the reserved-prefix check so that whitespace-padded variants
+ * like "  trace.internal" are caught and dropped correctly.
+ * Byte limit uses UTF-8 byte count (Buffer.byteLength) rather than JS string length.
  *
  * Sentinel entries are exempt from the reserved-prefix drop rule.
  * The sentinel data contains submitted, stored_before_sentinel, discarded, and reason fields.
@@ -73,8 +77,11 @@ export function normalizeTrace(input: AgentTraceEntry[]): NormalizeTraceResult {
   const stored: TraceEntry[] = [];
 
   for (const entry of input) {
-    // Drop reserved-prefix entries (engine namespace).
-    if (entry.event.startsWith(RESERVED_PREFIX)) {
+    // Normalize event first so whitespace-padded reserved-prefix events are caught below.
+    const event = normalizeEvent(entry.event);
+
+    // Drop entries whose normalized event starts with the reserved engine prefix.
+    if (event.startsWith(RESERVED_PREFIX)) {
       discardedReserved++;
       continue;
     }
@@ -85,7 +92,6 @@ export function normalizeTrace(input: AgentTraceEntry[]): NormalizeTraceResult {
       continue;
     }
 
-    const event = normalizeEvent(entry.event);
     const data = normalizeData(entry.data as Record<string, unknown> | undefined);
 
     const candidate: TraceEntry = {
@@ -103,8 +109,8 @@ export function normalizeTrace(input: AgentTraceEntry[]): NormalizeTraceResult {
       continue;
     }
 
-    // Byte limit check: measure serialized size including seq-assigned candidate.
-    if (JSON.stringify([...stored, candidate]).length > MAX_BYTES) {
+    // Byte limit check: measure UTF-8 byte size including seq-assigned candidate.
+    if (Buffer.byteLength(JSON.stringify([...stored, candidate]), 'utf8') > MAX_BYTES) {
       truncated = true;
       truncationReason = 'byte_limit';
       discardedOverflow++;

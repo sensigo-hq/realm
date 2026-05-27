@@ -254,10 +254,10 @@ describe('inspectRun', () => {
       trace: Array.from({ length: 101 }, (_, i) => ({ seq: i + 1, event: `ev_${i}` })),
       trace_digest: 'def456',
       trace_summary: {
-        submitted_entries: 105,
+        submitted_entries: 107,
         stored_entries: 101,
-        discarded_entries: 5,
-        discarded_reserved_event_entries: 0,
+        discarded_entries: 7, // 2 reserved + 5 overflow
+        discarded_reserved_event_entries: 2,
         discarded_overflow_entries: 5,
         truncated: true,
         truncation_reason: 'count_limit' as const,
@@ -266,6 +266,8 @@ describe('inspectRun', () => {
     const run = makeRun([snap]);
     const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
     expect(result).toContain('Trace:  101 entries (not hashed).');
-    expect(result).toContain('⚠ Trace truncated (count_limit): 101 stored, 5 discarded.');
+    // Warning must report total discarded (7), not overflow-only (5).
+    expect(result).toContain('⚠ Trace truncated (count_limit): 101 stored, 7 discarded.');
+    expect(result).not.toContain('5 discarded');
   });
 });

@@ -133,7 +133,7 @@ export async function inspectRun(
           const s = lastSnap.trace_summary;
           lines.push(
             chalk.yellow(
-              `     ⚠ Trace truncated (${s.truncation_reason ?? 'unknown'}): ${s.stored_entries} stored, ${s.discarded_overflow_entries} discarded.`,
+              `     ⚠ Trace truncated (${s.truncation_reason ?? 'unknown'}): ${s.stored_entries} stored, ${s.discarded_entries} discarded.`,
             ),
           );
         }
@@ -172,7 +172,7 @@ export async function inspectRun(
             const s = snap.trace_summary;
             lines.push(
               chalk.yellow(
-                `     ⚠ Trace truncated (${s.truncation_reason ?? 'unknown'}): ${s.stored_entries} stored, ${s.discarded_overflow_entries} discarded.`,
+                `     ⚠ Trace truncated (${s.truncation_reason ?? 'unknown'}): ${s.stored_entries} stored, ${s.discarded_entries} discarded.`,
               ),
             );
           }
