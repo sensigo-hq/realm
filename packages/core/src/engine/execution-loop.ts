@@ -14,7 +14,7 @@ import type {
 } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
 import { captureEvidence } from '../evidence/snapshot.js';
-import { validateInputSchema } from '../validation/input-schema.js';
+import { validateInputSchema, validateOutputSchema } from '../validation/input-schema.js';
 import { TERMINAL_PHASES } from './lifecycle.js';
 import { checkPreconditions, evaluateAllPreconditions } from './precondition.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
@@ -483,6 +483,18 @@ export async function executeStep(
   if (stepDef?.input_schema !== undefined) {
     try {
       validateInputSchema(options.input, stepDef.input_schema, options.command);
+    } catch (err) {
+      return makeErrorEnvelope(options, run, err as WorkflowError, definition);
+    }
+  }
+
+  // Step 2c: Validate output schema (agent steps only).
+  // For agent steps dispatch is a pass-through, so options.input IS the agent's
+  // submitted output. Validating here (pre-claim) is equivalent to
+  // "post-generation, pre-commit" — the standard output guardrail position.
+  if (stepDef?.execution === 'agent' && stepDef.output_schema !== undefined) {
+    try {
+      validateOutputSchema(options.input, stepDef.output_schema, options.command);
     } catch (err) {
       return makeErrorEnvelope(options, run, err as WorkflowError, definition);
     }

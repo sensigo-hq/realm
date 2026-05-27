@@ -253,6 +253,11 @@ export function loadWorkflowFromString(content: string): WorkflowDefinition {
       errors.push(`Step '${stepName}': 'agent_profile' is only valid on execution: agent steps`);
     }
 
+    // output_schema is only valid on execution: agent steps.
+    if (step['output_schema'] !== undefined && step['execution'] !== 'agent') {
+      errors.push(`Step '${stepName}': 'output_schema' is only valid on execution: agent steps`);
+    }
+
     if ('uses_service' in step && typeof step['uses_service'] === 'string') {
       const services = doc['services'];
       if (

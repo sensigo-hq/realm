@@ -314,6 +314,20 @@ steps:
       );
     }
   });
+
+  it('output_schema on execution: auto step throws VALIDATION_WORKFLOW_SCHEMA', () => {
+    const content = VALID_YAML.replace(
+      'execution: auto',
+      'execution: auto\n    output_schema:\n      type: object\n      required: [result]\n      properties:\n        result:\n          type: string',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      expect((err as WorkflowError).code).toBe('VALIDATION_WORKFLOW_SCHEMA');
+      expect((err as WorkflowError).message).toContain('output_schema');
+    }
+  });
 });
 
 describe('loadWorkflowFromFile — agent profile resolution', () => {
