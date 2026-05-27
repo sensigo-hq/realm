@@ -8,6 +8,20 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **Step Trace A1 — contract hardening**: `execute_step` now accepts an optional top-level
+  `trace` array of `{ event, timestamp?, data? }` entries alongside `params`. The engine
+  canonicalizes submissions in a single pass (deterministic seq assignment, 100-char event cap,
+  500-char string-value cap, 20-key data cap, 100-entry / 50 KB hard limits, reserved `trace.`
+  prefix drop) and persists the result as `trace`, `trace_digest`, and `trace_summary` on the
+  `EvidenceSnapshot`. `evidence_hash` is unaffected — it covers `output_summary` only. Trace is
+  silently dropped for non-agent steps. `realm run inspect` shows a compact summary line and a
+  yellow warning when the trace was truncated.
+  - _Correction 1_: reserved-prefix check now runs on the normalized event (post-trim), so
+    whitespace-padded variants like `"  trace.internal"` are correctly dropped. Byte limit now
+    uses `Buffer.byteLength(…, 'utf8')` instead of JS string length, giving accurate enforcement
+    for multi-byte Unicode payloads. `realm run inspect` truncation warning now reports total
+    `discarded_entries` (reserved + overflow) rather than overflow-only.
+
 - `output_schema` field on `StepDefinition` — an optional JSON Schema that
   validates the params an agent submits to `execute_step` before the engine
   claims the step. Symmetric to `input_schema`. Only valid on

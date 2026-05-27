@@ -1,6 +1,38 @@
 // Types for an active or historical workflow run record stored on disk.
 import type { ToolCallRecord } from './mcp-types.js';
 
+/**
+ * A single trace entry submitted by the agent. Submitted as-is; the engine
+ * canonicalizes and assigns seq before persisting.
+ */
+export interface AgentTraceEntry {
+  event: string;
+  timestamp?: string | undefined;
+  data?: Record<string, string | number | boolean | null> | undefined;
+}
+
+/**
+ * A single stored trace entry after canonicalization.
+ * seq is engine-assigned: 1-based, monotonically increasing in stored order.
+ */
+export interface TraceEntry {
+  seq: number;
+  event: string;
+  timestamp?: string;
+  data?: Record<string, string | number | boolean | null>;
+}
+
+/** Discard and truncation accounting produced by the trace normalizer. */
+export interface TraceNormalizationSummary {
+  submitted_entries: number;
+  stored_entries: number;
+  discarded_entries: number;
+  discarded_reserved_event_entries: number;
+  discarded_overflow_entries: number;
+  truncated: boolean;
+  truncation_reason?: 'count_limit' | 'byte_limit';
+}
+
 /** Diagnostic metadata captured during step execution. Written once; read by inspect. */
 export interface StepDiagnostics {
   /** Rough token count estimate: Math.ceil(JSON.stringify(input).length / 4) */
@@ -45,6 +77,23 @@ export interface EvidenceSnapshot {
    * derived from run state and passed to the service adapter. Absent for all other step types.
    */
   resolved_params?: Record<string, unknown>;
+  /**
+   * Canonical stored trace entries for this step. Present only on agent execution steps
+   * when the agent submitted a non-empty trace that survived normalization.
+   * Excludes evidence_hash computation — integrity is tracked separately via trace_digest.
+   */
+  trace?: TraceEntry[];
+  /**
+   * SHA-256 hex digest of JSON.stringify(trace). Present when trace is non-empty.
+   * Separate from evidence_hash, which covers output_summary only.
+   */
+  trace_digest?: string;
+  /**
+   * Discard and truncation accounting from the trace normalizer.
+   * Present whenever the agent submitted a trace (even if all entries were dropped).
+   * Absent when no trace was submitted.
+   */
+  trace_summary?: TraceNormalizationSummary;
 }
 
 export interface PendingGate {

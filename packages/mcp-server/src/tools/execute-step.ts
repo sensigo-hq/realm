@@ -7,8 +7,16 @@ import {
   executeChain,
   type StepDispatcher,
   type ResponseEnvelope,
+  type AgentTraceEntry,
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
+
+/** Zod schema for a single agent trace entry submitted to execute_step. */
+const traceEntrySchema = z.object({
+  event: z.string(),
+  timestamp: z.string().optional(),
+  data: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+});
 
 // For agent steps, the agent's params represent their work output. The dispatcher
 // passes them through as the step output recorded in evidence.
@@ -22,7 +30,12 @@ const makeParamsDispatcher =
  * Validates eligibility, claims the step, and records the agent's params as step output.
  */
 export async function handleExecuteStep(
-  args: { run_id: string; command: string; params?: Record<string, unknown> },
+  args: {
+    run_id: string;
+    command: string;
+    params?: Record<string, unknown>;
+    trace?: AgentTraceEntry[] | undefined;
+  },
   stores?: HandleRunStores,
 ): Promise<ResponseEnvelope> {
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
@@ -38,6 +51,8 @@ export async function handleExecuteStep(
     dispatcher: makeParamsDispatcher(params),
     ...(stores?.registry !== undefined ? { registry: stores.registry } : {}),
     ...(stores?.secrets !== undefined ? { secrets: stores.secrets } : {}),
+    // trace is a top-level execute_step field — never embedded in params.
+    ...(args.trace !== undefined ? { trace: args.trace } : {}),
   });
 }
 
@@ -47,7 +62,12 @@ export async function handleExecuteStep(
  * Exported for direct testing of the MCP response shape.
  */
 export async function handleExecuteStepTool(
-  args: { run_id: string; command: string; params?: Record<string, unknown> },
+  args: {
+    run_id: string;
+    command: string;
+    params?: Record<string, unknown>;
+    trace?: AgentTraceEntry[] | undefined;
+  },
   stores?: HandleRunStores,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   try {
@@ -104,6 +124,7 @@ export function registerExecuteStep(
       run_id: z.string(),
       command: z.string(),
       params: z.record(z.unknown()).optional().default({}),
+      trace: z.array(traceEntrySchema).optional(),
     },
     async (args) => {
       return handleExecuteStepTool(args, opts);
