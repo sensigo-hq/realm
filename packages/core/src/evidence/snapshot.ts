@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { EvidenceSnapshot, StepDiagnostics, AgentTraceEntry } from '../types/run-record.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import { normalizeTrace } from '../engine/trace-normalizer.js';
+import type { NormalizeTraceResult } from '../engine/trace-normalizer.js';
 
 export interface CaptureEvidenceParams {
   stepId: string;
@@ -21,8 +22,16 @@ export interface CaptureEvidenceParams {
    * Agent-submitted trace entries. When present (even empty array), the normalizer runs
    * and trace_summary is always recorded. Entries surviving normalization are stored as trace.
    * evidence_hash is unaffected — it covers output_summary only.
+   * Ignored when normalizedTrace is provided.
    */
   trace?: AgentTraceEntry[];
+  /**
+   * Pre-normalized trace result from the execution loop. When provided, used directly
+   * in place of calling normalizeTrace on raw trace entries. Allows the execution loop
+   * to run schema validation on canonical entries before evidence capture without
+   * re-normalizing. Takes precedence over the raw trace field.
+   */
+  normalizedTrace?: NormalizeTraceResult;
 }
 
 /** Builds an EvidenceSnapshot from step execution parameters, including a SHA-256 content hash.
@@ -34,9 +43,17 @@ export function captureEvidence(params: CaptureEvidenceParams): EvidenceSnapshot
   // evidence_hash: hash of output only — behavior unchanged.
   const evidenceHash = createHash('sha256').update(JSON.stringify(params.output)).digest('hex');
 
-  // Trace normalization: only when trace input is provided.
+  // Trace normalization: prefer pre-normalized result when available (avoids double normalization
+  // when the execution loop already normalized for schema validation). Fall back to raw trace.
   let traceEntry: Pick<EvidenceSnapshot, 'trace' | 'trace_digest' | 'trace_summary'> = {};
-  if (params.trace !== undefined) {
+  if (params.normalizedTrace !== undefined) {
+    const { entries, digest, summary } = params.normalizedTrace;
+    if (entries.length > 0 && digest !== undefined) {
+      traceEntry = { trace: entries, trace_digest: digest, trace_summary: summary };
+    } else {
+      traceEntry = { trace_summary: summary };
+    }
+  } else if (params.trace !== undefined) {
     const { entries, digest, summary } = normalizeTrace(params.trace);
     if (entries.length > 0 && digest !== undefined) {
       traceEntry = { trace: entries, trace_digest: digest, trace_summary: summary };

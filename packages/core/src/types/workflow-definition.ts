@@ -122,6 +122,19 @@ export interface StepDefinition {
    * payload.
    */
   output_schema?: JsonSchema;
+  /**
+   * JSON Schema validated against the canonical stored trace entries for this step.
+   * Only valid on `execution: 'agent'` steps.
+   * When `trace_validation_mode` is `'enforce'`, invalid trace fails pre-claim and the
+   * step remains unclaimed. When `'warn'` (default), a warning is added to the envelope.
+   */
+  trace_schema?: JsonSchema;
+  /**
+   * Controls how `trace_schema` failures are handled.
+   * Default when `trace_schema` is set and mode is omitted: `'warn'`.
+   * Ignored when no `trace_schema` is declared.
+   */
+  trace_validation_mode?: 'warn' | 'enforce';
   preconditions?: string[];
   trust?: TrustLevel;
   timeout_seconds?: number;

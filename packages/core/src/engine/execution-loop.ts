@@ -19,7 +19,13 @@ import type {
 } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
 import { captureEvidence } from '../evidence/snapshot.js';
-import { validateInputSchema, validateOutputSchema } from '../validation/input-schema.js';
+import {
+  validateInputSchema,
+  validateOutputSchema,
+  validateTraceSchema,
+} from '../validation/input-schema.js';
+import { normalizeTrace } from './trace-normalizer.js';
+import type { NormalizeTraceResult } from './trace-normalizer.js';
 import { TERMINAL_PHASES } from './lifecycle.js';
 import { checkPreconditions, evaluateAllPreconditions } from './precondition.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
@@ -513,6 +519,48 @@ export async function executeStep(
     }
   }
 
+  // Step 2d: Validate trace schema (agent steps only, pre-claim).
+  // Normalizes the trace once here so the canonical entries can be validated, and carries
+  // the pre-normalized result through to captureEvidence to avoid double normalization.
+  const traceWarnings: string[] = [];
+  let preNormalizedTrace: NormalizeTraceResult | undefined;
+  if (
+    stepDef?.execution === 'agent' &&
+    stepDef.trace_schema !== undefined &&
+    options.trace !== undefined
+  ) {
+    preNormalizedTrace = normalizeTrace(options.trace);
+    const mode = stepDef.trace_validation_mode ?? 'warn';
+    if (mode === 'enforce') {
+      try {
+        validateTraceSchema(
+          preNormalizedTrace.entries,
+          stepDef.trace_schema,
+          options.command,
+          'enforce',
+        );
+        preNormalizedTrace.summary.schema_applied = true;
+        preNormalizedTrace.summary.validation_mode = 'enforce';
+        preNormalizedTrace.summary.validation_errors = 0;
+      } catch (err) {
+        return makeErrorEnvelope(options, run, err as WorkflowError, definition);
+      }
+    } else {
+      const result = validateTraceSchema(
+        preNormalizedTrace.entries,
+        stepDef.trace_schema,
+        options.command,
+        'warn',
+      );
+      preNormalizedTrace.summary.schema_applied = true;
+      preNormalizedTrace.summary.validation_mode = 'warn';
+      preNormalizedTrace.summary.validation_errors = result.errorCount;
+      if (result.errorCount > 0) {
+        traceWarnings.push(result.warning);
+      }
+    }
+  }
+
   // Step 3: Claim the step — adds to in_progress_steps under file lock.
   let pendingRun: RunRecord;
   try {
@@ -650,8 +698,12 @@ export async function executeStep(
         ? { toolCalls: options.stepMeta.toolCalls }
         : {}),
       // Gate trace to agent steps only — drop silently for auto/adapter/handler steps.
+      // When pre-normalized (schema validation ran), pass the pre-normalized result to avoid
+      // double normalization. Otherwise pass raw trace for lazy normalization in captureEvidence.
       ...(stepDef?.execution === 'agent' && options.trace !== undefined
-        ? { trace: options.trace }
+        ? preNormalizedTrace !== undefined
+          ? { normalizedTrace: preNormalizedTrace }
+          : { trace: options.trace }
         : {}),
     });
     const snap: EvidenceSnapshot =
@@ -952,7 +1004,7 @@ export async function executeStep(
     status: 'ok',
     data: output,
     evidence: allEvidence,
-    warnings: [],
+    warnings: traceWarnings,
     errors: [],
     context_hint: orientation,
     next_actions: nextActions,

@@ -270,4 +270,138 @@ describe('inspectRun', () => {
     expect(result).toContain('⚠ Trace truncated (count_limit): 101 stored, 7 discarded.');
     expect(result).not.toContain('5 discarded');
   });
+
+  // ─── run-level trace aggregation (A2) ──────────────────────────────────
+
+  it('run-level trace summary appears when at least one step has a trace', async () => {
+    const snap1 = makeSnapshot('step_a', {
+      trace: [
+        { seq: 1, event: 'read_file' },
+        { seq: 2, event: 'read_file' },
+        { seq: 3, event: 'write_result' },
+      ],
+      trace_summary: {
+        submitted_entries: 3,
+        stored_entries: 3,
+        discarded_entries: 0,
+        discarded_reserved_event_entries: 0,
+        discarded_overflow_entries: 0,
+        truncated: false,
+      },
+    });
+    const snap2 = makeSnapshot('step_b', {
+      trace: [{ seq: 1, event: 'read_file' }],
+      trace_summary: {
+        submitted_entries: 1,
+        stored_entries: 1,
+        discarded_entries: 0,
+        discarded_reserved_event_entries: 0,
+        discarded_overflow_entries: 0,
+        truncated: false,
+      },
+    });
+    const run = makeRun([snap1, snap2]);
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+
+    expect(result).toContain('Trace Summary:');
+    expect(result).toContain('steps_with_trace:       2');
+    expect(result).toContain('stored_entries_total:   4');
+    expect(result).toContain('discarded_entries_total:0');
+    expect(result).toContain('truncated_steps:        0');
+    expect(result).toContain('top_events:');
+    // read_file appears 3 times, write_result once — read_file should be first
+    expect(result).toContain('read_file (3)');
+    expect(result).toContain('write_result (1)');
+  });
+
+  it('run-level trace summary: top_events excludes trace.truncated sentinel', async () => {
+    const snap = makeSnapshot('step_a', {
+      trace: [
+        { seq: 1, event: 'my_event' },
+        { seq: 2, event: 'trace.truncated', data: { reason: 'count_limit' } },
+      ],
+      trace_summary: {
+        submitted_entries: 110,
+        stored_entries: 2,
+        discarded_entries: 9,
+        discarded_reserved_event_entries: 0,
+        discarded_overflow_entries: 9,
+        truncated: true,
+        truncation_reason: 'count_limit' as const,
+      },
+    });
+    const run = makeRun([snap]);
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+
+    expect(result).toContain('Trace Summary:');
+    expect(result).toContain('top_events:');
+    expect(result).toContain('my_event (1)');
+    // Sentinel must not appear in top_events
+    expect(result).not.toContain('trace.truncated (');
+  });
+
+  it('run-level trace summary: truncated_steps counts correctly', async () => {
+    const truncatedSnap = makeSnapshot('step_a', {
+      trace: [{ seq: 1, event: 'ev' }],
+      trace_summary: {
+        submitted_entries: 105,
+        stored_entries: 1,
+        discarded_entries: 4,
+        discarded_reserved_event_entries: 0,
+        discarded_overflow_entries: 4,
+        truncated: true,
+        truncation_reason: 'count_limit' as const,
+      },
+    });
+    const normalSnap = makeSnapshot('step_b', {
+      trace: [{ seq: 1, event: 'ok_event' }],
+      trace_summary: {
+        submitted_entries: 1,
+        stored_entries: 1,
+        discarded_entries: 0,
+        discarded_reserved_event_entries: 0,
+        discarded_overflow_entries: 0,
+        truncated: false,
+      },
+    });
+    const run = makeRun([truncatedSnap, normalSnap]);
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+
+    expect(result).toContain('truncated_steps:        1');
+  });
+
+  it('run-level trace summary is absent when no step has a trace', async () => {
+    const snap = makeSnapshot('step_one'); // no trace field
+    const run = makeRun([snap]);
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+
+    expect(result).not.toContain('Trace Summary:');
+  });
+
+  it('run-level trace summary: top_events shows at most 5 events', async () => {
+    const trace = Array.from({ length: 10 }, (_, i) => ({
+      seq: i + 1,
+      event: `event_${i}`,
+    }));
+    const snap = makeSnapshot('step_a', {
+      trace,
+      trace_summary: {
+        submitted_entries: 10,
+        stored_entries: 10,
+        discarded_entries: 0,
+        discarded_reserved_event_entries: 0,
+        discarded_overflow_entries: 0,
+        truncated: false,
+      },
+    });
+    const run = makeRun([snap]);
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+
+    // Count how many "event_N (1)" entries appear in the top_events line
+    const match = result.match(/top_events:\s+(.+)/);
+    expect(match).not.toBeNull();
+    const topEventsLine = match![1]!;
+    const count = (topEventsLine.match(/\(\d+\)/g) ?? []).length;
+    expect(count).toBeLessThanOrEqual(5);
+  });
 });
