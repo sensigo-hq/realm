@@ -258,6 +258,29 @@ export function loadWorkflowFromString(content: string): WorkflowDefinition {
       errors.push(`Step '${stepName}': 'output_schema' is only valid on execution: agent steps`);
     }
 
+    // trace_schema is only valid on execution: agent steps.
+    if (step['trace_schema'] !== undefined && step['execution'] !== 'agent') {
+      errors.push(`Step '${stepName}': 'trace_schema' is only valid on execution: agent steps`);
+    }
+
+    // trace_validation_mode is only valid on execution: agent steps.
+    if (step['trace_validation_mode'] !== undefined && step['execution'] !== 'agent') {
+      errors.push(
+        `Step '${stepName}': 'trace_validation_mode' is only valid on execution: agent steps`,
+      );
+    }
+
+    // trace_validation_mode must be 'warn' or 'enforce' when provided.
+    if (
+      step['trace_validation_mode'] !== undefined &&
+      step['trace_validation_mode'] !== 'warn' &&
+      step['trace_validation_mode'] !== 'enforce'
+    ) {
+      errors.push(
+        `Step '${stepName}': invalid trace_validation_mode '${String(step['trace_validation_mode'])}'; must be 'warn' or 'enforce'`,
+      );
+    }
+
     if ('uses_service' in step && typeof step['uses_service'] === 'string') {
       const services = doc['services'];
       if (

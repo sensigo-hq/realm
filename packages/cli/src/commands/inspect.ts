@@ -100,6 +100,47 @@ export async function inspectRun(
     stepSnapshots.get(snap.step_id)!.push(snap);
   }
 
+  // Run-level trace aggregation — summarise across all evidence snapshots.
+  const allSnaps = run.evidence;
+  const snapsWithTrace = allSnaps.filter((s) => s.trace !== undefined && s.trace.length > 0);
+  if (snapsWithTrace.length > 0) {
+    const stepsWithTrace = snapsWithTrace.length;
+    const stepsWithTraceUnique = new Set(snapsWithTrace.map((s) => s.step_id)).size;
+    const storedEntriesTotal = allSnaps.reduce(
+      (acc, s) => acc + (s.trace_summary?.stored_entries ?? 0),
+      0,
+    );
+    const discardedEntriesTotal = allSnaps.reduce(
+      (acc, s) => acc + (s.trace_summary?.discarded_entries ?? 0),
+      0,
+    );
+    const truncatedSteps = allSnaps.filter((s) => s.trace_summary?.truncated === true).length;
+
+    // Frequency map of events across all stored trace entries (excluding sentinel).
+    const eventFreq = new Map<string, number>();
+    for (const snap of allSnaps) {
+      for (const entry of snap.trace ?? []) {
+        if (entry.event === 'trace.truncated') continue;
+        eventFreq.set(entry.event, (eventFreq.get(entry.event) ?? 0) + 1);
+      }
+    }
+    const topEvents = [...eventFreq.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([event, count]) => `${event} (${count})`);
+
+    lines.push('');
+    lines.push('Trace Summary:');
+    lines.push(`  steps_with_trace:        ${stepsWithTrace}`);
+    lines.push(`  steps_with_trace_unique: ${stepsWithTraceUnique}`);
+    lines.push(`  stored_entries_total:   ${storedEntriesTotal}`);
+    lines.push(`  discarded_entries_total:${discardedEntriesTotal}`);
+    lines.push(`  truncated_steps:        ${truncatedSteps}`);
+    if (topEvents.length > 0) {
+      lines.push(`  top_events:             ${topEvents.join(', ')}`);
+    }
+  }
+
   lines.push('');
   lines.push(`Evidence (${stepOrder.length} steps):`);
 

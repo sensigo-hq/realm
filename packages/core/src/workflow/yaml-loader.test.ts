@@ -328,6 +328,57 @@ steps:
       expect((err as WorkflowError).message).toContain('output_schema');
     }
   });
+
+  it('trace_schema on execution: auto step throws VALIDATION_WORKFLOW_SCHEMA', () => {
+    const content = VALID_YAML.replace(
+      'execution: auto',
+      'execution: auto\n    trace_schema:\n      type: array',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      expect((err as WorkflowError).code).toBe('VALIDATION_WORKFLOW_SCHEMA');
+      expect((err as WorkflowError).message).toContain('trace_schema');
+    }
+  });
+
+  it('trace_validation_mode on execution: auto step throws VALIDATION_WORKFLOW_SCHEMA', () => {
+    const content = VALID_YAML.replace(
+      'execution: auto',
+      'execution: auto\n    trace_validation_mode: warn',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      expect((err as WorkflowError).code).toBe('VALIDATION_WORKFLOW_SCHEMA');
+      expect((err as WorkflowError).message).toContain('trace_validation_mode');
+    }
+  });
+
+  it('trace_validation_mode with invalid value throws VALIDATION_WORKFLOW_SCHEMA', () => {
+    // Use an agent step (replace execution: agent step in VALID_YAML)
+    const content = VALID_YAML.replace(
+      'execution: agent',
+      'execution: agent\n    trace_validation_mode: strict',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      expect((err as WorkflowError).code).toBe('VALIDATION_WORKFLOW_SCHEMA');
+      expect((err as WorkflowError).message).toContain('trace_validation_mode');
+    }
+  });
+
+  it('trace_schema and trace_validation_mode on execution: agent step are accepted', () => {
+    const content = VALID_YAML.replace(
+      'execution: agent',
+      'execution: agent\n    trace_schema:\n      type: array\n    trace_validation_mode: enforce',
+    );
+    expect(() => loadWorkflowFromString(content)).not.toThrow();
+  });
 });
 
 describe('loadWorkflowFromFile — agent profile resolution', () => {

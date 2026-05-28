@@ -1813,5 +1813,421 @@ describe('executeStep', () => {
       expect(e2.evidence[0]?.trace_digest).toBeDefined();
       expect(e1.evidence[0]?.trace_digest).not.toBe(e2.evidence[0]?.trace_digest);
     });
+
+    // ─── trace_schema validation (A2) ──────────────────────────────────────
+
+    const traceSchemaDefinitionBase: WorkflowDefinition = {
+      ...definition,
+      id: 'trace-schema-wf',
+      steps: {
+        ...definition.steps,
+        'step-one': {
+          ...definition.steps['step-one']!,
+          execution: 'agent',
+          depends_on: [],
+          trace_schema: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['seq', 'event'],
+              properties: {
+                seq: { type: 'number' },
+                event: { type: 'string', pattern: '^[a-z_]+$' },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    it('trace_schema enforce: invalid trace blocks pre-claim and is re-submittable', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'enforce',
+          },
+        },
+      };
+      const dispatchCalled = vi.fn();
+      const spy: StepDispatcher = async (step, input, run, signal) => {
+        dispatchCalled();
+        return echoDispatcher(step, input, run, signal);
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Invalid trace: event contains uppercase letters (fails pattern '^[a-z_]+$')
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: spy,
+        trace: [{ event: 'InvalidEvent' }],
+      });
+
+      expect(envelope.status).toBe('error');
+      expect(envelope.agent_action).toBe('provide_input');
+      expect(dispatchCalled).not.toHaveBeenCalled();
+      // Step not claimed — it is still eligible and in next_actions
+      expect(envelope.next_actions).toHaveLength(1);
+      const runAfter = await store.get(run.id);
+      expect(runAfter.in_progress_steps).not.toContain('step-one');
+    });
+
+    it('trace_schema enforce: re-submittable after failure (step never claimed)', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'enforce',
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // First call — invalid trace
+      const first = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'BadEvent' }],
+      });
+      expect(first.status).toBe('error');
+
+      // Second call — valid trace (all lowercase)
+      const second = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'good_event' }],
+      });
+      expect(second.status).toBe('ok');
+    });
+
+    it('trace_schema warn: invalid trace does not block step, warning returned in envelope', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'warn',
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Invalid trace — but warn mode so step succeeds
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'BadEvent' }],
+      });
+
+      expect(envelope.status).toBe('ok');
+      expect(envelope.warnings).toHaveLength(1);
+      expect(envelope.warnings[0]).toContain('step-one');
+    });
+
+    it('trace_schema warn: valid trace passes with no warnings', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'warn',
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'good_event' }],
+      });
+
+      expect(envelope.status).toBe('ok');
+      expect(envelope.warnings).toHaveLength(0);
+    });
+
+    it('trace_schema: schema_applied and validation metadata recorded in trace_summary', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'enforce',
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'good_event' }],
+      });
+
+      expect(envelope.status).toBe('ok');
+      const summary = envelope.evidence[0]?.trace_summary;
+      expect(summary?.schema_applied).toBe(true);
+      expect(summary?.validation_mode).toBe('enforce');
+      expect(summary?.validation_errors).toBe(0);
+    });
+
+    it('trace_schema default mode is warn when trace_schema set but mode omitted', async () => {
+      // traceSchemaDefinitionBase has trace_schema but no trace_validation_mode
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Submit invalid trace — default warn mode should not block
+      const envelope = await executeStep(store, traceSchemaDefinitionBase, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'BadEvent' }],
+      });
+
+      expect(envelope.status).toBe('ok');
+      expect(envelope.warnings).toHaveLength(1);
+    });
+
+    it('trace_schema warn: claim-error envelope includes trace warning', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'warn',
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Mock claimStep to throw after step 2d validation has already produced a warning
+      vi.spyOn(store, 'claimStep').mockRejectedValue(
+        new WorkflowError('claim failed', {
+          code: 'ENGINE_STORE_FAILED',
+          category: 'ENGINE',
+          agentAction: 'stop',
+          retryable: false,
+        }),
+      );
+
+      try {
+        const envelope = await executeStep(store, def, {
+          runId: run.id,
+          command: 'step-one',
+          input: { result: 'done' },
+          dispatcher: echoDispatcher,
+          trace: [{ event: 'BadEvent' }],
+        });
+
+        expect(envelope.status).toBe('error');
+        expect(envelope.warnings).toHaveLength(1);
+        expect(envelope.warnings[0]).toContain('step-one');
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('trace_schema warn: dispatch-error envelope includes trace warning', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'warn',
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Invalid trace (warn mode) + failing dispatcher — trace warning must survive dispatch failure
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: failDispatcher,
+        trace: [{ event: 'BadEvent' }],
+      });
+
+      expect(envelope.status).toBe('error');
+      expect(envelope.errors[0]).toContain('step failed');
+      expect(envelope.warnings).toHaveLength(1);
+      expect(envelope.warnings[0]).toContain('step-one');
+    });
+
+    it('trace_schema warn: confirm-required envelope includes trace warning', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'warn',
+            trust: 'human_confirmed' as const,
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Invalid trace (warn mode) — step has trust: human_confirmed so returns confirm_required
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'BadEvent' }],
+      });
+
+      expect(envelope.status).toBe('confirm_required');
+      expect(envelope.warnings).toHaveLength(1);
+      expect(envelope.warnings[0]).toContain('step-one');
+    });
+
+    it('trace_schema warn: both trace warning and cleanup warning appear when dispatch fails and store.update throws', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'warn',
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Mock store.update to throw — simulates cleanup write failure
+      vi.spyOn(store, 'update').mockImplementation(async () => {
+        throw new Error('store write failed');
+      });
+
+      try {
+        const envelope = await executeStep(store, def, {
+          runId: run.id,
+          command: 'step-one',
+          input: { result: 'done' },
+          dispatcher: failDispatcher,
+          trace: [{ event: 'BadEvent' }],
+        });
+
+        expect(envelope.status).toBe('error');
+        expect(envelope.warnings).toHaveLength(2);
+        // Trace warning first (deterministic order), cleanup warning second
+        expect(envelope.warnings[0]).toContain('step-one');
+        expect(envelope.warnings[1]).toMatch(/Failed to persist step failure/);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('trace_schema warn: gate store.update error envelope retains trace warning', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'warn',
+            trust: 'human_confirmed' as const,
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Mock store.update to throw — simulates the gate persistence failure (post-dispatch)
+      vi.spyOn(store, 'update').mockImplementation(async () => {
+        throw new Error('gate store write failed');
+      });
+
+      try {
+        const envelope = await executeStep(store, def, {
+          runId: run.id,
+          command: 'step-one',
+          input: { result: 'done' },
+          dispatcher: echoDispatcher,
+          trace: [{ event: 'BadEvent' }],
+        });
+
+        expect(envelope.status).toBe('error');
+        expect(envelope.warnings).toHaveLength(1);
+        expect(envelope.warnings[0]).toContain('step-one');
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
   });
 });

@@ -19,7 +19,13 @@ import type {
 } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
 import { captureEvidence } from '../evidence/snapshot.js';
-import { validateInputSchema, validateOutputSchema } from '../validation/input-schema.js';
+import {
+  validateInputSchema,
+  validateOutputSchema,
+  validateTraceSchema,
+} from '../validation/input-schema.js';
+import { normalizeTrace } from './trace-normalizer.js';
+import type { NormalizeTraceResult } from './trace-normalizer.js';
 import { TERMINAL_PHASES } from './lifecycle.js';
 import { checkPreconditions, evaluateAllPreconditions } from './precondition.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
@@ -362,6 +368,15 @@ export function buildNextActions(definition: WorkflowDefinition, run: RunRecord)
     .map((name) => stepToNextAction(name, definition.steps[name]!, context));
 }
 
+/**
+ * Merges call-scoped trace-schema warnings with an optional cleanup warning into
+ * a single warnings array. Trace warnings are listed first (deterministic order).
+ */
+function mergeWarnings(traceWarnings: string[], cleanupWarning?: string): string[] {
+  if (traceWarnings.length === 0 && cleanupWarning === undefined) return [];
+  return cleanupWarning !== undefined ? [...traceWarnings, cleanupWarning] : [...traceWarnings];
+}
+
 /** Builds a minimal error ResponseEnvelope from primitive fields. */
 function errorEnvelope(
   command: string,
@@ -390,6 +405,7 @@ function makeErrorEnvelope(
   run: RunRecord | null,
   err: WorkflowError,
   definition?: WorkflowDefinition,
+  extraWarnings?: string[],
 ): ResponseEnvelope {
   const hint =
     run !== null ? `Error during '${options.command}'. Run phase: '${run.run_phase}'.` : undefined;
@@ -400,10 +416,14 @@ function makeErrorEnvelope(
     err,
     hint,
   );
+  const baseWithWarnings =
+    extraWarnings !== undefined && extraWarnings.length > 0
+      ? { ...base, warnings: extraWarnings }
+      : base;
   if (run !== null && definition !== undefined && err.agentAction !== 'stop') {
-    return { ...base, next_actions: buildNextActions(definition, run) };
+    return { ...baseWithWarnings, next_actions: buildNextActions(definition, run) };
   }
-  return base;
+  return baseWithWarnings;
 }
 
 /**
@@ -513,6 +533,48 @@ export async function executeStep(
     }
   }
 
+  // Step 2d: Validate trace schema (agent steps only, pre-claim).
+  // Normalizes the trace once here so the canonical entries can be validated, and carries
+  // the pre-normalized result through to captureEvidence to avoid double normalization.
+  const traceWarnings: string[] = [];
+  let preNormalizedTrace: NormalizeTraceResult | undefined;
+  if (
+    stepDef?.execution === 'agent' &&
+    stepDef.trace_schema !== undefined &&
+    options.trace !== undefined
+  ) {
+    preNormalizedTrace = normalizeTrace(options.trace);
+    const mode = stepDef.trace_validation_mode ?? 'warn';
+    if (mode === 'enforce') {
+      try {
+        validateTraceSchema(
+          preNormalizedTrace.entries,
+          stepDef.trace_schema,
+          options.command,
+          'enforce',
+        );
+        preNormalizedTrace.summary.schema_applied = true;
+        preNormalizedTrace.summary.validation_mode = 'enforce';
+        preNormalizedTrace.summary.validation_errors = 0;
+      } catch (err) {
+        return makeErrorEnvelope(options, run, err as WorkflowError, definition);
+      }
+    } else {
+      const result = validateTraceSchema(
+        preNormalizedTrace.entries,
+        stepDef.trace_schema,
+        options.command,
+        'warn',
+      );
+      preNormalizedTrace.summary.schema_applied = true;
+      preNormalizedTrace.summary.validation_mode = 'warn';
+      preNormalizedTrace.summary.validation_errors = result.errorCount;
+      if (result.errorCount > 0) {
+        traceWarnings.push(result.warning);
+      }
+    }
+  }
+
   // Step 3: Claim the step — adds to in_progress_steps under file lock.
   let pendingRun: RunRecord;
   try {
@@ -539,7 +601,13 @@ export async function executeStep(
           },
         };
       }
-      return makeErrorEnvelope(options, run, err, definition);
+      return makeErrorEnvelope(
+        options,
+        run,
+        err,
+        definition,
+        traceWarnings.length > 0 ? traceWarnings : undefined,
+      );
     }
     return makeErrorEnvelope(
       options,
@@ -551,6 +619,7 @@ export async function executeStep(
         retryable: false,
       }),
       definition,
+      traceWarnings.length > 0 ? traceWarnings : undefined,
     );
   }
 
@@ -650,8 +719,12 @@ export async function executeStep(
         ? { toolCalls: options.stepMeta.toolCalls }
         : {}),
       // Gate trace to agent steps only — drop silently for auto/adapter/handler steps.
+      // When pre-normalized (schema validation ran), pass the pre-normalized result to avoid
+      // double normalization. Otherwise pass raw trace for lazy normalization in captureEvidence.
       ...(stepDef?.execution === 'agent' && options.trace !== undefined
-        ? { trace: options.trace }
+        ? preNormalizedTrace !== undefined
+          ? { normalizedTrace: preNormalizedTrace }
+          : { trace: options.trace }
         : {}),
     });
     const snap: EvidenceSnapshot =
@@ -728,7 +801,7 @@ export async function executeStep(
       status: 'error',
       data: {},
       evidence: allEvidence,
-      warnings: cleanupWarning !== undefined ? [cleanupWarning] : [],
+      warnings: mergeWarnings(traceWarnings, cleanupWarning),
       errors: [dispatchError.message],
       agent_action: 'stop' as const,
       context_hint: `Step '${options.command}' failed.`,
@@ -780,6 +853,7 @@ export async function executeStep(
               retryable: false,
             }),
             definition,
+            traceWarnings.length > 0 ? traceWarnings : undefined,
           );
         }
         throw err;
@@ -796,6 +870,7 @@ export async function executeStep(
             retryable: false,
           }),
           definition,
+          traceWarnings.length > 0 ? traceWarnings : undefined,
         );
       }
       resolvedGateMessage = raw;
@@ -824,7 +899,13 @@ export async function executeStep(
       });
     } catch (err) {
       if (err instanceof WorkflowError) {
-        return makeErrorEnvelope(options, pendingRun, err, definition);
+        return makeErrorEnvelope(
+          options,
+          pendingRun,
+          err,
+          definition,
+          traceWarnings.length > 0 ? traceWarnings : undefined,
+        );
       }
       return makeErrorEnvelope(
         options,
@@ -836,6 +917,7 @@ export async function executeStep(
           retryable: false,
         }),
         definition,
+        traceWarnings.length > 0 ? traceWarnings : undefined,
       );
     }
 
@@ -880,9 +962,10 @@ export async function executeStep(
       status: 'confirm_required',
       data: output,
       evidence: allEvidence,
-      warnings: [],
+      warnings: [...traceWarnings],
       errors: [],
       context_hint: `Run is paused at gate '${gate_id}'. Available choices: ${choices.join(', ')}.`,
+
       next_actions: [gateNextAction],
       gate: {
         gate_id,
@@ -926,7 +1009,13 @@ export async function executeStep(
     savedRun = await store.update(finalRun);
   } catch (err) {
     if (err instanceof WorkflowError) {
-      return makeErrorEnvelope(options, pendingRun, err, definition);
+      return makeErrorEnvelope(
+        options,
+        pendingRun,
+        err,
+        definition,
+        traceWarnings.length > 0 ? traceWarnings : undefined,
+      );
     }
     const internal = new WorkflowError('Failed to persist run update', {
       code: 'ENGINE_STORE_FAILED',
@@ -934,7 +1023,13 @@ export async function executeStep(
       agentAction: 'stop',
       retryable: false,
     });
-    return makeErrorEnvelope(options, pendingRun, internal, definition);
+    return makeErrorEnvelope(
+      options,
+      pendingRun,
+      internal,
+      definition,
+      traceWarnings.length > 0 ? traceWarnings : undefined,
+    );
   }
 
   // Step 7: Build and return ResponseEnvelope.
@@ -952,7 +1047,7 @@ export async function executeStep(
     status: 'ok',
     data: output,
     evidence: allEvidence,
-    warnings: [],
+    warnings: traceWarnings,
     errors: [],
     context_hint: orientation,
     next_actions: nextActions,

@@ -31,6 +31,12 @@ export interface TraceNormalizationSummary {
   discarded_overflow_entries: number;
   truncated: boolean;
   truncation_reason?: 'count_limit' | 'byte_limit';
+  /** Whether trace_schema validation was applied to the canonical entries. */
+  schema_applied?: boolean;
+  /** Validation mode that was applied ('warn' or 'enforce'). Present when schema_applied is true. */
+  validation_mode?: 'warn' | 'enforce';
+  /** Number of Ajv validation errors found. Zero means schema-conformant. Present when schema_applied is true. */
+  validation_errors?: number;
 }
 
 /** Diagnostic metadata captured during step execution. Written once; read by inspect. */
