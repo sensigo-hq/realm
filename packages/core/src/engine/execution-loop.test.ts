@@ -2036,6 +2036,51 @@ describe('executeStep', () => {
       expect(envelope.warnings).toHaveLength(1);
     });
 
+    it('trace_schema warn: claim-error envelope includes trace warning', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'warn',
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Mock claimStep to throw after step 2d validation has already produced a warning
+      vi.spyOn(store, 'claimStep').mockRejectedValue(
+        new WorkflowError('claim failed', {
+          code: 'ENGINE_STORE_FAILED',
+          category: 'ENGINE',
+          agentAction: 'stop',
+          retryable: false,
+        }),
+      );
+
+      try {
+        const envelope = await executeStep(store, def, {
+          runId: run.id,
+          command: 'step-one',
+          input: { result: 'done' },
+          dispatcher: echoDispatcher,
+          trace: [{ event: 'BadEvent' }],
+        });
+
+        expect(envelope.status).toBe('error');
+        expect(envelope.warnings).toHaveLength(1);
+        expect(envelope.warnings[0]).toContain('step-one');
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
     it('trace_schema warn: dispatch-error envelope includes trace warning', async () => {
       const def: WorkflowDefinition = {
         ...traceSchemaDefinitionBase,

@@ -601,7 +601,13 @@ export async function executeStep(
           },
         };
       }
-      return makeErrorEnvelope(options, run, err, definition);
+      return makeErrorEnvelope(
+        options,
+        run,
+        err,
+        definition,
+        traceWarnings.length > 0 ? traceWarnings : undefined,
+      );
     }
     return makeErrorEnvelope(
       options,
@@ -613,6 +619,7 @@ export async function executeStep(
         retryable: false,
       }),
       definition,
+      traceWarnings.length > 0 ? traceWarnings : undefined,
     );
   }
 
