@@ -105,6 +105,7 @@ export async function inspectRun(
   const snapsWithTrace = allSnaps.filter((s) => s.trace !== undefined && s.trace.length > 0);
   if (snapsWithTrace.length > 0) {
     const stepsWithTrace = snapsWithTrace.length;
+    const stepsWithTraceUnique = new Set(snapsWithTrace.map((s) => s.step_id)).size;
     const storedEntriesTotal = allSnaps.reduce(
       (acc, s) => acc + (s.trace_summary?.stored_entries ?? 0),
       0,
@@ -130,7 +131,8 @@ export async function inspectRun(
 
     lines.push('');
     lines.push('Trace Summary:');
-    lines.push(`  steps_with_trace:       ${stepsWithTrace}`);
+    lines.push(`  steps_with_trace:        ${stepsWithTrace}`);
+    lines.push(`  steps_with_trace_unique: ${stepsWithTraceUnique}`);
     lines.push(`  stored_entries_total:   ${storedEntriesTotal}`);
     lines.push(`  discarded_entries_total:${discardedEntriesTotal}`);
     lines.push(`  truncated_steps:        ${truncatedSteps}`);

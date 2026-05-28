@@ -368,6 +368,15 @@ export function buildNextActions(definition: WorkflowDefinition, run: RunRecord)
     .map((name) => stepToNextAction(name, definition.steps[name]!, context));
 }
 
+/**
+ * Merges call-scoped trace-schema warnings with an optional cleanup warning into
+ * a single warnings array. Trace warnings are listed first (deterministic order).
+ */
+function mergeWarnings(traceWarnings: string[], cleanupWarning?: string): string[] {
+  if (traceWarnings.length === 0 && cleanupWarning === undefined) return [];
+  return cleanupWarning !== undefined ? [...traceWarnings, cleanupWarning] : [...traceWarnings];
+}
+
 /** Builds a minimal error ResponseEnvelope from primitive fields. */
 function errorEnvelope(
   command: string,
@@ -396,6 +405,7 @@ function makeErrorEnvelope(
   run: RunRecord | null,
   err: WorkflowError,
   definition?: WorkflowDefinition,
+  extraWarnings?: string[],
 ): ResponseEnvelope {
   const hint =
     run !== null ? `Error during '${options.command}'. Run phase: '${run.run_phase}'.` : undefined;
@@ -406,10 +416,14 @@ function makeErrorEnvelope(
     err,
     hint,
   );
+  const baseWithWarnings =
+    extraWarnings !== undefined && extraWarnings.length > 0
+      ? { ...base, warnings: extraWarnings }
+      : base;
   if (run !== null && definition !== undefined && err.agentAction !== 'stop') {
-    return { ...base, next_actions: buildNextActions(definition, run) };
+    return { ...baseWithWarnings, next_actions: buildNextActions(definition, run) };
   }
-  return base;
+  return baseWithWarnings;
 }
 
 /**
@@ -780,7 +794,7 @@ export async function executeStep(
       status: 'error',
       data: {},
       evidence: allEvidence,
-      warnings: cleanupWarning !== undefined ? [cleanupWarning] : [],
+      warnings: mergeWarnings(traceWarnings, cleanupWarning),
       errors: [dispatchError.message],
       agent_action: 'stop' as const,
       context_hint: `Step '${options.command}' failed.`,
@@ -832,6 +846,7 @@ export async function executeStep(
               retryable: false,
             }),
             definition,
+            traceWarnings.length > 0 ? traceWarnings : undefined,
           );
         }
         throw err;
@@ -848,6 +863,7 @@ export async function executeStep(
             retryable: false,
           }),
           definition,
+          traceWarnings.length > 0 ? traceWarnings : undefined,
         );
       }
       resolvedGateMessage = raw;
@@ -876,7 +892,13 @@ export async function executeStep(
       });
     } catch (err) {
       if (err instanceof WorkflowError) {
-        return makeErrorEnvelope(options, pendingRun, err, definition);
+        return makeErrorEnvelope(
+          options,
+          pendingRun,
+          err,
+          definition,
+          traceWarnings.length > 0 ? traceWarnings : undefined,
+        );
       }
       return makeErrorEnvelope(
         options,
@@ -888,6 +910,7 @@ export async function executeStep(
           retryable: false,
         }),
         definition,
+        traceWarnings.length > 0 ? traceWarnings : undefined,
       );
     }
 
@@ -932,9 +955,10 @@ export async function executeStep(
       status: 'confirm_required',
       data: output,
       evidence: allEvidence,
-      warnings: [],
+      warnings: [...traceWarnings],
       errors: [],
       context_hint: `Run is paused at gate '${gate_id}'. Available choices: ${choices.join(', ')}.`,
+
       next_actions: [gateNextAction],
       gate: {
         gate_id,
@@ -978,7 +1002,13 @@ export async function executeStep(
     savedRun = await store.update(finalRun);
   } catch (err) {
     if (err instanceof WorkflowError) {
-      return makeErrorEnvelope(options, pendingRun, err, definition);
+      return makeErrorEnvelope(
+        options,
+        pendingRun,
+        err,
+        definition,
+        traceWarnings.length > 0 ? traceWarnings : undefined,
+      );
     }
     const internal = new WorkflowError('Failed to persist run update', {
       code: 'ENGINE_STORE_FAILED',
@@ -986,7 +1016,13 @@ export async function executeStep(
       agentAction: 'stop',
       retryable: false,
     });
-    return makeErrorEnvelope(options, pendingRun, internal, definition);
+    return makeErrorEnvelope(
+      options,
+      pendingRun,
+      internal,
+      definition,
+      traceWarnings.length > 0 ? traceWarnings : undefined,
+    );
   }
 
   // Step 7: Build and return ResponseEnvelope.

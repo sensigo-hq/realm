@@ -2035,5 +2035,154 @@ describe('executeStep', () => {
       expect(envelope.status).toBe('ok');
       expect(envelope.warnings).toHaveLength(1);
     });
+
+    it('trace_schema warn: dispatch-error envelope includes trace warning', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'warn',
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Invalid trace (warn mode) + failing dispatcher — trace warning must survive dispatch failure
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: failDispatcher,
+        trace: [{ event: 'BadEvent' }],
+      });
+
+      expect(envelope.status).toBe('error');
+      expect(envelope.errors[0]).toContain('step failed');
+      expect(envelope.warnings).toHaveLength(1);
+      expect(envelope.warnings[0]).toContain('step-one');
+    });
+
+    it('trace_schema warn: confirm-required envelope includes trace warning', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'warn',
+            trust: 'human_confirmed' as const,
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Invalid trace (warn mode) — step has trust: human_confirmed so returns confirm_required
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'BadEvent' }],
+      });
+
+      expect(envelope.status).toBe('confirm_required');
+      expect(envelope.warnings).toHaveLength(1);
+      expect(envelope.warnings[0]).toContain('step-one');
+    });
+
+    it('trace_schema warn: both trace warning and cleanup warning appear when dispatch fails and store.update throws', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'warn',
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Mock store.update to throw — simulates cleanup write failure
+      vi.spyOn(store, 'update').mockImplementation(async () => {
+        throw new Error('store write failed');
+      });
+
+      try {
+        const envelope = await executeStep(store, def, {
+          runId: run.id,
+          command: 'step-one',
+          input: { result: 'done' },
+          dispatcher: failDispatcher,
+          trace: [{ event: 'BadEvent' }],
+        });
+
+        expect(envelope.status).toBe('error');
+        expect(envelope.warnings).toHaveLength(2);
+        // Trace warning first (deterministic order), cleanup warning second
+        expect(envelope.warnings[0]).toContain('step-one');
+        expect(envelope.warnings[1]).toMatch(/Failed to persist step failure/);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('trace_schema warn: gate store.update error envelope retains trace warning', async () => {
+      const def: WorkflowDefinition = {
+        ...traceSchemaDefinitionBase,
+        steps: {
+          ...traceSchemaDefinitionBase.steps,
+          'step-one': {
+            ...traceSchemaDefinitionBase.steps['step-one']!,
+            trace_validation_mode: 'warn',
+            trust: 'human_confirmed' as const,
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-schema-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Mock store.update to throw — simulates the gate persistence failure (post-dispatch)
+      vi.spyOn(store, 'update').mockImplementation(async () => {
+        throw new Error('gate store write failed');
+      });
+
+      try {
+        const envelope = await executeStep(store, def, {
+          runId: run.id,
+          command: 'step-one',
+          input: { result: 'done' },
+          dispatcher: echoDispatcher,
+          trace: [{ event: 'BadEvent' }],
+        });
+
+        expect(envelope.status).toBe('error');
+        expect(envelope.warnings).toHaveLength(1);
+        expect(envelope.warnings[0]).toContain('step-one');
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
   });
 });

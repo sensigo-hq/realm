@@ -304,7 +304,8 @@ describe('inspectRun', () => {
     const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
 
     expect(result).toContain('Trace Summary:');
-    expect(result).toContain('steps_with_trace:       2');
+    expect(result).toContain('steps_with_trace:        2');
+    expect(result).toContain('steps_with_trace_unique: 2');
     expect(result).toContain('stored_entries_total:   4');
     expect(result).toContain('discarded_entries_total:0');
     expect(result).toContain('truncated_steps:        0');
@@ -403,5 +404,37 @@ describe('inspectRun', () => {
     const topEventsLine = match![1]!;
     const count = (topEventsLine.match(/\(\d+\)/g) ?? []).length;
     expect(count).toBeLessThanOrEqual(5);
+  });
+
+  it('run-level trace summary: steps_with_trace counts snapshots, steps_with_trace_unique counts distinct step IDs', async () => {
+    const traceSummaryBase = {
+      submitted_entries: 1,
+      stored_entries: 1,
+      discarded_entries: 0,
+      discarded_reserved_event_entries: 0,
+      discarded_overflow_entries: 0,
+      truncated: false,
+    };
+    // step_a appears twice (retry scenario), step_b appears once — 3 snapshots, 2 distinct steps
+    const snap1 = makeSnapshot('step_a', {
+      trace: [{ seq: 1, event: 'tool_call' }],
+      trace_summary: traceSummaryBase,
+      attempt: 1,
+    });
+    const snap2 = makeSnapshot('step_a', {
+      trace: [{ seq: 1, event: 'tool_call' }],
+      trace_summary: traceSummaryBase,
+      attempt: 2,
+    });
+    const snap3 = makeSnapshot('step_b', {
+      trace: [{ seq: 1, event: 'search' }],
+      trace_summary: traceSummaryBase,
+    });
+    const run = makeRun([snap1, snap2, snap3]);
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+
+    expect(result).toContain('Trace Summary:');
+    expect(result).toContain('steps_with_trace:        3');
+    expect(result).toContain('steps_with_trace_unique: 2');
   });
 });
