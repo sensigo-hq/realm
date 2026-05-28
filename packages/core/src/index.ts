@@ -61,6 +61,10 @@ export type { GitHubAdapterConfig } from './adapters/github-adapter.js';
 export { SlackAdapter } from './adapters/slack-adapter.js';
 export type { SlackAdapterConfig } from './adapters/slack-adapter.js';
 
+// Trace policy
+export { TRACE_POLICY_VERSION, TRACE_POLICY, TRACE_POLICY_HASH } from './engine/trace-policy.js';
+export type { TracePolicyDescriptor, TracePolicyVersion } from './engine/trace-policy.js';
+
 // Validation
 export { validateInputSchema } from './validation/input-schema.js';
 
