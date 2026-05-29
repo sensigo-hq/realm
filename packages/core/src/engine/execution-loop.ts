@@ -18,6 +18,7 @@ import type {
   ContextWrapperFormat,
 } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
+import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-store.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import {
   validateInputSchema,
@@ -73,6 +74,13 @@ export interface ExecuteStepOptions {
    * normalizer canonicalizes and persists them in the EvidenceSnapshot.
    */
   trace?: AgentTraceEntry[];
+  /**
+   * Optional trace buffer store for incremental trace ingestion (B-lite).
+   * When provided, WAL entries for (runId, stepId) are merged with any trace
+   * submitted on execute_step before canonicalization.
+   * When absent, behaviour is identical to the pre-B-lite path.
+   */
+  traceBufferStore?: TraceBufferStore;
 }
 
 export interface SubmitGateOptions {
@@ -98,6 +106,8 @@ export interface ExecuteChainOptions {
   stepMeta?: { toolCalls?: ToolCallRecord[] };
   /** @see ExecuteStepOptions.trace */
   trace?: AgentTraceEntry[];
+  /** @see ExecuteStepOptions.traceBufferStore */
+  traceBufferStore?: TraceBufferStore;
 }
 
 function delayMs(ms: number): Promise<void> {
@@ -533,44 +543,71 @@ export async function executeStep(
     }
   }
 
-  // Step 2d: Validate trace schema (agent steps only, pre-claim).
-  // Normalizes the trace once here so the canonical entries can be validated, and carries
-  // the pre-normalized result through to captureEvidence to avoid double normalization.
+  // Step 2d: Merge WAL buffer + execute_step trace, normalize, validate (agent steps only, pre-claim).
+  // walEntries is declared at this scope so it is in scope at the captureEvidence call site below.
   const traceWarnings: string[] = [];
   let preNormalizedTrace: NormalizeTraceResult | undefined;
-  if (
-    stepDef?.execution === 'agent' &&
-    stepDef.trace_schema !== undefined &&
-    options.trace !== undefined
-  ) {
-    preNormalizedTrace = normalizeTrace(options.trace);
-    const mode = stepDef.trace_validation_mode ?? 'warn';
-    if (mode === 'enforce') {
-      try {
-        validateTraceSchema(
-          preNormalizedTrace.entries,
-          stepDef.trace_schema,
-          options.command,
-          'enforce',
-        );
-        preNormalizedTrace.summary.schema_applied = true;
-        preNormalizedTrace.summary.validation_mode = 'enforce';
-        preNormalizedTrace.summary.validation_errors = 0;
-      } catch (err) {
-        return makeErrorEnvelope(options, run, err as WorkflowError, definition);
-      }
-    } else {
-      const result = validateTraceSchema(
-        preNormalizedTrace.entries,
-        stepDef.trace_schema,
-        options.command,
-        'warn',
-      );
-      preNormalizedTrace.summary.schema_applied = true;
-      preNormalizedTrace.summary.validation_mode = 'warn';
-      preNormalizedTrace.summary.validation_errors = result.errorCount;
-      if (result.errorCount > 0) {
-        traceWarnings.push(result.warning);
+  let walEntries: BufferedEntry[] = [];
+
+  if (stepDef?.execution === 'agent') {
+    // Read WAL buffer if a buffer store is configured.
+    walEntries =
+      options.traceBufferStore !== undefined
+        ? await options.traceBufferStore.read(options.runId, options.command)
+        : [];
+
+    const hasAnyTrace =
+      walEntries.length > 0 || (options.trace !== undefined && options.trace.length > 0);
+
+    if (hasAnyTrace) {
+      // Build merge set: WAL entries carry their _internalTs; execute_step entries
+      // receive Date.now() so they sort after all WAL batches (step conclusion ordering).
+      const finalTs = Date.now();
+      const mergeSet: Array<AgentTraceEntry & { _internalTs: number }> = [
+        ...walEntries, // already have _internalTs from buffer store
+        ...(options.trace ?? []).map((e) => ({ ...e, _internalTs: finalTs })),
+      ];
+
+      // Sort by _internalTs to produce chronological order, then strip the field before
+      // passing to normalizeTrace (which operates on plain AgentTraceEntry[]).
+      mergeSet.sort((a, b) => a._internalTs - b._internalTs);
+      const sortedEntries: AgentTraceEntry[] = mergeSet.map(({ _internalTs: _, ...rest }) => rest);
+
+      // Normalize the merged set once. This is the single canonicalization pass.
+      preNormalizedTrace = normalizeTrace(sortedEntries);
+
+      // Validate trace schema if configured (unchanged call site).
+      if (stepDef.trace_schema !== undefined) {
+        const mode = stepDef.trace_validation_mode ?? 'warn';
+        if (mode === 'enforce') {
+          try {
+            validateTraceSchema(
+              preNormalizedTrace.entries,
+              stepDef.trace_schema,
+              options.command,
+              'enforce',
+            );
+            preNormalizedTrace.summary.schema_applied = true;
+            preNormalizedTrace.summary.validation_mode = 'enforce';
+            preNormalizedTrace.summary.validation_errors = 0;
+          } catch (err) {
+            // On enforce rejection: do NOT delete the WAL — agent retries with WAL preserved.
+            return makeErrorEnvelope(options, run, err as WorkflowError, definition);
+          }
+        } else {
+          const result = validateTraceSchema(
+            preNormalizedTrace.entries,
+            stepDef.trace_schema,
+            options.command,
+            'warn',
+          );
+          preNormalizedTrace.summary.schema_applied = true;
+          preNormalizedTrace.summary.validation_mode = 'warn';
+          preNormalizedTrace.summary.validation_errors = result.errorCount;
+          if (result.errorCount > 0) {
+            traceWarnings.push(result.warning);
+          }
+        }
       }
     }
   }
@@ -719,12 +756,13 @@ export async function executeStep(
         ? { toolCalls: options.stepMeta.toolCalls }
         : {}),
       // Gate trace to agent steps only — drop silently for auto/adapter/handler steps.
-      // When pre-normalized (schema validation ran), pass the pre-normalized result to avoid
-      // double normalization. Otherwise pass raw trace for lazy normalization in captureEvidence.
-      ...(stepDef?.execution === 'agent' && options.trace !== undefined
+      // When pre-normalized (WAL merge + schema validation ran), pass the pre-normalized
+      // result to avoid double normalization. Also handle WAL-only case (options.trace may
+      // be undefined while walEntries contributed entries via preNormalizedTrace).
+      ...(stepDef?.execution === 'agent' && (options.trace !== undefined || walEntries.length > 0)
         ? preNormalizedTrace !== undefined
           ? { normalizedTrace: preNormalizedTrace }
-          : { trace: options.trace }
+          : { trace: options.trace ?? [] }
         : {}),
     });
     const snap: EvidenceSnapshot =
@@ -791,6 +829,8 @@ export async function executeStep(
           : {}),
       };
       await store.update(failedRun);
+      // Delete WAL after run state is written for failure — entries are now in evidence.
+      await options.traceBufferStore?.delete(options.runId, options.command);
     } catch (cleanupErr) {
       cleanupWarning = `Failed to persist step failure: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`;
     }
@@ -1031,6 +1071,9 @@ export async function executeStep(
       traceWarnings.length > 0 ? traceWarnings : undefined,
     );
   }
+
+  // Delete WAL after successful run update — entries are now in evidence.
+  await options.traceBufferStore?.delete(options.runId, options.command);
 
   // Step 7: Build and return ResponseEnvelope.
   const nextActions = savedRun.terminal_state ? [] : buildNextActions(definition, savedRun);

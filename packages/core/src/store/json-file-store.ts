@@ -21,6 +21,11 @@ export class JsonFileStore implements RunStore {
     this.runsDir = runsDir ?? DEFAULT_RUNS_DIR;
   }
 
+  /** The directory where run JSON files are stored. */
+  get runsDirPath(): string {
+    return this.runsDir;
+  }
+
   private filePath(runId: string): string {
     return join(this.runsDir, `${runId}.json`);
   }

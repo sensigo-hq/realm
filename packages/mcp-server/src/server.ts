@@ -8,6 +8,7 @@ import {
   JsonFileStore,
   createDefaultRegistry,
 } from '@sensigo/realm';
+import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import { registerListWorkflows } from './tools/list-workflows.js';
 import { registerGetWorkflowProtocol } from './tools/get-workflow-protocol.js';
 import { registerStartRun } from './tools/start-run.js';
@@ -15,6 +16,7 @@ import { registerExecuteStep } from './tools/execute-step.js';
 import { registerSubmitHumanResponse } from './tools/submit-human-response.js';
 import { registerGetRunState } from './tools/get-run-state.js';
 import { registerCreateWorkflow } from './tools/create-workflow.js';
+import { registerAppendTrace } from './tools/append-trace.js';
 
 export interface RealmMcpServerOptions {
   /** Extension registry for resolving service adapters and step handlers at runtime. */
@@ -64,13 +66,23 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
 
   const effectiveOptions: RealmMcpServerOptions = { ...options, registry: effectiveRegistry };
 
+  // Shared trace buffer store: one instance used by both append_trace and execute_step so
+  // WAL entries written by append_trace are visible when execute_step finalizes the step.
+  const effectiveRunStore = options?.runStore ?? new JsonFileStore();
+  const traceBufferStore = new JsonTraceBufferStore(effectiveRunStore.runsDirPath);
+
   registerListWorkflows(server, effectiveOptions);
   registerGetWorkflowProtocol(server, effectiveOptions);
   registerStartRun(server, effectiveOptions);
-  registerExecuteStep(server, effectiveOptions);
+  registerExecuteStep(server, { ...effectiveOptions, traceBufferStore });
   registerSubmitHumanResponse(server, effectiveOptions);
   registerGetRunState(server, effectiveOptions);
   registerCreateWorkflow(server, effectiveOptions);
+  registerAppendTrace(server, {
+    runStore: effectiveRunStore,
+    ...(options?.workflowStore !== undefined ? { workflowStore: options.workflowStore } : {}),
+    traceBufferStore,
+  });
 
   return server;
 }
