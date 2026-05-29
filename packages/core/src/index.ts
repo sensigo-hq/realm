@@ -62,6 +62,11 @@ export { SlackAdapter } from './adapters/slack-adapter.js';
 export type { SlackAdapterConfig } from './adapters/slack-adapter.js';
 export { GorgiasAdapter } from './adapters/gorgias-adapter.js';
 export type { GorgiasAdapterConfig } from './adapters/gorgias-adapter.js';
+export { ShopifyAdapter } from './adapters/shopify-adapter.js';
+export type {
+  ShopifyAdapterConfig,
+  NormalizedOrder as ShopifyNormalizedOrder,
+} from './adapters/shopify-adapter.js';
 
 // Trace policy
 export { TRACE_POLICY_VERSION, TRACE_POLICY, TRACE_POLICY_HASH } from './engine/trace-policy.js';
