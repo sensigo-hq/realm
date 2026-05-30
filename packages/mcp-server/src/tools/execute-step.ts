@@ -6,6 +6,7 @@ import {
   JsonFileStore,
   executeChain,
   WorkflowError,
+  resolvePreExecutionAgentAction,
   type StepDispatcher,
   type ResponseEnvelope,
   type AgentTraceEntry,
@@ -86,8 +87,15 @@ export async function handleExecuteStepTool(
       ],
     };
   } catch (err) {
-    const agentAction = err instanceof WorkflowError ? err.agentAction : 'report_to_user';
+    const agentAction =
+      err instanceof WorkflowError ? resolvePreExecutionAgentAction(err) : 'report_to_user';
     const message = err instanceof Error ? err.message : String(err);
+    const contextHint =
+      err instanceof WorkflowError && err.code === 'STATE_WORKFLOW_NOT_FOUND'
+        ? `Workflow definition for run '${args.run_id}' not found.`
+        : err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND'
+          ? `Run '${args.run_id}' not found.`
+          : `An error occurred before step '${args.command}' could begin.`;
     return {
       content: [
         {
@@ -103,7 +111,7 @@ export async function handleExecuteStepTool(
               warnings: [],
               errors: [message],
               agent_action: agentAction,
-              context_hint: `Error executing step '${args.command}' for run '${args.run_id}'.`,
+              context_hint: contextHint,
               next_actions: [],
             },
             null,

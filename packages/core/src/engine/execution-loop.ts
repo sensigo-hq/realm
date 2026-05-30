@@ -11,7 +11,6 @@ import type {
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import type { ResponseEnvelope, NextAction } from '../types/response-envelope.js';
 import { WorkflowError } from '../types/workflow-error.js';
-import type { AgentAction } from '../types/workflow-error.js';
 import type {
   WorkflowDefinition,
   StepDefinition,
@@ -43,6 +42,10 @@ import {
   buildEvidenceByStep,
   propagateSkips,
 } from './eligibility.js';
+import {
+  resolvePreExecutionAgentAction,
+  resolvePostDispatchAgentAction,
+} from './error-resolution.js';
 
 export type StepDispatcher = (
   stepName: string,
@@ -449,10 +452,14 @@ function makeErrorEnvelope(
     err,
     hint,
   );
+  // Apply pre-execution translation: provide_input / resolve_precondition cannot
+  // apply before claimStep — translate them to report_to_user.
+  const translatedBase =
+    run === null ? { ...base, agent_action: resolvePreExecutionAgentAction(err) } : base;
   const baseWithWarnings =
     extraWarnings !== undefined && extraWarnings.length > 0
-      ? { ...base, warnings: extraWarnings }
-      : base;
+      ? { ...translatedBase, warnings: extraWarnings }
+      : translatedBase;
   if (run !== null && definition !== undefined && err.agentAction !== 'stop') {
     return { ...baseWithWarnings, next_actions: buildNextActions(definition, run) };
   }
@@ -875,17 +882,10 @@ export async function executeStep(
     //
     // 'provide_input' and 'resolve_precondition' both imply "retry the same command" which
     // is impossible once a step is in failed_steps; translate both to 'report_to_user'.
-    const rawAction: AgentAction = isComplete
-      ? 'stop'
-      : dispatchError.agentAction === 'stop'
-        ? 'report_to_user'
-        : dispatchError.agentAction;
-    const effectiveAction: AgentAction =
-      rawAction === 'provide_input'
-        ? 'report_to_user'
-        : rawAction === 'resolve_precondition'
-          ? 'report_to_user'
-          : rawAction;
+    const effectiveAction = resolvePostDispatchAgentAction(
+      dispatchError,
+      (persistedRun ?? failedRun).terminal_state,
+    );
 
     // Mirror makeErrorEnvelope: populate next_actions for any action other than 'stop',
     // but only when store.update succeeded (inconsistent state → no reliable next_actions).

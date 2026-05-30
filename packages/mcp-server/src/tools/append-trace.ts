@@ -4,9 +4,11 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   JsonWorkflowStore,
   JsonFileStore,
+  resolvePreExecutionAgentAction,
   type AppendResult,
   type TraceBufferStore,
   type AgentTraceEntry,
+  type AgentAction,
 } from '@sensigo/realm';
 import { WorkflowError } from '@sensigo/realm';
 import { traceEntrySchema } from './execute-step.js';
@@ -19,7 +21,13 @@ export interface HandleAppendTraceStores {
 
 export type AppendTraceResult =
   | ({ status: 'ok' } & AppendResult)
-  | { status: 'error'; code: string; message: string; details?: Record<string, unknown> };
+  | {
+      status: 'error';
+      code: string;
+      message: string;
+      agent_action: AgentAction;
+      details?: Record<string, unknown>;
+    };
 
 /**
  * Business logic for the append_trace tool.
@@ -48,6 +56,7 @@ export async function handleAppendTrace(
         status: 'error',
         code: 'STEP_NOT_ELIGIBLE',
         message: `Run '${args.run_id}' not found.`,
+        agent_action: 'report_to_user',
         details: { step_state: 'not_found' },
       };
     }
@@ -64,6 +73,7 @@ export async function handleAppendTrace(
       status: 'error',
       code: 'STEP_NOT_ELIGIBLE',
       message: `Step '${args.step_id}' not found in workflow '${run.workflow_id}'.`,
+      agent_action: 'report_to_user',
       details: { step_state: 'not_found' },
     };
   }
@@ -74,6 +84,7 @@ export async function handleAppendTrace(
       status: 'error',
       code: 'STEP_NOT_ELIGIBLE',
       message: `Step '${args.step_id}' is not an agent step (execution: '${stepDef.execution}').`,
+      agent_action: 'report_to_user',
       details: { step_type: 'not_agent_step' },
     };
   }
@@ -84,6 +95,7 @@ export async function handleAppendTrace(
       status: 'error',
       code: 'STEP_NOT_ELIGIBLE',
       message: `Step '${args.step_id}' has already been claimed (completed or failed).`,
+      agent_action: 'report_to_user',
       details: { step_state: 'already_claimed' },
     };
   }
@@ -92,6 +104,7 @@ export async function handleAppendTrace(
       status: 'error',
       code: 'STEP_NOT_ELIGIBLE',
       message: `Step '${args.step_id}' is currently being executed by execute_step.`,
+      agent_action: 'report_to_user',
       details: { step_state: 'already_claimed' },
     };
   }
@@ -148,6 +161,8 @@ export function registerAppendTrace(
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const code = err instanceof WorkflowError ? err.code : 'ENGINE_INTERNAL';
+        const agentAction =
+          err instanceof WorkflowError ? resolvePreExecutionAgentAction(err) : 'report_to_user';
         return {
           content: [
             {
@@ -157,6 +172,7 @@ export function registerAppendTrace(
                   status: 'error',
                   code,
                   message,
+                  agent_action: agentAction,
                   details: err instanceof WorkflowError ? err.details : undefined,
                 },
                 null,

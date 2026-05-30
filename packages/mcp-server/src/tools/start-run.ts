@@ -8,6 +8,7 @@ import {
   buildNextActions,
   findEligibleSteps,
   WorkflowError,
+  resolvePreExecutionAgentAction,
   type StepDispatcher,
   type ResponseEnvelope,
   type TraceBufferStore,
@@ -106,8 +107,13 @@ export function registerStartRun(
           ],
         };
       } catch (err) {
-        const agentAction = err instanceof WorkflowError ? err.agentAction : 'report_to_user';
+        const agentAction =
+          err instanceof WorkflowError ? resolvePreExecutionAgentAction(err) : 'report_to_user';
         const message = err instanceof Error ? err.message : String(err);
+        const contextHint =
+          err instanceof WorkflowError && err.code === 'STATE_WORKFLOW_NOT_FOUND'
+            ? `Workflow '${args.workflow_id}' not found.`
+            : `An error occurred before the run could be started.`;
         return {
           content: [
             {
@@ -123,7 +129,7 @@ export function registerStartRun(
                   warnings: [],
                   errors: [message],
                   agent_action: agentAction,
-                  context_hint: `Error creating run for workflow '${args.workflow_id}'.`,
+                  context_hint: contextHint,
                   next_actions: [],
                 },
                 null,

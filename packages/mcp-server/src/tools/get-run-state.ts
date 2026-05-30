@@ -1,7 +1,12 @@
 // get-run-state tool — returns the current state summary of a run.
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { JsonFileStore, WorkflowError, type RunPhase } from '@sensigo/realm';
+import {
+  JsonFileStore,
+  WorkflowError,
+  resolvePreExecutionAgentAction,
+  type RunPhase,
+} from '@sensigo/realm';
 
 export interface HandleRunStateStores {
   runStore?: JsonFileStore;
@@ -64,8 +69,13 @@ export function registerGetRunState(server: McpServer, opts?: HandleRunStateStor
         const result = await handleGetRunState(args, opts);
         return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
-        const agentAction = err instanceof WorkflowError ? err.agentAction : 'report_to_user';
+        const agentAction =
+          err instanceof WorkflowError ? resolvePreExecutionAgentAction(err) : 'report_to_user';
         const message = err instanceof Error ? err.message : String(err);
+        const contextHint =
+          err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND'
+            ? `Run '${args.run_id}' not found.`
+            : `An error occurred while loading run state.`;
         return {
           content: [
             {
@@ -80,7 +90,7 @@ export function registerGetRunState(server: McpServer, opts?: HandleRunStateStor
                   warnings: [],
                   errors: [message],
                   agent_action: agentAction,
-                  context_hint: `Error retrieving state for run '${args.run_id}'.`,
+                  context_hint: contextHint,
                   next_actions: [],
                 },
                 null,

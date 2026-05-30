@@ -68,6 +68,18 @@ describe('handleCreateWorkflow', () => {
     expect(result.data['workflow_id']).toMatch(/^dynamic-/);
   });
 
+  it('identical args produce the same workflow_id (deterministic/idempotent)', async () => {
+    const args = {
+      steps: [{ id: 'step-a', description: 'Do something repeatable' }],
+      metadata: { name: 'idempotency-test' },
+    };
+    const result1 = await handleCreateWorkflow(args, stores);
+    const result2 = await handleCreateWorkflow(args, stores);
+    expect(result1.status).toBe('ok');
+    expect(result2.status).toBe('ok');
+    expect(result1.data['workflow_id']).toBe(result2.data['workflow_id']);
+  });
+
   it('happy path — input_schema is forwarded to the step and next_action', async () => {
     const schema = {
       type: 'object',

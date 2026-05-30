@@ -41,7 +41,7 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
       raw = readFileSync(filePath, 'utf8');
     } catch {
       throw new WorkflowError(`Workflow not found: ${workflowId}`, {
-        code: 'STATE_RUN_NOT_FOUND',
+        code: 'STATE_WORKFLOW_NOT_FOUND',
         category: 'STATE',
         agentAction: 'report_to_user',
         retryable: false,

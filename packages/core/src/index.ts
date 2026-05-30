@@ -2,6 +2,7 @@
 export * from './types/run-record.js';
 export * from './types/response-envelope.js';
 export * from './types/workflow-error.js';
+export { resolvePreExecutionAgentAction } from './engine/error-resolution.js';
 export * from './types/workflow-definition.js';
 export * from './store/store-interface.js';
 export { JsonFileStore } from './store/json-file-store.js';

@@ -1,11 +1,12 @@
 // create-workflow.ts — Mode 2: agent creates and registers a workflow at runtime, then starts a run.
 import { z } from 'zod';
-import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   JsonWorkflowStore,
   JsonFileStore,
   WorkflowError,
+  resolvePreExecutionAgentAction,
   type WorkflowDefinition,
   type ResponseEnvelope,
   type JsonSchema,
@@ -128,18 +129,26 @@ function validateArgs(args: CreateWorkflowArgs): string[] {
   return errors;
 }
 
-/** Derives a deterministic, human-readable workflow ID from an optional name. */
-function deriveWorkflowId(name?: string): string {
+/**
+ * Derives a deterministic workflow ID from a slug of the optional name and a
+ * 16-hex-char SHA-256 prefix of the definition content (excluding the `id`
+ * field to avoid circular dependency). Identical definition content always
+ * produces the same ID, making `create_workflow` retries idempotent with the
+ * existing file-overwrite semantics of `JsonWorkflowStore.register`.
+ */
+function deriveWorkflowId(name: string | undefined, definitionWithoutId: object): string {
+  const hash = createHash('sha256')
+    .update(JSON.stringify(definitionWithoutId))
+    .digest('hex')
+    .slice(0, 16);
   if (name !== undefined && name.trim() !== '') {
     const slug = name
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '');
-    const fragment = randomUUID().replace(/-/g, '').slice(0, 6);
-    return `${slug}-${fragment}`;
+    return `${slug}-${hash}`;
   }
-  const id = randomUUID().replace(/-/g, '').slice(0, 8);
-  return `dynamic-${id}`;
+  return `dynamic-${hash}`;
 }
 
 /** Builds a linear WorkflowDefinition from the submitted steps. */
@@ -204,8 +213,12 @@ export async function handleCreateWorkflow(
   }
 
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
-  const workflowId = deriveWorkflowId(args.metadata?.name);
-  const definition = buildWorkflowDefinition(workflowId, args);
+  // Build the definition body first (with a placeholder id that is excluded from the hash).
+  const definitionBody = buildWorkflowDefinition('__placeholder__', args);
+  // Hash all content except the id to derive a stable, deterministic id.
+  const { id: _placeholderId, ...definitionWithoutId } = definitionBody;
+  const workflowId = deriveWorkflowId(args.metadata?.name, definitionWithoutId);
+  const definition: WorkflowDefinition = { ...definitionBody, id: workflowId };
 
   await workflowStore.register(definition);
 
@@ -258,7 +271,8 @@ export function registerCreateWorkflow(server: McpServer, opts?: HandleRunStores
           ],
         };
       } catch (err) {
-        const agentAction = err instanceof WorkflowError ? err.agentAction : 'report_to_user';
+        const agentAction =
+          err instanceof WorkflowError ? resolvePreExecutionAgentAction(err) : 'report_to_user';
         const message = err instanceof Error ? err.message : String(err);
         return {
           content: [
@@ -274,7 +288,8 @@ export function registerCreateWorkflow(server: McpServer, opts?: HandleRunStores
                   warnings: [],
                   errors: [message],
                   agent_action: agentAction,
-                  context_hint: 'Unexpected error during create_workflow.',
+                  context_hint:
+                    'An error occurred before the workflow could be registered or the run could be started.',
                   next_actions: [],
                 },
                 null,
