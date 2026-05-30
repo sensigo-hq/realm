@@ -11,6 +11,7 @@ import {
 import { JsonFileStore } from '../store/json-file-store.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
+import { InMemoryTraceBufferStore } from '../store/trace-buffer-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
 import type { ServiceAdapter } from '../extensions/service-adapter.js';
@@ -2229,5 +2230,181 @@ describe('executeStep', () => {
         vi.restoreAllMocks();
       }
     });
+  });
+});
+
+describe('WAL trace buffer integration (B-lite)', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  const agentDef: WorkflowDefinition = {
+    id: 'wal-test-wf',
+    name: 'WAL Test Workflow',
+    version: 1,
+    steps: {
+      'step-agent': {
+        description: 'Agent step',
+        execution: 'agent',
+        depends_on: [],
+      },
+    },
+  };
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-wal-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  it('WAL entries present + no execute_step.trace → evidence has trace from WAL', async () => {
+    const bufferStore = new InMemoryTraceBufferStore();
+    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+
+    await bufferStore.append(run.id, 'step-agent', [
+      { event: 'wal_event', data: { phase: 'pre' } },
+    ]);
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: { result: 'done' },
+      dispatcher: async () => ({ result: 'done' }),
+      traceBufferStore: bufferStore,
+    });
+
+    expect(envelope.status).toBe('ok');
+    const snap = envelope.evidence[0];
+    expect(snap?.trace).toHaveLength(1);
+    expect(snap?.trace?.[0]?.event).toBe('wal_event');
+  });
+
+  it('WAL entries + execute_step.trace entries → merged, WAL entries first', async () => {
+    const bufferStore = new InMemoryTraceBufferStore();
+    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+
+    await bufferStore.append(run.id, 'step-agent', [{ event: 'wal_first' }]);
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => ({}),
+      traceBufferStore: bufferStore,
+      trace: [{ event: 'final_last' }],
+    });
+
+    expect(envelope.status).toBe('ok');
+    const snap = envelope.evidence[0];
+    expect(snap?.trace).toHaveLength(2);
+    // WAL entry should have lower seq than the final entry.
+    const walEntry = snap?.trace?.find((e) => e.event === 'wal_first');
+    const finalEntry = snap?.trace?.find((e) => e.event === 'final_last');
+    expect(walEntry?.seq).toBeDefined();
+    expect(finalEntry?.seq).toBeDefined();
+    expect(walEntry!.seq).toBeLessThan(finalEntry!.seq);
+  });
+
+  it('enforce-mode schema rejection → WAL preserved after rejection', async () => {
+    const schemaEnforceDef: WorkflowDefinition = {
+      id: 'wal-schema-wf',
+      name: 'WAL Schema Workflow',
+      version: 1,
+      steps: {
+        'step-agent': {
+          description: 'Agent step with trace schema',
+          execution: 'agent',
+          depends_on: [],
+          trace_schema: {
+            type: 'array',
+            items: { type: 'object', required: ['event', 'myField'] },
+          },
+          trace_validation_mode: 'enforce',
+        },
+      },
+    };
+
+    const bufferStore = new InMemoryTraceBufferStore();
+    const run = await store.create({ workflowId: 'wal-schema-wf', workflowVersion: 1, params: {} });
+
+    await bufferStore.append(run.id, 'step-agent', [{ event: 'buffered' }]);
+
+    // Submit an execute_step call with a trace entry missing required 'myField' → schema enforcement fails.
+    const envelope = await executeStep(store, schemaEnforceDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => ({}),
+      traceBufferStore: bufferStore,
+      trace: [{ event: 'bad_entry' }],
+    });
+
+    // Should return an error due to schema enforcement.
+    expect(envelope.status).toBe('error');
+
+    // WAL must be preserved — agent can retry.
+    const remaining = await bufferStore.read(run.id, 'step-agent');
+    expect(remaining.length).toBeGreaterThan(0);
+  });
+
+  it('execute_step succeeds → WAL is deleted', async () => {
+    const bufferStore = new InMemoryTraceBufferStore();
+    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+
+    await bufferStore.append(run.id, 'step-agent', [{ event: 'pre_step' }]);
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => ({}),
+      traceBufferStore: bufferStore,
+    });
+
+    expect(envelope.status).toBe('ok');
+    const remaining = await bufferStore.read(run.id, 'step-agent');
+    expect(remaining).toHaveLength(0);
+  });
+
+  it('execute_step dispatch fails → WAL is deleted', async () => {
+    const bufferStore = new InMemoryTraceBufferStore();
+    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+
+    await bufferStore.append(run.id, 'step-agent', [{ event: 'pre_fail' }]);
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Simulated dispatch failure', {
+          code: 'ENGINE_HANDLER_FAILED',
+          category: 'ENGINE',
+          agentAction: 'stop',
+          retryable: false,
+        });
+      },
+      traceBufferStore: bufferStore,
+    });
+
+    expect(envelope.status).toBe('error');
+    const remaining = await bufferStore.read(run.id, 'step-agent');
+    expect(remaining).toHaveLength(0);
+  });
+
+  it('no traceBufferStore configured → behaviour identical to pre-B-lite (regression)', async () => {
+    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => ({}),
+      trace: [{ event: 'direct_trace' }],
+      // No traceBufferStore — pre-B-lite path.
+    });
+
+    expect(envelope.status).toBe('ok');
+    const snap = envelope.evidence[0];
+    expect(snap?.trace).toHaveLength(1);
+    expect(snap?.trace?.[0]?.event).toBe('direct_trace');
   });
 });

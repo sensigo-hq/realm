@@ -11,8 +11,8 @@ import {
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
 
-/** Zod schema for a single agent trace entry submitted to execute_step. */
-const traceEntrySchema = z.object({
+/** Zod schema for a single agent trace entry submitted to execute_step or append_trace. */
+export const traceEntrySchema = z.object({
   event: z.string(),
   timestamp: z.string().optional(),
   data: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
@@ -53,6 +53,10 @@ export async function handleExecuteStep(
     ...(stores?.secrets !== undefined ? { secrets: stores.secrets } : {}),
     // trace is a top-level execute_step field — never embedded in params.
     ...(args.trace !== undefined ? { trace: args.trace } : {}),
+    // Pass WAL buffer store so execution loop can merge and clean up the WAL.
+    ...(stores?.traceBufferStore !== undefined
+      ? { traceBufferStore: stores.traceBufferStore }
+      : {}),
   });
 }
 
@@ -115,6 +119,7 @@ export function registerExecuteStep(
   opts?: {
     registry?: import('@sensigo/realm').ExtensionRegistry;
     secrets?: Record<string, string>;
+    traceBufferStore?: import('@sensigo/realm').TraceBufferStore;
   },
 ): void {
   server.tool(

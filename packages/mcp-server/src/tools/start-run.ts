@@ -9,6 +9,7 @@ import {
   findEligibleSteps,
   type StepDispatcher,
   type ResponseEnvelope,
+  type TraceBufferStore,
   ExtensionRegistry,
 } from '@sensigo/realm';
 
@@ -19,6 +20,8 @@ export interface HandleRunStores {
   registry?: ExtensionRegistry;
   /** Resolved secrets for use by service adapters. */
   secrets?: Record<string, string>;
+  /** Trace buffer store for incremental WAL-based trace ingestion (B-lite). */
+  traceBufferStore?: TraceBufferStore;
 }
 
 // Fallback dispatcher for agent steps and auto steps without a registry entry.

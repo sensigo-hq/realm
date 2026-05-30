@@ -98,3 +98,14 @@ export { walkField } from './handlers/primitives/walk-field.js';
 export { partitionBySubstring } from './handlers/primitives/partition-by-substring.js';
 export { countResults } from './handlers/primitives/count-results.js';
 export { compareStrings } from './handlers/primitives/compare-strings.js';
+
+// Trace buffer store (B-lite)
+export type { TraceBufferStore, BufferedEntry, AppendResult } from './store/trace-buffer-store.js';
+export {
+  InMemoryTraceBufferStore,
+  normalizeEntryForBuffer,
+  BUFFER_LIMIT_COUNT,
+  BUFFER_LIMIT_BYTES,
+  FINAL_LIMIT_ENTRIES,
+  FINAL_LIMIT_BYTES,
+} from './store/trace-buffer-store.js';
