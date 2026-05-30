@@ -15,7 +15,7 @@ import { resolveTemplates } from './template-resolver.js';
 export const CURRENT_WORKFLOW_SCHEMA_VERSION = 1;
 
 const VALID_EXECUTIONS = new Set(['auto', 'agent']);
-const VALID_SERVICE_METHODS = new Set(['fetch', 'create', 'update']);
+const VALID_SERVICE_METHODS = new Set(['fetch', 'create', 'update', 'delete']);
 const VALID_TRIGGER_RULES = new Set<TriggerRule>([
   'all_success',
   'all_failed',
@@ -296,7 +296,7 @@ export function loadWorkflowFromString(content: string): WorkflowDefinition {
 
     if ('service_method' in step && !VALID_SERVICE_METHODS.has(step['service_method'] as string)) {
       errors.push(
-        `Step '${stepName}': invalid service_method '${String(step['service_method'])}'; must be 'fetch', 'create', or 'update'`,
+        `Step '${stepName}': invalid service_method '${String(step['service_method'])}'; must be 'fetch', 'create', 'update', or 'delete'`,
       );
     }
 

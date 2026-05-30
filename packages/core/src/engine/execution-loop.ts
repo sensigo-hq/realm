@@ -31,7 +31,7 @@ import { TERMINAL_PHASES } from './lifecycle.js';
 import { checkPreconditions, evaluateAllPreconditions } from './precondition.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
-import type { ServiceResponse } from '../extensions/service-adapter.js';
+import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
 import { resolveSecret } from '../config/secrets.js';
 import { renderTemplate, resolvePath, UnknownFilterError } from './render-template.js';
 import { generateSchemaSkeleton } from '../utils/schema-skeleton.js';
@@ -227,9 +227,31 @@ async function callAdapter(
   const operation = stepDef.operation ?? options.command;
 
   const adapterParams = resolveInputMap(stepDef.input_map, options, pendingRun);
+
+  // Guard: `delete` is optional on ServiceAdapter. If the adapter omits it, surface
+  // ADAPTER_OP_UNSUPPORTED rather than allowing a TypeError from an undefined call.
+  const adapterMethod = adapter[method as keyof ServiceAdapter];
+  if (typeof adapterMethod !== 'function') {
+    throw new WorkflowError(
+      `Adapter '${serviceDef.adapter}' does not support service_method '${method}'`,
+      {
+        code: 'ADAPTER_OP_UNSUPPORTED',
+        category: 'ENGINE',
+        agentAction: 'provide_input',
+        retryable: false,
+      },
+    );
+  }
+
   let response: ServiceResponse;
   try {
-    response = await adapter[method](operation, adapterParams, config, signal);
+    response = await (adapterMethod as ServiceAdapter['fetch']).call(
+      adapter,
+      operation,
+      adapterParams,
+      config,
+      signal,
+    );
   } catch (err) {
     if (err instanceof WorkflowError) throw err;
     const message = err instanceof Error ? err.message : String(err);

@@ -684,6 +684,86 @@ describe('executeStep', () => {
       expect(adapter.fetch).not.toHaveBeenCalled();
     });
 
+    it('calls adapter.delete() when service_method is delete', async () => {
+      const adapter: ServiceAdapter = {
+        id: 'mock_adapter',
+        fetch: vi.fn().mockResolvedValue({ status: 200, data: {} }),
+        create: vi.fn().mockResolvedValue({ status: 201, data: {} }),
+        update: vi.fn().mockResolvedValue({ status: 200, data: {} }),
+        delete: vi.fn().mockResolvedValue({ status: 204, data: {} }),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('adapter', 'mock_adapter', adapter);
+
+      const def: WorkflowDefinition = {
+        ...adapterDefinition,
+        steps: {
+          fetch_data: {
+            ...adapterDefinition.steps['fetch_data']!,
+            service_method: 'delete',
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'adapter-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'fetch_data',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(envelope.status).toBe('ok');
+      expect(adapter.delete).toHaveBeenCalledTimes(1);
+      expect(adapter.fetch).not.toHaveBeenCalled();
+    });
+
+    it('throws ADAPTER_OP_UNSUPPORTED when adapter has no delete method', async () => {
+      const adapter: ServiceAdapter = {
+        id: 'mock_adapter',
+        fetch: vi.fn().mockResolvedValue({ status: 200, data: {} }),
+        create: vi.fn().mockResolvedValue({ status: 201, data: {} }),
+        update: vi.fn().mockResolvedValue({ status: 200, data: {} }),
+        // delete is intentionally absent
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('adapter', 'mock_adapter', adapter);
+
+      const def: WorkflowDefinition = {
+        ...adapterDefinition,
+        steps: {
+          fetch_data: {
+            ...adapterDefinition.steps['fetch_data']!,
+            service_method: 'delete',
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'adapter-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'fetch_data',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(envelope.status).toBe('error');
+      expect(envelope.agent_action).toBe('stop');
+      expect(envelope.errors[0]).toContain("does not support service_method 'delete'");
+    });
+
     it('uses step name as operation when operation field is absent', async () => {
       const adapter = makeAdapter({ ok: true });
       const registry = new ExtensionRegistry();
