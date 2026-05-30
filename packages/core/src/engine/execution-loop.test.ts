@@ -2688,18 +2688,8 @@ describe('Step 5 dispatch-failure envelope', () => {
       params: {},
     });
 
-    // Spy after the run is created so claimStep still works; only store.update throws.
-    const originalUpdate = store.update.bind(store);
-    vi.spyOn(store, 'update').mockImplementation(async (record) => {
-      // Allow claimStep's internal update to succeed (it goes through a file lock path),
-      // but reject the explicit store.update call in Step 5.
-      // Since claimStep uses its own internal mechanism, only the Step 5 store.update
-      // call will hit this spy.
-      void record;
-      throw new Error('disk full');
-    });
-    // Restore original for claimStep path — claimStep doesn't call store.update directly.
-    store.update = originalUpdate;
+    // claimStep uses its own atomic file-lock write and does not call store.update,
+    // so spying on store.update only intercepts the Step 5 store.update(failedRun) call.
     vi.spyOn(store, 'update').mockRejectedValue(new Error('disk full'));
 
     const envelope = await executeStep(store, twoStepDef, {
@@ -2717,6 +2707,7 @@ describe('Step 5 dispatch-failure envelope', () => {
     });
 
     expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('wait_for_human');
     expect(envelope.next_actions).toHaveLength(0);
     expect(envelope.warnings.some((w) => w.toLowerCase().includes('persist'))).toBe(true);
   });
