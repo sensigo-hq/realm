@@ -324,7 +324,7 @@ export class ParcelPanelAdapter implements ServiceAdapter {
     throw new WorkflowError(`ParcelPanelAdapter: operation "${operation}" is not supported`, {
       code: 'ADAPTER_OP_UNSUPPORTED',
       category: 'ENGINE',
-      agentAction: 'provide_input',
+      agentAction: 'report_to_user',
       retryable: false,
     });
   }
@@ -338,7 +338,7 @@ export class ParcelPanelAdapter implements ServiceAdapter {
     throw new WorkflowError(`ParcelPanelAdapter: operation "${operation}" is not supported`, {
       code: 'ADAPTER_OP_UNSUPPORTED',
       category: 'ENGINE',
-      agentAction: 'provide_input',
+      agentAction: 'report_to_user',
       retryable: false,
     });
   }
@@ -352,7 +352,7 @@ export class ParcelPanelAdapter implements ServiceAdapter {
     throw new WorkflowError(`ParcelPanelAdapter: operation "${operation}" is not supported`, {
       code: 'ADAPTER_OP_UNSUPPORTED',
       category: 'ENGINE',
-      agentAction: 'provide_input',
+      agentAction: 'report_to_user',
       retryable: false,
     });
   }
