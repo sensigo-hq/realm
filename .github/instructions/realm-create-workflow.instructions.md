@@ -208,6 +208,17 @@ already started — check `next_actions` immediately and proceed to `execute_ste
 }
 ```
 
+**`data.workflow_id` is deterministic.** The ID is derived from a SHA-256 hash of the
+workflow definition content (steps, schemas, metadata). Calling `create_workflow` twice with
+identical arguments produces the same `workflow_id` and overwrites the previously registered
+definition — the file store is idempotent by overwrite. This means retrying a failed
+`create_workflow` call is safe: you will get back the same workflow ID.
+
+However, any change to the definition — including a corrected typo in a step description —
+produces a different hash and therefore a different `workflow_id`. This is intentional: a
+different definition is a different workflow. Do not rely on the ID being stable across
+definition changes.
+
 Call `execute_step` using `instruction.call_with` as the template — fill in your step output
 in `params` (shaped to `next_actions[0].input_schema` if present). The engine does not require
 a `run_version` argument — it reads the current version from the store automatically.
