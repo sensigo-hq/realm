@@ -5,6 +5,7 @@ import {
   JsonWorkflowStore,
   JsonFileStore,
   executeChain,
+  WorkflowError,
   type StepDispatcher,
   type ResponseEnvelope,
   type AgentTraceEntry,
@@ -85,6 +86,7 @@ export async function handleExecuteStepTool(
       ],
     };
   } catch (err) {
+    const agentAction = err instanceof WorkflowError ? err.agentAction : 'report_to_user';
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [
@@ -100,7 +102,7 @@ export async function handleExecuteStepTool(
               evidence: [],
               warnings: [],
               errors: [message],
-              agent_action: 'stop',
+              agent_action: agentAction,
               context_hint: `Error executing step '${args.command}' for run '${args.run_id}'.`,
               next_actions: [],
             },

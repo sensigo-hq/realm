@@ -5,6 +5,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   JsonWorkflowStore,
   JsonFileStore,
+  WorkflowError,
   type WorkflowDefinition,
   type ResponseEnvelope,
   type JsonSchema,
@@ -257,6 +258,7 @@ export function registerCreateWorkflow(server: McpServer, opts?: HandleRunStores
           ],
         };
       } catch (err) {
+        const agentAction = err instanceof WorkflowError ? err.agentAction : 'report_to_user';
         const message = err instanceof Error ? err.message : String(err);
         return {
           content: [
@@ -271,9 +273,9 @@ export function registerCreateWorkflow(server: McpServer, opts?: HandleRunStores
                   evidence: [],
                   warnings: [],
                   errors: [message],
-                  agent_action: 'stop',
+                  agent_action: agentAction,
                   context_hint: 'Unexpected error during create_workflow.',
-                  next_action: null,
+                  next_actions: [],
                 },
                 null,
                 2,
