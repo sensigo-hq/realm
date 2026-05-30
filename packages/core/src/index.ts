@@ -72,6 +72,8 @@ export type {
   ParcelPanelAdapterConfig,
   NormalizedTracking as ParcelPanelNormalizedTracking,
 } from './adapters/parcelpanel-adapter.js';
+export { AirtableAdapter } from './adapters/airtable-adapter.js';
+export type { AirtableAdapterConfig } from './adapters/airtable-adapter.js';
 
 // Trace policy
 export { TRACE_POLICY_VERSION, TRACE_POLICY, TRACE_POLICY_HASH } from './engine/trace-policy.js';
