@@ -3,8 +3,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import { JsonFileStore, JsonWorkflowStore, WorkflowError, ExtensionRegistry } from '@sensigo/realm';
+import type { WorkflowDefinition, ServiceAdapter } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import { handleListWorkflows } from './list-workflows.js';
 import { handleGetWorkflowProtocol } from './get-workflow-protocol.js';
@@ -442,5 +442,169 @@ describe('mcp tool handlers', () => {
 
     const run = await runStore.get(result.run_id);
     expect(run.run_phase).toBe('completed');
+  });
+
+  // ---
+  // Step 5 dispatch-failure integration tests — verify agent_action in the serialised
+  // MCP JSON response when a service adapter throws during auto-step execution.
+  // ---
+
+  /** Single-step service workflow — run becomes terminal on failure (no recovery step). */
+  function makeSingleServiceDef(): WorkflowDefinition {
+    return {
+      id: 'single-service-wf',
+      name: 'Single Service Workflow',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      services: { svc: { adapter: 'mock_throwing' } },
+      steps: {
+        call_api: {
+          description: 'Service call',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+        },
+      },
+    };
+  }
+
+  /**
+   * Two-step service workflow: auto service step + agent recovery step.
+   * When `call_api` fails, `recover` becomes eligible via `trigger_rule: 'one_failed'`.
+   * The run is therefore non-terminal after the failure.
+   */
+  function makeTwoStepServiceDef(): WorkflowDefinition {
+    return {
+      id: 'two-step-service-wf',
+      name: 'Two Step Service Workflow',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      services: { svc: { adapter: 'mock_throwing' } },
+      steps: {
+        call_api: {
+          description: 'Service call',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+        },
+        recover: {
+          description: 'Recovery step — runs when call_api fails',
+          execution: 'agent',
+          depends_on: ['call_api'],
+          trigger_rule: 'one_failed',
+        },
+      },
+    };
+  }
+
+  /** Returns a ServiceAdapter whose fetch/create/update all throw the given WorkflowError. */
+  function makeThrowingAdapter(err: WorkflowError): ServiceAdapter {
+    return {
+      id: 'mock_throwing',
+      fetch: async () => {
+        throw err;
+      },
+      create: async () => {
+        throw err;
+      },
+      update: async () => {
+        throw err;
+      },
+    };
+  }
+
+  it('Step 5 dispatch failure: terminal run → agent_action: stop in MCP response', async () => {
+    const adapterErr = new WorkflowError('Mock adapter failure', {
+      code: 'SERVICE_UNAVAILABLE',
+      category: 'SERVICE',
+      agentAction: 'report_to_user',
+      retryable: false,
+    });
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock_throwing', makeThrowingAdapter(adapterErr));
+
+    const workflowStore = new JsonWorkflowStore(workflowDir);
+    await workflowStore.register(makeSingleServiceDef());
+    const runStore = new JsonFileStore(runDir);
+    const run = await runStore.create({
+      workflowId: 'single-service-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const result = await handleExecuteStepTool(
+      { run_id: run.id, command: 'call_api' },
+      { runStore, workflowStore, registry },
+    );
+
+    const parsed = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+    expect(parsed['status']).toBe('error');
+    // Terminal run: resolvePostDispatchAgentAction always returns 'stop'.
+    expect(parsed['agent_action']).toBe('stop');
+    expect(Array.isArray(parsed['next_actions'])).toBe(true);
+    expect((parsed['next_actions'] as unknown[]).length).toBe(0);
+  });
+
+  it('Step 5 dispatch failure: non-terminal run, report_to_user error → agent_action: report_to_user with next_actions', async () => {
+    const adapterErr = new WorkflowError('Mock adapter failure', {
+      code: 'SERVICE_UNAVAILABLE',
+      category: 'SERVICE',
+      agentAction: 'report_to_user',
+      retryable: false,
+    });
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock_throwing', makeThrowingAdapter(adapterErr));
+
+    const workflowStore = new JsonWorkflowStore(workflowDir);
+    await workflowStore.register(makeTwoStepServiceDef());
+    const runStore = new JsonFileStore(runDir);
+    const run = await runStore.create({
+      workflowId: 'two-step-service-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const result = await handleExecuteStepTool(
+      { run_id: run.id, command: 'call_api' },
+      { runStore, workflowStore, registry },
+    );
+
+    const parsed = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+    expect(parsed['status']).toBe('error');
+    // Non-terminal run, report_to_user passes through.
+    expect(parsed['agent_action']).toBe('report_to_user');
+    // Recovery step is eligible — next_actions must be non-empty.
+    expect(Array.isArray(parsed['next_actions'])).toBe(true);
+    expect((parsed['next_actions'] as unknown[]).length).toBeGreaterThan(0);
+  });
+
+  it('Step 5 dispatch failure: non-terminal run, wait_for_human error → agent_action: wait_for_human', async () => {
+    const adapterErr = new WorkflowError('Mock adapter temporarily unavailable', {
+      code: 'SERVICE_UNAVAILABLE',
+      category: 'SERVICE',
+      agentAction: 'wait_for_human',
+      retryable: true,
+    });
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock_throwing', makeThrowingAdapter(adapterErr));
+
+    const workflowStore = new JsonWorkflowStore(workflowDir);
+    await workflowStore.register(makeTwoStepServiceDef());
+    const runStore = new JsonFileStore(runDir);
+    const run = await runStore.create({
+      workflowId: 'two-step-service-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const result = await handleExecuteStepTool(
+      { run_id: run.id, command: 'call_api' },
+      { runStore, workflowStore, registry },
+    );
+
+    const parsed = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+    expect(parsed['status']).toBe('error');
+    // Non-terminal run, wait_for_human passes through.
+    expect(parsed['agent_action']).toBe('wait_for_human');
   });
 });

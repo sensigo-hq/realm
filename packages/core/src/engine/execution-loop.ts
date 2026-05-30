@@ -241,7 +241,7 @@ async function callAdapter(
       {
         code: 'ADAPTER_OP_UNSUPPORTED',
         category: 'ENGINE',
-        agentAction: 'provide_input',
+        agentAction: 'report_to_user',
         retryable: false,
       },
     );
