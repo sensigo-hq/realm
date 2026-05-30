@@ -11,6 +11,7 @@ import type {
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import type { ResponseEnvelope, NextAction } from '../types/response-envelope.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import type { AgentAction } from '../types/workflow-error.js';
 import type {
   WorkflowDefinition,
   StepDefinition,
@@ -823,51 +824,99 @@ export async function executeStep(
 
   // Step 5: Handle dispatch failure — move step to failed_steps.
   if (dispatchError !== null) {
-    let cleanupWarning: string | undefined;
+    // Pure in-memory derivations — no I/O, no try required.
+    const afterFail: RunRecord = {
+      ...pendingRun,
+      in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== options.command),
+      failed_steps: [...pendingRun.failed_steps, options.command],
+    };
+    // Propagate skips: mark steps whose trigger_rule can never be satisfied after this failure.
+    const withSkippedFail: RunRecord = {
+      ...afterFail,
+      skipped_steps: propagateSkips(afterFail, definition),
+    };
+    // A run is terminal when all steps are settled OR when no step will ever become
+    // eligible again (safety net for when-condition edge cases not covered by propagateSkips).
+    const isComplete =
+      isWorkflowComplete(withSkippedFail, definition) ||
+      (withSkippedFail.in_progress_steps.length === 0 &&
+        findEligibleSteps(definition, withSkippedFail).length === 0);
+    const failedRun: RunRecord = {
+      ...withSkippedFail,
+      evidence: [...pendingRun.evidence, ...allEvidence],
+      terminal_state: isComplete,
+      ...(isComplete
+        ? { terminal_reason: `Step '${options.command}' failed: ${dispatchError.message}` }
+        : {}),
+    };
+
+    // Persist run state and WAL cleanup in separate try/catch blocks so a WAL deletion
+    // failure does not mask a successful store.update.
+    let persistedRun: RunRecord | undefined;
+    let storeCleanupWarning: string | undefined;
     try {
-      // Build the hypothetical run state after marking this step as failed.
-      const afterFail: RunRecord = {
-        ...pendingRun,
-        in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== options.command),
-        failed_steps: [...pendingRun.failed_steps, options.command],
-      };
-      // Propagate skips: mark steps whose trigger_rule can never be satisfied after this failure.
-      const withSkippedFail: RunRecord = {
-        ...afterFail,
-        skipped_steps: propagateSkips(afterFail, definition),
-      };
-      // A run is terminal when all steps are settled OR when no step will ever become
-      // eligible again (safety net for when-condition edge cases not covered by propagateSkips).
-      const isComplete =
-        isWorkflowComplete(withSkippedFail, definition) ||
-        (withSkippedFail.in_progress_steps.length === 0 &&
-          findEligibleSteps(definition, withSkippedFail).length === 0);
-      const failedRun: RunRecord = {
-        ...withSkippedFail,
-        evidence: [...pendingRun.evidence, ...allEvidence],
-        terminal_state: isComplete,
-        ...(isComplete
-          ? { terminal_reason: `Step '${options.command}' failed: ${dispatchError.message}` }
-          : {}),
-      };
-      await store.update(failedRun);
+      persistedRun = await store.update(failedRun);
+    } catch (storeErr) {
+      storeCleanupWarning = `Failed to persist step failure: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`;
+    }
+    let walCleanupWarning: string | undefined;
+    try {
       // Delete WAL after run state is written for failure — entries are now in evidence.
       await options.traceBufferStore?.delete(options.runId, options.command);
-    } catch (cleanupErr) {
-      cleanupWarning = `Failed to persist step failure: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`;
+    } catch (walErr) {
+      walCleanupWarning = `Failed to clean up trace buffer after step failure: ${walErr instanceof Error ? walErr.message : String(walErr)}`;
     }
+
+    // Derive the agent_action from the error semantics and run termination state.
+    //
+    // Non-terminal 'stop' errors (e.g. auth failure with a recovery branch) are surfaced
+    // as 'report_to_user' so the agent knows recovery steps are available. Terminal runs
+    // stay 'stop' — no further progress is possible.
+    //
+    // 'provide_input' and 'resolve_precondition' both imply "retry the same command" which
+    // is impossible once a step is in failed_steps; translate both to 'report_to_user'.
+    const rawAction: AgentAction = isComplete
+      ? 'stop'
+      : dispatchError.agentAction === 'stop'
+        ? 'report_to_user'
+        : dispatchError.agentAction;
+    const effectiveAction: AgentAction =
+      rawAction === 'provide_input'
+        ? 'report_to_user'
+        : rawAction === 'resolve_precondition'
+          ? 'report_to_user'
+          : rawAction;
+
+    // Mirror makeErrorEnvelope: populate next_actions for any action other than 'stop',
+    // but only when store.update succeeded (inconsistent state → no reliable next_actions).
+    let nextActions: NextAction[] = [];
+    if (effectiveAction !== 'stop' && storeCleanupWarning === undefined) {
+      try {
+        nextActions = buildNextActions(definition, persistedRun ?? failedRun);
+      } catch {
+        // buildNextActions can throw for unresolvable template references; fall back to [].
+      }
+    }
+
+    const contextHint =
+      effectiveAction === 'stop'
+        ? `Step '${options.command}' failed. Run is terminated.`
+        : effectiveAction === 'wait_for_human'
+          ? `Step '${options.command}' failed due to external service unavailability. Wait for service recovery, then proceed with the steps in next_actions.`
+          : `Step '${options.command}' failed. ${isComplete ? 'Run is terminated.' : 'Recovery steps are available in next_actions.'}`;
+
     return {
       command: options.command,
       run_id: options.runId,
-      run_version: pendingRun.version,
+      run_version: (persistedRun ?? failedRun).version,
       status: 'error',
       data: {},
       evidence: allEvidence,
-      warnings: mergeWarnings(traceWarnings, cleanupWarning),
+      warnings: mergeWarnings(traceWarnings, storeCleanupWarning ?? walCleanupWarning),
       errors: [dispatchError.message],
-      agent_action: 'stop' as const,
-      context_hint: `Step '${options.command}' failed.`,
-      next_actions: [],
+      agent_action: effectiveAction,
+      context_hint: contextHint,
+      next_actions: nextActions,
     };
   }
 

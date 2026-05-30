@@ -2488,3 +2488,285 @@ describe('WAL trace buffer integration (B-lite)', () => {
     expect(snap?.trace?.[0]?.event).toBe('direct_trace');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Step 5 dispatch-failure envelope — agent_action, next_actions, run_version
+// ---------------------------------------------------------------------------
+
+describe('Step 5 dispatch-failure envelope', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-step5-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  // Two-step workflow: step_a (agent) → step_b (agent, trigger_rule: one_failed).
+  const twoStepDef: WorkflowDefinition = {
+    id: 'two-step-wf',
+    name: 'Two Step Workflow',
+    version: 1,
+    steps: {
+      step_a: {
+        description: 'First step',
+        execution: 'agent',
+        depends_on: [],
+      },
+      step_b: {
+        description: 'Recovery step',
+        execution: 'agent',
+        depends_on: ['step_a'],
+        trigger_rule: 'one_failed',
+      },
+    },
+  };
+
+  it('non-terminal failure with wait_for_human exposes recovery branch', async () => {
+    const run = await store.create({
+      workflowId: 'two-step-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, twoStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Service unavailable', {
+          code: 'SERVICE_HTTP_5XX',
+          category: 'SERVICE',
+          agentAction: 'wait_for_human',
+          retryable: false,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('wait_for_human');
+    expect(envelope.next_actions.length).toBeGreaterThanOrEqual(1);
+    expect(envelope.next_actions[0]?.instruction.call_with.command).toBe('step_b');
+    expect(
+      envelope.context_hint.toLowerCase().includes('service') ||
+        envelope.context_hint.toLowerCase().includes('recovery'),
+    ).toBe(true);
+  });
+
+  it('non-terminal failure with provide_input is translated to report_to_user and exposes recovery branch', async () => {
+    const run = await store.create({
+      workflowId: 'two-step-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, twoStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Adapter method not supported', {
+          code: 'ADAPTER_OP_UNSUPPORTED',
+          category: 'SERVICE',
+          agentAction: 'provide_input',
+          retryable: false,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('report_to_user');
+    expect(envelope.next_actions.length).toBeGreaterThanOrEqual(1);
+    expect(envelope.next_actions[0]?.instruction.call_with.command).toBe('step_b');
+  });
+
+  it('non-terminal failure with stop is translated to report_to_user and exposes recovery branch', async () => {
+    const run = await store.create({
+      workflowId: 'two-step-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, twoStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Authentication failed', {
+          code: 'SERVICE_AUTH_FAILED',
+          category: 'SERVICE',
+          agentAction: 'stop',
+          retryable: false,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('report_to_user');
+    expect(envelope.next_actions.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('terminal failure always returns stop with empty next_actions', async () => {
+    // Single-step workflow — no recovery branch possible.
+    const singleStepDef: WorkflowDefinition = {
+      id: 'single-step-wf',
+      name: 'Single Step Workflow',
+      version: 1,
+      steps: {
+        step_a: {
+          description: 'Only step',
+          execution: 'agent',
+          depends_on: [],
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'single-step-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, singleStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Service unavailable', {
+          code: 'SERVICE_HTTP_5XX',
+          category: 'SERVICE',
+          agentAction: 'wait_for_human',
+          retryable: false,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('stop');
+    expect(envelope.next_actions).toHaveLength(0);
+  });
+
+  it('WAL deletion failure does NOT suppress next_actions', async () => {
+    const bufferStore = new InMemoryTraceBufferStore();
+    vi.spyOn(bufferStore, 'delete').mockRejectedValue(new Error('disk contention'));
+
+    const run = await store.create({
+      workflowId: 'two-step-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, twoStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Service unavailable', {
+          code: 'SERVICE_HTTP_5XX',
+          category: 'SERVICE',
+          agentAction: 'wait_for_human',
+          retryable: false,
+        });
+      },
+      traceBufferStore: bufferStore,
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('wait_for_human');
+    expect(envelope.next_actions.length).toBeGreaterThanOrEqual(1);
+    expect(
+      envelope.warnings.some(
+        (w) => w.toLowerCase().includes('trace') || w.toLowerCase().includes('buffer'),
+      ),
+    ).toBe(true);
+  });
+
+  it('store.update failure suppresses next_actions', async () => {
+    const run = await store.create({
+      workflowId: 'two-step-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // Spy after the run is created so claimStep still works; only store.update throws.
+    const originalUpdate = store.update.bind(store);
+    vi.spyOn(store, 'update').mockImplementation(async (record) => {
+      // Allow claimStep's internal update to succeed (it goes through a file lock path),
+      // but reject the explicit store.update call in Step 5.
+      // Since claimStep uses its own internal mechanism, only the Step 5 store.update
+      // call will hit this spy.
+      void record;
+      throw new Error('disk full');
+    });
+    // Restore original for claimStep path — claimStep doesn't call store.update directly.
+    store.update = originalUpdate;
+    vi.spyOn(store, 'update').mockRejectedValue(new Error('disk full'));
+
+    const envelope = await executeStep(store, twoStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Service unavailable', {
+          code: 'SERVICE_HTTP_5XX',
+          category: 'SERVICE',
+          agentAction: 'wait_for_human',
+          retryable: false,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.next_actions).toHaveLength(0);
+    expect(envelope.warnings.some((w) => w.toLowerCase().includes('persist'))).toBe(true);
+  });
+
+  it('run_version reflects persisted version not stale pre-persist version', async () => {
+    const run = await store.create({
+      workflowId: 'single-step-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // Track the version returned by store.update in Step 5.
+    const originalUpdate = store.update.bind(store);
+    let persistedVersion: number | undefined;
+    vi.spyOn(store, 'update').mockImplementation(async (record) => {
+      const result = await originalUpdate(record);
+      persistedVersion = result.version;
+      return result;
+    });
+
+    const singleStepDef: WorkflowDefinition = {
+      id: 'single-step-wf',
+      name: 'Single Step Workflow',
+      version: 1,
+      steps: {
+        step_a: {
+          description: 'Only step',
+          execution: 'agent',
+          depends_on: [],
+        },
+      },
+    };
+
+    const envelope = await executeStep(store, singleStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('failure', {
+          code: 'ENGINE_HANDLER_FAILED',
+          category: 'ENGINE',
+          agentAction: 'stop',
+          retryable: false,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    // run_version must equal what store.update returned, not the stale pendingRun.version.
+    expect(persistedVersion).toBeDefined();
+    expect(envelope.run_version).toBe(persistedVersion);
+  });
+});
