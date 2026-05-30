@@ -287,12 +287,46 @@ describe('mcp tool handlers', () => {
 
     const parsed = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
     expect(parsed['status']).toBe('error');
-    expect(parsed['agent_action']).toBe('stop');
+    expect(parsed['agent_action']).toBe('report_to_user');
     expect(Array.isArray(parsed['next_actions'])).toBe(true);
     expect((parsed['next_actions'] as unknown[]).length).toBe(0);
     expect((parsed['errors'] as string[])[0]).toContain('unexpected failure');
     expect(parsed['run_id']).toBe('test-run');
     expect(parsed['command']).toBe('review_security');
+  });
+
+  it('handleExecuteStepTool propagates WorkflowError.agentAction to MCP response', async () => {
+    const { WorkflowError } = await import('@sensigo/realm');
+
+    const throwingOpts = {
+      runStore: {
+        get: async () => {
+          throw new WorkflowError('Run not found: unknown-run', {
+            code: 'STATE_RUN_NOT_FOUND',
+            category: 'STATE',
+            agentAction: 'report_to_user',
+            retryable: false,
+          });
+        },
+        create: async () => {
+          throw new Error('should not be called');
+        },
+        update: async () => {
+          throw new Error('should not be called');
+        },
+        list: async () => [],
+      } as unknown as JsonFileStore,
+    };
+
+    const result = await handleExecuteStepTool(
+      { run_id: 'unknown-run', command: 'some_step' },
+      throwingOpts,
+    );
+
+    const parsed = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+    expect(parsed['status']).toBe('error');
+    expect(parsed['agent_action']).toBe('report_to_user');
+    expect((parsed['errors'] as string[])[0]).toContain('Run not found');
   });
 
   it('handleGetRunState returns run summary', async () => {

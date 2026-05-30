@@ -7,6 +7,7 @@ import {
   executeChain,
   buildNextActions,
   findEligibleSteps,
+  WorkflowError,
   type StepDispatcher,
   type ResponseEnvelope,
   type TraceBufferStore,
@@ -105,6 +106,7 @@ export function registerStartRun(
           ],
         };
       } catch (err) {
+        const agentAction = err instanceof WorkflowError ? err.agentAction : 'report_to_user';
         const message = err instanceof Error ? err.message : String(err);
         return {
           content: [
@@ -120,7 +122,7 @@ export function registerStartRun(
                   evidence: [],
                   warnings: [],
                   errors: [message],
-                  agent_action: 'stop',
+                  agent_action: agentAction,
                   context_hint: `Error creating run for workflow '${args.workflow_id}'.`,
                   next_actions: [],
                 },

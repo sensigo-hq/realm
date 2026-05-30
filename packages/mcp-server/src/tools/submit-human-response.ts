@@ -5,6 +5,7 @@ import {
   JsonWorkflowStore,
   JsonFileStore,
   submitHumanResponse,
+  WorkflowError,
   type ResponseEnvelope,
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
@@ -51,6 +52,7 @@ export function registerSubmitHumanResponse(server: McpServer, opts?: HandleRunS
           ],
         };
       } catch (err) {
+        const agentAction = err instanceof WorkflowError ? err.agentAction : 'report_to_user';
         const message = err instanceof Error ? err.message : String(err);
         return {
           content: [
@@ -66,7 +68,7 @@ export function registerSubmitHumanResponse(server: McpServer, opts?: HandleRunS
                   evidence: [],
                   warnings: [],
                   errors: [message],
-                  agent_action: 'stop',
+                  agent_action: agentAction,
                   context_hint: `Error submitting response for run '${args.run_id}'.`,
                   next_actions: [],
                 },
