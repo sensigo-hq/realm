@@ -4,7 +4,7 @@ applyTo: '**'
 
 # GitHub Issue Standards
 
-This policy applies to all agents and human contributors across all 187n repositories.
+This policy applies to all agents and human contributors across all repositories.
 
 ---
 
@@ -44,10 +44,10 @@ Use a concise, descriptive imperative phrase prefixed with a type label:
 
 **Rules:**
 
-- Imperative mood: "lock bot to owner" not "bot should be locked" or "locking bot"
+- Imperative mood: "restrict access to authenticated users" not "should restrict access" or "restricting access"
 - Lowercase after the type prefix
 - No period at the end
-- Be specific: `[security] telegram bot responds to any user` not `[security] bot issue`
+- Be specific: `[security] API returns data for unauthenticated requests` not `[security] auth issue`
 
 ---
 
@@ -104,9 +104,9 @@ What the solution should be. Keep it at the approach level — implementation de
 A numbered list of conditions that must be true for this issue to be considered resolved. Each item must be verifiable.
 
 ```
-1. New users completing setup must have TELEGRAM_ALLOWED_USERS set to their ID
-2. Existing deployed containers can have the value updated without full re-provisioning
-3. Unit tests cover the new field in buildCustomerRow
+1. Unauthenticated requests to all protected endpoints return 403
+2. Existing integrations continue to work without configuration changes
+3. Unit tests cover the new validation logic
 ```
 
 ### `## Severity` _(bugs and security only)_
@@ -120,7 +120,7 @@ A numbered list of conditions that must be true for this issue to be considered 
 
 ### `## Related` _(optional)_
 
-Links to relevant PRs, issues, Supabase rows, Whop dashboard entries, or external references.
+Links to relevant PRs, issues, external service records, or supporting documentation.
 
 ---
 
