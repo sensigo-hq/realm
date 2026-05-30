@@ -12,7 +12,6 @@ plans/
 .github/agents/marketing-god.agent.md
 .github/agents/peer-architect.agent.md
 .github/agents/design-reviewer.agent.md
-.github/instructions/pre-publication.instructions.md
 .github/instructions/project-info-prompt.md
 
 # Dependencies
