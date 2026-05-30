@@ -69,6 +69,14 @@ describe('loadWorkflowFromString', () => {
     }
   });
 
+  it('accepts service_method: delete without throwing', () => {
+    const content = VALID_YAML.replace(
+      'depends_on: []',
+      'depends_on: []\n    service_method: delete',
+    );
+    expect(() => loadWorkflowFromString(content)).not.toThrow();
+  });
+
   it('preserves step config block in parsed definition', () => {
     const yaml = `
 id: cfg-test

@@ -85,7 +85,7 @@ export interface StepDefinition {
    * Which adapter method to invoke for this service step.
    * Defaults to 'fetch' if omitted.
    */
-  service_method?: 'fetch' | 'create' | 'update';
+  service_method?: 'fetch' | 'create' | 'update' | 'delete';
   /**
    * Operation name passed as the first argument to the adapter method.
    * Defaults to the step name if omitted.
