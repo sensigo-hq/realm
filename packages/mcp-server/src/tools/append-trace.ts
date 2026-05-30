@@ -46,7 +46,7 @@ export async function handleAppendTrace(
     if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
       return {
         status: 'error',
-        code: 'STATE_STEP_NOT_ELIGIBLE',
+        code: 'STEP_NOT_ELIGIBLE',
         message: `Run '${args.run_id}' not found.`,
         details: { step_state: 'not_found' },
       };
@@ -62,7 +62,7 @@ export async function handleAppendTrace(
   if (stepDef === undefined) {
     return {
       status: 'error',
-      code: 'STATE_STEP_NOT_ELIGIBLE',
+      code: 'STEP_NOT_ELIGIBLE',
       message: `Step '${args.step_id}' not found in workflow '${run.workflow_id}'.`,
       details: { step_state: 'not_found' },
     };
@@ -72,7 +72,7 @@ export async function handleAppendTrace(
   if (stepDef.execution !== 'agent') {
     return {
       status: 'error',
-      code: 'STATE_STEP_NOT_ELIGIBLE',
+      code: 'STEP_NOT_ELIGIBLE',
       message: `Step '${args.step_id}' is not an agent step (execution: '${stepDef.execution}').`,
       details: { step_type: 'not_agent_step' },
     };
@@ -82,7 +82,7 @@ export async function handleAppendTrace(
   if (run.completed_steps.includes(args.step_id) || run.failed_steps.includes(args.step_id)) {
     return {
       status: 'error',
-      code: 'STATE_STEP_NOT_ELIGIBLE',
+      code: 'STEP_NOT_ELIGIBLE',
       message: `Step '${args.step_id}' has already been claimed (completed or failed).`,
       details: { step_state: 'already_claimed' },
     };
@@ -90,43 +90,29 @@ export async function handleAppendTrace(
   if (run.in_progress_steps.includes(args.step_id)) {
     return {
       status: 'error',
-      code: 'STATE_STEP_NOT_ELIGIBLE',
+      code: 'STEP_NOT_ELIGIBLE',
       message: `Step '${args.step_id}' is currently being executed by execute_step.`,
       details: { step_state: 'already_claimed' },
     };
   }
 
+  // Steps 6 + 7: Require buffer store for any append_trace operation.
+  if (traceBufferStore === undefined) {
+    throw new WorkflowError('No trace buffer store configured', {
+      code: 'ENGINE_INTERNAL',
+      category: 'ENGINE',
+      agentAction: 'stop',
+      retryable: false,
+    });
+  }
+
   // 6. Empty entries — return current buffer state without writing.
   if (args.entries.length === 0) {
-    if (traceBufferStore === undefined) {
-      return {
-        status: 'ok',
-        buffer_count: 0,
-        buffer_bytes: 0,
-        limit_count: 200,
-        limit_bytes: 100 * 1024,
-        final_limit_entries: 100,
-        final_limit_bytes: 50 * 1024,
-      };
-    }
     const result = await traceBufferStore.append(args.run_id, args.step_id, []);
     return { status: 'ok', ...result };
   }
 
   // 7. Append entries to the buffer.
-  if (traceBufferStore === undefined) {
-    // No buffer store configured — silently succeed (entries will be submitted via execute_step).
-    return {
-      status: 'ok',
-      buffer_count: 0,
-      buffer_bytes: 0,
-      limit_count: 200,
-      limit_bytes: 100 * 1024,
-      final_limit_entries: 100,
-      final_limit_bytes: 50 * 1024,
-    };
-  }
-
   const result = await traceBufferStore.append(args.run_id, args.step_id, args.entries);
   return { status: 'ok', ...result };
 }

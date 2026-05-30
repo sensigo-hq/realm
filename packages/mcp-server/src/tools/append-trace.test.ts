@@ -59,7 +59,7 @@ describe('handleAppendTrace', () => {
     );
     expect(result.status).toBe('error');
     if (result.status === 'error') {
-      expect(result.code).toBe('STATE_STEP_NOT_ELIGIBLE');
+      expect(result.code).toBe('STEP_NOT_ELIGIBLE');
       expect(result.details?.['step_state']).toBe('not_found');
     }
   });
@@ -76,7 +76,7 @@ describe('handleAppendTrace', () => {
     );
     expect(result.status).toBe('error');
     if (result.status === 'error') {
-      expect(result.code).toBe('STATE_STEP_NOT_ELIGIBLE');
+      expect(result.code).toBe('STEP_NOT_ELIGIBLE');
       expect(result.details?.['step_state']).toBe('not_found');
     }
   });
@@ -93,7 +93,7 @@ describe('handleAppendTrace', () => {
     );
     expect(result.status).toBe('error');
     if (result.status === 'error') {
-      expect(result.code).toBe('STATE_STEP_NOT_ELIGIBLE');
+      expect(result.code).toBe('STEP_NOT_ELIGIBLE');
       expect(result.details?.['step_type']).toBe('not_agent_step');
     }
   });
@@ -117,7 +117,7 @@ describe('handleAppendTrace', () => {
     );
     expect(result.status).toBe('error');
     if (result.status === 'error') {
-      expect(result.code).toBe('STATE_STEP_NOT_ELIGIBLE');
+      expect(result.code).toBe('STEP_NOT_ELIGIBLE');
       expect(result.details?.['step_state']).toBe('already_claimed');
     }
   });
@@ -139,7 +139,7 @@ describe('handleAppendTrace', () => {
     );
     expect(result.status).toBe('error');
     if (result.status === 'error') {
-      expect(result.code).toBe('STATE_STEP_NOT_ELIGIBLE');
+      expect(result.code).toBe('STEP_NOT_ELIGIBLE');
       expect(result.details?.['step_state']).toBe('already_claimed');
     }
   });
