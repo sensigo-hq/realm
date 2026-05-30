@@ -6,6 +6,7 @@ import {
   JsonFileStore,
   submitHumanResponse,
   WorkflowError,
+  resolvePreExecutionAgentAction,
   type ResponseEnvelope,
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
@@ -52,8 +53,15 @@ export function registerSubmitHumanResponse(server: McpServer, opts?: HandleRunS
           ],
         };
       } catch (err) {
-        const agentAction = err instanceof WorkflowError ? err.agentAction : 'report_to_user';
+        const agentAction =
+          err instanceof WorkflowError ? resolvePreExecutionAgentAction(err) : 'report_to_user';
         const message = err instanceof Error ? err.message : String(err);
+        const contextHint =
+          err instanceof WorkflowError && err.code === 'STATE_WORKFLOW_NOT_FOUND'
+            ? `Workflow definition for run '${args.run_id}' not found.`
+            : err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND'
+              ? `Run '${args.run_id}' not found.`
+              : `An error occurred before gate response could be submitted.`;
         return {
           content: [
             {
@@ -69,7 +77,7 @@ export function registerSubmitHumanResponse(server: McpServer, opts?: HandleRunS
                   warnings: [],
                   errors: [message],
                   agent_action: agentAction,
-                  context_hint: `Error submitting response for run '${args.run_id}'.`,
+                  context_hint: contextHint,
                   next_actions: [],
                 },
                 null,
