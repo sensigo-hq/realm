@@ -67,6 +67,11 @@ export type {
   ShopifyAdapterConfig,
   NormalizedOrder as ShopifyNormalizedOrder,
 } from './adapters/shopify-adapter.js';
+export { ParcelPanelAdapter } from './adapters/parcelpanel-adapter.js';
+export type {
+  ParcelPanelAdapterConfig,
+  NormalizedTracking as ParcelPanelNormalizedTracking,
+} from './adapters/parcelpanel-adapter.js';
 
 // Trace policy
 export { TRACE_POLICY_VERSION, TRACE_POLICY, TRACE_POLICY_HASH } from './engine/trace-policy.js';
