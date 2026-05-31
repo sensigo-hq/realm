@@ -8,7 +8,7 @@ import {
   buildNextActions,
   findEligibleSteps,
   WorkflowError,
-  resolvePreExecutionAgentAction,
+  buildPreExecutionErrorEnvelope,
   type StepDispatcher,
   type ResponseEnvelope,
   type TraceBufferStore,
@@ -107,34 +107,31 @@ export function registerStartRun(
           ],
         };
       } catch (err) {
-        const agentAction =
-          err instanceof WorkflowError ? resolvePreExecutionAgentAction(err) : 'report_to_user';
-        const message = err instanceof Error ? err.message : String(err);
+        const workflowErr =
+          err instanceof WorkflowError
+            ? err
+            : new WorkflowError(err instanceof Error ? err.message : String(err), {
+                code: 'ENGINE_INTERNAL',
+                category: 'ENGINE',
+                agentAction: 'stop',
+                retryable: false,
+              });
         const contextHint =
-          err instanceof WorkflowError && err.code === 'STATE_WORKFLOW_NOT_FOUND'
+          workflowErr.code === 'STATE_WORKFLOW_NOT_FOUND'
             ? `Workflow '${args.workflow_id}' not found.`
             : `An error occurred before the run could be started.`;
+        const envelope: ResponseEnvelope = buildPreExecutionErrorEnvelope(
+          'start_run',
+          '',
+          0,
+          workflowErr,
+          contextHint,
+        );
         return {
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify(
-                {
-                  command: 'start_run',
-                  run_id: '',
-                  run_version: 0,
-                  status: 'error',
-                  data: {},
-                  evidence: [],
-                  warnings: [],
-                  errors: [message],
-                  agent_action: agentAction,
-                  context_hint: contextHint,
-                  next_actions: [],
-                },
-                null,
-                2,
-              ),
+              text: JSON.stringify(envelope, null, 2),
             },
           ],
         };
