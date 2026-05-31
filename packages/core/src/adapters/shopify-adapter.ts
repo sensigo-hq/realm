@@ -173,6 +173,7 @@ interface ShopifyOrderNode {
  */
 export class ShopifyAdapter implements ServiceAdapter {
   readonly id: string;
+  readonly defaultRetryAfterSeconds = 30;
   private readonly apiVersion: string;
   private readonly baseUrlOverride: string | undefined;
   private readonly stores: ShopifyAdapterConfig['stores'];
@@ -260,12 +261,13 @@ export class ShopifyAdapter implements ServiceAdapter {
     const details = { status, operation, body };
 
     if (status === 429) {
+      const retryAfterFromHeader = parseRetryAfterHeader(response.headers.get('Retry-After'));
       throw new WorkflowError('Rate limited by Shopify API', {
         code: 'SERVICE_RATE_LIMITED',
         category: 'SERVICE',
         agentAction: 'wait_and_proceed',
         retryable: true,
-        retry_after: parseRetryAfterHeader(response.headers.get('Retry-After'), 30),
+        ...(retryAfterFromHeader !== undefined ? { retry_after: retryAfterFromHeader } : {}),
         details,
       });
     }

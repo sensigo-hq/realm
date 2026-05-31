@@ -370,4 +370,88 @@ describe('reliability', () => {
       retryable: false,
     });
   });
+
+  it('computeBackoff with optional fields omitted — defaults to fixed/0ms, retry completes', async () => {
+    const def: WorkflowDefinition = {
+      id: 'optional-retry-wf',
+      name: 'Optional Retry Workflow',
+      version: 1,
+      steps: {
+        'step-one': {
+          description: 'Retries with minimal config',
+          execution: 'auto',
+          depends_on: [],
+          retry: { max_attempts: 2 },
+        },
+      },
+    };
+    const store = new JsonFileStore(dir);
+    const run = await store.create({
+      workflowId: 'optional-retry-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    let calls = 0;
+    const flakyDispatcher: StepDispatcher = async () => {
+      calls++;
+      if (calls === 1) throw makeRetryableError();
+      return { ok: true };
+    };
+
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: flakyDispatcher,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(calls).toBe(2);
+  });
+
+  it('STEP_RETRY_EXHAUSTED carries details.retry_after from last SERVICE_RATE_LIMITED error', async () => {
+    const def: WorkflowDefinition = {
+      id: 'rate-limited-retry-wf',
+      name: 'Rate Limited Retry Workflow',
+      version: 1,
+      steps: {
+        'step-one': {
+          description: 'Always rate limited',
+          execution: 'auto',
+          depends_on: [],
+          retry: { max_attempts: 2, backoff: 'fixed', base_delay_ms: 0 },
+        },
+      },
+    };
+    const store = new JsonFileStore(dir);
+    const run = await store.create({
+      workflowId: 'rate-limited-retry-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const rateLimitedDispatcher: StepDispatcher = async () => {
+      throw new WorkflowError('Rate limited', {
+        code: 'SERVICE_RATE_LIMITED',
+        category: 'SERVICE',
+        agentAction: 'wait_and_proceed',
+        retryable: true,
+        retry_after: 0,
+      });
+    };
+
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: rateLimitedDispatcher,
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.errors[0]).toContain('failed after 2 attempts');
+
+    const updated = await store.get(run.id);
+    expect(updated.terminal_state).toBe(true);
+  });
 });

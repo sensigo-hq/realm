@@ -314,7 +314,7 @@ describe('ParcelPanelAdapter HTTP error classification', () => {
     expect(err.details['retry_after']).toBeUndefined();
   });
 
-  it('HTTP 429 without Retry-After header → fallback retry_after: 60', async () => {
+  it('HTTP 429 without Retry-After header → retry_after is undefined (resolved by callAdapter)', async () => {
     respond(429, { errors: 'Too Many Requests' });
     const adapter = makeAdapter();
     const err = await adapter
@@ -323,7 +323,8 @@ describe('ParcelPanelAdapter HTTP error classification', () => {
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
     expect(err.agentAction).toBe('wait_and_proceed');
-    expect(err.retry_after).toBe(60);
+    expect(err.retry_after).toBeUndefined();
+    expect(adapter.defaultRetryAfterSeconds).toBe(60);
   });
 
   it('HTTP 500 → SERVICE_HTTP_5XX', async () => {

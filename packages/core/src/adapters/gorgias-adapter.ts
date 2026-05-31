@@ -64,6 +64,7 @@ function stripHtmlTags(html: string): string {
  */
 export class GorgiasAdapter implements ServiceAdapter {
   readonly id: string;
+  readonly defaultRetryAfterSeconds = 60;
   private readonly baseUrl: string;
   private readonly authHeader: string;
 
@@ -165,12 +166,13 @@ export class GorgiasAdapter implements ServiceAdapter {
     const details = { status, operation, body };
 
     if (status === 429) {
+      const retryAfterFromHeader = parseRetryAfterHeader(response.headers.get('Retry-After'));
       throw new WorkflowError('Rate limited by Gorgias API', {
         code: 'SERVICE_RATE_LIMITED',
         category: 'SERVICE',
         agentAction: 'wait_and_proceed',
         retryable: true,
-        retry_after: parseRetryAfterHeader(response.headers.get('Retry-After'), 60),
+        ...(retryAfterFromHeader !== undefined ? { retry_after: retryAfterFromHeader } : {}),
         details,
       });
     }

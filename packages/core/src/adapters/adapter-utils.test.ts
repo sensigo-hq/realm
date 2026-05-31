@@ -12,8 +12,19 @@ describe('parseRetryAfterHeader', () => {
     expect(parseRetryAfterHeader(null)).toBeUndefined();
   });
 
-  it('returns fallback when header is an HTTP-date string (not supported)', () => {
-    expect(parseRetryAfterHeader('Sat, 31 May 2026 12:00:00 GMT', 30)).toBe(30);
+  it('parses HTTP-date form in the past — returns 0', () => {
+    expect(parseRetryAfterHeader('Mon, 01 Jan 2024 00:00:00 GMT', 30)).toBe(0);
+  });
+
+  it('parses HTTP-date form in the future — returns positive seconds', () => {
+    const futureDate = new Date(Date.now() + 30000).toUTCString();
+    const result = parseRetryAfterHeader(futureDate);
+    expect(result).toBeGreaterThan(0);
+    expect(result).toBeLessThanOrEqual(31);
+  });
+
+  it('returns 0 for negative integer (malformed header)', () => {
+    expect(parseRetryAfterHeader('-5', 30)).toBe(0);
   });
 
   it('returns fallback when header is an empty string', () => {

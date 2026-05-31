@@ -811,3 +811,144 @@ steps:
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: rate_limit validation
+// ---------------------------------------------------------------------------
+
+const VALID_YAML_WITH_SERVICE = `
+id: test-workflow
+name: Test Workflow
+version: 1
+services:
+  my-service:
+    adapter: airtable
+    trust: engine_delivered
+steps:
+  step-one:
+    description: First step
+    execution: auto
+    depends_on: []
+    uses_service: my-service
+`;
+
+describe('loadWorkflowFromString — rate_limit validation', () => {
+  it('rate_limit with valid requests_per_second — no error', () => {
+    const content = VALID_YAML_WITH_SERVICE.replace(
+      'trust: engine_delivered',
+      'trust: engine_delivered\n    rate_limit:\n      requests_per_second: 2',
+    );
+    expect(() => loadWorkflowFromString(content)).not.toThrow();
+  });
+
+  it('rate_limit.requests_per_second = 0 — hard error', () => {
+    const content = VALID_YAML_WITH_SERVICE.replace(
+      'trust: engine_delivered',
+      'trust: engine_delivered\n    rate_limit:\n      requests_per_second: 0',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain('requests_per_second');
+    }
+  });
+
+  it('rate_limit.requests_per_second = -1 — hard error', () => {
+    const content = VALID_YAML_WITH_SERVICE.replace(
+      'trust: engine_delivered',
+      'trust: engine_delivered\n    rate_limit:\n      requests_per_second: -1',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+  });
+
+  it('rate_limit.burst without requests_per_second — hard error', () => {
+    const content = VALID_YAML_WITH_SERVICE.replace(
+      'trust: engine_delivered',
+      'trust: engine_delivered\n    rate_limit:\n      burst: 5',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain('burst');
+    }
+  });
+
+  it('rate_limit.burst = 0 — hard error', () => {
+    const content = VALID_YAML_WITH_SERVICE.replace(
+      'trust: engine_delivered',
+      'trust: engine_delivered\n    rate_limit:\n      requests_per_second: 2\n      burst: 0',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+  });
+
+  it('rate_limit.max_retry_seconds = 0 — hard error', () => {
+    const content = VALID_YAML_WITH_SERVICE.replace(
+      'trust: engine_delivered',
+      'trust: engine_delivered\n    rate_limit:\n      requests_per_second: 2\n      max_retry_seconds: 0',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain('max_retry_seconds');
+    }
+  });
+
+  it('rate_limit.fallback_retry_seconds = 0 — hard error', () => {
+    const content = VALID_YAML_WITH_SERVICE.replace(
+      'trust: engine_delivered',
+      'trust: engine_delivered\n    rate_limit:\n      requests_per_second: 2\n      fallback_retry_seconds: 0',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain('fallback_retry_seconds');
+    }
+  });
+
+  it('rate_limit.fallback_retry_seconds = -1 — hard error', () => {
+    const content = VALID_YAML_WITH_SERVICE.replace(
+      'trust: engine_delivered',
+      'trust: engine_delivered\n    rate_limit:\n      requests_per_second: 2\n      fallback_retry_seconds: -1',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: retry validation
+// ---------------------------------------------------------------------------
+
+describe('loadWorkflowFromString — retry validation', () => {
+  it('retry.backoff invalid value — hard error', () => {
+    const content = VALID_YAML.replace(
+      'depends_on: []',
+      'depends_on: []\n    retry:\n      max_attempts: 3\n      backoff: invalid_value',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain('retry.backoff');
+    }
+  });
+
+  it('retry.backoff omitted — no error (backoff is now optional)', () => {
+    const content = VALID_YAML.replace(
+      'depends_on: []',
+      'depends_on: []\n    retry:\n      max_attempts: 3\n      base_delay_ms: 100',
+    );
+    expect(() => loadWorkflowFromString(content)).not.toThrow();
+  });
+
+  it('retry with only max_attempts — no error', () => {
+    const content = VALID_YAML.replace(
+      'depends_on: []',
+      'depends_on: []\n    retry:\n      max_attempts: 2',
+    );
+    expect(() => loadWorkflowFromString(content)).not.toThrow();
+  });
+});

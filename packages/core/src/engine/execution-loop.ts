@@ -172,14 +172,20 @@ function resolveInputMap(
 
 /** Computes the delay (ms) before a retry attempt based on the configured backoff strategy. */
 function computeBackoff(config: RetryConfig, attemptNum: number): number {
-  switch (config.backoff) {
-    case 'fixed':
-      return config.base_delay_ms;
+  const backoff = config.backoff ?? 'fixed';
+  const base = config.base_delay_ms ?? 0;
+  let delay: number;
+  switch (backoff) {
     case 'linear':
-      return config.base_delay_ms * attemptNum;
+      delay = base * attemptNum;
+      break;
     case 'exponential':
-      return config.base_delay_ms * Math.pow(2, attemptNum - 1);
+      delay = base * Math.pow(2, attemptNum - 1);
+      break;
+    default: // 'fixed'
+      delay = base;
   }
+  return config.max_delay_ms !== undefined ? Math.min(delay, config.max_delay_ms) : delay;
 }
 
 /**
@@ -207,7 +213,8 @@ async function callAdapter(
     });
   }
 
-  const adapter = (options.registry ?? createDefaultRegistry()).getAdapter(serviceDef.adapter);
+  const registry = options.registry;
+  const adapter = (registry ?? createDefaultRegistry()).getAdapter(serviceDef.adapter);
   if (adapter === undefined) {
     throw new WorkflowError(
       `Adapter '${serviceDef.adapter}' for service '${serviceName}' is not registered`,
@@ -247,6 +254,12 @@ async function callAdapter(
     );
   }
 
+  // Proactive rate limiting: acquire a token before calling the service.
+  // Skipped silently when no explicit registry is provided.
+  if (registry !== undefined && serviceDef.rate_limit?.requests_per_second !== undefined) {
+    await registry.getOrCreateRateLimiter(serviceName, serviceDef.rate_limit).acquire(signal);
+  }
+
   let response: ServiceResponse;
   try {
     response = await (adapterMethod as ServiceAdapter['fetch']).call(
@@ -257,7 +270,63 @@ async function callAdapter(
       signal,
     );
   } catch (err) {
-    if (err instanceof WorkflowError) throw err;
+    if (err instanceof WorkflowError) {
+      if (err.code === 'SERVICE_RATE_LIMITED') {
+        // Resolve retry_after through the three-tier fallback chain:
+        //   1. Header value (already on err.retry_after from the adapter)
+        //   2. rate_limit.fallback_retry_seconds from YAML
+        //   3. adapter.defaultRetryAfterSeconds constant
+        const resolvedRetryAfter =
+          err.retry_after ??
+          serviceDef.rate_limit?.fallback_retry_seconds ??
+          adapter?.defaultRetryAfterSeconds;
+
+        // Pause the token bucket (if configured) to hold off concurrent retries.
+        const maxRetry = serviceDef.rate_limit?.max_retry_seconds;
+        if (
+          registry !== undefined &&
+          serviceDef.rate_limit?.requests_per_second !== undefined &&
+          resolvedRetryAfter !== undefined
+        ) {
+          const pauseDuration =
+            maxRetry !== undefined ? Math.min(resolvedRetryAfter, maxRetry) : resolvedRetryAfter;
+          if (pauseDuration > 0) {
+            registry
+              .getOrCreateRateLimiter(serviceName, serviceDef.rate_limit)
+              .pause(pauseDuration);
+          }
+        }
+
+        // Fail fast if the retry window exceeds max_retry_seconds.
+        if (
+          maxRetry !== undefined &&
+          resolvedRetryAfter !== undefined &&
+          resolvedRetryAfter > maxRetry
+        ) {
+          throw new WorkflowError(err.message, {
+            code: 'SERVICE_RATE_LIMITED',
+            category: 'SERVICE',
+            agentAction: 'report_to_user',
+            retryable: false,
+            retry_after: resolvedRetryAfter,
+            ...(Object.keys(err.details).length > 0 ? { details: err.details } : {}),
+          });
+        }
+
+        // Re-throw with the resolved retry_after (may differ from original).
+        if (resolvedRetryAfter !== err.retry_after) {
+          throw new WorkflowError(err.message, {
+            code: 'SERVICE_RATE_LIMITED',
+            category: 'SERVICE',
+            agentAction: 'wait_and_proceed',
+            retryable: true,
+            ...(resolvedRetryAfter !== undefined ? { retry_after: resolvedRetryAfter } : {}),
+            ...(Object.keys(err.details).length > 0 ? { details: err.details } : {}),
+          });
+        }
+      }
+      throw err;
+    }
     const message = err instanceof Error ? err.message : String(err);
     throw new WorkflowError(`Adapter '${serviceDef.adapter}' threw: ${message}`, {
       code: 'ENGINE_ADAPTER_FAILED',
@@ -824,13 +893,18 @@ export async function executeStep(
   if (dispatchError !== null && retryConfig !== undefined && attemptsUsed === maxAttempts) {
     const lastError = dispatchError;
     dispatchError = new WorkflowError(
-      `Step '${options.command}' failed after ${maxAttempts} attempts`,
+      `Step '${options.command}' failed after ${attemptsUsed} attempts`,
       {
         code: 'STEP_RETRY_EXHAUSTED',
         category: 'ENGINE',
         agentAction: 'report_to_user',
         retryable: false,
-        details: { stepName: options.command, attempts: maxAttempts, lastError: lastError.message },
+        details: {
+          stepName: options.command,
+          attempts: attemptsUsed,
+          lastError: lastError.message,
+          ...(lastError.retry_after !== undefined ? { retry_after: lastError.retry_after } : {}),
+        },
       },
     );
   }

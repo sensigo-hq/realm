@@ -22,6 +22,14 @@ export interface ServiceResponse {
  */
 export interface ServiceAdapter {
   readonly id: string;
+  /**
+   * Default retry-after delay in seconds when the service returns HTTP 429
+   * with no Retry-After header (or with an unparseable value).
+   * Read by callAdapter() as the last-resort fallback after
+   * rate_limit.fallback_retry_seconds. If undefined, no adapter-level
+   * fallback is applied and retry_after remains undefined.
+   */
+  readonly defaultRetryAfterSeconds?: number;
   fetch(
     operation: string,
     params: Record<string, unknown>,
