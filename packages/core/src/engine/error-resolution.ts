@@ -21,6 +21,8 @@ export function resolvePreExecutionAgentAction(err: WorkflowError): AgentAction 
  * successfully and the step is in `in_progress_steps`. Call this only in that
  * context. `isTerminalRun` must be `run.terminal_state` from the persisted or
  * failed run record after dispatch — do not pass a derived or assumed value.
+ *
+ * 'wait_and_proceed' passes through unchanged in all non-terminal cases.
  */
 export function resolvePostDispatchAgentAction(
   err: WorkflowError,

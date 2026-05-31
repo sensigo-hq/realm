@@ -2761,3 +2761,245 @@ describe('Step 5 dispatch-failure envelope', () => {
     expect(envelope.run_version).toBe(persistedVersion);
   });
 });
+
+// ---------------------------------------------------------------------------
+// retry_after field on ResponseEnvelope
+// ---------------------------------------------------------------------------
+
+describe('retry_after on ResponseEnvelope', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-retry-after-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  const twoStepDef: WorkflowDefinition = {
+    id: 'two-step-retry-wf',
+    name: 'Two Step Retry Workflow',
+    version: 1,
+    steps: {
+      step_a: {
+        description: 'Step that can fail',
+        execution: 'agent',
+        depends_on: [],
+      },
+      step_b: {
+        description: 'Recovery step',
+        execution: 'agent',
+        depends_on: ['step_a'],
+        trigger_rule: 'one_failed',
+      },
+    },
+  };
+
+  it('retry_after appears in ResponseEnvelope for wait_and_proceed dispatch failure', async () => {
+    const run = await store.create({
+      workflowId: 'two-step-retry-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, twoStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Rate limited', {
+          code: 'SERVICE_RATE_LIMITED',
+          category: 'SERVICE',
+          agentAction: 'wait_and_proceed',
+          retryable: true,
+          retry_after: 30,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('wait_and_proceed');
+    expect(envelope.retry_after).toBe(30);
+  });
+
+  it('retry_after is absent from ResponseEnvelope when not set on the error', async () => {
+    const run = await store.create({
+      workflowId: 'two-step-retry-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, twoStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Service unavailable', {
+          code: 'SERVICE_HTTP_5XX',
+          category: 'SERVICE',
+          agentAction: 'wait_for_human',
+          retryable: false,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('wait_for_human');
+    expect(envelope.retry_after).toBeUndefined();
+  });
+
+  it('errorEnvelope includes retry_after when WorkflowError.retry_after is set (pre-execution path)', async () => {
+    // Use a mock store whose get() throws a WorkflowError with retry_after set.
+    // This exercises the makeErrorEnvelope(options, null, err) path in step 1.
+    const mockStore: import('../store/store-interface.js').RunStore = {
+      create: store.create.bind(store),
+      get: async () => {
+        throw new WorkflowError('Rate limited at store level', {
+          code: 'SERVICE_RATE_LIMITED',
+          category: 'SERVICE',
+          agentAction: 'wait_and_proceed',
+          retryable: true,
+          retry_after: 45,
+        });
+      },
+      update: store.update.bind(store),
+      list: store.list.bind(store),
+      claimStep: store.claimStep.bind(store),
+    };
+
+    const envelope = await executeStep(mockStore, twoStepDef, {
+      runId: 'any-run-id',
+      command: 'step_a',
+      input: {},
+      dispatcher: echoDispatcher,
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('wait_and_proceed');
+    expect(envelope.retry_after).toBe(45);
+  });
+
+  it('engine retry loop uses Math.max(computeBackoff, retry_after * 1000) as delay', async () => {
+    // Spy on setTimeout: record the requested delay but fire the callback immediately
+    // (delay=0) so the test doesn't actually wait 30 seconds.
+    const capturedDelays: number[] = [];
+    const origSetTimeout = globalThis.setTimeout;
+    (globalThis as Record<string, unknown>)['setTimeout'] = (
+      fn: (...args: unknown[]) => void,
+      delay?: number,
+    ) => {
+      capturedDelays.push(delay ?? 0);
+      return origSetTimeout(fn, 0);
+    };
+
+    try {
+      const retryDef: WorkflowDefinition = {
+        id: 'retry-delay-wf',
+        name: 'Retry Delay Workflow',
+        version: 1,
+        steps: {
+          step_a: {
+            description: 'Step with retry',
+            execution: 'agent',
+            depends_on: [],
+            retry: { max_attempts: 2, backoff: 'fixed', base_delay_ms: 100 },
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'retry-delay-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      let attempt = 0;
+      const result = await executeStep(store, retryDef, {
+        runId: run.id,
+        command: 'step_a',
+        input: {},
+        dispatcher: async () => {
+          attempt++;
+          if (attempt === 1) {
+            throw new WorkflowError('Rate limited', {
+              code: 'SERVICE_RATE_LIMITED',
+              category: 'SERVICE',
+              agentAction: 'wait_and_proceed',
+              retryable: true,
+              retry_after: 30,
+            });
+          }
+          return { recovered: true };
+        },
+      });
+
+      expect(result.status).toBe('ok');
+      expect(attempt).toBe(2);
+      // Math.max(100 base_delay_ms, 30 * 1000 retry_after_ms) = 30000
+      expect(capturedDelays).toContain(30000);
+    } finally {
+      (globalThis as Record<string, unknown>)['setTimeout'] = origSetTimeout;
+    }
+  });
+
+  it('engine retry loop falls back to computeBackoff when retry_after is undefined', async () => {
+    // Same spy approach: record the requested delay but fire immediately.
+    const capturedDelays: number[] = [];
+    const origSetTimeout = globalThis.setTimeout;
+    (globalThis as Record<string, unknown>)['setTimeout'] = (
+      fn: (...args: unknown[]) => void,
+      delay?: number,
+    ) => {
+      capturedDelays.push(delay ?? 0);
+      return origSetTimeout(fn, 0);
+    };
+
+    try {
+      const retryDef: WorkflowDefinition = {
+        id: 'retry-fallback-wf',
+        name: 'Retry Fallback Workflow',
+        version: 1,
+        steps: {
+          step_a: {
+            description: 'Step with retry',
+            execution: 'agent',
+            depends_on: [],
+            retry: { max_attempts: 2, backoff: 'fixed', base_delay_ms: 500 },
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'retry-fallback-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      let attempt = 0;
+      const result = await executeStep(store, retryDef, {
+        runId: run.id,
+        command: 'step_a',
+        input: {},
+        dispatcher: async () => {
+          attempt++;
+          if (attempt === 1) {
+            throw new WorkflowError('Transient failure', {
+              code: 'ENGINE_HANDLER_FAILED',
+              category: 'ENGINE',
+              agentAction: 'report_to_user',
+              retryable: true,
+              // No retry_after — computeBackoff (500ms) should be used
+            });
+          }
+          return { recovered: true };
+        },
+      });
+
+      expect(result.status).toBe('ok');
+      expect(attempt).toBe(2);
+      // Math.max(500 base_delay_ms, 0 retry_after_ms) = 500
+      expect(capturedDelays).toContain(500);
+    } finally {
+      (globalThis as Record<string, unknown>)['setTimeout'] = origSetTimeout;
+    }
+  });
+});

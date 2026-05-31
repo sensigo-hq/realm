@@ -79,4 +79,20 @@ describe('resolvePostDispatchAgentAction', () => {
   it('passes wait_for_human through when non-terminal', () => {
     expect(resolvePostDispatchAgentAction(makeErr('wait_for_human'), false)).toBe('wait_for_human');
   });
+
+  it('passes wait_and_proceed through when non-terminal', () => {
+    expect(resolvePostDispatchAgentAction(makeErr('wait_and_proceed'), false)).toBe(
+      'wait_and_proceed',
+    );
+  });
+
+  it('returns stop for wait_and_proceed when terminal', () => {
+    expect(resolvePostDispatchAgentAction(makeErr('wait_and_proceed'), true)).toBe('stop');
+  });
+});
+
+describe('resolvePreExecutionAgentAction (wait_and_proceed)', () => {
+  it('passes wait_and_proceed through unchanged', () => {
+    expect(resolvePreExecutionAgentAction(makeErr('wait_and_proceed'))).toBe('wait_and_proceed');
+  });
 });

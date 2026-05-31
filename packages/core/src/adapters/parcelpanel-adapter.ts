@@ -1,6 +1,7 @@
 // ParcelPanelAdapter — communicates with the ParcelPanel / ParcelWILL Shopify tracking API v2.
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
+import { parseRetryAfterHeader } from './adapter-utils.js';
 
 const PARCELPANEL_DEFAULT_BASE_URL = 'https://open.parcelwill.com';
 // Previous domain https://open.parcelpanel.com deprecated as of 2026-02-11.
@@ -161,9 +162,10 @@ export class ParcelPanelAdapter implements ServiceAdapter {
       throw new WorkflowError('Rate limited by ParcelPanel API', {
         code: 'SERVICE_RATE_LIMITED',
         category: 'SERVICE',
-        agentAction: 'wait_for_human',
+        agentAction: 'wait_and_proceed',
         retryable: true,
-        details: { ...details, retry_after: response.headers.get('Retry-After') ?? undefined },
+        retry_after: parseRetryAfterHeader(response.headers.get('Retry-After'), 60),
+        details,
       });
     }
 

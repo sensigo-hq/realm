@@ -202,7 +202,7 @@ describe("GorgiasAdapter fetch('get_ticket')", () => {
     });
   });
 
-  it('mock returns 429 with Retry-After: 5 → throws SERVICE_RATE_LIMITED with details.retry_after === "5"', async () => {
+  it('mock returns 429 with Retry-After: 5 → throws SERVICE_RATE_LIMITED, wait_and_proceed, retry_after: 5', async () => {
     respond(429, { error: 'Too Many Requests' }, { 'Retry-After': '5' });
     const adapter = makeAdapter();
     const err = await adapter
@@ -210,7 +210,21 @@ describe("GorgiasAdapter fetch('get_ticket')", () => {
       .catch((e: unknown) => e as WorkflowError);
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
-    expect(err.details['retry_after']).toBe('5');
+    expect(err.agentAction).toBe('wait_and_proceed');
+    expect(err.retry_after).toBe(5);
+    expect(err.details['retry_after']).toBeUndefined();
+  });
+
+  it('mock returns 429 without Retry-After header → fallback retry_after: 60', async () => {
+    respond(429, { error: 'Too Many Requests' });
+    const adapter = makeAdapter();
+    const err = await adapter
+      .fetch('get_ticket', { ticket_id: 1 }, {})
+      .catch((e: unknown) => e as WorkflowError);
+    expect(err).toBeInstanceOf(WorkflowError);
+    expect(err.code).toBe('SERVICE_RATE_LIMITED');
+    expect(err.agentAction).toBe('wait_and_proceed');
+    expect(err.retry_after).toBe(60);
   });
 
   it('mock returns 500 → throws SERVICE_HTTP_5XX with retryable: true', async () => {

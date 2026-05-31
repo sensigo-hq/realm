@@ -469,7 +469,7 @@ describe('AirtableAdapter HTTP error classification', () => {
     expect(body.error?.type).toBe('INVALID_MULTIPLE_CHOICE_OPTIONS');
   });
 
-  it('HTTP 429 → SERVICE_RATE_LIMITED, no retry_after in details', async () => {
+  it('HTTP 429 → SERVICE_RATE_LIMITED, wait_and_proceed, retry_after: 30', async () => {
     respond(429, { error: { type: 'RATE_LIMIT_REACHED' } });
     const adapter = makeAdapter();
     const err = await adapter
@@ -477,6 +477,8 @@ describe('AirtableAdapter HTTP error classification', () => {
       .catch((e: unknown) => e as WorkflowError);
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
+    expect(err.agentAction).toBe('wait_and_proceed');
+    expect(err.retry_after).toBe(30);
     expect(err.details['retry_after']).toBeUndefined();
   });
 

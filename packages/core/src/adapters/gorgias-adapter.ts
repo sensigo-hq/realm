@@ -1,6 +1,7 @@
 // GorgiasAdapter — communicates with the Gorgias REST API.
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
+import { parseRetryAfterHeader } from './adapter-utils.js';
 
 /**
  * Configuration for GorgiasAdapter.
@@ -167,9 +168,10 @@ export class GorgiasAdapter implements ServiceAdapter {
       throw new WorkflowError('Rate limited by Gorgias API', {
         code: 'SERVICE_RATE_LIMITED',
         category: 'SERVICE',
-        agentAction: 'wait_for_human',
+        agentAction: 'wait_and_proceed',
         retryable: true,
-        details: { ...details, retry_after: response.headers.get('Retry-After') ?? undefined },
+        retry_after: parseRetryAfterHeader(response.headers.get('Retry-After'), 60),
+        details,
       });
     }
 

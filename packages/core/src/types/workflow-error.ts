@@ -7,7 +7,8 @@ export type AgentAction =
   | 'provide_input'
   | 'resolve_precondition'
   | 'stop'
-  | 'wait_for_human';
+  | 'wait_for_human'
+  | 'wait_and_proceed';
 
 export type ErrorCode =
   // NETWORK
@@ -84,6 +85,7 @@ export interface WorkflowErrorOptions {
   details?: Record<string, unknown>;
   stepId?: string;
   attempt?: number;
+  retry_after?: number; // seconds; set only for SERVICE_RATE_LIMITED errors
 }
 
 export class WorkflowError extends Error {
@@ -95,6 +97,7 @@ export class WorkflowError extends Error {
   readonly stepId?: string;
   readonly timestamp: string;
   readonly attempt: number;
+  readonly retry_after?: number;
 
   constructor(message: string, options: WorkflowErrorOptions) {
     super(message);
@@ -107,5 +110,6 @@ export class WorkflowError extends Error {
     if (options.stepId !== undefined) this.stepId = options.stepId;
     this.timestamp = new Date().toISOString();
     this.attempt = options.attempt ?? 1;
+    if (options.retry_after !== undefined) this.retry_after = options.retry_after;
   }
 }
