@@ -80,6 +80,8 @@ export type {
 } from './adapters/parcelpanel-adapter.js';
 export { AirtableAdapter } from './adapters/airtable-adapter.js';
 export type { AirtableAdapterConfig } from './adapters/airtable-adapter.js';
+export { NotionAdapter } from './adapters/notion-adapter.js';
+export type { NotionAdapterConfig } from './adapters/notion-adapter.js';
 
 // Trace policy
 export { TRACE_POLICY_VERSION, TRACE_POLICY, TRACE_POLICY_HASH } from './engine/trace-policy.js';
