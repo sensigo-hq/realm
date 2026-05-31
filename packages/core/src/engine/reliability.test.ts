@@ -10,6 +10,8 @@ import { WorkflowError } from '../types/workflow-error.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
 import { MockAdapter } from '../adapters/mock-adapter.js';
+import { ExtensionRegistry } from '../extensions/registry.js';
+import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
 
 // Workflow with a single step that times out at 0.05s and allows 2 retry attempts.
 const timeoutDef: WorkflowDefinition = {
@@ -370,4 +372,172 @@ describe('reliability', () => {
       retryable: false,
     });
   });
+
+  it('computeBackoff with optional fields omitted — defaults to fixed/0ms, retry completes', async () => {
+    const def: WorkflowDefinition = {
+      id: 'optional-retry-wf',
+      name: 'Optional Retry Workflow',
+      version: 1,
+      steps: {
+        'step-one': {
+          description: 'Retries with minimal config',
+          execution: 'auto',
+          depends_on: [],
+          retry: { max_attempts: 2 },
+        },
+      },
+    };
+    const store = new JsonFileStore(dir);
+    const run = await store.create({
+      workflowId: 'optional-retry-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    let calls = 0;
+    const flakyDispatcher: StepDispatcher = async () => {
+      calls++;
+      if (calls === 1) throw makeRetryableError();
+      return { ok: true };
+    };
+
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: flakyDispatcher,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(calls).toBe(2);
+  });
+
+  it('STEP_RETRY_EXHAUSTED carries details.retry_after from last SERVICE_RATE_LIMITED error', async () => {
+    const def: WorkflowDefinition = {
+      id: 'rate-limited-retry-wf',
+      name: 'Rate Limited Retry Workflow',
+      version: 1,
+      steps: {
+        'step-one': {
+          description: 'Always rate limited',
+          execution: 'auto',
+          depends_on: [],
+          retry: { max_attempts: 2, backoff: 'fixed', base_delay_ms: 0 },
+        },
+      },
+    };
+    const store = new JsonFileStore(dir);
+    const run = await store.create({
+      workflowId: 'rate-limited-retry-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const rateLimitedDispatcher: StepDispatcher = async () => {
+      throw new WorkflowError('Rate limited', {
+        code: 'SERVICE_RATE_LIMITED',
+        category: 'SERVICE',
+        agentAction: 'wait_and_proceed',
+        retryable: true,
+        retry_after: 0,
+      });
+    };
+
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: rateLimitedDispatcher,
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.errors[0]).toContain('failed after 2 attempts');
+
+    const updated = await store.get(run.id);
+    expect(updated.terminal_state).toBe(true);
+  });
+
+  it('proactive acquire → SERVICE_RATE_LIMITED → pause → resume → retry succeeds', async () => {
+    // Full integration: verifies that the token bucket is paused when the adapter returns
+    // SERVICE_RATE_LIMITED with no retry_after (exercising the fallback_retry_seconds path),
+    // and that the second attempt succeeds once the bucket resumes.
+    // Uses real timers with a 50ms pause to avoid fake-timer + real-I/O interleaving issues.
+    let callCount = 0;
+    const faultyAdapter: ServiceAdapter = {
+      id: 'faulty',
+      async fetch(
+        _op: string,
+        _params: Record<string, unknown>,
+        _config: Record<string, unknown>,
+      ): Promise<ServiceResponse> {
+        callCount++;
+        if (callCount === 1) {
+          // No retry_after — exercises the fallback_retry_seconds path.
+          throw new WorkflowError('Rate limited', {
+            code: 'SERVICE_RATE_LIMITED',
+            category: 'SERVICE',
+            agentAction: 'wait_and_proceed',
+            retryable: true,
+          });
+        }
+        return { status: 200, data: { ok: true } };
+      },
+      async create(): Promise<ServiceResponse> {
+        return { status: 200, data: {} };
+      },
+      async update(): Promise<ServiceResponse> {
+        return { status: 200, data: {} };
+      },
+    };
+
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'faulty', faultyAdapter);
+
+    const def: WorkflowDefinition = {
+      id: 'rate-limit-integration-wf',
+      name: 'Rate Limit Integration Workflow',
+      version: 1,
+      services: {
+        'test-service': {
+          adapter: 'faulty',
+          trust: 'engine_delivered',
+          rate_limit: {
+            requests_per_second: 1000, // 1ms refill interval — effectively immediate
+            burst: 1,
+            fallback_retry_seconds: 0.05, // 50ms pause on 429
+          },
+        },
+      },
+      steps: {
+        'step-one': {
+          description: 'Uses a rate-limited service',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'test-service',
+          // base_delay_ms omitted — retry waits max(0ms backoff, 50ms retry_after) = 50ms.
+          retry: { max_attempts: 2 },
+        },
+      },
+    };
+
+    const store = new JsonFileStore(dir);
+    const run = await store.create({
+      workflowId: 'rate-limit-integration-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: async () => {
+        throw new Error('dispatcher should not be called for uses_service steps');
+      },
+      registry,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(callCount).toBe(2);
+  }, 5000);
 });

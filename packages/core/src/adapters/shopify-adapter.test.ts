@@ -250,7 +250,7 @@ describe("ShopifyAdapter fetch('get_order') HTTP errors", () => {
     expect(err.details['retry_after']).toBeUndefined();
   });
 
-  it('throws SERVICE_RATE_LIMITED on HTTP 429 without Retry-After header, uses fallback', async () => {
+  it('throws SERVICE_RATE_LIMITED on HTTP 429 without Retry-After header, retry_after is undefined (resolved by callAdapter)', async () => {
     respondWith(429, { errors: 'Too Many Requests' });
     const adapter = makeAdapter();
     const err = await adapter
@@ -259,7 +259,8 @@ describe("ShopifyAdapter fetch('get_order') HTTP errors", () => {
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
     expect(err.agentAction).toBe('wait_and_proceed');
-    expect(err.retry_after).toBe(30);
+    expect(err.retry_after).toBeUndefined();
+    expect(adapter.defaultRetryAfterSeconds).toBe(30);
   });
 
   it('throws SERVICE_HTTP_4XX on HTTP 422', async () => {

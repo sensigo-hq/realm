@@ -215,7 +215,7 @@ describe("GorgiasAdapter fetch('get_ticket')", () => {
     expect(err.details['retry_after']).toBeUndefined();
   });
 
-  it('mock returns 429 without Retry-After header → fallback retry_after: 60', async () => {
+  it('mock returns 429 without Retry-After header → retry_after is undefined (resolved by callAdapter)', async () => {
     respond(429, { error: 'Too Many Requests' });
     const adapter = makeAdapter();
     const err = await adapter
@@ -224,7 +224,8 @@ describe("GorgiasAdapter fetch('get_ticket')", () => {
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
     expect(err.agentAction).toBe('wait_and_proceed');
-    expect(err.retry_after).toBe(60);
+    expect(err.retry_after).toBeUndefined();
+    expect(adapter.defaultRetryAfterSeconds).toBe(60);
   });
 
   it('mock returns 500 → throws SERVICE_HTTP_5XX with retryable: true', async () => {

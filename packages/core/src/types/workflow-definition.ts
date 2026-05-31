@@ -25,10 +25,28 @@ export interface JsonSchema {
   [key: string]: unknown;
 }
 
+export interface RateLimitConfig {
+  /** Maximum number of requests per second. Used as the token refill rate. */
+  requests_per_second?: number;
+  /** Initial token capacity (burst). Defaults to requests_per_second if omitted. */
+  burst?: number;
+  /**
+   * Fallback retry-after delay (seconds) when the service returns HTTP 429 with no header.
+   * Overrides adapter.defaultRetryAfterSeconds when set.
+   */
+  fallback_retry_seconds?: number;
+  /**
+   * Maximum retry-after window (seconds). When the resolved retry_after exceeds this value,
+   * the step fails immediately with agentAction: 'report_to_user' instead of waiting.
+   */
+  max_retry_seconds?: number;
+}
+
 export interface ServiceDefinition {
   adapter: string;
   auth?: { token_from: string };
   trust: ServiceTrust;
+  rate_limit?: RateLimitConfig;
 }
 
 /** A single parameter declaration in a template. */
@@ -45,8 +63,10 @@ export interface TemplateDefinition {
 
 export interface RetryConfig {
   max_attempts: number;
-  backoff: 'linear' | 'exponential' | 'fixed';
-  base_delay_ms: number;
+  backoff?: 'linear' | 'exponential' | 'fixed';
+  base_delay_ms?: number;
+  /** Cap on the computed backoff delay. When set, no single delay exceeds this value. */
+  max_delay_ms?: number;
 }
 
 /**

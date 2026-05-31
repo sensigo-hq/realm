@@ -49,6 +49,7 @@ interface AirtableRecord {
  */
 export class AirtableAdapter implements ServiceAdapter {
   readonly id: string;
+  readonly defaultRetryAfterSeconds = 30;
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly baseId: string;
@@ -189,12 +190,11 @@ export class AirtableAdapter implements ServiceAdapter {
     }
 
     if (status === 429) {
-      throw new WorkflowError('Rate limited by Airtable API — wait 30 seconds before retrying', {
+      throw new WorkflowError('Rate limited by Airtable API', {
         code: 'SERVICE_RATE_LIMITED',
         category: 'SERVICE',
         agentAction: 'wait_and_proceed',
         retryable: true,
-        retry_after: 30,
         details: baseDetails,
       });
     }

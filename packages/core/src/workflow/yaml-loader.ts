@@ -294,6 +294,43 @@ export function loadWorkflowFromString(content: string): WorkflowDefinition {
       }
     }
 
+    // Validate retry: backoff must be a recognised value when present.
+    if (step['retry'] !== undefined) {
+      if (typeof step['retry'] !== 'object' || step['retry'] === null) {
+        errors.push(`Step '${stepName}': 'retry' must be an object`);
+      } else {
+        const retry = step['retry'] as Record<string, unknown>;
+        if (
+          'backoff' in retry &&
+          retry['backoff'] !== 'fixed' &&
+          retry['backoff'] !== 'linear' &&
+          retry['backoff'] !== 'exponential'
+        ) {
+          errors.push(
+            `Step '${stepName}': 'retry.backoff' must be 'fixed', 'linear', or 'exponential'`,
+          );
+        }
+        if (
+          'max_attempts' in retry &&
+          (!Number.isInteger(retry['max_attempts']) || (retry['max_attempts'] as number) < 1)
+        ) {
+          errors.push(`Step '${stepName}': 'retry.max_attempts' must be a positive integer`);
+        }
+        if (
+          'base_delay_ms' in retry &&
+          (typeof retry['base_delay_ms'] !== 'number' || (retry['base_delay_ms'] as number) < 0)
+        ) {
+          errors.push(`Step '${stepName}': 'retry.base_delay_ms' must be a non-negative number`);
+        }
+        if (
+          'max_delay_ms' in retry &&
+          (typeof retry['max_delay_ms'] !== 'number' || (retry['max_delay_ms'] as number) < 0)
+        ) {
+          errors.push(`Step '${stepName}': 'retry.max_delay_ms' must be a non-negative number`);
+        }
+      }
+    }
+
     if ('service_method' in step && !VALID_SERVICE_METHODS.has(step['service_method'] as string)) {
       errors.push(
         `Step '${stepName}': invalid service_method '${String(step['service_method'])}'; must be 'fetch', 'create', 'update', or 'delete'`,
@@ -412,6 +449,61 @@ export function loadWorkflowFromString(content: string): WorkflowDefinition {
         errors.push(`mcp_servers: duplicate server id '${server.id}'`);
       }
       seen.add(server.id);
+    }
+  }
+
+  // Validate services: rate_limit fields.
+  if (typeof doc['services'] === 'object' && doc['services'] !== null) {
+    for (const [serviceName, serviceRaw] of Object.entries(
+      doc['services'] as Record<string, unknown>,
+    )) {
+      if (typeof serviceRaw !== 'object' || serviceRaw === null) continue;
+      const service = serviceRaw as Record<string, unknown>;
+      const rateLimit = service['rate_limit'];
+      if (rateLimit === undefined) continue;
+      if (typeof rateLimit !== 'object' || rateLimit === null) {
+        errors.push(`Service '${serviceName}': 'rate_limit' must be an object`);
+        continue;
+      }
+      const rl = rateLimit as Record<string, unknown>;
+
+      if (
+        'requests_per_second' in rl &&
+        (!Number.isInteger(rl['requests_per_second']) || (rl['requests_per_second'] as number) < 1)
+      ) {
+        errors.push(
+          `Service '${serviceName}': 'rate_limit.requests_per_second' must be a positive integer (≥ 1)`,
+        );
+      }
+      if ('burst' in rl) {
+        if (!Number.isInteger(rl['burst']) || (rl['burst'] as number) < 1) {
+          errors.push(
+            `Service '${serviceName}': 'rate_limit.burst' must be a positive integer (≥ 1)`,
+          );
+        }
+        if (!('requests_per_second' in rl)) {
+          errors.push(
+            `Service '${serviceName}': 'rate_limit.burst' requires 'rate_limit.requests_per_second' to be set`,
+          );
+        }
+      }
+      if (
+        'fallback_retry_seconds' in rl &&
+        (typeof rl['fallback_retry_seconds'] !== 'number' ||
+          (rl['fallback_retry_seconds'] as number) <= 0)
+      ) {
+        errors.push(
+          `Service '${serviceName}': 'rate_limit.fallback_retry_seconds' must be a positive number (> 0)`,
+        );
+      }
+      if (
+        'max_retry_seconds' in rl &&
+        (!Number.isInteger(rl['max_retry_seconds']) || (rl['max_retry_seconds'] as number) < 1)
+      ) {
+        errors.push(
+          `Service '${serviceName}': 'rate_limit.max_retry_seconds' must be a positive integer (≥ 1)`,
+        );
+      }
     }
   }
 
