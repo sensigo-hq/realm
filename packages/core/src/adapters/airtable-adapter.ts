@@ -1,6 +1,7 @@
 // AirtableAdapter — wraps the Airtable REST API for record-level operations.
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
+import { parseRetryAfterHeader } from './adapter-utils.js';
 
 const AIRTABLE_DEFAULT_BASE_URL = 'https://api.airtable.com';
 
@@ -190,11 +191,13 @@ export class AirtableAdapter implements ServiceAdapter {
     }
 
     if (status === 429) {
+      const retryAfterFromHeader = parseRetryAfterHeader(response.headers.get('Retry-After'));
       throw new WorkflowError('Rate limited by Airtable API', {
         code: 'SERVICE_RATE_LIMITED',
         category: 'SERVICE',
         agentAction: 'wait_and_proceed',
         retryable: true,
+        ...(retryAfterFromHeader !== undefined ? { retry_after: retryAfterFromHeader } : {}),
         details: baseDetails,
       });
     }
