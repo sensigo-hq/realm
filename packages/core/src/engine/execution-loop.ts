@@ -513,7 +513,40 @@ function errorEnvelope(
     evidence: [],
     warnings: [],
     errors: [err.message],
+    error_code: err.code,
+    ...(Object.keys(err.details).length > 0 ? { error_details: err.details } : {}),
     agent_action: err.agentAction,
+    ...(err.retry_after !== undefined ? { retry_after: err.retry_after } : {}),
+    context_hint: contextHint ?? `Error during '${command}'.`,
+    next_actions: [],
+  };
+}
+
+/**
+ * Builds a ResponseEnvelope for errors caught in an MCP tool's outer catch block,
+ * before any step execution has occurred. Translates provide_input and
+ * resolve_precondition agent actions to report_to_user (pre-execution context).
+ */
+export function buildPreExecutionErrorEnvelope(
+  command: string,
+  runId: string,
+  runVersion: number,
+  err: WorkflowError,
+  contextHint?: string,
+): ResponseEnvelope {
+  const agentAction = resolvePreExecutionAgentAction(err);
+  return {
+    command,
+    run_id: runId,
+    run_version: runVersion,
+    status: 'error',
+    data: {},
+    evidence: [],
+    warnings: [],
+    errors: [err.message],
+    error_code: err.code,
+    ...(Object.keys(err.details).length > 0 ? { error_details: err.details } : {}),
+    agent_action: agentAction,
     ...(err.retry_after !== undefined ? { retry_after: err.retry_after } : {}),
     context_hint: contextHint ?? `Error during '${command}'.`,
     next_actions: [],

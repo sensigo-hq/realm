@@ -1,6 +1,6 @@
 // Types for the ResponseEnvelope returned by every step execution.
 import type { EvidenceSnapshot } from './run-record.js';
-import type { AgentAction } from './workflow-error.js';
+import type { AgentAction, ErrorCode } from './workflow-error.js';
 
 export interface NextAction {
   instruction: {
@@ -63,6 +63,16 @@ export interface ResponseEnvelope {
   evidence: EvidenceSnapshot[];
   warnings: string[];
   errors: string[];
+  /**
+   * The canonical error code from the WorkflowError that produced this envelope.
+   * Only present when status === 'error'.
+   */
+  error_code?: ErrorCode;
+  /**
+   * Additional structured context from the WorkflowError. Only present when
+   * error_code is set and the error carries non-empty details.
+   */
+  error_details?: Record<string, unknown>;
   agent_action?: AgentAction;
   /**
    * When present and agent_action is 'wait_and_proceed', the number of seconds
