@@ -607,4 +607,35 @@ describe('mcp tool handlers', () => {
     // Non-terminal run, wait_for_human passes through.
     expect(parsed['agent_action']).toBe('wait_for_human');
   });
+
+  it('Step 5 dispatch failure: wait_and_proceed with retry_after → MCP response contains retry_after', async () => {
+    const adapterErr = new WorkflowError('Rate limited', {
+      code: 'SERVICE_RATE_LIMITED',
+      category: 'SERVICE',
+      agentAction: 'wait_and_proceed',
+      retryable: true,
+      retry_after: 30,
+    });
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock_throwing', makeThrowingAdapter(adapterErr));
+
+    const workflowStore = new JsonWorkflowStore(workflowDir);
+    await workflowStore.register(makeTwoStepServiceDef());
+    const runStore = new JsonFileStore(runDir);
+    const run = await runStore.create({
+      workflowId: 'two-step-service-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const result = await handleExecuteStepTool(
+      { run_id: run.id, command: 'call_api' },
+      { runStore, workflowStore, registry },
+    );
+
+    const parsed = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+    expect(parsed['status']).toBe('error');
+    expect(parsed['agent_action']).toBe('wait_and_proceed');
+    expect(parsed['retry_after']).toBe(30);
+  });
 });

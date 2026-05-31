@@ -192,8 +192,9 @@ export class AirtableAdapter implements ServiceAdapter {
       throw new WorkflowError('Rate limited by Airtable API — wait 30 seconds before retrying', {
         code: 'SERVICE_RATE_LIMITED',
         category: 'SERVICE',
-        agentAction: 'wait_for_human',
+        agentAction: 'wait_and_proceed',
         retryable: true,
+        retry_after: 30,
         details: baseDetails,
       });
     }

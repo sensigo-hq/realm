@@ -53,6 +53,8 @@ const ERROR_HANDLING: Record<string, string> = {
   stop: 'A critical error occurred. Report it to the user and do not attempt any further steps.',
   wait_for_human:
     'An external service is unavailable and cannot be retried automatically (e.g. network unreachable, upstream server error). Show the error to the user and wait for them to confirm the issue is resolved — the run cannot continue until the external dependency is back.',
+  wait_and_proceed:
+    'The upstream service returned a rate-limit response. retry_after in the envelope gives the number of seconds to wait. After that delay, follow next_actions without human involvement — the step has already failed; if a recovery branch exists it will appear in next_actions. This action only appears when engine-level retry is not configured for the step; when retry is configured, the engine retries internally and surfaces STEP_RETRY_EXHAUSTED (report_to_user) on exhaustion.',
 };
 
 /**

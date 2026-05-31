@@ -64,6 +64,12 @@ export interface ResponseEnvelope {
   warnings: string[];
   errors: string[];
   agent_action?: AgentAction;
+  /**
+   * When present and agent_action is 'wait_and_proceed', the number of seconds
+   * the consumer should wait before following next_actions. Not set for other
+   * agent_action values.
+   */
+  retry_after?: number;
   /** Current state orientation. Always populated — describes what just happened and what state the run is in. */
   context_hint: string;
   /** Steps available for execution. Empty array means terminal or blocked — check status and run_phase. */

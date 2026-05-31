@@ -301,7 +301,7 @@ describe('ParcelPanelAdapter HTTP error classification', () => {
     ).rejects.toMatchObject({ code: 'SERVICE_HTTP_4XX' });
   });
 
-  it('HTTP 429 → SERVICE_RATE_LIMITED with retry_after in details', async () => {
+  it('HTTP 429 with Retry-After header → SERVICE_RATE_LIMITED, wait_and_proceed, retry_after: 30', async () => {
     respond(429, { errors: 'Too Many Requests' }, { 'Retry-After': '30' });
     const adapter = makeAdapter();
     const err = await adapter
@@ -309,7 +309,21 @@ describe('ParcelPanelAdapter HTTP error classification', () => {
       .catch((e: unknown) => e as WorkflowError);
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
-    expect(err.details['retry_after']).toBe('30');
+    expect(err.agentAction).toBe('wait_and_proceed');
+    expect(err.retry_after).toBe(30);
+    expect(err.details['retry_after']).toBeUndefined();
+  });
+
+  it('HTTP 429 without Retry-After header → fallback retry_after: 60', async () => {
+    respond(429, { errors: 'Too Many Requests' });
+    const adapter = makeAdapter();
+    const err = await adapter
+      .fetch('get_tracking', { store: 'mystore', order_number: '1234' }, {})
+      .catch((e: unknown) => e as WorkflowError);
+    expect(err).toBeInstanceOf(WorkflowError);
+    expect(err.code).toBe('SERVICE_RATE_LIMITED');
+    expect(err.agentAction).toBe('wait_and_proceed');
+    expect(err.retry_after).toBe(60);
   });
 
   it('HTTP 500 → SERVICE_HTTP_5XX', async () => {

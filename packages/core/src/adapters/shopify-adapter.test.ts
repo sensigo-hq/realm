@@ -237,7 +237,7 @@ describe("ShopifyAdapter fetch('get_order') HTTP errors", () => {
     ).rejects.toMatchObject({ code: 'SERVICE_AUTH_FAILED' });
   });
 
-  it('throws SERVICE_RATE_LIMITED on HTTP 429 with retry_after in details', async () => {
+  it('throws SERVICE_RATE_LIMITED on HTTP 429 with Retry-After header', async () => {
     respondWith(429, { errors: 'Too Many Requests' }, { 'Retry-After': '10' });
     const adapter = makeAdapter();
     const err = await adapter
@@ -245,7 +245,21 @@ describe("ShopifyAdapter fetch('get_order') HTTP errors", () => {
       .catch((e: unknown) => e as WorkflowError);
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
-    expect(err.details['retry_after']).toBe('10');
+    expect(err.agentAction).toBe('wait_and_proceed');
+    expect(err.retry_after).toBe(10);
+    expect(err.details['retry_after']).toBeUndefined();
+  });
+
+  it('throws SERVICE_RATE_LIMITED on HTTP 429 without Retry-After header, uses fallback', async () => {
+    respondWith(429, { errors: 'Too Many Requests' });
+    const adapter = makeAdapter();
+    const err = await adapter
+      .fetch('get_order', { store: 'mystore', order_name: '#1234' }, {})
+      .catch((e: unknown) => e as WorkflowError);
+    expect(err).toBeInstanceOf(WorkflowError);
+    expect(err.code).toBe('SERVICE_RATE_LIMITED');
+    expect(err.agentAction).toBe('wait_and_proceed');
+    expect(err.retry_after).toBe(30);
   });
 
   it('throws SERVICE_HTTP_4XX on HTTP 422', async () => {
@@ -275,9 +289,13 @@ describe("ShopifyAdapter fetch('get_order') GraphQL errors", () => {
       errors: [{ message: 'Throttled', extensions: { code: 'THROTTLED' } }],
     });
     const adapter = makeAdapter();
-    await expect(
-      adapter.fetch('get_order', { store: 'mystore', order_name: '#1234' }, {}),
-    ).rejects.toMatchObject({ code: 'SERVICE_RATE_LIMITED' });
+    const err = await adapter
+      .fetch('get_order', { store: 'mystore', order_name: '#1234' }, {})
+      .catch((e: unknown) => e as WorkflowError);
+    expect(err).toBeInstanceOf(WorkflowError);
+    expect(err.code).toBe('SERVICE_RATE_LIMITED');
+    expect(err.agentAction).toBe('wait_and_proceed');
+    expect(err.retry_after).toBe(2);
   });
 
   it('throws SERVICE_RESPONSE_INVALID for non-throttle GraphQL error', async () => {

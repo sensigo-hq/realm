@@ -431,6 +431,7 @@ function errorEnvelope(
     warnings: [],
     errors: [err.message],
     agent_action: err.agentAction,
+    ...(err.retry_after !== undefined ? { retry_after: err.retry_after } : {}),
     context_hint: contextHint ?? `Error during '${command}'.`,
     next_actions: [],
   };
@@ -809,7 +810,12 @@ export async function executeStep(
     const willRetry =
       retryConfig !== undefined && attemptError.retryable && attemptNum < maxAttempts;
     if (willRetry) {
-      await delayMs(computeBackoff(retryConfig, attemptNum));
+      const baseBackoff = computeBackoff(retryConfig, attemptNum);
+      const retryAfterMs =
+        attemptError instanceof WorkflowError && attemptError.retry_after !== undefined
+          ? attemptError.retry_after * 1000
+          : 0;
+      await delayMs(Math.max(baseBackoff, retryAfterMs));
     } else {
       break;
     }
@@ -901,9 +907,11 @@ export async function executeStep(
     const contextHint =
       effectiveAction === 'stop'
         ? `Step '${options.command}' failed. Run is terminated.`
-        : effectiveAction === 'wait_for_human'
-          ? `Step '${options.command}' failed due to external service unavailability. Wait for service recovery, then proceed with the steps in next_actions.`
-          : `Step '${options.command}' failed. ${isComplete ? 'Run is terminated.' : 'Recovery steps are available in next_actions.'}`;
+        : effectiveAction === 'wait_and_proceed'
+          ? `Step '${options.command}' was rate-limited. Wait ${dispatchError.retry_after !== undefined ? `${dispatchError.retry_after} second(s)` : 'a moment'} then follow next_actions — no human intervention required.`
+          : effectiveAction === 'wait_for_human'
+            ? `Step '${options.command}' failed due to external service unavailability. Wait for service recovery, then proceed with the steps in next_actions.`
+            : `Step '${options.command}' failed. ${isComplete ? 'Run is terminated.' : 'Recovery steps are available in next_actions.'}`;
 
     return {
       command: options.command,
@@ -915,6 +923,9 @@ export async function executeStep(
       warnings: mergeWarnings(traceWarnings, storeCleanupWarning ?? walCleanupWarning),
       errors: [dispatchError.message],
       agent_action: effectiveAction,
+      ...(dispatchError.retry_after !== undefined
+        ? { retry_after: dispatchError.retry_after }
+        : {}),
       context_hint: contextHint,
       next_actions: nextActions,
     };
