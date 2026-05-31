@@ -141,6 +141,12 @@ If you lose track of a run's current state (e.g. after an error or session gap),
 terminal, the pending gate if any, and how many evidence entries exist. Use it to orient
 yourself before deciding the next tool call — do not guess the state.
 
+`run_version: 0` in an error response is a sentinel meaning the run version was not
+available at the time the error was produced (e.g. the run did not exist, or the error
+occurred before the run could be read). Do not use `0` as a version when constructing a
+retry call — always use the version from `next_actions[0].instruction.call_with`, or call
+`get_run_state` to retrieve the current version before retrying.
+
 ## Error and Blocked Responses
 
 Every `status: 'error'` and `status: 'blocked'` response carries `agent_action` that tells you

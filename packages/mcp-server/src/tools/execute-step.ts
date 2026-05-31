@@ -6,7 +6,7 @@ import {
   JsonFileStore,
   executeChain,
   WorkflowError,
-  resolvePreExecutionAgentAction,
+  buildPreExecutionErrorEnvelope,
   type StepDispatcher,
   type ResponseEnvelope,
   type AgentTraceEntry,
@@ -87,36 +87,33 @@ export async function handleExecuteStepTool(
       ],
     };
   } catch (err) {
-    const agentAction =
-      err instanceof WorkflowError ? resolvePreExecutionAgentAction(err) : 'report_to_user';
-    const message = err instanceof Error ? err.message : String(err);
+    const workflowErr =
+      err instanceof WorkflowError
+        ? err
+        : new WorkflowError(err instanceof Error ? err.message : String(err), {
+            code: 'ENGINE_INTERNAL',
+            category: 'ENGINE',
+            agentAction: 'stop',
+            retryable: false,
+          });
     const contextHint =
-      err instanceof WorkflowError && err.code === 'STATE_WORKFLOW_NOT_FOUND'
+      workflowErr.code === 'STATE_WORKFLOW_NOT_FOUND'
         ? `Workflow definition for run '${args.run_id}' not found.`
-        : err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND'
+        : workflowErr.code === 'STATE_RUN_NOT_FOUND'
           ? `Run '${args.run_id}' not found.`
           : `An error occurred before step '${args.command}' could begin.`;
+    const envelope: ResponseEnvelope = buildPreExecutionErrorEnvelope(
+      args.command,
+      args.run_id,
+      0,
+      workflowErr,
+      contextHint,
+    );
     return {
       content: [
         {
           type: 'text' as const,
-          text: JSON.stringify(
-            {
-              command: args.command,
-              run_id: args.run_id,
-              run_version: 0,
-              status: 'error',
-              data: {},
-              evidence: [],
-              warnings: [],
-              errors: [message],
-              agent_action: agentAction,
-              context_hint: contextHint,
-              next_actions: [],
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify(envelope, null, 2),
         },
       ],
     };

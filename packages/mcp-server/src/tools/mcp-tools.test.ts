@@ -8,11 +8,14 @@ import type { WorkflowDefinition, ServiceAdapter } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import { handleListWorkflows } from './list-workflows.js';
 import { handleGetWorkflowProtocol } from './get-workflow-protocol.js';
-import { handleStartRun } from './start-run.js';
+import { handleStartRun, registerStartRun } from './start-run.js';
 import { handleExecuteStep, handleExecuteStepTool } from './execute-step.js';
-import { handleSubmitHumanResponse } from './submit-human-response.js';
+import { handleSubmitHumanResponse, registerSubmitHumanResponse } from './submit-human-response.js';
 import { handleGetRunState } from './get-run-state.js';
 import { createDefaultRegistry } from '../server.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client } from '@modelcontextprotocol/sdk/client';
 
 /** Minimal 2-step workflow: auto → completed */
 function makeSimpleDef(): WorkflowDefinition {
@@ -287,12 +290,13 @@ describe('mcp tool handlers', () => {
 
     const parsed = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
     expect(parsed['status']).toBe('error');
-    expect(parsed['agent_action']).toBe('report_to_user');
+    expect(parsed['agent_action']).toBe('stop');
     expect(Array.isArray(parsed['next_actions'])).toBe(true);
     expect((parsed['next_actions'] as unknown[]).length).toBe(0);
     expect((parsed['errors'] as string[])[0]).toContain('unexpected failure');
     expect(parsed['run_id']).toBe('test-run');
     expect(parsed['command']).toBe('review_security');
+    expect(parsed['error_code']).toBe('ENGINE_INTERNAL');
   });
 
   it('handleExecuteStepTool propagates WorkflowError.agentAction to MCP response', async () => {
@@ -327,6 +331,7 @@ describe('mcp tool handlers', () => {
     expect(parsed['status']).toBe('error');
     expect(parsed['agent_action']).toBe('report_to_user');
     expect((parsed['errors'] as string[])[0]).toContain('Run not found');
+    expect(parsed['error_code']).toBe('STATE_RUN_NOT_FOUND');
   });
 
   it('handleGetRunState returns run summary', async () => {
@@ -637,5 +642,53 @@ describe('mcp tool handlers', () => {
     expect(parsed['status']).toBe('error');
     expect(parsed['agent_action']).toBe('wait_and_proceed');
     expect(parsed['retry_after']).toBe(30);
+  });
+});
+
+describe('registerStartRun — ResponseEnvelope error shape', () => {
+  it('emits error_code when workflow is not found', async () => {
+    const server = new McpServer({ name: 'test', version: '0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    registerStartRun(server, {});
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test-client', version: '0' });
+    await client.connect(clientTransport);
+    const result = await client.callTool({
+      name: 'start_run',
+      arguments: { workflow_id: 'nonexistent' },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+    const envelope = JSON.parse(text) as Record<string, unknown>;
+    expect(envelope['status']).toBe('error');
+    expect(envelope['error_code']).toBe('STATE_WORKFLOW_NOT_FOUND');
+    expect(envelope['command']).toBe('start_run');
+    expect(envelope['run_id']).toBe('');
+    expect(envelope['run_version']).toBe(0);
+    expect(Array.isArray(envelope['next_actions'])).toBe(true);
+    await client.close();
+  });
+});
+
+describe('registerSubmitHumanResponse — ResponseEnvelope error shape', () => {
+  it('emits error_code when run is not found', async () => {
+    const server = new McpServer({ name: 'test', version: '0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    registerSubmitHumanResponse(server, {});
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test-client', version: '0' });
+    await client.connect(clientTransport);
+    const result = await client.callTool({
+      name: 'submit_human_response',
+      arguments: { run_id: 'no-such-run', gate_id: 'g1', choice: 'approve' },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+    const envelope = JSON.parse(text) as Record<string, unknown>;
+    expect(envelope['status']).toBe('error');
+    expect(envelope['error_code']).toBe('STATE_RUN_NOT_FOUND');
+    expect(envelope['command']).toBe('submit_human_response');
+    expect(envelope['run_id']).toBe('no-such-run');
+    expect(envelope['run_version']).toBe(0);
+    expect(Array.isArray(envelope['next_actions'])).toBe(true);
+    await client.close();
   });
 });
