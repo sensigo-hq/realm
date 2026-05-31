@@ -11,7 +11,10 @@ import {
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
-import { handleAppendTrace } from './append-trace.js';
+import { handleAppendTrace, registerAppendTrace } from './append-trace.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client } from '@modelcontextprotocol/sdk/client';
 
 function makeWorkflowDef(): WorkflowDefinition {
   return {
@@ -52,81 +55,77 @@ describe('handleAppendTrace', () => {
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
   });
 
-  it('returns STEP_NOT_ELIGIBLE with step_state: not_found when run_id is unknown', async () => {
-    const result = await handleAppendTrace(
-      { run_id: 'nonexistent-run', step_id: 'step-agent', entries: [] },
-      { runStore, workflowStore, traceBufferStore },
-    );
-    expect(result.status).toBe('error');
-    if (result.status === 'error') {
-      expect(result.code).toBe('STEP_NOT_ELIGIBLE');
-      expect(result.agent_action).toBe('report_to_user');
-      expect(result.details?.['step_state']).toBe('not_found');
-    }
+  it('throws STATE_RUN_NOT_FOUND when run_id is unknown', async () => {
+    await expect(
+      handleAppendTrace(
+        { run_id: 'nonexistent-run', step_id: 'step-agent', entries: [] },
+        { runStore, workflowStore, traceBufferStore },
+      ),
+    ).rejects.toMatchObject({
+      code: 'STATE_RUN_NOT_FOUND',
+      agentAction: 'report_to_user',
+    });
   });
 
-  it('returns STEP_NOT_ELIGIBLE with step_state: not_found when step_id is not in the workflow', async () => {
+  it('throws STEP_NOT_FOUND when step_id is not in the workflow', async () => {
     const run = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
     });
-    const result = await handleAppendTrace(
-      { run_id: run.id, step_id: 'nonexistent-step', entries: [] },
-      { runStore, workflowStore, traceBufferStore },
-    );
-    expect(result.status).toBe('error');
-    if (result.status === 'error') {
-      expect(result.code).toBe('STEP_NOT_ELIGIBLE');
-      expect(result.agent_action).toBe('report_to_user');
-      expect(result.details?.['step_state']).toBe('not_found');
-    }
+    await expect(
+      handleAppendTrace(
+        { run_id: run.id, step_id: 'nonexistent-step', entries: [] },
+        { runStore, workflowStore, traceBufferStore },
+      ),
+    ).rejects.toMatchObject({
+      code: 'STEP_NOT_FOUND',
+      agentAction: 'report_to_user',
+    });
   });
 
-  it('returns STEP_NOT_ELIGIBLE with step_type: not_agent_step when the step is auto', async () => {
+  it('throws STATE_STEP_NOT_ELIGIBLE when the step is auto', async () => {
     const run = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
     });
-    const result = await handleAppendTrace(
-      { run_id: run.id, step_id: 'step-auto', entries: [{ event: 'test' }] },
-      { runStore, workflowStore, traceBufferStore },
-    );
-    expect(result.status).toBe('error');
-    if (result.status === 'error') {
-      expect(result.code).toBe('STEP_NOT_ELIGIBLE');
-      expect(result.agent_action).toBe('report_to_user');
-      expect(result.details?.['step_type']).toBe('not_agent_step');
-    }
+    await expect(
+      handleAppendTrace(
+        { run_id: run.id, step_id: 'step-auto', entries: [{ event: 'test' }] },
+        { runStore, workflowStore, traceBufferStore },
+      ),
+    ).rejects.toMatchObject({
+      code: 'STATE_STEP_NOT_ELIGIBLE',
+      agentAction: 'report_to_user',
+      details: { step_type: 'auto' },
+    });
   });
 
-  it('returns STEP_NOT_ELIGIBLE with step_state: already_claimed when step is in completed_steps', async () => {
+  it('throws STATE_STEP_NOT_ELIGIBLE when step is in completed_steps', async () => {
     const run = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
     });
-    // Manually update run to mark step-agent as completed.
     await runStore.update({
       ...run,
       completed_steps: ['step-auto', 'step-agent'],
       in_progress_steps: [],
     });
-
-    const result = await handleAppendTrace(
-      { run_id: run.id, step_id: 'step-agent', entries: [{ event: 'test' }] },
-      { runStore, workflowStore, traceBufferStore },
-    );
-    expect(result.status).toBe('error');
-    if (result.status === 'error') {
-      expect(result.code).toBe('STEP_NOT_ELIGIBLE');
-      expect(result.agent_action).toBe('report_to_user');
-      expect(result.details?.['step_state']).toBe('already_claimed');
-    }
+    await expect(
+      handleAppendTrace(
+        { run_id: run.id, step_id: 'step-agent', entries: [{ event: 'test' }] },
+        { runStore, workflowStore, traceBufferStore },
+      ),
+    ).rejects.toMatchObject({
+      code: 'STATE_STEP_NOT_ELIGIBLE',
+      agentAction: 'report_to_user',
+      details: { step_state: 'already_claimed' },
+    });
   });
 
-  it('returns STEP_NOT_ELIGIBLE with step_state: already_claimed when step is in in_progress_steps', async () => {
+  it('throws STATE_STEP_NOT_ELIGIBLE when step is in in_progress_steps', async () => {
     const run = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
@@ -136,17 +135,16 @@ describe('handleAppendTrace', () => {
       ...run,
       in_progress_steps: ['step-agent'],
     });
-
-    const result = await handleAppendTrace(
-      { run_id: run.id, step_id: 'step-agent', entries: [{ event: 'test' }] },
-      { runStore, workflowStore, traceBufferStore },
-    );
-    expect(result.status).toBe('error');
-    if (result.status === 'error') {
-      expect(result.code).toBe('STEP_NOT_ELIGIBLE');
-      expect(result.agent_action).toBe('report_to_user');
-      expect(result.details?.['step_state']).toBe('already_claimed');
-    }
+    await expect(
+      handleAppendTrace(
+        { run_id: run.id, step_id: 'step-agent', entries: [{ event: 'test' }] },
+        { runStore, workflowStore, traceBufferStore },
+      ),
+    ).rejects.toMatchObject({
+      code: 'STATE_STEP_NOT_ELIGIBLE',
+      agentAction: 'report_to_user',
+      details: { step_state: 'in_progress' },
+    });
   });
 
   it('returns status: ok with AppendResult fields when step is eligible and entries are valid', async () => {
@@ -235,5 +233,90 @@ describe('handleAppendTrace', () => {
       // Only 'valid_event' survives normalization.
       expect(result.buffer_count).toBe(1);
     }
+  });
+});
+
+describe('registerAppendTrace — ResponseEnvelope error shape', () => {
+  let runDir: string;
+  let workflowDir: string;
+  let runStore: JsonFileStore;
+  let workflowStore: JsonWorkflowStore;
+  let traceBufferStore: InMemoryTraceBufferStore;
+  let client: Client;
+
+  beforeEach(async () => {
+    runDir = await mkdtemp(join(tmpdir(), 'realm-append-reg-runs-'));
+    workflowDir = await mkdtemp(join(tmpdir(), 'realm-append-reg-wf-'));
+    runStore = new JsonFileStore(runDir);
+    workflowStore = new JsonWorkflowStore(workflowDir);
+    traceBufferStore = new InMemoryTraceBufferStore();
+
+    const def = makeWorkflowDef();
+    await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+
+    const server = new McpServer({ name: 'test', version: '0.0.0' });
+    registerAppendTrace(server, { runStore, workflowStore, traceBufferStore });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    client = new Client({ name: 'test-client', version: '0.0.0' });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  });
+
+  async function callAppendTrace(args: {
+    run_id: string;
+    step_id: string;
+    entries: unknown[];
+  }): Promise<Record<string, unknown>> {
+    const raw = await client.callTool({ name: 'append_trace', arguments: args });
+    const content = (raw as { content: Array<{ type: string; text: string }> }).content;
+    return JSON.parse(content[0]!.text) as Record<string, unknown>;
+  }
+
+  it('returns ResponseEnvelope with error_code on run_id not found', async () => {
+    const envelope = await callAppendTrace({
+      run_id: 'ghost-run',
+      step_id: 'step-agent',
+      entries: [],
+    });
+    expect(envelope['status']).toBe('error');
+    expect(envelope['error_code']).toBe('STATE_RUN_NOT_FOUND');
+    expect(envelope['run_id']).toBe('ghost-run');
+    expect(envelope['command']).toBe('append_trace');
+    expect(typeof envelope['context_hint']).toBe('string');
+    expect(Array.isArray(envelope['next_actions'])).toBe(true);
+    expect(Array.isArray(envelope['errors'])).toBe(true);
+  });
+
+  it('returns ResponseEnvelope with error_code on step not found', async () => {
+    const run = await runStore.create({
+      workflowId: 'append-trace-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const envelope = await callAppendTrace({
+      run_id: run.id,
+      step_id: 'no-such-step',
+      entries: [],
+    });
+    expect(envelope['status']).toBe('error');
+    expect(envelope['error_code']).toBe('STEP_NOT_FOUND');
+    expect(envelope['run_id']).toBe(run.id);
+    expect(envelope['command']).toBe('append_trace');
+    expect(typeof envelope['context_hint']).toBe('string');
+  });
+
+  it('returns ResponseEnvelope with error_code on step not eligible', async () => {
+    const run = await runStore.create({
+      workflowId: 'append-trace-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const envelope = await callAppendTrace({
+      run_id: run.id,
+      step_id: 'step-auto',
+      entries: [],
+    });
+    expect(envelope['status']).toBe('error');
+    expect(envelope['error_code']).toBe('STATE_STEP_NOT_ELIGIBLE');
+    expect(envelope['run_id']).toBe(run.id);
   });
 });

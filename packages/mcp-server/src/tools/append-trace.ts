@@ -4,13 +4,13 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   JsonWorkflowStore,
   JsonFileStore,
-  resolvePreExecutionAgentAction,
+  WorkflowError,
+  buildPreExecutionErrorEnvelope,
   type AppendResult,
   type TraceBufferStore,
   type AgentTraceEntry,
-  type AgentAction,
+  type ResponseEnvelope,
 } from '@sensigo/realm';
-import { WorkflowError } from '@sensigo/realm';
 import { traceEntrySchema } from './execute-step.js';
 
 export interface HandleAppendTraceStores {
@@ -19,20 +19,15 @@ export interface HandleAppendTraceStores {
   traceBufferStore?: TraceBufferStore;
 }
 
-export type AppendTraceResult =
-  | ({ status: 'ok' } & AppendResult)
-  | {
-      status: 'error';
-      code: string;
-      message: string;
-      agent_action: AgentAction;
-      details?: Record<string, unknown>;
-    };
+export type AppendTraceOkResult = { status: 'ok' } & AppendResult;
 
 /**
  * Business logic for the append_trace tool.
  * Buffers trace entries to the WAL for (runId, stepId). Entries are merged with
  * any entries submitted at execute_step finalization.
+ *
+ * Throws WorkflowError for all error conditions. Callers (typically
+ * registerAppendTrace) catch and convert to ResponseEnvelope.
  */
 export async function handleAppendTrace(
   args: {
@@ -41,27 +36,13 @@ export async function handleAppendTrace(
     entries: AgentTraceEntry[];
   },
   stores?: HandleAppendTraceStores,
-): Promise<AppendTraceResult> {
+): Promise<AppendTraceOkResult> {
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
   const traceBufferStore = stores?.traceBufferStore;
 
-  // 1. Load the run.
-  let run;
-  try {
-    run = await runStore.get(args.run_id);
-  } catch (err) {
-    if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
-      return {
-        status: 'error',
-        code: 'STEP_NOT_ELIGIBLE',
-        message: `Run '${args.run_id}' not found.`,
-        agent_action: 'report_to_user',
-        details: { step_state: 'not_found' },
-      };
-    }
-    throw err;
-  }
+  // 1. Load the run. Throws STATE_RUN_NOT_FOUND if missing.
+  const run = await runStore.get(args.run_id);
 
   // 2. Load the workflow definition.
   const definition = await workflowStore.get(run.workflow_id);
@@ -69,44 +50,50 @@ export async function handleAppendTrace(
   // 3. Find the step in the definition.
   const stepDef = definition.steps[args.step_id];
   if (stepDef === undefined) {
-    return {
-      status: 'error',
-      code: 'STEP_NOT_ELIGIBLE',
-      message: `Step '${args.step_id}' not found in workflow '${run.workflow_id}'.`,
-      agent_action: 'report_to_user',
-      details: { step_state: 'not_found' },
-    };
+    throw new WorkflowError(`Step '${args.step_id}' not found in workflow '${run.workflow_id}'.`, {
+      code: 'STEP_NOT_FOUND',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: { step_id: args.step_id, workflow_id: run.workflow_id, run_version: run.version },
+    });
   }
 
   // 4. Check step type — only agent steps support append_trace.
   if (stepDef.execution !== 'agent') {
-    return {
-      status: 'error',
-      code: 'STEP_NOT_ELIGIBLE',
-      message: `Step '${args.step_id}' is not an agent step (execution: '${stepDef.execution}').`,
-      agent_action: 'report_to_user',
-      details: { step_type: 'not_agent_step' },
-    };
+    throw new WorkflowError(
+      `Step '${args.step_id}' is not an agent step (execution: '${stepDef.execution}').`,
+      {
+        code: 'STATE_STEP_NOT_ELIGIBLE',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: { step_id: args.step_id, step_type: stepDef.execution, run_version: run.version },
+      },
+    );
   }
 
   // 5. Check step eligibility — must not be completed, failed, or in-progress.
   if (run.completed_steps.includes(args.step_id) || run.failed_steps.includes(args.step_id)) {
-    return {
-      status: 'error',
-      code: 'STEP_NOT_ELIGIBLE',
-      message: `Step '${args.step_id}' has already been claimed (completed or failed).`,
-      agent_action: 'report_to_user',
-      details: { step_state: 'already_claimed' },
-    };
+    throw new WorkflowError(
+      `Step '${args.step_id}' has already been claimed (completed or failed).`,
+      {
+        code: 'STATE_STEP_NOT_ELIGIBLE',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: { step_id: args.step_id, step_state: 'already_claimed', run_version: run.version },
+      },
+    );
   }
   if (run.in_progress_steps.includes(args.step_id)) {
-    return {
-      status: 'error',
-      code: 'STEP_NOT_ELIGIBLE',
-      message: `Step '${args.step_id}' is currently being executed by execute_step.`,
-      agent_action: 'report_to_user',
-      details: { step_state: 'already_claimed' },
-    };
+    throw new WorkflowError(`Step '${args.step_id}' is currently being executed by execute_step.`, {
+      code: 'STATE_STEP_NOT_ELIGIBLE',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: { step_id: args.step_id, step_state: 'in_progress', run_version: run.version },
+    });
   }
 
   // Steps 6 + 7: Require buffer store for any append_trace operation.
@@ -159,27 +146,38 @@ export function registerAppendTrace(
           content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
         };
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const code = err instanceof WorkflowError ? err.code : 'ENGINE_INTERNAL';
-        const agentAction =
-          err instanceof WorkflowError ? resolvePreExecutionAgentAction(err) : 'report_to_user';
+        const workflowErr =
+          err instanceof WorkflowError
+            ? err
+            : new WorkflowError(err instanceof Error ? err.message : String(err), {
+                code: 'ENGINE_INTERNAL',
+                category: 'ENGINE',
+                agentAction: 'stop',
+                retryable: false,
+              });
+        const runVersion =
+          typeof workflowErr.details['run_version'] === 'number'
+            ? workflowErr.details['run_version']
+            : 0;
+        const contextHint =
+          workflowErr.code === 'STATE_RUN_NOT_FOUND'
+            ? `Run '${args.run_id}' not found.`
+            : workflowErr.code === 'STEP_NOT_FOUND'
+              ? `Step '${args.step_id}' not found in the workflow.`
+              : workflowErr.code === 'STATE_STEP_NOT_ELIGIBLE'
+                ? `Step '${args.step_id}' is not eligible for trace buffering.`
+                : workflowErr.code === 'BUFFER_FULL'
+                  ? `Trace buffer is full for step '${args.step_id}'.`
+                  : `An error occurred during append_trace for run '${args.run_id}'.`;
+        const envelope: ResponseEnvelope = buildPreExecutionErrorEnvelope(
+          'append_trace',
+          args.run_id,
+          runVersion,
+          workflowErr,
+          contextHint,
+        );
         return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(
-                {
-                  status: 'error',
-                  code,
-                  message,
-                  agent_action: agentAction,
-                  details: err instanceof WorkflowError ? err.details : undefined,
-                },
-                null,
-                2,
-              ),
-            },
-          ],
+          content: [{ type: 'text' as const, text: JSON.stringify(envelope, null, 2) }],
         };
       }
     },

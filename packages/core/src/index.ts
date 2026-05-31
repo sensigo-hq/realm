@@ -8,7 +8,12 @@ export * from './store/store-interface.js';
 export { JsonFileStore } from './store/json-file-store.js';
 export { executeStep } from './engine/execution-loop.js';
 export type { StepDispatcher, ExecuteStepOptions } from './engine/execution-loop.js';
-export { submitHumanResponse, executeChain, buildNextActions } from './engine/execution-loop.js';
+export {
+  submitHumanResponse,
+  executeChain,
+  buildNextActions,
+  buildPreExecutionErrorEnvelope,
+} from './engine/execution-loop.js';
 export type { SubmitGateOptions, ExecuteChainOptions } from './engine/execution-loop.js';
 export {
   findEligibleSteps,
