@@ -116,11 +116,11 @@ const SOURCE_VERSIONS = [
 for (const { file, pattern, replacement } of SOURCE_VERSIONS) {
   const fullPath = join(ROOT, file);
   const original = readFileSync(fullPath, 'utf-8');
-  const updated = original.replace(pattern, replacement);
-  if (original === updated) {
+  if (!pattern.test(original)) {
     console.error(`Error: Version pattern not found in ${file}. Cannot update version.`);
     process.exit(1);
   }
+  const updated = original.replace(pattern, replacement);
   writeFileSync(fullPath, updated, 'utf-8');
   console.log(`  ${file} → ${version}`);
 }
