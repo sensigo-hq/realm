@@ -190,12 +190,17 @@ function computeBackoff(config: RetryConfig, attemptNum: number): number {
 
 /**
  * Resolves and calls the service adapter for an auto step with `uses_service`.
+ *
+ * @param rateLimiterRegistry - Stable registry for rate-limiter state. Must be the same
+ *   instance across all retry attempts of this step so that pause/resume coordination
+ *   is preserved. Created once per executeStep() invocation and shared here.
  */
 async function callAdapter(
   stepDef: StepDefinition,
   definition: WorkflowDefinition,
   options: ExecuteStepOptions,
   pendingRun: RunRecord,
+  rateLimiterRegistry: ExtensionRegistry,
   signal?: AbortSignal,
 ): Promise<{
   output: Record<string, unknown>;
@@ -213,8 +218,9 @@ async function callAdapter(
     });
   }
 
-  const registry = options.registry;
-  const adapter = (registry ?? createDefaultRegistry()).getAdapter(serviceDef.adapter);
+  // Adapter lookup: use the caller-provided registry for custom adapters; fall back to
+  // the built-in default registry (FileSystemAdapter etc.) when none is provided.
+  const adapter = (options.registry ?? createDefaultRegistry()).getAdapter(serviceDef.adapter);
   if (adapter === undefined) {
     throw new WorkflowError(
       `Adapter '${serviceDef.adapter}' for service '${serviceName}' is not registered`,
@@ -255,9 +261,11 @@ async function callAdapter(
   }
 
   // Proactive rate limiting: acquire a token before calling the service.
-  // Skipped silently when no explicit registry is provided.
-  if (registry !== undefined && serviceDef.rate_limit?.requests_per_second !== undefined) {
-    await registry.getOrCreateRateLimiter(serviceName, serviceDef.rate_limit).acquire(signal);
+  // rateLimiterRegistry is always defined (step-scoped; see executeStep).
+  if (serviceDef.rate_limit?.requests_per_second !== undefined) {
+    await rateLimiterRegistry
+      .getOrCreateRateLimiter(serviceName, serviceDef.rate_limit)
+      .acquire(signal);
   }
 
   let response: ServiceResponse;
@@ -281,23 +289,29 @@ async function callAdapter(
           serviceDef.rate_limit?.fallback_retry_seconds ??
           adapter?.defaultRetryAfterSeconds;
 
-        // Pause the token bucket (if configured) to hold off concurrent retries.
+        // Pause the token bucket for the resolved retry window.
+        // The cap (Math.min with max_retry_seconds) is applied before calling pause() so
+        // that concurrent callers are never held longer than max_retry_seconds. The pause
+        // fires before the fail-fast throw below — this is intentional: even when the
+        // current step exits immediately, the bucket is paused to prevent a burst of
+        // immediate retries from concurrent steps against an already-overloaded service.
         const maxRetry = serviceDef.rate_limit?.max_retry_seconds;
         if (
-          registry !== undefined &&
           serviceDef.rate_limit?.requests_per_second !== undefined &&
           resolvedRetryAfter !== undefined
         ) {
           const pauseDuration =
             maxRetry !== undefined ? Math.min(resolvedRetryAfter, maxRetry) : resolvedRetryAfter;
           if (pauseDuration > 0) {
-            registry
+            rateLimiterRegistry
               .getOrCreateRateLimiter(serviceName, serviceDef.rate_limit)
               .pause(pauseDuration);
           }
         }
 
-        // Fail fast if the retry window exceeds max_retry_seconds.
+        // Fail fast when the retry window exceeds max_retry_seconds.
+        // The pause above has already fired with a capped duration — this throw
+        // signals the retry loop to stop rather than wait the full retry window.
         if (
           maxRetry !== undefined &&
           resolvedRetryAfter !== undefined &&
@@ -779,6 +793,13 @@ export async function executeStep(
   const timeoutMs =
     stepDef?.timeout_seconds !== undefined ? stepDef.timeout_seconds * 1000 : undefined;
 
+  // Create a stable rate-limiter registry for all retry attempts of this step.
+  // Shared state ensures that a pause() triggered on attempt N is still in effect
+  // when the proactive acquire() runs on attempt N+1. When the caller provides an
+  // explicit registry, it is used directly (also enables cross-step coordination);
+  // otherwise a step-scoped fallback is created so rate limiting still works.
+  const rateLimiterRegistry: ExtensionRegistry = options.registry ?? new ExtensionRegistry();
+
   let output: Record<string, unknown> = {};
   let dispatchError: WorkflowError | null = null;
   let attemptsUsed = 0;
@@ -799,7 +820,7 @@ export async function executeStep(
         resolvedParams: Record<string, unknown> | undefined;
       }> => {
         if (stepDef?.execution === 'auto' && stepDef.uses_service !== undefined) {
-          return callAdapter(stepDef, definition, options, pendingRun, signal);
+          return callAdapter(stepDef, definition, options, pendingRun, rateLimiterRegistry, signal);
         } else if (stepDef?.execution === 'auto' && stepDef.handler !== undefined) {
           return callHandler(stepDef, options, pendingRun, evidenceByStep, signal).then(
             (result) => ({ output: result, resolvedParams: undefined }),
