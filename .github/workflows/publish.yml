@@ -1,0 +1,48 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write # required for OIDC trusted publishing
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false # never cache in release builds
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Pin inter-package dependency ranges
+        run: node scripts/pin-deps.mjs
+
+      - name: Publish @sensigo/realm
+        run: npm publish
+        working-directory: packages/core
+
+      - name: Publish @sensigo/realm-mcp
+        run: npm publish
+        working-directory: packages/mcp-server
+
+      - name: Publish @sensigo/realm-testing
+        run: npm publish
+        working-directory: packages/testing
+
+      - name: Publish @sensigo/realm-cli
+        run: npm publish
+        working-directory: packages/cli

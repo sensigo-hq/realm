@@ -70,7 +70,7 @@ Follow this checklist in order before merging any branch into `main`.
 
 > Run Part B after the Part A PR has been merged and your local `main` is up to date (`git switch main && git pull`).
 >
-> This repository uses a coordinated release script (`scripts/release.mjs`) that bumps all four packages atomically — `@sensigo/realm`, `@sensigo/realm-mcp`, `@sensigo/realm-testing`, `@sensigo/realm-cli` — and publishes them in dependency order. Do not attempt manual per-package releases; the script is the authoritative release mechanism.
+> This repository uses a two-part release process. The release script (`scripts/release.mjs`) bumps all four packages atomically and creates the release git commit and tag. Publishing to npm is handled by `.github/workflows/publish.yml`, which is triggered automatically when the tag is pushed after the release PR is merged. Do not attempt manual per-package publishes; the workflow is the authoritative publish mechanism.
 >
 > A package with `"private": true` in its manifest is not published. Part B does not apply to it.
 
@@ -102,7 +102,7 @@ git commit -m "docs: update changelog for v<version>"
 npm run release -- --version <version>
 ```
 
-The script: checks the working tree is clean, bumps `version` in all four `package.json` files and five source-file `VERSION` constants, pins inter-package dependency ranges, runs `npm run build`, publishes each package with `npm publish --access public` in dependency order, restores workspace dependency ranges, stages the changed files, commits with `chore: release v<version>`, and creates the git tag `v<version>`. If any step fails, the script exits without creating the commit or tag — fix the issue and re-run.
+The script: checks the working tree is clean, bumps `version` in all four `package.json` files and five source-file `VERSION` constants, runs `npm run build` as a local sanity check, stages the changed files, commits with `chore: release v<version>`, and creates the git tag `v<version>`. It does **not** publish — publishing is handled by GitHub Actions when the tag is pushed. If any step fails, the script exits without creating the commit or tag — fix the issue and re-run.
 
 **4. Push and open a PR**
 
@@ -121,7 +121,13 @@ git switch main && git pull
 git push --tags
 ```
 
-**6. Verify the published artifact**
+Pushing the tag triggers `.github/workflows/publish.yml`, which builds and publishes all four packages to npm using OIDC Trusted Publishing — no token required.
+
+**6. Verify the publish workflow**
+
+Go to https://github.com/sensigo-hq/realm/actions and confirm the **Publish** workflow triggered and completed successfully on the `v<version>` tag. Each of the four `npm publish` steps should be green.
+
+**7. Verify the published artifact**
 
 Install the package in a clean environment and confirm the minimal working example from the README runs correctly:
 
@@ -129,18 +135,14 @@ Install the package in a clean environment and confirm the minimal working examp
 mkdir /tmp/test-install && cd /tmp/test-install
 npm init -y
 npm install @sensigo/realm@<version>
-node -e "<minimal working example from README>"
+node -e "const { VERSION } = require('@sensigo/realm'); console.log(VERSION);"
 ```
 
-If `publishConfig.registry` is set on the package, add `--registry <registry-url>` to the install command.
+**8. Rollback note**
 
-**7. Rollback note**
+If the publish workflow fails after some packages are published but before all four complete: re-push the tag (delete and re-push, or re-trigger the workflow manually). `npm publish` will skip packages already at the target version with a `EPUBLISHCONFLICT` error. Confirm all four packages appear on the registry before proceeding.
 
-If step 3 (`npm run release`) fails before completing, no commit or tag has been created. Fix the issue and re-run from step 3.
-
-If a publish error occurs after some packages are already published but before all four complete: the script exits. Identify which packages were published, fix the issue (credentials, registry, network), and re-run `npm run release` — `npm publish` will skip packages already at the target version with a `409 conflict` or `EPUBLISHCONFLICT` error. Confirm all four packages appear on the registry before proceeding.
-
-If the tag was pushed but verification (step 6) reveals a broken artifact: publish a patch release following this entire Part B sequence with an incremented patch version.
+If the tag was pushed but verification (step 7) reveals a broken artifact: publish a patch release following this entire Part B sequence with an incremented patch version.
 
 ---
 
