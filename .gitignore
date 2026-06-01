@@ -6,12 +6,9 @@ prompts/
 reports/
 plans/
 
-# Local agent customisation files — personal agents stay private, shared Realm agent is committed
-.github/agents/master-architect.agent.md
-.github/agents/implementation-agent.agent.md
-.github/agents/marketing-god.agent.md
-.github/agents/peer-architect.agent.md
-.github/agents/design-reviewer.agent.md
+# Local agent customisation files — all private by default; only the shared Realm agent is committed
+.github/agents/*.agent.md
+!.github/agents/realm.agent.md
 .github/instructions/project-info-prompt.md
 
 # Dependencies
