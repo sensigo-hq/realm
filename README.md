@@ -13,7 +13,7 @@ You define workflows in YAML. The engine enforces step order, validates every ag
 | Package                  | npm                                                                                                                 | Description                                                              |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `@sensigo/realm`         | [![npm](https://img.shields.io/npm/v/@sensigo/realm)](https://www.npmjs.com/package/@sensigo/realm)                 | Core engine — state guard, execution loop, evidence capture              |
-| `@sensigo/realm-cli`     | [![npm](https://img.shields.io/npm/v/@sensigo/realm-cli)](https://www.npmjs.com/package/@sensigo/realm-cli)         | `realm` CLI — 17 commands for building, operating, and serving workflows |
+| `@sensigo/realm-cli`     | [![npm](https://img.shields.io/npm/v/@sensigo/realm-cli)](https://www.npmjs.com/package/@sensigo/realm-cli)         | `realm` CLI — 18 commands for building, operating, and serving workflows |
 | `@sensigo/realm-mcp`     | [![npm](https://img.shields.io/npm/v/@sensigo/realm-mcp)](https://www.npmjs.com/package/@sensigo/realm-mcp)         | `realm-mcp` MCP server — 7 tools for AI agent connections                |
 | `@sensigo/realm-testing` | [![npm](https://img.shields.io/npm/v/@sensigo/realm-testing)](https://www.npmjs.com/package/@sensigo/realm-testing) | Testing utilities — fixtures, assertions, in-memory store                |
 
@@ -160,6 +160,7 @@ When no registered workflow matches the task, the agent calls `create_workflow` 
 | `realm workflow migrate`         | Back-fill provenance fields on local workflow definitions from earlier versions |
 | `realm mcp`                      | Start the MCP server over stdio (for local AI agents)                           |
 | `realm serve`                    | Start the MCP server over HTTP with Bearer token auth (for hosted platforms)    |
+| `realm webhook`                  | Start a webhook server that creates runs from GitHub events                     |
 
 Run `realm <command> --help` for full options on any command.
 

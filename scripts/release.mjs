@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// scripts/release.mjs — Coordinated npm release script for the Realm monorepo.
-// Bumps all four packages to the same version, pins inter-package deps,
-// publishes to npm in dependency order, then restores workspace "*" ranges.
+// scripts/release.mjs — Coordinated release script for the Realm monorepo.
+// Bumps all four packages to the same version, builds, and creates the release
+// git commit and tag. Publishing to npm is handled by .github/workflows/publish.yml
+// which is triggered when the tag is pushed after the release PR is merged.
 //
 // Usage: npm run release -- --version 0.1.0
 
@@ -20,13 +21,6 @@ const PACKAGES = [
   { dir: 'packages/testing', name: '@sensigo/realm-testing' },
   { dir: 'packages/cli', name: '@sensigo/realm-cli' },
 ];
-
-// Internal deps each package declares (only deps entries, not devDependencies)
-const INTERNAL_DEPS = {
-  'packages/mcp-server': ['@sensigo/realm'],
-  'packages/testing': ['@sensigo/realm'],
-  'packages/cli': ['@sensigo/realm', '@sensigo/realm-mcp', '@sensigo/realm-testing'],
-};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -116,78 +110,21 @@ const SOURCE_VERSIONS = [
 for (const { file, pattern, replacement } of SOURCE_VERSIONS) {
   const fullPath = join(ROOT, file);
   const original = readFileSync(fullPath, 'utf-8');
-  const updated = original.replace(pattern, replacement);
-  if (original === updated) {
+  if (!pattern.test(original)) {
     console.error(`Error: Version pattern not found in ${file}. Cannot update version.`);
     process.exit(1);
   }
+  const updated = original.replace(pattern, replacement);
   writeFileSync(fullPath, updated, 'utf-8');
   console.log(`  ${file} → ${version}`);
 }
 
-// ─── Step 4: Pin inter-package dependency ranges ─────────────────────────────
-// Snapshot originals first so step 7 restores exactly what was there,
-// regardless of what the original values were.
-
-const originalDepRanges = {};
-for (const [dir, internalDeps] of Object.entries(INTERNAL_DEPS)) {
-  originalDepRanges[dir] = {};
-  const { pkg } = readPkg(dir);
-  for (const depName of internalDeps) {
-    originalDepRanges[dir][depName] = pkg.dependencies?.[depName];
-  }
-}
-
-console.log('Pinning inter-package dependency ranges...');
-for (const [dir, internalDeps] of Object.entries(INTERNAL_DEPS)) {
-  const { path, pkg } = readPkg(dir);
-  for (const depName of internalDeps) {
-    if (pkg.dependencies !== undefined && pkg.dependencies[depName] !== undefined) {
-      pkg.dependencies[depName] = `^${version}`;
-    }
-  }
-  writePkg(path, pkg);
-  console.log(`  ${dir}/package.json — pinned: ${internalDeps.join(', ')}`);
-}
-
-// ─── Step 5: Build ───────────────────────────────────────────────────────────
+// ─── Step 4: Build ───────────────────────────────────────────────────────────
 
 console.log('Building...');
 execSync('npm run build', { stdio: 'inherit', cwd: ROOT });
 
-// ─── Step 6: Publish in dependency order ─────────────────────────────────────
-
-console.log('Publishing packages...');
-for (const { dir, name } of PACKAGES) {
-  console.log(`  Publishing ${name}...`);
-  try {
-    execSync('npm publish --access public', {
-      stdio: 'inherit',
-      cwd: join(ROOT, dir),
-    });
-  } catch (err) {
-    console.error(`Error: Failed to publish ${name}.`);
-    console.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
-}
-
-// ─── Step 7: Restore original dep ranges from snapshot ───────────────────────
-
-console.log('Restoring workspace dependency ranges...');
-for (const [dir, internalDeps] of Object.entries(INTERNAL_DEPS)) {
-  const { path, pkg } = readPkg(dir);
-  for (const depName of internalDeps) {
-    const original = originalDepRanges[dir][depName];
-    if (original !== undefined && pkg.dependencies !== undefined) {
-      pkg.dependencies[depName] = original;
-    }
-  }
-  writePkg(path, pkg);
-  console.log(`  ${dir}/package.json — restored: ${internalDeps.join(', ')}`);
-}
-
-// ─── Step 8: Git tag ─────────────────────────────────────────────────────────
+// ─── Step 5: Git tag ─────────────────────────────────────────────────────────
 
 console.log('Creating git commit and tag...');
 execSync(
@@ -197,4 +134,9 @@ execSync(
 execSync(`git commit -m "chore: release v${version}"`, { stdio: 'inherit', cwd: ROOT });
 execSync(`git tag v${version}`, { stdio: 'inherit', cwd: ROOT });
 
-console.log(`\nReleased v${version}. Push with: git push && git push --tags`);
+console.log(`\nRelease commit and tag v${version} created.`);
+console.log('Next steps:');
+console.log('  1. Push branch:  git push -u origin HEAD');
+console.log('  2. Open and merge the release PR (merge commit, not squash)');
+console.log('  3. Push the tag: git switch main && git pull && git push --tags');
+console.log('     The tag push triggers GitHub Actions to publish to npm.');
