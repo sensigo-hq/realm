@@ -143,6 +143,8 @@ steps:
 
 When a step fails (or is skipped), all downstream steps whose `trigger_rule` can no longer be satisfied are automatically moved to `skipped_steps`. For example, if `extract_fields` fails, any step with `depends_on: [extract_fields]` and the default `trigger_rule: all_success` is skipped immediately. The run terminates cleanly with `run_phase: failed` when no eligible or in-progress steps remain.
 
+`when`-condition branches are skipped the same way: once all of a step's dependencies are settled, if the step's `when` expression evaluates to false, the engine moves it to `skipped_steps` immediately. In a mutual-exclusion pattern (two branches with opposite `when` conditions), the inactive branch is skipped as soon as the shared upstream step completes — the run closes cleanly without any finalizer step.
+
 `skipped_steps` is included in `realm run inspect` and the `get_run_state` MCP response.
 
 ---
@@ -175,7 +177,7 @@ steps:
 
 `when` conditions are evaluated against each step's recorded `output_summary`. Comparison is strict — types must match (`"1"` does not equal `1`).
 
-A step whose `when` condition is permanently false is not automatically moved to `skipped_steps` — it stays ineligible. Only `trigger_rule` impossibility triggers automatic skipping.
+Once all of a step's dependencies are settled, the engine evaluates the `when` condition. If it evaluates to false at that point, the step is moved to `skipped_steps` immediately — it does not remain indefinitely ineligible. In a mutual-exclusion pattern (two branches with opposite `when` conditions), the inactive branch is skipped as soon as the shared upstream step completes. No finalizer step is needed to close the run.
 
 ---
 
