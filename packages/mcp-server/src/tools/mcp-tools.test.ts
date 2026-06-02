@@ -692,3 +692,83 @@ describe('registerSubmitHumanResponse — ResponseEnvelope error shape', () => {
     await client.close();
   });
 });
+
+describe('handleGetRunState — abort_context', () => {
+  let runDir: string;
+  let workflowDir: string;
+
+  beforeEach(async () => {
+    runDir = await mkdtemp(join(tmpdir(), 'realm-abort-runs-'));
+    workflowDir = await mkdtemp(join(tmpdir(), 'realm-abort-wf-'));
+  });
+
+  it('abort_context is included when run is aborted by a guard step', async () => {
+    const guardWfDef: WorkflowDefinition = {
+      id: 'guard-abort-wf',
+      name: 'Guard Abort Workflow',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        step_a: { description: 'Agent step', execution: 'agent', depends_on: [] },
+        guard_b: {
+          description: 'Guard step',
+          execution: 'guard',
+          depends_on: ['step_a'],
+          abort_unless: ["step_a.status == 'open'"],
+          abort_message: 'Not open',
+        },
+      },
+    };
+
+    const workflowStore = new JsonWorkflowStore(workflowDir);
+    await workflowStore.register(guardWfDef);
+    const runStore = new JsonFileStore(runDir);
+
+    const startResult = await handleStartRun(
+      { workflow_id: 'guard-abort-wf', params: {} },
+      { runStore, workflowStore },
+    );
+    expect(startResult.status).toBe('ok');
+
+    // Execute step_a with closed status — guard should fire and abort the run.
+    const execResult = await handleExecuteStep(
+      { run_id: startResult.run_id, command: 'step_a', params: { status: 'closed' } },
+      { runStore, workflowStore },
+    );
+    expect(execResult.status).toBe('ok');
+    expect(execResult.next_actions).toHaveLength(0);
+
+    const state = await handleGetRunState({ run_id: startResult.run_id }, { runStore });
+
+    expect(state.run_phase).toBe('aborted');
+    expect(state.terminal_state).toBe(true);
+    expect(state.abort_context).toBeDefined();
+    expect(state.abort_context?.step_id).toBe('guard_b');
+    expect(state.abort_context?.abort_message).toBe('Not open');
+    expect(Array.isArray(state.abort_context?.conditions)).toBe(true);
+  });
+
+  it('abort_context is absent on a non-aborted terminal run', async () => {
+    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const simpleWf: WorkflowDefinition = {
+      id: 'simple-complete-wf',
+      name: 'Simple Complete Workflow',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        'step-a': { description: 'Auto step', execution: 'auto', depends_on: [] },
+      },
+    };
+    await workflowStore.register(simpleWf);
+    const runStore = new JsonFileStore(runDir);
+
+    const startResult = await handleStartRun(
+      { workflow_id: 'simple-complete-wf', params: {} },
+      { runStore, workflowStore },
+    );
+
+    const state = await handleGetRunState({ run_id: startResult.run_id }, { runStore });
+    expect(state.run_phase).toBe('completed');
+    expect(state.abort_context).toBeUndefined();
+  });
+});

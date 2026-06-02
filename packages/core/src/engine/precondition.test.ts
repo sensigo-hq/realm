@@ -7,6 +7,7 @@ import {
   evaluatePrecondition,
   checkPreconditions,
   evaluateAllPreconditions,
+  evaluateGuardConditions,
 } from './precondition.js';
 import { executeStep } from './execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
@@ -122,5 +123,101 @@ describe('evaluateAllPreconditions', () => {
     expect(results[0]!.passed).toBe(false);
     expect(results[1]!.expression).toBe('step_a.count >= 0');
     expect(results[1]!.passed).toBe(true);
+  });
+});
+
+describe('evaluateGuardConditions', () => {
+  it('returns pass when all conditions are true', () => {
+    const evidenceByStep = { step_a: { status: 'open', count: 5 } };
+    const result = evaluateGuardConditions(
+      ["step_a.status == 'open'", 'step_a.count > 0'],
+      evidenceByStep,
+    );
+    expect(result.kind).toBe('pass');
+    if (result.kind === 'pass') {
+      expect(result.conditions).toHaveLength(2);
+      expect(result.conditions[0]!.passed).toBe(true);
+      expect(result.conditions[1]!.passed).toBe(true);
+    }
+  });
+
+  it('returns abort when any condition is false, evaluating all conditions', () => {
+    const evidenceByStep = { step_a: { status: 'closed', count: 5 } };
+    const result = evaluateGuardConditions(
+      ["step_a.status == 'open'", 'step_a.count > 0'],
+      evidenceByStep,
+    );
+    expect(result.kind).toBe('abort');
+    if (result.kind === 'abort') {
+      // All conditions evaluated — not short-circuited
+      expect(result.conditions).toHaveLength(2);
+      expect(result.conditions[0]!.passed).toBe(false);
+      expect(result.conditions[1]!.passed).toBe(true);
+    }
+  });
+
+  it('returns abort with all conditions false when all fail', () => {
+    const evidenceByStep = { step_a: { status: 'closed', count: 0 } };
+    const result = evaluateGuardConditions(
+      ["step_a.status == 'open'", 'step_a.count > 0'],
+      evidenceByStep,
+    );
+    expect(result.kind).toBe('abort');
+    if (result.kind === 'abort') {
+      expect(result.conditions).toHaveLength(2);
+      expect(result.conditions[0]!.passed).toBe(false);
+      expect(result.conditions[1]!.passed).toBe(false);
+    }
+  });
+
+  it('returns resolution_error when a path cannot be resolved', () => {
+    const evidenceByStep = { step_a: { count: 5 } };
+    const result = evaluateGuardConditions(["step_a.missing_field == 'open'"], evidenceByStep);
+    expect(result.kind).toBe('resolution_error');
+    if (result.kind === 'resolution_error') {
+      expect(result.condition).toBe("step_a.missing_field == 'open'");
+      expect(result.unresolvable_path).toBe('step_a.missing_field');
+    }
+  });
+
+  it('returns resolution_error when the step has no evidence', () => {
+    const evidenceByStep: Record<string, Record<string, unknown>> = {};
+    const result = evaluateGuardConditions(["step_a.status == 'open'"], evidenceByStep);
+    expect(result.kind).toBe('resolution_error');
+  });
+
+  it('handles bare path truthy check — true when field is truthy', () => {
+    const evidenceByStep = { step_a: { enabled: true } };
+    const result = evaluateGuardConditions(['step_a.enabled'], evidenceByStep);
+    expect(result.kind).toBe('pass');
+  });
+
+  it('handles bare path truthy check — abort when field is falsy', () => {
+    const evidenceByStep = { step_a: { enabled: false } };
+    const result = evaluateGuardConditions(['step_a.enabled'], evidenceByStep);
+    expect(result.kind).toBe('abort');
+    if (result.kind === 'abort') {
+      expect(result.conditions[0]!.passed).toBe(false);
+    }
+  });
+
+  it('returns pass with all conditions recorded for single passing condition', () => {
+    const evidenceByStep = { step_a: { count: 10 } };
+    const result = evaluateGuardConditions(['step_a.count >= 10'], evidenceByStep);
+    expect(result.kind).toBe('pass');
+    if (result.kind === 'pass') {
+      expect(result.conditions[0]!.condition).toBe('step_a.count >= 10');
+      expect(result.conditions[0]!.resolved_value).toBe(10);
+      expect(result.conditions[0]!.passed).toBe(true);
+    }
+  });
+
+  it('records resolved_value in abort result for each condition', () => {
+    const evidenceByStep = { step_a: { count: 0 } };
+    const result = evaluateGuardConditions(['step_a.count > 5'], evidenceByStep);
+    expect(result.kind).toBe('abort');
+    if (result.kind === 'abort') {
+      expect(result.conditions[0]!.resolved_value).toBe(0);
+    }
   });
 });

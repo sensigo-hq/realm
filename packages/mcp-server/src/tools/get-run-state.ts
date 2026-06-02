@@ -27,6 +27,11 @@ export interface RunStateSummary {
   created_at: string;
   updated_at: string;
   params: Record<string, unknown>;
+  abort_context?: {
+    step_id: string;
+    conditions: Array<{ condition: string; resolved_value: unknown; passed: boolean }>;
+    abort_message?: string;
+  };
 }
 
 /**
@@ -55,6 +60,7 @@ export async function handleGetRunState(
     created_at: run.created_at,
     updated_at: run.updated_at,
     params: run.params,
+    ...(run.aborted_at !== undefined ? { abort_context: run.aborted_at } : {}),
   };
 }
 

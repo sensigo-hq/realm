@@ -14,7 +14,7 @@ import { resolveTemplates } from './template-resolver.js';
 /** Bumped on every breaking change to WorkflowDefinition's serialized format. */
 export const CURRENT_WORKFLOW_SCHEMA_VERSION = 1;
 
-const VALID_EXECUTIONS = new Set(['auto', 'agent']);
+const VALID_EXECUTIONS = new Set(['auto', 'agent', 'guard']);
 const VALID_SERVICE_METHODS = new Set(['fetch', 'create', 'update', 'delete']);
 const VALID_TRIGGER_RULES = new Set<TriggerRule>([
   'all_success',
@@ -244,8 +244,42 @@ export function loadWorkflowFromString(content: string): WorkflowDefinition {
 
     if ('execution' in step && !VALID_EXECUTIONS.has(step['execution'] as string)) {
       errors.push(
-        `Step '${stepName}': invalid execution value '${String(step['execution'])}'; must be 'auto' or 'agent'`,
+        `Step '${stepName}': invalid execution value '${String(step['execution'])}'; must be 'auto', 'agent', or 'guard'`,
       );
+    }
+
+    // Guard step constraints.
+    if (step['execution'] === 'guard') {
+      const prohibited = [
+        'uses_service',
+        'handler',
+        'input_schema',
+        'output_schema',
+        'trust',
+        'agent_profile',
+        'trigger_rule',
+        'timeout_seconds',
+        'service_method',
+        'operation',
+        'input_map',
+        'tools',
+      ];
+      for (const field of prohibited) {
+        if (step[field] !== undefined) {
+          errors.push(`Step '${stepName}': '${field}' is not valid on execution: guard steps`);
+        }
+      }
+      if (step['abort_unless'] === undefined) {
+        errors.push(`Step '${stepName}': execution: guard requires 'abort_unless'`);
+      }
+    }
+
+    // abort_unless and abort_message are only valid on execution: guard steps.
+    if (step['abort_unless'] !== undefined && step['execution'] !== 'guard') {
+      errors.push(`Step '${stepName}': 'abort_unless' is only valid on execution: guard steps`);
+    }
+    if (step['abort_message'] !== undefined && step['execution'] !== 'guard') {
+      errors.push(`Step '${stepName}': 'abort_message' is only valid on execution: guard steps`);
     }
 
     // agent_profile is only valid on agent steps.

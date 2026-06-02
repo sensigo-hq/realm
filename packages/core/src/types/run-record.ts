@@ -58,7 +58,7 @@ export interface EvidenceSnapshot {
   duration_ms: number;
   input_summary: Record<string, unknown>;
   output_summary: Record<string, unknown>;
-  status: 'success' | 'error' | 'skipped';
+  status: 'success' | 'error' | 'skipped' | 'abandoned';
   error?: string;
   evidence_hash: string;
   attempt?: number;
@@ -132,7 +132,13 @@ export interface PendingGate {
  * Derived phase of a workflow run. Always computed from the four step sets and run state;
  * never set directly by callers outside the engine.
  */
-export type RunPhase = 'running' | 'gate_waiting' | 'completed' | 'failed' | 'abandoned';
+export type RunPhase =
+  | 'running'
+  | 'gate_waiting'
+  | 'completed'
+  | 'failed'
+  | 'abandoned'
+  | 'aborted';
 
 /** Snapshot of a single workflow context entry taken at run start. */
 export interface WorkflowContextSnapshot {
@@ -179,4 +185,14 @@ export interface RunRecord {
   terminal_state: boolean;
   terminal_reason?: string;
   pending_gate?: PendingGate;
+  /**
+   * Set by the engine when a guard step fires. Contains the name of the guard step
+   * that caused the abort and its evaluated conditions. Used by deriveRunPhase
+   * and surfaced by get_run_state.
+   */
+  aborted_at?: {
+    step_id: string;
+    conditions: Array<{ condition: string; resolved_value: unknown; passed: boolean }>;
+    abort_message?: string;
+  };
 }
