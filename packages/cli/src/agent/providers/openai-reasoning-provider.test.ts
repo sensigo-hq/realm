@@ -7,9 +7,9 @@ import { ToolCapableLlmProvider, resolveProvider } from './llm-provider.js';
 // ---------- shared mock for the openai package ----------------------------
 const mockCreate = vi.fn();
 vi.mock('openai', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    chat: { completions: { create: mockCreate } },
-  })),
+  default: vi.fn().mockImplementation(function () {
+    return { chat: { completions: { create: mockCreate } } };
+  }),
 }));
 
 // ---------- response builder ----------------------------------------------
