@@ -27,6 +27,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./dist/tools/*.js": {
+      "import": "./dist/tools/*.js",
+      "types": "./dist/tools/*.d.ts"
     }
   },
   "engines": {
