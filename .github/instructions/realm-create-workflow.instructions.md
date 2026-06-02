@@ -239,8 +239,9 @@ them as described in `realm.instructions.md`.
 - `depends_on` accepts at most one step ID per step — dynamic workflows are always linear.
   Submitting more than one dependency causes `agent_action: 'provide_input'`.
 - All steps in a dynamic workflow are `execution: agent` — the engine always returns them to
-  you for execution. `handler:` and `uses_service:` are not available on dynamic steps; use
-  a YAML-registered workflow if you need auto steps, service adapters, or handlers.
+  you for execution. `handler:`, `uses_service:`, and `execution: guard` are not available on
+  dynamic steps; use a YAML-registered workflow if you need auto steps, service adapters,
+  handlers, or guard conditions.
 - `depends_on` references must point to steps earlier in the `steps` array. Forward references
   cause a `provide_input` error at `create_workflow` call time.
 - `trigger_rule` is not supported on dynamically-created workflows. Step sequencing is always

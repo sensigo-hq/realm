@@ -6,15 +6,15 @@ Realm exposes 7 MCP tools. This document covers the full protocol: tool call pat
 
 ## Tools
 
-| Tool                    | Description                                                                                                                                   |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `list_workflows`        | Returns all registered workflow IDs and names. Call this first to discover what is available.                                                 |
-| `get_workflow_protocol` | Returns the full agent briefing for a workflow: step list, input schemas, instructions, rules, and quick_start. Read this before `start_run`. |
-| `start_run`             | Starts a new run for a workflow. Accepts `workflow_id` and optional `params`.                                                                 |
-| `execute_step`          | Submits agent output for the current step. Accepts `run_id`, `command` (step name), and `params`.                                             |
-| `submit_human_response` | Submits a human gate response. Accepts `run_id`, `gate_id`, and `choice`.                                                                     |
-| `get_run_state`         | Returns the current state, evidence chain, and terminal status of a run.                                                                      |
-| `create_workflow`       | Registers a dynamic workflow from a `steps` array and immediately starts a run. No YAML file or `realm register` required.                    |
+| Tool                    | Description                                                                                                                                                                                         |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_workflows`        | Returns all registered workflow IDs and names. Call this first to discover what is available.                                                                                                       |
+| `get_workflow_protocol` | Returns the full agent briefing for a workflow: step list, input schemas, instructions, rules, and quick_start. Read this before `start_run`.                                                       |
+| `start_run`             | Starts a new run for a workflow. Accepts `workflow_id` and optional `params`.                                                                                                                       |
+| `execute_step`          | Submits agent output for the current step. Accepts `run_id`, `command` (step name), and `params`.                                                                                                   |
+| `submit_human_response` | Submits a human gate response. Accepts `run_id`, `gate_id`, and `choice`.                                                                                                                           |
+| `get_run_state`         | Returns the current state, evidence chain, and terminal status of a run. When `run_phase` is `aborted`, also returns `abort_context` (guard step ID, evaluated conditions, optional abort message). |
+| `create_workflow`       | Registers a dynamic workflow from a `steps` array and immediately starts a run. No YAML file or `realm register` required.                                                                          |
 
 ---
 
@@ -78,6 +78,8 @@ When `start_run` or `execute_step` chains through auto steps before returning, `
 ```
 
 `branched_via` is present when a DAG branch was taken (e.g. a `trigger_rule: one_failed` recovery step was auto-executed).
+
+Guard steps (`execution: guard`) also appear in `chained_auto_steps`. A passing guard has `run_phase: running`; a guard that fires and aborts the run has `run_phase: aborted`, and the outer response will have `next_actions: []`.
 
 ---
 

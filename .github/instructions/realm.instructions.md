@@ -97,6 +97,11 @@ Repeat from step 4 until:
 - `status` is `confirm_required` — a human gate is open; handle it in step 6, then continue.
 - `status` is `ok` and `next_actions` is empty — the workflow has finished. No further steps exist.
 
+**Guard abort:** When a workflow contains an `execution: guard` step and its `abort_unless` conditions
+are not met, the engine aborts the run cleanly. This also produces `status: ok` with `next_actions: []`.
+`context_hint` will state that a guard step aborted the run. Call `get_run_state` if you need the full
+condition evaluation — the response will include `abort_context` when `run_phase` is `aborted`.
+
 ### 5a. Reading `chained_auto_steps`
 
 When `start_run`, `execute_step`, or `submit_human_response` triggers auto steps before returning,
@@ -112,6 +117,9 @@ ran — only present when the array would be non-empty:
 
 `branched_via` is present when a DAG transition fired (e.g. the engine selected a particular
 trigger-rule branch). Use it to understand which path the engine took before returning to you.
+
+Guard steps (`execution: guard`) also appear in `chained_auto_steps`. When a guard passes, its
+`run_phase` is `running`. When a guard fires and aborts the run, its `run_phase` is `aborted`.
 
 ### 5b. `status: ok` with warnings — recovery step executed
 
@@ -140,6 +148,10 @@ If you lose track of a run's current state (e.g. after an error or session gap),
 `get_run_state` with the `run_id`. It returns the current state name, whether the run is
 terminal, the pending gate if any, and how many evidence entries exist. Use it to orient
 yourself before deciding the next tool call — do not guess the state.
+
+When `run_phase` is `aborted`, the response also includes `abort_context`: the guard step ID,
+the evaluated conditions with their resolved values, and an optional `abort_message` authored
+in the workflow YAML. `aborted` is a terminal phase — the run will not execute any further steps.
 
 `run_version: 0` in an error response is a sentinel meaning the run version was not
 available at the time the error was produced (e.g. the run did not exist, or the error
