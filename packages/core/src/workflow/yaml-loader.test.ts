@@ -286,6 +286,58 @@ steps:
       expect((err as WorkflowError).message).toContain('input_map');
     }
   });
+
+  it('input_map with empty nested object is rejected', () => {
+    const yaml = `
+id: wf
+name: WF
+version: 1
+services:
+  svc:
+    adapter: mock
+    trust: engine_delivered
+steps:
+  step1:
+    description: step
+    execution: auto
+    uses_service: svc
+    input_map:
+      fields: {}
+`;
+    expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(yaml);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain('input_map');
+      expect((err as WorkflowError).message).toContain('fields');
+    }
+  });
+
+  it('input_map with non-string leaf is rejected', () => {
+    const yaml = `
+id: wf
+name: WF
+version: 1
+services:
+  svc:
+    adapter: mock
+    trust: engine_delivered
+steps:
+  step1:
+    description: step
+    execution: auto
+    uses_service: svc
+    input_map:
+      fields:
+        count: 42
+`;
+    expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(yaml);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain('input_map');
+    }
+  });
 });
 
 describe('loadWorkflowFromFile', () => {

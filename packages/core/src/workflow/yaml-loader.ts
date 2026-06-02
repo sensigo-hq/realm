@@ -385,6 +385,13 @@ export function loadWorkflowFromString(
         errors.push(
           `Step '${stepName}': 'input_map' is only valid on execution: auto steps with uses_service`,
         );
+      } else {
+        validateInputMapNode(
+          step['input_map'] as Record<string, unknown>,
+          `Step '${stepName}': input_map`,
+          errors,
+          0,
+        );
       }
     }
 
@@ -607,5 +614,44 @@ function hasUseTemplateInSteps(steps: unknown): boolean {
   if (typeof steps !== 'object' || steps === null) return false;
   return Object.values(steps as Record<string, unknown>).some(
     (s) => typeof s === 'object' && s !== null && 'use_template' in (s as object),
+  );
+}
+
+/**
+ * Recursively validates an input_map node tree.
+ * Every object node must have at least one key.
+ * Every leaf must be a non-empty string.
+ * Maximum depth is 10.
+ */
+function validateInputMapNode(
+  node: unknown,
+  pathDesc: string,
+  errors: string[],
+  depth: number,
+): void {
+  if (depth > 10) {
+    errors.push(`${pathDesc}: exceeded maximum nesting depth of 10`);
+    return;
+  }
+  if (typeof node === 'string') {
+    if (node.trim() === '') {
+      errors.push(`${pathDesc}: source path must be a non-empty string`);
+    }
+    return;
+  }
+  if (typeof node === 'object' && node !== null && !Array.isArray(node)) {
+    const entries = Object.entries(node as Record<string, unknown>);
+    if (entries.length === 0) {
+      errors.push(`${pathDesc}: object nodes must have at least one key`);
+      return;
+    }
+    for (const [key, child] of entries) {
+      validateInputMapNode(child, `${pathDesc} path "${key}"`, errors, depth + 1);
+    }
+    return;
+  }
+  // null, number, boolean, array
+  errors.push(
+    `${pathDesc}: expected a string or object, got ${Array.isArray(node) ? 'array' : typeof node}`,
   );
 }
