@@ -15,7 +15,10 @@ import { resolvePath } from './render-template.js';
  * Called after every store write to keep run_phase consistent.
  */
 export function deriveRunPhase(
-  run: Pick<RunRecord, 'pending_gate' | 'terminal_state' | 'failed_steps' | 'terminal_reason'>,
+  run: Pick<
+    RunRecord,
+    'pending_gate' | 'terminal_state' | 'failed_steps' | 'terminal_reason' | 'aborted_at'
+  >,
 ): RunPhase {
   if (run.pending_gate !== undefined) return 'gate_waiting';
   if (!run.terminal_state) return 'running';
@@ -23,6 +26,7 @@ export function deriveRunPhase(
   // Recovery workflows end with failed_steps non-empty but are still considered completed
   // when the final recovery step succeeds, so terminal_reason takes precedence.
   if (run.terminal_reason === 'Workflow completed.') return 'completed';
+  if (run.aborted_at !== undefined) return 'aborted';
   if (run.failed_steps.length > 0) return 'failed';
   // terminal_state is true but the run neither completed normally nor failed — it was abandoned.
   return 'abandoned';
@@ -181,6 +185,10 @@ export function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord
   const eligible: string[] = [];
 
   for (const [stepName, step] of Object.entries(definition.steps)) {
+    // Guard steps are executed inline by the engine, not by the agent.
+    // They never appear as eligible steps returned to callers.
+    if (step.execution === 'guard') continue;
+
     // Already done or in-flight.
     if (
       run.completed_steps.includes(stepName) ||
@@ -196,6 +204,45 @@ export function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord
 
     // when-condition evaluation.
     if (step.when !== undefined) {
+      if (!evaluateWhenCondition(step.when, evidenceByStep)) continue;
+    }
+
+    eligible.push(stepName);
+  }
+
+  return eligible;
+}
+
+/**
+ * Returns the names of all guard steps currently eligible for inline engine execution.
+ * A guard step is eligible when its trigger_rule is satisfied and it is not yet settled.
+ * Guard steps are never returned by findEligibleSteps (they execute inside the engine,
+ * not via agent execute_step calls).
+ */
+export function findEligibleGuardSteps(definition: WorkflowDefinition, run: RunRecord): string[] {
+  if (run.pending_gate !== undefined) return [];
+
+  const eligible: string[] = [];
+
+  for (const [stepName, step] of Object.entries(definition.steps)) {
+    if (step.execution !== 'guard') continue;
+
+    // Already settled.
+    if (
+      run.completed_steps.includes(stepName) ||
+      run.in_progress_steps.includes(stepName) ||
+      run.failed_steps.includes(stepName) ||
+      run.skipped_steps.includes(stepName)
+    ) {
+      continue;
+    }
+
+    // Trigger rule evaluation.
+    if (!triggerRuleSatisfied(step, run)) continue;
+
+    // when-condition evaluation.
+    if (step.when !== undefined) {
+      const evidenceByStep = buildEvidenceByStep(run);
       if (!evaluateWhenCondition(step.when, evidenceByStep)) continue;
     }
 

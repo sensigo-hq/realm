@@ -143,3 +143,94 @@ export function evaluateAllPreconditions(
     return { expression, passed, resolved_value: resolvedValue };
   });
 }
+
+// ---------------------------------------------------------------------------
+// Guard condition evaluator
+// ---------------------------------------------------------------------------
+
+export interface GuardConditionResult {
+  condition: string;
+  resolved_value: unknown;
+  passed: boolean;
+}
+
+export type GuardEvaluationOutcome =
+  | { kind: 'pass'; conditions: GuardConditionResult[] }
+  | { kind: 'abort'; conditions: GuardConditionResult[] }
+  | { kind: 'resolution_error'; condition: string; unresolvable_path: string };
+
+/**
+ * Evaluates all abort_unless conditions against prior step evidence.
+ *
+ * All conditions are evaluated before deciding — no short-circuit on first failure.
+ * This ensures the evidence record is complete regardless of outcome.
+ *
+ * Returns:
+ * - { kind: 'pass' }  — all conditions true; run continues
+ * - { kind: 'abort' } — one or more conditions false; run aborts
+ * - { kind: 'resolution_error' } — a path could not be resolved; run fails (not aborted)
+ *
+ * Resolution errors (absent path) always cause run_phase: 'failed', not 'aborted'.
+ * Type mismatches on comparison operators (e.g. > applied to a non-number) also cause
+ * resolution_error, not abort.
+ */
+export function evaluateGuardConditions(
+  conditions: string[],
+  evidenceByStep: Record<string, Record<string, unknown>>,
+): GuardEvaluationOutcome {
+  const root = evidenceByStep as Record<string, unknown>;
+  const results: GuardConditionResult[] = [];
+
+  for (const condition of conditions) {
+    const operators = ['>=', '<=', '!=', '==', '>', '<'] as const;
+    let matched = false;
+
+    for (const op of operators) {
+      const opWithSpaces = ` ${op} `;
+      const idx = condition.indexOf(opWithSpaces);
+      if (idx === -1) continue;
+
+      matched = true;
+      const lhsPath = condition.slice(0, idx).trim();
+      const rhs = condition.slice(idx + opWithSpaces.length).trim();
+
+      // Resolve LHS.
+      const lhsValue = resolvePath(root, lhsPath);
+      if (lhsValue === undefined) {
+        return { kind: 'resolution_error', condition, unresolvable_path: lhsPath };
+      }
+
+      // Parse RHS literal.
+      const rhsValue = parseLiteral(rhs);
+
+      // Numeric operators require both sides to be numbers.
+      if (
+        op !== '==' &&
+        op !== '!=' &&
+        (typeof lhsValue !== 'number' || typeof rhsValue !== 'number')
+      ) {
+        return { kind: 'resolution_error', condition, unresolvable_path: lhsPath };
+      }
+
+      const passed = compare(lhsValue, op, rhsValue);
+      results.push({ condition, resolved_value: lhsValue, passed });
+      break;
+    }
+
+    if (!matched) {
+      // Bare path — truthy/falsy check.
+      const path = condition.trim();
+      const value = resolvePath(root, path);
+      if (value === undefined) {
+        return { kind: 'resolution_error', condition, unresolvable_path: path };
+      }
+      results.push({ condition, resolved_value: value, passed: Boolean(value) });
+    }
+  }
+
+  const anyFailed = results.some((r) => !r.passed);
+  if (anyFailed) {
+    return { kind: 'abort', conditions: results };
+  }
+  return { kind: 'pass', conditions: results };
+}

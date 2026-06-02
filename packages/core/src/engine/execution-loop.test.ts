@@ -3003,3 +3003,243 @@ describe('retry_after on ResponseEnvelope', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// execution: guard — inline guard step execution via executeChain
+// ---------------------------------------------------------------------------
+
+describe('guard step execution', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  const guardWorkflow: WorkflowDefinition = {
+    id: 'guard-wf',
+    name: 'Guard Workflow',
+    version: 1,
+    steps: {
+      step_a: {
+        description: 'Agent step',
+        execution: 'agent',
+        depends_on: [],
+      },
+      guard_b: {
+        description: 'Guard step',
+        execution: 'guard',
+        depends_on: ['step_a'],
+        abort_unless: ["step_a.status == 'open'"],
+      },
+      step_c: {
+        description: 'Post-guard agent step',
+        execution: 'agent',
+        depends_on: ['guard_b'],
+      },
+    },
+  };
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-guard-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  it('guard passes — run continues with downstream agent step in next_actions', async () => {
+    const run = await store.create({ workflowId: 'guard-wf', workflowVersion: 1, params: {} });
+
+    const envelope = await executeChain(store, guardWorkflow, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ status: 'open' }),
+    });
+
+    expect(envelope.status).toBe('ok');
+    // Guard ran inline — visible in chained_auto_steps
+    expect(envelope.chained_auto_steps?.some((s) => s.step === 'guard_b')).toBe(true);
+    // step_c is the next eligible agent step
+    expect(envelope.next_actions.some((a) => a.instruction.call_with.command === 'step_c')).toBe(
+      true,
+    );
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.completed_steps).toContain('guard_b');
+    expect(savedRun.run_phase).not.toBe('aborted');
+  });
+
+  it('guard aborts — run_phase becomes aborted, next_actions is empty, aborted_at set', async () => {
+    const run = await store.create({ workflowId: 'guard-wf', workflowVersion: 1, params: {} });
+
+    const envelope = await executeChain(store, guardWorkflow, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ status: 'closed' }),
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.next_actions).toHaveLength(0);
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.run_phase).toBe('aborted');
+    expect(savedRun.terminal_state).toBe(true);
+    expect(savedRun.skipped_steps).toContain('guard_b');
+    expect(savedRun.aborted_at).toBeDefined();
+    expect(savedRun.aborted_at?.step_id).toBe('guard_b');
+    expect(savedRun.aborted_at?.conditions).toHaveLength(1);
+    expect(savedRun.aborted_at?.conditions[0]?.passed).toBe(false);
+  });
+
+  it('guard abort skips downstream steps (step_c goes into skipped_steps)', async () => {
+    const run = await store.create({ workflowId: 'guard-wf', workflowVersion: 1, params: {} });
+
+    await executeChain(store, guardWorkflow, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ status: 'closed' }),
+    });
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.skipped_steps).toContain('step_c');
+  });
+
+  it('guard resolution error — run_phase becomes failed, guard in failed_steps', async () => {
+    const run = await store.create({ workflowId: 'guard-wf', workflowVersion: 1, params: {} });
+
+    // Dispatcher returns no 'status' field — path step_a.status is unresolvable
+    const envelope = await executeChain(store, guardWorkflow, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ other_field: 'value' }),
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.next_actions).toHaveLength(0);
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.run_phase).toBe('failed');
+    expect(savedRun.terminal_state).toBe(true);
+    expect(savedRun.failed_steps).toContain('guard_b');
+  });
+
+  it('guard abort_message is recorded in aborted_at', async () => {
+    const workflowWithMessage: WorkflowDefinition = {
+      id: 'guard-msg-wf',
+      name: 'Guard Message Workflow',
+      version: 1,
+      steps: {
+        step_a: { description: 'Step A', execution: 'agent', depends_on: [] },
+        guard_b: {
+          description: 'Guard with message',
+          execution: 'guard',
+          depends_on: ['step_a'],
+          abort_unless: ["step_a.status == 'open'"],
+          abort_message: 'Ticket is not open',
+        },
+      },
+    };
+
+    const run = await store.create({ workflowId: 'guard-msg-wf', workflowVersion: 1, params: {} });
+
+    await executeChain(store, workflowWithMessage, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ status: 'closed' }),
+    });
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.aborted_at?.abort_message).toBe('Ticket is not open');
+  });
+
+  it('cascading guards — guard_b passes, guard_c passes, run continues', async () => {
+    const cascadeWorkflow: WorkflowDefinition = {
+      id: 'cascade-guard-wf',
+      name: 'Cascade Guard Workflow',
+      version: 1,
+      steps: {
+        step_a: { description: 'Step A', execution: 'agent', depends_on: [] },
+        guard_b: {
+          description: 'First guard',
+          execution: 'guard',
+          depends_on: ['step_a'],
+          abort_unless: ['step_a.count > 0'],
+        },
+        guard_c: {
+          description: 'Second guard',
+          execution: 'guard',
+          depends_on: ['guard_b'],
+          abort_unless: ['step_a.count > 5'],
+        },
+        step_d: { description: 'Post-guard step', execution: 'agent', depends_on: ['guard_c'] },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'cascade-guard-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeChain(store, cascadeWorkflow, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ count: 10 }),
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.next_actions.some((a) => a.instruction.call_with.command === 'step_d')).toBe(
+      true,
+    );
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.completed_steps).toContain('guard_b');
+    expect(savedRun.completed_steps).toContain('guard_c');
+    expect(savedRun.run_phase).not.toBe('aborted');
+  });
+
+  it('cascading guards — guard_b passes, guard_c aborts, run is aborted', async () => {
+    const cascadeWorkflow: WorkflowDefinition = {
+      id: 'cascade-abort-wf',
+      name: 'Cascade Abort Workflow',
+      version: 1,
+      steps: {
+        step_a: { description: 'Step A', execution: 'agent', depends_on: [] },
+        guard_b: {
+          description: 'First guard (passes)',
+          execution: 'guard',
+          depends_on: ['step_a'],
+          abort_unless: ['step_a.count > 0'],
+        },
+        guard_c: {
+          description: 'Second guard (aborts)',
+          execution: 'guard',
+          depends_on: ['guard_b'],
+          abort_unless: ['step_a.count > 100'],
+        },
+        step_d: { description: 'Post-guard step', execution: 'agent', depends_on: ['guard_c'] },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'cascade-abort-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeChain(store, cascadeWorkflow, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ count: 10 }),
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.next_actions).toHaveLength(0);
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.run_phase).toBe('aborted');
+    expect(savedRun.completed_steps).toContain('guard_b');
+    expect(savedRun.aborted_at?.step_id).toBe('guard_c');
+  });
+});

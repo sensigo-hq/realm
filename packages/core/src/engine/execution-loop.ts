@@ -28,7 +28,11 @@ import {
 import { normalizeTrace } from './trace-normalizer.js';
 import type { NormalizeTraceResult } from './trace-normalizer.js';
 import { TERMINAL_PHASES } from './lifecycle.js';
-import { checkPreconditions, evaluateAllPreconditions } from './precondition.js';
+import {
+  checkPreconditions,
+  evaluateAllPreconditions,
+  evaluateGuardConditions,
+} from './precondition.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
@@ -38,6 +42,7 @@ import { generateSchemaSkeleton } from '../utils/schema-skeleton.js';
 import { loadWorkflowContext } from './workflow-context-loader.js';
 import {
   findEligibleSteps,
+  findEligibleGuardSteps,
   isWorkflowComplete,
   buildEvidenceByStep,
   propagateSkips,
@@ -978,10 +983,12 @@ export async function executeStep(
     };
     // A run is terminal when all steps are settled OR when no step will ever become
     // eligible again (safety net for when-condition edge cases not covered by propagateSkips).
+    // Guard steps are not returned by findEligibleSteps, so check them separately.
     const isComplete =
       isWorkflowComplete(withSkippedFail, definition) ||
       (withSkippedFail.in_progress_steps.length === 0 &&
-        findEligibleSteps(definition, withSkippedFail).length === 0);
+        findEligibleSteps(definition, withSkippedFail).length === 0 &&
+        findEligibleGuardSteps(definition, withSkippedFail).length === 0);
     const failedRun: RunRecord = {
       ...withSkippedFail,
       evidence: [...pendingRun.evidence, ...allEvidence],
@@ -1244,10 +1251,12 @@ export async function executeStep(
   };
   // A run is terminal when all steps are settled OR when no step will ever become
   // eligible again (safety net for when-condition routing not fully covered by propagateSkips).
+  // Guard steps are not returned by findEligibleSteps, so check them separately.
   const isComplete =
     isWorkflowComplete(withSkippedComplete, definition) ||
     (withSkippedComplete.in_progress_steps.length === 0 &&
-      findEligibleSteps(definition, withSkippedComplete).length === 0);
+      findEligibleSteps(definition, withSkippedComplete).length === 0 &&
+      findEligibleGuardSteps(definition, withSkippedComplete).length === 0);
   const finalRun: RunRecord = {
     ...withSkippedComplete,
     terminal_state: isComplete,
@@ -1415,10 +1424,12 @@ export async function submitHumanResponse(
   };
   // A run is terminal when all steps are settled OR when no step will ever become
   // eligible again (safety net for when-condition routing not fully covered by propagateSkips).
+  // Guard steps are not returned by findEligibleSteps, so check them separately.
   const isComplete =
     isWorkflowComplete(withSkippedGate, definition) ||
     (withSkippedGate.in_progress_steps.length === 0 &&
-      findEligibleSteps(definition, withSkippedGate).length === 0);
+      findEligibleSteps(definition, withSkippedGate).length === 0 &&
+      findEligibleGuardSteps(definition, withSkippedGate).length === 0);
   const finalRun: RunRecord = {
     ...withSkippedGate,
     terminal_state: isComplete,
@@ -1470,6 +1481,133 @@ export async function submitHumanResponse(
 
 const MAX_CHAIN_DEPTH = 50;
 
+/**
+ * Executes a guard step inline within the engine's auto-chain.
+ *
+ * Guard steps are never claimed via claimStep — they execute synchronously as part of
+ * the chain, not via agent execute_step calls. This function evaluates all abort_unless
+ * conditions and returns an updated RunRecord:
+ *
+ * - PASS: guard in completed_steps, run continues.
+ * - ABORT: guard in skipped_steps, terminal_state=true, aborted_at set.
+ * - RESOLUTION_ERROR: guard in failed_steps, terminal_state=true, evidence with error.
+ *
+ * The caller is responsible for persisting the returned RunRecord via store.update.
+ */
+async function executeGuardStep(
+  stepName: string,
+  stepDef: StepDefinition,
+  definition: WorkflowDefinition,
+  run: RunRecord,
+): Promise<RunRecord> {
+  // Normalise abort_unless to string[].
+  const conditions = Array.isArray(stepDef.abort_unless)
+    ? stepDef.abort_unless
+    : [stepDef.abort_unless!];
+
+  // Build evidenceByStep from current run.
+  const evidenceByStep = buildEvidenceByStep(run);
+
+  // Evaluate all conditions (no short-circuit — record all outcomes).
+  const outcome = evaluateGuardConditions(conditions, evidenceByStep);
+
+  const now = new Date();
+
+  if (outcome.kind === 'resolution_error') {
+    // Authoring error — a path in abort_unless could not be resolved.
+    // Record evidence with error status and place guard in failed_steps.
+    const evidenceEntry = captureEvidence({
+      stepId: stepName,
+      startedAt: now,
+      completedAt: now,
+      input: {},
+      output: { error: `Unresolvable path: ${outcome.unresolvable_path}` },
+      error: `Guard resolution error on condition: ${outcome.condition}`,
+    });
+
+    const withFailed: RunRecord = {
+      ...run,
+      evidence: [...run.evidence, evidenceEntry],
+      failed_steps: [...run.failed_steps, stepName],
+    };
+    const withSkipped: RunRecord = {
+      ...withFailed,
+      skipped_steps: propagateSkips(withFailed, definition),
+    };
+    return {
+      ...withSkipped,
+      terminal_state: true,
+      terminal_reason: `Guard step '${stepName}' failed: unresolvable path '${outcome.unresolvable_path}'`,
+    };
+  }
+
+  if (outcome.kind === 'pass') {
+    // All conditions true — guard passed, run continues.
+    const evidenceEntry = captureEvidence({
+      stepId: stepName,
+      startedAt: now,
+      completedAt: now,
+      input: {},
+      output: { conditions: outcome.conditions, aborted: false },
+    });
+
+    const withCompleted: RunRecord = {
+      ...run,
+      evidence: [...run.evidence, evidenceEntry],
+      completed_steps: [...run.completed_steps, stepName],
+    };
+    const withSkipped: RunRecord = {
+      ...withCompleted,
+      skipped_steps: propagateSkips(withCompleted, definition),
+    };
+    const isComplete =
+      isWorkflowComplete(withSkipped, definition) ||
+      (withSkipped.in_progress_steps.length === 0 &&
+        findEligibleSteps(definition, withSkipped).length === 0 &&
+        findEligibleGuardSteps(definition, withSkipped).length === 0);
+    return {
+      ...withSkipped,
+      terminal_state: isComplete,
+      ...(isComplete ? { terminal_reason: 'Workflow completed.' } : {}),
+    };
+  }
+
+  // Guard fired — one or more conditions false; abort the run.
+  const evidenceEntry = captureEvidence({
+    stepId: stepName,
+    startedAt: now,
+    completedAt: now,
+    input: {},
+    output: {
+      conditions: outcome.conditions,
+      aborted: true,
+      ...(stepDef.abort_message !== undefined ? { abort_message: stepDef.abort_message } : {}),
+    },
+    error: stepDef.abort_message ?? `Guard step '${stepName}' aborted the run.`,
+  });
+
+  const withGuardSkipped: RunRecord = {
+    ...run,
+    evidence: [...run.evidence, evidenceEntry],
+    // Guard that aborted goes into skipped_steps (not completed or failed).
+    skipped_steps: [...run.skipped_steps, stepName],
+  };
+  // Propagate skips for any downstream steps that can no longer fire.
+  const withAllSkipped: RunRecord = {
+    ...withGuardSkipped,
+    skipped_steps: propagateSkips(withGuardSkipped, definition),
+  };
+  return {
+    ...withAllSkipped,
+    terminal_state: true,
+    aborted_at: {
+      step_id: stepName,
+      conditions: outcome.conditions,
+      ...(stepDef.abort_message !== undefined ? { abort_message: stepDef.abort_message } : {}),
+    },
+  };
+}
+
 async function executeChainInternal(
   store: RunStore,
   definition: WorkflowDefinition,
@@ -1495,7 +1633,7 @@ async function executeChainInternal(
     };
   }
 
-  const result = await executeStep(store, definition, options);
+  let result = await executeStep(store, definition, options);
 
   // Stop chaining on any non-ok result.
   if (result.status !== 'ok') {
@@ -1513,6 +1651,81 @@ async function executeChainInternal(
   // Record this auto step in the accumulator.
   if (definition.steps[options.command]?.execution === 'auto') {
     chainedSteps.push({ step: options.command, run_phase: run.run_phase });
+  }
+
+  if (run.terminal_state || run.pending_gate !== undefined) {
+    return result;
+  }
+
+  // Execute any eligible guard steps inline before looking for the next auto step.
+  // Guard steps are synchronous engine decisions — not returned to the agent.
+  // Loop to handle cascading guards (guard A passes → guard B becomes eligible).
+  let guardEligible = findEligibleGuardSteps(definition, run);
+  while (guardEligible.length > 0) {
+    const guardName = guardEligible[0]!;
+    const guardStepDef = definition.steps[guardName]!;
+
+    // Execute inline (pure in-memory; returns updated RunRecord).
+    const guardResult = await executeGuardStep(guardName, guardStepDef, definition, run);
+
+    // Persist the guard step result.
+    let persistedGuardRun: RunRecord;
+    try {
+      persistedGuardRun = await store.update(guardResult);
+    } catch (storeErr) {
+      const msg = storeErr instanceof Error ? storeErr.message : String(storeErr);
+      return {
+        command: options.command,
+        run_id: options.runId,
+        run_version: run.version,
+        status: 'error',
+        data: {},
+        evidence: [],
+        warnings: [],
+        errors: [`Failed to persist guard step '${guardName}': ${msg}`],
+        agent_action: 'stop' as const,
+        context_hint: `Guard step '${guardName}' could not be persisted. Run state may be inconsistent.`,
+        next_actions: [],
+      };
+    }
+
+    // Record in chained_auto_steps for visibility.
+    chainedSteps.push({ step: guardName, run_phase: persistedGuardRun.run_phase });
+
+    if (persistedGuardRun.terminal_state) {
+      // Guard aborted or had a resolution error — run is terminal.
+      const contextHint =
+        persistedGuardRun.aborted_at !== undefined
+          ? `Guard step '${guardName}' aborted the run.`
+          : `Guard step '${guardName}' failed with a resolution error. Run is terminated.`;
+      return {
+        command: options.command,
+        run_id: options.runId,
+        run_version: persistedGuardRun.version,
+        status: 'ok',
+        data: {},
+        evidence: persistedGuardRun.evidence.slice(-1),
+        warnings: [],
+        errors: [],
+        context_hint: contextHint,
+        next_actions: [],
+      };
+    }
+
+    run = persistedGuardRun;
+    guardEligible = findEligibleGuardSteps(definition, run);
+  }
+
+  // If any guards ran and passed, rebuild result with fresh next_actions and run_version.
+  // The original `result` was built before guard execution, so its next_actions and version are stale.
+  const guardsRan = chainedSteps.some((s) => definition.steps[s.step]?.execution === 'guard');
+  if (guardsRan) {
+    const freshNextActions = buildNextActions(definition, run);
+    result = {
+      ...result,
+      run_version: run.version,
+      next_actions: freshNextActions,
+    };
   }
 
   if (run.terminal_state || run.pending_gate !== undefined) {

@@ -952,3 +952,212 @@ describe('loadWorkflowFromString — retry validation', () => {
     expect(() => loadWorkflowFromString(content)).not.toThrow();
   });
 });
+
+describe('loadWorkflowFromString — guard step validation', () => {
+  it('guard step with abort_unless string loads without error', () => {
+    const yaml = `
+id: guard-test
+name: Guard Test
+version: 1
+steps:
+  step_a:
+    description: First step
+    execution: agent
+    depends_on: []
+  guard_b:
+    description: Guard step
+    execution: guard
+    depends_on: [step_a]
+    abort_unless: "step_a.status == 'open'"
+`;
+    expect(() => loadWorkflowFromString(yaml)).not.toThrow();
+  });
+
+  it('guard step with abort_unless array loads without error', () => {
+    const yaml = `
+id: guard-test
+name: Guard Test
+version: 1
+steps:
+  step_a:
+    description: First step
+    execution: agent
+    depends_on: []
+  guard_b:
+    description: Guard step
+    execution: guard
+    depends_on: [step_a]
+    abort_unless:
+      - "step_a.status == 'open'"
+      - "step_a.count > 0"
+`;
+    expect(() => loadWorkflowFromString(yaml)).not.toThrow();
+  });
+
+  it('guard step with abort_message loads without error', () => {
+    const yaml = `
+id: guard-test
+name: Guard Test
+version: 1
+steps:
+  step_a:
+    description: First step
+    execution: agent
+    depends_on: []
+  guard_b:
+    description: Guard step
+    execution: guard
+    depends_on: [step_a]
+    abort_unless: "step_a.status == 'open'"
+    abort_message: Ticket is not open
+`;
+    expect(() => loadWorkflowFromString(yaml)).not.toThrow();
+  });
+
+  it('guard step missing abort_unless throws WorkflowError', () => {
+    const yaml = `
+id: guard-test
+name: Guard Test
+version: 1
+steps:
+  step_a:
+    description: First step
+    execution: agent
+    depends_on: []
+  guard_b:
+    description: Guard step
+    execution: guard
+    depends_on: [step_a]
+`;
+    try {
+      loadWorkflowFromString(yaml);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkflowError);
+      expect((err as WorkflowError).message).toContain('abort_unless');
+    }
+  });
+
+  it('guard step with prohibited field (handler) throws WorkflowError', () => {
+    const yaml = `
+id: guard-test
+name: Guard Test
+version: 1
+steps:
+  step_a:
+    description: First step
+    execution: agent
+    depends_on: []
+  guard_b:
+    description: Guard step
+    execution: guard
+    depends_on: [step_a]
+    abort_unless: "step_a.status == 'open'"
+    handler: some_handler
+`;
+    try {
+      loadWorkflowFromString(yaml);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkflowError);
+      expect((err as WorkflowError).message).toContain('handler');
+    }
+  });
+
+  it('guard step with prohibited field (uses_service) throws WorkflowError', () => {
+    const yaml = `
+id: guard-test
+name: Guard Test
+version: 1
+services:
+  my_service:
+    base_url: https://example.com
+steps:
+  step_a:
+    description: First step
+    execution: agent
+    depends_on: []
+  guard_b:
+    description: Guard step
+    execution: guard
+    depends_on: [step_a]
+    abort_unless: "step_a.status == 'open'"
+    uses_service: my_service
+`;
+    try {
+      loadWorkflowFromString(yaml);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkflowError);
+      expect((err as WorkflowError).message).toContain('uses_service');
+    }
+  });
+
+  it('guard step with prohibited field (trigger_rule) throws WorkflowError', () => {
+    const yaml = `
+id: guard-test
+name: Guard Test
+version: 1
+steps:
+  step_a:
+    description: First step
+    execution: agent
+    depends_on: []
+  guard_b:
+    description: Guard step
+    execution: guard
+    depends_on: [step_a]
+    abort_unless: "step_a.status == 'open'"
+    trigger_rule: one_failed
+`;
+    try {
+      loadWorkflowFromString(yaml);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkflowError);
+      expect((err as WorkflowError).message).toContain('trigger_rule');
+    }
+  });
+
+  it('abort_unless on a non-guard step throws WorkflowError', () => {
+    const yaml = `
+id: guard-test
+name: Guard Test
+version: 1
+steps:
+  step_a:
+    description: First step
+    execution: agent
+    depends_on: []
+    abort_unless: "step_a.status == 'open'"
+`;
+    try {
+      loadWorkflowFromString(yaml);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkflowError);
+      expect((err as WorkflowError).message).toContain('abort_unless');
+    }
+  });
+
+  it('abort_message on a non-guard step throws WorkflowError', () => {
+    const yaml = `
+id: guard-test
+name: Guard Test
+version: 1
+steps:
+  step_a:
+    description: First step
+    execution: agent
+    depends_on: []
+    abort_message: Not allowed here
+`;
+    try {
+      loadWorkflowFromString(yaml);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkflowError);
+      expect((err as WorkflowError).message).toContain('abort_message');
+    }
+  });
+});

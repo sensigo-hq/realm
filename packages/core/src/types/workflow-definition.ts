@@ -1,7 +1,7 @@
 // Typed representation of a parsed workflow YAML definition.
 import type { McpServerConfig } from './mcp-types.js';
 
-export type ExecutionMode = 'auto' | 'agent';
+export type ExecutionMode = 'auto' | 'agent' | 'guard';
 
 export interface ProtocolConfig {
   /** Override for the generated quick-start paragraph. */
@@ -100,6 +100,22 @@ export interface StepDefinition {
    * Example: "context.resources.classifier.category == 'billing'"
    */
   when?: string;
+  /**
+   * Array of condition expressions evaluated against prior step evidence.
+   * All conditions are evaluated; the run aborts (run_phase: 'aborted') if any is false.
+   * A single string is normalised to a single-element array internally.
+   * Only valid on execution: 'guard' steps.
+   * Expression syntax: "step_id.field op value" — same path syntax as preconditions and when.
+   * Supported operators: ==, !=, >, >=, <, <=
+   * Bare path resolves as truthy/falsy.
+   * Absent path → GUARD_RESOLUTION_ERROR (run_phase: 'failed', not 'aborted').
+   */
+  abort_unless?: string | string[];
+  /**
+   * Human-readable message recorded in the guard step's evidence entry when the run aborts.
+   * Only valid on execution: 'guard' steps.
+   */
+  abort_message?: string;
   uses_service?: string;
   /**
    * Which adapter method to invoke for this service step.

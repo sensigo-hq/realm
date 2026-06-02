@@ -127,6 +127,38 @@ describe('deriveRunPhase', () => {
       }),
     ).toBe('abandoned');
   });
+
+  it('returns aborted when aborted_at is set', () => {
+    expect(
+      deriveRunPhase({
+        pending_gate: undefined,
+        terminal_state: true,
+        failed_steps: [],
+        terminal_reason: 'Guard step aborted run.',
+        aborted_at: {
+          step_id: 'guard_step',
+          conditions: [
+            { condition: "step_a.status == 'open'", resolved_value: 'closed', passed: false },
+          ],
+        },
+      }),
+    ).toBe('aborted');
+  });
+
+  it('returns aborted even when failed_steps is non-empty if aborted_at is set', () => {
+    expect(
+      deriveRunPhase({
+        pending_gate: undefined,
+        terminal_state: true,
+        failed_steps: ['some_step'],
+        terminal_reason: 'Guard aborted.',
+        aborted_at: {
+          step_id: 'guard_step',
+          conditions: [{ condition: 'step_a.enabled', resolved_value: false, passed: false }],
+        },
+      }),
+    ).toBe('aborted');
+  });
 });
 
 // ---------------------------------------------------------------------------
