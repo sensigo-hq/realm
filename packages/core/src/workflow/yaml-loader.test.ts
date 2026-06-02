@@ -5,6 +5,8 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from './yaml-loader.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import { ExtensionRegistry } from '../extensions/registry.js';
+import type { ServiceAdapter } from '../extensions/service-adapter.js';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1158,6 +1160,128 @@ steps:
     } catch (err) {
       expect(err).toBeInstanceOf(WorkflowError);
       expect((err as WorkflowError).message).toContain('abort_message');
+    }
+  });
+});
+
+describe('loadWorkflowFromString — adapter config validation', () => {
+  const BASE_YAML = `
+id: config-test
+name: Config Test
+version: 1
+services:
+  my_service:
+    adapter: my_adapter
+    trust: engine_delivered
+steps:
+  step_a:
+    description: First step
+    execution: agent
+    depends_on: []
+`;
+
+  function makeAdapter(withSchema: boolean): ServiceAdapter {
+    const base: ServiceAdapter = {
+      id: 'my_adapter',
+      fetch: async () => ({ status: 200, data: {} }),
+      create: async () => ({ status: 201, data: {} }),
+      update: async () => ({ status: 200, data: {} }),
+    };
+    if (withSchema) {
+      return {
+        ...base,
+        config_schema: {
+          type: 'object',
+          properties: { table: { type: 'string' } },
+          required: ['table'],
+        },
+      };
+    }
+    return base;
+  }
+
+  it('step with config targeting adapter with config_schema loads successfully', () => {
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'my_adapter', makeAdapter(true));
+
+    const yaml =
+      BASE_YAML +
+      `  fetch_step:
+    description: Fetch from service
+    execution: auto
+    depends_on: [step_a]
+    uses_service: my_service
+    config:
+      table: Tickets
+`;
+    const def = loadWorkflowFromString(yaml, registry);
+    expect(def.steps['fetch_step']?.config).toEqual({ table: 'Tickets' });
+  });
+
+  it('step with config targeting adapter WITHOUT config_schema throws WorkflowError', () => {
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'my_adapter', makeAdapter(false));
+
+    const yaml =
+      BASE_YAML +
+      `  fetch_step:
+    description: Fetch from service
+    execution: auto
+    depends_on: [step_a]
+    uses_service: my_service
+    config:
+      table: Tickets
+`;
+    try {
+      loadWorkflowFromString(yaml, registry);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkflowError);
+      expect((err as WorkflowError).message).toContain("does not declare 'config_schema'");
+    }
+  });
+
+  it('step config failing schema validation throws WorkflowError', () => {
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'my_adapter', makeAdapter(true));
+
+    const yaml =
+      BASE_YAML +
+      `  fetch_step:
+    description: Fetch from service
+    execution: auto
+    depends_on: [step_a]
+    uses_service: my_service
+    config:
+      table: 123
+`;
+    try {
+      loadWorkflowFromString(yaml, registry);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkflowError);
+      expect((err as WorkflowError).message).toContain('config validation failed');
+    }
+  });
+
+  it('step with nested object in config throws WorkflowError', () => {
+    const yaml =
+      BASE_YAML +
+      `  fetch_step:
+    description: Fetch from service
+    execution: auto
+    depends_on: [step_a]
+    uses_service: my_service
+    config:
+      nested:
+        a: 1
+`;
+    try {
+      loadWorkflowFromString(yaml);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkflowError);
+      expect((err as WorkflowError).message).toContain('nested objects are not supported in v1');
     }
   });
 });

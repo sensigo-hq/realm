@@ -3,6 +3,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { load } from 'js-yaml';
+import { Ajv } from 'ajv';
 import type {
   WorkflowDefinition,
   TemplateDefinition,
@@ -10,6 +11,7 @@ import type {
 } from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { resolveTemplates } from './template-resolver.js';
+import type { ExtensionRegistry } from '../extensions/registry.js';
 
 /** Bumped on every breaking change to WorkflowDefinition's serialized format. */
 export const CURRENT_WORKFLOW_SCHEMA_VERSION = 1;
@@ -29,7 +31,10 @@ const VALID_TRIGGER_RULES = new Set<TriggerRule>([
  * Loads a WorkflowDefinition from a YAML file on disk.
  * @throws WorkflowError on read failure or structural validation errors.
  */
-export function loadWorkflowFromFile(filePath: string): WorkflowDefinition {
+export function loadWorkflowFromFile(
+  filePath: string,
+  registry?: ExtensionRegistry,
+): WorkflowDefinition {
   let content: string;
   try {
     content = readFileSync(filePath, 'utf8');
@@ -42,7 +47,7 @@ export function loadWorkflowFromFile(filePath: string): WorkflowDefinition {
       retryable: false,
     });
   }
-  const definition = loadWorkflowFromString(content);
+  const definition = loadWorkflowFromString(content, registry);
 
   // Resolve agent profiles — only possible when we have a file path.
   const workflowDir = dirname(resolve(filePath));
@@ -163,7 +168,10 @@ export function loadWorkflowFromFile(filePath: string): WorkflowDefinition {
  * Validates structure and DAG dependency references.
  * @throws WorkflowError on parse failure or structural validation errors.
  */
-export function loadWorkflowFromString(content: string): WorkflowDefinition {
+export function loadWorkflowFromString(
+  content: string,
+  registry?: ExtensionRegistry,
+): WorkflowDefinition {
   // Step 1: Parse YAML
   let raw: unknown;
   try {
@@ -377,6 +385,44 @@ export function loadWorkflowFromString(content: string): WorkflowDefinition {
         errors.push(
           `Step '${stepName}': 'input_map' is only valid on execution: auto steps with uses_service`,
         );
+      }
+    }
+
+    // Validate step config: literal values only (no nested objects).
+    if (
+      step['config'] !== undefined &&
+      typeof step['config'] === 'object' &&
+      step['config'] !== null
+    ) {
+      for (const [key, value] of Object.entries(step['config'] as Record<string, unknown>)) {
+        if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+          errors.push(
+            `Step '${stepName}': config key '${key}' must be a literal value (string, number, boolean, null, or array) — nested objects are not supported in v1`,
+          );
+        }
+      }
+    }
+
+    // Validate step config against adapter config_schema (requires registry).
+    if (step['config'] !== undefined && step['uses_service'] !== undefined) {
+      const serviceName = step['uses_service'] as string;
+      const services = doc['services'] as Record<string, unknown> | undefined;
+      const service = services?.[serviceName] as Record<string, unknown> | undefined;
+      const adapterName = service?.['adapter'] as string | undefined;
+      const adapter = adapterName !== undefined ? registry?.getAdapter(adapterName) : undefined;
+      if (adapter !== undefined && adapter.config_schema === undefined) {
+        errors.push(
+          `Step '${stepName}': 'config' declared but adapter '${adapterName}' does not declare 'config_schema'`,
+        );
+      } else if (adapter?.config_schema !== undefined) {
+        const ajv = new Ajv();
+        const valid = ajv.validate(adapter.config_schema as object, step['config']);
+        if (!valid) {
+          const errMessages = ajv.errors?.map((e) => e.message ?? '').join('; ') ?? 'unknown error';
+          errors.push(
+            `Step '${stepName}': config validation failed against adapter config_schema: ${errMessages}`,
+          );
+        }
       }
     }
 

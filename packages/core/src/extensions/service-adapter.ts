@@ -30,6 +30,13 @@ export interface ServiceAdapter {
    * fallback is applied and retry_after remains undefined.
    */
   readonly defaultRetryAfterSeconds?: number;
+  /**
+   * Optional JSON Schema describing per-step config accepted by this adapter.
+   * When declared, steps targeting this adapter may include a `config` field in YAML.
+   * The engine validates step config against this schema at registration time.
+   * If omitted, steps targeting this adapter must not declare `config`.
+   */
+  readonly config_schema?: Record<string, unknown>;
   fetch(
     operation: string,
     params: Record<string, unknown>,

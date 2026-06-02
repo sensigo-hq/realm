@@ -240,7 +240,11 @@ async function callAdapter(
   }
 
   const secrets = options.secrets ?? {};
-  const config: Record<string, unknown> = { adapter: serviceDef.adapter, trust: serviceDef.trust };
+  const config: Record<string, unknown> = {
+    adapter: serviceDef.adapter,
+    trust: serviceDef.trust,
+    ...(stepDef.config ?? {}),
+  };
   if (serviceDef.auth?.token_from !== undefined) {
     config['auth'] = { token: resolveSecret(serviceDef.auth.token_from, secrets) };
   }

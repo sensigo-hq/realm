@@ -827,6 +827,72 @@ describe('executeStep', () => {
         undefined,
       );
     });
+
+    it('merges step-level config into adapter config object', async () => {
+      const adapter = makeAdapter({ result: 'ok' });
+      const registry = new ExtensionRegistry();
+      registry.register('adapter', 'mock_adapter', adapter);
+
+      const def: WorkflowDefinition = {
+        ...adapterDefinition,
+        steps: {
+          fetch_data: {
+            ...adapterDefinition.steps['fetch_data']!,
+            config: { table: 'Tickets', view: 'Grid view' },
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'adapter-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      await executeStep(store, def, {
+        runId: run.id,
+        command: 'fetch_data',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(adapter.fetch).toHaveBeenCalledWith(
+        'fetch_data',
+        expect.anything(),
+        expect.objectContaining({
+          adapter: 'mock_adapter',
+          trust: 'engine_delivered',
+          table: 'Tickets',
+          view: 'Grid view',
+        }),
+        undefined,
+      );
+    });
+
+    it('passes no extra keys in config when step has no config field', async () => {
+      const adapter = makeAdapter({ result: 'ok' });
+      const registry = new ExtensionRegistry();
+      registry.register('adapter', 'mock_adapter', adapter);
+
+      const run = await store.create({
+        workflowId: 'adapter-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      await executeStep(store, adapterDefinition, {
+        runId: run.id,
+        command: 'fetch_data',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      const receivedConfig = (adapter.fetch as ReturnType<typeof vi.fn>).mock
+        .calls[0]?.[2] as Record<string, unknown>;
+      expect(Object.keys(receivedConfig).sort()).toEqual(['adapter', 'trust']);
+    });
   });
 
   // ---------------------------------------------------------------------------
