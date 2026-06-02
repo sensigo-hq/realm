@@ -8,9 +8,9 @@ import type { ToolDefinition } from '../mcp/mcp-extensions.js';
 // ---------- shared mock for the @anthropic-ai/sdk package -----------------
 const mockCreate = vi.fn();
 vi.mock('@anthropic-ai/sdk', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    messages: { create: mockCreate },
-  })),
+  default: vi.fn().mockImplementation(function () {
+    return { messages: { create: mockCreate } };
+  }),
 }));
 
 // ---------- response builders ---------------------------------------------

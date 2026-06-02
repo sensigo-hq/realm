@@ -9,9 +9,9 @@ import type { ToolDefinition } from '../mcp/mcp-extensions.js';
 // mockCreate is captured here so each test can configure it via mockResolvedValueOnce.
 const mockCreate = vi.fn();
 vi.mock('openai', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    chat: { completions: { create: mockCreate } },
-  })),
+  default: vi.fn().mockImplementation(function () {
+    return { chat: { completions: { create: mockCreate } } };
+  }),
 }));
 
 // ---------- response builders ---------------------------------------------
