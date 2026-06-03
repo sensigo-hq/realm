@@ -475,10 +475,14 @@ export function renderTemplate(
   },
   options?: { strict?: boolean },
 ): string {
-  // Matches {{ path }} and {{ path | filter | filter: arg }} — allows any content except }}.
-  // No \s* around the capture group: whitespace is trimmed in code below via .trim(), and
-  // omitting \s* eliminates the [^}]+? / \s* ambiguity that causes polynomial backtracking.
-  return template.replace(/\{\{([^}]+?)\}\}/g, (_match, expr: string) => {
+  // Matches {{ path }} and {{ path | filter | filter: arg }}.
+  // [^{}]+ excludes both { and } from the expression body:
+  //   - Excluding } prevents the match from spanning past the closing }}.
+  //   - Excluding { prevents O(N²) backtracking on adversarial inputs like
+  //     many repetitions of "{{{{|" — where [^}]+ would try matching { chars
+  //     repeatedly at each start position. Valid template expressions never
+  //     contain { or }. Whitespace is trimmed in code below via .trim().
+  return template.replace(/\{\{([^{}]+)\}\}/g, (_match, expr: string) => {
     const pipeIdx = expr.indexOf('|');
     const hasFilters = pipeIdx !== -1;
 
