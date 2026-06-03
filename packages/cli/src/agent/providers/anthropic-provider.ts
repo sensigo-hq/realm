@@ -108,6 +108,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     options: {
       inputSchema?: Record<string, unknown>;
       maxToolCalls?: number;
+      maxFanOut?: number;
       toolTimeoutMs?: number;
       agentProfileInstructions?: string;
     },
@@ -152,6 +153,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     }
 
     const maxCalls = options.maxToolCalls ?? 20;
+    const maxFanOut = options.maxFanOut;
+    let fan_out_count = 0;
+    let fan_out_budget_exhausted = false;
     let tool_call_count = 0;
     const tool_call_records: ToolCallRecord[] = [];
     const system = buildSystemPrompt(options.inputSchema, options.agentProfileInstructions);
@@ -221,7 +225,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         for (const block of toolUseBlocks) {
           const llmToolCallId = block.id!; // captured verbatim — "toolu_01abc..."
 
-          if (tool_call_count >= maxCalls) {
+          if (tool_call_count >= maxCalls || fan_out_budget_exhausted) {
             // Budget exhausted — must still answer every id in the assistant message.
             anthropic_result_blocks.push({
               type: 'tool_result',
@@ -270,6 +274,16 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
 
           tool_call_records.push(record);
           tool_call_count++;
+          if (
+            maxFanOut !== undefined &&
+            (toolName === 'start_run' || toolName === 'start_run_batch')
+          ) {
+            fan_out_count++;
+            if (fan_out_count >= maxFanOut) {
+              fan_out_budget_exhausted = true;
+              budget_exhausted_mid_batch = true;
+            }
+          }
           anthropic_result_blocks.push({
             type: 'tool_result',
             tool_use_id: llmToolCallId,
