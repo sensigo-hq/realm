@@ -158,11 +158,22 @@ describe('realm serve — HTTP protocol', () => {
     ({ server } = await startTestServer({ devMode: true }));
     const addr = server.address() as { port: number };
     const res = await postMcp(`http://127.0.0.1:${addr.port}`);
-    // StreamableHTTP responds with an SSE stream; extract the JSON from the data line.
-    const text = await res.text();
-    const dataLine = text.split('\n').find((line) => line.startsWith('data: '));
+    expect(res.status).toBe(200);
+    // StreamableHTTP responds with an SSE stream. Read chunks until we see a
+    // data line rather than buffering the full body — the stream may stay open.
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let dataLine: string | undefined;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (value) buffer += decoder.decode(value, { stream: !done });
+      dataLine = buffer.split(/\r?\n/).find((line) => line.startsWith('data: '));
+      if (dataLine !== undefined || done) break;
+    }
+    reader.releaseLock();
     expect(dataLine).toBeDefined();
-    const parsed = JSON.parse((dataLine ?? '').slice(6)) as Record<string, unknown>;
+    const parsed = JSON.parse(dataLine!.slice(6)) as Record<string, unknown>;
     const result = parsed['result'] as Record<string, unknown> | undefined;
     expect(Array.isArray(result?.['tools'])).toBe(true);
   });
