@@ -48,7 +48,7 @@ export interface RealmMcpServerOptions {
 export { createDefaultRegistry };
 
 /**
- * Creates and configures the Realm MCP server with all 7 workflow tools.
+ * Creates and configures the Realm MCP server with all 9 workflow tools.
  *
  * When no `registry` is provided, `FileSystemAdapter` is pre-registered automatically
  * under the name `filesystem`. Pass a custom `registry` to add your own handlers and
@@ -75,6 +75,7 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   registerListWorkflows(server, effectiveOptions);
   registerGetWorkflowProtocol(server, effectiveOptions);
   registerStartRun(server, effectiveOptions);
+  registerStartRunBatch(server, effectiveOptions);
   registerExecuteStep(server, { ...effectiveOptions, traceBufferStore });
   registerSubmitHumanResponse(server, effectiveOptions);
   registerGetRunState(server, effectiveOptions);

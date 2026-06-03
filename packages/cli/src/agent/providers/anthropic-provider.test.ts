@@ -426,6 +426,59 @@ describe('AnthropicProvider.callStepWithTools', () => {
     expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('tool_choice');
     expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('response_format');
   });
+
+  // -----------------------------------------------------------------------
+  // 13. max_fan_out: 1 — second start_run call triggers final extraction
+  // -----------------------------------------------------------------------
+  it('max_fan_out: 1 — second start_run call triggers final extraction', async () => {
+    const executor = vi.fn().mockResolvedValue('ok');
+    mockCreate
+      .mockResolvedValueOnce(
+        makeToolUseResponse([
+          { id: 'tu1', name: 'start_run' },
+          { id: 'tu2', name: 'start_run' },
+        ]),
+      )
+      .mockResolvedValueOnce(makeTextResponse('{"done":true}'));
+
+    const provider = new AnthropicProvider('claude-3-5-sonnet-20241022');
+    const result = await provider.callStepWithTools(
+      'prompt',
+      [oneTool('realm:start_run')],
+      executor,
+      { maxFanOut: 1 },
+    );
+
+    expect(result.output).toEqual({ done: true });
+    // Only the first start_run should have been executed; second was budget-blocked
+    expect(executor).toHaveBeenCalledTimes(1);
+  });
+
+  // -----------------------------------------------------------------------
+  // 14. max_fan_out: undefined — start_run calls are not capped
+  // -----------------------------------------------------------------------
+  it('max_fan_out: undefined — start_run calls are not capped', async () => {
+    const executor = vi.fn().mockResolvedValue('ok');
+    mockCreate
+      .mockResolvedValueOnce(
+        makeToolUseResponse([
+          { id: 'tu1', name: 'start_run' },
+          { id: 'tu2', name: 'start_run' },
+        ]),
+      )
+      .mockResolvedValueOnce(makeTextResponse('{"done":true}'));
+
+    const provider = new AnthropicProvider('claude-3-5-sonnet-20241022');
+    const result = await provider.callStepWithTools(
+      'prompt',
+      [oneTool('realm:start_run')],
+      executor,
+      {},
+    );
+
+    expect(result.output).toEqual({ done: true });
+    expect(executor).toHaveBeenCalledTimes(2);
+  });
 });
 
 // =========================================================================

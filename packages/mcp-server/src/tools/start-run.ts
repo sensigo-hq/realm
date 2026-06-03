@@ -38,7 +38,6 @@ export async function handleStartRun(
     workflow_id: string;
     params?: Record<string, unknown>;
     idempotency_key?: string | undefined;
-    parent_run_id?: string | undefined;
   },
   stores?: HandleRunStores,
 ): Promise<ResponseEnvelope> {
@@ -52,7 +51,6 @@ export async function handleStartRun(
     workflowVersion: definition.version,
     params,
     ...(args.idempotency_key !== undefined ? { idempotencyKey: args.idempotency_key } : {}),
-    ...(args.parent_run_id !== undefined ? { parentRunId: args.parent_run_id } : {}),
   });
 
   const eligible = findEligibleSteps(definition, run);
@@ -100,7 +98,6 @@ export function registerStartRun(
       workflow_id: z.string(),
       params: z.record(z.unknown()).optional().default({}),
       idempotency_key: z.string().optional(),
-      parent_run_id: z.string().optional(),
     },
     async (args) => {
       try {

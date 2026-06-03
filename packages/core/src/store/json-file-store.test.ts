@@ -1,5 +1,5 @@
 // Tests for JsonFileStore: create, get, update, list, and claimStep operations.
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -229,5 +229,78 @@ describe('JsonFileStore.save()', () => {
 
   it('cleanup', async () => {
     await rm(dir, { recursive: true, force: true });
+  });
+});
+
+// ── idempotency ───────────────────────────────────────────────────────────────
+
+describe('JsonFileStore idempotency', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    ({ store, dir } = await makeTmpStore());
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('create() without idempotencyKey always creates a new run', async () => {
+    const r1 = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+    const r2 = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+    expect(r1.id).not.toBe(r2.id);
+  });
+
+  it('create() with idempotencyKey returns the same run on second call', async () => {
+    const r1 = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    const r2 = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    expect(r1.id).toBe(r2.id);
+  });
+
+  it('create() stores idempotency_key on the record', async () => {
+    const record = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    expect(record.idempotency_key).toBe('k1');
+  });
+
+  it('create() with parentRunId stores parent_run_id on the record', async () => {
+    const record = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      parentRunId: 'parent-123',
+    });
+    expect(record.parent_run_id).toBe('parent-123');
+  });
+
+  it('idempotency is scoped per workflow — same key on different workflowId creates a new run', async () => {
+    const r1 = await store.create({
+      workflowId: 'wf-a',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    const r2 = await store.create({
+      workflowId: 'wf-b',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    expect(r1.id).not.toBe(r2.id);
   });
 });

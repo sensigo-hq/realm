@@ -388,6 +388,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 ? { inputSchema: stepDef.input_schema as Record<string, unknown> }
                 : {}),
               maxToolCalls: stepDef.max_tool_calls ?? 20,
+              ...(stepDef.max_fan_out !== undefined ? { maxFanOut: stepDef.max_fan_out } : {}),
               toolTimeoutMs: (stepDef.tool_timeout ?? 30) * 1000,
               ...(agentProfileInstructions !== undefined ? { agentProfileInstructions } : {}),
             });

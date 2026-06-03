@@ -1,137 +1,115 @@
-// start-run-batch tool — atomically enqueues a list of child runs from a fan-out step.
-// Semantics: all-or-nothing. All items are validated before any run is created.
-// Each item may supply an idempotency_key; the store deduplicates by (workflow_id, key).
+// start-run-batch tool — atomically enqueues multiple runs of the same workflow.
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { JsonWorkflowStore, JsonFileStore, WorkflowError } from '@sensigo/realm';
+import {
+  JsonWorkflowStore,
+  JsonFileStore,
+  WorkflowError,
+  buildPreExecutionErrorEnvelope,
+  validateInputSchema,
+  type ResponseEnvelope,
+} from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
 
-export interface BatchItem {
-  workflow_id: string;
-  params?: Record<string, unknown> | undefined;
-  idempotency_key?: string | undefined;
-}
-
 export interface StartRunBatchResult {
-  started: Array<{ run_id: string; workflow_id: string; idempotency_key?: string }>;
-  parent_run_id?: string;
+  started: Array<{
+    run_id: string;
+    idempotency_key?: string;
+    params: Record<string, unknown>;
+  }>;
 }
 
-/**
- * Business logic for the start_run_batch tool.
- * Validates all items first, then enqueues them atomically (all-or-nothing).
- */
 export async function handleStartRunBatch(
   args: {
-    items: BatchItem[];
+    workflow_id: string;
+    items: Array<{ params: Record<string, unknown>; idempotency_key?: string | undefined }>;
     parent_run_id?: string | undefined;
-    max_fan_out?: number | undefined;
+    max_items?: number | undefined;
   },
   stores?: HandleRunStores,
 ): Promise<StartRunBatchResult> {
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
 
-  const { items, parent_run_id } = args;
-
-  if (items.length === 0) {
-    throw new WorkflowError('start_run_batch requires at least one item', {
-      code: 'VALIDATION_BATCH_ITEMS',
-      category: 'VALIDATION',
-      agentAction: 'provide_input',
-      retryable: false,
-    });
-  }
-
-  const effectiveMaxFanOut = args.max_fan_out;
-  if (effectiveMaxFanOut !== undefined && items.length > effectiveMaxFanOut) {
+  const cap = args.max_items ?? 100;
+  if (args.items.length > cap) {
     throw new WorkflowError(
-      `start_run_batch received ${items.length} items but max_fan_out is ${effectiveMaxFanOut}. ` +
-        `Reduce the batch to at most ${effectiveMaxFanOut} items.`,
+      `start_run_batch: ${args.items.length} items exceeds max_items limit of ${cap}`,
       {
         code: 'VALIDATION_BATCH_TOO_LARGE',
         category: 'VALIDATION',
         agentAction: 'provide_input',
         retryable: false,
+        details: { count: args.items.length, max_items: cap },
       },
     );
   }
 
-  // Phase 1: validate all items — resolve each workflow definition.
-  // Collect all failures before throwing so the caller can fix everything at once.
-  const validationErrors: string[] = [];
-  const definitions: Awaited<ReturnType<typeof workflowStore.get>>[] = [];
+  const definition = await workflowStore.get(args.workflow_id);
 
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]!;
-    try {
-      const def = await workflowStore.get(item.workflow_id);
-      definitions.push(def);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      validationErrors.push(`Item ${i} (workflow_id: '${item.workflow_id}'): ${msg}`);
-      definitions.push(null as never); // placeholder — never used if errors exist
+  if (definition.params_schema !== undefined) {
+    const failures: Array<{ index: number; reason: string }> = [];
+    for (let i = 0; i < args.items.length; i++) {
+      try {
+        validateInputSchema(args.items[i]!.params, definition.params_schema, `item[${i}]`);
+      } catch (err) {
+        if (err instanceof WorkflowError) {
+          failures.push({ index: i, reason: err.message });
+        }
+      }
+    }
+    if (failures.length > 0) {
+      throw new WorkflowError(
+        `start_run_batch: ${failures.length} item(s) failed schema validation`,
+        {
+          code: 'VALIDATION_BATCH_ITEMS',
+          category: 'VALIDATION',
+          agentAction: 'provide_input',
+          retryable: false,
+          details: { failures },
+        },
+      );
     }
   }
 
-  if (validationErrors.length > 0) {
-    throw new WorkflowError(
-      `start_run_batch validation failed for ${validationErrors.length} item(s):\n` +
-        validationErrors.join('\n'),
-      {
-        code: 'VALIDATION_BATCH_ITEMS',
-        category: 'VALIDATION',
-        agentAction: 'provide_input',
-        retryable: false,
-      },
-    );
-  }
-
-  // Phase 2: enqueue all runs — all validations passed.
   const started: StartRunBatchResult['started'] = [];
-
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]!;
-    const definition = definitions[i]!;
-
+  for (const item of args.items) {
     const run = await runStore.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
-      params: item.params ?? {},
+      params: item.params,
       ...(item.idempotency_key !== undefined ? { idempotencyKey: item.idempotency_key } : {}),
-      ...(parent_run_id !== undefined ? { parentRunId: parent_run_id } : {}),
+      ...(args.parent_run_id !== undefined ? { parentRunId: args.parent_run_id } : {}),
     });
-
     started.push({
       run_id: run.id,
-      workflow_id: definition.id,
       ...(item.idempotency_key !== undefined ? { idempotency_key: item.idempotency_key } : {}),
+      params: item.params,
     });
   }
-
-  return {
-    started,
-    ...(parent_run_id !== undefined ? { parent_run_id } : {}),
-  };
+  return { started };
 }
 
-/** Registers the start_run_batch MCP tool on the server. */
-export function registerStartRunBatch(server: McpServer, opts?: HandleRunStores): void {
-  const batchItemSchema = z.object({
-    workflow_id: z.string(),
-    params: z.record(z.unknown()).optional(),
-    idempotency_key: z.string().optional(),
-  });
-
+export function registerStartRunBatch(
+  server: McpServer,
+  opts?: {
+    registry?: import('@sensigo/realm').ExtensionRegistry;
+    secrets?: Record<string, string>;
+  },
+): void {
   server.tool(
     'start_run_batch',
-    'Atomically enqueue multiple child workflow runs. All items are validated before any run is created (all-or-nothing). ' +
-      'Each item may include an idempotency_key for safe re-runs. ' +
-      'Pass the current run_id as parent_run_id to link child runs for observability.',
+    'Atomically enqueue multiple runs of the same workflow. All items are validated before any run is created. If idempotency keys are provided, duplicate runs are returned instead of created.',
     {
-      items: z.array(batchItemSchema).min(1),
+      workflow_id: z.string(),
+      items: z.array(
+        z.object({
+          params: z.record(z.unknown()),
+          idempotency_key: z.string().optional(),
+        }),
+      ),
       parent_run_id: z.string().optional(),
-      max_fan_out: z.number().int().positive().optional(),
+      max_items: z.number().int().positive().optional(),
     },
     async (args) => {
       try {
@@ -140,16 +118,7 @@ export function registerStartRunBatch(server: McpServer, opts?: HandleRunStores)
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify(
-                {
-                  status: 'ok',
-                  command: 'start_run_batch',
-                  runs_started: result.started.length,
-                  ...result,
-                },
-                null,
-                2,
-              ),
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
@@ -163,23 +132,28 @@ export function registerStartRunBatch(server: McpServer, opts?: HandleRunStores)
                 agentAction: 'stop',
                 retryable: false,
               });
+        const contextHint =
+          workflowErr.code === 'STATE_WORKFLOW_NOT_FOUND'
+            ? `Workflow '${args.workflow_id}' not found.`
+            : workflowErr.code === 'VALIDATION_BATCH_TOO_LARGE'
+              ? `Batch exceeds max_items limit.`
+              : workflowErr.code === 'VALIDATION_BATCH_ITEMS'
+                ? `One or more items failed schema validation. No runs were created.`
+                : `An error occurred before any runs were created.`;
+        const envelope: ResponseEnvelope = buildPreExecutionErrorEnvelope(
+          'start_run_batch',
+          '',
+          0,
+          workflowErr,
+          contextHint,
+        );
         return {
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify(
-                {
-                  status: 'error',
-                  command: 'start_run_batch',
-                  agent_action: workflowErr.agentAction,
-                  errors: [workflowErr.message],
-                },
-                null,
-                2,
-              ),
+              text: JSON.stringify(envelope, null, 2),
             },
           ],
-          isError: true,
         };
       }
     },
