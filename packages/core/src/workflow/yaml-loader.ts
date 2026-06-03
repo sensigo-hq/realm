@@ -648,7 +648,26 @@ function validateInputMapNode(
     return;
   }
   if (typeof node === 'object' && node !== null && !Array.isArray(node)) {
-    const entries = Object.entries(node as Record<string, unknown>);
+    const obj = node as Record<string, unknown>;
+
+    // Literal sentinel node.
+    if ('$literal' in obj) {
+      if (Object.keys(obj).length !== 1) {
+        errors.push(
+          `${pathDesc}: $literal node must have exactly one key ($literal); found sibling keys`,
+        );
+        return;
+      }
+      const val = obj['$literal'];
+      const allowed = ['string', 'number', 'boolean'];
+      if (val !== null && !allowed.includes(typeof val)) {
+        errors.push(`${pathDesc}: $literal value must be a string, number, boolean, or null`);
+      }
+      return;
+    }
+
+    // Nested object — recurse.
+    const entries = Object.entries(obj);
     if (entries.length === 0) {
       errors.push(`${pathDesc}: object nodes must have at least one key`);
       return;
