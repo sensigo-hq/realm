@@ -476,8 +476,8 @@ export function renderTemplate(
   options?: { strict?: boolean },
 ): string {
   // Matches {{ path }} and {{ path | filter | filter: arg }} — allows any content except }}.
-  // No \s* inside or around the capture group: whitespace is trimmed in code below.
-  // Omitting \s* entirely eliminates the [^}]+? / \s* backtracking ambiguity (polynomial ReDoS).
+  // No \s* around the capture group: whitespace is trimmed in code below via .trim(), and
+  // omitting \s* eliminates the [^}]+? / \s* ambiguity that causes polynomial backtracking.
   return template.replace(/\{\{([^}]+?)\}\}/g, (_match, expr: string) => {
     const pipeIdx = expr.indexOf('|');
     const hasFilters = pipeIdx !== -1;
