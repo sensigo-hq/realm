@@ -347,9 +347,35 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               }
             }
 
-            const executor: ToolExecutor = async (namespacedName, args) => {
+            const baseExecutor: ToolExecutor = async (namespacedName, args) => {
               const [serverId, toolName] = namespacedName.split(':') as [string, string];
               return mcpClient!.call(serverId, toolName, args);
+            };
+
+            // Wrap the executor to enforce max_fan_out when set.
+            // Counts calls to start_run and start_run_batch (regardless of server prefix).
+            let fanOutCallCount = 0;
+            const maxFanOut = stepDef.max_fan_out;
+            const executor: ToolExecutor = async (namespacedName, args) => {
+              const toolName = namespacedName.includes(':')
+                ? namespacedName.split(':')[1]!
+                : namespacedName;
+              if (toolName === 'start_run' || toolName === 'start_run_batch') {
+                fanOutCallCount += 1;
+                if (maxFanOut !== undefined && fanOutCallCount > maxFanOut) {
+                  throw new WorkflowError(
+                    `max_fan_out of ${maxFanOut} reached for step '${stepName}'. ` +
+                      `No further start_run or start_run_batch calls are permitted in this step.`,
+                    {
+                      code: 'VALIDATION_BATCH_TOO_LARGE',
+                      category: 'VALIDATION',
+                      agentAction: 'provide_input',
+                      retryable: false,
+                    },
+                  );
+                }
+              }
+              return baseExecutor(namespacedName, args);
             };
 
             if (!isToolCapable(deps.provider)) {

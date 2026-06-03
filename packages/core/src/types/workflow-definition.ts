@@ -250,6 +250,14 @@ export interface StepDefinition {
    */
   max_tool_calls?: number;
   /**
+   * Maximum number of fan-out tool calls (`start_run` / `start_run_batch`) allowed within
+   * a single agentic loop execution. Applies only to steps with `tools` declared.
+   * When the count reaches this value the loop is terminated early (equivalent to the
+   * existing `max_tool_calls` early-termination path).
+   * Default: unlimited.
+   */
+  max_fan_out?: number;
+  /**
    * Timeout in seconds for each individual tool call.
    * Default: 30 (applied at runtime).
    */

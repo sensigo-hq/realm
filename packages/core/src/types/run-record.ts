@@ -158,6 +158,17 @@ export interface RunRecord {
   id: string;
   workflow_id: string;
   workflow_version: number;
+  /**
+   * Run ID of the parent run that spawned this run via start_run_batch.
+   * Absent for top-level runs.
+   */
+  parent_run_id?: string;
+  /**
+   * Caller-supplied deduplication key. When provided at creation time,
+   * the store returns the existing run if one with the same (workflow_id, idempotency_key)
+   * already exists instead of creating a new one.
+   */
+  idempotency_key?: string;
 
   // DAG execution state — replaces the single `state: string` field.
   completed_steps: string[];

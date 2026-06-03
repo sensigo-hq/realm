@@ -34,7 +34,12 @@ const passthroughDispatcher: StepDispatcher = async () => ({});
  * Creates a run and immediately chains through any leading auto steps.
  */
 export async function handleStartRun(
-  args: { workflow_id: string; params?: Record<string, unknown> },
+  args: {
+    workflow_id: string;
+    params?: Record<string, unknown>;
+    idempotency_key?: string | undefined;
+    parent_run_id?: string | undefined;
+  },
   stores?: HandleRunStores,
 ): Promise<ResponseEnvelope> {
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
@@ -46,6 +51,8 @@ export async function handleStartRun(
     workflowId: definition.id,
     workflowVersion: definition.version,
     params,
+    ...(args.idempotency_key !== undefined ? { idempotencyKey: args.idempotency_key } : {}),
+    ...(args.parent_run_id !== undefined ? { parentRunId: args.parent_run_id } : {}),
   });
 
   const eligible = findEligibleSteps(definition, run);
@@ -92,6 +99,8 @@ export function registerStartRun(
     {
       workflow_id: z.string(),
       params: z.record(z.unknown()).optional().default({}),
+      idempotency_key: z.string().optional(),
+      parent_run_id: z.string().optional(),
     },
     async (args) => {
       try {

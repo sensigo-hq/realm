@@ -36,11 +36,21 @@ export class JsonFileStore implements RunStore {
 
   async create(options: CreateRunOptions): Promise<RunRecord> {
     await this.ensureDir();
+
+    // Idempotency check: if a key is supplied, return the existing run if one matches.
+    if (options.idempotencyKey !== undefined) {
+      const existing = await this.list(options.workflowId);
+      const match = existing.find((r) => r.idempotency_key === options.idempotencyKey);
+      if (match !== undefined) return match;
+    }
+
     const now = new Date().toISOString();
     const record: RunRecord = {
       id: uuidv4(),
       workflow_id: options.workflowId,
       workflow_version: options.workflowVersion,
+      ...(options.parentRunId !== undefined ? { parent_run_id: options.parentRunId } : {}),
+      ...(options.idempotencyKey !== undefined ? { idempotency_key: options.idempotencyKey } : {}),
       completed_steps: [],
       in_progress_steps: [],
       failed_steps: [],

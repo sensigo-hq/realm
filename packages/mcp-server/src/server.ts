@@ -17,6 +17,7 @@ import { registerSubmitHumanResponse } from './tools/submit-human-response.js';
 import { registerGetRunState } from './tools/get-run-state.js';
 import { registerCreateWorkflow } from './tools/create-workflow.js';
 import { registerAppendTrace } from './tools/append-trace.js';
+import { registerStartRunBatch } from './tools/start-run-batch.js';
 
 export interface RealmMcpServerOptions {
   /** Extension registry for resolving service adapters and step handlers at runtime. */
@@ -78,6 +79,7 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   registerSubmitHumanResponse(server, effectiveOptions);
   registerGetRunState(server, effectiveOptions);
   registerCreateWorkflow(server, effectiveOptions);
+  registerStartRunBatch(server, effectiveOptions);
   registerAppendTrace(server, {
     runStore: effectiveRunStore,
     ...(options?.workflowStore !== undefined ? { workflowStore: options.workflowStore } : {}),
