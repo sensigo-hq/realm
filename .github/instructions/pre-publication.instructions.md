@@ -74,6 +74,8 @@ Follow this checklist in order before merging any branch into `main`.
 >
 > A package with `"private": true` in its manifest is not published. Part B does not apply to it.
 
+**When to run Part B:** Cut a release when `[Unreleased]` in `CHANGELOG.md` contains at least one `### Added`, `### Changed`, or `### Security` entry and all open PRs for the milestone are merged. Do not let `[Unreleased]` accumulate across multiple sessions without a release — npm will show the previous version until a tag is pushed.
+
 **1. Create a release branch**
 
 ```bash
@@ -113,6 +115,8 @@ git push -u origin release/v<version>
 Open a PR to `main`. Use **merge commit** (`gh pr merge --merge`) — not rebase, not squash. The release script tags the release commit on the branch before the PR is opened; a rebase merge would rewrite that commit's SHA, making the tag a dangling reference unreachable from `main` and breaking the publish workflow. Merge after CI passes.
 
 **5. Push the tag**
+
+> **Hard gate — this is the only action that triggers the automated npm publish pipeline.** `publish.yml` fires on `push: tags: v*` and will not run until this command is executed. Packages remain at the previous version on npm despite CI being green and the PR being merged until this step runs. Do not skip it.
 
 After the PR is merged:
 
