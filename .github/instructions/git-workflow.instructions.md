@@ -100,9 +100,9 @@ type(scope): short imperative description
 
 ## PR Merge Strategy
 
-- **Squash merge** is the default for feature and fix branches — keeps `main` history linear and readable.
-- **Merge commit** is permitted when preserving the full branch history is explicitly required.
-- **Rebase merge** is permitted for clean, well-structured commit sequences that add value to the linear history.
+- **Merge commit** is the default. It preserves the full branch history honestly — individual commits remain reachable for `git bisect` and archaeology. Use `git log --first-parent main` for a linear view when needed.
+- **Squash merge** is permitted when a branch has a noisy commit history that adds no value to the record (e.g. many "wip" or "fix" commits with no meaningful structure).
+- **Rebase merge** is permitted for clean, well-structured commit sequences where linear history and individual commit preservation are both desired.
 - Do not mix strategies across a project without a documented reason.
 
 ---
