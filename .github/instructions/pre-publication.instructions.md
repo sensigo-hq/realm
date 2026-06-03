@@ -110,7 +110,7 @@ The script: checks the working tree is clean, bumps `version` in all four `packa
 git push -u origin release/v<version>
 ```
 
-Open a PR to `main`. Select **merge commit** (not squash) — the release commit must exist as an ancestor of `main` for the tag to be reachable from `main`'s history. Merge after CI passes.
+Open a PR to `main`. Use **merge commit** (`gh pr merge --merge`) — not rebase, not squash. The release script tags the release commit on the branch before the PR is opened; a rebase merge would rewrite that commit's SHA, making the tag a dangling reference unreachable from `main` and breaking the publish workflow. Merge after CI passes.
 
 **5. Push the tag**
 

@@ -100,10 +100,10 @@ type(scope): short imperative description
 
 ## PR Merge Strategy
 
-- **Merge commit** is the default. It preserves the full branch history honestly — individual commits remain reachable for `git bisect` and archaeology. Use `git log --first-parent main` for a linear view when needed.
+- **Rebase merge is the default.** Individual commits are replayed onto `main` with their original messages and a linear history is preserved. Use `gh pr merge --rebase`.
+- **Merge commit is required for `release/v*` branches.** The release script tags the release commit on the branch before the PR is opened. A rebase merge would rewrite that commit's SHA, making the tag a dangling reference unreachable from `main` and breaking the publish workflow. Use `gh pr merge --merge` for release PRs only.
 - **Squash merge** is permitted when a branch has a noisy commit history that adds no value to the record (e.g. many "wip" or "fix" commits with no meaningful structure).
-- **Rebase merge** is permitted for clean, well-structured commit sequences where linear history and individual commit preservation are both desired.
-- Do not mix strategies across a project without a documented reason.
+- Do not mix strategies beyond the above rules without a documented reason.
 
 ---
 
