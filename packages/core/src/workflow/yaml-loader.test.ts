@@ -338,6 +338,110 @@ steps:
       expect((err as WorkflowError).message).toContain('input_map');
     }
   });
+
+  it('input_map with valid $literal string loads without error', () => {
+    const yaml = `
+id: wf
+name: WF
+version: 1
+services:
+  svc:
+    adapter: mock
+    trust: engine_delivered
+steps:
+  step1:
+    description: step
+    execution: auto
+    uses_service: svc
+    input_map:
+      table:
+        $literal: CS_Macros
+`;
+    expect(() => loadWorkflowFromString(yaml)).not.toThrow();
+    const def = loadWorkflowFromString(yaml);
+    expect((def.steps['step1']?.input_map?.['table'] as { $literal: unknown }).$literal).toBe(
+      'CS_Macros',
+    );
+  });
+
+  it('input_map with $literal having sibling key is rejected', () => {
+    const yaml = `
+id: wf
+name: WF
+version: 1
+services:
+  svc:
+    adapter: mock
+    trust: engine_delivered
+steps:
+  step1:
+    description: step
+    execution: auto
+    uses_service: svc
+    input_map:
+      table:
+        $literal: CS_Macros
+        extra: should_fail
+`;
+    expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(yaml);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain('$literal');
+      expect((err as WorkflowError).message).toContain('sibling keys');
+    }
+  });
+
+  it('input_map with $literal array value is rejected', () => {
+    const yaml = `
+id: wf
+name: WF
+version: 1
+services:
+  svc:
+    adapter: mock
+    trust: engine_delivered
+steps:
+  step1:
+    description: step
+    execution: auto
+    uses_service: svc
+    input_map:
+      ids:
+        $literal:
+          - one
+          - two
+`;
+    expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(yaml);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain('$literal value must be');
+    }
+  });
+
+  it('input_map with $literal nested inside object validates correctly', () => {
+    const yaml = `
+id: wf
+name: WF
+version: 1
+services:
+  svc:
+    adapter: mock
+    trust: engine_delivered
+steps:
+  step1:
+    description: step
+    execution: auto
+    uses_service: svc
+    input_map:
+      config:
+        table:
+          $literal: CS_Macros
+        id: run.params.id
+`;
+    expect(() => loadWorkflowFromString(yaml)).not.toThrow();
+  });
 });
 
 describe('loadWorkflowFromFile', () => {

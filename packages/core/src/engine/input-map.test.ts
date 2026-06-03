@@ -442,4 +442,249 @@ describe('input_map', () => {
     expect(snap).toBeDefined();
     expect(snap!.resolved_params).toEqual({ fields: { name: 'Bob' } });
   });
+
+  it('input_map — $literal string value resolves without path lookup', async () => {
+    const def: WorkflowDefinition = {
+      id: 'imap-wf',
+      name: 'InputMap Workflow',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        insert: {
+          description: 'Adapter step with literal table name',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+          input_map: { table: { $literal: 'CS_Macros' } },
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { insert: { status: 200, data: {} } });
+    const fetchSpy = vi.spyOn(adapter, 'fetch');
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const run = await store.create({ workflowId: 'imap-wf', workflowVersion: 1, params: {} });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'insert',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'insert',
+      { table: 'CS_Macros' },
+      expect.any(Object),
+      undefined,
+    );
+  });
+
+  it('input_map — $literal boolean false resolves to false', async () => {
+    const def: WorkflowDefinition = {
+      id: 'imap-wf',
+      name: 'InputMap Workflow',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        query: {
+          description: 'Adapter step with boolean literal',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+          input_map: { include_archived: { $literal: false } },
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { query: { status: 200, data: {} } });
+    const fetchSpy = vi.spyOn(adapter, 'fetch');
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const run = await store.create({ workflowId: 'imap-wf', workflowVersion: 1, params: {} });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'query',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'query',
+      { include_archived: false },
+      expect.any(Object),
+      undefined,
+    );
+  });
+
+  it('input_map — $literal number resolves to number', async () => {
+    const def: WorkflowDefinition = {
+      id: 'imap-wf',
+      name: 'InputMap Workflow',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        list: {
+          description: 'Adapter step with number literal',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+          input_map: { max_results: { $literal: 100 } },
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { list: { status: 200, data: {} } });
+    const fetchSpy = vi.spyOn(adapter, 'fetch');
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const run = await store.create({ workflowId: 'imap-wf', workflowVersion: 1, params: {} });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'list',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'list',
+      { max_results: 100 },
+      expect.any(Object),
+      undefined,
+    );
+  });
+
+  it('input_map — $literal null resolves to null', async () => {
+    const def: WorkflowDefinition = {
+      id: 'imap-wf',
+      name: 'InputMap Workflow',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        clear: {
+          description: 'Adapter step with null literal',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+          input_map: { owner: { $literal: null } },
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { clear: { status: 200, data: {} } });
+    const fetchSpy = vi.spyOn(adapter, 'fetch');
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const run = await store.create({ workflowId: 'imap-wf', workflowVersion: 1, params: {} });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'clear',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith('clear', { owner: null }, expect.any(Object), undefined);
+  });
+
+  it('input_map — mixed path leaf and literal leaf produces correct merged object', async () => {
+    const def: WorkflowDefinition = {
+      id: 'imap-wf',
+      name: 'InputMap Workflow',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        upsert2: {
+          description: 'Adapter step with mixed path and literal',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+          input_map: {
+            table: { $literal: 'CS_Macros' },
+            record_id: 'run.params.id',
+          },
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { upsert2: { status: 200, data: {} } });
+    const fetchSpy = vi.spyOn(adapter, 'fetch');
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const run = await store.create({
+      workflowId: 'imap-wf',
+      workflowVersion: 1,
+      params: { id: 'rec123' },
+    });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'upsert2',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'upsert2',
+      { table: 'CS_Macros', record_id: 'rec123' },
+      expect.any(Object),
+      undefined,
+    );
+  });
+
+  it('input_map — $literal nested inside object node resolves correctly', async () => {
+    const def: WorkflowDefinition = {
+      id: 'imap-wf',
+      name: 'InputMap Workflow',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        nested: {
+          description: 'Adapter step with literal inside nested object',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+          input_map: {
+            config: {
+              table: { $literal: 'CS_Macros' },
+              id: 'run.params.id',
+            },
+          },
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { nested: { status: 200, data: {} } });
+    const fetchSpy = vi.spyOn(adapter, 'fetch');
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const run = await store.create({
+      workflowId: 'imap-wf',
+      workflowVersion: 1,
+      params: { id: 'rec456' },
+    });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'nested',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'nested',
+      { config: { table: 'CS_Macros', id: 'rec456' } },
+      expect.any(Object),
+      undefined,
+    );
+  });
 });

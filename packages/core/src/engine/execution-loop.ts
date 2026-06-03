@@ -17,6 +17,7 @@ import type {
   RetryConfig,
   ContextWrapperFormat,
   InputMapNode,
+  LiteralNode,
 } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
 import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-store.js';
@@ -203,9 +204,16 @@ function resolveInputMapNode(
   if (typeof node === 'string') {
     return resolvePath(node, root);
   }
+
+  // Literal node — return the value directly without path resolution.
+  if ('$literal' in node && Object.keys(node).length === 1) {
+    return (node as LiteralNode).$literal;
+  }
+
+  // Nested object — recurse.
   const result: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(node)) {
-    result[key] = resolveInputMapNode(child, root, `${keyChain}.${key}`, depth + 1);
+    result[key] = resolveInputMapNode(child as InputMapNode, root, `${keyChain}.${key}`, depth + 1);
   }
   return result;
 }

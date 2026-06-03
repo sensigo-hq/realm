@@ -82,11 +82,15 @@ export type TriggerRule =
   | 'none_failed';
 
 /**
- * A node in an input_map tree. Either a dot-path string leaf or a nested object
- * whose values are themselves InputMapNodes. Enables building nested param objects
- * for adapter steps without flattening the structure.
+ * A node in an input_map tree. One of:
+ * - string: a dot-path reference resolved against run state
+ * - { $literal: scalar }: a static constant value
+ * - { [key: string]: InputMapNode }: a nested object (recursive)
+ *
+ * The $literal sentinel must appear alone — no sibling keys are permitted.
  */
-export type InputMapNode = string | { [key: string]: InputMapNode };
+export type LiteralNode = { $literal: string | number | boolean | null };
+export type InputMapNode = string | LiteralNode | { [key: string]: InputMapNode };
 
 export interface StepDefinition {
   description: string;
