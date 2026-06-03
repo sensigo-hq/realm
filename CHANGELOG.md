@@ -6,8 +6,16 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+---
+
+## [0.2.0] — 2026-06-03
+
 ### Added
 
+- **`execution: guard` step type** — a new step kind that evaluates `abort_unless` conditions against resolved run state. If any condition is not met the run transitions to `run_phase: aborted` and no further steps execute. Guard steps appear in `chained_auto_steps` and always run as auto steps. See the [YAML schema reference](docs/reference/yaml-schema.md) for the full condition syntax.
+- `abort_context` on `get_run_state` — when `run_phase` is `aborted`, the response now includes the guard step ID, each evaluated condition with its resolved value, and the optional `abort_message` authored in the workflow YAML.
+- **`config_schema`** field on service adapter definitions — a JSON Schema that validates the `config` object passed from a step's `config` field before the adapter is invoked. Invalid configs produce a structured validation error without reaching the adapter.
+- `config` pass-through on steps — workflow step definitions now accept an optional `config` object forwarded verbatim to service adapters that declare `config_schema`.
 - **`start_run_batch` MCP tool** — atomically enqueues multiple child workflow runs in a single call. All items are validated before any run is created (all-or-nothing semantics). Each item accepts `workflow_id`, `params`, and an optional `idempotency_key` for safe re-runs.
 - `parent_run_id` field on `RunRecord` — links child runs to their originating parent run for lineage tracking.
 - `idempotency_key` field on `RunRecord` — deduplication key for `start_run` and `start_run_batch` calls. The `JsonFileStore` deduplicates by key within a workflow: a second create with the same key returns the existing run.
@@ -16,10 +24,21 @@ All notable changes to this project are documented here.
 - New error codes `VALIDATION_BATCH_TOO_LARGE` and `VALIDATION_BATCH_ITEMS` in `ErrorCode` union.
 - New exported type `InputMapNode` — a recursive union type (`string | { [key: string]: InputMapNode }`) representing a leaf source-path string or a nested map used for nested object construction in `input_map`.
 - `input_map` now supports nested object construction. Object nodes assemble a plain nested object by recursively resolving their children as source paths. Maximum depth is 10. Empty object nodes and non-string leaves are rejected at workflow registration time with a clear error message.
+- **Agent profile runtime injection** — `agent_profile_instructions` from the MCP protocol step response is now prepended to the LLM system prompt at runtime by the Anthropic and OpenAI providers. Previously the field was present in the protocol but not consumed by the agent loop.
 
 ### Changed
 
 - `WorkflowDefinition.input_map` value type changed from `string` to `InputMapNode` (`string | { [key: string]: InputMapNode }`). Runtime behaviour is unchanged for all-string `input_map` blocks.
+- `@sensigo/realm-mcp`: individual MCP tool modules are now accessible as subpath exports (`@sensigo/realm-mcp/tools/<name>`).
+
+### Fixed
+
+- MCP server: version assertion now uses a semver pattern regex instead of a hardcoded string, so it no longer needs updating on each release.
+
+### Security
+
+- **ReDoS in `render-template`**: removed `\s*` anchors and excluded `{` from the template variable capture group (`[^}]+?` → `[^{}]+`) to eliminate polynomial backtracking on adversarial inputs containing repeated `{` characters or trailing spaces.
+- **CodeQL alerts**: patched Gorgias adapter tag-stripping loop to handle nested-tag bypass patterns (e.g. `<scr<x>ipt>`); replaced sequential entity-escape calls with a single-pass regex to prevent double-unescaping; tightened precondition literal capture group (`(.+)` → `(\S.*)`) to remove leading-whitespace backtracking ambiguity.
 
 ### Breaking Changes
 
