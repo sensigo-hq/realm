@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- New exported type `InputMapNode` — a recursive union type (`string | { [key: string]: InputMapNode }`) representing a leaf source-path string or a nested map used for nested object construction in `input_map`.
+- `input_map` now supports nested object construction. Object nodes assemble a plain nested object by recursively resolving their children as source paths. Maximum depth is 10. Empty object nodes and non-string leaves are rejected at workflow registration time with a clear error message.
+
+### Changed
+
+- `WorkflowDefinition.input_map` value type changed from `string` to `InputMapNode` (`string | { [key: string]: InputMapNode }`). Runtime behaviour is unchanged for all-string `input_map` blocks.
+
+### Breaking Changes
+
+- TypeScript API: `StepDefinition.input_map` values are now `InputMapNode` instead of `string`. TypeScript consumers that read values as `string` must narrow: `if (typeof value === 'string') { ... }`.
+
+---
+
 ## [0.1.0] — 2026-06-01
 
 ### Added

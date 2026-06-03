@@ -81,6 +81,13 @@ export type TriggerRule =
   | 'one_success'
   | 'none_failed';
 
+/**
+ * A node in an input_map tree. Either a dot-path string leaf or a nested object
+ * whose values are themselves InputMapNodes. Enables building nested param objects
+ * for adapter steps without flattening the structure.
+ */
+export type InputMapNode = string | { [key: string]: InputMapNode };
+
 export interface StepDefinition {
   description: string;
   execution: ExecutionMode;
@@ -129,12 +136,14 @@ export interface StepDefinition {
   operation?: string;
   /**
    * Static path-mapping that assembles this step's adapter params from run state.
-   * Each key is the param name passed to the adapter; each value is a dot-path:
+   * Each key is the param name passed to the adapter; each value is either a dot-path string:
    *   run.params.FIELD            — from the run's initial params
    *   context.resources.STEP.FIELD — from a prior step's evidence output
+   * or a nested object of the same shape (InputMapNode), enabling the construction of
+   * arbitrarily nested param objects for adapter steps.
    * Only valid on execution: 'auto' steps with uses_service.
    */
-  input_map?: Record<string, string>;
+  input_map?: Record<string, InputMapNode>;
   handler?: string;
   /**
    * Static key-value configuration passed to the step handler via context.config,

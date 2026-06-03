@@ -304,4 +304,142 @@ describe('input_map', () => {
     expect(snap).toBeDefined();
     expect(Object.prototype.hasOwnProperty.call(snap, 'resolved_params')).toBe(false);
   });
+
+  it('input_map — nested object from run.params', async () => {
+    const def: WorkflowDefinition = {
+      id: 'imap-wf',
+      name: 'InputMap Workflow',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        upsert: {
+          description: 'Adapter step using nested input_map',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+          input_map: {
+            fields: {
+              name: 'run.params.customer_name',
+              email: 'run.params.email',
+            },
+          },
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { upsert: { status: 200, data: {} } });
+    const fetchSpy = vi.spyOn(adapter, 'fetch');
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const run = await store.create({
+      workflowId: 'imap-wf',
+      workflowVersion: 1,
+      params: { customer_name: 'Alice', email: 'alice@example.com' },
+    });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'upsert',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'upsert',
+      { fields: { name: 'Alice', email: 'alice@example.com' } },
+      expect.any(Object),
+      undefined,
+    );
+  });
+
+  it('input_map — flat and nested keys coexist', async () => {
+    const def: WorkflowDefinition = {
+      id: 'imap-wf',
+      name: 'InputMap Workflow',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        call: {
+          description: 'Step with mixed flat/nested input_map',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+          input_map: {
+            table_id: 'run.params.table',
+            fields: {
+              status: 'run.params.status',
+            },
+          },
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { call: { status: 200, data: {} } });
+    const fetchSpy = vi.spyOn(adapter, 'fetch');
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const run = await store.create({
+      workflowId: 'imap-wf',
+      workflowVersion: 1,
+      params: { table: 'tbl_abc', status: 'open' },
+    });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'call',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'call',
+      { table_id: 'tbl_abc', fields: { status: 'open' } },
+      expect.any(Object),
+      undefined,
+    );
+  });
+
+  it('input_map — nested map records resolved_params in evidence snapshot', async () => {
+    const def: WorkflowDefinition = {
+      id: 'imap-wf',
+      name: 'InputMap Workflow',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        upsert: {
+          description: 'Nested input_map step',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+          input_map: {
+            fields: { name: 'run.params.name' },
+          },
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { upsert: { status: 200, data: { id: '42' } } });
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const run = await store.create({
+      workflowId: 'imap-wf',
+      workflowVersion: 1,
+      params: { name: 'Bob' },
+    });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'upsert',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    const afterRun = await store.get(run.id);
+    const snap = afterRun.evidence.find((e) => e.step_id === 'upsert');
+    expect(snap).toBeDefined();
+    expect(snap!.resolved_params).toEqual({ fields: { name: 'Bob' } });
+  });
 });

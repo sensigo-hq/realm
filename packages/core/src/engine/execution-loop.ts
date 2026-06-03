@@ -16,6 +16,7 @@ import type {
   StepDefinition,
   RetryConfig,
   ContextWrapperFormat,
+  InputMapNode,
 } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
 import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-store.js';
@@ -153,12 +154,15 @@ function withTimeout<T>(
   return Promise.race([dispatch(controller.signal), timeout]).finally(() => clearTimeout(timer));
 }
 
+/** Maximum nesting depth allowed in an input_map tree. */
+const MAX_INPUT_MAP_DEPTH = 10;
+
 /**
  * Resolves an input_map declaration into a concrete params object.
  * Falls back to options.input when input_map is absent.
  */
 function resolveInputMap(
-  inputMap: Record<string, string> | undefined,
+  inputMap: Record<string, InputMapNode> | undefined,
   options: ExecuteStepOptions,
   pendingRun: RunRecord,
 ): Record<string, unknown> {
@@ -169,8 +173,39 @@ function resolveInputMap(
     context: { resources: evidenceByStep },
   };
   const result: Record<string, unknown> = {};
-  for (const [key, path] of Object.entries(inputMap)) {
-    result[key] = resolvePath(path, root);
+  for (const [key, node] of Object.entries(inputMap)) {
+    result[key] = resolveInputMapNode(node, root, key, 0);
+  }
+  return result;
+}
+
+/**
+ * Recursively resolves a single InputMapNode. String leaves are resolved via resolvePath;
+ * object nodes produce a nested Record by recursing into their entries.
+ */
+function resolveInputMapNode(
+  node: InputMapNode,
+  root: Record<string, unknown>,
+  keyChain: string,
+  depth: number,
+): unknown {
+  if (depth > MAX_INPUT_MAP_DEPTH) {
+    throw new WorkflowError(
+      `input_map path "${keyChain}": exceeded maximum nesting depth of ${MAX_INPUT_MAP_DEPTH}`,
+      {
+        code: 'INPUT_MAP_DEPTH_EXCEEDED',
+        category: 'ENGINE',
+        agentAction: 'report_to_user',
+        retryable: false,
+      },
+    );
+  }
+  if (typeof node === 'string') {
+    return resolvePath(node, root);
+  }
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(node)) {
+    result[key] = resolveInputMapNode(child, root, `${keyChain}.${key}`, depth + 1);
   }
   return result;
 }
