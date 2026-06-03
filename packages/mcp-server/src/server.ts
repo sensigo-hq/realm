@@ -80,7 +80,6 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   registerSubmitHumanResponse(server, effectiveOptions);
   registerGetRunState(server, effectiveOptions);
   registerCreateWorkflow(server, effectiveOptions);
-  registerStartRunBatch(server, effectiveOptions);
   registerAppendTrace(server, {
     runStore: effectiveRunStore,
     ...(options?.workflowStore !== undefined ? { workflowStore: options.workflowStore } : {}),
