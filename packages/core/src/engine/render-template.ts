@@ -476,7 +476,9 @@ export function renderTemplate(
   options?: { strict?: boolean },
 ): string {
   // Matches {{ path }} and {{ path | filter | filter: arg }} — allows any content except }}.
-  return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_match, expr: string) => {
+  // No trailing \s* inside the capture group: whitespace is trimmed in code below,
+  // and omitting it eliminates the [^}]+? / \s* ambiguity that causes polynomial backtracking.
+  return template.replace(/\{\{\s*([^}]+?)\}\}/g, (_match, expr: string) => {
     const pipeIdx = expr.indexOf('|');
     const hasFilters = pipeIdx !== -1;
 

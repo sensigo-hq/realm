@@ -71,7 +71,7 @@ export function evaluatePrecondition(
   expression: string,
   evidenceByStep: Record<string, Record<string, unknown>>,
 ): boolean {
-  const match = /^([\w-]+)\.([\w.]+)\s*(>=|<=|!=|>|<|==)\s*(.+)$/.exec(expression);
+  const match = /^([\w-]+)\.([\w.]+)\s*(>=|<=|!=|>|<|==)\s*(\S.*)$/.exec(expression);
   if (match === null) return false;
 
   const stepName = match[1]!;

@@ -39,18 +39,35 @@ interface NormalizedMessage {
   created_datetime: string;
 }
 
+/** HTML entity map used by stripHtmlTags. */
+const HTML_ENTITIES: Record<string, string> = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#039;': "'",
+};
+
 /**
- * Intentionally minimal — strips tags and decodes five common HTML entities.
- * Sufficient for Gorgias plain-text note bodies.
+ * Converts an HTML string to plain text.
+ *
+ * Tag removal is applied in a loop until stable so that patterns like
+ * `<scr<x>ipt>` cannot survive a single-pass strip. Entity decoding is done
+ * in a single regex pass to prevent double-unescaping (e.g. `&amp;lt;` must
+ * produce `&lt;`, not `<`).
  */
 function stripHtmlTags(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
+  // Loop until no more tags remain — prevents nested/incomplete-tag bypass.
+  let result = html;
+  let prev: string;
+  do {
+    prev = result;
+    result = result.replace(/<[^>]*>/g, '');
+  } while (result !== prev);
+
+  // Single-pass entity decode — avoids double-unescaping.
+  return result
+    .replace(/&(?:amp|lt|gt|quot|#039);/g, (entity) => HTML_ENTITIES[entity] ?? entity)
     .trim();
 }
 
