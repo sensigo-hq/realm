@@ -415,6 +415,59 @@ describe('OpenAIProvider.callStepWithTools', () => {
     // callStepWithTools-style fields must NOT be present in callStep requests
     expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('tools');
   });
+
+  // -----------------------------------------------------------------------
+  // 15. max_fan_out: 1 — second start_run call triggers final extraction
+  // -----------------------------------------------------------------------
+  it('max_fan_out: 1 — second start_run call triggers final extraction', async () => {
+    const executor = vi.fn().mockResolvedValue('ok');
+    mockCreate
+      .mockResolvedValueOnce(
+        makeToolCallResponse([
+          { id: 'c1', name: 'start_run' },
+          { id: 'c2', name: 'start_run' },
+        ]),
+      )
+      .mockResolvedValueOnce(makeTextResponse('{"done":true}'));
+
+    const provider = new OpenAIProvider('gpt-4o');
+    const result = await provider.callStepWithTools(
+      'prompt',
+      [oneTool('realm:start_run')],
+      executor,
+      { maxFanOut: 1 },
+    );
+
+    expect(result.output).toEqual({ done: true });
+    // Only the first start_run should have been executed; second was budget-blocked
+    expect(executor).toHaveBeenCalledTimes(1);
+  });
+
+  // -----------------------------------------------------------------------
+  // 16. max_fan_out: undefined — start_run calls are not capped
+  // -----------------------------------------------------------------------
+  it('max_fan_out: undefined — start_run calls are not capped', async () => {
+    const executor = vi.fn().mockResolvedValue('ok');
+    mockCreate
+      .mockResolvedValueOnce(
+        makeToolCallResponse([
+          { id: 'c1', name: 'start_run' },
+          { id: 'c2', name: 'start_run' },
+        ]),
+      )
+      .mockResolvedValueOnce(makeTextResponse('{"done":true}'));
+
+    const provider = new OpenAIProvider('gpt-4o');
+    const result = await provider.callStepWithTools(
+      'prompt',
+      [oneTool('realm:start_run')],
+      executor,
+      {},
+    );
+
+    expect(result.output).toEqual({ done: true });
+    expect(executor).toHaveBeenCalledTimes(2);
+  });
 });
 
 // =========================================================================

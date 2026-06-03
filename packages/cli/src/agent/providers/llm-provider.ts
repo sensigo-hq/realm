@@ -45,6 +45,7 @@ export abstract class ToolCapableLlmProvider extends LlmProvider {
     options: {
       inputSchema?: Record<string, unknown>;
       maxToolCalls?: number;
+      maxFanOut?: number;
       toolTimeoutMs?: number;
       agentProfileInstructions?: string;
     },

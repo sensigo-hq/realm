@@ -120,6 +120,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     options: {
       inputSchema?: Record<string, unknown>;
       maxToolCalls?: number;
+      maxFanOut?: number;
       toolTimeoutMs?: number;
       agentProfileInstructions?: string;
     },
@@ -169,6 +170,9 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     }
 
     const maxCalls = options.maxToolCalls ?? 20;
+    const maxFanOut = options.maxFanOut;
+    let fan_out_count = 0;
+    let fan_out_budget_exhausted = false;
     let tool_call_count = 0;
     const tool_call_records: ToolCallRecord[] = [];
 
@@ -236,7 +240,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         for (const tool of batch) {
           const llmToolCallId = tool.id; // captured verbatim — API returns 400 if echoed incorrectly
 
-          if (tool_call_count >= maxCalls) {
+          if (tool_call_count >= maxCalls || fan_out_budget_exhausted) {
             // Budget exhausted — must still answer every id in the assistant message.
             history.push({
               role: 'tool',
@@ -285,6 +289,16 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
 
           tool_call_records.push(record);
           tool_call_count++;
+          if (
+            maxFanOut !== undefined &&
+            (toolName === 'start_run' || toolName === 'start_run_batch')
+          ) {
+            fan_out_count++;
+            if (fan_out_count >= maxFanOut) {
+              fan_out_budget_exhausted = true;
+              budget_exhausted_mid_batch = true;
+            }
+          }
           history.push({ role: 'tool', tool_call_id: llmToolCallId, content: resultContent });
         }
 
