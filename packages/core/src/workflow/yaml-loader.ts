@@ -519,6 +519,14 @@ export function loadWorkflowFromString(
       errors.push(`Step '${stepName}': 'max_tool_calls' must be a positive integer`);
     }
 
+    // Validate max_fan_out: must be a positive integer.
+    if (
+      step['max_fan_out'] !== undefined &&
+      (!Number.isInteger(step['max_fan_out']) || (step['max_fan_out'] as number) <= 0)
+    ) {
+      errors.push(`Step '${stepName}': 'max_fan_out' must be a positive integer`);
+    }
+
     // Validate tool_timeout: must be a positive integer.
     if (
       step['tool_timeout'] !== undefined &&

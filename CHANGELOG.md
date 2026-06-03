@@ -8,6 +8,12 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **`start_run_batch` MCP tool** — atomically enqueues multiple child workflow runs in a single call. All items are validated before any run is created (all-or-nothing semantics). Each item accepts `workflow_id`, `params`, and an optional `idempotency_key` for safe re-runs.
+- `parent_run_id` field on `RunRecord` — links child runs to their originating parent run for lineage tracking.
+- `idempotency_key` field on `RunRecord` — deduplication key for `start_run` and `start_run_batch` calls. The `JsonFileStore` deduplicates by key within a workflow: a second create with the same key returns the existing run.
+- `parent_run_id` and `idempotency_key` optional fields on `start_run` MCP tool.
+- `max_fan_out` step field — caps the number of `start_run` / `start_run_batch` calls permitted within a single agent tool-calling loop. Validated at workflow registration (must be a positive integer).
+- New error codes `VALIDATION_BATCH_TOO_LARGE` and `VALIDATION_BATCH_ITEMS` in `ErrorCode` union.
 - New exported type `InputMapNode` — a recursive union type (`string | { [key: string]: InputMapNode }`) representing a leaf source-path string or a nested map used for nested object construction in `input_map`.
 - `input_map` now supports nested object construction. Object nodes assemble a plain nested object by recursively resolving their children as source paths. Maximum depth is 10. Empty object nodes and non-string leaves are rejected at workflow registration time with a clear error message.
 

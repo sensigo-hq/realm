@@ -6,6 +6,10 @@ export interface CreateRunOptions {
   workflowId: string;
   workflowVersion: number;
   params: Record<string, unknown>;
+  /** When provided, the store deduplicates: returns the existing run if one with the same (workflowId, idempotencyKey) exists. */
+  idempotencyKey?: string;
+  /** ID of the parent run that spawned this run via start_run_batch. */
+  parentRunId?: string;
 }
 
 export interface RunStore {
