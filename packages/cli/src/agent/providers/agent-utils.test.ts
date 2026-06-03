@@ -15,4 +15,18 @@ describe('buildSystemPrompt', () => {
     expect(result).toContain('AI agent executing a step');
     expect(result).toContain(JSON.stringify(schema));
   });
+
+  it('prepends agent profile instructions before the base prompt', () => {
+    const result = buildSystemPrompt(undefined, 'You are a ticket classifier.');
+    expect(result).toMatch(/^You are a ticket classifier\./);
+    expect(result).toContain('AI agent executing a step');
+  });
+
+  it('prepends agent profile and includes schema when both are provided', () => {
+    const schema = { required: ['category'] };
+    const result = buildSystemPrompt(schema, 'You are a ticket classifier.');
+    expect(result).toMatch(/^You are a ticket classifier\./);
+    expect(result).toContain('AI agent executing a step');
+    expect(result).toContain(JSON.stringify(schema));
+  });
 });

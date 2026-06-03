@@ -43,6 +43,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
   async callStep(
     prompt: string,
     inputSchema?: Record<string, unknown>,
+    agentProfileInstructions?: string,
   ): Promise<Record<string, unknown>> {
     // Dynamically import @anthropic-ai/sdk to keep it an optional peer dependency.
     // See openai-provider.ts for an explanation of the 'string' cast technique.
@@ -63,7 +64,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       apiKey: process.env['ANTHROPIC_API_KEY'],
     });
 
-    const systemPrompt = buildSystemPrompt(inputSchema);
+    const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
 
     const makeRequest = async (userContent: string): Promise<string> => {
       const response = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -108,6 +109,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       inputSchema?: Record<string, unknown>;
       maxToolCalls?: number;
       toolTimeoutMs?: number;
+      agentProfileInstructions?: string;
     },
   ): Promise<StepWithToolsResult> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -152,7 +154,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     const maxCalls = options.maxToolCalls ?? 20;
     let tool_call_count = 0;
     const tool_call_records: ToolCallRecord[] = [];
-    const system = buildSystemPrompt(options.inputSchema);
+    const system = buildSystemPrompt(options.inputSchema, options.agentProfileInstructions);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const history: any[] = [{ role: 'user', content: prompt }];

@@ -24,6 +24,7 @@ export abstract class LlmProvider {
   abstract callStep(
     prompt: string,
     inputSchema?: Record<string, unknown>,
+    agentProfileInstructions?: string,
   ): Promise<Record<string, unknown>>;
 
   /** Returns the capability set for this provider instance. */
@@ -45,6 +46,7 @@ export abstract class ToolCapableLlmProvider extends LlmProvider {
       inputSchema?: Record<string, unknown>;
       maxToolCalls?: number;
       toolTimeoutMs?: number;
+      agentProfileInstructions?: string;
     },
   ): Promise<StepWithToolsResult>;
 }
