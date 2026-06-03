@@ -1,20 +1,22 @@
 # MCP Protocol Reference
 
-Realm exposes 7 MCP tools. This document covers the full protocol: tool call patterns, response envelope fields, and error recovery.
+Realm exposes 9 MCP tools. This document covers the full protocol: tool call patterns, response envelope fields, and error recovery.
 
 ---
 
 ## Tools
 
-| Tool                    | Description                                                                                                                                                                                         |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `list_workflows`        | Returns all registered workflow IDs and names. Call this first to discover what is available.                                                                                                       |
-| `get_workflow_protocol` | Returns the full agent briefing for a workflow: step list, input schemas, instructions, rules, and quick_start. Read this before `start_run`.                                                       |
-| `start_run`             | Starts a new run for a workflow. Accepts `workflow_id` and optional `params`.                                                                                                                       |
-| `execute_step`          | Submits agent output for the current step. Accepts `run_id`, `command` (step name), and `params`.                                                                                                   |
-| `submit_human_response` | Submits a human gate response. Accepts `run_id`, `gate_id`, and `choice`.                                                                                                                           |
-| `get_run_state`         | Returns the current state, evidence chain, and terminal status of a run. When `run_phase` is `aborted`, also returns `abort_context` (guard step ID, evaluated conditions, optional abort message). |
-| `create_workflow`       | Registers a dynamic workflow from a `steps` array and immediately starts a run. No YAML file or `realm register` required.                                                                          |
+| Tool                    | Description                                                                                                                                                                                                                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_workflows`        | Returns all registered workflow IDs and names. Call this first to discover what is available.                                                                                                                                                                                          |
+| `get_workflow_protocol` | Returns the full agent briefing for a workflow: step list, input schemas, instructions, rules, and quick_start. Read this before `start_run`.                                                                                                                                          |
+| `start_run`             | Starts a new run for a workflow. Accepts `workflow_id`, optional `params`, and optional `idempotency_key` (if supplied and a run with that key already exists for the workflow, the existing run is returned instead of creating a new one).                                           |
+| `start_run_batch`       | Atomically enqueues multiple runs of the same workflow. Accepts a single `workflow_id`, an `items` array (each item has `params` and optional `idempotency_key`), optional `parent_run_id`, and optional `max_items` (default 100). All items are validated before any run is created. |
+| `execute_step`          | Submits agent output for the current step. Accepts `run_id`, `command` (step name), and `params`.                                                                                                                                                                                      |
+| `submit_human_response` | Submits a human gate response. Accepts `run_id`, `gate_id`, and `choice`.                                                                                                                                                                                                              |
+| `get_run_state`         | Returns the current state, evidence chain, and terminal status of a run. When `run_phase` is `aborted`, also returns `abort_context` (guard step ID, evaluated conditions, optional abort message).                                                                                    |
+| `create_workflow`       | Registers a dynamic workflow from a `steps` array and immediately starts a run. No YAML file or `realm register` required.                                                                                                                                                             |
+| `list_runs`             | Lists runs, optionally filtered by `workflow_id` or `status`.                                                                                                                                                                                                                          |
 
 ---
 
@@ -114,6 +116,45 @@ When the engine opens a gate:
 | `wait_for_human`       | A gate is open and waiting for a choice.                                     | Call `submit_human_response` with the user's choice.                                                                                     |
 
 When `agent_action` is `provide_input` or `resolve_precondition` and `next_actions` is non-empty, follow the first item exactly as after a successful step.
+
+---
+
+## `start_run_batch`
+
+Use `start_run_batch` to enqueue multiple runs of the same workflow atomically. All items are validated before any run is created — if any item fails schema validation, no runs are created and the tool returns a `VALIDATION_BATCH_ITEMS` error with a `failures` array listing each failing item by index.
+
+```json
+{
+  "workflow_id": "ticket-classifier",
+  "parent_run_id": "<orchestrating-run-id>",
+  "max_items": 10,
+  "items": [
+    { "params": { "ticket_id": "T-001", "body": "Login broken" } },
+    { "params": { "ticket_id": "T-002", "body": "Billing error" }, "idempotency_key": "T-002" }
+  ]
+}
+```
+
+### Arguments
+
+| Field           | Required | Description                                                                                                                                                                                                        |
+| --------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `workflow_id`   | Yes      | The workflow to start runs for. All items share the same workflow.                                                                                                                                                 |
+| `items`         | Yes      | Array of run inputs. Each item has `params` (required) and an optional `idempotency_key`. If `idempotency_key` is set and a run with that key already exists, it is returned as-is rather than creating a new run. |
+| `parent_run_id` | No       | Run ID of the orchestrating parent. Stored on each child run record for traceability.                                                                                                                              |
+| `max_items`     | No       | Maximum number of items allowed in a single call. Defaults to `100`. If `items.length` exceeds this cap, the call fails immediately with `VALIDATION_BATCH_TOO_LARGE` before any validation or creation.           |
+
+### Response
+
+On success returns `{ started: Array<{ run_id, params, idempotency_key? }> }` — one entry per item in the same order as the input array.
+
+On failure returns a `ResponseEnvelope` with `status: error` and `agent_action: provide_input`.
+
+| Error code                   | Cause                                                                      |
+| ---------------------------- | -------------------------------------------------------------------------- |
+| `VALIDATION_BATCH_TOO_LARGE` | `items.length` exceeds `max_items`. No runs were created.                  |
+| `VALIDATION_BATCH_ITEMS`     | One or more items failed `params_schema` validation. No runs were created. |
+| `STATE_WORKFLOW_NOT_FOUND`   | `workflow_id` is not registered.                                           |
 
 ---
 

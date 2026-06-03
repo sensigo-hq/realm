@@ -34,6 +34,37 @@ Call `start_run` with `workflow_id` and any required `params` (check `params_sch
 protocol). The engine may auto-chain through initial auto steps and return the first agent step
 immediately.
 
+### 3a. Fan-out: starting multiple child runs
+
+When the task requires spawning multiple parallel child runs of the same workflow, use
+`start_run_batch` instead of calling `start_run` in a loop.
+
+```json
+{
+  "workflow_id": "ticket-classifier",
+  "parent_run_id": "<current-run-id>",
+  "items": [
+    { "params": { "ticket_id": "T-001" } },
+    { "params": { "ticket_id": "T-002" }, "idempotency_key": "T-002" }
+  ]
+}
+```
+
+`start_run_batch` validates all items against the workflow's `params_schema` before creating any
+run. If validation fails for any item, no runs are created — the response carries
+`agent_action: provide_input` with a `failures` array listing each failing item by index. Fix all
+reported items and retry the whole call.
+
+`parent_run_id` links each child run to the orchestrating parent for traceability. Set it to the
+`run_id` of the current run when you are inside a step that fans out.
+
+`max_items` (default 100) caps the batch size. Exceeding it returns `VALIDATION_BATCH_TOO_LARGE`
+before any creation.
+
+A workflow step may declare `max_fan_out` in its YAML to limit how many `start_run` or
+`start_run_batch` calls the agent may make in a single step execution. Once reached, the agent
+enters final-extraction mode — the step completes cleanly with whatever has been collected so far.
+
 ### 4. Execute agent steps
 
 `next_actions` is an array. For linear workflows it contains a single item; for parallel
