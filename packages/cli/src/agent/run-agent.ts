@@ -281,6 +281,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         const inputSchema =
           (nextAction?.input_schema as Record<string, unknown> | undefined) ??
           (stepDef.input_schema as Record<string, unknown> | undefined);
+        const agentProfileInstructions =
+          stepDef.agent_profile !== undefined
+            ? definition.resolved_profiles?.[stepDef.agent_profile]?.content
+            : undefined;
 
         const descPreview = stepDef.description.slice(0, 80);
         console.log(`\n→ [agent] ${stepName}`);
@@ -359,6 +363,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 : {}),
               maxToolCalls: stepDef.max_tool_calls ?? 20,
               toolTimeoutMs: (stepDef.tool_timeout ?? 30) * 1000,
+              ...(agentProfileInstructions !== undefined ? { agentProfileInstructions } : {}),
             });
           } catch (err) {
             console.error(
@@ -374,7 +379,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           stepInput = {};
           for (let attempt = 0; attempt < 2; attempt++) {
             try {
-              stepInput = await deps.provider.callStep(prompt, inputSchema);
+              stepInput = await deps.provider.callStep(
+                prompt,
+                inputSchema,
+                agentProfileInstructions,
+              );
               callError = undefined;
               break;
             } catch (err) {

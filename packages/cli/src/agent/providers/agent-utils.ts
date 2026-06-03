@@ -4,10 +4,17 @@ const SYSTEM_PROMPT_BASE =
   'You are an AI agent executing a step in a structured workflow.\n' +
   'Your task is described below. Respond with a JSON object only — no markdown, no explanation.';
 
-/** Builds the system prompt for an agent step, optionally including the output schema. */
-export function buildSystemPrompt(inputSchema?: Record<string, unknown>): string {
-  if (inputSchema === undefined) return SYSTEM_PROMPT_BASE;
-  return `${SYSTEM_PROMPT_BASE}\nThe JSON must conform to this schema: ${JSON.stringify(inputSchema)}`;
+/** Builds the system prompt for an agent step, optionally prepending an agent profile and/or including the output schema. */
+export function buildSystemPrompt(
+  inputSchema?: Record<string, unknown>,
+  agentProfileInstructions?: string,
+): string {
+  const base =
+    agentProfileInstructions !== undefined
+      ? `${agentProfileInstructions}\n\n${SYSTEM_PROMPT_BASE}`
+      : SYSTEM_PROMPT_BASE;
+  if (inputSchema === undefined) return base;
+  return `${base}\nThe JSON must conform to this schema: ${JSON.stringify(inputSchema)}`;
 }
 
 /**

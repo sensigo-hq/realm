@@ -46,6 +46,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
   async callStep(
     prompt: string,
     inputSchema?: Record<string, unknown>,
+    agentProfileInstructions?: string,
   ): Promise<Record<string, unknown>> {
     // Dynamically import openai to keep it an optional peer dependency.
     // Assigning the module specifier to a typed variable via 'string' makes TS
@@ -66,7 +67,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       ...(this.baseUrl !== undefined ? { baseURL: this.baseUrl } : {}),
     });
 
-    const systemPrompt = buildSystemPrompt(inputSchema);
+    const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
     type Message = { role: 'system' | 'user' | 'assistant'; content: string };
     const messages: Message[] = [
       { role: 'system', content: systemPrompt },
@@ -120,6 +121,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       inputSchema?: Record<string, unknown>;
       maxToolCalls?: number;
       toolTimeoutMs?: number;
+      agentProfileInstructions?: string;
     },
   ): Promise<StepWithToolsResult> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -172,7 +174,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const history: any[] = [
-      { role: 'system', content: buildSystemPrompt(options.inputSchema) },
+      {
+        role: 'system',
+        content: buildSystemPrompt(options.inputSchema, options.agentProfileInstructions),
+      },
       { role: 'user', content: prompt },
     ];
 

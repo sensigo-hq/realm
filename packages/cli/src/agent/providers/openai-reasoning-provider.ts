@@ -37,6 +37,7 @@ export class OpenAIReasoningProvider extends LlmProvider {
   async callStep(
     prompt: string,
     inputSchema?: Record<string, unknown>,
+    agentProfileInstructions?: string,
   ): Promise<Record<string, unknown>> {
     // Dynamically import openai to keep it an optional peer dependency.
     // Assigning the module specifier to a typed variable via 'string' makes TS
@@ -57,7 +58,7 @@ export class OpenAIReasoningProvider extends LlmProvider {
     });
 
     // Fold system prompt into the user message — safe for all o1-series API revisions.
-    const systemPrompt = buildSystemPrompt(inputSchema);
+    const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
     const userContent = `${systemPrompt}\n\n${prompt}`;
 
     type Message = { role: 'user' | 'assistant'; content: string };
