@@ -203,7 +203,7 @@ export interface RunRecord {
    */
   aborted_at?: {
     step_id: string;
-    conditions: Array<{ condition: string; resolved_value: unknown; passed: boolean }>;
+    conditions?: Array<{ condition: string; resolved_value: unknown; passed: boolean }>;
     abort_message?: string;
   };
 }

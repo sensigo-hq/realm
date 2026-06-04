@@ -17,8 +17,21 @@ export interface StepContext {
 }
 
 export interface StepHandlerResult {
-  data: Record<string, unknown>;
+  /**
+   * Output data to record in the evidence chain. Required unless `abort` is set.
+   * When both `abort` and `data` are present, `abort` takes precedence and `data` is ignored.
+   */
+  data?: Record<string, unknown>;
   state_update?: Record<string, unknown>;
+  /**
+   * When set, the engine treats this step as a clean abort rather than a completion.
+   * The run transitions to run_phase: 'aborted' and all downstream steps are skipped.
+   * Use this for expected business conditions (e.g. "ticket is already closed") that
+   * should stop the run cleanly without recording a failure.
+   *
+   * Mutually exclusive with `data` — when both are present, `abort` takes precedence.
+   */
+  abort?: { message: string };
 }
 
 export interface StepHandler {
