@@ -29,7 +29,7 @@ export interface RunStateSummary {
   params: Record<string, unknown>;
   abort_context?: {
     step_id: string;
-    conditions: Array<{ condition: string; resolved_value: unknown; passed: boolean }>;
+    conditions?: Array<{ condition: string; resolved_value: unknown; passed: boolean }>;
     abort_message?: string;
   };
 }
