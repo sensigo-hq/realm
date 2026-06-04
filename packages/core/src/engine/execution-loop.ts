@@ -413,6 +413,10 @@ async function callAdapter(
   };
 }
 
+type HandlerCallResult =
+  | { kind: 'data'; output: Record<string, unknown> }
+  | { kind: 'abort'; message: string };
+
 /**
  * Resolves and calls the step handler for an auto step with a `handler` reference.
  */
@@ -422,7 +426,7 @@ async function callHandler(
   pendingRun: RunRecord,
   evidenceByStep: Record<string, Record<string, unknown>>,
   signal?: AbortSignal,
-): Promise<Record<string, unknown>> {
+): Promise<HandlerCallResult> {
   const handlerName = stepDef.handler!;
   const handler = (options.registry ?? createDefaultRegistry()).getHandler(handlerName);
   if (handler === undefined) {
@@ -459,7 +463,10 @@ async function callHandler(
     });
   }
 
-  return result.data;
+  if (result.abort !== undefined) {
+    return { kind: 'abort', message: result.abort.message };
+  }
+  return { kind: 'data', output: result.data ?? {} };
 }
 
 /**
@@ -903,12 +910,22 @@ export async function executeStep(
       ): Promise<{
         output: Record<string, unknown>;
         resolvedParams: Record<string, unknown> | undefined;
+        handlerAbort?: { message: string };
       }> => {
         if (stepDef?.execution === 'auto' && stepDef.uses_service !== undefined) {
           return callAdapter(stepDef, definition, options, pendingRun, rateLimiterRegistry, signal);
         } else if (stepDef?.execution === 'auto' && stepDef.handler !== undefined) {
           return callHandler(stepDef, options, pendingRun, evidenceByStep, signal).then(
-            (result) => ({ output: result, resolvedParams: undefined }),
+            (result) => {
+              if (result.kind === 'abort') {
+                return {
+                  output: {},
+                  resolvedParams: undefined,
+                  handlerAbort: { message: result.message },
+                };
+              }
+              return { output: result.output, resolvedParams: undefined };
+            },
           );
         } else {
           return options
@@ -920,6 +937,61 @@ export async function executeStep(
         timeoutMs !== undefined
           ? await withTimeout((signal) => makeCall(signal), timeoutMs, options.command)
           : await makeCall();
+
+      // Handle graceful abort from a handler returning { abort: { message } }.
+      if (callResult.handlerAbort !== undefined) {
+        const abortMessage = callResult.handlerAbort.message;
+        const now = new Date();
+        const abortEvidence: EvidenceSnapshot = {
+          ...captureEvidence({
+            stepId: options.command,
+            startedAt: now,
+            completedAt: now,
+            input: options.input,
+            output: { aborted: true, abort_message: abortMessage },
+            error: abortMessage,
+          }),
+          status: 'skipped',
+        };
+        const withHandlerSkipped: RunRecord = {
+          ...pendingRun,
+          in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== options.command),
+          evidence: [...pendingRun.evidence, abortEvidence],
+          skipped_steps: [...pendingRun.skipped_steps, options.command],
+        };
+        const withAllSkipped: RunRecord = {
+          ...withHandlerSkipped,
+          skipped_steps: propagateSkips(withHandlerSkipped, definition),
+        };
+        const abortedRun: RunRecord = {
+          ...withAllSkipped,
+          terminal_state: true,
+          terminal_reason: `Handler '${options.command}' aborted the run: ${abortMessage}`,
+          aborted_at: {
+            step_id: options.command,
+            abort_message: abortMessage,
+          },
+        };
+        let persistedAbortRun: RunRecord | undefined;
+        try {
+          persistedAbortRun = await store.update(abortedRun);
+        } catch {
+          // Persist failed — return the in-memory run version.
+        }
+        return {
+          command: options.command,
+          run_id: options.runId,
+          run_version: (persistedAbortRun ?? abortedRun).version,
+          status: 'ok',
+          data: {},
+          evidence: [abortEvidence],
+          warnings: [],
+          errors: [],
+          context_hint: `Handler step '${options.command}' aborted the run: ${abortMessage}`,
+          next_actions: [],
+        };
+      }
+
       attemptOutput = callResult.output;
       resolvedParams = callResult.resolvedParams;
       if (resolvedParams !== undefined) {

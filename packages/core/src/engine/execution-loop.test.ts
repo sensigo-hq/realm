@@ -1049,6 +1049,204 @@ describe('executeStep', () => {
       expect(ctx.resources).toBeDefined();
       expect(ctx.resources!['fetch_doc']).toBeDefined();
     });
+
+    it('clean abort — handler returning { abort: { message } } produces run_phase: aborted', async () => {
+      const handler: StepHandler = {
+        id: 'my_handler',
+        execute: vi.fn().mockResolvedValue({ abort: { message: 'Ticket is closed' } }),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'my_handler', handler);
+
+      const run = await store.create({
+        workflowId: 'handler-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, handlerDefinition, {
+        runId: run.id,
+        command: 'validate',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(envelope.status).toBe('ok');
+      expect(envelope.next_actions).toHaveLength(0);
+
+      const updatedRun = await store.get(run.id);
+      expect(updatedRun.run_phase).toBe('aborted');
+      expect(updatedRun.terminal_state).toBe(true);
+      expect(updatedRun.aborted_at?.step_id).toBe('validate');
+      expect(updatedRun.aborted_at?.abort_message).toBe('Ticket is closed');
+    });
+
+    it('abort skips downstream steps', async () => {
+      const twoStepHandlerDef: WorkflowDefinition = {
+        id: 'two-step-handler-wf',
+        name: 'Two Step Handler Workflow',
+        version: 1,
+        steps: {
+          check: {
+            description: 'Guard-like check',
+            execution: 'auto',
+            depends_on: [],
+            handler: 'my_handler',
+          },
+          process: {
+            description: 'Downstream processing',
+            execution: 'agent',
+            depends_on: ['check'],
+          },
+        },
+      };
+
+      const handler: StepHandler = {
+        id: 'my_handler',
+        execute: vi.fn().mockResolvedValue({ abort: { message: 'Condition not met' } }),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'my_handler', handler);
+
+      const run = await store.create({
+        workflowId: 'two-step-handler-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      await executeStep(store, twoStepHandlerDef, {
+        runId: run.id,
+        command: 'check',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      const updatedRun = await store.get(run.id);
+      expect(updatedRun.run_phase).toBe('aborted');
+      expect(updatedRun.skipped_steps).toContain('check');
+      expect(updatedRun.skipped_steps).toContain('process');
+      expect(updatedRun.completed_steps).not.toContain('check');
+      expect(updatedRun.failed_steps).not.toContain('check');
+    });
+
+    it('abort evidence entry has status skipped and records the abort message', async () => {
+      const handler: StepHandler = {
+        id: 'my_handler',
+        execute: vi.fn().mockResolvedValue({ abort: { message: 'Ticket is closed' } }),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'my_handler', handler);
+
+      const run = await store.create({
+        workflowId: 'handler-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      await executeStep(store, handlerDefinition, {
+        runId: run.id,
+        command: 'validate',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      const updatedRun = await store.get(run.id);
+      const abortEntry = updatedRun.evidence.find((e) => e.step_id === 'validate');
+      expect(abortEntry).toBeDefined();
+      expect(abortEntry!.status).toBe('skipped');
+      expect(abortEntry!.error).toBe('Ticket is closed');
+    });
+
+    it('throw still fails — handler that throws produces run_phase: failed', async () => {
+      const handler: StepHandler = {
+        id: 'my_handler',
+        execute: vi.fn().mockRejectedValue(new Error('unexpected crash')),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'my_handler', handler);
+
+      const run = await store.create({
+        workflowId: 'handler-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, handlerDefinition, {
+        runId: run.id,
+        command: 'validate',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(envelope.status).toBe('error');
+      const updatedRun = await store.get(run.id);
+      expect(updatedRun.run_phase).toBe('failed');
+      expect(updatedRun.failed_steps).toContain('validate');
+    });
+
+    it('data-only result unchanged — handler returning { data } completes normally', async () => {
+      const handler = makeHandler({ processed: true });
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'my_handler', handler);
+
+      const run = await store.create({
+        workflowId: 'handler-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, handlerDefinition, {
+        runId: run.id,
+        command: 'validate',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(envelope.status).toBe('ok');
+      expect(envelope.data).toEqual({ processed: true });
+      const updatedRun = await store.get(run.id);
+      expect(updatedRun.run_phase).toBe('completed');
+      expect(updatedRun.completed_steps).toContain('validate');
+    });
+
+    it('both abort and data — abort takes precedence and run aborts cleanly', async () => {
+      const handler: StepHandler = {
+        id: 'my_handler',
+        execute: vi
+          .fn()
+          .mockResolvedValue({
+            data: { should_be_ignored: true },
+            abort: { message: 'Abort wins' },
+          }),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'my_handler', handler);
+
+      const run = await store.create({
+        workflowId: 'handler-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, handlerDefinition, {
+        runId: run.id,
+        command: 'validate',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(envelope.status).toBe('ok');
+      expect(envelope.next_actions).toHaveLength(0);
+      const updatedRun = await store.get(run.id);
+      expect(updatedRun.run_phase).toBe('aborted');
+      expect(updatedRun.aborted_at?.abort_message).toBe('Abort wins');
+    });
   });
 
   // ---------------------------------------------------------------------------
