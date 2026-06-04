@@ -4,7 +4,18 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
+## [0.3.0] — 2026-06-04
+
+### Added
+
+- **`$literal` sentinel in `input_map`** — workflow YAML authors can now write `{ $literal: <value> }` as a leaf node in `input_map` to inject a static scalar value (string, number, boolean, or null) directly, without any dot-path resolution. Validated at registration time: sibling keys alongside `$literal` and non-scalar values are rejected with a clear error message.
+- **Handler graceful abort via `result.abort`** — handlers can now return `{ abort: { message: "..." } }` to cleanly stop a run with `run_phase: 'aborted'` instead of throwing an `Error` (which produces `run_phase: 'failed'`). Mirrors the `execution: guard` abort path. The aborting step is recorded in evidence with `status: 'skipped'`; all downstream steps are skipped; `aborted_at.abort_message` is set on the run record.
+- **`uses_resources` on `StepHandler`** — handlers can declare `readonly uses_resources?: readonly string[]` listing the step IDs they read from `context.resources`. When declared, the YAML loader validates at `realm register` time that every listed ID exists in the workflow definition. Missing IDs produce a clear error identifying the step, handler, and the missing resource step ID. Purely informational at runtime — the engine does not filter `context.resources`.
+
+### Changed
+
+- `StepHandlerResult.data` is now optional. Handlers that return only `abort` or `state_update` no longer need to include an empty `data: {}`.
+- `RunRecord.aborted_at.conditions` is now optional. Guard aborts continue to populate it; handler aborts set `aborted_at` without a conditions array.
 
 ---
 
