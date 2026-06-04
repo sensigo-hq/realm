@@ -1217,12 +1217,10 @@ describe('executeStep', () => {
     it('both abort and data — abort takes precedence and run aborts cleanly', async () => {
       const handler: StepHandler = {
         id: 'my_handler',
-        execute: vi
-          .fn()
-          .mockResolvedValue({
-            data: { should_be_ignored: true },
-            abort: { message: 'Abort wins' },
-          }),
+        execute: vi.fn().mockResolvedValue({
+          data: { should_be_ignored: true },
+          abort: { message: 'Abort wins' },
+        }),
       };
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
