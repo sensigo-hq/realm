@@ -37,6 +37,15 @@ export interface StepHandlerResult {
 export interface StepHandler {
   readonly id: string;
   /**
+   * Step IDs this handler reads from `context.resources`.
+   * When declared, the YAML loader verifies that each listed step ID exists in
+   * the workflow definition at registration time.
+   *
+   * Purely informational at runtime — the engine does not enforce or filter
+   * `context.resources` based on this list.
+   */
+  readonly uses_resources?: readonly string[];
+  /**
    * Executes the handler's business logic.
    * Implementors that perform async I/O should check `signal?.aborted` between operations
    * and throw if true, rather than completing work that has already been cancelled.

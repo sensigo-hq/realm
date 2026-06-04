@@ -1441,3 +1441,69 @@ steps:
     }
   });
 });
+
+describe('loadWorkflowFromString — uses_resources validation', () => {
+  function makeHandler(id: string, usesResources?: string[]) {
+    return {
+      id,
+      ...(usesResources !== undefined ? { uses_resources: usesResources } : {}),
+      execute: async () => ({ data: {} }),
+    };
+  }
+
+  const BASE_YAML = `
+id: res-test
+name: Resource Test
+version: 1
+steps:
+  step-a:
+    description: First step
+    execution: auto
+    depends_on: []
+    handler: my_handler
+  step-b:
+    description: Second step
+    execution: agent
+    depends_on: [step-a]
+`;
+
+  it('valid reference — handler uses_resources points to existing step loads without error', () => {
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'my_handler', makeHandler('my_handler', ['step-b']));
+    expect(() => loadWorkflowFromString(BASE_YAML, registry)).not.toThrow();
+  });
+
+  it('missing step ID — handler uses_resources references nonexistent step throws WorkflowError', () => {
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'my_handler', makeHandler('my_handler', ['nonexistent-step']));
+    try {
+      loadWorkflowFromString(BASE_YAML, registry);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkflowError);
+      expect((err as WorkflowError).message).toContain(
+        "declares uses_resources 'nonexistent-step' but no step with that ID exists in this workflow",
+      );
+    }
+  });
+
+  it('no registry — uses_resources check is silently skipped', () => {
+    // Registry is not passed; validation must not throw even if uses_resources
+    // references a nonexistent step (the handler is not inspectable without a registry).
+    expect(() => loadWorkflowFromString(BASE_YAML)).not.toThrow();
+  });
+
+  it('handler not in registry — skips uses_resources check without error', () => {
+    // The step declares handler: 'unknown-handler' but the registry does not contain it.
+    // The loader must not throw — handler-not-found is a runtime concern, not a loader concern.
+    const registry = new ExtensionRegistry();
+    // Intentionally do not register 'my_handler'.
+    expect(() => loadWorkflowFromString(BASE_YAML, registry)).not.toThrow();
+  });
+
+  it('handler without uses_resources — no regression, loads without error', () => {
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'my_handler', makeHandler('my_handler'));
+    expect(() => loadWorkflowFromString(BASE_YAML, registry)).not.toThrow();
+  });
+});

@@ -433,6 +433,22 @@ export function loadWorkflowFromString(
       }
     }
 
+    // Validate uses_resources: each listed step ID must exist in the workflow.
+    if (step['handler'] !== undefined && registry !== undefined) {
+      const handlerName = step['handler'] as string;
+      const handler = registry.getHandler(handlerName);
+      if (handler !== undefined && handler.uses_resources !== undefined) {
+        for (const resourceStepId of handler.uses_resources) {
+          if (!(resourceStepId in stepsRaw)) {
+            errors.push(
+              `Step '${stepName}': handler '${handlerName}' declares uses_resources '${resourceStepId}' ` +
+                `but no step with that ID exists in this workflow`,
+            );
+          }
+        }
+      }
+    }
+
     // Validate trigger_rule.
     if ('trigger_rule' in step) {
       if (!VALID_TRIGGER_RULES.has(step['trigger_rule'] as TriggerRule)) {
