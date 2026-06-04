@@ -39,4 +39,4 @@ export type { TestResult, RunFixtureTestsOptions } from './runner/test-runner.js
 export { startGitHubMockServer } from './servers/github-mock-server.js';
 export type { GitHubMockServerHandle } from './servers/github-mock-server.js';
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.0';
