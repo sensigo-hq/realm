@@ -87,7 +87,7 @@ export function createAgentDispatcher(
         { params: input },
         { run_id: run.id, run_params: run.params, config: {} },
       );
-      return result.data;
+      return result.data ?? {};
     }
 
     if (stepDef.uses_service !== undefined) {
