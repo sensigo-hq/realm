@@ -248,10 +248,15 @@ async function callHandler(
     });
   }
 
+  const resolvedInput =
+    stepDef.input_map !== undefined
+      ? resolveInputMap(stepDef.input_map, options, pendingRun)
+      : options.input;
+
   let result: Awaited<ReturnType<typeof handler.execute>>;
   try {
     result = await handler.execute(
-      { params: options.input },
+      { params: resolvedInput },
       {
         run_id: options.runId,
         run_params: pendingRun.params,
@@ -566,9 +571,7 @@ export async function executeStep(
     stepDef?.timeout_seconds !== undefined ? stepDef.timeout_seconds * 1000 : undefined;
 
   const resolvedInputMapParams: Record<string, unknown> | undefined =
-    stepDef?.execution === 'auto' &&
-    stepDef.uses_service !== undefined &&
-    stepDef.input_map !== undefined
+    stepDef?.execution === 'auto' && stepDef?.input_map !== undefined
       ? resolveInputMap(stepDef.input_map as Record<string, unknown>, options, pendingRun)
       : undefined;
 

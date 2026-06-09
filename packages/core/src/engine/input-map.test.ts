@@ -687,4 +687,141 @@ describe('input_map', () => {
       undefined,
     );
   });
+
+  it('handler step with input_map receives resolved params (Phase 73)', async () => {
+    let capturedParams: Record<string, unknown> | undefined;
+
+    const def: WorkflowDefinition = {
+      id: 'handler-imap-wf',
+      name: 'Handler InputMap Workflow',
+      version: 1,
+      steps: {
+        process: {
+          description: 'Handler step with input_map',
+          execution: 'auto',
+          handler: 'test-handler',
+          depends_on: [],
+          input_map: {
+            table: { $literal: 'CS_Macros' },
+            ticket_id: 'run.params.ticket_id',
+          },
+        },
+      },
+    };
+
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'test-handler', {
+      id: 'test-handler',
+      async execute(inputs: { params: Record<string, unknown> }) {
+        capturedParams = inputs.params;
+        return { data: { done: true } };
+      },
+    });
+
+    const store = new JsonFileStore(dir);
+    const run = await store.create({
+      workflowId: 'handler-imap-wf',
+      workflowVersion: 1,
+      params: { ticket_id: 'TKT-999' },
+    });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'process',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    expect(capturedParams).toEqual({ table: 'CS_Macros', ticket_id: 'TKT-999' });
+  });
+
+  it('handler step with input_map records resolved_params in evidence snapshot (Phase 73)', async () => {
+    const def: WorkflowDefinition = {
+      id: 'handler-imap-snap-wf',
+      name: 'Handler InputMap Snapshot Workflow',
+      version: 1,
+      steps: {
+        process: {
+          description: 'Handler step with input_map',
+          execution: 'auto',
+          handler: 'snap-handler',
+          depends_on: [],
+          input_map: { table: { $literal: 'Orders' } },
+        },
+      },
+    };
+
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'snap-handler', {
+      id: 'snap-handler',
+      async execute() {
+        return { data: { done: true } };
+      },
+    });
+
+    const store = new JsonFileStore(dir);
+    const run = await store.create({
+      workflowId: 'handler-imap-snap-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'process',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    const updatedRun = await store.get(run.id);
+    const snap = updatedRun.evidence.find((e) => e.step_id === 'process');
+    expect(snap).toBeDefined();
+    expect(snap?.resolved_params).toEqual({ table: 'Orders' });
+  });
+
+  it('handler step without input_map passes options.input unchanged (Phase 73)', async () => {
+    let capturedParams: Record<string, unknown> | undefined;
+
+    const def: WorkflowDefinition = {
+      id: 'handler-no-imap-wf',
+      name: 'Handler No InputMap Workflow',
+      version: 1,
+      steps: {
+        process: {
+          description: 'Handler step without input_map',
+          execution: 'auto',
+          handler: 'passthrough-handler',
+          depends_on: [],
+        },
+      },
+    };
+
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'passthrough-handler', {
+      id: 'passthrough-handler',
+      async execute(inputs: { params: Record<string, unknown> }) {
+        capturedParams = inputs.params;
+        return { data: { done: true } };
+      },
+    });
+
+    const store = new JsonFileStore(dir);
+    const run = await store.create({
+      workflowId: 'handler-no-imap-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'process',
+      input: { custom: 'value' },
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    expect(capturedParams).toEqual({ custom: 'value' });
+  });
 });

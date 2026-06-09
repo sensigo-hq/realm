@@ -264,7 +264,7 @@ steps:
     expect(keys).toContain('task_run');
     expect(keys).not.toContain('main');
   });
-  it('execution: auto step with input_map on agent step is rejected', () => {
+  it('input_map on execution: agent step is rejected', () => {
     const content = VALID_YAML.replace(
       'execution: agent',
       'execution: agent\n    input_map:\n      foo: run.params.foo',
@@ -275,6 +275,24 @@ steps:
     } catch (err) {
       expect((err as WorkflowError).message).toContain('input_map');
     }
+  });
+
+  it('input_map on execution: auto handler step is accepted (Phase 73)', () => {
+    const yaml = `
+id: handler-imap-wf
+name: Handler InputMap Workflow
+version: 1
+steps:
+  process:
+    description: Handler step with input_map
+    execution: auto
+    handler: test-handler
+    depends_on: []
+    input_map:
+      table: { $literal: "CS_Macros" }
+      ticket_id: run.params.ticket_id
+`;
+    expect(() => loadWorkflowFromString(yaml)).not.toThrow();
   });
 
   const SERVICE_YAML_BASE = `

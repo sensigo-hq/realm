@@ -274,12 +274,10 @@ export function loadWorkflowFromString(content: string): WorkflowDefinition {
       );
     }
 
-    // Validate input_map: only valid on execution: auto steps with uses_service.
+    // Validate input_map: only valid on execution: auto steps (uses_service or handler).
     if (step['input_map'] !== undefined) {
-      if (step['execution'] !== 'auto' || step['uses_service'] === undefined) {
-        errors.push(
-          `Step '${stepName}': 'input_map' is only valid on execution: auto steps with uses_service`,
-        );
+      if (step['execution'] !== 'auto') {
+        errors.push(`Step '${stepName}': 'input_map' is only valid on execution: auto steps`);
       } else {
         for (const [key, value] of Object.entries(step['input_map'] as Record<string, unknown>)) {
           if (typeof value === 'string') {
