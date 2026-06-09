@@ -934,6 +934,169 @@ describe('executeStep', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Phase 71 — handler abort and warn
+  // ---------------------------------------------------------------------------
+
+  describe('handler abort and warn (Phase 71)', () => {
+    const abortWarnDef: WorkflowDefinition = {
+      id: 'abort-warn-wf',
+      name: 'Abort Warn Workflow',
+      version: 1,
+      steps: {
+        check: {
+          description: 'Check step',
+          execution: 'auto',
+          depends_on: [],
+          handler: 'check_handler',
+        },
+        downstream: {
+          description: 'Downstream agent step',
+          execution: 'agent',
+          depends_on: ['check'],
+        },
+      },
+    };
+
+    it('handler returning abort transitions run to run_phase: aborted with step in completed_steps', async () => {
+      const handler: StepHandler = {
+        id: 'check_handler',
+        execute: vi.fn().mockResolvedValue({ abort: { message: 'ticket is closed' } }),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'check_handler', handler);
+      const run = await store.create({
+        workflowId: 'abort-warn-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, abortWarnDef, {
+        runId: run.id,
+        command: 'check',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(envelope.status).toBe('ok');
+      expect(envelope.next_actions).toHaveLength(0);
+      expect(envelope.context_hint).toContain('aborted');
+
+      const updatedRun = await store.get(run.id);
+      expect(updatedRun.run_phase).toBe('aborted');
+      expect(updatedRun.completed_steps).toContain('check');
+      expect(updatedRun.failed_steps).not.toContain('check');
+      expect(updatedRun.aborted_at?.step_id).toBe('check');
+      expect(updatedRun.aborted_at?.abort_message).toBe('ticket is closed');
+    });
+
+    it('handler abort sets terminal_state — downstream steps never execute', async () => {
+      const handler: StepHandler = {
+        id: 'check_handler',
+        execute: vi.fn().mockResolvedValue({ abort: { message: 'already done' } }),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'check_handler', handler);
+      const run = await store.create({
+        workflowId: 'abort-warn-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      await executeStep(store, abortWarnDef, {
+        runId: run.id,
+        command: 'check',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      const updatedRun = await store.get(run.id);
+      expect(updatedRun.terminal_state).toBe(true);
+      expect(updatedRun.run_phase).toBe('aborted');
+      expect(updatedRun.completed_steps).toContain('check');
+    });
+
+    it('handler returning warn results in EvidenceSnapshot.warn and ResponseEnvelope.warnings', async () => {
+      const handler: StepHandler = {
+        id: 'check_handler',
+        execute: vi
+          .fn()
+          .mockResolvedValue({ data: { result: 'ok' }, warn: { message: 'quota at 95%' } }),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'check_handler', handler);
+      const run = await store.create({
+        workflowId: 'abort-warn-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, abortWarnDef, {
+        runId: run.id,
+        command: 'check',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(envelope.status).toBe('ok');
+      expect(envelope.warnings).toEqual(['quota at 95%']);
+
+      const updatedRun = await store.get(run.id);
+      expect(updatedRun.run_phase).toBe('running');
+      expect(updatedRun.completed_steps).toContain('check');
+
+      const snap = updatedRun.evidence.find((e) => e.step_id === 'check');
+      expect(snap?.warn).toBe('quota at 95%');
+    });
+
+    it('warned step with retry.max_attempts: 3 does not retry — completes on first warn', async () => {
+      const warnRetryDef: WorkflowDefinition = {
+        id: 'warn-retry-wf',
+        name: 'Warn Retry',
+        version: 1,
+        steps: {
+          check: {
+            description: 'Check with retry',
+            execution: 'auto',
+            depends_on: [],
+            handler: 'check_handler',
+            retry: { max_attempts: 3, backoff: 'fixed', base_delay_ms: 0 },
+          },
+        },
+      };
+      let callCount = 0;
+      const handler: StepHandler = {
+        id: 'check_handler',
+        execute: vi.fn().mockImplementation(async () => {
+          callCount++;
+          return { data: { done: true }, warn: { message: 'degraded' } };
+        }),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'check_handler', handler);
+      const run = await store.create({
+        workflowId: 'warn-retry-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, warnRetryDef, {
+        runId: run.id,
+        command: 'check',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(envelope.status).toBe('ok');
+      expect(envelope.warnings).toEqual(['degraded']);
+      expect(callCount).toBe(1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // step.prompt resolution
   // ---------------------------------------------------------------------------
 

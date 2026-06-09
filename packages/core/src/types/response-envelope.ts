@@ -91,5 +91,10 @@ export interface ResponseEnvelope {
    * Only present when at least one auto step was chained. Useful for debugging and orientation
    * after start_run or after an agent step that triggers subsequent auto steps.
    */
-  chained_auto_steps?: Array<{ step: string; run_phase: string; branched_via?: string }>;
+  chained_auto_steps?: Array<{
+    step: string;
+    run_phase: string;
+    branched_via?: string;
+    warnings?: string[];
+  }>;
 }

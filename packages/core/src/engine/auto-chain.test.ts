@@ -7,8 +7,10 @@ import { join } from 'node:path';
 import { executeChain } from './execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import { ExtensionRegistry } from '../extensions/registry.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
+import type { StepHandler } from '../extensions/step-handler.js';
 
 /** Three consecutive auto steps that chain all the way to completed. */
 const threeAutoStepsDef: WorkflowDefinition = {
@@ -199,5 +201,58 @@ describe('executeChain', () => {
 
     const updated = await store.get(run.id);
     expect(updated.run_phase).toBe('failed');
+  });
+
+  it('warn from an intermediate auto step appears in the final envelope warnings', async () => {
+    // step-a (handler, warns) → step-b (auto) → step-c (agent)
+    const chainWarnDef: WorkflowDefinition = {
+      id: 'chain-warn-wf',
+      name: 'Chain Warn Workflow',
+      version: 1,
+      steps: {
+        'step-a': {
+          description: 'First auto step (warns)',
+          execution: 'auto',
+          depends_on: [],
+          handler: 'warn_handler',
+        },
+        'step-b': {
+          description: 'Second auto step',
+          execution: 'auto',
+          depends_on: ['step-a'],
+        },
+        'step-c': {
+          description: 'Agent step — chain stops here',
+          execution: 'agent',
+          depends_on: ['step-b'],
+        },
+      },
+    };
+
+    const warnHandler: StepHandler = {
+      id: 'warn_handler',
+      execute: async () => ({ data: { done: true }, warn: { message: 'quota at 95%' } }),
+    };
+
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'warn_handler', warnHandler);
+
+    const store = new JsonFileStore(dir);
+    const run = await store.create({
+      workflowId: 'chain-warn-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeChain(store, chainWarnDef, {
+      runId: run.id,
+      command: 'step-a',
+      input: {},
+      dispatcher: async (_step, input) => ({ ...input, echoed: true }),
+      registry,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.warnings).toContain('quota at 95%');
   });
 });

@@ -227,6 +227,7 @@ async function callAdapter(
 
 /**
  * Resolves and calls the step handler for an auto step with a `handler` reference.
+ * Returns `{ data, warn? }` — throws WorkflowError with STEP_HANDLER_ABORT when handler aborts.
  */
 async function callHandler(
   stepDef: StepDefinition,
@@ -234,7 +235,7 @@ async function callHandler(
   pendingRun: RunRecord,
   evidenceByStep: Record<string, Record<string, unknown>>,
   signal?: AbortSignal,
-): Promise<Record<string, unknown>> {
+): Promise<{ data: Record<string, unknown>; warn?: string }> {
   const handlerName = stepDef.handler!;
   const handler = (options.registry ?? createDefaultRegistry()).getHandler(handlerName);
   if (handler === undefined) {
@@ -271,7 +272,21 @@ async function callHandler(
     });
   }
 
-  return result.data;
+  if (result.abort !== undefined) {
+    throw new WorkflowError(result.abort.message, {
+      code: 'STEP_HANDLER_ABORT',
+      category: 'ENGINE',
+      agentAction: 'stop',
+      retryable: false,
+      stepId: options.command,
+    });
+  }
+
+  if (result.warn !== undefined) {
+    return { data: result.data ?? {}, warn: result.warn.message };
+  }
+
+  return { data: result.data ?? {} };
 }
 
 /**
@@ -558,6 +573,7 @@ export async function executeStep(
       : undefined;
 
   let output: Record<string, unknown> = {};
+  let currentWarn: string | undefined;
   let dispatchError: WorkflowError | null = null;
   let attemptsUsed = 0;
   const allEvidence: EvidenceSnapshot[] = [];
@@ -566,22 +582,31 @@ export async function executeStep(
     attemptsUsed = attemptNum;
     const startedAt = new Date();
     let attemptOutput: Record<string, unknown> = {};
+    let attemptWarn: string | undefined;
     let attemptError: WorkflowError | null = null;
 
     try {
-      const makeCall = (signal?: AbortSignal): Promise<Record<string, unknown>> => {
+      const makeCall = (
+        signal?: AbortSignal,
+      ): Promise<{ data: Record<string, unknown>; warn?: string }> => {
         if (stepDef?.execution === 'auto' && stepDef.uses_service !== undefined) {
-          return callAdapter(stepDef, definition, options, pendingRun, signal);
+          return callAdapter(stepDef, definition, options, pendingRun, signal).then((data) => ({
+            data,
+          }));
         } else if (stepDef?.execution === 'auto' && stepDef.handler !== undefined) {
           return callHandler(stepDef, options, pendingRun, evidenceByStep, signal);
         } else {
-          return options.dispatcher(options.command, options.input, pendingRun, signal);
+          return options
+            .dispatcher(options.command, options.input, pendingRun, signal)
+            .then((data) => ({ data }));
         }
       };
-      attemptOutput =
+      const callResult =
         timeoutMs !== undefined
           ? await withTimeout((signal) => makeCall(signal), timeoutMs, options.command)
           : await makeCall();
+      attemptOutput = callResult.data;
+      attemptWarn = callResult.warn;
     } catch (err) {
       if (err instanceof WorkflowError) {
         attemptError = err;
@@ -615,6 +640,7 @@ export async function executeStep(
         ? { agentProfile: profile!, agentProfileHash: profileData.content_hash }
         : {}),
       ...(resolvedInputMapParams !== undefined ? { resolvedParams: resolvedInputMapParams } : {}),
+      ...(attemptError === null && attemptWarn !== undefined ? { warn: attemptWarn } : {}),
     });
     const snap: EvidenceSnapshot =
       retryConfig !== undefined ? { ...baseSnap, attempt: attemptNum } : baseSnap;
@@ -622,6 +648,7 @@ export async function executeStep(
 
     if (attemptError === null) {
       output = attemptOutput;
+      currentWarn = attemptWarn;
       dispatchError = null;
       break;
     }
@@ -650,8 +677,44 @@ export async function executeStep(
     );
   }
 
-  // Step 5: Handle dispatch failure — move step to failed_steps.
+  // Step 5: Handle dispatch failure — move step to failed_steps (or abort path for STEP_HANDLER_ABORT).
   if (dispatchError !== null) {
+    // Branch: handler abort — transition run to aborted, step goes to completed_steps.
+    if (dispatchError.code === 'STEP_HANDLER_ABORT') {
+      let abortCleanupWarning: string | undefined;
+      try {
+        const afterAbort: RunRecord = {
+          ...pendingRun,
+          in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== options.command),
+          completed_steps: [...pendingRun.completed_steps, options.command],
+          evidence: [...pendingRun.evidence, ...allEvidence],
+          aborted_at: { step_id: options.command, abort_message: dispatchError.message },
+          terminal_state: true,
+          terminal_reason: `Step '${options.command}' aborted: ${dispatchError.message}`,
+        };
+        const withSkippedAbort: RunRecord = {
+          ...afterAbort,
+          skipped_steps: propagateSkips(afterAbort, definition),
+        };
+        await store.update(withSkippedAbort);
+      } catch (cleanupErr) {
+        abortCleanupWarning = `Failed to persist handler abort: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`;
+      }
+      return {
+        command: options.command,
+        run_id: options.runId,
+        run_version: pendingRun.version,
+        status: 'ok',
+        data: {},
+        evidence: allEvidence,
+        warnings: abortCleanupWarning !== undefined ? [abortCleanupWarning] : [],
+        errors: [],
+        agent_action: 'stop' as const,
+        context_hint: `Step '${options.command}' aborted: ${dispatchError.message}`,
+        next_actions: [],
+      };
+    }
+
     let cleanupWarning: string | undefined;
     try {
       // Build the hypothetical run state after marking this step as failed.
@@ -852,7 +915,7 @@ export async function executeStep(
     status: 'ok',
     data: output,
     evidence: allEvidence,
-    warnings: [],
+    warnings: currentWarn !== undefined ? [currentWarn] : [],
     errors: [],
     context_hint: orientation,
     next_actions: nextActions,
@@ -1016,7 +1079,12 @@ async function executeChainInternal(
   definition: WorkflowDefinition,
   options: ExecuteChainOptions,
   depth: number,
-  chainedSteps: Array<{ step: string; run_phase: string; branched_via?: string }>,
+  chainedSteps: Array<{
+    step: string;
+    run_phase: string;
+    branched_via?: string;
+    warnings?: string[];
+  }>,
 ): Promise<ResponseEnvelope> {
   if (depth > MAX_CHAIN_DEPTH) {
     return {
@@ -1051,12 +1119,11 @@ async function executeChainInternal(
     return result;
   }
 
-  // Record this auto step in the accumulator.
-  if (definition.steps[options.command]?.execution === 'auto') {
-    chainedSteps.push({ step: options.command, run_phase: run.run_phase });
-  }
-
   if (run.terminal_state || run.pending_gate !== undefined) {
+    // Final step — push without accumulated warnings (they're carried in result.warnings).
+    if (definition.steps[options.command]?.execution === 'auto') {
+      chainedSteps.push({ step: options.command, run_phase: run.run_phase });
+    }
     return result;
   }
 
@@ -1065,8 +1132,20 @@ async function executeChainInternal(
   const nextAutoStep = eligible.find((name) => definition.steps[name]?.execution === 'auto');
 
   if (nextAutoStep === undefined) {
-    // Only agent steps or nothing — stop chain, return with latest next_actions.
+    // Last auto step before an agent step — push without accumulated warnings.
+    if (definition.steps[options.command]?.execution === 'auto') {
+      chainedSteps.push({ step: options.command, run_phase: run.run_phase });
+    }
     return result;
+  }
+
+  // Intermediate auto step — push with warnings before recursing.
+  if (definition.steps[options.command]?.execution === 'auto') {
+    chainedSteps.push({
+      step: options.command,
+      run_phase: run.run_phase,
+      ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+    });
   }
 
   return executeChainInternal(
@@ -1092,10 +1171,25 @@ export async function executeChain(
     ...options,
     registry: options.registry ?? createDefaultRegistry(),
   };
-  const chained: Array<{ step: string; run_phase: string; branched_via?: string }> = [];
+  const chained: Array<{
+    step: string;
+    run_phase: string;
+    branched_via?: string;
+    warnings?: string[];
+  }> = [];
   const result = await executeChainInternal(store, definition, effectiveOptions, 0, chained);
   const envelope = { ...result, command: options.command };
-  return chained.length > 0 ? { ...envelope, chained_auto_steps: chained } : envelope;
+
+  // Fold warnings from intermediate chained steps into the final envelope in chain order.
+  const chainedWarnings = chained.flatMap((c) => c.warnings ?? []);
+  const mergedWarnings =
+    chainedWarnings.length > 0
+      ? [...chainedWarnings, ...(envelope.warnings ?? [])]
+      : (envelope.warnings ?? []);
+  const finalEnvelope =
+    chainedWarnings.length > 0 ? { ...envelope, warnings: mergedWarnings } : envelope;
+
+  return chained.length > 0 ? { ...finalEnvelope, chained_auto_steps: chained } : finalEnvelope;
 }
 
 // Re-export TERMINAL_PHASES so existing importers via execution-loop.js still resolve.

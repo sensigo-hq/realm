@@ -22,16 +22,23 @@ export interface StepHandlerResult {
    * When both `abort` and `data` are present, `abort` takes precedence and `data` is ignored.
    */
   data?: Record<string, unknown>;
+  // TODO: not yet consumed by the engine — reserved for future use.
   state_update?: Record<string, unknown>;
   /**
-   * When set, the engine treats this step as a clean abort rather than a completion.
-   * The run transitions to run_phase: 'aborted' and all downstream steps are skipped.
-   * Use this for expected business conditions (e.g. "ticket is already closed") that
-   * should stop the run cleanly without recording a failure.
+   * When set, the engine transitions the run to run_phase: 'aborted'. The step is added to
+   * completed_steps (not failed_steps) and all downstream steps are skipped. Use for expected
+   * business conditions (e.g. "ticket is already closed") that should stop the run cleanly.
    *
-   * Mutually exclusive with `data` — when both are present, `abort` takes precedence.
+   * Mutually exclusive with `warn` — when both are present, `abort` takes precedence.
    */
   abort?: { message: string };
+  /**
+   * When set, the step completes normally but the engine records a warning.
+   * The warning appears in EvidenceSnapshot.warn and ResponseEnvelope.warnings[].
+   * Returning warn is unconditionally final — the retry loop does not retry a warned result.
+   * Mutually exclusive with abort.
+   */
+  warn?: { message: string };
 }
 
 export interface StepHandler {

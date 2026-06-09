@@ -16,6 +16,8 @@ export interface CaptureEvidenceParams {
   agentProfile?: string;
   agentProfileHash?: string;
   resolvedParams?: Record<string, unknown>;
+  /** Warning message from the step handler. Never included in evidence_hash. */
+  warn?: string;
   /** MCP tool calls made during this step. Absent = callStep path; present = callStepWithTools path. */
   toolCalls?: ToolCallRecord[];
   /**
@@ -78,6 +80,7 @@ export function captureEvidence(params: CaptureEvidenceParams): EvidenceSnapshot
       ? { agent_profile_hash: params.agentProfileHash }
       : {}),
     ...(params.resolvedParams !== undefined ? { resolved_params: params.resolvedParams } : {}),
+    ...(params.warn !== undefined ? { warn: params.warn } : {}),
     ...(params.toolCalls !== undefined ? { tool_calls: params.toolCalls } : {}),
     ...traceEntry,
   };
