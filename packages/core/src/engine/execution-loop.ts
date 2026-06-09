@@ -234,7 +234,11 @@ async function callAdapter(
   }
 
   const secrets = options.secrets ?? {};
-  const config: Record<string, unknown> = { adapter: serviceDef.adapter, trust: serviceDef.trust };
+  const config: Record<string, unknown> = {
+    adapter: serviceDef.adapter,
+    trust: serviceDef.trust,
+    ...(stepDef.config ?? {}),
+  };
   if (serviceDef.auth?.token_from !== undefined) {
     config['auth'] = { token: resolveSecret(serviceDef.auth.token_from, secrets) };
   }
@@ -242,10 +246,30 @@ async function callAdapter(
   const method = stepDef.service_method ?? 'fetch';
   const operation = stepDef.operation ?? options.command;
 
+  // Guard: `delete` is optional on ServiceAdapter. If the adapter omits it, surface
+  // ADAPTER_OP_UNSUPPORTED rather than allowing a TypeError from an undefined call.
+  const adapterMethod = adapter[method as keyof typeof adapter];
+  if (typeof adapterMethod !== 'function') {
+    throw new WorkflowError(
+      `Adapter '${serviceDef.adapter}' does not support service_method '${method}'`,
+      {
+        code: 'ADAPTER_OP_UNSUPPORTED',
+        category: 'ENGINE',
+        agentAction: 'report_to_user',
+        retryable: false,
+      },
+    );
+  }
+
   let response: ServiceResponse;
   try {
     const adapterParams = resolveInputMap(stepDef.input_map, options, pendingRun);
-    response = await adapter[method](operation, adapterParams, config, signal);
+    response = await (adapterMethod as typeof adapter.fetch)(
+      operation,
+      adapterParams,
+      config,
+      signal,
+    );
   } catch (err) {
     if (err instanceof WorkflowError) throw err;
     const message = err instanceof Error ? err.message : String(err);

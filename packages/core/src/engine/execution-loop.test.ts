@@ -353,6 +353,95 @@ describe('executeStep', () => {
     expect(envelope.status).toBe('ok');
   });
 
+  it('output_schema: fails when agent submits output missing required field', async () => {
+    const dispatchCalled = vi.fn();
+    const spy: StepDispatcher = async (step, input, run, _signal) => {
+      dispatchCalled();
+      return echoDispatcher(step, input, run, _signal);
+    };
+
+    const schemaDefinition: WorkflowDefinition = {
+      ...definition,
+      steps: {
+        ...definition.steps,
+        'step-one': {
+          ...definition.steps['step-one']!,
+          execution: 'agent',
+          output_schema: {
+            type: 'object',
+            required: ['summary'],
+            properties: { summary: { type: 'string' } },
+          },
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, schemaDefinition, {
+      runId: run.id,
+      command: 'step-one',
+      input: {}, // missing required 'summary' field
+      dispatcher: spy,
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(dispatchCalled).not.toHaveBeenCalled();
+    expect(envelope.agent_action).toBe('provide_input');
+    // The step was never claimed — it is still eligible and appears in next_actions
+    // so the agent can immediately correct and re-submit it.
+    expect(envelope.next_actions).toHaveLength(1);
+
+    const runAfter = await store.get(run.id);
+    expect(runAfter.in_progress_steps).not.toContain('step-one');
+  });
+
+  it('output_schema: step can be re-submitted after failed validation', async () => {
+    const schemaDefinition: WorkflowDefinition = {
+      ...definition,
+      steps: {
+        ...definition.steps,
+        'step-one': {
+          ...definition.steps['step-one']!,
+          execution: 'agent',
+          output_schema: {
+            type: 'object',
+            required: ['summary'],
+            properties: { summary: { type: 'string' } },
+          },
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // First call with invalid input — should fail
+    const first = await executeStep(store, schemaDefinition, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: echoDispatcher,
+    });
+    expect(first.status).toBe('error');
+
+    // Second call with valid input — step was never claimed, so it can be re-submitted
+    const second = await executeStep(store, schemaDefinition, {
+      runId: run.id,
+      command: 'step-one',
+      input: { summary: 'corrected' },
+      dispatcher: echoDispatcher,
+    });
+    expect(second.status).toBe('ok');
+  });
+
   // ---------------------------------------------------------------------------
   // Adapter dispatch (uses_service)
   // ---------------------------------------------------------------------------
@@ -695,6 +784,88 @@ describe('executeStep', () => {
         'fetch_document_v2',
         expect.anything(),
         expect.anything(),
+        undefined,
+      );
+    });
+
+    it('throws ADAPTER_OP_UNSUPPORTED when adapter has no delete method', async () => {
+      const adapter: ServiceAdapter = {
+        id: 'mock_adapter',
+        fetch: vi.fn().mockResolvedValue({ status: 200, data: {} }),
+        create: vi.fn().mockResolvedValue({ status: 201, data: {} }),
+        update: vi.fn().mockResolvedValue({ status: 200, data: {} }),
+        // delete is intentionally absent
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('adapter', 'mock_adapter', adapter);
+
+      const def: WorkflowDefinition = {
+        ...adapterDefinition,
+        steps: {
+          fetch_data: {
+            ...adapterDefinition.steps['fetch_data']!,
+            service_method: 'delete',
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'adapter-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'fetch_data',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(envelope.status).toBe('error');
+      expect(envelope.agent_action).toBe('stop');
+      expect(envelope.errors[0]).toContain("does not support service_method 'delete'");
+    });
+
+    it('merges step-level config into adapter config object', async () => {
+      const adapter = makeAdapter({ result: 'ok' });
+      const registry = new ExtensionRegistry();
+      registry.register('adapter', 'mock_adapter', adapter);
+
+      const def: WorkflowDefinition = {
+        ...adapterDefinition,
+        steps: {
+          fetch_data: {
+            ...adapterDefinition.steps['fetch_data']!,
+            config: { table: 'Tickets', view: 'Grid view' },
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'adapter-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      await executeStep(store, def, {
+        runId: run.id,
+        command: 'fetch_data',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(adapter.fetch).toHaveBeenCalledWith(
+        'fetch_data',
+        expect.anything(),
+        expect.objectContaining({
+          adapter: 'mock_adapter',
+          trust: 'engine_delivered',
+          table: 'Tickets',
+          view: 'Grid view',
+        }),
         undefined,
       );
     });
@@ -2142,6 +2313,215 @@ describe('Step 5 dispatch-failure envelope', () => {
       const snap = updatedRun.evidence.find((e) => e.step_id === 'classify');
       expect(snap).toBeDefined();
       expect(Object.prototype.hasOwnProperty.call(snap, 'debug_output')).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // trace — A1 contract hardening
+  // ---------------------------------------------------------------------------
+
+  describe('trace', () => {
+    it('agent step stores canonical trace with seq numbers in evidence', async () => {
+      const agentDefinition: WorkflowDefinition = {
+        ...definition,
+        id: 'trace-agent-wf',
+        steps: {
+          ...definition.steps,
+          'step-one': { ...definition.steps['step-one']!, execution: 'agent', depends_on: [] },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-agent-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const envelope = await executeStep(store, agentDefinition, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: echoDispatcher,
+        trace: [
+          { event: 'tool_called', data: { name: 'read_file' } },
+          { event: 'tool_result', data: { status: 'ok' } },
+        ],
+      });
+
+      expect(envelope.status).toBe('ok');
+      const snap = envelope.evidence[0];
+      expect(snap?.trace).toBeDefined();
+      expect(snap?.trace).toHaveLength(2);
+      expect(snap?.trace![0]!.seq).toBe(1);
+      expect(snap?.trace![0]!.event).toBe('tool_called');
+      expect(snap?.trace![1]!.seq).toBe(2);
+      expect(snap?.trace_digest).toMatch(/^[0-9a-f]{64}$/);
+      expect(snap?.trace_summary?.stored_entries).toBe(2);
+      expect(snap?.trace_summary?.truncated).toBe(false);
+    });
+
+    it('non-agent step silently drops provided trace', async () => {
+      // step-one is execution: 'auto' in the default definition
+      const run = await store.create({ workflowId: 'test-wf', workflowVersion: 1, params: {} });
+      const envelope = await executeStep(store, definition, {
+        runId: run.id,
+        command: 'step-one',
+        input: {},
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'should_be_dropped' }],
+      });
+
+      expect(envelope.status).toBe('ok');
+      const snap = envelope.evidence[0];
+      expect(snap?.trace).toBeUndefined();
+      expect(snap?.trace_digest).toBeUndefined();
+      expect(snap?.trace_summary).toBeUndefined();
+    });
+
+    it('reserved "trace." prefix entries are dropped from agent trace', async () => {
+      const agentDefinition: WorkflowDefinition = {
+        ...definition,
+        id: 'trace-reserved-wf',
+        steps: {
+          ...definition.steps,
+          'step-one': { ...definition.steps['step-one']!, execution: 'agent', depends_on: [] },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-reserved-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const envelope = await executeStep(store, agentDefinition, {
+        runId: run.id,
+        command: 'step-one',
+        input: { r: 1 },
+        dispatcher: echoDispatcher,
+        trace: [
+          { event: 'trace.internal_engine_event' },
+          { event: 'trace.another_reserved' },
+          { event: 'user_event' },
+        ],
+      });
+
+      const snap = envelope.evidence[0];
+      expect(snap?.trace).toHaveLength(1);
+      expect(snap?.trace![0]!.event).toBe('user_event');
+      expect(snap?.trace_summary?.discarded_reserved_event_entries).toBe(2);
+    });
+
+    it('count limit produces single sentinel with accurate summary', async () => {
+      const agentDefinition: WorkflowDefinition = {
+        ...definition,
+        id: 'trace-count-wf',
+        steps: {
+          ...definition.steps,
+          'step-one': { ...definition.steps['step-one']!, execution: 'agent', depends_on: [] },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'trace-count-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const manyEntries = Array.from({ length: 105 }, (_, i) => ({ event: `ev_${i}` }));
+      const envelope = await executeStep(store, agentDefinition, {
+        runId: run.id,
+        command: 'step-one',
+        input: { r: 1 },
+        dispatcher: echoDispatcher,
+        trace: manyEntries,
+      });
+
+      const snap = envelope.evidence[0];
+      // 100 real entries + 1 sentinel
+      expect(snap?.trace).toHaveLength(101);
+      expect(snap?.trace![100]!.event).toBe('trace.truncated');
+      expect(snap?.trace_summary?.truncated).toBe(true);
+      expect(snap?.trace_summary?.truncation_reason).toBe('count_limit');
+      expect(snap?.trace_summary?.discarded_overflow_entries).toBe(5);
+    });
+
+    it('evidence_hash is unchanged when trace changes but output is identical', async () => {
+      const agentDefinition: WorkflowDefinition = {
+        ...definition,
+        id: 'trace-hash-stable-wf',
+        steps: {
+          ...definition.steps,
+          'step-one': { ...definition.steps['step-one']!, execution: 'agent', depends_on: [] },
+        },
+      };
+
+      const run1 = await store.create({
+        workflowId: 'trace-hash-stable-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const e1 = await executeStep(store, agentDefinition, {
+        runId: run1.id,
+        command: 'step-one',
+        input: { result: 'same_output' },
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'trace_a' }],
+      });
+
+      const run2 = await store.create({
+        workflowId: 'trace-hash-stable-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const e2 = await executeStep(store, agentDefinition, {
+        runId: run2.id,
+        command: 'step-one',
+        input: { result: 'same_output' },
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'trace_b' }],
+      });
+
+      expect(e1.evidence[0]?.evidence_hash).toBe(e2.evidence[0]?.evidence_hash);
+      expect(e1.evidence[0]?.trace_digest).not.toBe(e2.evidence[0]?.trace_digest);
+    });
+
+    it('trace_digest differs when canonical trace differs', async () => {
+      const agentDefinition: WorkflowDefinition = {
+        ...definition,
+        id: 'trace-digest-diff-wf',
+        steps: {
+          ...definition.steps,
+          'step-one': { ...definition.steps['step-one']!, execution: 'agent', depends_on: [] },
+        },
+      };
+
+      const run1 = await store.create({
+        workflowId: 'trace-digest-diff-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const e1 = await executeStep(store, agentDefinition, {
+        runId: run1.id,
+        command: 'step-one',
+        input: { r: 1 },
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'alpha' }],
+      });
+
+      const run2 = await store.create({
+        workflowId: 'trace-digest-diff-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const e2 = await executeStep(store, agentDefinition, {
+        runId: run2.id,
+        command: 'step-one',
+        input: { r: 1 },
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'beta' }],
+      });
+
+      expect(e1.evidence[0]?.trace_digest).toBeDefined();
+      expect(e2.evidence[0]?.trace_digest).toBeDefined();
+      expect(e1.evidence[0]?.trace_digest).not.toBe(e2.evidence[0]?.trace_digest);
     });
   });
 });
