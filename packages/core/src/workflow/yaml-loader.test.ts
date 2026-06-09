@@ -331,6 +331,44 @@ steps:
       );
     }
   });
+
+  it('step named "run" is rejected as a reserved identifier', () => {
+    const yaml = `
+id: reserved-wf
+name: Reserved Workflow
+version: 1
+steps:
+  run:
+    description: Reserved step
+    execution: auto
+    depends_on: []
+`;
+    expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(yaml);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain("Step name 'run' is reserved");
+    }
+  });
+
+  it('step named "context" is rejected as a reserved identifier', () => {
+    const yaml = `
+id: reserved-wf
+name: Reserved Workflow
+version: 1
+steps:
+  context:
+    description: Reserved step
+    execution: auto
+    depends_on: []
+`;
+    expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(yaml);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain("Step name 'context' is reserved");
+    }
+  });
 });
 
 describe('loadWorkflowFromFile', () => {

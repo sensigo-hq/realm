@@ -73,10 +73,13 @@ export interface StepDefinition {
    */
   trigger_rule?: TriggerRule;
   /**
-   * Optional condition expression evaluated against prior step evidence.
+   * Optional condition expression evaluated against prior step evidence and run params.
    * Step is ineligible until this expression is truthy.
-   * Uses the same dot-path syntax as input_map.
-   * Example: "context.resources.classifier.category == 'billing'"
+   * Path forms:
+   *   step_id.field           — resolves against prior step output (e.g. "classify.category == 'billing'")
+   *   run.params.field        — resolves against the run's start params (e.g. "run.params.mode == 'live'")
+   * Supports: ==, !=, >, <, >=, <=, and bare truthy/falsy path.
+   * Single expression only — compound conditions (AND/OR) are not supported.
    */
   when?: string;
   uses_service?: string;

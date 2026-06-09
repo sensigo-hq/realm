@@ -82,17 +82,18 @@ export function triggerRuleSatisfied(step: StepDefinition, run: RunRecord): bool
 }
 
 /**
- * Evaluates a when-condition expression against prior step evidence.
+ * Evaluates a when-condition expression against prior step evidence and run params.
  * Supports: path == 'value', path != 'value', path > n, path < n, path >= n, path <= n.
+ * Path forms: step_id.field (step output) or run.params.field (run start params).
  * Returns false on parse error or missing value.
  */
 export function evaluateWhenCondition(
   expr: string,
   evidenceByStep: Record<string, Record<string, unknown>>,
+  runParams: Record<string, unknown>,
 ): boolean {
-  // when-condition paths are relative to step outputs: "step_id.field" resolves
-  // directly against evidenceByStep (e.g. step_a.confidence == high).
-  const root = evidenceByStep as Record<string, unknown>;
+  // Root merges step outputs and run params under the 'run' key.
+  const root: Record<string, unknown> = { ...evidenceByStep, run: { params: runParams } };
 
   const operators: Array<[string, (a: unknown, b: unknown) => boolean]> = [
     [' >= ', (a, b) => (a as number) >= (b as number)],
@@ -204,7 +205,7 @@ export function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord
 
     // when-condition evaluation.
     if (step.when !== undefined) {
-      if (!evaluateWhenCondition(step.when, evidenceByStep)) continue;
+      if (!evaluateWhenCondition(step.when, evidenceByStep, run.params)) continue;
     }
 
     eligible.push(stepName);
@@ -243,7 +244,7 @@ export function findEligibleGuardSteps(definition: WorkflowDefinition, run: RunR
     // when-condition evaluation.
     if (step.when !== undefined) {
       const evidenceByStep = buildEvidenceByStep(run);
-      if (!evaluateWhenCondition(step.when, evidenceByStep)) continue;
+      if (!evaluateWhenCondition(step.when, evidenceByStep, run.params)) continue;
     }
 
     eligible.push(stepName);
@@ -362,7 +363,10 @@ export function propagateSkips(run: RunRecord, definition: WorkflowDefinition): 
             tempRun.failed_steps.includes(d) ||
             skipped.includes(d),
         );
-        if (allDepsSettled && !evaluateWhenCondition(step.when, buildEvidenceByStep(run))) {
+        if (
+          allDepsSettled &&
+          !evaluateWhenCondition(step.when, buildEvidenceByStep(run), run.params)
+        ) {
           skipped.push(stepName);
           changed = true;
         }

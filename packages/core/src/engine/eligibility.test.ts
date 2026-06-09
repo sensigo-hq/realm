@@ -263,38 +263,65 @@ describe('triggerRuleSatisfied', () => {
 describe('evaluateWhenCondition', () => {
   it('equality: truthy when step output matches expected string', () => {
     const evidence = { classify: { category: 'billing' } };
-    expect(evaluateWhenCondition("classify.category == 'billing'", evidence)).toBe(true);
+    expect(evaluateWhenCondition("classify.category == 'billing'", evidence, {})).toBe(true);
   });
 
   it('equality: falsy when step output does not match', () => {
     const evidence = { classify: { category: 'technical' } };
-    expect(evaluateWhenCondition("classify.category == 'billing'", evidence)).toBe(false);
+    expect(evaluateWhenCondition("classify.category == 'billing'", evidence, {})).toBe(false);
   });
 
   it('numeric comparison: truthy when value exceeds threshold', () => {
     const evidence = { classify: { confidence: 0.9 } };
-    expect(evaluateWhenCondition('classify.confidence > 0.8', evidence)).toBe(true);
+    expect(evaluateWhenCondition('classify.confidence > 0.8', evidence, {})).toBe(true);
   });
 
   it('numeric comparison: falsy when value is below threshold', () => {
     const evidence = { classify: { confidence: 0.5 } };
-    expect(evaluateWhenCondition('classify.confidence > 0.8', evidence)).toBe(false);
+    expect(evaluateWhenCondition('classify.confidence > 0.8', evidence, {})).toBe(false);
   });
 
   it('inequality operator', () => {
     const evidence = { step_a: { status: 'error' } };
-    expect(evaluateWhenCondition("step_a.status != 'success'", evidence)).toBe(true);
-    expect(evaluateWhenCondition("step_a.status != 'error'", evidence)).toBe(false);
+    expect(evaluateWhenCondition("step_a.status != 'success'", evidence, {})).toBe(true);
+    expect(evaluateWhenCondition("step_a.status != 'error'", evidence, {})).toBe(false);
   });
 
   it('returns false when path is missing from evidence', () => {
     const evidence = { classify: {} };
-    expect(evaluateWhenCondition("classify.missing_field == 'billing'", evidence)).toBe(false);
+    expect(evaluateWhenCondition("classify.missing_field == 'billing'", evidence, {})).toBe(false);
   });
 
   it('unquoted string rhs treated as bareword for equality', () => {
     const evidence = { step_a: { confidence: 'high' } };
-    expect(evaluateWhenCondition('step_a.confidence == high', evidence)).toBe(true);
+    expect(evaluateWhenCondition('step_a.confidence == high', evidence, {})).toBe(true);
+  });
+
+  it('run.params string equality: truthy when param matches', () => {
+    expect(evaluateWhenCondition("run.params.mode == 'live'", {}, { mode: 'live' })).toBe(true);
+  });
+
+  it('run.params string equality: falsy when param does not match', () => {
+    expect(evaluateWhenCondition("run.params.mode == 'live'", {}, { mode: 'shadow' })).toBe(false);
+  });
+
+  it('run.params numeric comparison: truthy when param exceeds threshold', () => {
+    expect(evaluateWhenCondition('run.params.threshold >= 3', {}, { threshold: 5 })).toBe(true);
+  });
+
+  it('run.params numeric comparison: falsy when param is below threshold', () => {
+    expect(evaluateWhenCondition('run.params.threshold >= 3', {}, { threshold: 1 })).toBe(false);
+  });
+
+  it('run.params missing key returns false', () => {
+    expect(evaluateWhenCondition("run.params.mode == 'live'", {}, {})).toBe(false);
+  });
+
+  it('step output path still works alongside run.params', () => {
+    const evidence = { classify: { category: 'billing' } };
+    expect(
+      evaluateWhenCondition("classify.category == 'billing'", evidence, { mode: 'live' }),
+    ).toBe(true);
   });
 });
 

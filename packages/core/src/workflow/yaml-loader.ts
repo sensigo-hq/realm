@@ -233,6 +233,10 @@ export function loadWorkflowFromString(content: string): WorkflowDefinition {
     }
     const step = stepRaw as Record<string, unknown>;
 
+    if (stepName === 'run' || stepName === 'context') {
+      errors.push(`Step name '${stepName}' is reserved and cannot be used as a step identifier`);
+    }
+
     const REQUIRED_STEP = ['description', 'execution'];
     for (const field of REQUIRED_STEP) {
       if (!(field in step)) {
