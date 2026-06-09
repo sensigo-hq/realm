@@ -11,6 +11,7 @@ import {
 import { JsonFileStore } from '../store/json-file-store.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
+import { InMemoryTraceBufferStore } from '../store/trace-buffer-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
 import type { ServiceAdapter } from '../extensions/service-adapter.js';
@@ -1325,6 +1326,40 @@ describe('executeStep', () => {
   // ---------------------------------------------------------------------------
 
   describe('gate owner propagation', () => {
+    it('propagates gate.owner from step definition into pending_gate.owner', async () => {
+      const gateOwnerWorkflow: WorkflowDefinition = {
+        id: 'gate-owner-wf',
+        name: 'Gate Owner Workflow',
+        version: 1,
+        steps: {
+          gate_step: {
+            description: 'Gate step with owner',
+            execution: 'auto',
+            trust: 'human_confirmed',
+            depends_on: [],
+            gate: { choices: ['send', 'discard'], owner: '@mihai.lupu' },
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'gate-owner-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, gateOwnerWorkflow, {
+        runId: run.id,
+        command: 'gate_step',
+        input: {},
+        dispatcher: echoDispatcher,
+      });
+
+      expect(envelope.status).toBe('confirm_required');
+      const updatedRun = await store.get(run.id);
+      expect(updatedRun.pending_gate?.owner).toBe('@mihai.lupu');
+    });
+
     it('pending_gate.owner is undefined when gate has no owner', async () => {
       const gateNoOwnerWorkflow: WorkflowDefinition = {
         id: 'gate-no-owner-wf',
@@ -1515,6 +1550,174 @@ describe('executeStep', () => {
   // ---------------------------------------------------------------------------
 
   describe('gate.message template resolution', () => {
+    it('fail-fast: returns stop error when gate.message contains an unresolvable reference', async () => {
+      const gateMessageBrokenWf: WorkflowDefinition = {
+        id: 'gate-msg-broken-wf',
+        name: 'Gate Message Broken',
+        version: 1,
+        steps: {
+          gate_step: {
+            description: 'Gate step with broken message reference',
+            execution: 'auto',
+            trust: 'human_confirmed',
+            depends_on: [],
+            gate: {
+              choices: ['approve', 'reject'],
+              message: 'Count: {{ context.resources.gate_step.missing_field }}',
+            },
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'gate-msg-broken-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, gateMessageBrokenWf, {
+        runId: run.id,
+        command: 'gate_step',
+        input: {},
+        dispatcher: async () => ({}), // output has no missing_field
+      });
+
+      expect(envelope.status).toBe('error');
+      expect(envelope.agent_action).toBe('stop');
+      expect(envelope.errors[0]).toContain('gate.message has unresolvable references');
+      expect(envelope.errors[0]).toContain('context.resources.gate_step.missing_field');
+
+      // Gate must not be written to the store.
+      const updatedRun = await store.get(run.id);
+      expect(updatedRun.pending_gate).toBeUndefined();
+    });
+
+    it('happy path: gate.message with self-reference resolves and populates gate.display and resolved_message', async () => {
+      const gateMessageWf: WorkflowDefinition = {
+        id: 'gate-msg-happy-wf',
+        name: 'Gate Message Happy',
+        version: 1,
+        steps: {
+          gate_step: {
+            description: 'Gate step with valid message self-reference',
+            execution: 'auto',
+            trust: 'human_confirmed',
+            depends_on: [],
+            gate: {
+              choices: ['approve', 'reject'],
+              message: 'Found: {{ context.resources.gate_step.count }}',
+            },
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'gate-msg-happy-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, gateMessageWf, {
+        runId: run.id,
+        command: 'gate_step',
+        input: {},
+        dispatcher: async () => ({ count: 7 }),
+      });
+
+      expect(envelope.status).toBe('confirm_required');
+      expect(envelope.gate?.display).toBe('Found: 7');
+
+      const updatedRun = await store.get(run.id);
+      expect(updatedRun.pending_gate?.resolved_message).toBe('Found: 7');
+    });
+
+    it('evidence persistence: gate_message appears on gate_response snapshot and not in output blob', async () => {
+      const gateMessageEvidenceWf: WorkflowDefinition = {
+        id: 'gate-msg-evidence-wf',
+        name: 'Gate Message Evidence',
+        version: 1,
+        steps: {
+          gate_step: {
+            description: 'Gate step for evidence test',
+            execution: 'auto',
+            trust: 'human_confirmed',
+            depends_on: [],
+            gate: {
+              choices: ['approve', 'reject'],
+              message: 'Found: {{ context.resources.gate_step.count }}',
+            },
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'gate-msg-evidence-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, gateMessageEvidenceWf, {
+        runId: run.id,
+        command: 'gate_step',
+        input: {},
+        dispatcher: async () => ({ count: 7 }),
+      });
+
+      expect(envelope.status).toBe('confirm_required');
+      const gateId = envelope.gate!.gate_id;
+
+      await submitHumanResponse(store, gateMessageEvidenceWf, {
+        runId: run.id,
+        gateId,
+        choice: 'approve',
+      });
+
+      const finalRun = await store.get(run.id);
+      const gateSnap = finalRun.evidence.find((e) => e.kind === 'gate_response');
+      expect(gateSnap).toBeDefined();
+      expect(gateSnap!.gate_message).toBe('Found: 7');
+      // gate_message must NOT appear in the output blob.
+      expect(gateSnap!.output_summary).not.toHaveProperty('gate_message');
+    });
+
+    it('gate.message present and step.prompt also present: gate.display uses gate.message not step.prompt', async () => {
+      const gateMsgOverPromptWf: WorkflowDefinition = {
+        id: 'gate-msg-over-prompt-wf',
+        name: 'Gate Message Over Prompt',
+        version: 1,
+        steps: {
+          gate_step: {
+            description: 'Gate step with both message and prompt',
+            execution: 'auto',
+            trust: 'human_confirmed',
+            depends_on: [],
+            prompt: 'This is step.prompt text',
+            gate: {
+              choices: ['approve', 'reject'],
+              message: 'This is gate.message text',
+            },
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'gate-msg-over-prompt-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, gateMsgOverPromptWf, {
+        runId: run.id,
+        command: 'gate_step',
+        input: {},
+        dispatcher: async () => ({}),
+      });
+
+      expect(envelope.status).toBe('confirm_required');
+      expect(envelope.gate?.display).toBe('This is gate.message text');
+      expect(envelope.gate?.display).not.toContain('step.prompt');
+    });
+
     it('no gate.message: pending_gate.resolved_message is absent and gate.display falls back to step.prompt', async () => {
       const gateNoMsgWf: WorkflowDefinition = {
         id: 'gate-no-msg-wf',
@@ -1610,6 +1813,26 @@ describe('Step 5 dispatch-failure envelope', () => {
     store = new JsonFileStore(dir);
   });
 
+  // Two-step workflow: step_a (agent) → step_b (agent, trigger_rule: one_failed).
+  const twoStepDef: WorkflowDefinition = {
+    id: 'two-step-wf',
+    name: 'Two Step Workflow',
+    version: 1,
+    steps: {
+      step_a: {
+        description: 'First step',
+        execution: 'agent',
+        depends_on: [],
+      },
+      step_b: {
+        description: 'Recovery step',
+        execution: 'agent',
+        depends_on: ['step_a'],
+        trigger_rule: 'one_failed',
+      },
+    },
+  };
+
   it('terminal failure always returns stop with empty next_actions', async () => {
     // Single-step workflow — no recovery branch possible.
     const singleStepDef: WorkflowDefinition = {
@@ -1648,6 +1871,205 @@ describe('Step 5 dispatch-failure envelope', () => {
     expect(envelope.status).toBe('error');
     expect(envelope.agent_action).toBe('stop');
     expect(envelope.next_actions).toHaveLength(0);
+  });
+
+  it('non-terminal failure with wait_for_human exposes recovery branch', async () => {
+    const run = await store.create({
+      workflowId: 'two-step-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, twoStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Service unavailable', {
+          code: 'SERVICE_HTTP_5XX',
+          category: 'SERVICE',
+          agentAction: 'wait_for_human',
+          retryable: false,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('wait_for_human');
+    expect(envelope.next_actions.length).toBeGreaterThanOrEqual(1);
+    expect(envelope.next_actions[0]?.instruction.call_with.command).toBe('step_b');
+    expect(
+      envelope.context_hint.toLowerCase().includes('service') ||
+        envelope.context_hint.toLowerCase().includes('recovery'),
+    ).toBe(true);
+  });
+
+  it('non-terminal failure with provide_input is translated to report_to_user and exposes recovery branch', async () => {
+    const run = await store.create({
+      workflowId: 'two-step-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, twoStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Adapter method not supported', {
+          code: 'ADAPTER_OP_UNSUPPORTED',
+          category: 'SERVICE',
+          agentAction: 'provide_input',
+          retryable: false,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('report_to_user');
+    expect(envelope.next_actions.length).toBeGreaterThanOrEqual(1);
+    expect(envelope.next_actions[0]?.instruction.call_with.command).toBe('step_b');
+  });
+
+  it('non-terminal failure with stop is translated to report_to_user and exposes recovery branch', async () => {
+    const run = await store.create({
+      workflowId: 'two-step-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, twoStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Authentication failed', {
+          code: 'SERVICE_AUTH_FAILED',
+          category: 'SERVICE',
+          agentAction: 'stop',
+          retryable: false,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('report_to_user');
+    expect(envelope.next_actions.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('WAL deletion failure does NOT suppress next_actions', async () => {
+    const bufferStore = new InMemoryTraceBufferStore();
+    vi.spyOn(bufferStore, 'delete').mockRejectedValue(new Error('disk contention'));
+
+    const run = await store.create({
+      workflowId: 'two-step-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, twoStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Service unavailable', {
+          code: 'SERVICE_HTTP_5XX',
+          category: 'SERVICE',
+          agentAction: 'wait_for_human',
+          retryable: false,
+        });
+      },
+      traceBufferStore: bufferStore,
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('wait_for_human');
+    expect(envelope.next_actions.length).toBeGreaterThanOrEqual(1);
+    expect(
+      envelope.warnings.some(
+        (w) => w.toLowerCase().includes('trace') || w.toLowerCase().includes('buffer'),
+      ),
+    ).toBe(true);
+  });
+
+  it('store.update failure suppresses next_actions', async () => {
+    const run = await store.create({
+      workflowId: 'two-step-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // claimStep uses its own atomic file-lock write and does not call store.update,
+    // so spying on store.update only intercepts the Step 5 store.update(failedRun) call.
+    vi.spyOn(store, 'update').mockRejectedValue(new Error('disk full'));
+
+    const envelope = await executeStep(store, twoStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Service unavailable', {
+          code: 'SERVICE_HTTP_5XX',
+          category: 'SERVICE',
+          agentAction: 'wait_for_human',
+          retryable: false,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('wait_for_human');
+    expect(envelope.next_actions).toHaveLength(0);
+    expect(envelope.warnings.some((w) => w.toLowerCase().includes('persist'))).toBe(true);
+  });
+
+  it('run_version reflects persisted version not stale pre-persist version', async () => {
+    const run = await store.create({
+      workflowId: 'single-step-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // Track the version returned by store.update in Step 5.
+    const originalUpdate = store.update.bind(store);
+    let persistedVersion: number | undefined;
+    vi.spyOn(store, 'update').mockImplementation(async (record) => {
+      const result = await originalUpdate(record);
+      persistedVersion = result.version;
+      return result;
+    });
+
+    const singleStepDef: WorkflowDefinition = {
+      id: 'single-step-wf',
+      name: 'Single Step Workflow',
+      version: 1,
+      steps: {
+        step_a: {
+          description: 'Only step',
+          execution: 'agent',
+          depends_on: [],
+        },
+      },
+    };
+
+    const envelope = await executeStep(store, singleStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('failure', {
+          code: 'ENGINE_HANDLER_FAILED',
+          category: 'ENGINE',
+          agentAction: 'stop',
+          retryable: false,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    // run_version must equal what store.update returned, not the stale pendingRun.version.
+    expect(persistedVersion).toBeDefined();
+    expect(envelope.run_version).toBe(persistedVersion);
   });
 
   // ---------------------------------------------------------------------------
@@ -1721,5 +2143,1100 @@ describe('Step 5 dispatch-failure envelope', () => {
       expect(snap).toBeDefined();
       expect(Object.prototype.hasOwnProperty.call(snap, 'debug_output')).toBe(false);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// trace_schema validation (A2)
+// ---------------------------------------------------------------------------
+
+describe('trace_schema validation', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-trace-schema-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  const traceSchemaDefinitionBase: WorkflowDefinition = {
+    id: 'trace-schema-wf',
+    name: 'Test Workflow',
+    version: 1,
+    steps: {
+      'step-one': {
+        description: 'First step',
+        execution: 'agent',
+        depends_on: [],
+        trace_schema: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['seq', 'event'],
+            properties: {
+              seq: { type: 'number' },
+              event: { type: 'string', pattern: '^[a-z_]+$' },
+            },
+          },
+        },
+      },
+      'step-two': {
+        description: 'Second step',
+        execution: 'agent',
+        depends_on: ['step-one'],
+      },
+    },
+  };
+
+  it('trace_schema enforce: invalid trace blocks pre-claim and is re-submittable', async () => {
+    const def: WorkflowDefinition = {
+      ...traceSchemaDefinitionBase,
+      steps: {
+        ...traceSchemaDefinitionBase.steps,
+        'step-one': {
+          ...traceSchemaDefinitionBase.steps['step-one']!,
+          trace_validation_mode: 'enforce',
+        },
+      },
+    };
+    const dispatchCalled = vi.fn();
+    const spy: StepDispatcher = async (step, input, run, signal) => {
+      dispatchCalled();
+      return echoDispatcher(step, input, run, signal);
+    };
+
+    const run = await store.create({
+      workflowId: 'trace-schema-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // Invalid trace: event contains uppercase letters (fails pattern '^[a-z_]+$')
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: { result: 'done' },
+      dispatcher: spy,
+      trace: [{ event: 'InvalidEvent' }],
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('provide_input');
+    expect(dispatchCalled).not.toHaveBeenCalled();
+    // Step not claimed — it is still eligible and in next_actions
+    expect(envelope.next_actions).toHaveLength(1);
+    const runAfter = await store.get(run.id);
+    expect(runAfter.in_progress_steps).not.toContain('step-one');
+  });
+
+  it('trace_schema enforce: re-submittable after failure (step never claimed)', async () => {
+    const def: WorkflowDefinition = {
+      ...traceSchemaDefinitionBase,
+      steps: {
+        ...traceSchemaDefinitionBase.steps,
+        'step-one': {
+          ...traceSchemaDefinitionBase.steps['step-one']!,
+          trace_validation_mode: 'enforce',
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'trace-schema-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // First call — invalid trace
+    const first = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: { result: 'done' },
+      dispatcher: echoDispatcher,
+      trace: [{ event: 'BadEvent' }],
+    });
+    expect(first.status).toBe('error');
+
+    // Second call — valid trace (all lowercase)
+    const second = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: { result: 'done' },
+      dispatcher: echoDispatcher,
+      trace: [{ event: 'good_event' }],
+    });
+    expect(second.status).toBe('ok');
+  });
+
+  it('trace_schema warn: invalid trace does not block step, warning returned in envelope', async () => {
+    const def: WorkflowDefinition = {
+      ...traceSchemaDefinitionBase,
+      steps: {
+        ...traceSchemaDefinitionBase.steps,
+        'step-one': {
+          ...traceSchemaDefinitionBase.steps['step-one']!,
+          trace_validation_mode: 'warn',
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'trace-schema-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // Invalid trace — but warn mode so step succeeds
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: { result: 'done' },
+      dispatcher: echoDispatcher,
+      trace: [{ event: 'BadEvent' }],
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.warnings).toHaveLength(1);
+    expect(envelope.warnings[0]).toContain('step-one');
+  });
+
+  it('trace_schema warn: valid trace passes with no warnings', async () => {
+    const def: WorkflowDefinition = {
+      ...traceSchemaDefinitionBase,
+      steps: {
+        ...traceSchemaDefinitionBase.steps,
+        'step-one': {
+          ...traceSchemaDefinitionBase.steps['step-one']!,
+          trace_validation_mode: 'warn',
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'trace-schema-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: { result: 'done' },
+      dispatcher: echoDispatcher,
+      trace: [{ event: 'good_event' }],
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.warnings).toHaveLength(0);
+  });
+
+  it('trace_schema: schema_applied and validation metadata recorded in trace_summary', async () => {
+    const def: WorkflowDefinition = {
+      ...traceSchemaDefinitionBase,
+      steps: {
+        ...traceSchemaDefinitionBase.steps,
+        'step-one': {
+          ...traceSchemaDefinitionBase.steps['step-one']!,
+          trace_validation_mode: 'enforce',
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'trace-schema-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: { result: 'done' },
+      dispatcher: echoDispatcher,
+      trace: [{ event: 'good_event' }],
+    });
+
+    expect(envelope.status).toBe('ok');
+    const summary = envelope.evidence[0]?.trace_summary;
+    expect(summary?.schema_applied).toBe(true);
+    expect(summary?.validation_mode).toBe('enforce');
+    expect(summary?.validation_errors).toBe(0);
+  });
+
+  it('trace_schema default mode is warn when trace_schema set but mode omitted', async () => {
+    // traceSchemaDefinitionBase has trace_schema but no trace_validation_mode
+    const run = await store.create({
+      workflowId: 'trace-schema-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // Submit invalid trace — default warn mode should not block
+    const envelope = await executeStep(store, traceSchemaDefinitionBase, {
+      runId: run.id,
+      command: 'step-one',
+      input: { result: 'done' },
+      dispatcher: echoDispatcher,
+      trace: [{ event: 'BadEvent' }],
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.warnings).toHaveLength(1);
+  });
+
+  it('trace_schema warn: claim-error envelope includes trace warning', async () => {
+    const def: WorkflowDefinition = {
+      ...traceSchemaDefinitionBase,
+      steps: {
+        ...traceSchemaDefinitionBase.steps,
+        'step-one': {
+          ...traceSchemaDefinitionBase.steps['step-one']!,
+          trace_validation_mode: 'warn',
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'trace-schema-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // Mock claimStep to throw after step 2d validation has already produced a warning
+    vi.spyOn(store, 'claimStep').mockRejectedValue(
+      new WorkflowError('claim failed', {
+        code: 'ENGINE_STORE_FAILED',
+        category: 'ENGINE',
+        agentAction: 'stop',
+        retryable: false,
+      }),
+    );
+
+    try {
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'BadEvent' }],
+      });
+
+      expect(envelope.status).toBe('error');
+      expect(envelope.warnings).toHaveLength(1);
+      expect(envelope.warnings[0]).toContain('step-one');
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('trace_schema warn: dispatch-error envelope includes trace warning', async () => {
+    const def: WorkflowDefinition = {
+      ...traceSchemaDefinitionBase,
+      steps: {
+        ...traceSchemaDefinitionBase.steps,
+        'step-one': {
+          ...traceSchemaDefinitionBase.steps['step-one']!,
+          trace_validation_mode: 'warn',
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'trace-schema-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // Invalid trace (warn mode) + failing dispatcher — trace warning must survive dispatch failure
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: { result: 'done' },
+      dispatcher: failDispatcher,
+      trace: [{ event: 'BadEvent' }],
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.errors[0]).toContain('step failed');
+    expect(envelope.warnings).toHaveLength(1);
+    expect(envelope.warnings[0]).toContain('step-one');
+  });
+
+  it('trace_schema warn: confirm-required envelope includes trace warning', async () => {
+    const def: WorkflowDefinition = {
+      ...traceSchemaDefinitionBase,
+      steps: {
+        ...traceSchemaDefinitionBase.steps,
+        'step-one': {
+          ...traceSchemaDefinitionBase.steps['step-one']!,
+          trace_validation_mode: 'warn',
+          trust: 'human_confirmed' as const,
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'trace-schema-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // Invalid trace (warn mode) — step has trust: human_confirmed so returns confirm_required
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: { result: 'done' },
+      dispatcher: echoDispatcher,
+      trace: [{ event: 'BadEvent' }],
+    });
+
+    expect(envelope.status).toBe('confirm_required');
+    expect(envelope.warnings).toHaveLength(1);
+    expect(envelope.warnings[0]).toContain('step-one');
+  });
+
+  it('trace_schema warn: both trace warning and cleanup warning appear when dispatch fails and store.update throws', async () => {
+    const def: WorkflowDefinition = {
+      ...traceSchemaDefinitionBase,
+      steps: {
+        ...traceSchemaDefinitionBase.steps,
+        'step-one': {
+          ...traceSchemaDefinitionBase.steps['step-one']!,
+          trace_validation_mode: 'warn',
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'trace-schema-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // Mock store.update to throw — simulates cleanup write failure
+    vi.spyOn(store, 'update').mockImplementation(async () => {
+      throw new Error('store write failed');
+    });
+
+    try {
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: failDispatcher,
+        trace: [{ event: 'BadEvent' }],
+      });
+
+      expect(envelope.status).toBe('error');
+      expect(envelope.warnings).toHaveLength(2);
+      // Trace warning first (deterministic order), cleanup warning second
+      expect(envelope.warnings[0]).toContain('step-one');
+      expect(envelope.warnings[1]).toMatch(/Failed to persist step failure/);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('trace_schema warn: gate store.update error envelope retains trace warning', async () => {
+    const def: WorkflowDefinition = {
+      ...traceSchemaDefinitionBase,
+      steps: {
+        ...traceSchemaDefinitionBase.steps,
+        'step-one': {
+          ...traceSchemaDefinitionBase.steps['step-one']!,
+          trace_validation_mode: 'warn',
+          trust: 'human_confirmed' as const,
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'trace-schema-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // Mock store.update to throw — simulates the gate persistence failure (post-dispatch)
+    vi.spyOn(store, 'update').mockImplementation(async () => {
+      throw new Error('gate store write failed');
+    });
+
+    try {
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: { result: 'done' },
+        dispatcher: echoDispatcher,
+        trace: [{ event: 'BadEvent' }],
+      });
+
+      expect(envelope.status).toBe('error');
+      expect(envelope.warnings).toHaveLength(1);
+      expect(envelope.warnings[0]).toContain('step-one');
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WAL trace buffer integration (B-lite)
+// ---------------------------------------------------------------------------
+
+describe('WAL trace buffer integration (B-lite)', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  const agentDef: WorkflowDefinition = {
+    id: 'wal-test-wf',
+    name: 'WAL Test Workflow',
+    version: 1,
+    steps: {
+      'step-agent': {
+        description: 'Agent step',
+        execution: 'agent',
+        depends_on: [],
+      },
+    },
+  };
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-wal-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  it('WAL entries present + no execute_step.trace → evidence has trace from WAL', async () => {
+    const bufferStore = new InMemoryTraceBufferStore();
+    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+
+    await bufferStore.append(run.id, 'step-agent', [
+      { event: 'wal_event', data: { phase: 'pre' } },
+    ]);
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: { result: 'done' },
+      dispatcher: async () => ({ result: 'done' }),
+      traceBufferStore: bufferStore,
+    });
+
+    expect(envelope.status).toBe('ok');
+    const snap = envelope.evidence[0];
+    expect(snap?.trace).toHaveLength(1);
+    expect(snap?.trace?.[0]?.event).toBe('wal_event');
+  });
+
+  it('WAL entries + execute_step.trace entries → merged, WAL entries first', async () => {
+    const bufferStore = new InMemoryTraceBufferStore();
+    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+
+    await bufferStore.append(run.id, 'step-agent', [{ event: 'wal_first' }]);
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => ({}),
+      traceBufferStore: bufferStore,
+      trace: [{ event: 'final_last' }],
+    });
+
+    expect(envelope.status).toBe('ok');
+    const snap = envelope.evidence[0];
+    expect(snap?.trace).toHaveLength(2);
+    // WAL entry should have lower seq than the final entry.
+    const walEntry = snap?.trace?.find((e) => e.event === 'wal_first');
+    const finalEntry = snap?.trace?.find((e) => e.event === 'final_last');
+    expect(walEntry?.seq).toBeDefined();
+    expect(finalEntry?.seq).toBeDefined();
+    expect(walEntry!.seq).toBeLessThan(finalEntry!.seq);
+  });
+
+  it('enforce-mode schema rejection → WAL preserved after rejection', async () => {
+    const schemaEnforceDef: WorkflowDefinition = {
+      id: 'wal-schema-wf',
+      name: 'WAL Schema Workflow',
+      version: 1,
+      steps: {
+        'step-agent': {
+          description: 'Agent step with trace schema',
+          execution: 'agent',
+          depends_on: [],
+          trace_schema: {
+            type: 'array',
+            items: { type: 'object', required: ['event', 'myField'] },
+          },
+          trace_validation_mode: 'enforce',
+        },
+      },
+    };
+
+    const bufferStore = new InMemoryTraceBufferStore();
+    const run = await store.create({ workflowId: 'wal-schema-wf', workflowVersion: 1, params: {} });
+
+    await bufferStore.append(run.id, 'step-agent', [{ event: 'buffered' }]);
+
+    // Submit an execute_step call with a trace entry missing required 'myField' → schema enforcement fails.
+    const envelope = await executeStep(store, schemaEnforceDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => ({}),
+      traceBufferStore: bufferStore,
+      trace: [{ event: 'bad_entry' }],
+    });
+
+    // Should return an error due to schema enforcement.
+    expect(envelope.status).toBe('error');
+
+    // WAL must be preserved — agent can retry.
+    const remaining = await bufferStore.read(run.id, 'step-agent');
+    expect(remaining.length).toBeGreaterThan(0);
+  });
+
+  it('execute_step succeeds → WAL is deleted', async () => {
+    const bufferStore = new InMemoryTraceBufferStore();
+    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+
+    await bufferStore.append(run.id, 'step-agent', [{ event: 'pre_step' }]);
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => ({}),
+      traceBufferStore: bufferStore,
+    });
+
+    expect(envelope.status).toBe('ok');
+    const remaining = await bufferStore.read(run.id, 'step-agent');
+    expect(remaining).toHaveLength(0);
+  });
+
+  it('execute_step dispatch fails → WAL is deleted', async () => {
+    const bufferStore = new InMemoryTraceBufferStore();
+    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+
+    await bufferStore.append(run.id, 'step-agent', [{ event: 'pre_fail' }]);
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Simulated dispatch failure', {
+          code: 'ENGINE_HANDLER_FAILED',
+          category: 'ENGINE',
+          agentAction: 'stop',
+          retryable: false,
+        });
+      },
+      traceBufferStore: bufferStore,
+    });
+
+    expect(envelope.status).toBe('error');
+    const remaining = await bufferStore.read(run.id, 'step-agent');
+    expect(remaining).toHaveLength(0);
+  });
+
+  it('no traceBufferStore configured → behaviour identical to pre-B-lite (regression)', async () => {
+    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => ({}),
+      trace: [{ event: 'direct_trace' }],
+      // No traceBufferStore — pre-B-lite path.
+    });
+
+    expect(envelope.status).toBe('ok');
+    const snap = envelope.evidence[0];
+    expect(snap?.trace).toHaveLength(1);
+    expect(snap?.trace?.[0]?.event).toBe('direct_trace');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// retry_after on ResponseEnvelope
+// ---------------------------------------------------------------------------
+
+describe('retry_after on ResponseEnvelope', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-retry-after-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  const twoStepDef: WorkflowDefinition = {
+    id: 'two-step-retry-wf',
+    name: 'Two Step Retry Workflow',
+    version: 1,
+    steps: {
+      step_a: {
+        description: 'Step that can fail',
+        execution: 'agent',
+        depends_on: [],
+      },
+      step_b: {
+        description: 'Recovery step',
+        execution: 'agent',
+        depends_on: ['step_a'],
+        trigger_rule: 'one_failed',
+      },
+    },
+  };
+
+  it('retry_after appears in ResponseEnvelope for wait_and_proceed dispatch failure', async () => {
+    const run = await store.create({
+      workflowId: 'two-step-retry-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, twoStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Rate limited', {
+          code: 'SERVICE_RATE_LIMITED',
+          category: 'SERVICE',
+          agentAction: 'wait_and_proceed',
+          retryable: true,
+          retry_after: 30,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('wait_and_proceed');
+    expect(envelope.retry_after).toBe(30);
+  });
+
+  it('retry_after is absent from ResponseEnvelope when not set on the error', async () => {
+    const run = await store.create({
+      workflowId: 'two-step-retry-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeStep(store, twoStepDef, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => {
+        throw new WorkflowError('Service unavailable', {
+          code: 'SERVICE_HTTP_5XX',
+          category: 'SERVICE',
+          agentAction: 'wait_for_human',
+          retryable: false,
+        });
+      },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('wait_for_human');
+    expect(envelope.retry_after).toBeUndefined();
+  });
+
+  it('errorEnvelope includes retry_after when WorkflowError.retry_after is set (pre-execution path)', async () => {
+    // Use a mock store whose get() throws a WorkflowError with retry_after set.
+    // This exercises the makeErrorEnvelope(options, null, err) path in step 1.
+    const mockStore: import('../store/store-interface.js').RunStore = {
+      create: store.create.bind(store),
+      get: async () => {
+        throw new WorkflowError('Rate limited at store level', {
+          code: 'SERVICE_RATE_LIMITED',
+          category: 'SERVICE',
+          agentAction: 'wait_and_proceed',
+          retryable: true,
+          retry_after: 45,
+        });
+      },
+      update: store.update.bind(store),
+      list: store.list.bind(store),
+      claimStep: store.claimStep.bind(store),
+    };
+
+    const envelope = await executeStep(mockStore, twoStepDef, {
+      runId: 'any-run-id',
+      command: 'step_a',
+      input: {},
+      dispatcher: echoDispatcher,
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.agent_action).toBe('wait_and_proceed');
+    expect(envelope.retry_after).toBe(45);
+  });
+
+  it('engine retry loop uses Math.max(computeBackoff, retry_after * 1000) as delay', async () => {
+    // Spy on setTimeout: record the requested delay but fire the callback immediately
+    // (delay=0) so the test doesn't actually wait 30 seconds.
+    const capturedDelays: number[] = [];
+    const origSetTimeout = globalThis.setTimeout;
+    (globalThis as Record<string, unknown>)['setTimeout'] = (
+      fn: (...args: unknown[]) => void,
+      delay?: number,
+    ) => {
+      capturedDelays.push(delay ?? 0);
+      return origSetTimeout(fn, 0);
+    };
+
+    try {
+      const retryDef: WorkflowDefinition = {
+        id: 'retry-delay-wf',
+        name: 'Retry Delay Workflow',
+        version: 1,
+        steps: {
+          step_a: {
+            description: 'Step with retry',
+            execution: 'agent',
+            depends_on: [],
+            retry: { max_attempts: 2, backoff: 'fixed', base_delay_ms: 100 },
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'retry-delay-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      let attempt = 0;
+      const result = await executeStep(store, retryDef, {
+        runId: run.id,
+        command: 'step_a',
+        input: {},
+        dispatcher: async () => {
+          attempt++;
+          if (attempt === 1) {
+            throw new WorkflowError('Rate limited', {
+              code: 'SERVICE_RATE_LIMITED',
+              category: 'SERVICE',
+              agentAction: 'wait_and_proceed',
+              retryable: true,
+              retry_after: 30,
+            });
+          }
+          return { recovered: true };
+        },
+      });
+
+      expect(result.status).toBe('ok');
+      expect(attempt).toBe(2);
+      // Math.max(100 base_delay_ms, 30 * 1000 retry_after_ms) = 30000
+      expect(capturedDelays).toContain(30000);
+    } finally {
+      (globalThis as Record<string, unknown>)['setTimeout'] = origSetTimeout;
+    }
+  });
+
+  it('engine retry loop falls back to computeBackoff when retry_after is undefined', async () => {
+    // Same spy approach: record the requested delay but fire immediately.
+    const capturedDelays: number[] = [];
+    const origSetTimeout = globalThis.setTimeout;
+    (globalThis as Record<string, unknown>)['setTimeout'] = (
+      fn: (...args: unknown[]) => void,
+      delay?: number,
+    ) => {
+      capturedDelays.push(delay ?? 0);
+      return origSetTimeout(fn, 0);
+    };
+
+    try {
+      const retryDef: WorkflowDefinition = {
+        id: 'retry-fallback-wf',
+        name: 'Retry Fallback Workflow',
+        version: 1,
+        steps: {
+          step_a: {
+            description: 'Step with retry',
+            execution: 'agent',
+            depends_on: [],
+            retry: { max_attempts: 2, backoff: 'fixed', base_delay_ms: 500 },
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'retry-fallback-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      let attempt = 0;
+      const result = await executeStep(store, retryDef, {
+        runId: run.id,
+        command: 'step_a',
+        input: {},
+        dispatcher: async () => {
+          attempt++;
+          if (attempt === 1) {
+            throw new WorkflowError('Transient failure', {
+              code: 'ENGINE_HANDLER_FAILED',
+              category: 'ENGINE',
+              agentAction: 'report_to_user',
+              retryable: true,
+              // No retry_after — computeBackoff (500ms) should be used
+            });
+          }
+          return { recovered: true };
+        },
+      });
+
+      expect(result.status).toBe('ok');
+      expect(attempt).toBe(2);
+      // Math.max(500 base_delay_ms, 0 retry_after_ms) = 500
+      expect(capturedDelays).toContain(500);
+    } finally {
+      (globalThis as Record<string, unknown>)['setTimeout'] = origSetTimeout;
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// execution: guard — inline guard step execution via executeChain
+// ---------------------------------------------------------------------------
+
+describe('guard step execution', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  const guardWorkflow: WorkflowDefinition = {
+    id: 'guard-wf',
+    name: 'Guard Workflow',
+    version: 1,
+    steps: {
+      step_a: {
+        description: 'Agent step',
+        execution: 'agent',
+        depends_on: [],
+      },
+      guard_b: {
+        description: 'Guard step',
+        execution: 'guard',
+        depends_on: ['step_a'],
+        abort_unless: ["step_a.status == 'open'"],
+      },
+      step_c: {
+        description: 'Post-guard agent step',
+        execution: 'agent',
+        depends_on: ['guard_b'],
+      },
+    },
+  };
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-guard-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  it('guard passes — run continues with downstream agent step in next_actions', async () => {
+    const run = await store.create({ workflowId: 'guard-wf', workflowVersion: 1, params: {} });
+
+    const envelope = await executeChain(store, guardWorkflow, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ status: 'open' }),
+    });
+
+    expect(envelope.status).toBe('ok');
+    // Guard ran inline — visible in chained_auto_steps
+    expect(envelope.chained_auto_steps?.some((s) => s.step === 'guard_b')).toBe(true);
+    // step_c is the next eligible agent step
+    expect(envelope.next_actions.some((a) => a.instruction.call_with.command === 'step_c')).toBe(
+      true,
+    );
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.completed_steps).toContain('guard_b');
+    expect(savedRun.run_phase).not.toBe('aborted');
+  });
+
+  it('guard aborts — run_phase becomes aborted, next_actions is empty, aborted_at set', async () => {
+    const run = await store.create({ workflowId: 'guard-wf', workflowVersion: 1, params: {} });
+
+    const envelope = await executeChain(store, guardWorkflow, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ status: 'closed' }),
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.next_actions).toHaveLength(0);
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.run_phase).toBe('aborted');
+    expect(savedRun.terminal_state).toBe(true);
+    expect(savedRun.skipped_steps).toContain('guard_b');
+    expect(savedRun.aborted_at).toBeDefined();
+    expect(savedRun.aborted_at?.step_id).toBe('guard_b');
+    expect(savedRun.aborted_at?.conditions).toHaveLength(1);
+    expect(savedRun.aborted_at?.conditions[0]?.passed).toBe(false);
+  });
+
+  it('guard abort skips downstream steps (step_c goes into skipped_steps)', async () => {
+    const run = await store.create({ workflowId: 'guard-wf', workflowVersion: 1, params: {} });
+
+    await executeChain(store, guardWorkflow, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ status: 'closed' }),
+    });
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.skipped_steps).toContain('step_c');
+  });
+
+  it('guard resolution error — run_phase becomes failed, guard in failed_steps', async () => {
+    const run = await store.create({ workflowId: 'guard-wf', workflowVersion: 1, params: {} });
+
+    // Dispatcher returns no 'status' field — path step_a.status is unresolvable
+    const envelope = await executeChain(store, guardWorkflow, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ other_field: 'value' }),
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.next_actions).toHaveLength(0);
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.run_phase).toBe('failed');
+    expect(savedRun.terminal_state).toBe(true);
+    expect(savedRun.failed_steps).toContain('guard_b');
+  });
+
+  it('guard abort_message is recorded in aborted_at', async () => {
+    const workflowWithMessage: WorkflowDefinition = {
+      id: 'guard-msg-wf',
+      name: 'Guard Message Workflow',
+      version: 1,
+      steps: {
+        step_a: { description: 'Step A', execution: 'agent', depends_on: [] },
+        guard_b: {
+          description: 'Guard with message',
+          execution: 'guard',
+          depends_on: ['step_a'],
+          abort_unless: ["step_a.status == 'open'"],
+          abort_message: 'Ticket is not open',
+        },
+      },
+    };
+
+    const run = await store.create({ workflowId: 'guard-msg-wf', workflowVersion: 1, params: {} });
+
+    await executeChain(store, workflowWithMessage, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ status: 'closed' }),
+    });
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.aborted_at?.abort_message).toBe('Ticket is not open');
+  });
+
+  it('cascading guards — guard_b passes, guard_c passes, run continues', async () => {
+    const cascadeWorkflow: WorkflowDefinition = {
+      id: 'cascade-guard-wf',
+      name: 'Cascade Guard Workflow',
+      version: 1,
+      steps: {
+        step_a: { description: 'Step A', execution: 'agent', depends_on: [] },
+        guard_b: {
+          description: 'First guard',
+          execution: 'guard',
+          depends_on: ['step_a'],
+          abort_unless: ['step_a.count > 0'],
+        },
+        guard_c: {
+          description: 'Second guard',
+          execution: 'guard',
+          depends_on: ['guard_b'],
+          abort_unless: ['step_a.count > 5'],
+        },
+        step_d: { description: 'Post-guard step', execution: 'agent', depends_on: ['guard_c'] },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'cascade-guard-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeChain(store, cascadeWorkflow, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ count: 10 }),
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.next_actions.some((a) => a.instruction.call_with.command === 'step_d')).toBe(
+      true,
+    );
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.completed_steps).toContain('guard_b');
+    expect(savedRun.completed_steps).toContain('guard_c');
+    expect(savedRun.run_phase).not.toBe('aborted');
+  });
+
+  it('cascading guards — guard_b passes, guard_c aborts, run is aborted', async () => {
+    const cascadeWorkflow: WorkflowDefinition = {
+      id: 'cascade-abort-wf',
+      name: 'Cascade Abort Workflow',
+      version: 1,
+      steps: {
+        step_a: { description: 'Step A', execution: 'agent', depends_on: [] },
+        guard_b: {
+          description: 'First guard (passes)',
+          execution: 'guard',
+          depends_on: ['step_a'],
+          abort_unless: ['step_a.count > 0'],
+        },
+        guard_c: {
+          description: 'Second guard (aborts)',
+          execution: 'guard',
+          depends_on: ['guard_b'],
+          abort_unless: ['step_a.count > 100'],
+        },
+        step_d: { description: 'Post-guard step', execution: 'agent', depends_on: ['guard_c'] },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'cascade-abort-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const envelope = await executeChain(store, cascadeWorkflow, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ count: 10 }),
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.next_actions).toHaveLength(0);
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.run_phase).toBe('aborted');
+    expect(savedRun.completed_steps).toContain('guard_b');
+    expect(savedRun.aborted_at?.step_id).toBe('guard_c');
   });
 });

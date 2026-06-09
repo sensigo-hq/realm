@@ -1,6 +1,6 @@
 // Typed representation of a parsed workflow YAML definition.
 
-export type ExecutionMode = 'auto' | 'agent';
+export type ExecutionMode = 'auto' | 'agent' | 'guard';
 
 export interface ProtocolConfig {
   /** Override for the generated quick-start paragraph. */
@@ -40,6 +40,17 @@ export interface TemplateParam {
 export interface TemplateDefinition {
   params?: Record<string, TemplateParam>;
   steps: Record<string, StepDefinition>;
+}
+
+export interface RateLimitConfig {
+  /** Maximum number of requests per second. */
+  requests_per_second?: number;
+  /** Initial token capacity (burst). Defaults to requests_per_second if omitted. */
+  burst?: number;
+  /** Fallback retry-after delay (seconds) when service returns 429 with no header. */
+  fallback_retry_seconds?: number;
+  /** Maximum retry-after window (seconds). Exceeding it fails the step immediately. */
+  max_retry_seconds?: number;
 }
 
 export interface RetryConfig {
@@ -126,8 +137,42 @@ export interface StepDefinition {
    * WorkflowDefinition returned to callers.
    */
   use_template?: string;
+  /**
+   * Array of condition expressions. Run aborts if any is false.
+   * Only valid on execution: 'guard' steps.
+   */
+  abort_unless?: string | string[];
+  /** Human-readable message recorded when the run aborts. Only valid on execution: 'guard' steps. */
+  abort_message?: string;
+  /**
+   * JSON Schema validated against the agent's submitted output (execute_step params) pre-claim.
+   * Only valid on execution: 'agent' steps.
+   */
+  output_schema?: JsonSchema;
+  /**
+   * JSON Schema validated against canonical stored trace entries for this step.
+   * Only valid on execution: 'agent' steps.
+   */
+  trace_schema?: JsonSchema;
+  /**
+   * Controls how trace_schema failures are handled. Default: 'warn'.
+   * Ignored when no trace_schema is declared.
+   */
+  trace_validation_mode?: 'warn' | 'enforce';
   /** Gate configuration — choices available to the human reviewer. */
-  gate?: { choices?: string[] };
+  gate?: {
+    choices?: string[];
+    /** Slack user ID or handle of the person responsible for resolving this gate. */
+    owner?: string;
+    /**
+     * Template string presented to the human reviewer when this gate opens.
+     * Supports {{ context.resources.STEP.FIELD }} and {{ run.params.FIELD }} references.
+     * Fail-fast: unresolvable references cause a stop error rather than opening a broken gate.
+     */
+    message?: string;
+    /** Per-choice messages posted when the gate resolves. */
+    resolution_messages?: Record<string, string>;
+  };
   /** Name of the agent profile for this step. Only valid on execution: 'agent' steps. */
   agent_profile?: string;
 }

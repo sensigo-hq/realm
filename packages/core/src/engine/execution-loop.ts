@@ -2,7 +2,12 @@
 // run state update, and ResponseEnvelope construction for the DAG execution model.
 // Includes: step claiming, step-level retry, step timeouts, human gate mechanics,
 // auto-chaining with fan-out, and registry-based dispatch for adapter and handler steps.
-import type { RunRecord, EvidenceSnapshot, WorkflowContextSnapshot } from '../types/run-record.js';
+import type {
+  RunRecord,
+  EvidenceSnapshot,
+  WorkflowContextSnapshot,
+  AgentTraceEntry,
+} from '../types/run-record.js';
 import type { ResponseEnvelope, NextAction } from '../types/response-envelope.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type {
@@ -12,23 +17,39 @@ import type {
   ContextWrapperFormat,
 } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
+import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-store.js';
 import { captureEvidence } from '../evidence/snapshot.js';
-import { validateInputSchema } from '../validation/input-schema.js';
+import {
+  validateInputSchema,
+  validateOutputSchema,
+  validateTraceSchema,
+} from '../validation/input-schema.js';
+import { normalizeTrace } from './trace-normalizer.js';
+import type { NormalizeTraceResult } from './trace-normalizer.js';
 import { TERMINAL_PHASES } from './lifecycle.js';
-import { checkPreconditions, evaluateAllPreconditions } from './precondition.js';
+import {
+  checkPreconditions,
+  evaluateAllPreconditions,
+  evaluateGuardConditions,
+} from './precondition.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
 import type { ServiceResponse } from '../extensions/service-adapter.js';
 import { resolveSecret } from '../config/secrets.js';
-import { resolvePromptTemplate, resolvePath } from './prompt-template.js';
+import { renderTemplate, resolvePath, UnknownFilterError } from './render-template.js';
 import { generateSchemaSkeleton } from '../utils/schema-skeleton.js';
 import { loadWorkflowContext } from './workflow-context-loader.js';
 import {
   findEligibleSteps,
+  findEligibleGuardSteps,
   isWorkflowComplete,
   buildEvidenceByStep,
   propagateSkips,
 } from './eligibility.js';
+import {
+  resolvePreExecutionAgentAction,
+  resolvePostDispatchAgentAction,
+} from './error-resolution.js';
 
 export type StepDispatcher = (
   stepName: string,
@@ -49,6 +70,19 @@ export interface ExecuteStepOptions {
   registry?: ExtensionRegistry;
   /** Resolved secrets passed to adapter configs (e.g. API tokens). */
   secrets?: Record<string, string>;
+  /**
+   * Optional agent-submitted trace entries for this step.
+   * Silently dropped for non-agent steps. When present on agent steps, the
+   * normalizer canonicalizes and persists them in the EvidenceSnapshot.
+   */
+  trace?: AgentTraceEntry[];
+  /**
+   * Optional trace buffer store for incremental trace ingestion (B-lite).
+   * When provided, WAL entries for (runId, stepId) are merged with any trace
+   * submitted on execute_step before canonicalization.
+   * When absent, behaviour is identical to the pre-B-lite path.
+   */
+  traceBufferStore?: TraceBufferStore;
 }
 
 export interface SubmitGateOptions {
@@ -66,6 +100,10 @@ export interface ExecuteChainOptions {
   registry?: ExtensionRegistry;
   /** @see ExecuteStepOptions.secrets */
   secrets?: Record<string, string>;
+  /** @see ExecuteStepOptions.trace */
+  trace?: AgentTraceEntry[];
+  /** @see ExecuteStepOptions.traceBufferStore */
+  traceBufferStore?: TraceBufferStore;
 }
 
 function delayMs(ms: number): Promise<void> {
@@ -311,7 +349,7 @@ function stepToNextAction(
   },
 ): NextAction {
   const resolvedPrompt =
-    step.prompt !== undefined ? resolvePromptTemplate(step.prompt, context) : undefined;
+    step.prompt !== undefined ? renderTemplate(step.prompt, context) : undefined;
 
   return {
     instruction:
@@ -371,6 +409,15 @@ export function buildNextActions(definition: WorkflowDefinition, run: RunRecord)
     .map((name) => stepToNextAction(name, definition.steps[name]!, context));
 }
 
+/**
+ * Merges call-scoped trace-schema warnings with an optional cleanup warning into
+ * a single warnings array. Trace warnings are listed first (deterministic order).
+ */
+function mergeWarnings(traceWarnings: string[], cleanupWarning?: string): string[] {
+  if (traceWarnings.length === 0 && cleanupWarning === undefined) return [];
+  return cleanupWarning !== undefined ? [...traceWarnings, cleanupWarning] : [...traceWarnings];
+}
+
 /** Builds a minimal error ResponseEnvelope from primitive fields. */
 function errorEnvelope(
   command: string,
@@ -388,7 +435,40 @@ function errorEnvelope(
     evidence: [],
     warnings: [],
     errors: [err.message],
+    error_code: err.code,
+    ...(Object.keys(err.details).length > 0 ? { error_details: err.details } : {}),
     agent_action: err.agentAction,
+    ...(err.retry_after !== undefined ? { retry_after: err.retry_after } : {}),
+    context_hint: contextHint ?? `Error during '${command}'.`,
+    next_actions: [],
+  };
+}
+
+/**
+ * Builds a ResponseEnvelope for errors caught before any step execution has occurred.
+ * Translates provide_input and resolve_precondition agent actions to report_to_user.
+ */
+export function buildPreExecutionErrorEnvelope(
+  command: string,
+  runId: string,
+  runVersion: number,
+  err: WorkflowError,
+  contextHint?: string,
+): ResponseEnvelope {
+  const agentAction = resolvePreExecutionAgentAction(err);
+  return {
+    command,
+    run_id: runId,
+    run_version: runVersion,
+    status: 'error',
+    data: {},
+    evidence: [],
+    warnings: [],
+    errors: [err.message],
+    error_code: err.code,
+    ...(Object.keys(err.details).length > 0 ? { error_details: err.details } : {}),
+    agent_action: agentAction,
+    ...(err.retry_after !== undefined ? { retry_after: err.retry_after } : {}),
     context_hint: contextHint ?? `Error during '${command}'.`,
     next_actions: [],
   };
@@ -399,6 +479,7 @@ function makeErrorEnvelope(
   run: RunRecord | null,
   err: WorkflowError,
   definition?: WorkflowDefinition,
+  extraWarnings?: string[],
 ): ResponseEnvelope {
   const hint =
     run !== null ? `Error during '${options.command}'. Run phase: '${run.run_phase}'.` : undefined;
@@ -409,10 +490,18 @@ function makeErrorEnvelope(
     err,
     hint,
   );
+  // Apply pre-execution translation: provide_input / resolve_precondition cannot
+  // apply before claimStep — translate them to report_to_user.
+  const translatedBase =
+    run === null ? { ...base, agent_action: resolvePreExecutionAgentAction(err) } : base;
+  const baseWithWarnings =
+    extraWarnings !== undefined && extraWarnings.length > 0
+      ? { ...translatedBase, warnings: extraWarnings }
+      : translatedBase;
   if (run !== null && definition !== undefined && err.agentAction !== 'stop') {
-    return { ...base, next_actions: buildNextActions(definition, run) };
+    return { ...baseWithWarnings, next_actions: buildNextActions(definition, run) };
   }
-  return base;
+  return baseWithWarnings;
 }
 
 /**
@@ -520,6 +609,75 @@ export async function executeStep(
     }
   }
 
+  // Step 2c: Validate output schema (agent steps only, pre-claim).
+  if (stepDef?.execution === 'agent' && stepDef.output_schema !== undefined) {
+    try {
+      validateOutputSchema(options.input, stepDef.output_schema, options.command);
+    } catch (err) {
+      return makeErrorEnvelope(options, run, err as WorkflowError, definition);
+    }
+  }
+
+  // Step 2d: Merge WAL buffer + execute_step trace, normalize, validate (agent steps only, pre-claim).
+  const traceWarnings: string[] = [];
+  let preNormalizedTrace: NormalizeTraceResult | undefined;
+  let walEntries: BufferedEntry[] = [];
+
+  if (stepDef?.execution === 'agent') {
+    walEntries =
+      options.traceBufferStore !== undefined
+        ? await options.traceBufferStore.read(options.runId, options.command)
+        : [];
+
+    const hasAnyTrace =
+      walEntries.length > 0 || (options.trace !== undefined && options.trace.length > 0);
+
+    if (hasAnyTrace) {
+      const finalTs = Date.now();
+      const mergeSet: Array<AgentTraceEntry & { _internalTs: number }> = [
+        ...walEntries,
+        ...(options.trace ?? []).map((e) => ({ ...e, _internalTs: finalTs })),
+      ];
+      mergeSet.sort((a, b) => a._internalTs - b._internalTs);
+      const sortedEntries: AgentTraceEntry[] = mergeSet.map(({ _internalTs: _, ...rest }) => rest);
+
+      preNormalizedTrace = normalizeTrace(sortedEntries);
+
+      if (stepDef.trace_schema !== undefined) {
+        const mode = stepDef.trace_validation_mode ?? 'warn';
+        if (mode === 'enforce') {
+          try {
+            validateTraceSchema(
+              preNormalizedTrace.entries,
+              stepDef.trace_schema,
+              options.command,
+              'enforce',
+            );
+            preNormalizedTrace.summary.schema_applied = true;
+            preNormalizedTrace.summary.validation_mode = 'enforce';
+            preNormalizedTrace.summary.validation_errors = 0;
+          } catch (err) {
+            // On enforce rejection: do NOT delete the WAL — agent retries with WAL preserved.
+            return makeErrorEnvelope(options, run, err as WorkflowError, definition);
+          }
+        } else {
+          const result = validateTraceSchema(
+            preNormalizedTrace.entries,
+            stepDef.trace_schema,
+            options.command,
+            'warn',
+          );
+          preNormalizedTrace.summary.schema_applied = true;
+          preNormalizedTrace.summary.validation_mode = 'warn';
+          preNormalizedTrace.summary.validation_errors = result.errorCount;
+          if (result.errorCount > 0) {
+            traceWarnings.push(result.warning);
+          }
+        }
+      }
+    }
+  }
+
   // Step 3: Claim the step — adds to in_progress_steps under file lock.
   let pendingRun: RunRecord;
   try {
@@ -546,7 +704,13 @@ export async function executeStep(
           },
         };
       }
-      return makeErrorEnvelope(options, run, err, definition);
+      return makeErrorEnvelope(
+        options,
+        run,
+        err,
+        definition,
+        traceWarnings.length > 0 ? traceWarnings : undefined,
+      );
     }
     return makeErrorEnvelope(
       options,
@@ -558,6 +722,7 @@ export async function executeStep(
         retryable: false,
       }),
       definition,
+      traceWarnings.length > 0 ? traceWarnings : undefined,
     );
   }
 
@@ -655,6 +820,12 @@ export async function executeStep(
       ...(resolvedInputMapParams !== undefined ? { resolvedParams: resolvedInputMapParams } : {}),
       ...(attemptError === null && attemptWarn !== undefined ? { warn: attemptWarn } : {}),
       ...(attemptError === null && debugOutput !== undefined ? { debugOutput } : {}),
+      // Gate trace to agent steps only — drop silently for auto/adapter/handler steps.
+      ...(stepDef?.execution === 'agent' && (options.trace !== undefined || walEntries.length > 0)
+        ? preNormalizedTrace !== undefined
+          ? { normalizedTrace: preNormalizedTrace }
+          : { trace: options.trace ?? [] }
+        : {}),
     });
     const snap: EvidenceSnapshot =
       retryConfig !== undefined ? { ...baseSnap, attempt: attemptNum } : baseSnap;
@@ -671,7 +842,12 @@ export async function executeStep(
     const willRetry =
       retryConfig !== undefined && attemptError.retryable && attemptNum < maxAttempts;
     if (willRetry) {
-      await delayMs(computeBackoff(retryConfig, attemptNum));
+      const baseBackoff = computeBackoff(retryConfig, attemptNum);
+      const retryAfterMs =
+        attemptError instanceof WorkflowError && attemptError.retry_after !== undefined
+          ? attemptError.retry_after * 1000
+          : 0;
+      await delayMs(Math.max(baseBackoff, retryAfterMs));
     } else {
       break;
     }
@@ -729,49 +905,85 @@ export async function executeStep(
       };
     }
 
-    let cleanupWarning: string | undefined;
+    // Non-abort failure: move step to failed_steps, compute terminal state.
+    const afterFail: RunRecord = {
+      ...pendingRun,
+      in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== options.command),
+      failed_steps: [...pendingRun.failed_steps, options.command],
+    };
+    const withSkippedFail: RunRecord = {
+      ...afterFail,
+      skipped_steps: propagateSkips(afterFail, definition),
+    };
+    // Guard steps are not returned by findEligibleSteps — check them separately.
+    const isComplete =
+      isWorkflowComplete(withSkippedFail, definition) ||
+      (withSkippedFail.in_progress_steps.length === 0 &&
+        findEligibleSteps(definition, withSkippedFail).length === 0 &&
+        findEligibleGuardSteps(definition, withSkippedFail).length === 0);
+    const failedRun: RunRecord = {
+      ...withSkippedFail,
+      evidence: [...pendingRun.evidence, ...allEvidence],
+      terminal_state: isComplete,
+      ...(isComplete
+        ? { terminal_reason: `Step '${options.command}' failed: ${dispatchError.message}` }
+        : {}),
+    };
+
+    // Persist run state and WAL cleanup in separate try/catch blocks so a WAL deletion
+    // failure does not mask a successful store.update.
+    let persistedRun: RunRecord | undefined;
+    let storeCleanupWarning: string | undefined;
     try {
-      // Build the hypothetical run state after marking this step as failed.
-      const afterFail: RunRecord = {
-        ...pendingRun,
-        in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== options.command),
-        failed_steps: [...pendingRun.failed_steps, options.command],
-      };
-      // Propagate skips: mark steps whose trigger_rule can never be satisfied after this failure.
-      const withSkippedFail: RunRecord = {
-        ...afterFail,
-        skipped_steps: propagateSkips(afterFail, definition),
-      };
-      // A run is terminal when all steps are settled OR when no step will ever become
-      // eligible again (safety net for when-condition edge cases not covered by propagateSkips).
-      const isComplete =
-        isWorkflowComplete(withSkippedFail, definition) ||
-        (withSkippedFail.in_progress_steps.length === 0 &&
-          findEligibleSteps(definition, withSkippedFail).length === 0);
-      const failedRun: RunRecord = {
-        ...withSkippedFail,
-        evidence: [...pendingRun.evidence, ...allEvidence],
-        terminal_state: isComplete,
-        ...(isComplete
-          ? { terminal_reason: `Step '${options.command}' failed: ${dispatchError.message}` }
-          : {}),
-      };
-      await store.update(failedRun);
-    } catch (cleanupErr) {
-      cleanupWarning = `Failed to persist step failure: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`;
+      persistedRun = await store.update(failedRun);
+    } catch (storeErr) {
+      storeCleanupWarning = `Failed to persist step failure: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`;
     }
+    let walCleanupWarning: string | undefined;
+    try {
+      await options.traceBufferStore?.delete(options.runId, options.command);
+    } catch (walErr) {
+      walCleanupWarning = `Failed to clean up trace buffer after step failure: ${walErr instanceof Error ? walErr.message : String(walErr)}`;
+    }
+
+    const effectiveAction = resolvePostDispatchAgentAction(
+      dispatchError,
+      (persistedRun ?? failedRun).terminal_state,
+    );
+
+    let nextActions: NextAction[] = [];
+    if (effectiveAction !== 'stop' && storeCleanupWarning === undefined) {
+      try {
+        nextActions = buildNextActions(definition, persistedRun ?? failedRun);
+      } catch {
+        // buildNextActions can throw for unresolvable template references; fall back to [].
+      }
+    }
+
+    const contextHint =
+      effectiveAction === 'stop'
+        ? `Step '${options.command}' failed. Run is terminated.`
+        : effectiveAction === 'wait_and_proceed'
+          ? `Step '${options.command}' was rate-limited. Wait ${dispatchError.retry_after !== undefined ? `${dispatchError.retry_after} second(s)` : 'a moment'} then follow next_actions — no human intervention required.`
+          : effectiveAction === 'wait_for_human'
+            ? `Step '${options.command}' failed due to external service unavailability. Wait for service recovery, then proceed with the steps in next_actions.`
+            : `Step '${options.command}' failed. ${isComplete ? 'Run is terminated.' : 'Recovery steps are available in next_actions.'}`;
+
     return {
       command: options.command,
       run_id: options.runId,
-      run_version: pendingRun.version,
+      run_version: (persistedRun ?? failedRun).version,
       status: 'error',
       data: {},
       evidence: allEvidence,
-      warnings: cleanupWarning !== undefined ? [cleanupWarning] : [],
+      warnings: mergeWarnings(traceWarnings, storeCleanupWarning ?? walCleanupWarning),
       errors: [dispatchError.message],
-      agent_action: 'stop' as const,
-      context_hint: `Step '${options.command}' failed.`,
-      next_actions: [],
+      agent_action: effectiveAction,
+      ...(dispatchError.retry_after !== undefined
+        ? { retry_after: dispatchError.retry_after }
+        : {}),
+      context_hint: contextHint,
+      next_actions: nextActions,
     };
   }
 
@@ -782,6 +994,68 @@ export async function executeStep(
       stepDef!.gate?.choices ?? stepDef!.input_schema?.properties?.['choice']?.enum;
     const choices = Array.isArray(choicesRaw) ? (choicesRaw as string[]) : ['approve', 'reject'];
     const step_name = options.command;
+
+    // Resolve gate.message if configured — fail-fast on unresolvable references.
+    const gateEvidenceCtx = { ...evidenceByStep, [options.command]: output };
+    const wfCtxSpread =
+      pendingRun.workflow_context_snapshots !== undefined
+        ? {
+            workflowContext: {
+              snapshots: pendingRun.workflow_context_snapshots,
+              wrapper: (definition.context_wrapper ?? 'xml') as ContextWrapperFormat,
+            },
+          }
+        : {};
+
+    let resolvedGateMessage: string | undefined;
+    if (stepDef!.gate?.message !== undefined) {
+      let raw: string;
+      try {
+        raw = renderTemplate(
+          stepDef!.gate.message,
+          {
+            evidenceByStep: gateEvidenceCtx,
+            runParams: run.params,
+            ...wfCtxSpread,
+          },
+          { strict: true },
+        );
+      } catch (err) {
+        if (err instanceof UnknownFilterError) {
+          return makeErrorEnvelope(
+            options,
+            pendingRun,
+            new WorkflowError(`gate.message uses unknown filter '${err.filterName}'`, {
+              code: 'FILTER_UNKNOWN',
+              category: 'ENGINE',
+              agentAction: 'stop',
+              retryable: false,
+            }),
+            definition,
+            traceWarnings.length > 0 ? traceWarnings : undefined,
+          );
+        }
+        throw err;
+      }
+      const unresolved = [...raw.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)].map((m) => m[1]);
+      if (unresolved.length > 0) {
+        return makeErrorEnvelope(
+          options,
+          pendingRun,
+          new WorkflowError(`gate.message has unresolvable references: ${unresolved.join(', ')}`, {
+            code: 'GATE_MESSAGE_UNRESOLVABLE',
+            category: 'ENGINE',
+            agentAction: 'stop',
+            retryable: false,
+          }),
+          definition,
+          traceWarnings.length > 0 ? traceWarnings : undefined,
+        );
+      }
+      resolvedGateMessage = raw;
+    }
+
+    const gateConfig = stepDef!.gate;
 
     let gateRun: RunRecord;
     try {
@@ -795,11 +1069,19 @@ export async function executeStep(
           preview: output,
           choices,
           opened_at: new Date().toISOString(),
+          ...(gateConfig?.owner !== undefined ? { owner: gateConfig.owner } : {}),
+          ...(resolvedGateMessage !== undefined ? { resolved_message: resolvedGateMessage } : {}),
         },
       });
     } catch (err) {
       if (err instanceof WorkflowError) {
-        return makeErrorEnvelope(options, pendingRun, err, definition);
+        return makeErrorEnvelope(
+          options,
+          pendingRun,
+          err,
+          definition,
+          traceWarnings.length > 0 ? traceWarnings : undefined,
+        );
       }
       return makeErrorEnvelope(
         options,
@@ -811,30 +1093,24 @@ export async function executeStep(
           retryable: false,
         }),
         definition,
+        traceWarnings.length > 0 ? traceWarnings : undefined,
       );
     }
 
-    const gateEvidenceCtx = { ...evidenceByStep, [options.command]: output };
-    const wfCtxSpread =
-      pendingRun.workflow_context_snapshots !== undefined
-        ? {
-            workflowContext: {
-              snapshots: pendingRun.workflow_context_snapshots,
-              wrapper: (definition.context_wrapper ?? 'xml') as ContextWrapperFormat,
-            },
-          }
-        : {};
+    // gate.display fallback chain: gate.message resolved → step.prompt resolved → absent
     const resolvedGateDisplay =
-      stepDef!.prompt !== undefined
-        ? resolvePromptTemplate(stepDef!.prompt, {
-            evidenceByStep: gateEvidenceCtx,
-            runParams: run.params,
-            ...wfCtxSpread,
-          })
-        : undefined;
+      resolvedGateMessage !== undefined
+        ? resolvedGateMessage
+        : stepDef!.prompt !== undefined
+          ? renderTemplate(stepDef!.prompt, {
+              evidenceByStep: gateEvidenceCtx,
+              runParams: run.params,
+              ...wfCtxSpread,
+            })
+          : undefined;
     const resolvedGateInstructions =
       stepDef!.instructions !== undefined
-        ? resolvePromptTemplate(stepDef!.instructions, {
+        ? renderTemplate(stepDef!.instructions, {
             evidenceByStep: gateEvidenceCtx,
             runParams: run.params,
             ...wfCtxSpread,
@@ -862,7 +1138,7 @@ export async function executeStep(
       status: 'confirm_required',
       data: output,
       evidence: allEvidence,
-      warnings: [],
+      warnings: [...traceWarnings],
       errors: [],
       context_hint: `Run is paused at gate '${gate_id}'. Available choices: ${choices.join(', ')}.`,
       next_actions: [gateNextAction],
@@ -885,13 +1161,16 @@ export async function executeStep(
     completed_steps: [...pendingRun.completed_steps, options.command],
     evidence: [...pendingRun.evidence, ...allEvidence],
   };
-  // Propagate skips: completing this step may make some downstream steps permanently ineligible
-  // (e.g. all_failed steps whose dep just succeeded, one_failed steps whose last unfailed dep just completed).
   const withSkippedComplete: RunRecord = {
     ...afterComplete,
     skipped_steps: propagateSkips(afterComplete, definition),
   };
-  const isComplete = isWorkflowComplete(withSkippedComplete, definition);
+  // Guard steps are not returned by findEligibleSteps — check them separately.
+  const isComplete =
+    isWorkflowComplete(withSkippedComplete, definition) ||
+    (withSkippedComplete.in_progress_steps.length === 0 &&
+      findEligibleSteps(definition, withSkippedComplete).length === 0 &&
+      findEligibleGuardSteps(definition, withSkippedComplete).length === 0);
   const finalRun: RunRecord = {
     ...withSkippedComplete,
     terminal_state: isComplete,
@@ -903,7 +1182,13 @@ export async function executeStep(
     savedRun = await store.update(finalRun);
   } catch (err) {
     if (err instanceof WorkflowError) {
-      return makeErrorEnvelope(options, pendingRun, err, definition);
+      return makeErrorEnvelope(
+        options,
+        pendingRun,
+        err,
+        definition,
+        traceWarnings.length > 0 ? traceWarnings : undefined,
+      );
     }
     const internal = new WorkflowError('Failed to persist run update', {
       code: 'ENGINE_STORE_FAILED',
@@ -911,8 +1196,17 @@ export async function executeStep(
       agentAction: 'stop',
       retryable: false,
     });
-    return makeErrorEnvelope(options, pendingRun, internal, definition);
+    return makeErrorEnvelope(
+      options,
+      pendingRun,
+      internal,
+      definition,
+      traceWarnings.length > 0 ? traceWarnings : undefined,
+    );
   }
+
+  // Delete WAL after successful run update — entries are now in evidence.
+  await options.traceBufferStore?.delete(options.runId, options.command);
 
   // Step 7: Build and return ResponseEnvelope.
   const nextActions = savedRun.terminal_state ? [] : buildNextActions(definition, savedRun);
@@ -929,7 +1223,14 @@ export async function executeStep(
     status: 'ok',
     data: output,
     evidence: allEvidence,
-    warnings: currentWarn !== undefined ? [currentWarn] : [],
+    warnings:
+      traceWarnings.length > 0
+        ? currentWarn !== undefined
+          ? [...traceWarnings, currentWarn]
+          : traceWarnings
+        : currentWarn !== undefined
+          ? [currentWarn]
+          : [],
     errors: [],
     context_hint: orientation,
     next_actions: nextActions,
@@ -1021,7 +1322,13 @@ export async function submitHumanResponse(
     input: { choice: options.choice },
     output: { ...run.pending_gate.preview, choice: options.choice },
   });
-  const gateSnapshot = { ...gateEvidence, kind: 'gate_response' as const };
+  const gateSnapshot: EvidenceSnapshot = {
+    ...gateEvidence,
+    kind: 'gate_response' as const,
+    ...(run.pending_gate.resolved_message !== undefined
+      ? { gate_message: run.pending_gate.resolved_message }
+      : {}),
+  };
 
   const { pending_gate: _pg, terminal_reason: _tr, ...rest } = run;
   const afterGate: RunRecord = {
@@ -1030,13 +1337,16 @@ export async function submitHumanResponse(
     completed_steps: [...rest.completed_steps, gateStepName],
     evidence: [...rest.evidence, gateSnapshot],
   };
-  // Propagate skips in case resolving the gate completes a dep that makes
-  // some downstream trigger_rules permanently unsatisfiable.
   const withSkippedGate: RunRecord = {
     ...afterGate,
     skipped_steps: propagateSkips(afterGate, definition),
   };
-  const isComplete = isWorkflowComplete(withSkippedGate, definition);
+  // Guard steps are not returned by findEligibleSteps — check them separately.
+  const isComplete =
+    isWorkflowComplete(withSkippedGate, definition) ||
+    (withSkippedGate.in_progress_steps.length === 0 &&
+      findEligibleSteps(definition, withSkippedGate).length === 0 &&
+      findEligibleGuardSteps(definition, withSkippedGate).length === 0);
   const finalRun: RunRecord = {
     ...withSkippedGate,
     terminal_state: isComplete,
@@ -1088,6 +1398,122 @@ export async function submitHumanResponse(
 
 const MAX_CHAIN_DEPTH = 50;
 
+/**
+ * Executes a guard step inline within the engine's auto-chain.
+ *
+ * Guard steps are never claimed via claimStep — they execute synchronously as part of
+ * the chain, not via agent execute_step calls. This function evaluates all abort_unless
+ * conditions and returns an updated RunRecord.
+ *
+ * - PASS: guard in completed_steps, run continues.
+ * - ABORT: guard in skipped_steps, terminal_state=true, aborted_at set.
+ * - RESOLUTION_ERROR: guard in failed_steps, terminal_state=true, evidence with error.
+ */
+async function executeGuardStep(
+  stepName: string,
+  stepDef: StepDefinition,
+  definition: WorkflowDefinition,
+  run: RunRecord,
+): Promise<RunRecord> {
+  const conditions = Array.isArray(stepDef.abort_unless)
+    ? stepDef.abort_unless
+    : [stepDef.abort_unless!];
+
+  const evidenceByStep = buildEvidenceByStep(run);
+  const outcome = evaluateGuardConditions(conditions, evidenceByStep);
+
+  const now = new Date();
+
+  if (outcome.kind === 'resolution_error') {
+    const evidenceEntry = captureEvidence({
+      stepId: stepName,
+      startedAt: now,
+      completedAt: now,
+      input: {},
+      output: { error: `Unresolvable path: ${outcome.unresolvable_path}` },
+      error: `Guard resolution error on condition: ${outcome.condition}`,
+    });
+
+    const withFailed: RunRecord = {
+      ...run,
+      evidence: [...run.evidence, evidenceEntry],
+      failed_steps: [...run.failed_steps, stepName],
+    };
+    const withSkipped: RunRecord = {
+      ...withFailed,
+      skipped_steps: propagateSkips(withFailed, definition),
+    };
+    return {
+      ...withSkipped,
+      terminal_state: true,
+      terminal_reason: `Guard step '${stepName}' failed: unresolvable path '${outcome.unresolvable_path}'`,
+    };
+  }
+
+  if (outcome.kind === 'pass') {
+    const evidenceEntry = captureEvidence({
+      stepId: stepName,
+      startedAt: now,
+      completedAt: now,
+      input: {},
+      output: { conditions: outcome.conditions, aborted: false },
+    });
+
+    const withCompleted: RunRecord = {
+      ...run,
+      evidence: [...run.evidence, evidenceEntry],
+      completed_steps: [...run.completed_steps, stepName],
+    };
+    const withSkipped: RunRecord = {
+      ...withCompleted,
+      skipped_steps: propagateSkips(withCompleted, definition),
+    };
+    const isComplete =
+      isWorkflowComplete(withSkipped, definition) ||
+      (withSkipped.in_progress_steps.length === 0 &&
+        findEligibleSteps(definition, withSkipped).length === 0 &&
+        findEligibleGuardSteps(definition, withSkipped).length === 0);
+    return {
+      ...withSkipped,
+      terminal_state: isComplete,
+      ...(isComplete ? { terminal_reason: 'Workflow completed.' } : {}),
+    };
+  }
+
+  // Guard fired — one or more conditions false; abort the run.
+  const evidenceEntry = captureEvidence({
+    stepId: stepName,
+    startedAt: now,
+    completedAt: now,
+    input: {},
+    output: {
+      conditions: outcome.conditions,
+      aborted: true,
+      ...(stepDef.abort_message !== undefined ? { abort_message: stepDef.abort_message } : {}),
+    },
+    error: stepDef.abort_message ?? `Guard step '${stepName}' aborted the run.`,
+  });
+
+  const withGuardSkipped: RunRecord = {
+    ...run,
+    evidence: [...run.evidence, evidenceEntry],
+    skipped_steps: [...run.skipped_steps, stepName],
+  };
+  const withAllSkipped: RunRecord = {
+    ...withGuardSkipped,
+    skipped_steps: propagateSkips(withGuardSkipped, definition),
+  };
+  return {
+    ...withAllSkipped,
+    terminal_state: true,
+    aborted_at: {
+      step_id: stepName,
+      conditions: outcome.conditions,
+      ...(stepDef.abort_message !== undefined ? { abort_message: stepDef.abort_message } : {}),
+    },
+  };
+}
+
 async function executeChainInternal(
   store: RunStore,
   definition: WorkflowDefinition,
@@ -1118,7 +1544,7 @@ async function executeChainInternal(
     };
   }
 
-  const result = await executeStep(store, definition, options);
+  let result = await executeStep(store, definition, options);
 
   // Stop chaining on any non-ok result.
   if (result.status !== 'ok') {
@@ -1133,11 +1559,84 @@ async function executeChainInternal(
     return result;
   }
 
+  // Record this auto step in the accumulator.
+  if (definition.steps[options.command]?.execution === 'auto') {
+    chainedSteps.push({
+      step: options.command,
+      run_phase: run.run_phase,
+      ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+    });
+  }
+
   if (run.terminal_state || run.pending_gate !== undefined) {
-    // Final step — push without accumulated warnings (they're carried in result.warnings).
-    if (definition.steps[options.command]?.execution === 'auto') {
-      chainedSteps.push({ step: options.command, run_phase: run.run_phase });
+    return result;
+  }
+
+  // Execute any eligible guard steps inline before looking for the next auto step.
+  let guardEligible = findEligibleGuardSteps(definition, run);
+  while (guardEligible.length > 0) {
+    const guardName = guardEligible[0]!;
+    const guardStepDef = definition.steps[guardName]!;
+
+    const guardResult = await executeGuardStep(guardName, guardStepDef, definition, run);
+
+    let persistedGuardRun: RunRecord;
+    try {
+      persistedGuardRun = await store.update(guardResult);
+    } catch (storeErr) {
+      const msg = storeErr instanceof Error ? storeErr.message : String(storeErr);
+      return {
+        command: options.command,
+        run_id: options.runId,
+        run_version: run.version,
+        status: 'error',
+        data: {},
+        evidence: [],
+        warnings: [],
+        errors: [`Failed to persist guard step '${guardName}': ${msg}`],
+        agent_action: 'stop' as const,
+        context_hint: `Guard step '${guardName}' could not be persisted. Run state may be inconsistent.`,
+        next_actions: [],
+      };
     }
+
+    chainedSteps.push({ step: guardName, run_phase: persistedGuardRun.run_phase });
+
+    if (persistedGuardRun.terminal_state) {
+      const contextHint =
+        persistedGuardRun.aborted_at !== undefined
+          ? `Guard step '${guardName}' aborted the run.`
+          : `Guard step '${guardName}' failed with a resolution error. Run is terminated.`;
+      return {
+        command: options.command,
+        run_id: options.runId,
+        run_version: persistedGuardRun.version,
+        status: 'ok',
+        data: {},
+        evidence: persistedGuardRun.evidence.slice(-1),
+        warnings: [],
+        errors: [],
+        context_hint: contextHint,
+        next_actions: [],
+      };
+    }
+
+    run = persistedGuardRun;
+    guardEligible = findEligibleGuardSteps(definition, run);
+  }
+
+  // If any guards ran and passed, rebuild result with fresh next_actions and run_version.
+  const guardsRan = chainedSteps.some((s) => definition.steps[s.step]?.execution === 'guard');
+  if (guardsRan) {
+    const freshNextActions = buildNextActions(definition, run);
+    result = {
+      ...result,
+      run_version: run.version,
+      next_actions: freshNextActions,
+    };
+  }
+
+  if (run.terminal_state || run.pending_gate !== undefined) {
     return result;
   }
 
@@ -1146,20 +1645,7 @@ async function executeChainInternal(
   const nextAutoStep = eligible.find((name) => definition.steps[name]?.execution === 'auto');
 
   if (nextAutoStep === undefined) {
-    // Last auto step before an agent step — push without accumulated warnings.
-    if (definition.steps[options.command]?.execution === 'auto') {
-      chainedSteps.push({ step: options.command, run_phase: run.run_phase });
-    }
     return result;
-  }
-
-  // Intermediate auto step — push with warnings before recursing.
-  if (definition.steps[options.command]?.execution === 'auto') {
-    chainedSteps.push({
-      step: options.command,
-      run_phase: run.run_phase,
-      ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
-    });
   }
 
   return executeChainInternal(
