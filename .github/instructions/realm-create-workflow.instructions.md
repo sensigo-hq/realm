@@ -71,14 +71,14 @@ Minimal call:
 
 Each step:
 
-| Field             | Required | Description                                                                                                                                                                                                          |
-| ----------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`              | Yes      | Unique identifier. Snake_case verb-noun. No spaces.                                                                                                                                                                  |
-| `description`     | Yes      | What a correct output looks like (acceptance criterion).                                                                                                                                                             |
-| `input_schema`    | No       | JSON Schema for the fields this step's output must include. Also drives the `call_with.params` skeleton returned to the agent in `next_actions`.                                                                     |
-| `output_schema`   | No       | JSON Schema validated against the agent's submitted params before the engine claims the step. Failed validation returns `agent_action: provide_input`; the step remains unclaimed and is immediately re-submittable. |
-| `depends_on`      | No       | Array with **at most one** step ID this step depends on. Controls execution ordering.                                                                                                                                |
-| `timeout_seconds` | No       | Positive integer. If omitted, no timeout is enforced.                                                                                                                                                                |
+| Field             | Required | Description                                                                                                     |
+| ----------------- | -------- | --------------------------------------------------------------------------------------------------------------- |
+| `id`              | Yes      | Unique identifier. Snake_case verb-noun. No spaces.                                                             |
+| `description`     | Yes      | What a correct output looks like (acceptance criterion).                                                        |
+| `input_schema`    | No       | JSON Schema for the fields this step's output must include.                                                     |
+| `depends_on`      | No       | Array of step IDs this step depends on. Controls execution ordering.                                            |
+| `trigger_rule`    | No       | When to evaluate dependency satisfaction. Default: `all_success`. See `realm.instructions.md` for all variants. |
+| `timeout_seconds` | No       | Positive integer. If omitted, no timeout is enforced.                                                           |
 
 ## Step Design Guidelines
 
@@ -106,8 +106,9 @@ too much.
 
 ### 5. `depends_on` controls execution ordering
 
-Setting `depends_on` declares which earlier step must complete before this step becomes
-eligible. Dynamic workflows are linear — `depends_on` accepts **at most one** step ID.
+Setting `depends_on` declares which earlier steps must complete before this step becomes
+eligible. The engine evaluates `trigger_rule` against the listed dependencies at eligibility
+check time — the default rule `all_success` requires all deps to be in `completed_steps`.
 
 Omit `depends_on` when a step can start immediately at run creation (first tier of the DAG).
 For simple sequential workflows, each step lists the previous step as its single dependency.
@@ -208,17 +209,6 @@ already started — check `next_actions` immediately and proceed to `execute_ste
 }
 ```
 
-**`data.workflow_id` is deterministic.** The ID is derived from a SHA-256 hash of the
-workflow definition content (steps, schemas, metadata). Calling `create_workflow` twice with
-identical arguments produces the same `workflow_id` and overwrites the previously registered
-definition — the file store is idempotent by overwrite. This means retrying a failed
-`create_workflow` call is safe: you will get back the same workflow ID.
-
-However, any change to the definition — including a corrected typo in a step description —
-produces a different hash and therefore a different `workflow_id`. This is intentional: a
-different definition is a different workflow. Do not rely on the ID being stable across
-definition changes.
-
 Call `execute_step` using `instruction.call_with` as the template — fill in your step output
 in `params` (shaped to `next_actions[0].input_schema` if present). The engine does not require
 a `run_version` argument — it reads the current version from the store automatically.
@@ -236,17 +226,11 @@ them as described in `realm.instructions.md`.
 - Step IDs must be unique, non-empty, and contain no spaces.
 - Step descriptions must be non-empty.
 - `timeout_seconds` must be a positive integer if set.
-- `depends_on` accepts at most one step ID per step — dynamic workflows are always linear.
-  Submitting more than one dependency causes `agent_action: 'provide_input'`.
 - All steps in a dynamic workflow are `execution: agent` — the engine always returns them to
-  you for execution. `handler:`, `uses_service:`, and `execution: guard` are not available on
-  dynamic steps; use a YAML-registered workflow if you need auto steps, service adapters,
-  handlers, or guard conditions.
+  you for execution. `handler:` and `uses_service:` are not available on dynamic steps; use
+  a YAML-registered workflow if you need auto steps, service adapters, or handlers.
 - `depends_on` references must point to steps earlier in the `steps` array. Forward references
   cause a `provide_input` error at `create_workflow` call time.
-- `trigger_rule` is not supported on dynamically-created workflows. Step sequencing is always
-  linear — each step starts when its single `depends_on` predecessor completes successfully.
-  Use a YAML-registered workflow if you need `trigger_rule` variants (e.g. `one_failed`).
 - `workflow_context` is not supported on dynamically-created workflows. It is a YAML-loader
   feature resolved at registration time — file paths are resolved and validated when
   `realm workflow register` processes the workflow directory. Dynamic workflows have no

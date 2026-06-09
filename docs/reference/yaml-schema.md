@@ -18,41 +18,33 @@ Complete reference for `workflow.yaml` fields. Every field documented here is va
 | `profiles_dir`     | string  | No       | Path to agent profile files, relative to the workflow YAML. Defaults to `profiles/` in the same directory.                   |
 | `workflow_context` | object  | No       | Named file entries loaded once at run start and available in all step prompts. See [Workflow context](#workflow-context).    |
 | `context_wrapper`  | string  | No       | Wrapper format applied to `{{ workflow.context.NAME }}` references. One of `xml` (default), `brackets`, `none`.              |
-| `mcp_servers`      | array   | No       | External MCP server definitions. Steps reference these via `tools`. See [MCP servers](#mcp-servers).                         |
 
 ---
 
 ## Step fields
 
-| Field             | Type                                        | Required | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ----------------- | ------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `description`     | string                                      | Yes      | Human-readable step description. Appears in the agent protocol.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `execution`       | `agent` \| `auto` \| `guard`                | Yes      | Who executes this step. See [Execution modes](#execution-modes).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `depends_on`      | string[]                                    | No       | Step IDs this step waits for. Empty array or omitted means eligible from run start.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `trigger_rule`    | string                                      | No       | When to evaluate dependency satisfaction. Default: `all_success`. See [`trigger_rule`](#trigger_rule).                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `when`            | string                                      | No       | Expression evaluated against prior step evidence. A step is ineligible until this is truthy. See [`when` condition](#when-condition).                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `uses_service`    | string                                      | No       | Name of a service declared in `services`. Only valid on `execution: auto` steps.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `service_method`  | `fetch` \| `create` \| `update` \| `delete` | No       | Adapter method to call. Defaults to `fetch`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `operation`       | string                                      | No       | Operation name passed to the adapter. Defaults to the step name.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `handler`         | string                                      | No       | Name of a registered `StepHandler` to invoke. Only valid on `execution: auto` steps.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `config`          | object                                      | No       | Static key-value configuration passed to the handler via `context.config`. Only meaningful on `execution: auto` steps with a `handler`.                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `input_schema`    | object                                      | No       | JSON Schema validated against the agent's submitted `params` before execution. Also drives the `call_with.params` skeleton returned to the agent in `next_actions`.                                                                                                                                                                                                                                                                                                                                                                                    |
-| `output_schema`   | object                                      | No       | JSON Schema validated against the agent's submitted `params` before the engine claims the step. Only valid on `execution: agent` steps — declaring it on `execution: auto` steps is a loader error. Failed validation returns `agent_action: provide_input` and leaves the step unclaimed — immediately re-submittable without side effects.                                                                                                                                                                                                           |
-| `preconditions`   | string[]                                    | No       | Boolean expressions evaluated before the step runs. See [Preconditions](#preconditions).                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `trust`           | string                                      | No       | Human oversight level. See [Trust levels](#trust-levels).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `timeout_seconds` | integer                                     | No       | Step execution timeout in seconds. On expiry the run fails with `STEP_TIMEOUT`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `retry`           | object                                      | No       | Retry configuration. See [Retry](#retry).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `instructions`    | string                                      | No       | Agent-facing instructions. Delivered as `gate.agent_hint` when a gate is open.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `prompt`          | string                                      | No       | Template-resolved task prompt delivered via `next_actions[].prompt`. On human gate steps, delivered as `gate.display`. Supports `{{ context.resources.STEP.FIELD }}` and `{{ run.params.FIELD }}`.                                                                                                                                                                                                                                                                                                                                                     |
-| `gate`            | object                                      | No       | Gate configuration. `gate.choices` lists the valid human response values. `gate.message` is a developer-authored template string shown to the human reviewer. See [Gate message](#gate-message).                                                                                                                                                                                                                                                                                                                                                       |
-| `input_map`       | `Record<string, InputMapNode>`              | No       | Maps param names the service adapter receives to values from the run context. Only valid on `execution: auto` steps with `uses_service`. Each value is either a dot-path string (`run.params.<key>` or `context.resources.<step>.<field>`) or a nested object whose leaves are dot-path strings — allowing arbitrary nested objects to be constructed from prior step evidence. Maximum nesting depth is 10. The resolved params are recorded in the evidence chain as `resolved_params` and are visible in `realm run inspect` as a `Resolved:` line. |
-| `agent_profile`   | string                                      | No       | Agent profile name. Only valid on `execution: agent` steps. Must match a file in `profiles_dir`.                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `tools`           | `string[]`                                  | No       | Tool names this step may call, in `server_id:tool_name` format. Only valid on `execution: agent` steps with an `input_schema`. References entries in `mcp_servers`. All declared names must exist in the connected server — if any name is not found after `listTools()`, the step fails immediately with `MCP_TOOL_NOT_FOUND` before any LLM call is made. If two connected servers expose the same bare tool name within a single step, the step fails immediately with `MCP_TOOL_NAME_COLLISION`.                                                   |
-| `max_tool_calls`  | integer                                     | No       | Maximum number of tool calls the agent may make in a single step execution. Must be a positive integer.                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `max_fan_out`     | integer                                     | No       | Maximum number of `start_run` or `start_run_batch` MCP tool calls the agent may make in a single step execution. Once this limit is reached the agent enters final-extraction mode (same as `max_tool_calls` exhaustion) — no further fan-out calls are executed, but the response is returned cleanly. Must be a positive integer.                                                                                                                                                                                                                    |
-| `tool_timeout`    | integer                                     | No       | Timeout in seconds for each individual MCP tool call. Must be a positive integer.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `abort_unless`    | string \| string[]                          | No       | One or more condition expressions evaluated against prior step evidence. If any condition is false, the run is aborted with `run_phase: 'aborted'`. Only valid on `execution: guard` steps. Absent path → `GUARD_RESOLUTION_ERROR` (`run_phase: 'failed'`, not `'aborted'`). See [execution: guard](#execution-guard).                                                                                                                                                                                                                                 |
-| `abort_message`   | string                                      | No       | Human-readable message recorded in the guard step's evidence entry and in `aborted_at.abort_message` when the run aborts. Only valid on `execution: guard` steps.                                                                                                                                                                                                                                                                                                                                                                                      |
+| Field             | Type                            | Required | Description                                                                                                                                                                                                                                                                                                    |
+| ----------------- | ------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `description`     | string                          | Yes      | Human-readable step description. Appears in the agent protocol.                                                                                                                                                                                                                                                |
+| `execution`       | `agent` \| `auto`               | Yes      | Who executes this step.                                                                                                                                                                                                                                                                                        |
+| `depends_on`      | string[]                        | No       | Step IDs this step waits for. Empty array or omitted means eligible from run start.                                                                                                                                                                                                                            |
+| `trigger_rule`    | string                          | No       | When to evaluate dependency satisfaction. Default: `all_success`. See [`trigger_rule`](#trigger_rule).                                                                                                                                                                                                         |
+| `when`            | string                          | No       | Expression evaluated against prior step evidence. A step is ineligible until this is truthy. See [`when` condition](#when-condition).                                                                                                                                                                          |
+| `uses_service`    | string                          | No       | Name of a service declared in `services`. Only valid on `execution: auto` steps.                                                                                                                                                                                                                               |
+| `service_method`  | `fetch` \| `create` \| `update` | No       | Adapter method to call. Defaults to `fetch`.                                                                                                                                                                                                                                                                   |
+| `operation`       | string                          | No       | Operation name passed to the adapter. Defaults to the step name.                                                                                                                                                                                                                                               |
+| `handler`         | string                          | No       | Name of a registered `StepHandler` to invoke. Only valid on `execution: auto` steps.                                                                                                                                                                                                                           |
+| `config`          | object                          | No       | Static key-value configuration passed to the handler via `context.config`. Only meaningful on `execution: auto` steps with a `handler`.                                                                                                                                                                        |
+| `input_schema`    | object                          | No       | JSON Schema validated against the agent's submitted `params` before execution.                                                                                                                                                                                                                                 |
+| `preconditions`   | string[]                        | No       | Boolean expressions evaluated before the step runs. See [Preconditions](#preconditions).                                                                                                                                                                                                                       |
+| `trust`           | string                          | No       | Human oversight level. See [Trust levels](#trust-levels).                                                                                                                                                                                                                                                      |
+| `timeout_seconds` | integer                         | No       | Step execution timeout in seconds. On expiry the run fails with `STEP_TIMEOUT`.                                                                                                                                                                                                                                |
+| `retry`           | object                          | No       | Retry configuration. See [Retry](#retry).                                                                                                                                                                                                                                                                      |
+| `instructions`    | string                          | No       | Agent-facing instructions. Delivered as `gate.agent_hint` when a gate is open.                                                                                                                                                                                                                                 |
+| `prompt`          | string                          | No       | Template-resolved task prompt delivered via `next_actions[].prompt`. On human gate steps, delivered as `gate.display`. Supports `{{ context.resources.STEP.FIELD }}` and `{{ run.params.FIELD }}`.                                                                                                             |
+| `gate`            | object                          | No       | Gate configuration. `gate.choices` lists the valid human response values.                                                                                                                                                                                                                                      |
+| `input_map`       | `Record<string, string>`        | No       | Maps param names the service adapter receives to dot-path values from the run context. Only valid on `execution: auto` steps with `uses_service`. Each value is a dot-path: `run.params.<key>` reads from the run's start params; `context.resources.<step>.<field>` reads a field from a prior step's output. |
+| `agent_profile`   | string                          | No       | Agent profile name. Only valid on `execution: agent` steps. Must match a file in `profiles_dir`.                                                                                                                                                                                                               |
 
 ---
 
@@ -60,46 +52,11 @@ Complete reference for `workflow.yaml` fields. Every field documented here is va
 
 ### `execution: agent`
 
-The engine pauses and returns `next_actions` containing this step. The AI agent (or `realm run` in dev mode) calls `execute_step` with the step's `command` and `params`. The engine validates `params` against `input_schema` (if declared) and `output_schema` (if declared) before proceeding.
+The engine pauses and returns `next_actions` containing this step. The AI agent (or `realm run` in dev mode) calls `execute_step` with the step's `command` and `params`. The engine validates `params` against `input_schema` before proceeding.
 
 ### `execution: auto`
 
 The engine executes this step immediately without returning to the caller. If the step declares `uses_service`, the engine calls the registered adapter. If it declares `handler`, the engine calls the registered `StepHandler`. Auto steps chain automatically: after any step completes, if the next step is `auto`, the engine runs it immediately and repeats until it reaches an agent step, a human gate, or a terminal state.
-
-### `execution: guard`
-
-The engine evaluates one or more boolean expressions declared in `abort_unless` against the run's current evidence. The evaluation happens inline, as part of the auto-chain — the guard is never returned to the agent as a step to execute.
-
-- If **all** conditions are true: the guard passes, goes into `completed_steps`, and the run continues.
-- If **any** condition is false: the run is aborted immediately. The guard goes into `skipped_steps`, `run_phase` becomes `'aborted'`, and `get_run_state` includes `abort_context` with the evaluated conditions. No further steps execute.
-- If a path in `abort_unless` cannot be resolved (absent evidence field): the guard fails with `GUARD_RESOLUTION_ERROR`, `run_phase` becomes `'failed'`. This is an authoring error — fix the path.
-
-All conditions are always evaluated regardless of intermediate outcomes — the evidence record is complete whether the guard passes or aborts.
-
-Guard steps are incompatible with: `uses_service`, `handler`, `input_schema`, `output_schema`, `trust`, `agent_profile`, `trigger_rule`, `timeout_seconds`, `service_method`, `operation`, `input_map`, `tools`.
-
-```yaml
-steps:
-  classify_ticket:
-    description: Classify the support ticket
-    execution: agent
-    depends_on: []
-
-  guard_must_be_open:
-    description: Abort if the ticket is not open
-    execution: guard
-    depends_on: [classify_ticket]
-    abort_unless:
-      - "classify_ticket.status == 'open'"
-    abort_message: 'Ticket is not open — aborting run.'
-
-  route_ticket:
-    description: Route the open ticket to the correct team
-    execution: agent
-    depends_on: [guard_must_be_open]
-```
-
-**Run phase after abort:** `'aborted'`. This is a terminal phase — aborted runs cannot be resumed. The `aborted_at` field on the run record (and `abort_context` in `get_run_state`) contains the guard step ID, all evaluated conditions, and the optional `abort_message`.
 
 ---
 
@@ -181,8 +138,6 @@ steps:
 
 When a step fails (or is skipped), all downstream steps whose `trigger_rule` can no longer be satisfied are automatically moved to `skipped_steps`. For example, if `extract_fields` fails, any step with `depends_on: [extract_fields]` and the default `trigger_rule: all_success` is skipped immediately. The run terminates cleanly with `run_phase: failed` when no eligible or in-progress steps remain.
 
-`when`-condition branches are skipped the same way: once all of a step's dependencies are settled, if the step's `when` expression evaluates to false, the engine moves it to `skipped_steps` immediately. In a mutual-exclusion pattern (two branches with opposite `when` conditions), the inactive branch is skipped as soon as the shared upstream step completes — the run closes cleanly without any finalizer step.
-
 `skipped_steps` is included in `realm run inspect` and the `get_run_state` MCP response.
 
 ---
@@ -215,7 +170,7 @@ steps:
 
 `when` conditions are evaluated against each step's recorded `output_summary`. Comparison is strict — types must match (`"1"` does not equal `1`).
 
-Once all of a step's dependencies are settled, the engine evaluates the `when` condition. If it evaluates to false at that point, the step is moved to `skipped_steps` immediately — it does not remain indefinitely ineligible. In a mutual-exclusion pattern (two branches with opposite `when` conditions), the inactive branch is skipped as soon as the shared upstream step completes. No finalizer step is needed to close the run.
+A step whose `when` condition is permanently false is not automatically moved to `skipped_steps` — it stays ineligible. Only `trigger_rule` impossibility triggers automatic skipping.
 
 ---
 
@@ -231,286 +186,6 @@ write_to_target:
 ```
 
 Supported operators: `>`, `<`, `>=`, `<=`, `==`, `!=`. The left side is a dot-path into the evidence of a prior step (`step.result.field`). The right side is a literal value.
-
----
-
-## Gate message
-
-`gate.message` is a developer-authored template string shown to the human reviewer when a gate opens. It is distinct from `prompt` — `prompt` is the LLM's task directive, while `gate.message` is a human-readable decision summary.
-
-**Primary use case — self-reference:** the gate step's own output is available via `context.resources.STEP_NAME.FIELD`, where `STEP_NAME` is this step's own name:
-
-```yaml
-confirm_update:
-  execution: agent
-  trust: human_confirmed
-  gate:
-    choices: [confirm, reject]
-    message: |
-      *Update Request*
-      Fields found: {{ context.resources.confirm_update.fields_found }} / {{ context.resources.confirm_update.total_fields }}
-      Missing: {{ context.resources.confirm_update.missing_fields }}
-      Confirm to proceed or reject to cancel.
-  prompt: |
-    Validate the incoming fields. Return JSON: { fields_found, total_fields, missing_fields }.
-```
-
-Cross-step references also work: `{{ context.resources.prior_step.field }}`.
-
-**Fail-fast behavior:** if any `{{ ... }}` reference is unresolvable when the gate opens, the step returns a stop error immediately. The gate does not open with broken placeholder text. Fix the template or the step's output schema.
-
-**gate.display fallback chain (MCP path):**
-
-1. `gate.message` resolved → used as `gate.display`
-2. `step.prompt` resolved → used as `gate.display` (existing behavior, unchanged)
-3. Neither present → `gate.display` absent (existing behavior, unchanged)
-
-**Audit guarantee:** the resolved message is stored verbatim in the run's evidence chain. `realm run inspect` surfaces it in the `gate_response` entry under `Message:`, so the exact text the human read when they made their choice is preserved permanently.
-
-**Slack path:** when `gate.message` is present, the resolved text is used in the Slack notification in place of the raw JSON preview. When absent, the existing `formatGatePreviewForSlack(preview)` fallback applies.
-
-### Authoring guidelines
-
-`gate.message` is a **decision card** — the minimal set of facts an operator needs to make their choice confidently. It is not a status report, not a content preview, and not a dump of the step's output.
-
-**Structure pattern:**
-
-```
-LINE 1     — Identity + the most important signal (severity, risk, category)
-LINES 2–N  — 2–4 scannable key facts (label: value format)
-[blank line]
-[action line — only when choices are not self-evident]
-```
-
-- **Target: 3–5 lines. Maximum: 8 lines.** Beyond this, operators skim to the choices and miss the context.
-- Line 1 must uniquely identify what is being reviewed and surface its urgency signal. In Slack it renders as bold when wrapped in `*...*`.
-- Lines 2–N are for impact scope, confidence level, counts, or the one-line summary of the pending action.
-- The runtime appends the response instructions (`realm run respond ...`) automatically — do **not** include them.
-
-**What to include:**
-
-| Include                                              | Reason                                            |
-| ---------------------------------------------------- | ------------------------------------------------- |
-| Identity — what specific thing this is               | Without this, every gate looks the same           |
-| Severity, risk, or confidence signal                 | Tells the operator how carefully to review        |
-| Impact scope — services, users, count                | Tells the operator how much they're committing to |
-| The pending action in one clause                     | What will happen if they approve                  |
-| Breaking constraints or flags that affect the choice | Things they'd want to know before saying yes      |
-
-**What to omit:**
-
-| Omit                                            | Reason                                                    |
-| ----------------------------------------------- | --------------------------------------------------------- |
-| Response instructions (`Reply 'approve' to...`) | The runtime appends these automatically                   |
-| Full document or report body                    | Put that content in `prompt`; `gate.message` is a summary |
-| Raw JSON arrays or objects                      | Use `\| join`, `\| bullets`, or `\| count` instead        |
-| Long strings without truncation                 | Bind with `\| truncate: N` to prevent layout blowout      |
-| Confidence notes when confidence is obvious     | Don't clutter high-signal messages with noise             |
-
-**Anti-patterns:**
-
-```yaml
-# BAD: omits identity — impossible to tell what's being approved
-message: |
-  Review this? Confirm to proceed or reject to cancel.
-
-# BAD: dumps the content body — gate.message is a summary, not the content
-message: |
-  Summary: {{ context.resources.write_summary.full_summary }}
-
-# BAD: includes response instructions — the runtime appends these
-message: |
-  PR #{{ run.params.pr_number }} detected.
-  Reply 'approve' to merge or 'reject' to discard.
-
-# BAD: raw array value — renders as ["src/index.ts","src/utils.ts",...]
-message: |
-  Changed files: {{ context.resources.scan.changed_files }}
-
-# GOOD: shaped for reading
-message: |
-  Changed files ({{ context.resources.scan.changed_files | count }}):
-  {{ context.resources.scan.changed_files | bullets }}
-```
-
-**Channel rendering:** the terminal renders `gate.message` as plain text — `*bold*` and other mrkdwn syntax appear literally. Keep messages plain text unless Slack is the primary surface. When Slack rendering matters, bold the headline only: `*{{ context.resources.step.title }}*`.
-
-**Checklist before shipping a gate:**
-
-- [ ] Line 1 uniquely identifies what is being reviewed
-- [ ] Severity, risk, or confidence signal is on line 1 or 2 — not buried
-- [ ] All array fields are formatted with `| join`, `| bullets`, or `| count`
-- [ ] All long strings are bounded with `| truncate: N`
-- [ ] Optional fields use `| default:` or are guaranteed present by the step's `input_schema`
-- [ ] No response instructions included
-- [ ] Total length is ≤ 8 lines
-- [ ] If content is truncated or capped (`| limit:`, `| truncate:`), the reviewer can either consult a primary source (URL, PR number, ticket) or — once bidirectional gate messaging is available — ask the agent for more detail in the same thread. Do not hide information that exists nowhere else and has no reachable primary source.
-- [ ] Tested in terminal rendering, not only previewed as Slack Markdown
-
-### resolution_messages
-
-`gate.resolution_messages` is an optional per-choice confirmation map displayed after the gate
-resolves. Each key is a valid gate choice; the value is shown in the terminal and posted as a
-Slack thread reply to the gate notification.
-
-```yaml
-gate:
-  choices: [send, reject]
-  message: |
-    {{ context.resources.analyze_cause.severity | upper }} — {{ context.resources.analyze_cause.root_cause }}
-    Draft: {{ context.resources.draft_response.headline | truncate: 80 }}
-  resolution_messages:
-    send: 'Draft approved — posted to the incident channel.'
-    reject: 'Draft rejected — run cancelled.'
-```
-
-Values are **plain text** — no template substitution. Keep entries to one line. Every choice in
-`gate.choices` should have a corresponding entry; missing choices resolve silently (no message).
-
----
-
-## Step display
-
-The `display:` field produces a formatted terminal summary printed after the step completes.
-Without `display:`, the CLI prints the raw JSON output. With `display:`, it renders the
-developer-authored template.
-
-```yaml
-write_review:
-  execution: agent
-  depends_on: [fetch_pr]
-  display: |
-    Risk: {{ risk }}
-
-    {{ review_comment }}
-```
-
-### Short-path syntax
-
-`display:` uses a **short-path renderer** — `{{ field }}` resolves against the step's own
-output object. It does **not** support:
-
-- `{{ context.resources.STEP.field }}` — cross-step references
-- `{{ run.params.field }}` — run params
-- Liquid filters (`| upper`, `| bullets`, `| truncate`)
-
-Unrecognised paths pass through as literal text. This is the most common authoring mistake
-— if you see `{{ context.resources.write_review.risk }}` in the terminal instead of a value,
-you are using context paths in `display:` where you should be using `gate.message`.
-
-### Gate fallback
-
-On `execution: auto` steps with `trust: human_confirmed`, `display:` is used as the
-`gate.display` fallback when `gate.message` is absent:
-
-```
-1. gate.message resolved  → used as gate.display (Liquid filters supported)
-2. display: resolved      → used as gate.display (short paths only, no filters)
-3. step.prompt resolved   → used as gate.display (existing fallback)
-4. none present           → gate.display is absent
-```
-
-For gate steps that need filters or cross-step references in the decision card, use
-`gate.message` — not `display:`.
-
----
-
-## Template filters
-
-Template expressions support an optional pipe-filter chain: `{{ path | filter1 | filter2: arg }}`.
-
-The path is resolved first. Each filter in the chain receives the current value and produces a new value. If any filter produces a type mismatch the placeholder is left intact (`{{ path | ... }}`). Unknown filters in `gate.message` templates cause a `FILTER_UNKNOWN` stop error.
-
-### Tier 1 filters
-
-| Filter       | Arg                           | Input      | Output                                                                                    |
-| ------------ | ----------------------------- | ---------- | ----------------------------------------------------------------------------------------- |
-| `bullets`    | —                             | `string[]` | `• item\n• item\n…` — empty array → placeholder                                           |
-| `join`       | separator (default `", "`)    | `string[]` | items joined by separator                                                                 |
-| `default`    | fallback value (default `""`) | any        | fallback when value is `null` or `undefined`; passes through `""`, `0`, `false` unchanged |
-| `upper`      | —                             | `string`   | uppercased string                                                                         |
-| `lower`      | —                             | `string`   | lowercased string                                                                         |
-| `capitalize` | —                             | `string`   | first character uppercased, remaining characters unchanged                                |
-| `truncate`   | max length (integer)          | `string`   | string cut at word boundary ≤ N + `…`; unchanged if already short enough                  |
-
-`truncate` does not auto-stringify numbers; ensure the value is a string in the step's output if truncation is needed.
-
-> `capitalize` uppercases only the first character; remaining characters are not modified.
-> `"DATABASE_UNAVAILABLE" | capitalize` → `"DATABASE_UNAVAILABLE"`, not `"Database_unavailable"`.
-
-**Arg quoting and multi-arg syntax:** Filter arguments follow the filter name after a colon. Multiple arguments are separated by commas. String arguments containing spaces or commas must be quoted with double or single quotes; the outer quotes are stripped. Unquoted arguments are trimmed. Examples: `join: " / "` (one quoted arg, passes `/`); `replace: ",", " / "` (two quoted args); `truncate: 80` (one unquoted integer arg); `yesno: "Active", "Inactive"` (two quoted args).
-
-**`default:` fires on `null` or `undefined` only — not on filter errors.** A short-circuit from a prior `ok: false` result (type mismatch or unknown filter in lenient mode) leaves the placeholder intact; `default:` is not reached. For example, `{{ items | pluck: "name" | default: "none" }}` where `pluck` produces a type mismatch short-circuits before `default:` — the result is the placeholder, not `"none"`.
-
-**Filter chain example:**
-
-```yaml
-gate:
-  message: |
-    Issues found:
-    {{ context.resources.scan.issues | bullets }}
-
-    Summary: {{ context.resources.scan.summary | truncate: 200 }}
-    Repo: {{ run.params.repo | upper }}
-    Tags: {{ context.resources.scan.tags | join: ", " }}
-    Status: {{ context.resources.scan.status | default: unknown }}
-```
-
-**Strict mode:** `gate.message` is rendered in strict mode — an unknown filter name returns a `FILTER_UNKNOWN` stop error rather than leaving the placeholder intact. All other template call sites (`prompt`, `instructions`, `gate.display` fallback) are lenient: unknown filters leave the placeholder as-is.
-
-**Author note:** If you need a fallback for optional fields that may also be the wrong type, ensure the step always outputs the field as a string or omits it — don't rely on `| default:` to cover upstream type errors.
-
-### Tier 2 filters
-
-| Filter          | Arg                                                                   | Input                   | Output                                                                                                                                                                                  |
-| --------------- | --------------------------------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pluck`         | key (string)                                                          | `object[]`              | array of values for key; absent keys and non-object items omitted                                                                                                                       |
-| `count`         | —                                                                     | `array`                 | array length as string; empty array → `"0"`                                                                                                                                             |
-| `limit`         | max items (integer)                                                   | `array`                 | first N items; `limit: 0` → `[]`                                                                                                                                                        |
-| `compact`       | —                                                                     | `array`                 | array with `null`/`undefined` entries removed                                                                                                                                           |
-| `replace`       | search, replacement (both required)                                   | `string`                | replaces all occurrences of search with replacement; case-sensitive; empty search → placeholder                                                                                         |
-| `round`         | decimals (integer, default `0`)                                       | `number`                | rounded string                                                                                                                                                                          |
-| `floor`         | —                                                                     | `number`                | largest integer ≤ input, as string                                                                                                                                                      |
-| `ceil`          | —                                                                     | `number`                | smallest integer ≥ input, as string                                                                                                                                                     |
-| `abs`           | —                                                                     | `number`                | absolute value as string                                                                                                                                                                |
-| `number_format` | decimals (integer, default `0`)                                       | `number`                | locale-formatted string with thousands separator; locale is `en-US`                                                                                                                     |
-| `percent`       | decimals (integer, default `0`)                                       | `number` [0, 1]         | e.g. `"85.7%"` — input is a fraction, multiplied by 100                                                                                                                                 |
-| `yesno`         | yes label, no label (both optional)                                   | `boolean`               | `"yes"` / `"no"` by default; custom labels when two args provided; one arg falls back to defaults                                                                                       |
-| `and_join`      | —                                                                     | `unknown[]`             | Oxford comma join; empty array → placeholder                                                                                                                                            |
-| `trim`          | —                                                                     | `string`                | leading and trailing whitespace removed                                                                                                                                                 |
-| `first`         | —                                                                     | `array`                 | first element; empty array → placeholder                                                                                                                                                |
-| `last`          | —                                                                     | `array`                 | last element; empty array → placeholder                                                                                                                                                 |
-| `sum`           | —                                                                     | `number[]`              | sum of elements as string; empty array → `"0"`; non-number element → placeholder                                                                                                        |
-| `flatten`       | —                                                                     | `array`                 | one level deep flatten; does not recurse                                                                                                                                                |
-| `split`         | delimiter (required)                                                  | `string`                | splits on delimiter string (any non-empty string); produces `string[]`; empty delimiter → placeholder                                                                                   |
-| `sort`          | —                                                                     | `array`                 | lexicographically sorted copy; elements coerced via `String()` for comparison; stable sort                                                                                              |
-| `unique`        | —                                                                     | `array`                 | deduplicated array; equality by `JSON.stringify`; property order in objects matters                                                                                                     |
-| `title`         | —                                                                     | `string`                | first character of each whitespace-separated word uppercased; remaining characters unchanged; hyphens are not word boundaries                                                           |
-| `code`          | —                                                                     | `string`                | wraps value in single backticks for Markdown/Slack inline code; inner backticks not escaped — values containing backticks may produce malformed output; intended for single-line values |
-| `indent`        | spaces (integer, required)                                            | `string`                | prefixes each non-empty line with N spaces; empty lines not indented                                                                                                                    |
-| `date`          | preset (`short`, `long`, `iso`, `time`, `datetime`) — default `short` | `string` (ISO 8601)     | formatted date in UTC; `short` → `"Jan 28, 2026"`; unparseable string → placeholder                                                                                                     |
-| `from_now`      | —                                                                     | `string` (ISO 8601)     | relative time string, e.g. `"3 minutes ago"` or `"in 5 minutes"`; uses `Intl.RelativeTimeFormat`                                                                                        |
-| `duration`      | —                                                                     | `number` (milliseconds) | duration string, e.g. `"1m 23s"` or `"45s"`; negative → placeholder                                                                                                                     |
-
-> All `date` output is in UTC. `timeZone: 'UTC'` is used in every `Intl.DateTimeFormat`
-> call — output is deterministic regardless of server timezone.
-
-> `split` is the only Tier 2 filter that changes the value type from `string` to `string[]`.
-> It enables chains like `{{ run.params.csv | split: "," | compact | and_join }}`.
-
-**Tier 2 filter example:**
-
-```yaml
-gate:
-  message: |
-    Review required for {{ run.params.repo | upper }}.
-    {{ context.resources.scan.findings | pluck: "title" | limit: 5 | bullets }}
-
-    Issues found: {{ context.resources.scan.findings | count }}
-    Confidence: {{ context.resources.scan.confidence | percent: 1 }}
-    Auto-fixable: {{ context.resources.scan.auto_fixable | yesno }}
-    Affected modules: {{ context.resources.scan.modules | compact | and_join }}
-```
 
 ---
 
@@ -565,10 +240,6 @@ services:
 | `engine_delivered` | Service response is injected directly into evidence. The agent cannot see or alter it. |
 | `engine_managed`   | The engine manages the service call; the agent provides input parameters.              |
 | `agent_provided`   | The agent is responsible for the service interaction.                                  |
-
-For full configuration reference, supported operations, and response shapes for the
-built-in adapters (`FileSystemAdapter`, `GitHubAdapter`, `GenericHttpAdapter`), see the
-[Built-in Service Adapters Reference](adapters.md).
 
 ---
 
@@ -896,34 +567,3 @@ verify_repo:
 
 For handler authoring details, interface signatures, primitives, and registration patterns, see
 [Handler Authoring Reference](handlers.md).
-
----
-
-## MCP servers
-
-Defines external MCP servers that steps may call tools on. Each server has a unique `id`.
-Step tool declarations reference server entries via `server_id:tool_name` in the `tools` field.
-
-```yaml
-mcp_servers:
-  - id: github # required; unique within this workflow
-    transport: stdio # required; only 'stdio' is supported
-    command: npx # required for stdio transport
-    args:
-      - -y
-      - '@modelcontextprotocol/server-github'
-    env:
-      GITHUB_TOKEN: '${GITHUB_TOKEN}' # ${VAR} is expanded from process.env at connect time
-```
-
-| Field       | Required | Description                                                                      |
-| ----------- | -------- | -------------------------------------------------------------------------------- |
-| `id`        | Yes      | Unique server identifier within this workflow. Used in `tools` field references. |
-| `transport` | Yes      | Transport type. Currently only `stdio` is supported.                             |
-| `command`   | Yes      | Executable to launch (e.g. `npx`, `node`, absolute path).                        |
-| `args`      | No       | Arguments passed to `command`.                                                   |
-| `env`       | No       | Environment variables for the server process. Values support `${VAR}` expansion. |
-
-`env` values support `${VAR}` substitution resolved from `process.env` at connect time.
-An unresolved variable causes the run to fail with `MCP_CONNECTION_FAILED` at the point
-where the first tool call for that server is attempted.
