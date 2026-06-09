@@ -1649,4 +1649,77 @@ describe('Step 5 dispatch-failure envelope', () => {
     expect(envelope.agent_action).toBe('stop');
     expect(envelope.next_actions).toHaveLength(0);
   });
+
+  // ---------------------------------------------------------------------------
+  // Phase 75 — _debug capture
+  // ---------------------------------------------------------------------------
+
+  describe('_debug capture (Phase 75)', () => {
+    const debugDef: WorkflowDefinition = {
+      id: 'debug-wf',
+      name: 'Debug Workflow',
+      version: 1,
+      steps: {
+        classify: {
+          description: 'Agent step with output_schema',
+          execution: 'agent',
+          depends_on: [],
+          input_schema: {
+            type: 'object',
+            required: ['category'],
+            properties: { category: { type: 'string' } },
+          },
+        },
+      },
+    };
+
+    it('_debug is stripped from output_summary and stored as debug_output on the snapshot', async () => {
+      const run = await store.create({ workflowId: 'debug-wf', workflowVersion: 1, params: {} });
+
+      await executeStep(store, debugDef, {
+        runId: run.id,
+        command: 'classify',
+        input: { category: 'billing', _debug: 'Ticket mentions invoice #4421. Confident billing.' },
+        dispatcher: echoDispatcher,
+      });
+
+      const updatedRun = await store.get(run.id);
+      const snap = updatedRun.evidence.find((e) => e.step_id === 'classify');
+      expect(snap).toBeDefined();
+      expect(snap?.debug_output).toBe('Ticket mentions invoice #4421. Confident billing.');
+      // _debug must not appear in output_summary
+      expect((snap?.output_summary as Record<string, unknown>)['_debug']).toBeUndefined();
+    });
+
+    it('_debug passes schema validation — stripped before schema check', async () => {
+      const run = await store.create({ workflowId: 'debug-wf', workflowVersion: 1, params: {} });
+
+      // Without _debug removal, this would fail schema validation because
+      // output_schema requires only { category }. With removal, it passes.
+      const envelope = await executeStep(store, debugDef, {
+        runId: run.id,
+        command: 'classify',
+        input: { category: 'billing', _debug: 'reasoning text' },
+        dispatcher: echoDispatcher,
+      });
+
+      expect(envelope.status).toBe('ok');
+    });
+
+    it('step without _debug produces no debug_output field on the snapshot', async () => {
+      const run = await store.create({ workflowId: 'debug-wf', workflowVersion: 1, params: {} });
+
+      await executeStep(store, debugDef, {
+        runId: run.id,
+        command: 'classify',
+        input: { category: 'billing' },
+        dispatcher: echoDispatcher,
+      });
+
+      const updatedRun = await store.get(run.id);
+      const snap = updatedRun.evidence.find((e) => e.step_id === 'classify');
+      expect(snap).toBeDefined();
+      expect(Object.prototype.hasOwnProperty.call(snap, 'debug_output')).toBe(false);
+    });
+  });
 });

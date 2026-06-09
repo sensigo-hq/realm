@@ -106,6 +106,13 @@ export interface EvidenceSnapshot {
    * Absent when no trace was submitted.
    */
   trace_summary?: TraceNormalizationSummary;
+  /**
+   * Optional agent-submitted reasoning or diagnostic notes.
+   * Extracted from params._debug before schema validation — never validated, never hashed.
+   * Present only when the agent included _debug in their execute_step params.
+   * Treat as engineering aid; do not rely on its structure.
+   */
+  debug_output?: unknown;
 }
 
 export interface PendingGate {

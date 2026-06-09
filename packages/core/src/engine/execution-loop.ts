@@ -499,6 +499,16 @@ export async function executeStep(
   }
 
   const preconditionTrace = evaluateAllPreconditions(stepDef?.preconditions ?? [], evidenceByStep);
+
+  // Extract _debug before schema validation — strips it from the input object so it does not
+  // interfere with schema validation and does not appear in output_summary.
+  let debugOutput: unknown = undefined;
+  if ('_debug' in options.input) {
+    debugOutput = options.input['_debug'];
+    const { _debug: _removed, ...cleanedInput } = options.input;
+    options = { ...options, input: cleanedInput };
+  }
+
   const inputTokenEstimate = Math.ceil(JSON.stringify(options.input).length / 4);
 
   // Step 2b: Validate input schema.
@@ -644,6 +654,7 @@ export async function executeStep(
         : {}),
       ...(resolvedInputMapParams !== undefined ? { resolvedParams: resolvedInputMapParams } : {}),
       ...(attemptError === null && attemptWarn !== undefined ? { warn: attemptWarn } : {}),
+      ...(attemptError === null && debugOutput !== undefined ? { debugOutput } : {}),
     });
     const snap: EvidenceSnapshot =
       retryConfig !== undefined ? { ...baseSnap, attempt: attemptNum } : baseSnap;

@@ -34,6 +34,8 @@ export interface CaptureEvidenceParams {
    * re-normalizing. Takes precedence over the raw trace field.
    */
   normalizedTrace?: NormalizeTraceResult;
+  /** Agent-submitted reasoning extracted from params._debug. Never included in evidence_hash. */
+  debugOutput?: unknown;
 }
 
 /** Builds an EvidenceSnapshot from step execution parameters, including a SHA-256 content hash.
@@ -82,6 +84,7 @@ export function captureEvidence(params: CaptureEvidenceParams): EvidenceSnapshot
     ...(params.resolvedParams !== undefined ? { resolved_params: params.resolvedParams } : {}),
     ...(params.warn !== undefined ? { warn: params.warn } : {}),
     ...(params.toolCalls !== undefined ? { tool_calls: params.toolCalls } : {}),
+    ...(params.debugOutput !== undefined ? { debug_output: params.debugOutput } : {}),
     ...traceEntry,
   };
 }
