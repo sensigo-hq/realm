@@ -243,6 +243,10 @@ export function loadWorkflowFromString(
     }
     const step = stepRaw as Record<string, unknown>;
 
+    if (stepName === 'run' || stepName === 'context') {
+      errors.push(`Step name '${stepName}' is reserved and cannot be used as a step identifier`);
+    }
+
     const REQUIRED_STEP = ['description', 'execution'];
     for (const field of REQUIRED_STEP) {
       if (!(field in step)) {
@@ -379,12 +383,10 @@ export function loadWorkflowFromString(
       );
     }
 
-    // Validate input_map: only valid on execution: auto steps with uses_service.
+    // Validate input_map: only valid on execution: auto steps (both uses_service and handler).
     if (step['input_map'] !== undefined) {
-      if (step['execution'] !== 'auto' || step['uses_service'] === undefined) {
-        errors.push(
-          `Step '${stepName}': 'input_map' is only valid on execution: auto steps with uses_service`,
-        );
+      if (step['execution'] !== 'auto') {
+        errors.push(`Step '${stepName}': 'input_map' is only valid on execution: auto steps`);
       } else {
         validateInputMapNode(
           step['input_map'] as Record<string, unknown>,

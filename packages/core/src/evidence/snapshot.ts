@@ -32,6 +32,10 @@ export interface CaptureEvidenceParams {
    * re-normalizing. Takes precedence over the raw trace field.
    */
   normalizedTrace?: NormalizeTraceResult;
+  /** Warning message from the step handler. Stamped onto the snapshot when present. Not hashed. */
+  warn?: string;
+  /** Agent-submitted reasoning extracted from _debug. Not hashed. */
+  debugOutput?: unknown;
 }
 
 /** Builds an EvidenceSnapshot from step execution parameters, including a SHA-256 content hash.
@@ -78,6 +82,8 @@ export function captureEvidence(params: CaptureEvidenceParams): EvidenceSnapshot
       ? { agent_profile_hash: params.agentProfileHash }
       : {}),
     ...(params.resolvedParams !== undefined ? { resolved_params: params.resolvedParams } : {}),
+    ...(params.warn !== undefined ? { warn: params.warn } : {}),
+    ...(params.debugOutput !== undefined ? { debug_output: params.debugOutput } : {}),
     ...(params.toolCalls !== undefined ? { tool_calls: params.toolCalls } : {}),
     ...traceEntry,
   };

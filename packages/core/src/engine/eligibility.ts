@@ -89,10 +89,12 @@ export function triggerRuleSatisfied(step: StepDefinition, run: RunRecord): bool
 export function evaluateWhenCondition(
   expr: string,
   evidenceByStep: Record<string, Record<string, unknown>>,
+  runParams: Record<string, unknown> = {},
 ): boolean {
   // when-condition paths are relative to step outputs: "step_id.field" resolves
   // directly against evidenceByStep (e.g. step_a.confidence == high).
-  const root = evidenceByStep as Record<string, unknown>;
+  // "run.params.field" resolves against run start params.
+  const root: Record<string, unknown> = { ...evidenceByStep, run: { params: runParams } };
 
   const operators: Array<[string, (a: unknown, b: unknown) => boolean]> = [
     [' >= ', (a, b) => (a as number) >= (b as number)],
@@ -204,7 +206,7 @@ export function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord
 
     // when-condition evaluation.
     if (step.when !== undefined) {
-      if (!evaluateWhenCondition(step.when, evidenceByStep)) continue;
+      if (!evaluateWhenCondition(step.when, evidenceByStep, run.params)) continue;
     }
 
     eligible.push(stepName);
@@ -243,7 +245,7 @@ export function findEligibleGuardSteps(definition: WorkflowDefinition, run: RunR
     // when-condition evaluation.
     if (step.when !== undefined) {
       const evidenceByStep = buildEvidenceByStep(run);
-      if (!evaluateWhenCondition(step.when, evidenceByStep)) continue;
+      if (!evaluateWhenCondition(step.when, evidenceByStep, run.params)) continue;
     }
 
     eligible.push(stepName);
@@ -362,7 +364,10 @@ export function propagateSkips(run: RunRecord, definition: WorkflowDefinition): 
             tempRun.failed_steps.includes(d) ||
             skipped.includes(d),
         );
-        if (allDepsSettled && !evaluateWhenCondition(step.when, buildEvidenceByStep(run))) {
+        if (
+          allDepsSettled &&
+          !evaluateWhenCondition(step.when, buildEvidenceByStep(run), run.params)
+        ) {
           skipped.push(stepName);
           changed = true;
         }

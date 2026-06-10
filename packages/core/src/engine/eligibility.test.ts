@@ -299,6 +299,40 @@ describe('evaluateWhenCondition', () => {
 });
 
 // ---------------------------------------------------------------------------
+// evaluateWhenCondition — run.params
+// ---------------------------------------------------------------------------
+
+describe('evaluateWhenCondition — run.params', () => {
+  it("run.params.mode == 'live' is true when runParams = { mode: 'live' }", () => {
+    expect(evaluateWhenCondition("run.params.mode == 'live'", {}, { mode: 'live' })).toBe(true);
+  });
+
+  it("run.params.mode == 'live' is false when runParams = { mode: 'shadow' }", () => {
+    expect(evaluateWhenCondition("run.params.mode == 'live'", {}, { mode: 'shadow' })).toBe(false);
+  });
+
+  it('run.params.threshold >= 3 is true when threshold is 3', () => {
+    expect(evaluateWhenCondition('run.params.threshold >= 3', {}, { threshold: 3 })).toBe(true);
+  });
+
+  it('run.params.threshold >= 3 is false when threshold is 2', () => {
+    expect(evaluateWhenCondition('run.params.threshold >= 3', {}, { threshold: 2 })).toBe(false);
+  });
+
+  it('existing step evidence tests still pass when runParams = {}', () => {
+    const evidence = { classify: { category: 'billing' } };
+    expect(evaluateWhenCondition("classify.category == 'billing'", evidence, {})).toBe(true);
+    expect(
+      evaluateWhenCondition(
+        "classify.category == 'billing'",
+        { classify: { category: 'other' } },
+        {},
+      ),
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // findEligibleSteps — gate serialization
 // ---------------------------------------------------------------------------
 

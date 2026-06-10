@@ -414,7 +414,13 @@ async function callAdapter(
 }
 
 type HandlerCallResult =
-  | { kind: 'data'; output: Record<string, unknown> }
+  | { kind: 'data'; output: Record<string, unknown>; resolvedParams?: Record<string, unknown> }
+  | {
+      kind: 'warn';
+      output: Record<string, unknown>;
+      message: string;
+      resolvedParams?: Record<string, unknown>;
+    }
   | { kind: 'abort'; message: string };
 
 /**
@@ -439,10 +445,16 @@ async function callHandler(
     });
   }
 
+  const resolvedInput =
+    stepDef.input_map !== undefined
+      ? resolveInputMap(stepDef.input_map, options, pendingRun)
+      : options.input;
+  const handlerResolvedParams = stepDef.input_map !== undefined ? resolvedInput : undefined;
+
   let result: Awaited<ReturnType<typeof handler.execute>>;
   try {
     result = await handler.execute(
-      { params: options.input },
+      { params: resolvedInput },
       {
         run_id: options.runId,
         run_params: pendingRun.params,
@@ -466,7 +478,19 @@ async function callHandler(
   if (result.abort !== undefined) {
     return { kind: 'abort', message: result.abort.message };
   }
-  return { kind: 'data', output: result.data ?? {} };
+  if (result.warn !== undefined) {
+    return {
+      kind: 'warn',
+      output: result.data ?? {},
+      message: result.warn.message,
+      ...(handlerResolvedParams !== undefined ? { resolvedParams: handlerResolvedParams } : {}),
+    };
+  }
+  return {
+    kind: 'data',
+    output: result.data ?? {},
+    ...(handlerResolvedParams !== undefined ? { resolvedParams: handlerResolvedParams } : {}),
+  };
 }
 
 /**
@@ -726,12 +750,22 @@ export async function executeStep(
   }
 
   const preconditionTrace = evaluateAllPreconditions(stepDef?.preconditions ?? [], evidenceByStep);
-  let inputTokenEstimate = Math.ceil(JSON.stringify(options.input).length / 4);
+
+  // Extract _debug before validation — it is never validated, never hashed, never in output_summary.
+  let debugOutput: unknown;
+  let effectiveInput = options.input;
+  if (Object.prototype.hasOwnProperty.call(options.input, '_debug')) {
+    const { _debug, ...rest } = options.input;
+    debugOutput = _debug;
+    effectiveInput = rest;
+  }
+
+  let inputTokenEstimate = Math.ceil(JSON.stringify(effectiveInput).length / 4);
 
   // Step 2b: Validate input schema.
   if (stepDef?.input_schema !== undefined) {
     try {
-      validateInputSchema(options.input, stepDef.input_schema, options.command);
+      validateInputSchema(effectiveInput, stepDef.input_schema, options.command);
     } catch (err) {
       return makeErrorEnvelope(options, run, err as WorkflowError, definition);
     }
@@ -743,7 +777,7 @@ export async function executeStep(
   // "post-generation, pre-commit" — the standard output guardrail position.
   if (stepDef?.execution === 'agent' && stepDef.output_schema !== undefined) {
     try {
-      validateOutputSchema(options.input, stepDef.output_schema, options.command);
+      validateOutputSchema(effectiveInput, stepDef.output_schema, options.command);
     } catch (err) {
       return makeErrorEnvelope(options, run, err as WorkflowError, definition);
     }
@@ -896,6 +930,7 @@ export async function executeStep(
   let dispatchError: WorkflowError | null = null;
   let attemptsUsed = 0;
   const allEvidence: EvidenceSnapshot[] = [];
+  let currentWarn: string | undefined;
 
   for (let attemptNum = 1; attemptNum <= maxAttempts; attemptNum++) {
     attemptsUsed = attemptNum;
@@ -911,6 +946,7 @@ export async function executeStep(
         output: Record<string, unknown>;
         resolvedParams: Record<string, unknown> | undefined;
         handlerAbort?: { message: string };
+        handlerWarn?: string;
       }> => {
         if (stepDef?.execution === 'auto' && stepDef.uses_service !== undefined) {
           return callAdapter(stepDef, definition, options, pendingRun, rateLimiterRegistry, signal);
@@ -924,12 +960,19 @@ export async function executeStep(
                   handlerAbort: { message: result.message },
                 };
               }
-              return { output: result.output, resolvedParams: undefined };
+              if (result.kind === 'warn') {
+                return {
+                  output: result.output,
+                  resolvedParams: result.resolvedParams,
+                  handlerWarn: result.message,
+                };
+              }
+              return { output: result.output, resolvedParams: result.resolvedParams };
             },
           );
         } else {
           return options
-            .dispatcher(options.command, options.input, pendingRun, signal)
+            .dispatcher(options.command, effectiveInput, pendingRun, signal)
             .then((result) => ({ output: result, resolvedParams: undefined }));
         }
       };
@@ -994,6 +1037,7 @@ export async function executeStep(
 
       attemptOutput = callResult.output;
       resolvedParams = callResult.resolvedParams;
+      currentWarn = callResult.handlerWarn;
       if (resolvedParams !== undefined) {
         inputTokenEstimate = Math.ceil(JSON.stringify(resolvedParams).length / 4);
       }
@@ -1019,7 +1063,7 @@ export async function executeStep(
       stepId: options.command,
       startedAt,
       completedAt,
-      input: options.input,
+      input: effectiveInput,
       output: attemptOutput,
       ...(attemptError !== null ? { error: attemptError.message } : {}),
       diagnostics: {
@@ -1030,6 +1074,8 @@ export async function executeStep(
         ? { agentProfile: profile!, agentProfileHash: profileData.content_hash }
         : {}),
       ...(resolvedParams !== undefined ? { resolvedParams } : {}),
+      ...(currentWarn !== undefined ? { warn: currentWarn } : {}),
+      ...(debugOutput !== undefined ? { debugOutput } : {}),
       ...(options.stepMeta?.toolCalls !== undefined
         ? { toolCalls: options.stepMeta.toolCalls }
         : {}),
@@ -1428,7 +1474,7 @@ export async function executeStep(
     status: 'ok',
     data: output,
     evidence: allEvidence,
-    warnings: traceWarnings,
+    warnings: mergeWarnings(traceWarnings, currentWarn),
     errors: [],
     context_hint: orientation,
     next_actions: nextActions,
@@ -1732,7 +1778,12 @@ async function executeChainInternal(
   definition: WorkflowDefinition,
   options: ExecuteChainOptions,
   depth: number,
-  chainedSteps: Array<{ step: string; run_phase: string; branched_via?: string }>,
+  chainedSteps: Array<{
+    step: string;
+    run_phase: string;
+    branched_via?: string;
+    warnings?: string[];
+  }>,
 ): Promise<ResponseEnvelope> {
   if (depth > MAX_CHAIN_DEPTH) {
     return {
@@ -1769,7 +1820,11 @@ async function executeChainInternal(
 
   // Record this auto step in the accumulator.
   if (definition.steps[options.command]?.execution === 'auto') {
-    chainedSteps.push({ step: options.command, run_phase: run.run_phase });
+    chainedSteps.push({
+      step: options.command,
+      run_phase: run.run_phase,
+      ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+    });
   }
 
   if (run.terminal_state || run.pending_gate !== undefined) {
@@ -1883,9 +1938,21 @@ export async function executeChain(
     ...options,
     registry: options.registry ?? createDefaultRegistry(),
   };
-  const chained: Array<{ step: string; run_phase: string; branched_via?: string }> = [];
+  const chained: Array<{
+    step: string;
+    run_phase: string;
+    branched_via?: string;
+    warnings?: string[];
+  }> = [];
   const result = await executeChainInternal(store, definition, effectiveOptions, 0, chained);
-  const envelope = { ...result, command: options.command };
+  const chainWarnings = chained.flatMap((s) => s.warnings ?? []);
+  const envelope = {
+    ...result,
+    command: options.command,
+    ...(chainWarnings.length > 0
+      ? { warnings: [...(result.warnings ?? []), ...chainWarnings] }
+      : {}),
+  };
   return chained.length > 0 ? { ...envelope, chained_auto_steps: chained } : envelope;
 }
 
