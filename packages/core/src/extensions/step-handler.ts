@@ -32,6 +32,13 @@ export interface StepHandlerResult {
    * Mutually exclusive with `data` — when both are present, `abort` takes precedence.
    */
   abort?: { message: string };
+  /**
+   * When set, the step completes normally but the engine records a warning.
+   * The warning appears in EvidenceSnapshot.warn and ResponseEnvelope.warnings[].
+   * Returning warn is unconditionally final — the retry loop does not retry a warned result.
+   * Mutually exclusive with abort.
+   */
+  warn?: { message: string };
 }
 
 export interface StepHandler {

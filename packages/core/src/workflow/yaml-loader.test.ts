@@ -1507,3 +1507,94 @@ steps:
     expect(() => loadWorkflowFromString(BASE_YAML, registry)).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Gap B — reserved step names
+// ---------------------------------------------------------------------------
+
+describe('reserved step names', () => {
+  it("step named 'run' is rejected with a reserved-name error", () => {
+    const yaml = `
+id: wf
+name: WF
+version: 1
+steps:
+  run:
+    description: reserved step name
+    execution: auto
+    handler: my_handler
+`;
+    expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(yaml);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain("'run'");
+      expect((err as WorkflowError).message).toContain('reserved');
+    }
+  });
+
+  it("step named 'context' is rejected with a reserved-name error", () => {
+    const yaml = `
+id: wf
+name: WF
+version: 1
+steps:
+  context:
+    description: reserved step name
+    execution: agent
+`;
+    expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(yaml);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain("'context'");
+      expect((err as WorkflowError).message).toContain('reserved');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap C — input_map on handler steps
+// ---------------------------------------------------------------------------
+
+describe('input_map on handler steps', () => {
+  it('handler step with input_map is accepted by the loader', () => {
+    const yaml = `
+id: wf
+name: WF
+version: 1
+steps:
+  fetch_data:
+    description: Fetch data with input map
+    execution: auto
+    handler: my_handler
+    input_map:
+      key:
+        $literal: CS_Macros
+`;
+    expect(() => loadWorkflowFromString(yaml)).not.toThrow();
+    const def = loadWorkflowFromString(yaml);
+    expect(def.steps['fetch_data']?.input_map).toBeDefined();
+  });
+
+  it('execution: agent step with input_map is rejected with a clear error', () => {
+    const yaml = `
+id: wf
+name: WF
+version: 1
+steps:
+  classify:
+    description: Classify
+    execution: agent
+    input_map:
+      key: run.params.value
+`;
+    expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(yaml);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain('input_map');
+      expect((err as WorkflowError).message).toContain('auto');
+    }
+  });
+});

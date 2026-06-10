@@ -84,6 +84,18 @@ export interface EvidenceSnapshot {
    */
   resolved_params?: Record<string, unknown>;
   /**
+   * Warning message emitted by the step handler. Present when the handler returned
+   * a warn result. The step completed normally; this is advisory only.
+   * Never included in evidence_hash.
+   */
+  warn?: string;
+  /**
+   * Optional agent-submitted reasoning or diagnostic notes.
+   * Extracted from params._debug before schema validation — never validated, never hashed.
+   * Present only when the agent included _debug in their execute_step params.
+   */
+  debug_output?: unknown;
+  /**
    * Canonical stored trace entries for this step. Present only on agent execution steps
    * when the agent submitted a non-empty trace that survived normalization.
    * Excludes evidence_hash computation — integrity is tracked separately via trace_digest.

@@ -3505,3 +3505,504 @@ describe('guard step execution', () => {
     expect(savedRun.aborted_at?.step_id).toBe('guard_c');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Gap A — handler warn result
+// ---------------------------------------------------------------------------
+
+describe('handler warn result', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-warn-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  const warnDefinition: WorkflowDefinition = {
+    id: 'warn-wf',
+    name: 'Warn Workflow',
+    version: 1,
+    steps: {
+      validate: {
+        description: 'Run validation with warn',
+        execution: 'auto',
+        depends_on: [],
+        handler: 'warn_handler',
+      },
+    },
+  };
+
+  it('handler returning warn completes step with warning in evidence and envelope', async () => {
+    const handler: StepHandler = {
+      id: 'warn_handler',
+      execute: vi.fn().mockResolvedValue({ data: { x: 1 }, warn: { message: 'quota near limit' } }),
+    };
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'warn_handler', handler);
+
+    const run = await store.create({ workflowId: 'warn-wf', workflowVersion: 1, params: {} });
+    const envelope = await executeStep(store, warnDefinition, {
+      runId: run.id,
+      command: 'validate',
+      input: {},
+      dispatcher: echoDispatcher,
+      registry,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.warnings).toEqual(['quota near limit']);
+
+    const updatedRun = await store.get(run.id);
+    expect(updatedRun.completed_steps).toContain('validate');
+    const snap = updatedRun.evidence.find((e) => e.step_id === 'validate');
+    expect(snap?.warn).toBe('quota near limit');
+  });
+
+  it('warn result does not retry — completes on first attempt', async () => {
+    const handler: StepHandler = {
+      id: 'warn_handler',
+      execute: vi.fn().mockResolvedValue({ data: { x: 1 }, warn: { message: 'near limit' } }),
+    };
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'warn_handler', handler);
+
+    const retryDef: WorkflowDefinition = {
+      ...warnDefinition,
+      steps: {
+        validate: {
+          ...warnDefinition.steps['validate']!,
+          retry: { max_attempts: 3, backoff: 'fixed', base_delay_ms: 1 },
+        },
+      },
+    };
+
+    const run = await store.create({ workflowId: 'warn-wf', workflowVersion: 1, params: {} });
+    await executeStep(store, retryDef, {
+      runId: run.id,
+      command: 'validate',
+      input: {},
+      dispatcher: echoDispatcher,
+      registry,
+    });
+
+    expect(handler.execute).toHaveBeenCalledTimes(1);
+    const snap = (await store.get(run.id)).evidence.find((e) => e.step_id === 'validate');
+    expect(snap?.attempt).toBe(1);
+  });
+
+  it('warn from step 1 propagates into final chain warnings', async () => {
+    const handler: StepHandler = {
+      id: 'warn_handler',
+      execute: vi
+        .fn()
+        .mockResolvedValue({ data: { processed: true }, warn: { message: 'from step 1' } }),
+    };
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'warn_handler', handler);
+
+    const chainDef: WorkflowDefinition = {
+      id: 'warn-chain-wf',
+      name: 'Warn Chain',
+      version: 1,
+      steps: {
+        step1: {
+          description: 'First step with warn',
+          execution: 'auto',
+          depends_on: [],
+          handler: 'warn_handler',
+        },
+        step2: {
+          description: 'Second step',
+          execution: 'agent',
+          depends_on: ['step1'],
+        },
+      },
+    };
+
+    const run = await store.create({ workflowId: 'warn-chain-wf', workflowVersion: 1, params: {} });
+    const envelope = await executeChain(store, chainDef, {
+      runId: run.id,
+      command: 'step1',
+      input: {},
+      dispatcher: echoDispatcher,
+      registry,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.warnings).toContain('from step 1');
+  });
+
+  it('handler returning no warn produces no warn in evidence and empty warnings', async () => {
+    const handler: StepHandler = {
+      id: 'warn_handler',
+      execute: vi.fn().mockResolvedValue({ data: { x: 1 } }),
+    };
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'warn_handler', handler);
+
+    const run = await store.create({ workflowId: 'warn-wf', workflowVersion: 1, params: {} });
+    const envelope = await executeStep(store, warnDefinition, {
+      runId: run.id,
+      command: 'validate',
+      input: {},
+      dispatcher: echoDispatcher,
+      registry,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.warnings).toEqual([]);
+
+    const snap = (await store.get(run.id)).evidence.find((e) => e.step_id === 'validate');
+    expect(snap?.warn).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap B — run.params in when condition (execution-loop integration)
+// ---------------------------------------------------------------------------
+
+describe('when: run.params integration', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-runparams-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  it('step with when: run.params.mode == live is skipped when run started with mode: shadow', async () => {
+    const shadowDef: WorkflowDefinition = {
+      id: 'shadow-wf',
+      name: 'Shadow Workflow',
+      version: 1,
+      steps: {
+        classify: {
+          description: 'Classify',
+          execution: 'auto',
+          depends_on: [],
+          handler: 'classify_handler',
+        },
+        post_action: {
+          description: 'Post result — skipped in shadow mode',
+          execution: 'auto',
+          depends_on: ['classify'],
+          when: "run.params.mode == 'live'",
+          handler: 'post_handler',
+        },
+      },
+    };
+
+    const classifyHandler: StepHandler = {
+      id: 'classify_handler',
+      execute: vi.fn().mockResolvedValue({ data: { category: 'billing' } }),
+    };
+    const postHandler: StepHandler = {
+      id: 'post_handler',
+      execute: vi.fn().mockResolvedValue({ data: {} }),
+    };
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'classify_handler', classifyHandler);
+    registry.register('handler', 'post_handler', postHandler);
+
+    const run = await store.create({
+      workflowId: 'shadow-wf',
+      workflowVersion: 1,
+      params: { mode: 'shadow' },
+    });
+
+    const envelope = await executeChain(store, shadowDef, {
+      runId: run.id,
+      command: 'classify',
+      input: {},
+      dispatcher: echoDispatcher,
+      registry,
+    });
+
+    expect(envelope.status).toBe('ok');
+    const savedRun = await store.get(run.id);
+    expect(savedRun.completed_steps).toContain('classify');
+    expect(savedRun.skipped_steps).toContain('post_action');
+    expect(savedRun.terminal_state).toBe(true);
+    expect(postHandler.execute).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap C — input_map on handler steps (execution-loop integration)
+// ---------------------------------------------------------------------------
+
+describe('input_map on handler steps', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-inputmap-handler-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  it('handler step with $literal input_map receives resolved params', async () => {
+    const handler: StepHandler = {
+      id: 'table_handler',
+      execute: vi.fn().mockResolvedValue({ data: { ok: true } }),
+    };
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'table_handler', handler);
+
+    const def: WorkflowDefinition = {
+      id: 'inputmap-handler-wf',
+      name: 'Input Map Handler',
+      version: 1,
+      steps: {
+        fetch: {
+          description: 'Fetch with literal input map',
+          execution: 'auto',
+          depends_on: [],
+          handler: 'table_handler',
+          input_map: { table: { $literal: 'CS_Macros' } },
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'inputmap-handler-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'fetch',
+      input: {},
+      dispatcher: echoDispatcher,
+      registry,
+    });
+
+    expect(handler.execute).toHaveBeenCalledWith(
+      { params: { table: 'CS_Macros' } },
+      expect.anything(),
+      undefined,
+    );
+  });
+
+  it('handler step with input_map reads from run.params', async () => {
+    const handler: StepHandler = {
+      id: 'ticket_handler',
+      execute: vi.fn().mockResolvedValue({ data: {} }),
+    };
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'ticket_handler', handler);
+
+    const def: WorkflowDefinition = {
+      id: 'inputmap-params-wf',
+      name: 'Input Map Params',
+      version: 1,
+      steps: {
+        process: {
+          description: 'Process ticket',
+          execution: 'auto',
+          depends_on: [],
+          handler: 'ticket_handler',
+          input_map: { id: 'run.params.ticket_id' },
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'inputmap-params-wf',
+      workflowVersion: 1,
+      params: { ticket_id: 'TKT-42' },
+    });
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'process',
+      input: {},
+      dispatcher: echoDispatcher,
+      registry,
+    });
+
+    expect(handler.execute).toHaveBeenCalledWith(
+      { params: { id: 'TKT-42' } },
+      expect.anything(),
+      undefined,
+    );
+  });
+
+  it('handler step with input_map has resolved_params in EvidenceSnapshot', async () => {
+    const handler: StepHandler = {
+      id: 'table_handler',
+      execute: vi.fn().mockResolvedValue({ data: { ok: true } }),
+    };
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'table_handler', handler);
+
+    const def: WorkflowDefinition = {
+      id: 'inputmap-evidence-wf',
+      name: 'Input Map Evidence',
+      version: 1,
+      steps: {
+        fetch: {
+          description: 'Fetch with literal input map',
+          execution: 'auto',
+          depends_on: [],
+          handler: 'table_handler',
+          input_map: { table: { $literal: 'CS_Macros' } },
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'inputmap-evidence-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'fetch',
+      input: {},
+      dispatcher: echoDispatcher,
+      registry,
+    });
+
+    const snap = (await store.get(run.id)).evidence.find((e) => e.step_id === 'fetch');
+    expect(snap?.resolved_params).toEqual({ table: 'CS_Macros' });
+  });
+
+  it('handler step without input_map passes empty options.input to handler', async () => {
+    const handler: StepHandler = {
+      id: 'simple_handler',
+      execute: vi.fn().mockResolvedValue({ data: {} }),
+    };
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'simple_handler', handler);
+
+    const def: WorkflowDefinition = {
+      id: 'no-inputmap-wf',
+      name: 'No Input Map',
+      version: 1,
+      steps: {
+        process: {
+          description: 'Process without input_map',
+          execution: 'auto',
+          depends_on: [],
+          handler: 'simple_handler',
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'no-inputmap-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'process',
+      input: {},
+      dispatcher: echoDispatcher,
+      registry,
+    });
+
+    expect(handler.execute).toHaveBeenCalledWith({ params: {} }, expect.anything(), undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap E — _debug capture
+// ---------------------------------------------------------------------------
+
+describe('_debug field capture', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-debug-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  const debugDef: WorkflowDefinition = {
+    id: 'debug-wf',
+    name: 'Debug Workflow',
+    version: 1,
+    steps: {
+      classify: {
+        description: 'Agent step with output_schema',
+        execution: 'agent',
+        depends_on: [],
+        output_schema: {
+          type: 'object',
+          required: ['category'],
+          properties: { category: { type: 'string' } },
+        },
+      },
+    },
+  };
+
+  it('_debug passes schema validation and is stored as debug_output (not in output_summary)', async () => {
+    const run = await store.create({ workflowId: 'debug-wf', workflowVersion: 1, params: {} });
+
+    await executeStep(store, debugDef, {
+      runId: run.id,
+      command: 'classify',
+      input: { category: 'billing', _debug: 'reasoning here' },
+      dispatcher: echoDispatcher,
+    });
+
+    const updatedRun = await store.get(run.id);
+    const snap = updatedRun.evidence.find((e) => e.step_id === 'classify');
+    expect(snap).toBeDefined();
+    expect(snap?.debug_output).toBe('reasoning here');
+    expect((snap?.output_summary as Record<string, unknown>)['_debug']).toBeUndefined();
+  });
+
+  it('_debug does not appear in output_summary', async () => {
+    const run = await store.create({ workflowId: 'debug-wf', workflowVersion: 1, params: {} });
+
+    await executeStep(store, debugDef, {
+      runId: run.id,
+      command: 'classify',
+      input: { category: 'billing', _debug: 'internal notes' },
+      dispatcher: echoDispatcher,
+    });
+
+    const snap = (await store.get(run.id)).evidence.find((e) => e.step_id === 'classify');
+    expect(Object.keys(snap?.output_summary as object)).not.toContain('_debug');
+  });
+
+  it('evidence_hash is the same whether or not _debug is present', async () => {
+    const run1 = await store.create({ workflowId: 'debug-wf', workflowVersion: 1, params: {} });
+    await executeStep(store, debugDef, {
+      runId: run1.id,
+      command: 'classify',
+      input: { category: 'billing' },
+      dispatcher: echoDispatcher,
+    });
+
+    const run2 = await store.create({ workflowId: 'debug-wf', workflowVersion: 1, params: {} });
+    await executeStep(store, debugDef, {
+      runId: run2.id,
+      command: 'classify',
+      input: { category: 'billing', _debug: 'reasoning text' },
+      dispatcher: echoDispatcher,
+    });
+
+    const snap1 = (await store.get(run1.id)).evidence.find((e) => e.step_id === 'classify');
+    const snap2 = (await store.get(run2.id)).evidence.find((e) => e.step_id === 'classify');
+    expect(snap1?.evidence_hash).toBe(snap2?.evidence_hash);
+  });
+
+  it('step without _debug produces no debug_output field on the snapshot', async () => {
+    const run = await store.create({ workflowId: 'debug-wf', workflowVersion: 1, params: {} });
+
+    await executeStep(store, debugDef, {
+      runId: run.id,
+      command: 'classify',
+      input: { category: 'billing' },
+      dispatcher: echoDispatcher,
+    });
+
+    const updatedRun = await store.get(run.id);
+    const snap = updatedRun.evidence.find((e) => e.step_id === 'classify');
+    expect(snap).toBeDefined();
+    expect(Object.prototype.hasOwnProperty.call(snap, 'debug_output')).toBe(false);
+  });
+});
