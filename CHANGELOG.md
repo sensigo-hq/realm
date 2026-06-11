@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`warn` return type on `StepHandlerResult`** — handlers can now return `{ data, warn: { message: "..." } }` to complete a step normally while recording an advisory warning. The warning is stamped on the evidence snapshot as `EvidenceSnapshot.warn` (never hashed) and surfaced in `ResponseEnvelope.warnings[]`. A warned result is unconditionally final — the retry loop does not retry it. Warnings from intermediate steps in an auto-chain are accumulated per step on `chained_auto_steps[].warnings` and folded into the final envelope's `warnings[]` in chain order.
+- **`run.params` in `when:` conditions** — `when:` expressions can now reference run start params via `run.params.<field>` (e.g. `when: "run.params.mode == 'live'"`), alongside the existing `step_id.field` form. Evaluated consistently across step eligibility, guard eligibility, and skip propagation, so a step whose `when:` is statically false for the run's params is skipped cleanly and the run reaches terminal state.
+- **Shadow mode convention** — documented in the YAML schema reference: pass `{ mode: "shadow" }` as a run param and annotate side-effect steps with `when: "run.params.mode == 'live'"` to run a workflow in shadow mode without maintaining a duplicate YAML copy.
+- **`input_map` on handler steps** — the `uses_service` restriction on `input_map` is lifted; any `execution: auto` step (handler or adapter) can now declare `input_map`. `callHandler` resolves it against run params and prior step evidence (including `$literal` leaves) and passes the result as the handler's `params`. Resolved params are recorded on the evidence snapshot as `resolved_params`, same as adapter steps.
+- **`_debug` capture on `execute_step`** — agents can submit a `_debug` field alongside business output to capture reasoning. It is extracted before schema validation and stored on the evidence snapshot as `debug_output` — never validated, never included in `evidence_hash`, never present in `input_summary`, and never forwarded to handlers, service adapters, or the dispatcher.
+
+### Changed
+
+- **Step names `run` and `context` are now reserved** and rejected at workflow registration time — they collide with the `run.params` namespace in `when:` conditions and the `context.resources` namespace in `input_map`. Migration: rename any step using these names (none expected in practice; such steps were never addressable in `when:` path expressions).
+
+---
+
 ## [0.3.0] — 2026-06-04
 
 ### Added
