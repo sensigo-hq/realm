@@ -4006,3 +4006,152 @@ describe('_debug field capture', () => {
     expect(Object.prototype.hasOwnProperty.call(snap, 'debug_output')).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Gap E correction — _debug stripping on direct auto-step invocation
+// ---------------------------------------------------------------------------
+
+describe('_debug stripping on direct auto-step invocation', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-debug-strip-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  it('handler step without input_map receives params with _debug stripped', async () => {
+    const handler: StepHandler = {
+      id: 'strip_handler',
+      execute: vi.fn().mockResolvedValue({ data: { ok: true } }),
+    };
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'strip_handler', handler);
+
+    const def: WorkflowDefinition = {
+      id: 'debug-strip-handler-wf',
+      name: 'Debug Strip Handler',
+      version: 1,
+      steps: {
+        process: {
+          description: 'Handler step invoked directly with _debug',
+          execution: 'auto',
+          depends_on: [],
+          handler: 'strip_handler',
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'debug-strip-handler-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'process',
+      input: { foo: 1, _debug: 'note' },
+      dispatcher: echoDispatcher,
+      registry,
+    });
+
+    expect(handler.execute).toHaveBeenCalledWith(
+      { params: { foo: 1 } },
+      expect.anything(),
+      undefined,
+    );
+
+    const snap = (await store.get(run.id)).evidence.find((e) => e.step_id === 'process');
+    expect(snap?.debug_output).toBe('note');
+    expect(Object.keys(snap?.input_summary as object)).not.toContain('_debug');
+  });
+
+  it('adapter step without input_map receives params with _debug stripped', async () => {
+    const adapter: ServiceAdapter = {
+      id: 'strip_adapter',
+      fetch: vi.fn().mockResolvedValue({ status: 200, data: { content: 'hello' } }),
+      create: vi.fn(),
+      update: vi.fn(),
+    };
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'strip_adapter', adapter);
+
+    const def: WorkflowDefinition = {
+      id: 'debug-strip-adapter-wf',
+      name: 'Debug Strip Adapter',
+      version: 1,
+      services: {
+        my_service: { adapter: 'strip_adapter', trust: 'engine_delivered' },
+      },
+      steps: {
+        fetch_data: {
+          description: 'Adapter step invoked directly with _debug',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'my_service',
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'debug-strip-adapter-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'fetch_data',
+      input: { id: 'x', _debug: 'note' },
+      dispatcher: echoDispatcher,
+      registry,
+    });
+
+    expect(adapter.fetch).toHaveBeenCalledWith(
+      'fetch_data',
+      { id: 'x' },
+      expect.objectContaining({ adapter: 'strip_adapter' }),
+      undefined,
+    );
+  });
+
+  it('abort evidence snapshot has _debug stripped from input_summary and preserved as debug_output', async () => {
+    const handler: StepHandler = {
+      id: 'abort_handler',
+      execute: vi.fn().mockResolvedValue({ abort: { message: 'closed' } }),
+    };
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'abort_handler', handler);
+
+    const def: WorkflowDefinition = {
+      id: 'debug-strip-abort-wf',
+      name: 'Debug Strip Abort',
+      version: 1,
+      steps: {
+        check: {
+          description: 'Handler step that aborts',
+          execution: 'auto',
+          depends_on: [],
+          handler: 'abort_handler',
+        },
+      },
+    };
+
+    const run = await store.create({
+      workflowId: 'debug-strip-abort-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'check',
+      input: { foo: 1, _debug: 'note' },
+      dispatcher: echoDispatcher,
+      registry,
+    });
+
+    const snap = (await store.get(run.id)).evidence.find((e) => e.step_id === 'check');
+    expect(snap?.status).toBe('skipped');
+    expect(Object.keys(snap?.input_summary as object)).not.toContain('_debug');
+    expect(snap?.debug_output).toBe('note');
+  });
+});

@@ -760,6 +760,10 @@ export async function executeStep(
     effectiveInput = rest;
   }
 
+  // All downstream consumers (handler, adapter, dispatcher, evidence) must see the
+  // stripped input. effectiveOptions is identical to options when _debug was absent.
+  const effectiveOptions: ExecuteStepOptions = { ...options, input: effectiveInput };
+
   let inputTokenEstimate = Math.ceil(JSON.stringify(effectiveInput).length / 4);
 
   // Step 2b: Validate input schema.
@@ -949,9 +953,16 @@ export async function executeStep(
         handlerWarn?: string;
       }> => {
         if (stepDef?.execution === 'auto' && stepDef.uses_service !== undefined) {
-          return callAdapter(stepDef, definition, options, pendingRun, rateLimiterRegistry, signal);
+          return callAdapter(
+            stepDef,
+            definition,
+            effectiveOptions,
+            pendingRun,
+            rateLimiterRegistry,
+            signal,
+          );
         } else if (stepDef?.execution === 'auto' && stepDef.handler !== undefined) {
-          return callHandler(stepDef, options, pendingRun, evidenceByStep, signal).then(
+          return callHandler(stepDef, effectiveOptions, pendingRun, evidenceByStep, signal).then(
             (result) => {
               if (result.kind === 'abort') {
                 return {
@@ -990,9 +1001,10 @@ export async function executeStep(
             stepId: options.command,
             startedAt: now,
             completedAt: now,
-            input: options.input,
+            input: effectiveInput,
             output: { aborted: true, abort_message: abortMessage },
             error: abortMessage,
+            ...(debugOutput !== undefined ? { debugOutput } : {}),
           }),
           status: 'skipped',
         };
