@@ -1029,16 +1029,3 @@ describe('NotionAdapter unsupported operations', () => {
     });
   });
 });
-
-// ---------------------------------------------------------------------------
-// Contract probe (skipped — requires real credentials)
-// ---------------------------------------------------------------------------
-
-it.skip('contract probe — real API (requires NOTION_TEST_API_KEY)', async () => {
-  const apiKey = process.env['NOTION_TEST_API_KEY'] ?? '';
-  const adapter = new NotionAdapter('notion', { api_key: apiKey });
-  const result = await adapter.fetch('search', {}, {});
-  expect(result.status).toBe(200);
-  const data = result.data as { results: unknown[] };
-  expect(Array.isArray(data.results)).toBe(true);
-});
