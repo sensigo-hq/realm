@@ -460,17 +460,38 @@ Fetches a single record by ID. `GET /v0/{base}/{table}/{record_id}`.
 
 Lists records from a table. `GET /v0/{base}/{table}`.
 
-| Parameter           | Type   | Required | Description                                                                                       |
-| ------------------- | ------ | -------- | ------------------------------------------------------------------------------------------------- |
-| `table`             | string | Yes      | Table name.                                                                                       |
-| `filter_by_formula` | string | No       | Airtable formula, passed as `filterByFormula`.                                                    |
-| `view`              | string | No       | View name or ID.                                                                                  |
-| `max_records`       | number | No       | Passed as `maxRecords`.                                                                           |
-| `fields`            | array  | No       | Field names to return (repeated `fields[]` params).                                               |
-| `offset`            | string | No       | Pagination cursor from a previous response.                                                       |
-| `sort`              | array  | No       | Array of `{ field, direction? }` — `direction` is `asc` or `desc`. Malformed entries are skipped. |
+| Parameter           | Type    | Required | Description                                                                                                                     |
+| ------------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `table`             | string  | Yes      | Table name.                                                                                                                     |
+| `filter_by_formula` | string  | No       | Airtable formula, passed as `filterByFormula`.                                                                                  |
+| `view`              | string  | No       | View name or ID.                                                                                                                |
+| `max_records`       | number  | No       | Passed as `maxRecords`.                                                                                                         |
+| `fields`            | array   | No       | Field names to return (repeated `fields[]` params).                                                                             |
+| `offset`            | string  | No       | Pagination cursor from a previous response.                                                                                     |
+| `sort`              | array   | No       | Array of `{ field, direction? }` — `direction` is `asc` or `desc`. Malformed entries are skipped.                               |
+| `fetch_all`         | boolean | No       | Opt-in bounded auto-pagination (see below).                                                                                     |
+| `max_pages`         | number  | No       | With `fetch_all`: page cap. Default 3, hard cap 10 (higher values are clamped).                                                 |
+| `max_bytes`         | number  | No       | With `fetch_all`: accumulated-size cap as `JSON.stringify(records).length`. Default 100000 (~25K LLM tokens), hard cap 1000000. |
 
 **Response:** the raw Airtable response — `records` array, plus `offset` when more pages exist.
+
+**Auto-pagination (`fetch_all: true`):** the adapter follows the response `offset` cursor,
+re-issuing the same query until no pages remain or a cap is hit — whichever comes first.
+Caps are stop conditions, not truncation: the page that crossed a limit is kept. The
+response `data` is constructed (not raw):
+
+| Field               | Type    | Description                                                            |
+| ------------------- | ------- | ---------------------------------------------------------------------- |
+| `records`           | array   | All accumulated records.                                               |
+| `truncated`         | boolean | `true` when a cap stopped the loop with more pages remaining.          |
+| `truncation_reason` | string  | `page_limit` or `byte_limit`. Present only when `truncated` is `true`. |
+| `offset`            | string  | Resume cursor. Present only when `truncated` is `true`.                |
+
+> Results returned by the final step of an auto-chain flow verbatim into the calling
+> LLM's context. Keep `fetch_all` steps in the middle of an auto-chain feeding a
+> handler step (intermediate envelopes are discarded), use `fields` /
+> `filter_by_formula` to shrink records, and treat `max_bytes` as your context
+> budget: ~4 bytes ≈ 1 token.
 
 **YAML step example:**
 

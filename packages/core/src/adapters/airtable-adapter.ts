@@ -347,6 +347,95 @@ export class AirtableAdapter implements ServiceAdapter {
         });
       }
 
+      // Bounded auto-pagination — opt-in via fetch_all: true. Two caps, whichever
+      // hits first (mirrors the trace normalizer's count/byte-limit design). Caps
+      // are stop conditions, not truncation: the page that crossed a limit is kept.
+      if (params['fetch_all'] === true) {
+        const rawMaxPages = params['max_pages'];
+        const maxPages =
+          typeof rawMaxPages === 'number' && Number.isFinite(rawMaxPages) && rawMaxPages >= 1
+            ? Math.min(Math.floor(rawMaxPages), 10)
+            : 3;
+        const rawMaxBytes = params['max_bytes'];
+        const maxBytes =
+          typeof rawMaxBytes === 'number' && Number.isFinite(rawMaxBytes) && rawMaxBytes >= 1
+            ? Math.min(Math.floor(rawMaxBytes), 1000000)
+            : 100000;
+
+        const allRecords: unknown[] = [];
+        let pagesFetched = 0;
+        let nextOffset: string | undefined;
+        let truncationReason: 'page_limit' | 'byte_limit' | undefined;
+        let lastStatus = 200;
+
+        for (;;) {
+          this.checkAborted(signal);
+          const pageUrl = new URL(url.href);
+          if (nextOffset !== undefined) {
+            pageUrl.searchParams.set('offset', nextOffset);
+          }
+          const pageResponse = await this.executeRequest(pageUrl, 'GET', undefined, signal);
+
+          if (!pageResponse.ok) {
+            await this.throwHttpError(pageResponse, 'list_records');
+          }
+
+          let pageParsed: unknown;
+          try {
+            pageParsed = await pageResponse.json();
+          } catch {
+            throw new WorkflowError('AirtableAdapter: failed to parse response body', {
+              code: 'SERVICE_RESPONSE_INVALID',
+              category: 'SERVICE',
+              agentAction: 'report_to_user',
+              retryable: false,
+            });
+          }
+
+          const page = pageParsed as { records?: unknown; offset?: unknown };
+          if (!Array.isArray(page.records)) {
+            throw new WorkflowError(
+              'AirtableAdapter: list_records response missing records array',
+              {
+                code: 'SERVICE_RESPONSE_INVALID',
+                category: 'SERVICE',
+                agentAction: 'report_to_user',
+                retryable: false,
+              },
+            );
+          }
+
+          lastStatus = pageResponse.status;
+          allRecords.push(...(page.records as unknown[]));
+          pagesFetched += 1;
+          nextOffset = typeof page.offset === 'string' ? page.offset : undefined;
+
+          // No further pages — the run is complete, not truncated.
+          if (nextOffset === undefined) {
+            break;
+          }
+          if (pagesFetched >= maxPages) {
+            truncationReason = 'page_limit';
+            break;
+          }
+          if (JSON.stringify(allRecords).length > maxBytes) {
+            truncationReason = 'byte_limit';
+            break;
+          }
+        }
+
+        const truncated = truncationReason !== undefined;
+        return {
+          status: lastStatus,
+          data: {
+            records: allRecords,
+            truncated,
+            ...(truncated ? { truncation_reason: truncationReason } : {}),
+            ...(truncated && nextOffset !== undefined ? { offset: nextOffset } : {}),
+          },
+        };
+      }
+
       const response = await this.executeRequest(url, 'GET', undefined, signal);
 
       if (!response.ok) {
