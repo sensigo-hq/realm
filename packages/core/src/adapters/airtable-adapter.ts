@@ -48,6 +48,7 @@ interface AirtableRecord {
  *   create('create_record', { table, fields, ... })  — POST /v0/{base}/{table}
  *   update('upsert_record', { table, fields, ... })  — POST /v0/{base}/{table} (upsert)
  *   update('update_record', { table, record_id, fields, ... }) — PATCH /v0/{base}/{table}/{id}
+ *   delete('delete_records', { table, record_ids })  — DELETE /v0/{base}/{table}?records[]=…
  */
 export class AirtableAdapter implements ServiceAdapter {
   readonly id: string;
@@ -99,7 +100,7 @@ export class AirtableAdapter implements ServiceAdapter {
 
   private async executeRequest(
     url: URL,
-    method: 'GET' | 'POST' | 'PATCH',
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
     body?: unknown,
     signal?: AbortSignal,
   ): Promise<Response> {
@@ -634,6 +635,119 @@ export class AirtableAdapter implements ServiceAdapter {
     }
 
     throw new WorkflowError(`AirtableAdapter: unsupported update operation "${operation}"`, {
+      code: 'ADAPTER_OP_UNSUPPORTED',
+      category: 'ENGINE',
+      agentAction: 'report_to_user',
+      retryable: false,
+    });
+  }
+
+  async delete(
+    operation: string,
+    params: Record<string, unknown>,
+    _config: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<ServiceResponse> {
+    if (operation === 'delete_records') {
+      const table = params['table'];
+      const recordIds = params['record_ids'];
+
+      if (typeof table !== 'string' || table === '') {
+        throw new WorkflowError('AirtableAdapter: table param must be a non-empty string', {
+          code: 'ADAPTER_VALIDATION_FAILED',
+          category: 'ENGINE',
+          agentAction: 'provide_input',
+          retryable: false,
+        });
+      }
+      if (!Array.isArray(recordIds) || recordIds.length === 0) {
+        throw new WorkflowError(
+          'AirtableAdapter: record_ids must be a non-empty array of non-empty strings',
+          {
+            code: 'ADAPTER_VALIDATION_FAILED',
+            category: 'ENGINE',
+            agentAction: 'provide_input',
+            retryable: false,
+          },
+        );
+      }
+      if (recordIds.length > 10) {
+        throw new WorkflowError(
+          'AirtableAdapter: record_ids accepts at most 10 ids per call (Airtable API limit) — split into multiple steps',
+          {
+            code: 'ADAPTER_VALIDATION_FAILED',
+            category: 'ENGINE',
+            agentAction: 'provide_input',
+            retryable: false,
+          },
+        );
+      }
+      for (const element of recordIds) {
+        if (typeof element !== 'string' || element === '') {
+          throw new WorkflowError(
+            'AirtableAdapter: record_ids must be a non-empty array of non-empty strings',
+            {
+              code: 'ADAPTER_VALIDATION_FAILED',
+              category: 'ENGINE',
+              agentAction: 'provide_input',
+              retryable: false,
+            },
+          );
+        }
+      }
+
+      // One API call only — never chunk internally: partial deletion across
+      // chunks would corrupt evidence semantics.
+      const url = this.buildUrl(table);
+      for (const id of recordIds as string[]) {
+        url.searchParams.append('records[]', id);
+      }
+      const response = await this.executeRequest(url, 'DELETE', undefined, signal);
+
+      if (!response.ok) {
+        await this.throwHttpError(response, 'delete_records');
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = await response.json();
+      } catch {
+        throw new WorkflowError('AirtableAdapter: failed to parse response body', {
+          code: 'SERVICE_RESPONSE_INVALID',
+          category: 'SERVICE',
+          agentAction: 'report_to_user',
+          retryable: false,
+        });
+      }
+
+      const data = parsed as { records?: unknown };
+      if (!Array.isArray(data.records)) {
+        throw new WorkflowError('AirtableAdapter: delete_records response missing records array', {
+          code: 'SERVICE_RESPONSE_INVALID',
+          category: 'SERVICE',
+          agentAction: 'report_to_user',
+          retryable: false,
+        });
+      }
+      for (const element of data.records) {
+        const record = element as { id?: unknown; deleted?: unknown };
+        if (typeof record.id !== 'string' || record.id === '' || record.deleted !== true) {
+          throw new WorkflowError(
+            'AirtableAdapter: delete_records response element missing id or deleted: true',
+            {
+              code: 'SERVICE_RESPONSE_INVALID',
+              category: 'SERVICE',
+              agentAction: 'report_to_user',
+              retryable: false,
+            },
+          );
+        }
+      }
+
+      return { status: response.status, data: parsed };
+    }
+
+    throw new WorkflowError(`AirtableAdapter: unsupported delete operation "${operation}"`, {
       code: 'ADAPTER_OP_UNSUPPORTED',
       category: 'ENGINE',
       agentAction: 'report_to_user',

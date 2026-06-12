@@ -544,6 +544,36 @@ close_ticket:
     fields: { status: { $literal: 'Closed' } }
 ```
 
+### Operations — delete (`service_method: delete`)
+
+#### `delete_records`
+
+Deletes up to 10 records in one call. `DELETE /v0/{base}/{table}?records[]=id1&records[]=id2…`.
+
+| Parameter    | Type   | Required | Description                          |
+| ------------ | ------ | -------- | ------------------------------------ |
+| `table`      | string | Yes      | Table name.                          |
+| `record_ids` | array  | Yes      | 1–10 record IDs (non-empty strings). |
+
+**Response:** the raw Airtable response — `records` array of `{ id, deleted: true }`.
+
+> **Deletion is irreversible. Put delete steps behind a human gate.** The adapter
+> deliberately caps at 10 records per call and performs no internal chunking.
+> Recommended step shape:
+>
+> ```yaml
+> remove_stale_rows:
+>   description: Delete the flagged records after human review
+>   execution: auto
+>   uses_service: airtable
+>   service_method: delete
+>   operation: delete_records
+>   trust: human_confirmed
+>   input_map:
+>     table: { $literal: 'Tasks' }
+>     record_ids: context.resources.flag_stale.record_ids
+> ```
+
 ### Errors
 
 | Condition                      | Error code                  | `agent_action`     | Retryable |
