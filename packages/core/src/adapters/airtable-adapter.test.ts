@@ -611,6 +611,91 @@ describe('AirtableAdapter HTTP error classification', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: delete_records
+// ---------------------------------------------------------------------------
+
+describe('AirtableAdapter delete_records', () => {
+  const DELETE_RESPONSE = {
+    records: [
+      { id: 'recAAA', deleted: true },
+      { id: 'recBBB', deleted: true },
+    ],
+  };
+
+  it('DELETE with records[] query params; response parsed', async () => {
+    let capturedUrl = '';
+    let capturedMethod = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      capturedMethod = req.method ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(DELETE_RESPONSE));
+    });
+    const adapter = makeAdapter();
+    const result = await adapter.delete(
+      'delete_records',
+      { table: 'Tickets', record_ids: ['recAAA', 'recBBB'] },
+      {},
+    );
+    expect(capturedMethod).toBe('DELETE');
+    const decoded = decodeURIComponent(capturedUrl);
+    expect(decoded).toContain('records[]=recAAA');
+    expect(decoded).toContain('records[]=recBBB');
+    expect(result.status).toBe(200);
+    const data = result.data as typeof DELETE_RESPONSE;
+    expect(data.records).toHaveLength(2);
+  });
+
+  it('11 ids → ADAPTER_VALIDATION_FAILED mentioning the 10-id limit', async () => {
+    const adapter = makeAdapter();
+    const ids = Array.from({ length: 11 }, (_, i) => `rec${String(i)}`);
+    const err = await adapter
+      .delete('delete_records', { table: 'Tickets', record_ids: ids }, {})
+      .catch((e: unknown) => e as WorkflowError);
+    expect(err).toBeInstanceOf(WorkflowError);
+    expect(err.code).toBe('ADAPTER_VALIDATION_FAILED');
+    expect(err.message).toContain('at most 10 ids');
+  });
+
+  it('empty array → ADAPTER_VALIDATION_FAILED', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.delete('delete_records', { table: 'Tickets', record_ids: [] }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+  });
+
+  it('non-array or non-string element → ADAPTER_VALIDATION_FAILED', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.delete('delete_records', { table: 'Tickets', record_ids: 'recAAA' }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+    await expect(
+      adapter.delete('delete_records', { table: 'Tickets', record_ids: ['recAAA', 42] }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+  });
+
+  it('response element with deleted: false or missing id → SERVICE_RESPONSE_INVALID', async () => {
+    respond(200, { records: [{ id: 'recAAA', deleted: false }] });
+    const adapter = makeAdapter();
+    await expect(
+      adapter.delete('delete_records', { table: 'Tickets', record_ids: ['recAAA'] }, {}),
+    ).rejects.toMatchObject({ code: 'SERVICE_RESPONSE_INVALID' });
+
+    respond(200, { records: [{ deleted: true }] });
+    await expect(
+      adapter.delete('delete_records', { table: 'Tickets', record_ids: ['recAAA'] }, {}),
+    ).rejects.toMatchObject({ code: 'SERVICE_RESPONSE_INVALID' });
+  });
+
+  it('delete("unknown") → ADAPTER_OP_UNSUPPORTED', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.delete('unknown', { table: 'Tickets', record_ids: ['recAAA'] }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_OP_UNSUPPORTED' });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: Airtable error body preservation
 // ---------------------------------------------------------------------------
 
