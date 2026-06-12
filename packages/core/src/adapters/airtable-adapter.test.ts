@@ -271,6 +271,50 @@ describe('AirtableAdapter list_records', () => {
       code: 'ADAPTER_VALIDATION_FAILED',
     });
   });
+
+  it('sort entries produce indexed sort[i][field] / sort[i][direction] params', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(RECORDS_FIXTURE));
+    });
+    const adapter = makeAdapter();
+    await adapter.fetch(
+      'list_records',
+      { table: 'Tickets', sort: [{ field: 'Created', direction: 'desc' }, { field: 'Name' }] },
+      {},
+    );
+    const decoded = decodeURIComponent(capturedUrl);
+    expect(decoded).toContain('sort[0][field]=Created');
+    expect(decoded).toContain('sort[0][direction]=desc');
+    expect(decoded).toContain('sort[1][field]=Name');
+    expect(decoded).not.toContain('sort[1][direction]');
+  });
+
+  it('malformed sort entries (non-object, missing field) are skipped without error', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(RECORDS_FIXTURE));
+    });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch(
+      'list_records',
+      {
+        table: 'Tickets',
+        sort: ['not-an-object', { direction: 'desc' }, null, { field: 'Name' }],
+      },
+      {},
+    );
+    expect(result.status).toBe(200);
+    const decoded = decodeURIComponent(capturedUrl);
+    expect(decoded).toContain('sort[3][field]=Name');
+    expect(decoded).not.toContain('sort[0]');
+    expect(decoded).not.toContain('sort[1]');
+    expect(decoded).not.toContain('sort[2]');
+  });
 });
 
 // ---------------------------------------------------------------------------

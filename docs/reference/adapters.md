@@ -460,14 +460,15 @@ Fetches a single record by ID. `GET /v0/{base}/{table}/{record_id}`.
 
 Lists records from a table. `GET /v0/{base}/{table}`.
 
-| Parameter           | Type   | Required | Description                                         |
-| ------------------- | ------ | -------- | --------------------------------------------------- |
-| `table`             | string | Yes      | Table name.                                         |
-| `filter_by_formula` | string | No       | Airtable formula, passed as `filterByFormula`.      |
-| `view`              | string | No       | View name or ID.                                    |
-| `max_records`       | number | No       | Passed as `maxRecords`.                             |
-| `fields`            | array  | No       | Field names to return (repeated `fields[]` params). |
-| `offset`            | string | No       | Pagination cursor from a previous response.         |
+| Parameter           | Type   | Required | Description                                                                                       |
+| ------------------- | ------ | -------- | ------------------------------------------------------------------------------------------------- |
+| `table`             | string | Yes      | Table name.                                                                                       |
+| `filter_by_formula` | string | No       | Airtable formula, passed as `filterByFormula`.                                                    |
+| `view`              | string | No       | View name or ID.                                                                                  |
+| `max_records`       | number | No       | Passed as `maxRecords`.                                                                           |
+| `fields`            | array  | No       | Field names to return (repeated `fields[]` params).                                               |
+| `offset`            | string | No       | Pagination cursor from a previous response.                                                       |
+| `sort`              | array  | No       | Array of `{ field, direction? }` — `direction` is `asc` or `desc`. Malformed entries are skipped. |
 
 **Response:** the raw Airtable response — `records` array, plus `offset` when more pages exist.
 

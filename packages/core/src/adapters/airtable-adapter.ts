@@ -330,6 +330,21 @@ export class AirtableAdapter implements ServiceAdapter {
       if (typeof params['offset'] === 'string') {
         url.searchParams.set('offset', params['offset']);
       }
+      // Malformed sort entries are skipped silently, consistent with the permissive
+      // param handling in this branch (e.g. non-string view is ignored, not an error).
+      if (Array.isArray(params['sort'])) {
+        (params['sort'] as unknown[]).forEach((entry, i) => {
+          if (typeof entry === 'object' && entry !== null) {
+            const e = entry as { field?: unknown; direction?: unknown };
+            if (typeof e.field === 'string' && e.field !== '') {
+              url.searchParams.set(`sort[${i}][field]`, e.field);
+              if (e.direction === 'asc' || e.direction === 'desc') {
+                url.searchParams.set(`sort[${i}][direction]`, e.direction);
+              }
+            }
+          }
+        });
+      }
 
       const response = await this.executeRequest(url, 'GET', undefined, signal);
 
