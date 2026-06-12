@@ -45,7 +45,7 @@
     "@types/proper-lockfile": "^4.1.4",
     "@types/uuid": "^10.0.0",
     "typescript": "*",
-    "vitest": "*"
+    "vitest": "^4.1.0"
   },
   "dependencies": {
     "ajv": "^8.18.0",

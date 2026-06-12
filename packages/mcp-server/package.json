@@ -52,7 +52,7 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "typescript": "*",
-    "vitest": "*"
+    "vitest": "^4.1.0"
   },
   "files": [
     "dist",
