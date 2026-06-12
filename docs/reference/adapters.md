@@ -507,6 +507,25 @@ fetch_open_tickets:
     filter_by_formula: { $literal: "{Status} = 'Open'" }
 ```
 
+#### `search_records`
+
+Searches records by substring match across named fields, built on `list_records` with a
+generated `filterByFormula`. `GET /v0/{base}/{table}?filterByFormula=…`.
+
+| Parameter     | Type   | Required | Description                                                                                                                                                  |
+| ------------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `table`       | string | Yes      | Table name.                                                                                                                                                  |
+| `search_term` | string | Yes      | Substring to find. `"` and `\` are formula-escaped (injection guard).                                                                                        |
+| `fields`      | array  | Yes      | Non-empty array of field names to search. Required because the adapter has no schema discovery — by design, the workflow author names the searchable fields. |
+| `view`        | string | No       | View name or ID (as in `list_records`).                                                                                                                      |
+| `max_records` | number | No       | Passed as `maxRecords` (as in `list_records`).                                                                                                               |
+
+One field produces `FIND("term", {field})`; multiple fields produce
+`OR(FIND("term", {field1}),FIND("term", {field2}),…)`. The term is escaped before
+interpolation — never embedded raw.
+
+**Response:** the raw Airtable response — `records` array.
+
 ### Operations — create (`service_method: create`)
 
 #### `create_record`

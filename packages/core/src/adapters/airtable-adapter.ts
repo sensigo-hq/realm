@@ -45,6 +45,7 @@ interface AirtableRecord {
  * Supported operations:
  *   fetch('get_record', { table, record_id })        — GET  /v0/{base}/{table}/{id}
  *   fetch('list_records', { table, ...query })       — GET  /v0/{base}/{table}
+ *   fetch('search_records', { table, search_term, fields, ... }) — GET via filterByFormula
  *   create('create_record', { table, fields, ... })  — POST /v0/{base}/{table}
  *   update('upsert_record', { table, fields, ... })  — POST /v0/{base}/{table} (upsert)
  *   update('update_record', { table, record_id, fields, ... }) — PATCH /v0/{base}/{table}/{id}
@@ -457,6 +458,90 @@ export class AirtableAdapter implements ServiceAdapter {
       const data = parsed as { records?: unknown };
       if (!Array.isArray(data.records)) {
         throw new WorkflowError('AirtableAdapter: list_records response missing records array', {
+          code: 'SERVICE_RESPONSE_INVALID',
+          category: 'SERVICE',
+          agentAction: 'report_to_user',
+          retryable: false,
+        });
+      }
+
+      return { status: response.status, data: parsed };
+    }
+
+    if (operation === 'search_records') {
+      const table = params['table'];
+      const searchTerm = params['search_term'];
+      const fields = params['fields'];
+
+      if (typeof table !== 'string' || table === '') {
+        throw new WorkflowError('AirtableAdapter: table param must be a non-empty string', {
+          code: 'ADAPTER_VALIDATION_FAILED',
+          category: 'ENGINE',
+          agentAction: 'provide_input',
+          retryable: false,
+        });
+      }
+      if (typeof searchTerm !== 'string' || searchTerm === '') {
+        throw new WorkflowError('AirtableAdapter: search_term param must be a non-empty string', {
+          code: 'ADAPTER_VALIDATION_FAILED',
+          category: 'ENGINE',
+          agentAction: 'provide_input',
+          retryable: false,
+        });
+      }
+      // fields is required: the adapter has no schema discovery (by design), so the
+      // workflow author must name the searchable fields.
+      if (
+        !Array.isArray(fields) ||
+        fields.length === 0 ||
+        fields.some((f) => typeof f !== 'string' || f === '')
+      ) {
+        throw new WorkflowError(
+          'AirtableAdapter: fields param must be a non-empty array of non-empty strings — name the fields to search',
+          {
+            code: 'ADAPTER_VALIDATION_FAILED',
+            category: 'ENGINE',
+            agentAction: 'provide_input',
+            retryable: false,
+          },
+        );
+      }
+
+      // Injection guard — escape " and \ in the term; never interpolate it raw.
+      const escapedTerm = searchTerm.replace(/["\\]/g, '\\$&');
+      const finds = (fields as string[]).map((f) => `FIND("${escapedTerm}", {${f}})`);
+      const formula = finds.length === 1 ? finds.join('') : `OR(${finds.join(',')})`;
+
+      const url = this.buildUrl(table);
+      url.searchParams.set('filterByFormula', formula);
+      if (typeof params['view'] === 'string') {
+        url.searchParams.set('view', params['view']);
+      }
+      if (typeof params['max_records'] === 'number') {
+        url.searchParams.set('maxRecords', String(params['max_records']));
+      }
+
+      const response = await this.executeRequest(url, 'GET', undefined, signal);
+
+      if (!response.ok) {
+        await this.throwHttpError(response, 'search_records');
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = await response.json();
+      } catch {
+        throw new WorkflowError('AirtableAdapter: failed to parse response body', {
+          code: 'SERVICE_RESPONSE_INVALID',
+          category: 'SERVICE',
+          agentAction: 'report_to_user',
+          retryable: false,
+        });
+      }
+
+      const data = parsed as { records?: unknown };
+      if (!Array.isArray(data.records)) {
+        throw new WorkflowError('AirtableAdapter: search_records response missing records array', {
           code: 'SERVICE_RESPONSE_INVALID',
           category: 'SERVICE',
           agentAction: 'report_to_user',
