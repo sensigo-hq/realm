@@ -318,6 +318,136 @@ describe('AirtableAdapter list_records', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: list_records auto-pagination (fetch_all)
+// ---------------------------------------------------------------------------
+
+describe('AirtableAdapter list_records fetch_all', () => {
+  function pushPage(records: unknown[], offset?: string, onRequest?: (url: string) => void): void {
+    handlers.push((req, res) => {
+      onRequest?.(req.url ?? '');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ records, ...(offset !== undefined ? { offset } : {}) }));
+    });
+  }
+
+  it('2 pages then no offset → records concatenated, truncated: false, offset carried', async () => {
+    const urls: string[] = [];
+    pushPage([{ id: 'rec1' }], 'cursor-1', (u) => urls.push(u));
+    pushPage([{ id: 'rec2' }], undefined, (u) => urls.push(u));
+
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('list_records', { table: 'Tickets', fetch_all: true }, {});
+
+    expect(urls).toHaveLength(2);
+    expect(decodeURIComponent(urls[1] ?? '')).toContain('offset=cursor-1');
+    const data = result.data as { records: unknown[]; truncated: boolean; offset?: string };
+    expect(data.records).toEqual([{ id: 'rec1' }, { id: 'rec2' }]);
+    expect(data.truncated).toBe(false);
+    expect('truncation_reason' in data).toBe(false);
+    expect('offset' in data).toBe(false);
+  });
+
+  it('max_pages: 2 with 3 pages available → truncated with page_limit and resume offset', async () => {
+    pushPage([{ id: 'rec1' }], 'cursor-1');
+    pushPage([{ id: 'rec2' }], 'cursor-2');
+    pushPage([{ id: 'rec3' }]);
+
+    const adapter = makeAdapter();
+    const result = await adapter.fetch(
+      'list_records',
+      { table: 'Tickets', fetch_all: true, max_pages: 2 },
+      {},
+    );
+
+    const data = result.data as {
+      records: unknown[];
+      truncated: boolean;
+      truncation_reason?: string;
+      offset?: string;
+    };
+    expect(data.records).toEqual([{ id: 'rec1' }, { id: 'rec2' }]);
+    expect(data.truncated).toBe(true);
+    expect(data.truncation_reason).toBe('page_limit');
+    expect(data.offset).toBe('cursor-2');
+    expect(handlers).toHaveLength(1); // third page never requested
+  });
+
+  it('tiny max_bytes → stops after first page with byte_limit', async () => {
+    pushPage([{ id: 'rec1', Name: 'a record large enough to exceed ten bytes' }], 'cursor-1');
+    pushPage([{ id: 'rec2' }]);
+
+    const adapter = makeAdapter();
+    const result = await adapter.fetch(
+      'list_records',
+      { table: 'Tickets', fetch_all: true, max_bytes: 10 },
+      {},
+    );
+
+    const data = result.data as {
+      records: unknown[];
+      truncated: boolean;
+      truncation_reason?: string;
+      offset?: string;
+    };
+    expect(data.records).toHaveLength(1);
+    expect(data.truncated).toBe(true);
+    expect(data.truncation_reason).toBe('byte_limit');
+    expect(data.offset).toBe('cursor-1');
+    expect(handlers).toHaveLength(1); // second page never requested
+  });
+
+  it('max_pages: 50 is clamped to 10 (11 pages mocked, 10 requests made)', async () => {
+    let requestCount = 0;
+    for (let i = 1; i <= 11; i++) {
+      pushPage([{ id: `rec${String(i)}` }], i < 11 ? `cursor-${String(i)}` : undefined, () => {
+        requestCount += 1;
+      });
+    }
+
+    const adapter = makeAdapter();
+    const result = await adapter.fetch(
+      'list_records',
+      { table: 'Tickets', fetch_all: true, max_pages: 50 },
+      {},
+    );
+
+    expect(requestCount).toBe(10);
+    const data = result.data as { records: unknown[]; truncated: boolean };
+    expect(data.records).toHaveLength(10);
+    expect(data.truncated).toBe(true);
+  });
+
+  it('without fetch_all → one request, raw response returned unchanged (regression guard)', async () => {
+    pushPage([{ id: 'rec1' }], 'cursor-1');
+    pushPage([{ id: 'rec2' }]);
+
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('list_records', { table: 'Tickets' }, {});
+
+    expect(handlers).toHaveLength(1); // only one request consumed
+    const data = result.data as Record<string, unknown>;
+    expect(data['records']).toEqual([{ id: 'rec1' }]);
+    expect(data['offset']).toBe('cursor-1');
+    expect('truncated' in data).toBe(false);
+  });
+
+  it('abort between pages → STEP_ABORTED', async () => {
+    const controller = new AbortController();
+    handlers.push((_req, res) => {
+      controller.abort();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ records: [{ id: 'rec1' }], offset: 'cursor-1' }));
+    });
+    pushPage([{ id: 'rec2' }]);
+
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('list_records', { table: 'Tickets', fetch_all: true }, {}, controller.signal),
+    ).rejects.toMatchObject({ code: 'STEP_ABORTED' });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: create_record
 // ---------------------------------------------------------------------------
 
