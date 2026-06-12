@@ -37,6 +37,7 @@
   "scripts": {
     "build": "tsc --build",
     "test": "vitest run",
+    "test:contract": "vitest run --config vitest.contract.config.ts",
     "lint": "eslint src"
   },
   "devDependencies": {
