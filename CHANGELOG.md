@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`update_record` operation on AirtableAdapter** — PATCH an existing record by `record_id` (`update('update_record', { table, record_id, fields, typecast? })`). Previously the only update path was `upsert_record`, which requires merge fields and can create rows.
+- **`delete_records` operation on AirtableAdapter** — batch delete of 1–10 record IDs in a single API call (`delete('delete_records', { table, record_ids })`, Airtable's per-call limit). No internal chunking — more than 10 IDs is a validation error, keeping each step's evidence atomic. The adapter docs recommend `trust: human_confirmed` on delete steps.
+- **`sort` support on AirtableAdapter `list_records`** — pass `sort: [{ field, direction? }]` to order results server-side; previously ordering required a pre-built Airtable view.
+- **Bounded auto-pagination on AirtableAdapter `list_records`** — opt-in via `fetch_all: true` with two caps, whichever hits first: `max_pages` (default 3, hard cap 10) and `max_bytes` (default 100000 ≈ 25K LLM tokens, hard cap 1000000). On truncation the response carries `truncated: true`, a `truncation_reason` of `page_limit`/`byte_limit`, and the resume `offset`. Unbounded fetch-all is impossible by design.
+- **`search_records` operation on AirtableAdapter** — text search across author-named fields, built as an Airtable `FIND`/`OR` formula with the search term escaped (`"` and `\`) to prevent formula injection. `fields` is required: the adapter has no schema discovery by design.
+- **AirtableAdapter section in `docs/reference/adapters.md`** — full operation reference (params tables, YAML examples, error mapping), including context-budget guidance for `fetch_all` (~4 bytes ≈ 1 token).
+
+### Changed
+
+- **AirtableAdapter 4xx errors now preserve Airtable's error body** — the API's `error.message` is appended to the thrown message and `error.type` is recorded as `details.airtable_error_type` (previously discarded except on 422). 401 errors add a PAT-format hint when the configured key looks malformed (the key itself is never included). Error codes, categories, and agent actions are unchanged.
+
+---
+
 ## [0.4.0] — 2026-06-11
 
 ### Added
