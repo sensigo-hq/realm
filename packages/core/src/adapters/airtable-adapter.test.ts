@@ -318,6 +318,90 @@ describe('AirtableAdapter list_records', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: search_records
+// ---------------------------------------------------------------------------
+
+describe('AirtableAdapter search_records', () => {
+  function captureQuery(): { get: (key: string) => string | null } {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(RECORDS_FIXTURE));
+    });
+    return {
+      get: (key: string) => new URLSearchParams(capturedUrl.split('?')[1] ?? '').get(key),
+    };
+  }
+
+  it('single field → filterByFormula is FIND("term", {field})', async () => {
+    const query = captureQuery();
+    const adapter = makeAdapter();
+    await adapter.fetch(
+      'search_records',
+      { table: 'Tickets', search_term: 'x', fields: ['Name'] },
+      {},
+    );
+    expect(query.get('filterByFormula')).toBe('FIND("x", {Name})');
+  });
+
+  it('multiple fields → OR(FIND(...),FIND(...))', async () => {
+    const query = captureQuery();
+    const adapter = makeAdapter();
+    await adapter.fetch(
+      'search_records',
+      { table: 'Tickets', search_term: 'billing', fields: ['Name', 'Notes'] },
+      {},
+    );
+    expect(query.get('filterByFormula')).toBe(
+      'OR(FIND("billing", {Name}),FIND("billing", {Notes}))',
+    );
+  });
+
+  it('term containing " and \\ is escaped in the formula', async () => {
+    const query = captureQuery();
+    const adapter = makeAdapter();
+    await adapter.fetch(
+      'search_records',
+      { table: 'Tickets', search_term: 'say "hi" \\ bye', fields: ['Name'] },
+      {},
+    );
+    const formula = query.get('filterByFormula') ?? '';
+    expect(formula).toBe('FIND("say \\"hi\\" \\\\ bye", {Name})');
+    expect(formula).not.toContain('"hi"'); // no raw unescaped quote from the term
+  });
+
+  it('missing fields → ADAPTER_VALIDATION_FAILED', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('search_records', { table: 'Tickets', search_term: 'x' }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+    await expect(
+      adapter.fetch('search_records', { table: 'Tickets', search_term: 'x', fields: [] }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+  });
+
+  it('empty search_term → ADAPTER_VALIDATION_FAILED', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('search_records', { table: 'Tickets', search_term: '', fields: ['Name'] }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+  });
+
+  it('view and max_records pass through like list_records', async () => {
+    const query = captureQuery();
+    const adapter = makeAdapter();
+    await adapter.fetch(
+      'search_records',
+      { table: 'Tickets', search_term: 'x', fields: ['Name'], view: 'Open', max_records: 25 },
+      {},
+    );
+    expect(query.get('view')).toBe('Open');
+    expect(query.get('maxRecords')).toBe('25');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: list_records auto-pagination (fetch_all)
 // ---------------------------------------------------------------------------
 
