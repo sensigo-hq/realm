@@ -47,6 +47,7 @@ interface AirtableRecord {
  *   fetch('list_records', { table, ...query })       — GET  /v0/{base}/{table}
  *   create('create_record', { table, fields, ... })  — POST /v0/{base}/{table}
  *   update('upsert_record', { table, fields, ... })  — POST /v0/{base}/{table} (upsert)
+ *   update('update_record', { table, record_id, fields, ... }) — PATCH /v0/{base}/{table}/{id}
  */
 export class AirtableAdapter implements ServiceAdapter {
   readonly id: string;
@@ -517,6 +518,78 @@ export class AirtableAdapter implements ServiceAdapter {
       const data = parsed as { records?: unknown };
       if (!Array.isArray(data.records)) {
         throw new WorkflowError('AirtableAdapter: upsert_record response missing records array', {
+          code: 'SERVICE_RESPONSE_INVALID',
+          category: 'SERVICE',
+          agentAction: 'report_to_user',
+          retryable: false,
+        });
+      }
+
+      return { status: response.status, data: parsed };
+    }
+
+    if (operation === 'update_record') {
+      const table = params['table'];
+      const recordId = params['record_id'];
+      const fields = params['fields'];
+
+      if (typeof table !== 'string' || table === '') {
+        throw new WorkflowError('AirtableAdapter: table param must be a non-empty string', {
+          code: 'ADAPTER_VALIDATION_FAILED',
+          category: 'ENGINE',
+          agentAction: 'provide_input',
+          retryable: false,
+        });
+      }
+      if (typeof recordId !== 'string' || recordId === '') {
+        throw new WorkflowError('AirtableAdapter: record_id param must be a non-empty string', {
+          code: 'ADAPTER_VALIDATION_FAILED',
+          category: 'ENGINE',
+          agentAction: 'provide_input',
+          retryable: false,
+        });
+      }
+      if (
+        fields === undefined ||
+        fields === null ||
+        typeof fields !== 'object' ||
+        Array.isArray(fields)
+      ) {
+        throw new WorkflowError('AirtableAdapter: fields param must be a plain object', {
+          code: 'ADAPTER_VALIDATION_FAILED',
+          category: 'ENGINE',
+          agentAction: 'provide_input',
+          retryable: false,
+        });
+      }
+
+      const body: Record<string, unknown> = { fields };
+      if (params['typecast'] === true) {
+        body['typecast'] = true;
+      }
+
+      const url = this.buildUrl(table, recordId);
+      const response = await this.executeRequest(url, 'PATCH', body, signal);
+
+      if (!response.ok) {
+        await this.throwHttpError(response, 'update_record');
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = await response.json();
+      } catch {
+        throw new WorkflowError('AirtableAdapter: failed to parse response body', {
+          code: 'SERVICE_RESPONSE_INVALID',
+          category: 'SERVICE',
+          agentAction: 'report_to_user',
+          retryable: false,
+        });
+      }
+
+      const data = parsed as AirtableRecord;
+      if (typeof data.id !== 'string' || data.id === '') {
+        throw new WorkflowError('AirtableAdapter: update_record response missing id field', {
           code: 'SERVICE_RESPONSE_INVALID',
           category: 'SERVICE',
           agentAction: 'report_to_user',

@@ -428,6 +428,80 @@ describe('AirtableAdapter upsert_record', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: update_record
+// ---------------------------------------------------------------------------
+
+describe('AirtableAdapter update_record', () => {
+  it('PATCH to /v0/{base}/{table}/{id} with body { fields }', async () => {
+    let capturedUrl = '';
+    let capturedMethod = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      capturedMethod = req.method ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(RECORD_FIXTURE));
+    });
+    const adapter = makeAdapter();
+    const result = await adapter.update(
+      'update_record',
+      { table: 'Tickets', record_id: 'recABC', fields: { Status: 'Closed' } },
+      {},
+    );
+    expect(capturedUrl).toBe('/v0/appXXXXXXXXXXXXXX/Tickets/recABC');
+    expect(capturedMethod).toBe('PATCH');
+    expect(JSON.parse(lastRequestBody)).toEqual({ fields: { Status: 'Closed' } });
+    expect(result.status).toBe(200);
+    const data = result.data as typeof RECORD_FIXTURE;
+    expect(data.id).toBe('recXXXXXXXXXXXXXX');
+  });
+
+  it('with typecast: true — body contains "typecast": true; without — key absent', async () => {
+    respond(200, RECORD_FIXTURE);
+    const adapter = makeAdapter();
+    await adapter.update(
+      'update_record',
+      { table: 'Tickets', record_id: 'recABC', fields: { Name: 'x' }, typecast: true },
+      {},
+    );
+    expect((JSON.parse(lastRequestBody) as Record<string, unknown>)['typecast']).toBe(true);
+
+    respond(200, RECORD_FIXTURE);
+    await adapter.update(
+      'update_record',
+      { table: 'Tickets', record_id: 'recABC', fields: { Name: 'x' } },
+      {},
+    );
+    expect('typecast' in (JSON.parse(lastRequestBody) as Record<string, unknown>)).toBe(false);
+  });
+
+  it('missing or empty record_id → ADAPTER_VALIDATION_FAILED', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.update('update_record', { table: 'Tickets', fields: { Name: 'x' } }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+    await expect(
+      adapter.update(
+        'update_record',
+        { table: 'Tickets', record_id: '', fields: { Name: 'x' } },
+        {},
+      ),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+  });
+
+  it('response without id → SERVICE_RESPONSE_INVALID', async () => {
+    respond(200, { createdTime: '2024-01-01T00:00:00.000Z', fields: {} });
+    const adapter = makeAdapter();
+    await expect(
+      adapter.update(
+        'update_record',
+        { table: 'Tickets', record_id: 'recABC', fields: { Name: 'x' } },
+        {},
+      ),
+    ).rejects.toMatchObject({ code: 'SERVICE_RESPONSE_INVALID' });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: HTTP error classification
 // ---------------------------------------------------------------------------
 

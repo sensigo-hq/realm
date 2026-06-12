@@ -416,3 +416,150 @@ This calls `GET https://api.example.com/v1/tickets?id={ticket_id}`.
 | Server error (HTTP 5xx)        | `SERVICE_HTTP_5XX`    | `wait_for_human` | Yes       |
 | Network unreachable            | `NETWORK_UNREACHABLE` | `wait_for_human` | Yes       |
 | Request aborted (step timeout) | `STEP_ABORTED`        | `report_to_user` | No        |
+
+---
+
+## AirtableAdapter
+
+Wraps the Airtable REST API for record-level operations. One adapter instance is scoped
+to a single base — for multi-base workflows, register one instance per base. The adapter
+is a deterministic workflow-step executor: schema discovery, schema mutation, comments,
+and attachments are deliberately out of scope.
+
+### YAML declaration
+
+```yaml
+services:
+  airtable:
+    adapter: airtable
+    trust: engine_delivered
+```
+
+### Constructor config
+
+| Key        | Type   | Required | Description                                                            |
+| ---------- | ------ | -------- | ---------------------------------------------------------------------- |
+| `api_key`  | string | Yes      | Personal Access Token (PAT). Rate limit: 5 req/sec per base.           |
+| `base_id`  | string | Yes      | Airtable base ID (`appXXXXXXXXXXXXXX`). One adapter instance per base. |
+| `base_url` | string | No       | Override for tests only — replaces `https://api.airtable.com`.         |
+
+### Operations — fetch (`service_method: fetch`)
+
+#### `get_record`
+
+Fetches a single record by ID. `GET /v0/{base}/{table}/{record_id}`.
+
+| Parameter   | Type   | Required | Description         |
+| ----------- | ------ | -------- | ------------------- |
+| `table`     | string | Yes      | Table name.         |
+| `record_id` | string | Yes      | Record ID (`rec…`). |
+
+**Response:** the raw Airtable record — `id`, `createdTime`, `fields`.
+
+#### `list_records`
+
+Lists records from a table. `GET /v0/{base}/{table}`.
+
+| Parameter           | Type   | Required | Description                                         |
+| ------------------- | ------ | -------- | --------------------------------------------------- |
+| `table`             | string | Yes      | Table name.                                         |
+| `filter_by_formula` | string | No       | Airtable formula, passed as `filterByFormula`.      |
+| `view`              | string | No       | View name or ID.                                    |
+| `max_records`       | number | No       | Passed as `maxRecords`.                             |
+| `fields`            | array  | No       | Field names to return (repeated `fields[]` params). |
+| `offset`            | string | No       | Pagination cursor from a previous response.         |
+
+**Response:** the raw Airtable response — `records` array, plus `offset` when more pages exist.
+
+**YAML step example:**
+
+```yaml
+fetch_open_tickets:
+  description: List open tickets from Airtable.
+  execution: auto
+  uses_service: airtable
+  service_method: fetch
+  operation: list_records
+  input_map:
+    table: { $literal: 'Tickets' }
+    filter_by_formula: { $literal: "{Status} = 'Open'" }
+```
+
+### Operations — create (`service_method: create`)
+
+#### `create_record`
+
+Creates a single record. `POST /v0/{base}/{table}`.
+
+| Parameter  | Type    | Required | Description                                         |
+| ---------- | ------- | -------- | --------------------------------------------------- |
+| `table`    | string  | Yes      | Table name.                                         |
+| `fields`   | object  | Yes      | Field values for the new record.                    |
+| `typecast` | boolean | No       | When `true`, Airtable coerces value types (opt-in). |
+
+**Response:** the created record — `id`, `createdTime`, `fields`.
+
+### Operations — update (`service_method: update`)
+
+#### `upsert_record`
+
+Upserts a record by merge fields. `POST /v0/{base}/{table}` with `performUpsert`.
+
+| Parameter            | Type    | Required | Description                                            |
+| -------------------- | ------- | -------- | ------------------------------------------------------ |
+| `table`              | string  | Yes      | Table name.                                            |
+| `fields`             | object  | Yes      | Field values to write.                                 |
+| `fields_to_merge_on` | array   | Yes      | Non-empty array of field names to match existing rows. |
+| `typecast`           | boolean | No       | Opt-in type coercion.                                  |
+
+**Response:** the raw Airtable upsert response — `records`, `createdRecords`, `updatedRecords`.
+
+#### `update_record`
+
+Updates a single record by ID. `PATCH /v0/{base}/{table}/{record_id}` — a partial
+update: only the fields provided are written, other fields are left untouched.
+
+| Parameter   | Type    | Required | Description            |
+| ----------- | ------- | -------- | ---------------------- |
+| `table`     | string  | Yes      | Table name.            |
+| `record_id` | string  | Yes      | Record ID (`rec…`).    |
+| `fields`    | object  | Yes      | Field values to write. |
+| `typecast`  | boolean | No       | Opt-in type coercion.  |
+
+**Response:** the updated record — `id`, `createdTime`, `fields`.
+
+**YAML step example:**
+
+```yaml
+close_ticket:
+  description: Mark the ticket closed in Airtable.
+  execution: auto
+  uses_service: airtable
+  service_method: update
+  operation: update_record
+  input_map:
+    table: { $literal: 'Tickets' }
+    record_id: context.resources.find_ticket.id
+    fields: { status: { $literal: 'Closed' } }
+```
+
+### Errors
+
+| Condition                      | Error code                  | `agent_action`     | Retryable |
+| ------------------------------ | --------------------------- | ------------------ | --------- |
+| Bad params (pre-request)       | `ADAPTER_VALIDATION_FAILED` | `provide_input`    | No        |
+| Auth failed (HTTP 401)         | `SERVICE_AUTH_FAILED`       | `stop`             | No        |
+| Forbidden (HTTP 403)           | `SERVICE_HTTP_4XX`          | `stop`             | No        |
+| Not found (HTTP 404)           | `SERVICE_NOT_FOUND`         | `provide_input`    | No        |
+| Unprocessable (HTTP 422)       | `SERVICE_HTTP_4XX`          | `stop`             | No        |
+| Rate limited (HTTP 429)        | `SERVICE_RATE_LIMITED`      | `wait_and_proceed` | Yes       |
+| Other client error (HTTP 4xx)  | `SERVICE_HTTP_4XX`          | `stop`             | No        |
+| Server error (HTTP 5xx)        | `SERVICE_HTTP_5XX`          | `report_to_user`   | Yes       |
+| Malformed response body        | `SERVICE_RESPONSE_INVALID`  | `report_to_user`   | No        |
+| Network unreachable            | `NETWORK_UNREACHABLE`       | `wait_for_human`   | Yes       |
+| Request aborted (step timeout) | `STEP_ABORTED`              | `report_to_user`   | No        |
+| Unknown operation              | `ADAPTER_OP_UNSUPPORTED`    | `report_to_user`   | No        |
+
+On HTTP 429 the adapter reads the `Retry-After` header into `retry_after` when present;
+Airtable does not send one, so the engine falls back to the adapter's
+`defaultRetryAfterSeconds` of **30 seconds**.
