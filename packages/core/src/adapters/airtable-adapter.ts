@@ -149,10 +149,28 @@ export class AirtableAdapter implements ServiceAdapter {
     }
 
     const status = response.status;
-    const baseDetails = { status, operation };
+    const airtableError =
+      typeof body === 'object' && body !== null && 'error' in body
+        ? (body as { error?: { type?: unknown; message?: unknown } }).error
+        : undefined;
+    const airtableMessage =
+      typeof airtableError?.message === 'string' ? airtableError.message : undefined;
+    const airtableType = typeof airtableError?.type === 'string' ? airtableError.type : undefined;
+    const detailSuffix = airtableMessage !== undefined ? ` — ${airtableMessage}` : '';
+    const baseDetails = {
+      status,
+      operation,
+      ...(airtableType !== undefined ? { airtable_error_type: airtableType } : {}),
+    };
 
     if (status === 401) {
-      throw new WorkflowError('Airtable authentication failed — check API key', {
+      // PAT format hint (never include any part of the key itself).
+      const dotCount = (this.apiKey.match(/\./g) ?? []).length;
+      const formatHint =
+        dotCount !== 1
+          ? ' (API key format looks wrong: expected one "." in a PAT — check you copied the full token)'
+          : '';
+      throw new WorkflowError(`Airtable authentication failed — check API key${formatHint}`, {
         code: 'SERVICE_AUTH_FAILED',
         category: 'SERVICE',
         agentAction: 'stop',
@@ -162,7 +180,7 @@ export class AirtableAdapter implements ServiceAdapter {
     }
 
     if (status === 403) {
-      throw new WorkflowError('Airtable: forbidden (HTTP 403)', {
+      throw new WorkflowError(`Airtable: forbidden (HTTP 403)${detailSuffix}`, {
         code: 'SERVICE_HTTP_4XX',
         category: 'SERVICE',
         agentAction: 'stop',
@@ -172,7 +190,7 @@ export class AirtableAdapter implements ServiceAdapter {
     }
 
     if (status === 404) {
-      throw new WorkflowError('Airtable: record not found', {
+      throw new WorkflowError(`Airtable: record not found${detailSuffix}`, {
         code: 'SERVICE_NOT_FOUND',
         category: 'SERVICE',
         agentAction: 'provide_input',
@@ -182,7 +200,7 @@ export class AirtableAdapter implements ServiceAdapter {
     }
 
     if (status === 422) {
-      throw new WorkflowError('Airtable: unprocessable entity (HTTP 422)', {
+      throw new WorkflowError(`Airtable: unprocessable entity (HTTP 422)${detailSuffix}`, {
         code: 'SERVICE_HTTP_4XX',
         category: 'SERVICE',
         agentAction: 'stop',
@@ -214,7 +232,7 @@ export class AirtableAdapter implements ServiceAdapter {
     }
 
     // 400 and other 4xx
-    throw new WorkflowError(`HTTP ${status}: ${response.statusText}`, {
+    throw new WorkflowError(`HTTP ${status}: ${response.statusText}${detailSuffix}`, {
       code: 'SERVICE_HTTP_4XX',
       category: 'SERVICE',
       agentAction: 'stop',

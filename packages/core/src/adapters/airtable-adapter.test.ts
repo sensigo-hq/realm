@@ -567,6 +567,70 @@ describe('AirtableAdapter HTTP error classification', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: Airtable error body preservation
+// ---------------------------------------------------------------------------
+
+describe('AirtableAdapter error body preservation', () => {
+  it('400 with error body → message contains Airtable message, details has airtable_error_type', async () => {
+    respond(400, {
+      error: { type: 'INVALID_REQUEST_UNKNOWN', message: 'Unknown field name: "foo"' },
+    });
+    const adapter = makeAdapter();
+    const err = await adapter
+      .fetch('get_record', { table: 'T', record_id: 'recABC' }, {})
+      .catch((e: unknown) => e as WorkflowError);
+    expect(err).toBeInstanceOf(WorkflowError);
+    expect(err.message).toContain('Unknown field name');
+    expect(err.details['airtable_error_type']).toBe('INVALID_REQUEST_UNKNOWN');
+  });
+
+  it('403 with error body → message contains the Airtable message', async () => {
+    respond(403, {
+      error: { type: 'NOT_AUTHORIZED', message: 'You are not permitted to perform this operation' },
+    });
+    const adapter = makeAdapter();
+    const err = await adapter
+      .fetch('get_record', { table: 'T', record_id: 'recABC' }, {})
+      .catch((e: unknown) => e as WorkflowError);
+    expect(err.code).toBe('SERVICE_HTTP_4XX');
+    expect(err.message).toContain('You are not permitted to perform this operation');
+  });
+
+  it('401 with malformed key (no dot) → message contains format hint, key value absent', async () => {
+    respond(401, { error: { type: 'AUTHENTICATION_REQUIRED' } });
+    const adapter = makeAdapter(); // default key 'patXXXXXXXXXXXXXX' has no dot
+    const err = await adapter
+      .fetch('get_record', { table: 'T', record_id: 'recABC' }, {})
+      .catch((e: unknown) => e as WorkflowError);
+    expect(err.code).toBe('SERVICE_AUTH_FAILED');
+    expect(err.message).toContain('API key format looks wrong');
+    expect(err.message).not.toContain('patXXXXXXXXXXXXXX');
+  });
+
+  it('401 with well-formed key (exactly one dot) → no format hint', async () => {
+    respond(401, { error: { type: 'AUTHENTICATION_REQUIRED' } });
+    const adapter = makeAdapter({ api_key: 'patXXXXXXXXXXXXXX.aaaabbbbcccc' });
+    const err = await adapter
+      .fetch('get_record', { table: 'T', record_id: 'recABC' }, {})
+      .catch((e: unknown) => e as WorkflowError);
+    expect(err.code).toBe('SERVICE_AUTH_FAILED');
+    expect(err.message).not.toContain('API key format looks wrong');
+  });
+
+  it('non-JSON error body → no crash, message has no suffix (regression guard)', async () => {
+    respondText(400, 'Bad Request');
+    const adapter = makeAdapter();
+    const err = await adapter
+      .fetch('get_record', { table: 'T', record_id: 'recABC' }, {})
+      .catch((e: unknown) => e as WorkflowError);
+    expect(err).toBeInstanceOf(WorkflowError);
+    expect(err.code).toBe('SERVICE_HTTP_4XX');
+    expect(err.message).not.toContain(' — ');
+    expect(err.details['airtable_error_type']).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: Response validation
 // ---------------------------------------------------------------------------
 
