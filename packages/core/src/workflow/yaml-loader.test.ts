@@ -1074,6 +1074,31 @@ describe('loadWorkflowFromString — rate_limit validation', () => {
     );
     expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
   });
+
+  it('accepts min_retry_seconds on rate_limit without requests_per_second', () => {
+    const content = VALID_YAML_WITH_SERVICE.replace(
+      'trust: engine_delivered',
+      'trust: engine_delivered\n    rate_limit:\n      min_retry_seconds: 30',
+    );
+    const def = loadWorkflowFromString(content);
+    expect(def.services?.['my-service'].rate_limit?.min_retry_seconds).toBe(30);
+  });
+
+  // min_retry_seconds = 0 is invalid (must be > 0)
+  it('rejects min_retry_seconds ≤ 0', () => {
+    const content = VALID_YAML_WITH_SERVICE.replace(
+      'trust: engine_delivered',
+      'trust: engine_delivered\n    rate_limit:\n      min_retry_seconds: 0',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain(
+        "'rate_limit.min_retry_seconds' must be a positive number",
+      );
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

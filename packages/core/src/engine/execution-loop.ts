@@ -336,10 +336,14 @@ async function callAdapter(
         //   1. Header value (already on err.retry_after from the adapter)
         //   2. rate_limit.fallback_retry_seconds from YAML
         //   3. adapter.defaultRetryAfterSeconds constant
-        const resolvedRetryAfter =
+        // Apply min_retry_seconds as a floor — overrides short Retry-After header values.
+        const rawRetryAfter =
           err.retry_after ??
           serviceDef.rate_limit?.fallback_retry_seconds ??
           adapter?.defaultRetryAfterSeconds;
+        const minRetry = serviceDef.rate_limit?.min_retry_seconds;
+        const resolvedRetryAfter =
+          minRetry !== undefined ? Math.max(rawRetryAfter ?? 0, minRetry) : rawRetryAfter;
 
         // Pause the token bucket for the resolved retry window.
         // The cap (Math.min with max_retry_seconds) is applied before calling pause() so
