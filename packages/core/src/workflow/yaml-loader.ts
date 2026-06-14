@@ -610,6 +610,14 @@ export function loadWorkflowFromString(
         );
       }
       if (
+        'min_retry_seconds' in rl &&
+        (typeof rl['min_retry_seconds'] !== 'number' || (rl['min_retry_seconds'] as number) <= 0)
+      ) {
+        errors.push(
+          `Service '${serviceName}': 'rate_limit.min_retry_seconds' must be a positive number (> 0)`,
+        );
+      }
+      if (
         'max_retry_seconds' in rl &&
         (!Number.isInteger(rl['max_retry_seconds']) || (rl['max_retry_seconds'] as number) < 1)
       ) {

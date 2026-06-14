@@ -36,6 +36,12 @@ export interface RateLimitConfig {
    */
   fallback_retry_seconds?: number;
   /**
+   * Minimum retry-after floor (seconds). When set, the resolved retry_after is
+   * Math.max(header_or_fallback, min_retry_seconds) — prevents short Retry-After
+   * header values from causing retries before the rate limit window has cleared.
+   */
+  min_retry_seconds?: number;
+  /**
    * Maximum retry-after window (seconds). When the resolved retry_after exceeds this value,
    * the step fails immediately with agentAction: 'report_to_user' instead of waiting.
    */

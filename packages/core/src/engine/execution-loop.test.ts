@@ -3267,6 +3267,253 @@ describe('retry_after on ResponseEnvelope', () => {
 });
 
 // ---------------------------------------------------------------------------
+// min_retry_seconds floor
+// ---------------------------------------------------------------------------
+
+describe('min_retry_seconds floor', () => {
+  let store: JsonFileStore;
+
+  beforeEach(async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'realm-min-retry-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  it('floors a short Retry-After header to min_retry_seconds', async () => {
+    const capturedDelays: number[] = [];
+    const origSetTimeout = globalThis.setTimeout;
+    (globalThis as Record<string, unknown>)['setTimeout'] = (
+      fn: (...args: unknown[]) => void,
+      delay?: number,
+    ) => {
+      capturedDelays.push(delay ?? 0);
+      return origSetTimeout(fn, 0);
+    };
+
+    try {
+      let attempt = 0;
+      const adapter: ServiceAdapter = {
+        id: 'rl_floor_adapter',
+        fetch: vi.fn().mockImplementation(async () => {
+          attempt++;
+          if (attempt === 1) {
+            throw new WorkflowError('Rate limited', {
+              code: 'SERVICE_RATE_LIMITED',
+              category: 'SERVICE',
+              agentAction: 'wait_and_proceed',
+              retryable: true,
+              retry_after: 1,
+            });
+          }
+          return { status: 200, data: { ok: true } };
+        }),
+        create: vi.fn(),
+        update: vi.fn(),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('adapter', 'rl_floor_adapter', adapter);
+
+      const def: WorkflowDefinition = {
+        id: 'min-retry-floor-wf',
+        name: 'Min Retry Floor Workflow',
+        version: 1,
+        services: {
+          svc: {
+            adapter: 'rl_floor_adapter',
+            trust: 'engine_delivered',
+            rate_limit: { min_retry_seconds: 30 },
+          },
+        },
+        steps: {
+          step_a: {
+            description: 'Step using rate-limited service',
+            execution: 'auto',
+            depends_on: [],
+            uses_service: 'svc',
+            retry: { max_attempts: 2, backoff: 'fixed', base_delay_ms: 500 },
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'min-retry-floor-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const result = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step_a',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(result.status).toBe('ok');
+      expect(attempt).toBe(2);
+      // min_retry_seconds=30 floors retry_after: 1 → 30; Math.max(500, 30000) = 30000
+      expect(capturedDelays).toContain(30000);
+    } finally {
+      (globalThis as Record<string, unknown>)['setTimeout'] = origSetTimeout;
+    }
+  });
+
+  it('acts as fallback when no Retry-After header', async () => {
+    const capturedDelays: number[] = [];
+    const origSetTimeout = globalThis.setTimeout;
+    (globalThis as Record<string, unknown>)['setTimeout'] = (
+      fn: (...args: unknown[]) => void,
+      delay?: number,
+    ) => {
+      capturedDelays.push(delay ?? 0);
+      return origSetTimeout(fn, 0);
+    };
+
+    try {
+      let attempt = 0;
+      const adapter: ServiceAdapter = {
+        id: 'rl_fallback_adapter',
+        fetch: vi.fn().mockImplementation(async () => {
+          attempt++;
+          if (attempt === 1) {
+            throw new WorkflowError('Rate limited', {
+              code: 'SERVICE_RATE_LIMITED',
+              category: 'SERVICE',
+              agentAction: 'wait_and_proceed',
+              retryable: true,
+              // no retry_after — min_retry_seconds acts as floor
+            });
+          }
+          return { status: 200, data: { ok: true } };
+        }),
+        create: vi.fn(),
+        update: vi.fn(),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('adapter', 'rl_fallback_adapter', adapter);
+
+      const def: WorkflowDefinition = {
+        id: 'min-retry-fallback-wf',
+        name: 'Min Retry Fallback Workflow',
+        version: 1,
+        services: {
+          svc: {
+            adapter: 'rl_fallback_adapter',
+            trust: 'engine_delivered',
+            rate_limit: { min_retry_seconds: 30 },
+          },
+        },
+        steps: {
+          step_a: {
+            description: 'Step using rate-limited service',
+            execution: 'auto',
+            depends_on: [],
+            uses_service: 'svc',
+            retry: { max_attempts: 2, backoff: 'fixed', base_delay_ms: 500 },
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'min-retry-fallback-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const result = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step_a',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(result.status).toBe('ok');
+      expect(attempt).toBe(2);
+      // no header → rawRetryAfter=undefined; min_retry_seconds=30 → Math.max(500, 30000) = 30000
+      expect(capturedDelays).toContain(30000);
+    } finally {
+      (globalThis as Record<string, unknown>)['setTimeout'] = origSetTimeout;
+    }
+  });
+
+  it('regression: no min_retry_seconds, short Retry-After header honoured as-is', async () => {
+    const capturedDelays: number[] = [];
+    const origSetTimeout = globalThis.setTimeout;
+    (globalThis as Record<string, unknown>)['setTimeout'] = (
+      fn: (...args: unknown[]) => void,
+      delay?: number,
+    ) => {
+      capturedDelays.push(delay ?? 0);
+      return origSetTimeout(fn, 0);
+    };
+
+    try {
+      let attempt = 0;
+      const adapter: ServiceAdapter = {
+        id: 'rl_regression_adapter',
+        fetch: vi.fn().mockImplementation(async () => {
+          attempt++;
+          if (attempt === 1) {
+            throw new WorkflowError('Rate limited', {
+              code: 'SERVICE_RATE_LIMITED',
+              category: 'SERVICE',
+              agentAction: 'wait_and_proceed',
+              retryable: true,
+              retry_after: 1,
+            });
+          }
+          return { status: 200, data: { ok: true } };
+        }),
+        create: vi.fn(),
+        update: vi.fn(),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('adapter', 'rl_regression_adapter', adapter);
+
+      const def: WorkflowDefinition = {
+        id: 'min-retry-regression-wf',
+        name: 'Min Retry Regression Workflow',
+        version: 1,
+        services: {
+          svc: {
+            adapter: 'rl_regression_adapter',
+            trust: 'engine_delivered',
+            // no rate_limit — min_retry_seconds absent
+          },
+        },
+        steps: {
+          step_a: {
+            description: 'Step using rate-limited service',
+            execution: 'auto',
+            depends_on: [],
+            uses_service: 'svc',
+            retry: { max_attempts: 2, backoff: 'fixed', base_delay_ms: 500 },
+          },
+        },
+      };
+
+      const run = await store.create({
+        workflowId: 'min-retry-regression-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const result = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step_a',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(result.status).toBe('ok');
+      expect(attempt).toBe(2);
+      // no min_retry_seconds; retry_after=1 honoured; Math.max(500, 1000) = 1000
+      expect(capturedDelays).toContain(1000);
+    } finally {
+      (globalThis as Record<string, unknown>)['setTimeout'] = origSetTimeout;
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // execution: guard — inline guard step execution via executeChain
 // ---------------------------------------------------------------------------
 

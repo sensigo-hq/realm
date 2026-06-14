@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- `min_retry_seconds` on service `rate_limit` config — enforces a minimum retry-after floor
+  for HTTP 429 responses, overriding short `Retry-After` header values.
+
+---
+
 ## [0.5.0] — 2026-06-13
 
 ### Added
