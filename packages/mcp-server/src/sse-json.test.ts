@@ -28,10 +28,13 @@ describe('sseJsonStringify', () => {
     expect(sseJsonStringify(input)).toBe(JSON.stringify(input, null, 2));
   });
 
-  it('round-trips non-ASCII text through JSON.parse', () => {
+  it('leaves regular non-ASCII chars (accented letters) unescaped', () => {
     const input = { t: 'Uw bestelling é ü' };
     const output = sseJsonStringify(input);
-    expect(/[\x80-￿]/g.test(output)).toBe(false);
+    // Targeted approach: only the 3 splitlines() chars are escaped.
+    // Regular non-ASCII (é, ü) must pass through to avoid payload inflation.
+    expect(output).toContain('é');
+    expect(output).toContain('ü');
     expect(JSON.parse(output).t).toBe('Uw bestelling é ü');
   });
 });

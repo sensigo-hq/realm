@@ -1,18 +1,19 @@
 /**
- * Serializes a value to JSON, escaping all non-ASCII characters as \uXXXX sequences.
+ * Serializes a value to JSON, escaping the three Unicode characters that Python's
+ * str.splitlines() treats as line terminators but JSON.stringify leaves unescaped:
+ *   U+0085 (NEXT LINE), U+2028 (LINE SEPARATOR), U+2029 (PARAGRAPH SEPARATOR).
  *
- * JavaScript's JSON.stringify leaves characters such as U+0085 (NEXT LINE), U+2028
- * (LINE SEPARATOR), and U+2029 (PARAGRAPH SEPARATOR) unescaped. SSE parsers —
- * including Python's str.splitlines() — treat these as line terminators, splitting
- * the data: line mid-JSON and producing a truncated payload that fails JSON.parse.
+ * When these characters appear in SSE data: lines, splitlines()-based parsers split
+ * the line mid-JSON, producing truncated payloads that fail JSON.parse. All other
+ * non-ASCII characters (accented letters, CJK, emoji surrogate pairs, etc.) are not
+ * splitlines() split points and are left as-is -- preserving human-readable output and
+ * avoiding payload inflation on multilingual ticket content.
  *
- * Escaping ALL characters U+0080–U+FFFF produces pure 7-bit ASCII output: immune to
- * any Unicode-based line-splitting by any SSE client, regardless of language or library.
  * Content round-trips correctly through any standard JSON.parse.
  */
 export function sseJsonStringify(value: unknown): string {
   return JSON.stringify(value, null, 2).replace(
-    /[\x80-￿]/g,
+    /[\u0085\u2028\u2029]/g,
     (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`,
   );
 }
