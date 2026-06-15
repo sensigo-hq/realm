@@ -12,6 +12,7 @@ import {
   type AgentTraceEntry,
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
+import { sseJsonStringify } from '../sse-json.js';
 
 /** Zod schema for a single agent trace entry submitted to execute_step or append_trace. */
 export const traceEntrySchema = z.object({
@@ -82,7 +83,7 @@ export async function handleExecuteStepTool(
       content: [
         {
           type: 'text' as const,
-          text: JSON.stringify({ ...result, data: {}, evidence: [] }, null, 2),
+          text: sseJsonStringify({ ...result, data: {}, evidence: [] }),
         },
       ],
     };
@@ -113,7 +114,7 @@ export async function handleExecuteStepTool(
       content: [
         {
           type: 'text' as const,
-          text: JSON.stringify(envelope, null, 2),
+          text: sseJsonStringify(envelope),
         },
       ],
     };

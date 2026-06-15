@@ -14,6 +14,7 @@ import {
   type TraceBufferStore,
   ExtensionRegistry,
 } from '@sensigo/realm';
+import { sseJsonStringify } from '../sse-json.js';
 
 export interface HandleRunStores {
   runStore?: JsonFileStore;
@@ -108,7 +109,7 @@ export function registerStartRun(
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify({ ...result, command: 'start_run' }, null, 2),
+              text: sseJsonStringify({ ...result, command: 'start_run' }),
             },
           ],
         };
@@ -137,7 +138,7 @@ export function registerStartRun(
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify(envelope, null, 2),
+              text: sseJsonStringify(envelope),
             },
           ],
         };

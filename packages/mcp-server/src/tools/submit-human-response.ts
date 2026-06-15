@@ -10,6 +10,7 @@ import {
   type ResponseEnvelope,
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
+import { sseJsonStringify } from '../sse-json.js';
 
 /**
  * Business logic for the submit_human_response tool.
@@ -48,7 +49,7 @@ export function registerSubmitHumanResponse(server: McpServer, opts?: HandleRunS
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify({ ...result, data: {}, evidence: [] }, null, 2),
+              text: sseJsonStringify({ ...result, data: {}, evidence: [] }),
             },
           ],
         };
@@ -79,7 +80,7 @@ export function registerSubmitHumanResponse(server: McpServer, opts?: HandleRunS
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify(envelope, null, 2),
+              text: sseJsonStringify(envelope),
             },
           ],
         };

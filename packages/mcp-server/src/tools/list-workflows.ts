@@ -1,6 +1,7 @@
 // list-workflows tool — returns all registered workflows.
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { JsonWorkflowStore } from '@sensigo/realm';
+import { sseJsonStringify } from '../sse-json.js';
 
 export interface HandleStores {
   workflowStore?: JsonWorkflowStore;
@@ -25,6 +26,6 @@ export async function handleListWorkflows(
 export function registerListWorkflows(server: McpServer, opts?: HandleStores): void {
   server.tool('list_workflows', 'List all registered Realm workflows.', async () => {
     const result = await handleListWorkflows(opts);
-    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    return { content: [{ type: 'text' as const, text: sseJsonStringify(result) }] };
   });
 }
