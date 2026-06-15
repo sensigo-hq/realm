@@ -12,6 +12,7 @@ import {
   type ResponseEnvelope,
 } from '@sensigo/realm';
 import { traceEntrySchema } from './execute-step.js';
+import { sseJsonStringify } from '../sse-json.js';
 
 export interface HandleAppendTraceStores {
   runStore?: JsonFileStore;
@@ -143,7 +144,7 @@ export function registerAppendTrace(
       try {
         const result = await handleAppendTrace(args, opts);
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+          content: [{ type: 'text' as const, text: sseJsonStringify(result) }],
         };
       } catch (err) {
         const workflowErr =
@@ -177,7 +178,7 @@ export function registerAppendTrace(
           contextHint,
         );
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(envelope, null, 2) }],
+          content: [{ type: 'text' as const, text: sseJsonStringify(envelope) }],
         };
       }
     },

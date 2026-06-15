@@ -13,6 +13,7 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
 import { handleStartRun, type HandleRunStores } from './start-run.js';
+import { sseJsonStringify } from '../sse-json.js';
 
 export interface CreateWorkflowStep {
   id: string;
@@ -266,7 +267,7 @@ export function registerCreateWorkflow(server: McpServer, opts?: HandleRunStores
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify({ ...result, command: 'create_workflow' }, null, 2),
+              text: sseJsonStringify({ ...result, command: 'create_workflow' }),
             },
           ],
         };
@@ -278,23 +279,19 @@ export function registerCreateWorkflow(server: McpServer, opts?: HandleRunStores
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify(
-                {
-                  command: 'create_workflow',
-                  run_id: '',
-                  status: 'error',
-                  data: {},
-                  evidence: [],
-                  warnings: [],
-                  errors: [message],
-                  agent_action: agentAction,
-                  context_hint:
-                    'An error occurred before the workflow could be registered or the run could be started.',
-                  next_actions: [],
-                },
-                null,
-                2,
-              ),
+              text: sseJsonStringify({
+                command: 'create_workflow',
+                run_id: '',
+                status: 'error',
+                data: {},
+                evidence: [],
+                warnings: [],
+                errors: [message],
+                agent_action: agentAction,
+                context_hint:
+                  'An error occurred before the workflow could be registered or the run could be started.',
+                next_actions: [],
+              }),
             },
           ],
         };

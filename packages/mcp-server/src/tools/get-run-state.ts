@@ -7,6 +7,7 @@ import {
   resolvePreExecutionAgentAction,
   type RunPhase,
 } from '@sensigo/realm';
+import { sseJsonStringify } from '../sse-json.js';
 
 export interface HandleRunStateStores {
   runStore?: JsonFileStore;
@@ -73,7 +74,7 @@ export function registerGetRunState(server: McpServer, opts?: HandleRunStateStor
     async (args) => {
       try {
         const result = await handleGetRunState(args, opts);
-        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+        return { content: [{ type: 'text' as const, text: sseJsonStringify(result) }] };
       } catch (err) {
         const agentAction =
           err instanceof WorkflowError ? resolvePreExecutionAgentAction(err) : 'report_to_user';
@@ -86,22 +87,18 @@ export function registerGetRunState(server: McpServer, opts?: HandleRunStateStor
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify(
-                {
-                  command: 'get_run_state',
-                  run_id: args.run_id,
-                  status: 'error',
-                  data: {},
-                  evidence: [],
-                  warnings: [],
-                  errors: [message],
-                  agent_action: agentAction,
-                  context_hint: contextHint,
-                  next_actions: [],
-                },
-                null,
-                2,
-              ),
+              text: sseJsonStringify({
+                command: 'get_run_state',
+                run_id: args.run_id,
+                status: 'error',
+                data: {},
+                evidence: [],
+                warnings: [],
+                errors: [message],
+                agent_action: agentAction,
+                context_hint: contextHint,
+                next_actions: [],
+              }),
             },
           ],
         };

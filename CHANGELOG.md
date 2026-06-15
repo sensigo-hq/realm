@@ -4,6 +4,21 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **SSE JSON serialization safety** — MCP tool responses now escape U+0085 (NEXT LINE),
+  U+2028 (LINE SEPARATOR), and U+2029 (PARAGRAPH SEPARATOR) as `\uXXXX` sequences in the
+  JSON payload. These three characters are the only ones that `JSON.stringify` leaves
+  unescaped but Python's `str.splitlines()` treats as line terminators, causing SSE `data:`
+  lines to be split mid-JSON and producing `JSONDecodeError` on the client side. Ticket
+  content in multilingual workflows (Dutch, Polish, French) that contains these characters
+  no longer causes truncated responses. All other non-ASCII characters (accented letters,
+  emoji, CJK) pass through unchanged.
+
+---
+
 ## [0.6.0] — 2026-06-15
 
 ### Added

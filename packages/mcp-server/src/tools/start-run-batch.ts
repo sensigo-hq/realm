@@ -10,6 +10,7 @@ import {
   type ResponseEnvelope,
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
+import { sseJsonStringify } from '../sse-json.js';
 
 export interface StartRunBatchResult {
   started: Array<{
@@ -118,7 +119,7 @@ export function registerStartRunBatch(
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify(result, null, 2),
+              text: sseJsonStringify(result),
             },
           ],
         };
@@ -151,7 +152,7 @@ export function registerStartRunBatch(
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify(envelope, null, 2),
+              text: sseJsonStringify(envelope),
             },
           ],
         };

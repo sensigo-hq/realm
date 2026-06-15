@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { JsonWorkflowStore, WorkflowError } from '@sensigo/realm';
+import { sseJsonStringify } from '../sse-json.js';
 import { generateProtocol, type WorkflowProtocol } from '../protocol/generator.js';
 import type { HandleStores } from './list-workflows.js';
 
@@ -27,7 +28,7 @@ export function registerGetWorkflowProtocol(server: McpServer, opts?: HandleStor
     async (args) => {
       try {
         const result = await handleGetWorkflowProtocol(args, opts);
-        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+        return { content: [{ type: 'text' as const, text: sseJsonStringify(result) }] };
       } catch (err) {
         const message = err instanceof WorkflowError ? err.message : String(err);
         return {
