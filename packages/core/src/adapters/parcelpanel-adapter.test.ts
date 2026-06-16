@@ -512,6 +512,71 @@ describe('ParcelPanelAdapter normalization', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: fetch(get_tracking_by_id)
+// ---------------------------------------------------------------------------
+
+describe('ParcelPanelAdapter fetch(get_tracking_by_id)', () => {
+  it('order_id as number — raw passthrough with order data', async () => {
+    respond(200, fulfilledOrderBody());
+    const adapter = makeAdapter();
+    const result = await adapter.fetch(
+      'get_tracking_by_id',
+      { store: 'mystore', order_id: 6140516335690 },
+      {},
+    );
+    expect(result.status).toBe(200);
+    const data = result.data as Record<string, unknown>;
+    const order = data['order'] as Record<string, unknown>;
+    expect(order['order_id']).toBe(6140516335690);
+    expect(typeof order['tracking_link']).toBe('string');
+  });
+
+  it('order_id as string — raw passthrough with order data', async () => {
+    respond(200, fulfilledOrderBody());
+    const adapter = makeAdapter();
+    const result = await adapter.fetch(
+      'get_tracking_by_id',
+      { store: 'mystore', order_id: '6140516335690' },
+      {},
+    );
+    expect(result.status).toBe(200);
+    const data = result.data as Record<string, unknown>;
+    const order = data['order'] as Record<string, unknown>;
+    expect(order['order_id']).toBe(6140516335690);
+    expect(typeof order['tracking_link']).toBe('string');
+  });
+
+  it('correct query string — order_id in URL, not order_number', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(fulfilledOrderBody()));
+    });
+    const adapter = makeAdapter();
+    await adapter.fetch('get_tracking_by_id', { store: 'mystore', order_id: 6140516335690 }, {});
+    expect(capturedUrl).toContain('order_id=6140516335690');
+    expect(capturedUrl).not.toContain('order_number');
+  });
+
+  it('missing order_id → ADAPTER_VALIDATION_FAILED', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('get_tracking_by_id', { store: 'mystore' }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+    expect(handlers).toHaveLength(0);
+  });
+
+  it('invalid order_id (negative number) → ADAPTER_VALIDATION_FAILED', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('get_tracking_by_id', { store: 'mystore', order_id: -1 }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+    expect(handlers).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: Unsupported operations
 // ---------------------------------------------------------------------------
 
