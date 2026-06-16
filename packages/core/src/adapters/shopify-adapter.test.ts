@@ -1,7 +1,7 @@
 import * as http from 'node:http';
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { ShopifyAdapter } from './shopify-adapter.js';
-import type { ShopifyAdapterConfig, NormalizedOrder } from './shopify-adapter.js';
+import type { ShopifyAdapterConfig } from './shopify-adapter.js';
 import { WorkflowError } from '../types/workflow-error.js';
 
 // ---------------------------------------------------------------------------
@@ -89,56 +89,6 @@ function makeAdapter(overrides: Partial<ShopifyAdapterConfig> = {}): ShopifyAdap
 }
 
 // ---------------------------------------------------------------------------
-// Complete order fixture
-// ---------------------------------------------------------------------------
-
-const FULL_ORDER_NODE = {
-  id: 'gid://shopify/Order/450789469',
-  legacyResourceId: '450789469',
-  number: 1234,
-  name: '#1234',
-  displayFinancialStatus: 'PAID',
-  displayFulfillmentStatus: 'FULFILLED',
-  cancelledAt: null,
-  cancelReason: null,
-  createdAt: '2024-01-15T10:30:00Z',
-  customer: {
-    firstName: 'Jane',
-    lastName: 'Doe',
-    email: 'jane@example.com',
-  },
-  currentTotalPriceSet: { shopMoney: { amount: '99.99', currencyCode: 'EUR' } },
-  currentSubtotalPriceSet: { shopMoney: { amount: '89.99' } },
-  currentShippingPriceSet: { shopMoney: { amount: '5.00' } },
-  discountCodes: ['SUMMER10'],
-  lineItems: {
-    edges: [
-      {
-        node: {
-          name: 'Blue T-Shirt',
-          quantity: 2,
-          originalUnitPriceSet: { shopMoney: { amount: '44.99' } },
-        },
-      },
-    ],
-  },
-};
-
-function gqlSuccess(node: unknown) {
-  return {
-    data: {
-      orders: {
-        edges: [{ node }],
-      },
-    },
-  };
-}
-
-function gqlEmpty() {
-  return { data: { orders: { edges: [] } } };
-}
-
-// ---------------------------------------------------------------------------
 // Tests: Constructor validation
 // ---------------------------------------------------------------------------
 
@@ -187,53 +137,59 @@ describe('ShopifyAdapter construction', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: fetch('get_order') — param validation
+// Tests: fetch('query') — param validation
 // ---------------------------------------------------------------------------
 
-describe("ShopifyAdapter fetch('get_order') param validation", () => {
+describe("ShopifyAdapter fetch('query') param validation", () => {
   it('throws ADAPTER_VALIDATION_FAILED when store is a number', async () => {
     const adapter = makeAdapter();
     await expect(
-      adapter.fetch('get_order', { store: 42, order_name: '#1234' }, {}),
+      adapter.fetch('query', { store: 42, query: '{ shop { name } }' }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+  });
+
+  it('throws ADAPTER_VALIDATION_FAILED when store is empty string', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('query', { store: '', query: '{ shop { name } }' }, {}),
     ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
   });
 
   it('throws ADAPTER_VALIDATION_FAILED with details.store when store not in map', async () => {
     const adapter = makeAdapter();
     const err = await adapter
-      .fetch('get_order', { store: 'unknown', order_name: '#1234' }, {})
+      .fetch('query', { store: 'unknown', query: '{ shop { name } }' }, {})
       .catch((e: unknown) => e as WorkflowError);
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('ADAPTER_VALIDATION_FAILED');
     expect(err.details['store']).toBe('unknown');
   });
 
-  it('throws ADAPTER_VALIDATION_FAILED when order_name is empty string', async () => {
+  it('throws ADAPTER_VALIDATION_FAILED when query is missing', async () => {
     const adapter = makeAdapter();
-    await expect(
-      adapter.fetch('get_order', { store: 'mystore', order_name: '' }, {}),
-    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+    await expect(adapter.fetch('query', { store: 'mystore' }, {})).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+    });
   });
 
-  it('normalizes "1234" to "#1234" before sending to API', async () => {
-    respondWith(200, gqlSuccess(FULL_ORDER_NODE));
+  it('throws ADAPTER_VALIDATION_FAILED when query is empty string', async () => {
     const adapter = makeAdapter();
-    await adapter.fetch('get_order', { store: 'mystore', order_name: '1234' }, {});
-    const reqBody = JSON.parse(lastRequestBody) as { variables: { query: string } };
-    expect(reqBody.variables.query).toBe('name:#1234');
+    await expect(adapter.fetch('query', { store: 'mystore', query: '' }, {})).rejects.toMatchObject(
+      { code: 'ADAPTER_VALIDATION_FAILED' },
+    );
   });
 });
 
 // ---------------------------------------------------------------------------
-// Tests: fetch('get_order') — HTTP errors
+// Tests: fetch('query') — HTTP errors
 // ---------------------------------------------------------------------------
 
-describe("ShopifyAdapter fetch('get_order') HTTP errors", () => {
+describe("ShopifyAdapter fetch('query') HTTP errors", () => {
   it('throws SERVICE_AUTH_FAILED on HTTP 401', async () => {
     respondWith(401, { errors: 'Unauthorized' });
     const adapter = makeAdapter();
     await expect(
-      adapter.fetch('get_order', { store: 'mystore', order_name: '#1234' }, {}),
+      adapter.fetch('query', { store: 'mystore', query: '{ shop { name } }' }, {}),
     ).rejects.toMatchObject({ code: 'SERVICE_AUTH_FAILED' });
   });
 
@@ -241,7 +197,7 @@ describe("ShopifyAdapter fetch('get_order') HTTP errors", () => {
     respondWith(429, { errors: 'Too Many Requests' }, { 'Retry-After': '10' });
     const adapter = makeAdapter();
     const err = await adapter
-      .fetch('get_order', { store: 'mystore', order_name: '#1234' }, {})
+      .fetch('query', { store: 'mystore', query: '{ shop { name } }' }, {})
       .catch((e: unknown) => e as WorkflowError);
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
@@ -254,7 +210,7 @@ describe("ShopifyAdapter fetch('get_order') HTTP errors", () => {
     respondWith(429, { errors: 'Too Many Requests' });
     const adapter = makeAdapter();
     const err = await adapter
-      .fetch('get_order', { store: 'mystore', order_name: '#1234' }, {})
+      .fetch('query', { store: 'mystore', query: '{ shop { name } }' }, {})
       .catch((e: unknown) => e as WorkflowError);
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
@@ -263,11 +219,23 @@ describe("ShopifyAdapter fetch('get_order') HTTP errors", () => {
     expect(adapter.defaultRetryAfterSeconds).toBe(30);
   });
 
+  it('throws SERVICE_HTTP_4XX on HTTP 403', async () => {
+    respondWith(403, { errors: 'Forbidden' });
+    const adapter = makeAdapter();
+    const err = await adapter
+      .fetch('query', { store: 'mystore', query: '{ shop { name } }' }, {})
+      .catch((e: unknown) => e as WorkflowError);
+    expect(err).toBeInstanceOf(WorkflowError);
+    expect(err.code).toBe('SERVICE_HTTP_4XX');
+    expect(err.retryable).toBe(false);
+    expect(err.agentAction).toBe('stop');
+  });
+
   it('throws SERVICE_HTTP_4XX on HTTP 422', async () => {
     respondWith(422, { errors: 'Unprocessable Entity' });
     const adapter = makeAdapter();
     await expect(
-      adapter.fetch('get_order', { store: 'mystore', order_name: '#1234' }, {}),
+      adapter.fetch('query', { store: 'mystore', query: '{ shop { name } }' }, {}),
     ).rejects.toMatchObject({ code: 'SERVICE_HTTP_4XX' });
   });
 
@@ -275,23 +243,23 @@ describe("ShopifyAdapter fetch('get_order') HTTP errors", () => {
     respondWith(503, { errors: 'Service Unavailable' });
     const adapter = makeAdapter();
     await expect(
-      adapter.fetch('get_order', { store: 'mystore', order_name: '#1234' }, {}),
+      adapter.fetch('query', { store: 'mystore', query: '{ shop { name } }' }, {}),
     ).rejects.toMatchObject({ code: 'SERVICE_HTTP_5XX', retryable: true });
   });
 });
 
 // ---------------------------------------------------------------------------
-// Tests: fetch('get_order') — GraphQL errors
+// Tests: fetch('query') — GraphQL errors
 // ---------------------------------------------------------------------------
 
-describe("ShopifyAdapter fetch('get_order') GraphQL errors", () => {
+describe("ShopifyAdapter fetch('query') GraphQL errors", () => {
   it('throws SERVICE_RATE_LIMITED when errors[0].extensions.code === "THROTTLED"', async () => {
     respondWith(200, {
       errors: [{ message: 'Throttled', extensions: { code: 'THROTTLED' } }],
     });
     const adapter = makeAdapter();
     const err = await adapter
-      .fetch('get_order', { store: 'mystore', order_name: '#1234' }, {})
+      .fetch('query', { store: 'mystore', query: '{ shop { name } }' }, {})
       .catch((e: unknown) => e as WorkflowError);
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
@@ -299,107 +267,59 @@ describe("ShopifyAdapter fetch('get_order') GraphQL errors", () => {
     expect(err.retry_after).toBe(2);
   });
 
-  it('throws SERVICE_RESPONSE_INVALID for non-throttle GraphQL error', async () => {
-    respondWith(200, {
+  it('resolves with raw body when GraphQL errors are non-THROTTLED', async () => {
+    const rawBody = {
+      data: null,
       errors: [{ message: 'Field not found', extensions: { code: 'FIELD_ERROR' } }],
-    });
+    };
+    respondWith(200, rawBody);
     const adapter = makeAdapter();
-    await expect(
-      adapter.fetch('get_order', { store: 'mystore', order_name: '#1234' }, {}),
-    ).rejects.toMatchObject({ code: 'SERVICE_RESPONSE_INVALID' });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Tests: fetch('get_order') — not found
-// ---------------------------------------------------------------------------
-
-describe("ShopifyAdapter fetch('get_order') not found", () => {
-  it('throws SERVICE_NOT_FOUND with details when edges is empty', async () => {
-    respondWith(200, gqlEmpty());
-    const adapter = makeAdapter();
-    const err = await adapter
-      .fetch('get_order', { store: 'mystore', order_name: '#1234' }, {})
-      .catch((e: unknown) => e as WorkflowError);
-    expect(err).toBeInstanceOf(WorkflowError);
-    expect(err.code).toBe('SERVICE_NOT_FOUND');
-    expect(err.details['store']).toBe('mystore');
-    expect(err.details['order_name']).toBe('#1234');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Tests: fetch('get_order') — successful normalization
-// ---------------------------------------------------------------------------
-
-describe("ShopifyAdapter fetch('get_order') normalization", () => {
-  it('returns { status: 200, data: NormalizedOrder } with all fields populated', async () => {
-    respondWith(200, gqlSuccess(FULL_ORDER_NODE));
-    const adapter = makeAdapter();
-    const result = await adapter.fetch('get_order', { store: 'mystore', order_name: '#1234' }, {});
+    const result = await adapter.fetch(
+      'query',
+      { store: 'mystore', query: '{ shop { name } }' },
+      {},
+    );
     expect(result.status).toBe(200);
-    const data = result.data as NormalizedOrder;
-    expect(data.id).toBe('gid://shopify/Order/450789469');
-    expect(data.legacy_id).toBe('450789469');
-    expect(data.order_number).toBe(1234);
-    expect(data.name).toBe('#1234');
-    expect(data.financial_status).toBe('PAID');
-    expect(data.fulfillment_status).toBe('FULFILLED');
-    expect(data.cancelled_at).toBeNull();
-    expect(data.cancel_reason).toBeNull();
-    expect(data.created_at).toBe('2024-01-15T10:30:00Z');
-    expect(data.customer).toEqual({
-      first_name: 'Jane',
-      last_name: 'Doe',
-      email: 'jane@example.com',
-    });
-    expect(data.total_price).toBe('99.99');
-    expect(data.subtotal_price).toBe('89.99');
-    expect(data.shipping_total).toBe('5.00');
-    expect(data.currency).toBe('EUR');
-    expect(data.discount_codes).toEqual(['SUMMER10']);
-    expect(data.line_items).toEqual([{ name: 'Blue T-Shirt', quantity: 2, price: '44.99' }]);
+    expect(result.data).toEqual(rawBody);
   });
+});
 
-  it('customer is null for guest checkout (node.customer is null)', async () => {
-    const node = { ...FULL_ORDER_NODE, customer: null };
-    respondWith(200, gqlSuccess(node));
+// ---------------------------------------------------------------------------
+// Tests: fetch('query') — request forwarding
+// ---------------------------------------------------------------------------
+
+describe("ShopifyAdapter fetch('query') request forwarding", () => {
+  it('forwards query string verbatim to request body', async () => {
+    const gqlQuery = 'query TestQuery { shop { name } }';
+    respondWith(200, { data: { shop: { name: 'My Store' } } });
     const adapter = makeAdapter();
-    const result = await adapter.fetch('get_order', { store: 'mystore', order_name: '#1234' }, {});
-    expect((result.data as NormalizedOrder).customer).toBeNull();
+    await adapter.fetch('query', { store: 'mystore', query: gqlQuery }, {});
+    const body = JSON.parse(lastRequestBody) as { query: string };
+    expect(body.query).toBe(gqlQuery);
   });
 
-  it('customer.email is null when node.customer.email is empty string', async () => {
-    const node = {
-      ...FULL_ORDER_NODE,
-      customer: { firstName: 'Jo', lastName: 'Blank', email: '' },
-    };
-    respondWith(200, gqlSuccess(node));
+  it('forwards variables when provided', async () => {
+    respondWith(200, { data: { orders: { edges: [] } } });
     const adapter = makeAdapter();
-    const result = await adapter.fetch('get_order', { store: 'mystore', order_name: '#1234' }, {});
-    expect((result.data as NormalizedOrder).customer?.email).toBeNull();
+    const vars = { orderId: 'gid://shopify/Order/123' };
+    await adapter.fetch(
+      'query',
+      { store: 'mystore', query: '{ shop { name } }', variables: vars },
+      {},
+    );
+    const body = JSON.parse(lastRequestBody) as { variables: unknown };
+    expect(body.variables).toEqual(vars);
   });
 
-  it('discount_codes is [] when node.discountCodes is []', async () => {
-    const node = { ...FULL_ORDER_NODE, discountCodes: [] };
-    respondWith(200, gqlSuccess(node));
+  it('omits variables from request body when not provided', async () => {
+    respondWith(200, { data: { shop: { name: 'My Store' } } });
     const adapter = makeAdapter();
-    const result = await adapter.fetch('get_order', { store: 'mystore', order_name: '#1234' }, {});
-    expect((result.data as NormalizedOrder).discount_codes).toEqual([]);
+    await adapter.fetch('query', { store: 'mystore', query: '{ shop { name } }' }, {});
+    const body = JSON.parse(lastRequestBody) as Record<string, unknown>;
+    expect(body['variables']).toBeUndefined();
   });
 
-  it('shipping_total is "0.00" when currentShippingPriceSet.shopMoney.amount is "0.00"', async () => {
-    const node = {
-      ...FULL_ORDER_NODE,
-      currentShippingPriceSet: { shopMoney: { amount: '0.00' } },
-    };
-    respondWith(200, gqlSuccess(node));
-    const adapter = makeAdapter();
-    const result = await adapter.fetch('get_order', { store: 'mystore', order_name: '#1234' }, {});
-    expect((result.data as NormalizedOrder).shipping_total).toBe('0.00');
-  });
-
-  it('uses correct X-Shopify-Access-Token header per store (multi-store)', async () => {
+  it('uses correct X-Shopify-Access-Token header per store', async () => {
     const multiAdapter = new ShopifyAdapter('shopify', {
       stores: {
         store_a: { shop_domain: 'store-a.myshopify.com', access_token: 'token_a' },
@@ -408,37 +328,52 @@ describe("ShopifyAdapter fetch('get_order') normalization", () => {
       base_url: `http://127.0.0.1:${port}`,
     });
 
-    // First: store_a
-    respondWith(200, gqlSuccess(FULL_ORDER_NODE));
-    await multiAdapter.fetch('get_order', { store: 'store_a', order_name: '#1234' }, {});
+    respondWith(200, { data: { shop: { name: 'A' } } });
+    await multiAdapter.fetch('query', { store: 'store_a', query: '{ shop { name } }' }, {});
     expect(lastRequestHeaders['x-shopify-access-token']).toBe('token_a');
 
-    // Second: store_b
-    respondWith(200, gqlSuccess(FULL_ORDER_NODE));
-    await multiAdapter.fetch('get_order', { store: 'store_b', order_name: '#1234' }, {});
+    respondWith(200, { data: { shop: { name: 'B' } } });
+    await multiAdapter.fetch('query', { store: 'store_b', query: '{ shop { name } }' }, {});
     expect(lastRequestHeaders['x-shopify-access-token']).toBe('token_b');
   });
 });
 
 // ---------------------------------------------------------------------------
-// Tests: request construction
+// Tests: fetch('query') — response passthrough
 // ---------------------------------------------------------------------------
 
-describe("ShopifyAdapter fetch('get_order') request construction", () => {
-  it('request body contains correct variables: { query: "name:#1234" }', async () => {
-    respondWith(200, gqlSuccess(FULL_ORDER_NODE));
+describe("ShopifyAdapter fetch('query') response passthrough", () => {
+  it('returns raw GraphQL response body — data field preserved as-is', async () => {
+    const rawBody = {
+      data: {
+        orders: { edges: [{ node: { id: 'gid://shopify/Order/123', name: '#1001' } }] },
+      },
+    };
+    respondWith(200, rawBody);
     const adapter = makeAdapter();
-    await adapter.fetch('get_order', { store: 'mystore', order_name: '#1234' }, {});
-    const body = JSON.parse(lastRequestBody) as { variables: { query: string } };
-    expect(body.variables).toEqual({ query: 'name:#1234' });
+    const result = await adapter.fetch(
+      'query',
+      { store: 'mystore', query: '{ shop { name } }' },
+      {},
+    );
+    expect(result.status).toBe(200);
+    expect(result.data).toEqual(rawBody);
   });
 
-  it('request body query field contains "OrderByName"', async () => {
-    respondWith(200, gqlSuccess(FULL_ORDER_NODE));
+  it('returns raw body including errors array when GraphQL errors are non-THROTTLED', async () => {
+    const rawBody = {
+      data: null,
+      errors: [{ message: 'Field not found', extensions: { code: 'FIELD_ERROR' } }],
+    };
+    respondWith(200, rawBody);
     const adapter = makeAdapter();
-    await adapter.fetch('get_order', { store: 'mystore', order_name: '#1234' }, {});
-    const body = JSON.parse(lastRequestBody) as { query: string };
-    expect(body.query).toContain('OrderByName');
+    const result = await adapter.fetch(
+      'query',
+      { store: 'mystore', query: '{ shop { name } }' },
+      {},
+    );
+    expect(result.status).toBe(200);
+    expect(result.data).toEqual(rawBody);
   });
 });
 
@@ -474,7 +409,12 @@ describe('ShopifyAdapter AbortSignal', () => {
     const controller = new AbortController();
     controller.abort();
     await expect(
-      adapter.fetch('get_order', { store: 'mystore', order_name: '#1234' }, {}, controller.signal),
+      adapter.fetch(
+        'query',
+        { store: 'mystore', query: '{ shop { name } }' },
+        {},
+        controller.signal,
+      ),
     ).rejects.toMatchObject({ code: 'STEP_ABORTED' });
     // No handler was consumed — confirms no network call was made
     expect(handlers).toHaveLength(0);

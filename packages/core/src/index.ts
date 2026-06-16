@@ -69,10 +69,7 @@ export type { SlackAdapterConfig } from './adapters/slack-adapter.js';
 export { GorgiasAdapter } from './adapters/gorgias-adapter.js';
 export type { GorgiasAdapterConfig } from './adapters/gorgias-adapter.js';
 export { ShopifyAdapter } from './adapters/shopify-adapter.js';
-export type {
-  ShopifyAdapterConfig,
-  NormalizedOrder as ShopifyNormalizedOrder,
-} from './adapters/shopify-adapter.js';
+export type { ShopifyAdapterConfig } from './adapters/shopify-adapter.js';
 export { ParcelPanelAdapter } from './adapters/parcelpanel-adapter.js';
 export type {
   ParcelPanelAdapterConfig,
