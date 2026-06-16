@@ -420,7 +420,7 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     expect(msg['stripped_text']).toBe('stripped body');
   });
 
-  it('default order_by is created_datetime:asc when not supplied', async () => {
+  it('omits order_by from URL when not supplied', async () => {
     let capturedUrl = '';
     handlers.push((req, res) => {
       capturedUrl = req.url ?? '';
@@ -429,7 +429,7 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     });
     const adapter = makeAdapter();
     await adapter.fetch('get_messages', { ticket_id: 10 }, {});
-    expect(capturedUrl).toContain('order_by=created_datetime%3Aasc');
+    expect(capturedUrl).not.toContain('order_by=');
   });
 
   it('caller-supplied order_by is forwarded in the URL', async () => {
@@ -442,6 +442,42 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     const adapter = makeAdapter();
     await adapter.fetch('get_messages', { ticket_id: 10, order_by: 'created_datetime:desc' }, {});
     expect(capturedUrl).toContain('order_by=created_datetime%3Adesc');
+  });
+
+  it('omits ticket_id from URL when not provided', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: [], meta: { next_cursor: null } }));
+    });
+    const adapter = makeAdapter();
+    await adapter.fetch('get_messages', {}, {});
+    expect(capturedUrl).not.toContain('ticket_id=');
+    expect(capturedUrl).toContain('limit=');
+  });
+
+  it('returns messages when ticket_id is not provided', async () => {
+    respond(200, {
+      data: [makeMsg(1), makeMsg(2)],
+      meta: { next_cursor: null },
+    });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', {}, {});
+    expect(result.status).toBe(200);
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages).toHaveLength(2);
+    expect(data.truncated).toBe(false);
+  });
+
+  it('throws ADAPTER_VALIDATION_FAILED when ticket_id is provided but invalid', async () => {
+    const adapter = makeAdapter();
+    await expect(adapter.fetch('get_messages', { ticket_id: -1 }, {})).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+    });
+    await expect(adapter.fetch('get_messages', { ticket_id: 'bad' }, {})).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+    });
   });
 
   it('aborting signal mid-loop (after page 1) → throws STEP_ABORTED', async () => {

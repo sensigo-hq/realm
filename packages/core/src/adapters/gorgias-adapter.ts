@@ -63,6 +63,12 @@ interface GorgiasMessage {
   last_sending_error?: unknown;
   is_retriable?: boolean | null;
   imported?: boolean | null;
+  auth_customer_identity?: unknown;
+  integration_id?: number | null;
+  intents?: unknown[];
+  rule_id?: number | null;
+  replied_by?: unknown | null;
+  replied_to?: unknown | null;
   [key: string]: unknown;
 }
 
@@ -71,7 +77,7 @@ interface GorgiasMessage {
  *
  * Supported operations:
  *   fetch('get_ticket', { ticket_id })                          — GET  /tickets/{ticket_id}
- *   fetch('get_messages', { ticket_id, limit?, order_by? })    — GET  /messages?ticket_id={ticket_id}&...
+ *   fetch('get_messages', { ticket_id?, limit?, order_by? })    — GET  /messages (ticket_id optional filter; order_by omitted when absent, API default applies)
  *   create('create_message', { ticket_id, ...messageFields })  — POST /tickets/{ticket_id}/messages
  */
 export class GorgiasAdapter implements ServiceAdapter {
@@ -119,7 +125,7 @@ export class GorgiasAdapter implements ServiceAdapter {
   }
 
   private async executeRequest(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PUT',
     url: string,
     operation: string,
     body?: unknown,
@@ -200,15 +206,7 @@ export class GorgiasAdapter implements ServiceAdapter {
     }
 
     if (status === 403) {
-      const message403 =
-        operation === 'get_ticket'
-          ? 'Account lacks permission to read Gorgias tickets'
-          : operation === 'get_messages'
-            ? 'Account lacks permission to read Gorgias ticket messages'
-            : operation === 'create_message'
-              ? 'Account lacks permission to create Gorgias messages'
-              : 'Account lacks permission for this Gorgias operation';
-      throw new WorkflowError(message403, {
+      throw new WorkflowError(`Account lacks permission for Gorgias operation '${operation}'`, {
         code: 'SERVICE_HTTP_4XX',
         category: 'SERVICE',
         agentAction: 'stop',
@@ -282,14 +280,17 @@ export class GorgiasAdapter implements ServiceAdapter {
     }
 
     if (operation === 'get_messages') {
-      const ticketId = this.validateTicketId(params);
+      const ticketId = params['ticket_id'] !== undefined ? this.validateTicketId(params) : null;
       const userLimit =
         typeof params['limit'] === 'number' && params['limit'] > 0 ? params['limit'] : 30;
       const effectiveLimit = Math.min(userLimit, 200);
       const PAGE_SIZE = 100;
 
-      const orderBy =
-        typeof params['order_by'] === 'string' ? params['order_by'] : 'created_datetime:asc';
+      const orderBy = typeof params['order_by'] === 'string' ? params['order_by'] : undefined;
+      const stableParts: string[] = [`limit=${PAGE_SIZE}`];
+      if (ticketId !== null) stableParts.push(`ticket_id=${ticketId}`);
+      if (orderBy !== undefined) stableParts.push(`order_by=${encodeURIComponent(orderBy)}`);
+
       const accumulated: GorgiasMessage[] = [];
       let cursor: string | undefined = undefined;
       let truncated = false;
@@ -297,9 +298,8 @@ export class GorgiasAdapter implements ServiceAdapter {
       for (;;) {
         this.checkAborted(signal);
 
-        const url =
-          `${this.baseUrl}/messages?ticket_id=${ticketId}&limit=${PAGE_SIZE}&order_by=${encodeURIComponent(orderBy)}` +
-          (cursor !== undefined ? `&cursor=${cursor}` : '');
+        const urlParts = cursor !== undefined ? [...stableParts, `cursor=${cursor}`] : stableParts;
+        const url = `${this.baseUrl}/messages?${urlParts.join('&')}`;
 
         const response = await this.executeRequest('GET', url, 'get_messages', undefined, signal);
         const json = response.data as {
