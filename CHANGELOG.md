@@ -4,6 +4,26 @@ All notable changes to this project are documented here.
 
 ---
 
+## [0.6.3] — 2026-06-16
+
+### Added
+
+- **ParcelPanelAdapter — `fetch('get_tracking_by_id', { store, order_id })`** — look up tracking data by Shopify numeric order ID instead of order number. Same endpoint (`GET /api/v2/tracking/order`), different query param (`?order_id=`). Accepts `order_id` as either `number` or `string`; both formats are normalised to a string before the request is sent.
+
+### Changed
+
+- **ParcelPanelAdapter — `ParcelPanelShipment` and `ParcelPanelOrderBody` interfaces expanded** — now cover the complete ParcelPanel API response shape: `substatus`, `transit_time`, `estimated_delivery_date`, `last_mile`, `products`, `checkpoints`, `customer`, `shipping_address`, `store`, `order_tags`, and more. Both interfaces are now exported from `@sensigo/realm` so callers can type raw API responses directly.
+
+### Fixed
+
+- **ParcelPanelAdapter universal passthrough** — `get_tracking` previously returned a normalised 4-field `NormalizedTracking` object (`tracking_url`, `carrier`, `tracking_number`, `status`), silently discarding the entire API response including all shipments beyond the first, all checkpoint events, customer data, and shipping address. Now returns the complete raw API response as-is.
+
+### Removed
+
+- **`NormalizedTracking` exported interface removed** — callers who were typing `result.data as NormalizedTracking` should switch to `result.data as ParcelPanelOrderBody`, which covers the full response shape.
+
+---
+
 ## [0.6.2] — 2026-06-16
 
 ### Added
