@@ -226,7 +226,7 @@ export class ParcelPanelAdapter implements ServiceAdapter {
       });
     }
 
-    // Any other 4xx (400, 403, 422, etc.)
+    // Any other 4xx (400, 422, etc.)
     throw new WorkflowError(`HTTP ${status}: ${response.statusText}`, {
       code: 'SERVICE_HTTP_4XX',
       category: 'SERVICE',
