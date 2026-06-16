@@ -4,6 +4,34 @@ All notable changes to this project are documented here.
 
 ---
 
+## [0.6.2] — 2026-06-16
+
+### Added
+
+- **GorgiasAdapter — 7 new operations** covering the full ticket and customer resource surface:
+  - `fetch('list_tickets', { order_by?, cursor?, limit?, ... })` — GET `/tickets`; returns one page of raw results including `meta.next_cursor` for caller-managed pagination
+  - `fetch('get_customer', { customer_id })` — GET `/customers/{id}`; follows Gorgias 301 redirects for merged customers transparently
+  - `fetch('list_customers', { order_by?, cursor?, limit?, ... })` — GET `/customers`; same single-page passthrough as `list_tickets`
+  - `create('create_ticket', { messages, ...ticketFields })` — POST `/tickets`; full params forwarded as body
+  - `create('create_customer', { channels, ...customerFields })` — POST `/customers`; full params forwarded as body
+  - `update('update_ticket', { ticket_id, ...ticketFields })` — PUT `/tickets/{id}`; `ticket_id` becomes the path param and is stripped from the body
+  - `update('update_customer', { customer_id, ...customerFields })` — PUT `/customers/{id}`; same pattern
+
+  List operations (`list_tickets`, `list_customers`) forward all scalar (`string | number | boolean`) params as URL-encoded query params; non-scalar values (arrays, objects) are silently skipped.
+
+### Changed
+
+- **GorgiasAdapter `get_messages` — `ticket_id` is now optional** — when absent the filter is omitted from the URL, enabling cross-ticket message queries. When present and invalid, `ADAPTER_VALIDATION_FAILED` is still thrown.
+- **GorgiasAdapter `get_messages` — `order_by` is omitted when not supplied** — previously defaulted to `created_datetime:asc` regardless of caller intent. Now omitted, letting the Gorgias API apply its own default (`created_datetime:desc`). Callers who need ascending order must pass `order_by: 'created_datetime:asc'` explicitly.
+- **GorgiasAdapter `GorgiasMessage` interface** — six previously undeclared fields now documented: `auth_customer_identity`, `integration_id`, `intents`, `rule_id`, `replied_by`, `replied_to`. These were always preserved at runtime via the index signature; the change is documentation only.
+
+### Fixed
+
+- **GorgiasAdapter universal passthrough** — `get_messages` previously cherry-picked fields and computed a derived `body` field from HTML content. All normalisation code (`normalize()`, `NormalizedMessage`, `stripHtmlTags`, `HTML_ENTITIES`) has been removed. Raw Gorgias message objects are now returned as-is, with all 35 API fields intact.
+- **GorgiasAdapter `create_message` replaces `post_internal_note`** — the previous `post_internal_note` operation hardcoded `channel: 'note'`, `public: false`, `from_agent: true` regardless of caller input. Replaced with `create_message`, which forwards all caller-supplied fields unchanged.
+
+---
+
 ## [0.6.1] — 2026-06-15
 
 ### Fixed
