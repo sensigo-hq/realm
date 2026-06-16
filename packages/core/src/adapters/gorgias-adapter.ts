@@ -288,6 +288,8 @@ export class GorgiasAdapter implements ServiceAdapter {
       const effectiveLimit = Math.min(userLimit, 200);
       const PAGE_SIZE = 100;
 
+      const orderBy =
+        typeof params['order_by'] === 'string' ? params['order_by'] : 'created_datetime:asc';
       const accumulated: GorgiasMessage[] = [];
       let cursor: string | undefined = undefined;
       let truncated = false;
@@ -295,8 +297,6 @@ export class GorgiasAdapter implements ServiceAdapter {
       for (;;) {
         this.checkAborted(signal);
 
-        const orderBy =
-          typeof params['order_by'] === 'string' ? params['order_by'] : 'created_datetime:asc';
         const url =
           `${this.baseUrl}/messages?ticket_id=${ticketId}&limit=${PAGE_SIZE}&order_by=${encodeURIComponent(orderBy)}` +
           (cursor !== undefined ? `&cursor=${cursor}` : '');
