@@ -21,54 +21,49 @@ export interface GorgiasAdapterConfig {
 /** Raw Gorgias message shape from the API. */
 interface GorgiasMessage {
   id: number;
-  from_agent: boolean;
+  uri?: string | null;
+  message_id?: string | null;
+  ticket_id?: number | null;
+  external_id?: string | null;
   public: boolean;
   channel: string;
+  via?: string | null;
+  source?: unknown;
+  sender?: {
+    id?: number | null;
+    email?: string | null;
+    name?: string | null;
+    firstname?: string | null;
+    lastname?: string | null;
+    meta?: Record<string, unknown> | null;
+  } | null;
+  receiver?: {
+    id?: number | null;
+    email?: string | null;
+    name?: string | null;
+  } | null;
+  from_agent: boolean;
+  subject?: string | null;
   body_text?: string | null;
   body_html?: string | null;
+  stripped_text?: string | null;
+  stripped_html?: string | null;
+  stripped_signature?: string | null;
+  headers?: unknown;
+  attachments?: unknown[];
+  actions?: unknown[];
+  macros?: unknown[];
+  meta?: unknown;
   created_datetime: string;
-}
-
-/** Normalized message shape returned by get_messages. */
-interface NormalizedMessage {
-  id: number;
-  from_agent: boolean;
-  public: boolean;
-  channel: string;
-  body: string;
-  created_datetime: string;
-}
-
-/** HTML entity map used by stripHtmlTags. */
-const HTML_ENTITIES: Record<string, string> = {
-  '&amp;': '&',
-  '&lt;': '<',
-  '&gt;': '>',
-  '&quot;': '"',
-  '&#039;': "'",
-};
-
-/**
- * Converts an HTML string to plain text.
- *
- * Tag removal is applied in a loop until stable so that patterns like
- * `<scr<x>ipt>` cannot survive a single-pass strip. Entity decoding is done
- * in a single regex pass to prevent double-unescaping (e.g. `&amp;lt;` must
- * produce `&lt;`, not `<`).
- */
-function stripHtmlTags(html: string): string {
-  // Loop until no more tags remain — prevents nested/incomplete-tag bypass.
-  let result = html;
-  let prev: string;
-  do {
-    prev = result;
-    result = result.replace(/<[^>]*>/g, '');
-  } while (result !== prev);
-
-  // Single-pass entity decode — avoids double-unescaping.
-  return result
-    .replace(/&(?:amp|lt|gt|quot|#039);/g, (entity) => HTML_ENTITIES[entity] ?? entity)
-    .trim();
+  processed_datetime?: string | null;
+  sent_datetime?: string | null;
+  failed_datetime?: string | null;
+  deleted_datetime?: string | null;
+  opened_datetime?: string | null;
+  last_sending_error?: unknown;
+  is_retriable?: boolean | null;
+  imported?: boolean | null;
+  [key: string]: unknown;
 }
 
 /**
@@ -76,8 +71,8 @@ function stripHtmlTags(html: string): string {
  *
  * Supported operations:
  *   fetch('get_ticket', { ticket_id })                          — GET  /tickets/{ticket_id}
- *   fetch('get_messages', { ticket_id, limit? })               — GET  /messages?ticket_id={ticket_id}&...
- *   create('post_internal_note', { ticket_id, body_html })     — POST /tickets/{ticket_id}/messages
+ *   fetch('get_messages', { ticket_id, limit?, order_by? })    — GET  /messages?ticket_id={ticket_id}&...
+ *   create('create_message', { ticket_id, ...messageFields })  — POST /tickets/{ticket_id}/messages
  */
 export class GorgiasAdapter implements ServiceAdapter {
   readonly id: string;
@@ -210,7 +205,7 @@ export class GorgiasAdapter implements ServiceAdapter {
           ? 'Account lacks permission to read Gorgias tickets'
           : operation === 'get_messages'
             ? 'Account lacks permission to read Gorgias ticket messages'
-            : operation === 'post_internal_note'
+            : operation === 'create_message'
               ? 'Account lacks permission to create Gorgias messages'
               : 'Account lacks permission for this Gorgias operation';
       throw new WorkflowError(message403, {
@@ -266,18 +261,6 @@ export class GorgiasAdapter implements ServiceAdapter {
     return ticketId;
   }
 
-  private normalize(msg: GorgiasMessage): NormalizedMessage {
-    const body = msg.body_text ?? stripHtmlTags(msg.body_html ?? '') ?? '';
-    return {
-      id: msg.id,
-      from_agent: msg.from_agent,
-      public: msg.public,
-      channel: msg.channel,
-      body,
-      created_datetime: msg.created_datetime,
-    };
-  }
-
   async fetch(
     operation: string,
     params: Record<string, unknown>,
@@ -305,7 +288,9 @@ export class GorgiasAdapter implements ServiceAdapter {
       const effectiveLimit = Math.min(userLimit, 200);
       const PAGE_SIZE = 100;
 
-      const accumulated: NormalizedMessage[] = [];
+      const orderBy =
+        typeof params['order_by'] === 'string' ? params['order_by'] : 'created_datetime:asc';
+      const accumulated: GorgiasMessage[] = [];
       let cursor: string | undefined = undefined;
       let truncated = false;
 
@@ -313,7 +298,7 @@ export class GorgiasAdapter implements ServiceAdapter {
         this.checkAborted(signal);
 
         const url =
-          `${this.baseUrl}/messages?ticket_id=${ticketId}&limit=${PAGE_SIZE}&order_by=created_datetime:asc` +
+          `${this.baseUrl}/messages?ticket_id=${ticketId}&limit=${PAGE_SIZE}&order_by=${encodeURIComponent(orderBy)}` +
           (cursor !== undefined ? `&cursor=${cursor}` : '');
 
         const response = await this.executeRequest('GET', url, 'get_messages', undefined, signal);
@@ -324,7 +309,7 @@ export class GorgiasAdapter implements ServiceAdapter {
 
         for (const message of json.data) {
           if (accumulated.length < effectiveLimit) {
-            accumulated.push(this.normalize(message));
+            accumulated.push(message);
           }
         }
 
@@ -360,52 +345,20 @@ export class GorgiasAdapter implements ServiceAdapter {
   ): Promise<ServiceResponse> {
     // config.auth is ignored — auth is set at construction time
 
-    if (operation === 'post_internal_note') {
+    if (operation === 'create_message') {
       const ticketId = this.validateTicketId(params);
 
-      if (typeof params['body_html'] !== 'string') {
-        throw new WorkflowError('GorgiasAdapter: body_html must be a string', {
-          code: 'ADAPTER_VALIDATION_FAILED',
-          category: 'ENGINE',
-          agentAction: 'provide_input',
-          retryable: false,
-          details: { received: params['body_html'] },
-        });
-      }
+      const { ticket_id: _tid, ...messageBody } = params;
 
       this.checkAborted(signal);
 
-      const requestBody = {
-        channel: 'note',
-        public: false,
-        from_agent: true,
-        body_html: params['body_html'],
-      };
-
-      const response = await this.executeRequest(
+      return this.executeRequest(
         'POST',
         `${this.baseUrl}/tickets/${ticketId}/messages`,
-        'post_internal_note',
-        requestBody,
+        'create_message',
+        messageBody,
         signal,
       );
-
-      const json = response.data as { id?: unknown };
-      const noteId = json.id;
-      if (typeof noteId !== 'number') {
-        throw new WorkflowError(
-          'GorgiasAdapter: unexpected response shape from post_internal_note',
-          {
-            code: 'SERVICE_RESPONSE_INVALID',
-            category: 'SERVICE',
-            agentAction: 'stop',
-            retryable: false,
-            details: { received: json },
-          },
-        );
-      }
-
-      return { status: 201, data: { ok: true, note_id: noteId } };
     }
 
     throw new WorkflowError(`GorgiasAdapter: unsupported create operation '${operation}'`, {
