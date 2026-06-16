@@ -107,6 +107,19 @@ type(scope): short imperative description
 
 ---
 
+## Stacked / Dependent Branches
+
+Never open a PR from a branch that is based on another unmerged feature branch.
+
+For sequentially-dependent work, choose one of two approaches:
+
+- **Combine** — put both phases in a single branch and open one PR.
+- **Sequence** — merge the first PR before branching the second.
+
+Opening PR2 while PR1 is unmerged creates a rebase dependency: PR2's diff on GitHub shows both branches combined, auto-merge becomes unreliable, and a rebase is required after PR1 lands. This is avoidable.
+
+---
+
 ## Draft PRs
 
 Open a draft PR when:
