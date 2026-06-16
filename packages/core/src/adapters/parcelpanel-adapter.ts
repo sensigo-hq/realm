@@ -175,6 +175,29 @@ export class ParcelPanelAdapter implements ServiceAdapter {
     };
   }
 
+  private resolveApiKey(params: Record<string, unknown>): string {
+    const store = params['store'];
+    if (typeof store !== 'string' || store === '') {
+      throw new WorkflowError('ParcelPanelAdapter: store param must be a non-empty string', {
+        code: 'ADAPTER_VALIDATION_FAILED',
+        category: 'ENGINE',
+        agentAction: 'provide_input',
+        retryable: false,
+      });
+    }
+    const apiKey = this.storesMap.get(store);
+    if (apiKey === undefined) {
+      throw new WorkflowError(`ParcelPanelAdapter: unknown store "${store}"`, {
+        code: 'ADAPTER_VALIDATION_FAILED',
+        category: 'ENGINE',
+        agentAction: 'provide_input',
+        retryable: false,
+        details: { store },
+      });
+    }
+    return apiKey;
+  }
+
   private validateOrderId(params: Record<string, unknown>): string {
     const orderId = params['order_id'];
     if (typeof orderId === 'number') {
@@ -347,26 +370,7 @@ export class ParcelPanelAdapter implements ServiceAdapter {
     signal?: AbortSignal,
   ): Promise<ServiceResponse> {
     if (operation === 'get_tracking') {
-      // Validate store param
-      const store = params['store'];
-      if (typeof store !== 'string' || store === '') {
-        throw new WorkflowError('ParcelPanelAdapter: store param must be a non-empty string', {
-          code: 'ADAPTER_VALIDATION_FAILED',
-          category: 'ENGINE',
-          agentAction: 'provide_input',
-          retryable: false,
-        });
-      }
-      const apiKey = this.storesMap.get(store);
-      if (apiKey === undefined) {
-        throw new WorkflowError(`ParcelPanelAdapter: unknown store "${store}"`, {
-          code: 'ADAPTER_VALIDATION_FAILED',
-          category: 'ENGINE',
-          agentAction: 'provide_input',
-          retryable: false,
-          details: { store },
-        });
-      }
+      const apiKey = this.resolveApiKey(params);
 
       // Validate order_number param
       const rawOrderNumber = params['order_number'];
@@ -395,26 +399,7 @@ export class ParcelPanelAdapter implements ServiceAdapter {
     }
 
     if (operation === 'get_tracking_by_id') {
-      // Validate store param
-      const store = params['store'];
-      if (typeof store !== 'string' || store === '') {
-        throw new WorkflowError('ParcelPanelAdapter: store param must be a non-empty string', {
-          code: 'ADAPTER_VALIDATION_FAILED',
-          category: 'ENGINE',
-          agentAction: 'provide_input',
-          retryable: false,
-        });
-      }
-      const apiKey = this.storesMap.get(store);
-      if (apiKey === undefined) {
-        throw new WorkflowError(`ParcelPanelAdapter: unknown store "${store}"`, {
-          code: 'ADAPTER_VALIDATION_FAILED',
-          category: 'ENGINE',
-          agentAction: 'provide_input',
-          retryable: false,
-          details: { store },
-        });
-      }
+      const apiKey = this.resolveApiKey(params);
 
       const orderId = this.validateOrderId(params);
 
