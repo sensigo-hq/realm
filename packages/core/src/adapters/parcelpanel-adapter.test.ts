@@ -2,7 +2,7 @@ import * as http from 'node:http';
 import * as net from 'node:net';
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { ParcelPanelAdapter } from './parcelpanel-adapter.js';
-import type { ParcelPanelAdapterConfig, NormalizedTracking } from './parcelpanel-adapter.js';
+import type { ParcelPanelAdapterConfig } from './parcelpanel-adapter.js';
 import { WorkflowError } from '../types/workflow-error.js';
 
 // ---------------------------------------------------------------------------
@@ -419,11 +419,11 @@ describe('ParcelPanelAdapter AbortSignal', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: Normalization — fulfilled order
+// Tests: Normalization — raw passthrough
 // ---------------------------------------------------------------------------
 
 describe('ParcelPanelAdapter normalization', () => {
-  it('fulfilled order: all four NormalizedTracking fields populated', async () => {
+  it('fulfilled order: raw data passthrough — order_id, tracking_link, and shipment status present', async () => {
     respond(200, fulfilledOrderBody());
     const adapter = makeAdapter();
     const result = await adapter.fetch(
@@ -432,14 +432,17 @@ describe('ParcelPanelAdapter normalization', () => {
       {},
     );
     expect(result.status).toBe(200);
-    const data = result.data as NormalizedTracking;
-    expect(data.tracking_url).toBe('https://example.myshopify.com/apps/parcelpanel?order=1030');
-    expect(data.carrier).toBe('YunExpress');
-    expect(data.tracking_number).toBe('YT2436021211003147');
-    expect(data.status).toBe('IN_TRANSIT');
+    const data = result.data as Record<string, unknown>;
+    const order = data['order'] as Record<string, unknown>;
+    expect(order['order_id']).toBe(6140516335690);
+    expect(order['tracking_link']).toBe(
+      'https://example.myshopify.com/apps/parcelpanel?order=1030',
+    );
+    const shipments = order['shipments'] as Record<string, unknown>[];
+    expect((shipments[0] as Record<string, unknown>)['status']).toBe('IN_TRANSIT');
   });
 
-  it('unfulfilled order: tracking_url set, carrier/tracking_number/status all null', async () => {
+  it('unfulfilled order: raw data passthrough — shipments is empty array', async () => {
     respond(200, unfulfilledOrderBody());
     const adapter = makeAdapter();
     const result = await adapter.fetch(
@@ -447,28 +450,20 @@ describe('ParcelPanelAdapter normalization', () => {
       { store: 'mystore', order_number: '1030' },
       {},
     );
-    const data = result.data as NormalizedTracking;
-    expect(data.tracking_url).toBe('https://example.myshopify.com/apps/parcelpanel?order=1030');
-    expect(data.carrier).toBeNull();
-    expect(data.tracking_number).toBeNull();
-    expect(data.status).toBeNull();
+    expect(result.status).toBe(200);
+    const data = result.data as Record<string, unknown>;
+    const order = data['order'] as Record<string, unknown>;
+    expect(Array.isArray(order['shipments'])).toBe(true);
+    expect((order['shipments'] as unknown[]).length).toBe(0);
   });
 
-  it('split fulfillment: uses shipments[0], second shipment silently ignored', async () => {
+  it('split fulfillment: both shipments present in result (not just first)', async () => {
     respond(
       200,
       fulfilledOrderBody({
         shipments: [
-          {
-            status: 'DELIVERED',
-            tracking_number: 'TN_FIRST',
-            carrier: { name: 'FedEx' },
-          },
-          {
-            status: 'IN_TRANSIT',
-            tracking_number: 'TN_SECOND',
-            carrier: { name: 'UPS' },
-          },
+          { status: 'DELIVERED', tracking_number: 'TN_FIRST', carrier: { name: 'FedEx' } },
+          { status: 'IN_TRANSIT', tracking_number: 'TN_SECOND', carrier: { name: 'UPS' } },
         ],
       }),
     );
@@ -478,26 +473,41 @@ describe('ParcelPanelAdapter normalization', () => {
       { store: 'mystore', order_number: '1030' },
       {},
     );
-    const data = result.data as NormalizedTracking;
-    expect(data.carrier).toBe('FedEx');
-    expect(data.tracking_number).toBe('TN_FIRST');
-    expect(data.status).toBe('DELIVERED');
+    const data = result.data as Record<string, unknown>;
+    const order = data['order'] as Record<string, unknown>;
+    const shipments = order['shipments'] as Record<string, unknown>[];
+    expect(shipments).toHaveLength(2);
+    expect(shipments[0]?.['tracking_number']).toBe('TN_FIRST');
+    expect(shipments[1]?.['tracking_number']).toBe('TN_SECOND');
   });
 
-  it('200 with missing order key → SERVICE_RESPONSE_INVALID', async () => {
+  it('fulfilled order: new interface fields status_label and carrier.code present in raw data', async () => {
+    respond(200, fulfilledOrderBody());
+    const adapter = makeAdapter();
+    const result = await adapter.fetch(
+      'get_tracking',
+      { store: 'mystore', order_number: '1030' },
+      {},
+    );
+    const data = result.data as Record<string, unknown>;
+    const order = data['order'] as Record<string, unknown>;
+    const shipments = order['shipments'] as Record<string, unknown>[];
+    const ship = shipments[0] as Record<string, unknown>;
+    expect(ship['status_label']).toBe('In transit');
+    const carrier = ship['carrier'] as Record<string, unknown>;
+    expect(carrier['code']).toBe('yunexpress');
+  });
+
+  it('200 with arbitrary shape — no throw, returns raw data', async () => {
     respond(200, { something: 'else' });
     const adapter = makeAdapter();
-    await expect(
-      adapter.fetch('get_tracking', { store: 'mystore', order_number: '1234' }, {}),
-    ).rejects.toMatchObject({ code: 'SERVICE_RESPONSE_INVALID' });
-  });
-
-  it('200 with order.tracking_link not a string → SERVICE_RESPONSE_INVALID', async () => {
-    respond(200, { order: { tracking_link: 12345, shipments: [] } });
-    const adapter = makeAdapter();
-    await expect(
-      adapter.fetch('get_tracking', { store: 'mystore', order_number: '1234' }, {}),
-    ).rejects.toMatchObject({ code: 'SERVICE_RESPONSE_INVALID' });
+    const result = await adapter.fetch(
+      'get_tracking',
+      { store: 'mystore', order_number: '1234' },
+      {},
+    );
+    expect(result.status).toBe(200);
+    expect(result.data).toMatchObject({ something: 'else' });
   });
 });
 

@@ -76,7 +76,8 @@ export type {
 export { ParcelPanelAdapter } from './adapters/parcelpanel-adapter.js';
 export type {
   ParcelPanelAdapterConfig,
-  NormalizedTracking as ParcelPanelNormalizedTracking,
+  ParcelPanelShipment,
+  ParcelPanelOrderBody,
 } from './adapters/parcelpanel-adapter.js';
 export { AirtableAdapter } from './adapters/airtable-adapter.js';
 export type { AirtableAdapterConfig } from './adapters/airtable-adapter.js';
