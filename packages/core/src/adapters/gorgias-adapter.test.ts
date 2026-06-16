@@ -264,6 +264,46 @@ describe("GorgiasAdapter fetch('get_ticket')", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: fetch('list_tickets')
+// ---------------------------------------------------------------------------
+
+describe("GorgiasAdapter fetch('list_tickets')", () => {
+  it('returns raw ticket list from GET /tickets', async () => {
+    respond(200, { data: [{ id: 1, status: 'open' }], meta: { next_cursor: null } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('list_tickets', {}, {});
+    expect(result.status).toBe(200);
+    const data = result.data as { data: unknown[]; meta: unknown };
+    expect(data.data).toHaveLength(1);
+  });
+
+  it('passes scalar params as query string', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: [], meta: { next_cursor: null } }));
+    });
+    const adapter = makeAdapter();
+    await adapter.fetch('list_tickets', { order_by: 'created_datetime:desc', limit: 10 }, {});
+    expect(capturedUrl).toContain('order_by=created_datetime%3Adesc');
+    expect(capturedUrl).toContain('limit=10');
+  });
+
+  it('no params: URL path has no query string', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: [], meta: { next_cursor: null } }));
+    });
+    const adapter = makeAdapter();
+    await adapter.fetch('list_tickets', {}, {});
+    expect(capturedUrl).toBe('/tickets');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: fetch('get_messages')
 // ---------------------------------------------------------------------------
 
@@ -508,6 +548,97 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: fetch('get_customer')
+// ---------------------------------------------------------------------------
+
+describe("GorgiasAdapter fetch('get_customer')", () => {
+  it('returns raw customer data from GET /customers/{id}', async () => {
+    respond(200, { id: 42, email: 'test@example.com', name: 'Test User' });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_customer', { customer_id: 42 }, {});
+    expect(result.status).toBe(200);
+    const data = result.data as Record<string, unknown>;
+    expect(data['id']).toBe(42);
+    expect(data['email']).toBe('test@example.com');
+  });
+
+  it('throws ADAPTER_VALIDATION_FAILED when customer_id is missing', async () => {
+    const adapter = makeAdapter();
+    await expect(adapter.fetch('get_customer', {}, {})).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+    });
+  });
+
+  it('throws ADAPTER_VALIDATION_FAILED for invalid customer_id (0 and string)', async () => {
+    const adapter = makeAdapter();
+    await expect(adapter.fetch('get_customer', { customer_id: 0 }, {})).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+    });
+    await expect(adapter.fetch('get_customer', { customer_id: 'abc' }, {})).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: fetch('list_customers')
+// ---------------------------------------------------------------------------
+
+describe("GorgiasAdapter fetch('list_customers')", () => {
+  it('returns raw customer list from GET /customers', async () => {
+    respond(200, { data: [{ id: 1, email: 'a@example.com' }], meta: { next_cursor: null } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('list_customers', {}, {});
+    expect(result.status).toBe(200);
+    const data = result.data as { data: unknown[]; meta: unknown };
+    expect(data.data).toHaveLength(1);
+  });
+
+  it('passes scalar params as query string', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: [], meta: { next_cursor: null } }));
+    });
+    const adapter = makeAdapter();
+    await adapter.fetch('list_customers', { email: 'test@example.com', limit: 5 }, {});
+    expect(capturedUrl).toContain('email=test%40example.com');
+    expect(capturedUrl).toContain('limit=5');
+  });
+
+  it('skips non-scalar params (arrays, objects) from query string', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: [], meta: { next_cursor: null } }));
+    });
+    const adapter = makeAdapter();
+    await adapter.fetch(
+      'list_customers',
+      { limit: 10, tags: ['vip', 'new'], nested: { key: 'val' } },
+      {},
+    );
+    expect(capturedUrl).toContain('limit=10');
+    expect(capturedUrl).not.toContain('tags=');
+    expect(capturedUrl).not.toContain('nested=');
+  });
+
+  it('no params: URL path has no query string', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: [], meta: { next_cursor: null } }));
+    });
+    const adapter = makeAdapter();
+    await adapter.fetch('list_customers', {}, {});
+    expect(capturedUrl).toBe('/customers');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: create('create_message')
 // ---------------------------------------------------------------------------
 
@@ -611,6 +742,88 @@ describe("GorgiasAdapter create('create_message')", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: create('create_ticket')
+// ---------------------------------------------------------------------------
+
+describe("GorgiasAdapter create('create_ticket')", () => {
+  it('returns raw ticket response', async () => {
+    respond(201, { id: 100, status: 'open', channel: 'email' });
+    const adapter = makeAdapter();
+    const result = await adapter.create(
+      'create_ticket',
+      { messages: [{ channel: 'email', from_agent: false }] },
+      {},
+    );
+    expect(result.status).toBe(201);
+    const data = result.data as Record<string, unknown>;
+    expect(data['id']).toBe(100);
+  });
+
+  it('passes all params as request body', async () => {
+    let capturedBody: unknown;
+    handlers.push((_req, res, body) => {
+      capturedBody = JSON.parse(body);
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: 1 }));
+    });
+    const adapter = makeAdapter();
+    await adapter.create(
+      'create_ticket',
+      {
+        messages: [{ channel: 'email', from_agent: false }],
+        subject: 'Help needed',
+        status: 'open',
+      },
+      {},
+    );
+    expect(capturedBody).toEqual({
+      messages: [{ channel: 'email', from_agent: false }],
+      subject: 'Help needed',
+      status: 'open',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: create('create_customer')
+// ---------------------------------------------------------------------------
+
+describe("GorgiasAdapter create('create_customer')", () => {
+  it('returns raw customer response', async () => {
+    respond(201, { id: 55, email: 'new@example.com' });
+    const adapter = makeAdapter();
+    const result = await adapter.create(
+      'create_customer',
+      { channels: [{ type: 'email', address: 'new@example.com' }] },
+      {},
+    );
+    expect(result.status).toBe(201);
+    const data = result.data as Record<string, unknown>;
+    expect(data['id']).toBe(55);
+  });
+
+  it('passes all params as request body', async () => {
+    let capturedBody: unknown;
+    handlers.push((_req, res, body) => {
+      capturedBody = JSON.parse(body);
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: 2 }));
+    });
+    const adapter = makeAdapter();
+    await adapter.create(
+      'create_customer',
+      { channels: [{ type: 'email', address: 'x@y.com' }], name: 'Jane', language: 'en' },
+      {},
+    );
+    expect(capturedBody).toEqual({
+      channels: [{ type: 'email', address: 'x@y.com' }],
+      name: 'Jane',
+      language: 'en',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: update()
 // ---------------------------------------------------------------------------
 
@@ -621,6 +834,84 @@ describe('GorgiasAdapter update()', () => {
       code: 'ADAPTER_OP_UNSUPPORTED',
     });
     await expect(adapter.update('anything', {}, {})).rejects.toBeInstanceOf(WorkflowError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: update('update_ticket')
+// ---------------------------------------------------------------------------
+
+describe("GorgiasAdapter update('update_ticket')", () => {
+  it('returns 202 with raw updated ticket', async () => {
+    respond(202, { id: 10, status: 'closed' });
+    const adapter = makeAdapter();
+    const result = await adapter.update('update_ticket', { ticket_id: 10, status: 'closed' }, {});
+    expect(result.status).toBe(202);
+    const data = result.data as Record<string, unknown>;
+    expect(data['status']).toBe('closed');
+  });
+
+  it('throws ADAPTER_VALIDATION_FAILED when ticket_id is missing', async () => {
+    const adapter = makeAdapter();
+    await expect(adapter.update('update_ticket', { status: 'closed' }, {})).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+    });
+  });
+
+  it('strips ticket_id from the PUT body', async () => {
+    let capturedBody: unknown;
+    handlers.push((_req, res, body) => {
+      capturedBody = JSON.parse(body);
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: 10 }));
+    });
+    const adapter = makeAdapter();
+    await adapter.update(
+      'update_ticket',
+      { ticket_id: 10, status: 'closed', tags: [{ name: 'resolved' }] },
+      {},
+    );
+    expect(capturedBody).toEqual({ status: 'closed', tags: [{ name: 'resolved' }] });
+    expect((capturedBody as Record<string, unknown>)['ticket_id']).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: update('update_customer')
+// ---------------------------------------------------------------------------
+
+describe("GorgiasAdapter update('update_customer')", () => {
+  it('returns 202 with raw updated customer', async () => {
+    respond(202, { id: 42, name: 'Updated Name' });
+    const adapter = makeAdapter();
+    const result = await adapter.update(
+      'update_customer',
+      { customer_id: 42, name: 'Updated Name' },
+      {},
+    );
+    expect(result.status).toBe(202);
+    const data = result.data as Record<string, unknown>;
+    expect(data['name']).toBe('Updated Name');
+  });
+
+  it('throws ADAPTER_VALIDATION_FAILED when customer_id is missing', async () => {
+    const adapter = makeAdapter();
+    await expect(adapter.update('update_customer', { name: 'X' }, {})).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+    });
+  });
+
+  it('strips customer_id from the PUT body', async () => {
+    let capturedBody: unknown;
+    handlers.push((_req, res, body) => {
+      capturedBody = JSON.parse(body);
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: 42 }));
+    });
+    const adapter = makeAdapter();
+    await adapter.update('update_customer', { customer_id: 42, name: 'Jane', language: 'fr' }, {});
+    expect(capturedBody).toEqual({ name: 'Jane', language: 'fr' });
+    expect((capturedBody as Record<string, unknown>)['customer_id']).toBeUndefined();
   });
 });
 

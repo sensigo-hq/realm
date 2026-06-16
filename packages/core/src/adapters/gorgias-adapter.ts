@@ -76,9 +76,20 @@ interface GorgiasMessage {
  * GorgiasAdapter communicates with the Gorgias REST API.
  *
  * Supported operations:
- *   fetch('get_ticket', { ticket_id })                          — GET  /tickets/{ticket_id}
- *   fetch('get_messages', { ticket_id?, limit?, order_by? })    — GET  /messages (ticket_id optional filter; order_by omitted when absent, API default applies)
- *   create('create_message', { ticket_id, ...messageFields })  — POST /tickets/{ticket_id}/messages
+ *   fetch('get_ticket',       { ticket_id })                         — GET  /tickets/{id}
+ *   fetch('list_tickets',     { order_by?, cursor?, limit?, ... })   — GET  /tickets
+ *   fetch('get_messages',     { ticket_id?, limit?, order_by? })     — GET  /messages
+ *   fetch('get_customer',     { customer_id })                       — GET  /customers/{id}
+ *   fetch('list_customers',   { order_by?, cursor?, limit?, ... })   — GET  /customers
+ *   create('create_message',  { ticket_id, ...messageFields })       — POST /tickets/{id}/messages
+ *   create('create_ticket',   { messages, ...ticketFields })         — POST /tickets
+ *   create('create_customer', { channels, ...customerFields })       — POST /customers
+ *   update('update_ticket',   { ticket_id, ...ticketFields })        — PUT  /tickets/{id}
+ *   update('update_customer', { customer_id, ...customerFields })    — PUT  /customers/{id}
+ *
+ * list_tickets and list_customers return a single page; pass cursor from response meta
+ * to retrieve subsequent pages. Scalar params (string | number | boolean) are forwarded
+ * as query params. Non-scalar values (arrays, objects) are silently skipped.
  */
 export class GorgiasAdapter implements ServiceAdapter {
   readonly id: string;
@@ -259,6 +270,20 @@ export class GorgiasAdapter implements ServiceAdapter {
     return ticketId;
   }
 
+  private validateCustomerId(params: Record<string, unknown>): number {
+    const customerId = params['customer_id'];
+    if (typeof customerId !== 'number' || !Number.isInteger(customerId) || customerId <= 0) {
+      throw new WorkflowError('GorgiasAdapter: customer_id must be a positive integer', {
+        code: 'ADAPTER_VALIDATION_FAILED',
+        category: 'ENGINE',
+        agentAction: 'provide_input',
+        retryable: false,
+        details: { received: customerId },
+      });
+    }
+    return customerId;
+  }
+
   async fetch(
     operation: string,
     params: Record<string, unknown>,
@@ -328,6 +353,54 @@ export class GorgiasAdapter implements ServiceAdapter {
       return { status: 200, data: { messages: accumulated, truncated } };
     }
 
+    if (operation === 'list_tickets') {
+      this.checkAborted(signal);
+      const queryParts: string[] = [];
+      for (const [key, value] of Object.entries(params)) {
+        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+          queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+        }
+      }
+      const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
+      return this.executeRequest(
+        'GET',
+        `${this.baseUrl}/tickets${queryString}`,
+        'list_tickets',
+        undefined,
+        signal,
+      );
+    }
+
+    if (operation === 'get_customer') {
+      const customerId = this.validateCustomerId(params);
+      this.checkAborted(signal);
+      return this.executeRequest(
+        'GET',
+        `${this.baseUrl}/customers/${customerId}`,
+        'get_customer',
+        undefined,
+        signal,
+      );
+    }
+
+    if (operation === 'list_customers') {
+      this.checkAborted(signal);
+      const queryParts: string[] = [];
+      for (const [key, value] of Object.entries(params)) {
+        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+          queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+        }
+      }
+      const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
+      return this.executeRequest(
+        'GET',
+        `${this.baseUrl}/customers${queryString}`,
+        'list_customers',
+        undefined,
+        signal,
+      );
+    }
+
     throw new WorkflowError(`GorgiasAdapter: unsupported fetch operation '${operation}'`, {
       code: 'ADAPTER_OP_UNSUPPORTED',
       category: 'ENGINE',
@@ -361,6 +434,28 @@ export class GorgiasAdapter implements ServiceAdapter {
       );
     }
 
+    if (operation === 'create_ticket') {
+      this.checkAborted(signal);
+      return this.executeRequest(
+        'POST',
+        `${this.baseUrl}/tickets`,
+        'create_ticket',
+        params,
+        signal,
+      );
+    }
+
+    if (operation === 'create_customer') {
+      this.checkAborted(signal);
+      return this.executeRequest(
+        'POST',
+        `${this.baseUrl}/customers`,
+        'create_customer',
+        params,
+        signal,
+      );
+    }
+
     throw new WorkflowError(`GorgiasAdapter: unsupported create operation '${operation}'`, {
       code: 'ADAPTER_OP_UNSUPPORTED',
       category: 'ENGINE',
@@ -372,11 +467,39 @@ export class GorgiasAdapter implements ServiceAdapter {
 
   async update(
     operation: string,
-    _params: Record<string, unknown>,
+    params: Record<string, unknown>,
     _config: Record<string, unknown>,
-    _signal?: AbortSignal,
+    signal?: AbortSignal,
   ): Promise<ServiceResponse> {
-    throw new WorkflowError(`GorgiasAdapter: update is not supported (operation: '${operation}')`, {
+    // config.auth is ignored — auth is set at construction time
+
+    if (operation === 'update_ticket') {
+      const ticketId = this.validateTicketId(params);
+      const { ticket_id: _tid, ...ticketBody } = params;
+      this.checkAborted(signal);
+      return this.executeRequest(
+        'PUT',
+        `${this.baseUrl}/tickets/${ticketId}`,
+        'update_ticket',
+        ticketBody,
+        signal,
+      );
+    }
+
+    if (operation === 'update_customer') {
+      const customerId = this.validateCustomerId(params);
+      const { customer_id: _cid, ...customerBody } = params;
+      this.checkAborted(signal);
+      return this.executeRequest(
+        'PUT',
+        `${this.baseUrl}/customers/${customerId}`,
+        'update_customer',
+        customerBody,
+        signal,
+      );
+    }
+
+    throw new WorkflowError(`GorgiasAdapter: unsupported update operation '${operation}'`, {
       code: 'ADAPTER_OP_UNSUPPORTED',
       category: 'ENGINE',
       agentAction: 'report_to_user',
