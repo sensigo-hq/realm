@@ -31,8 +31,56 @@ export interface ParcelPanelAdapterConfig {
 export interface ParcelPanelShipment {
   status?: string | null;
   status_label?: string | null;
+  substatus?: string | null;
+  substatus_label?: string | null;
   tracking_number?: string | null;
-  carrier?: { name?: string | null; code?: string | null } | null;
+  carrier?: {
+    name?: string | null;
+    code?: string | null;
+    contact?: string | null;
+    logo_url?: string | null;
+    url?: string | null;
+  } | null;
+  transit_time?: number | null;
+  residence_time?: number | null;
+  estimated_delivery_date?: {
+    source?: string | null;
+    display_text?: string | null;
+  } | null;
+  order_date?: string | null;
+  fulfillment_date?: string | null;
+  pickup_date?: string | null;
+  pickup_location?: string | null;
+  location?: { name?: string | null } | null;
+  delivery_date?: string | null;
+  last_mile_tracking_supported?: boolean | null;
+  last_mile?: {
+    carrier_name?: string | null;
+    carrier_code?: string | null;
+    tracking_number?: string | null;
+    carrier_contact?: string | null;
+    carrier_logo_url?: string | null;
+    carrier_url?: string | null;
+  } | null;
+  products?: Array<{
+    id?: number | null;
+    title?: string | null;
+    variant_id?: number | null;
+    variant_title?: string | null;
+    quantity?: number | null;
+    image_url?: string | null;
+    url?: string | null;
+    [key: string]: unknown;
+  }> | null;
+  checkpoints?: Array<{
+    detail?: string | null;
+    status?: string | null;
+    status_label?: string | null;
+    substatus?: string | null;
+    substatus_label?: string | null;
+    checkpoint_time?: string | null;
+    [key: string]: unknown;
+  }> | null;
   [key: string]: unknown;
 }
 
@@ -41,6 +89,27 @@ export interface ParcelPanelOrderBody {
   order?: {
     order_id?: number | null;
     order_number?: string | null;
+    order_tags?: string[] | null;
+    store?: { name?: string | null; url?: string | null } | null;
+    customer?: {
+      name?: string | null;
+      email?: string | null;
+      phone?: string | null;
+    } | null;
+    shipping_address?: {
+      name?: string | null;
+      phone?: string | null;
+      country?: string | null;
+      country_code?: string | null;
+      province?: string | null;
+      province_code?: string | null;
+      city?: string | null;
+      zip?: string | null;
+      address1?: string | null;
+      address2?: string | null;
+      company?: string | null;
+      [key: string]: unknown;
+    } | null;
     tracking_link?: string | null;
     shipments?: ParcelPanelShipment[];
     [key: string]: unknown;
@@ -52,11 +121,14 @@ export interface ParcelPanelOrderBody {
  * ParcelPanelAdapter communicates with the ParcelPanel / ParcelWILL tracking API v2.
  *
  * Supported operations:
- *   fetch('get_tracking', { store, order_number })   — GET /api/v2/tracking/order?order_number={n}
+ *   fetch('get_tracking',       { store, order_number })   — GET /api/v2/tracking/order?order_number={n}
+ *   fetch('get_tracking_by_id', { store, order_id })       — GET /api/v2/tracking/order?order_id={id}
  *
  * order_number normalisation: leading whitespace is trimmed and a leading '#' is stripped before
  * the request is sent. Shopify formats order numbers as '#1030'; ParcelPanel expects '1030'.
  * Pass either format — the adapter handles both correctly.
+ *
+ * order_id: the Shopify numeric order ID (e.g. 6140516335690). Accepted as number or string.
  */
 export class ParcelPanelAdapter implements ServiceAdapter {
   readonly id: string;
@@ -101,6 +173,38 @@ export class ParcelPanelAdapter implements ServiceAdapter {
       'x-parcelpanel-api-key': apiKey,
       Accept: 'application/json',
     };
+  }
+
+  private validateOrderId(params: Record<string, unknown>): string {
+    const orderId = params['order_id'];
+    if (typeof orderId === 'number') {
+      if (!Number.isInteger(orderId) || orderId <= 0) {
+        throw new WorkflowError(
+          'ParcelPanelAdapter: order_id must be a positive integer or non-empty string',
+          {
+            code: 'ADAPTER_VALIDATION_FAILED',
+            category: 'ENGINE',
+            agentAction: 'provide_input',
+            retryable: false,
+            details: { received: orderId },
+          },
+        );
+      }
+      return String(orderId);
+    }
+    if (typeof orderId === 'string' && orderId !== '') {
+      return orderId;
+    }
+    throw new WorkflowError(
+      'ParcelPanelAdapter: order_id must be a positive integer or non-empty string',
+      {
+        code: 'ADAPTER_VALIDATION_FAILED',
+        category: 'ENGINE',
+        agentAction: 'provide_input',
+        retryable: false,
+        details: { received: orderId },
+      },
+    );
   }
 
   private async executeRequest(
@@ -288,6 +392,35 @@ export class ParcelPanelAdapter implements ServiceAdapter {
       const url = `${this.baseUrl}/api/v2/tracking/order?order_number=${encodeURIComponent(normalizedOrderNumber)}`;
 
       return this.executeRequest('GET', url, 'get_tracking', apiKey, undefined, signal);
+    }
+
+    if (operation === 'get_tracking_by_id') {
+      // Validate store param
+      const store = params['store'];
+      if (typeof store !== 'string' || store === '') {
+        throw new WorkflowError('ParcelPanelAdapter: store param must be a non-empty string', {
+          code: 'ADAPTER_VALIDATION_FAILED',
+          category: 'ENGINE',
+          agentAction: 'provide_input',
+          retryable: false,
+        });
+      }
+      const apiKey = this.storesMap.get(store);
+      if (apiKey === undefined) {
+        throw new WorkflowError(`ParcelPanelAdapter: unknown store "${store}"`, {
+          code: 'ADAPTER_VALIDATION_FAILED',
+          category: 'ENGINE',
+          agentAction: 'provide_input',
+          retryable: false,
+          details: { store },
+        });
+      }
+
+      const orderId = this.validateOrderId(params);
+
+      const url = `${this.baseUrl}/api/v2/tracking/order?order_id=${encodeURIComponent(orderId)}`;
+
+      return this.executeRequest('GET', url, 'get_tracking_by_id', apiKey, undefined, signal);
     }
 
     throw new WorkflowError(`ParcelPanelAdapter: operation "${operation}" is not supported`, {
