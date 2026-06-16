@@ -103,6 +103,16 @@ function makeMsg(
     public: boolean;
     channel: string;
     created_datetime: string;
+    sender: {
+      id?: number;
+      email?: string | null;
+      name?: string | null;
+      firstname?: string | null;
+      lastname?: string | null;
+    } | null;
+    subject: string | null;
+    stripped_text: string | null;
+    via: string | null;
   }> = {},
 ) {
   return {
@@ -113,6 +123,10 @@ function makeMsg(
     body_text: overrides.body_text !== undefined ? overrides.body_text : `Message ${id}`,
     body_html: overrides.body_html !== undefined ? overrides.body_html : null,
     created_datetime: overrides.created_datetime ?? '2024-01-01T00:00:00Z',
+    sender: overrides.sender !== undefined ? overrides.sender : null,
+    subject: overrides.subject !== undefined ? overrides.subject : null,
+    stripped_text: overrides.stripped_text !== undefined ? overrides.stripped_text : null,
+    via: overrides.via !== undefined ? overrides.via : null,
   };
 }
 
@@ -323,37 +337,111 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     expect(data.truncated).toBe(true);
   });
 
-  it('body_text present: used as body; body_html ignored', async () => {
+  it('body_text and body_html are returned as-is', async () => {
     respond(200, {
       data: [makeMsg(1, { body_text: 'plain text', body_html: '<p>html</p>' })],
       meta: { next_cursor: null },
     });
     const adapter = makeAdapter();
     const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
-    const data = result.data as { messages: Array<{ body: string }> };
-    expect(data.messages[0]?.body).toBe('plain text');
+    const data = result.data as { messages: Array<Record<string, unknown>> };
+    const msg = data.messages[0]!;
+    expect(msg['body_text']).toBe('plain text');
+    expect(msg['body_html']).toBe('<p>html</p>');
   });
 
-  it('body_text absent, body_html present: HTML tags and entities stripped', async () => {
+  it('body_html is returned verbatim without HTML stripping', async () => {
     respond(200, {
-      data: [makeMsg(1, { body_text: null, body_html: '<p>Hello &amp; world &lt;test&gt;</p>' })],
+      data: [makeMsg(1, { body_text: null, body_html: '<p>Hello &amp; world</p>' })],
       meta: { next_cursor: null },
     });
     const adapter = makeAdapter();
     const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
-    const data = result.data as { messages: Array<{ body: string }> };
-    expect(data.messages[0]?.body).toBe('Hello & world <test>');
+    const data = result.data as { messages: Array<Record<string, unknown>> };
+    const msg = data.messages[0]!;
+    expect(msg['body_text']).toBeNull();
+    expect(msg['body_html']).toBe('<p>Hello &amp; world</p>');
   });
 
-  it('both body_text and body_html absent: body === ""', async () => {
+  it('does not add a computed body field to messages', async () => {
     respond(200, {
-      data: [makeMsg(1, { body_text: null, body_html: null })],
+      data: [makeMsg(1)],
       meta: { next_cursor: null },
     });
     const adapter = makeAdapter();
     const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
-    const data = result.data as { messages: Array<{ body: string }> };
-    expect(data.messages[0]?.body).toBe('');
+    const data = result.data as { messages: Array<Record<string, unknown>> };
+    expect('body' in (data.messages[0] ?? {})).toBe(false);
+  });
+
+  it('sender fields pass through to message output', async () => {
+    respond(200, {
+      data: [makeMsg(1, { sender: { id: 100, email: 'customer@example.com', name: 'Alice' } })],
+      meta: { next_cursor: null },
+    });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    const data = result.data as { messages: Array<Record<string, unknown>> };
+    const sender = data.messages[0]!['sender'] as Record<string, unknown>;
+    expect(sender['email']).toBe('customer@example.com');
+    expect(sender['name']).toBe('Alice');
+  });
+
+  it('null sender is preserved in output', async () => {
+    respond(200, {
+      data: [makeMsg(1, { sender: null })],
+      meta: { next_cursor: null },
+    });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    const data = result.data as { messages: Array<Record<string, unknown>> };
+    expect(data.messages[0]!['sender']).toBeNull();
+  });
+
+  it('extra fields not in the interface are preserved', async () => {
+    const msgWithExtra = { ...makeMsg(1), some_future_field: 'future_value' };
+    respond(200, { data: [msgWithExtra], meta: { next_cursor: null } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    const data = result.data as { messages: Array<Record<string, unknown>> };
+    expect(data.messages[0]!['some_future_field']).toBe('future_value');
+  });
+
+  it('subject and stripped_text pass through', async () => {
+    respond(200, {
+      data: [makeMsg(1, { subject: 'Order help', stripped_text: 'stripped body' })],
+      meta: { next_cursor: null },
+    });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    const data = result.data as { messages: Array<Record<string, unknown>> };
+    const msg = data.messages[0]!;
+    expect(msg['subject']).toBe('Order help');
+    expect(msg['stripped_text']).toBe('stripped body');
+  });
+
+  it('default order_by is created_datetime:asc when not supplied', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: [], meta: { next_cursor: null } }));
+    });
+    const adapter = makeAdapter();
+    await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    expect(capturedUrl).toContain('order_by=created_datetime%3Aasc');
+  });
+
+  it('caller-supplied order_by is forwarded in the URL', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: [], meta: { next_cursor: null } }));
+    });
+    const adapter = makeAdapter();
+    await adapter.fetch('get_messages', { ticket_id: 10, order_by: 'created_datetime:desc' }, {});
+    expect(capturedUrl).toContain('order_by=created_datetime%3Adesc');
   });
 
   it('aborting signal mid-loop (after page 1) → throws STEP_ABORTED', async () => {
@@ -384,89 +472,105 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: create('post_internal_note')
+// Tests: create('create_message')
 // ---------------------------------------------------------------------------
 
-describe("GorgiasAdapter create('post_internal_note')", () => {
-  it('sends correct body and returns { ok: true, note_id }', async () => {
-    respondEcho(201, (_req, body) => {
-      const parsed = JSON.parse(body) as Record<string, unknown>;
-      return { id: 999, echoed: parsed };
-    });
-    const adapter = makeAdapter();
-    const result = await adapter.create(
-      'post_internal_note',
-      { ticket_id: 42, body_html: '<p>Internal note</p>' },
-      {},
-    );
-    expect(result.status).toBe(201);
-    const data = result.data as { ok: boolean; note_id: number };
-    expect(data.ok).toBe(true);
-    expect(data.note_id).toBe(999);
-  });
-
-  it('sends exactly { channel: "note", public: false, from_agent: true, body_html }', async () => {
-    respondEcho(201, (_req, body) => {
-      const parsed = JSON.parse(body) as Record<string, unknown>;
-      return { id: 1, body: parsed };
-    });
-    const adapter = makeAdapter();
-    await adapter.create('post_internal_note', { ticket_id: 42, body_html: '<b>note</b>' }, {});
-
-    // Re-check via another call that records the request body
-    respondEcho(201, (_req, body) => {
-      return { id: 2, _body: body };
-    });
-    const result2 = await adapter.create(
-      'post_internal_note',
-      { ticket_id: 42, body_html: '<b>note</b>' },
-      {},
-    );
-    // Parse from a fresh call
-    void result2; // just checking it doesn't throw
-  });
-
-  it('asserts correct request body fields', async () => {
-    let capturedBody: unknown;
-    handlers.push((_req, res, body) => {
-      capturedBody = JSON.parse(body);
-      res.writeHead(201, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ id: 1 }));
-    });
-    const adapter = makeAdapter();
-    await adapter.create('post_internal_note', { ticket_id: 42, body_html: '<p>hi</p>' }, {});
-    expect(capturedBody).toEqual({
+describe("GorgiasAdapter create('create_message')", () => {
+  it('returns the raw Gorgias message response', async () => {
+    respond(201, {
+      id: 999,
       channel: 'note',
       public: false,
       from_agent: true,
       body_html: '<p>hi</p>',
+      created_datetime: '2024-01-01T00:00:00Z',
+    });
+    const adapter = makeAdapter();
+    const result = await adapter.create(
+      'create_message',
+      { ticket_id: 42, body_html: '<p>hi</p>', channel: 'note', public: false, from_agent: true },
+      {},
+    );
+    expect(result.status).toBe(201);
+    const data = result.data as Record<string, unknown>;
+    expect(data['id']).toBe(999);
+    expect(data['channel']).toBe('note');
+  });
+
+  it('passes caller-supplied fields as the request body (ticket_id excluded)', async () => {
+    let capturedBody: unknown;
+    handlers.push((_req, res, body) => {
+      capturedBody = JSON.parse(body);
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: 1, channel: 'email' }));
+    });
+    const adapter = makeAdapter();
+    await adapter.create(
+      'create_message',
+      {
+        ticket_id: 42,
+        channel: 'email',
+        public: true,
+        from_agent: true,
+        body_html: '<p>reply</p>',
+        subject: 'Re: your order',
+      },
+      {},
+    );
+    expect(capturedBody).toEqual({
+      channel: 'email',
+      public: true,
+      from_agent: true,
+      body_html: '<p>reply</p>',
+      subject: 'Re: your order',
     });
   });
 
-  it('body_html missing → throws ADAPTER_VALIDATION_FAILED', async () => {
+  it('channel: "note" works when caller supplies it', async () => {
+    let capturedBody: unknown;
+    handlers.push((_req, res, body) => {
+      capturedBody = JSON.parse(body);
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: 2 }));
+    });
     const adapter = makeAdapter();
-    await expect(adapter.create('post_internal_note', { ticket_id: 42 }, {})).rejects.toMatchObject(
-      { code: 'ADAPTER_VALIDATION_FAILED' },
+    await adapter.create(
+      'create_message',
+      { ticket_id: 42, channel: 'note', public: false, from_agent: true, body_html: '<p>note</p>' },
+      {},
     );
+    expect((capturedBody as Record<string, unknown>)['channel']).toBe('note');
+    expect((capturedBody as Record<string, unknown>)['public']).toBe(false);
   });
 
   it('mock returns 403 → throws SERVICE_HTTP_4XX with message containing "permission"', async () => {
     respond(403, { error: 'Forbidden' });
     const adapter = makeAdapter();
     const err = await adapter
-      .create('post_internal_note', { ticket_id: 42, body_html: '<p>hi</p>' }, {})
+      .create('create_message', { ticket_id: 42, body_html: '<p>hi</p>' }, {})
       .catch((e: unknown) => e as WorkflowError);
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_HTTP_4XX');
     expect(err.message).toContain('permission');
   });
 
-  it('mock returns 201 but with no id field → throws SERVICE_RESPONSE_INVALID', async () => {
-    respond(201, { ok: true });
+  it('channel: "email" is forwarded — not restricted to note', async () => {
+    respond(201, { id: 3, channel: 'email' });
     const adapter = makeAdapter();
-    await expect(
-      adapter.create('post_internal_note', { ticket_id: 42, body_html: '<p>hi</p>' }, {}),
-    ).rejects.toMatchObject({ code: 'SERVICE_RESPONSE_INVALID' });
+    const result = await adapter.create(
+      'create_message',
+      { ticket_id: 42, channel: 'email', public: true, body_html: '<p>reply</p>' },
+      {},
+    );
+    expect(result.status).toBe(201);
+    expect((result.data as Record<string, unknown>)['channel']).toBe('email');
+  });
+
+  it('ticket_id missing → throws ADAPTER_VALIDATION_FAILED', async () => {
+    const adapter = makeAdapter();
+    await expect(adapter.create('create_message', {}, {})).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+    });
   });
 });
 
