@@ -27,39 +27,25 @@ export interface ParcelPanelAdapterConfig {
   base_url?: string;
 }
 
-/**
- * Normalized tracking data returned by ParcelPanelAdapter.
- *
- * tracking_url is always present when the order exists (sourced from order.tracking_link,
- * documented as non-null in the ParcelPanel API).
- *
- * carrier, tracking_number, and status are all null in tandem when order.shipments is empty
- * (order exists but has not yet been fulfilled).
- */
-export interface NormalizedTracking {
-  /** ParcelPanel-hosted tracking page URL. Always a non-empty string when the order exists. */
-  tracking_url: string;
-  /** Primary carrier name, e.g. "YunExpress". Null if order has no shipments yet. */
-  carrier: string | null;
-  /** Primary carrier tracking number. Null if order has no shipments yet. */
-  tracking_number: string | null;
-  /** Primary shipment status code, e.g. "IN_TRANSIT". Null if order has no shipments yet. */
-  status: string | null;
-}
-
 /** Raw shipment shape from the ParcelPanel API. */
-interface ParcelPanelShipment {
-  status?: string;
-  tracking_number?: string;
-  carrier?: { name?: string } | null;
+export interface ParcelPanelShipment {
+  status?: string | null;
+  status_label?: string | null;
+  tracking_number?: string | null;
+  carrier?: { name?: string | null; code?: string | null } | null;
+  [key: string]: unknown;
 }
 
 /** Raw order body shape from the ParcelPanel API. */
-interface ParcelPanelOrderBody {
+export interface ParcelPanelOrderBody {
   order?: {
-    tracking_link?: unknown;
+    order_id?: number | null;
+    order_number?: string | null;
+    tracking_link?: string | null;
     shipments?: ParcelPanelShipment[];
-  };
+    [key: string]: unknown;
+  } | null;
+  [key: string]: unknown;
 }
 
 /**
@@ -67,6 +53,10 @@ interface ParcelPanelOrderBody {
  *
  * Supported operations:
  *   fetch('get_tracking', { store, order_number })   — GET /api/v2/tracking/order?order_number={n}
+ *
+ * order_number normalisation: leading whitespace is trimmed and a leading '#' is stripped before
+ * the request is sent. Shopify formats order numbers as '#1030'; ParcelPanel expects '1030'.
+ * Pass either format — the adapter handles both correctly.
  */
 export class ParcelPanelAdapter implements ServiceAdapter {
   readonly id: string;
@@ -114,18 +104,27 @@ export class ParcelPanelAdapter implements ServiceAdapter {
   }
 
   private async executeRequest(
+    method: 'GET' | 'POST' | 'PUT',
     url: string,
+    operation: string,
     apiKey: string,
+    body?: unknown,
     signal?: AbortSignal,
-  ): Promise<Response> {
+  ): Promise<ServiceResponse> {
     this.checkAborted(signal);
+    const fetchOptions: RequestInit =
+      method === 'GET'
+        ? { method, headers: this.buildHeaders(apiKey), signal: signal ?? null }
+        : {
+            method,
+            headers: { ...this.buildHeaders(apiKey), 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: signal ?? null,
+          };
+
     let response: Response;
     try {
-      response = await fetch(url, {
-        method: 'GET',
-        headers: this.buildHeaders(apiKey),
-        signal: signal ?? null,
-      });
+      response = await fetch(url, fetchOptions);
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         throw new WorkflowError('Adapter request aborted', {
@@ -143,7 +142,23 @@ export class ParcelPanelAdapter implements ServiceAdapter {
         retryable: true,
       });
     }
-    return response;
+
+    if (!response.ok) {
+      await this.throwHttpError(response, operation);
+    }
+
+    let json: unknown;
+    try {
+      json = await response.json();
+    } catch {
+      throw new WorkflowError('ParcelPanelAdapter: failed to parse response body', {
+        code: 'SERVICE_RESPONSE_INVALID',
+        category: 'SERVICE',
+        agentAction: 'report_to_user',
+        retryable: false,
+      });
+    }
+    return { status: response.status, data: json };
   }
 
   private async throwHttpError(response: Response, operation: string): Promise<never> {
@@ -174,6 +189,16 @@ export class ParcelPanelAdapter implements ServiceAdapter {
     if (status === 401) {
       throw new WorkflowError('ParcelPanel authentication failed — check API key', {
         code: 'SERVICE_AUTH_FAILED',
+        category: 'SERVICE',
+        agentAction: 'stop',
+        retryable: false,
+        details,
+      });
+    }
+
+    if (status === 403) {
+      throw new WorkflowError(`Account lacks permission for ParcelPanel operation '${operation}'`, {
+        code: 'SERVICE_HTTP_4XX',
         category: 'SERVICE',
         agentAction: 'stop',
         retryable: false,
@@ -253,7 +278,8 @@ export class ParcelPanelAdapter implements ServiceAdapter {
         );
       }
 
-      // Normalize order_number: trim whitespace then strip leading '#'
+      // Normalise order_number: trim whitespace then strip leading '#'.
+      // Shopify formats order numbers as '#1030'; ParcelPanel expects '1030'.
       let normalizedOrderNumber = rawOrderNumber.trim();
       if (normalizedOrderNumber.startsWith('#')) {
         normalizedOrderNumber = normalizedOrderNumber.slice(1);
@@ -261,68 +287,7 @@ export class ParcelPanelAdapter implements ServiceAdapter {
 
       const url = `${this.baseUrl}/api/v2/tracking/order?order_number=${encodeURIComponent(normalizedOrderNumber)}`;
 
-      const response = await this.executeRequest(url, apiKey, signal);
-
-      if (!response.ok) {
-        await this.throwHttpError(response, 'get_tracking');
-      }
-
-      // Parse response body
-      let parsed: unknown;
-      try {
-        parsed = await response.json();
-      } catch {
-        throw new WorkflowError('ParcelPanelAdapter: failed to parse response body', {
-          code: 'SERVICE_RESPONSE_INVALID',
-          category: 'SERVICE',
-          agentAction: 'report_to_user',
-          retryable: false,
-        });
-      }
-
-      const body = parsed as ParcelPanelOrderBody;
-
-      // Validate shape
-      if (body.order === undefined || body.order === null) {
-        throw new WorkflowError('ParcelPanelAdapter: response missing order field', {
-          code: 'SERVICE_RESPONSE_INVALID',
-          category: 'SERVICE',
-          agentAction: 'report_to_user',
-          retryable: false,
-        });
-      }
-
-      if (typeof body.order.tracking_link !== 'string') {
-        throw new WorkflowError(
-          'ParcelPanelAdapter: response missing or invalid order.tracking_link',
-          {
-            code: 'SERVICE_RESPONSE_INVALID',
-            category: 'SERVICE',
-            agentAction: 'report_to_user',
-            retryable: false,
-          },
-        );
-      }
-
-      const shipments = body.order.shipments ?? [];
-      const firstShipment = shipments[0];
-
-      const normalized: NormalizedTracking =
-        firstShipment !== undefined
-          ? {
-              tracking_url: body.order.tracking_link,
-              carrier: firstShipment.carrier?.name ?? null,
-              tracking_number: firstShipment.tracking_number ?? null,
-              status: firstShipment.status ?? null,
-            }
-          : {
-              tracking_url: body.order.tracking_link,
-              carrier: null,
-              tracking_number: null,
-              status: null,
-            };
-
-      return { status: 200, data: normalized };
+      return this.executeRequest('GET', url, 'get_tracking', apiKey, undefined, signal);
     }
 
     throw new WorkflowError(`ParcelPanelAdapter: operation "${operation}" is not supported`, {
