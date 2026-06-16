@@ -1,8 +1,7 @@
 # Built-in Service Adapters
 
-Reference documentation for the three service adapters shipped with `@sensigo/realm`:
-`FileSystemAdapter`, `GitHubAdapter`, and `GenericHttpAdapter`. Each adapter implements
-`ServiceAdapter` from `@sensigo/realm` and can be registered with `ExtensionRegistry`.
+Reference documentation for the service adapters shipped with `@sensigo/realm`. Each
+adapter implements `ServiceAdapter` and can be registered with `ExtensionRegistry`.
 The `SlackAdapter` is documented in [Slack Gate Modes](realm-agent-slack.md).
 
 ---
@@ -634,3 +633,634 @@ Deletes up to 10 records in one call. `DELETE /v0/{base}/{table}?records[]=id1&r
 On HTTP 429 the adapter reads the `Retry-After` header into `retry_after` when present;
 Airtable does not send one, so the engine falls back to the adapter's
 `defaultRetryAfterSeconds` of **30 seconds**.
+
+---
+
+## GorgiasAdapter
+
+Communicates with the Gorgias helpdesk API. Supports tickets, messages, and customers.
+Universal passthrough — the raw Gorgias API response is returned without transformation.
+
+### Constructor config
+
+| Key          | Type   | Required | Description                                                               |
+| ------------ | ------ | -------- | ------------------------------------------------------------------------- |
+| `domain`     | string | Yes      | Gorgias account subdomain — e.g. `"acme"` resolves to `acme.gorgias.com`. |
+| `auth.type`  | string | Yes      | Must be `"basic"`.                                                        |
+| `auth.token` | string | Yes      | Combined credential: `"{email}:{api_key}"`.                               |
+| `base_url`   | string | No       | Override for tests — replaces `https://{domain}.gorgias.com`.             |
+
+```typescript
+import { GorgiasAdapter, ExtensionRegistry } from '@sensigo/realm';
+
+const registry = new ExtensionRegistry();
+registry.register(
+  'adapter',
+  'gorgias',
+  new GorgiasAdapter('gorgias', {
+    domain: 'acme',
+    auth: {
+      type: 'basic',
+      token: `${process.env['GORGIAS_EMAIL']}:${process.env['GORGIAS_API_KEY']}`,
+    },
+  }),
+);
+```
+
+### YAML declaration
+
+```yaml
+services:
+  gorgias:
+    adapter: gorgias
+    trust: engine_delivered
+```
+
+### Operations — fetch (`service_method: fetch`)
+
+#### `get_ticket`
+
+Fetches a single ticket by ID. `GET /tickets/{ticket_id}`.
+
+| Parameter   | Type   | Required | Description                 |
+| ----------- | ------ | -------- | --------------------------- |
+| `ticket_id` | number | Yes      | Positive integer ticket ID. |
+
+**Response:** Raw Gorgias ticket object.
+
+---
+
+#### `get_messages`
+
+Fetches messages, paginating across multiple API pages and returning a merged result.
+
+| Parameter   | Type   | Required | Description                                                                     |
+| ----------- | ------ | -------- | ------------------------------------------------------------------------------- |
+| `ticket_id` | number | No       | Filter to a specific ticket. When omitted, returns messages across all tickets. |
+| `limit`     | number | No       | Maximum messages to return. Default 30, cap 200.                                |
+| `order_by`  | string | No       | Forwarded to the API as-is when provided.                                       |
+
+**Response:**
+
+| Field       | Type    | Description                                             |
+| ----------- | ------- | ------------------------------------------------------- |
+| `messages`  | array   | Accumulated messages in API order, up to `limit`.       |
+| `truncated` | boolean | `true` when the limit was reached before the last page. |
+
+---
+
+#### `list_tickets`
+
+Single-page ticket search. `GET /tickets?{params}`.
+
+| Parameter     | Type                          | Required | Description                                                                                    |
+| ------------- | ----------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
+| scalar params | `string \| number \| boolean` | No       | Any scalar param (`status`, `assignee_id`, `limit`, `cursor`, etc.) forwarded as query string. |
+
+Non-scalar values (arrays, objects) are silently dropped — there is no multi-value filter syntax.
+
+**Pagination:** the response includes `meta.next_cursor`. Pass it back as `cursor` for the next page. The caller manages the loop.
+
+**YAML step example:**
+
+```yaml
+list_open_tickets:
+  description: List open Gorgias tickets.
+  execution: auto
+  uses_service: gorgias
+  service_method: fetch
+  operation: list_tickets
+  input_map:
+    status: { $literal: 'open' }
+    limit: { $literal: 30 }
+```
+
+---
+
+#### `get_customer`
+
+Fetches a single customer by ID. `GET /customers/{customer_id}`.
+
+| Parameter     | Type   | Required | Description                   |
+| ------------- | ------ | -------- | ----------------------------- |
+| `customer_id` | number | Yes      | Positive integer customer ID. |
+
+**Response:** Raw Gorgias customer object.
+
+---
+
+#### `list_customers`
+
+Single-page customer search. `GET /customers?{params}`. Same scalar-passthrough and cursor-pagination pattern as `list_tickets`.
+
+---
+
+### Operations — create (`service_method: create`)
+
+#### `create_message`
+
+Posts a message on a ticket. `POST /tickets/{ticket_id}/messages`.
+
+| Parameter    | Type   | Required | Description                                                      |
+| ------------ | ------ | -------- | ---------------------------------------------------------------- |
+| `ticket_id`  | number | Yes      | Ticket to post on. Routed to the URL and stripped from the body. |
+| other fields | any    | No       | All remaining params forwarded verbatim as the POST body.        |
+
+---
+
+#### `create_ticket`
+
+Creates a new ticket. `POST /tickets`.
+
+| Parameter  | Type | Required | Description                                  |
+| ---------- | ---- | -------- | -------------------------------------------- |
+| any fields | any  | No       | All params forwarded as-is as the POST body. |
+
+---
+
+#### `create_customer`
+
+Creates a new customer. `POST /customers`. All params forwarded as the POST body.
+
+---
+
+### Operations — update (`service_method: update`)
+
+#### `update_ticket`
+
+Updates a ticket. `PUT /tickets/{ticket_id}`.
+
+| Parameter    | Type   | Required | Description                                                     |
+| ------------ | ------ | -------- | --------------------------------------------------------------- |
+| `ticket_id`  | number | Yes      | Ticket to update. Routed to the URL and stripped from the body. |
+| other fields | any    | No       | All remaining params forwarded verbatim as the PUT body.        |
+
+---
+
+#### `update_customer`
+
+Updates a customer. `PUT /customers/{customer_id}`.
+
+| Parameter     | Type   | Required | Description                                                       |
+| ------------- | ------ | -------- | ----------------------------------------------------------------- |
+| `customer_id` | number | Yes      | Customer to update. Routed to the URL and stripped from the body. |
+| other fields  | any    | No       | All remaining params forwarded verbatim as the PUT body.          |
+
+---
+
+### Errors
+
+| Condition                      | Error code                  | `agent_action`     | Retryable |
+| ------------------------------ | --------------------------- | ------------------ | --------- |
+| Bad params (pre-request)       | `ADAPTER_VALIDATION_FAILED` | `provide_input`    | No        |
+| Auth failed (HTTP 401)         | `SERVICE_AUTH_FAILED`       | `stop`             | No        |
+| Forbidden (HTTP 403)           | `SERVICE_HTTP_4XX`          | `stop`             | No        |
+| Not found (HTTP 404)           | `SERVICE_HTTP_4XX`          | `stop`             | No        |
+| Other client error (HTTP 4xx)  | `SERVICE_HTTP_4XX`          | `stop`             | No        |
+| Rate limited (HTTP 429)        | `SERVICE_RATE_LIMITED`      | `wait_and_proceed` | Yes       |
+| Server error (HTTP 5xx)        | `SERVICE_HTTP_5XX`          | `report_to_user`   | Yes       |
+| Network unreachable            | `NETWORK_UNREACHABLE`       | `wait_for_human`   | Yes       |
+| Request aborted (step timeout) | `STEP_ABORTED`              | `report_to_user`   | No        |
+| Unknown operation              | `ADAPTER_OP_UNSUPPORTED`    | `report_to_user`   | No        |
+
+On HTTP 429 the adapter reads `Retry-After` into `retry_after` when present.
+Error responses preserve the original HTTP body in `details.body`.
+
+When using the `rate_limit` config on the YAML service declaration, set `min_retry_seconds`
+to enforce a floor on retry delay — useful if the Gorgias API sends `Retry-After: 1` while
+the actual limit persists longer:
+
+```yaml
+services:
+  gorgias:
+    adapter: gorgias
+    trust: engine_delivered
+    rate_limit:
+      min_retry_seconds: 30
+```
+
+---
+
+## ParcelPanelAdapter
+
+Communicates with the ParcelPanel / ParcelWILL tracking API v2. Universal passthrough — the
+raw API response is returned without transformation. Multi-store: each store is identified by
+a short key and has its own API key.
+
+Exported types: `ParcelPanelOrderBody`, `ParcelPanelShipment` — available from `@sensigo/realm`.
+
+### Constructor config
+
+| Key        | Type                    | Required | Description                                                          |
+| ---------- | ----------------------- | -------- | -------------------------------------------------------------------- |
+| `stores`   | `Record<string,string>` | Yes      | Map of store key → ParcelPanel API key. At least one entry required. |
+| `base_url` | string                  | No       | Override for tests — replaces `https://open.parcelwill.com`.         |
+
+```typescript
+import { ParcelPanelAdapter, ExtensionRegistry } from '@sensigo/realm';
+
+const registry = new ExtensionRegistry();
+registry.register(
+  'adapter',
+  'parcelpanel',
+  new ParcelPanelAdapter('parcelpanel', {
+    stores: {
+      mystore: process.env['PARCELPANEL_API_KEY_MYSTORE'] ?? '',
+    },
+  }),
+);
+```
+
+### YAML declaration
+
+```yaml
+services:
+  parcelpanel:
+    adapter: parcelpanel
+    trust: engine_delivered
+```
+
+### Operations — fetch (`service_method: fetch`)
+
+#### `get_tracking`
+
+Looks up an order by order number. `GET /api/v2/tracking/order?order_number={n}`.
+
+| Parameter      | Type   | Required | Description                                                                                                                                |
+| -------------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `store`        | string | Yes      | Store key. Must match a key in the `stores` config map.                                                                                    |
+| `order_number` | string | Yes      | Order number. Leading whitespace is trimmed; a leading `#` is stripped before the request is sent. Pass `"#1030"` or `"1030"` — both work. |
+
+**Response:** Raw ParcelPanel API body (`ParcelPanelOrderBody` shape).
+
+**YAML step example:**
+
+```yaml
+fetch_tracking:
+  description: Fetch tracking info for the order.
+  execution: auto
+  uses_service: parcelpanel
+  service_method: fetch
+  operation: get_tracking
+  input_map:
+    store: run.params.store
+    order_number: run.params.order_number
+```
+
+---
+
+#### `get_tracking_by_id`
+
+Looks up an order by Shopify numeric order ID. `GET /api/v2/tracking/order?order_id={id}`.
+
+| Parameter  | Type             | Required | Description                                                                                                                                       |
+| ---------- | ---------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `store`    | string           | Yes      | Store key. Must match a key in the `stores` config map.                                                                                           |
+| `order_id` | number \| string | Yes      | Shopify numeric order ID (e.g. `6140516335690`). When passed as a number, must be a positive integer. When passed as a string, must be non-empty. |
+
+**Response:** Raw ParcelPanel API body (`ParcelPanelOrderBody` shape).
+
+---
+
+### Errors
+
+| Condition                      | Error code                  | `agent_action`     | Retryable |
+| ------------------------------ | --------------------------- | ------------------ | --------- |
+| Bad params (pre-request)       | `ADAPTER_VALIDATION_FAILED` | `provide_input`    | No        |
+| Auth failed (HTTP 401)         | `SERVICE_AUTH_FAILED`       | `stop`             | No        |
+| Forbidden (HTTP 403)           | `SERVICE_HTTP_4XX`          | `stop`             | No        |
+| Not found (HTTP 404)           | `SERVICE_NOT_FOUND`         | `provide_input`    | No        |
+| Rate limited (HTTP 429)        | `SERVICE_RATE_LIMITED`      | `wait_and_proceed` | Yes       |
+| Other client error (HTTP 4xx)  | `SERVICE_HTTP_4XX`          | `stop`             | No        |
+| Server error (HTTP 5xx)        | `SERVICE_HTTP_5XX`          | `report_to_user`   | Yes       |
+| Network unreachable            | `NETWORK_UNREACHABLE`       | `wait_for_human`   | Yes       |
+| Request aborted (step timeout) | `STEP_ABORTED`              | `report_to_user`   | No        |
+| Unknown operation              | `ADAPTER_OP_UNSUPPORTED`    | `report_to_user`   | No        |
+
+---
+
+## ShopifyAdapter
+
+Communicates with the Shopify Admin GraphQL API. A thin GraphQL executor: the caller provides
+the complete query string and optional variables; the adapter handles authentication, store
+routing, and error classification. Multi-store: each store has its own `shop_domain` and
+`access_token`.
+
+### Constructor config
+
+| Key                        | Type   | Required | Description                                                                                               |
+| -------------------------- | ------ | -------- | --------------------------------------------------------------------------------------------------------- |
+| `stores`                   | object | Yes      | Map of store key → `{ shop_domain, access_token }`. At least one entry required.                          |
+| `stores[key].shop_domain`  | string | Yes      | Shopify subdomain — e.g. `"my-store"` resolves to `my-store.myshopify.com`. Must match `*.myshopify.com`. |
+| `stores[key].access_token` | string | Yes      | Private app access token (`shpat_…`).                                                                     |
+| `api_version`              | string | No       | Shopify Admin API version, e.g. `"2024-04"`. Default: `2024-04`. Format: `YYYY-MM`.                       |
+| `base_url`                 | string | No       | Override for tests — replaces `https://{shop_domain}`.                                                    |
+
+```typescript
+import { ShopifyAdapter, ExtensionRegistry } from '@sensigo/realm';
+
+const registry = new ExtensionRegistry();
+registry.register(
+  'adapter',
+  'shopify',
+  new ShopifyAdapter('shopify', {
+    stores: {
+      mystore: {
+        shop_domain: 'my-store.myshopify.com',
+        access_token: process.env['SHOPIFY_ACCESS_TOKEN'] ?? '',
+      },
+    },
+  }),
+);
+```
+
+### YAML declaration
+
+```yaml
+services:
+  shopify:
+    adapter: shopify
+    trust: engine_delivered
+```
+
+### Operations — fetch (`service_method: fetch`)
+
+#### `query`
+
+Executes any Shopify Admin GraphQL query or mutation. `POST /admin/api/{version}/graphql.json`.
+
+| Parameter   | Type   | Required | Description                                                     |
+| ----------- | ------ | -------- | --------------------------------------------------------------- |
+| `store`     | string | Yes      | Store key. Must match a key in the `stores` config map.         |
+| `query`     | string | Yes      | Full GraphQL query or mutation string.                          |
+| `variables` | object | No       | Variables map. Omitted from the request body when not provided. |
+
+**Response:** Raw GraphQL response body — `{ data: {...} }` or `{ data: {...}, errors: [...] }`.
+
+Non-THROTTLED GraphQL errors (field errors, permission errors, etc.) are returned as-is in the
+raw body — the adapter does not throw on them. The caller inspects `result.data.errors` and
+decides how to handle partial success.
+
+**YAML step example:**
+
+```yaml
+fetch_order:
+  description: Fetch the Shopify order by name.
+  execution: auto
+  uses_service: shopify
+  service_method: fetch
+  operation: query
+  input_map:
+    store: run.params.store
+    query:
+      $literal: |
+        query OrderByName($query: String!) {
+          orders(first: 1, query: $query) {
+            edges {
+              node {
+                id
+                name
+                displayFulfillmentStatus
+                createdAt
+              }
+            }
+          }
+        }
+    variables:
+      query: 'name:#{{ run.params.order_name }}'
+```
+
+### Errors
+
+| Condition                      | Error code                  | `agent_action`     | Retryable |
+| ------------------------------ | --------------------------- | ------------------ | --------- |
+| Bad params (pre-request)       | `ADAPTER_VALIDATION_FAILED` | `provide_input`    | No        |
+| Auth failed (HTTP 401)         | `SERVICE_AUTH_FAILED`       | `stop`             | No        |
+| Forbidden (HTTP 403)           | `SERVICE_HTTP_4XX`          | `stop`             | No        |
+| Rate limited (HTTP 429)        | `SERVICE_RATE_LIMITED`      | `wait_and_proceed` | Yes       |
+| GraphQL `THROTTLED` error      | `SERVICE_RATE_LIMITED`      | `wait_and_proceed` | Yes       |
+| Other client error (HTTP 4xx)  | `SERVICE_HTTP_4XX`          | `stop`             | No        |
+| Server error (HTTP 5xx)        | `SERVICE_HTTP_5XX`          | `report_to_user`   | Yes       |
+| Non-THROTTLED GraphQL errors   | _(pass through)_            | _(pass through)_   | —         |
+| Network unreachable            | `NETWORK_UNREACHABLE`       | `wait_for_human`   | Yes       |
+| Request aborted (step timeout) | `STEP_ABORTED`              | `report_to_user`   | No        |
+| Unknown operation              | `ADAPTER_OP_UNSUPPORTED`    | `report_to_user`   | No        |
+
+On HTTP 429 the adapter reads `Retry-After` into `retry_after` when present. GraphQL
+`THROTTLED` uses a fixed `retry_after: 2` seconds.
+
+---
+
+## NotionAdapter
+
+Communicates with the Notion REST API for page, block, and search operations.
+Uses Notion API version `2026-03-11`. Single API key — not multi-store.
+
+### Constructor config
+
+| Key        | Type   | Required | Description                                                                  |
+| ---------- | ------ | -------- | ---------------------------------------------------------------------------- |
+| `api_key`  | string | Yes      | Notion integration token. Obtain from https://www.notion.so/my-integrations. |
+| `base_url` | string | No       | Override for tests — replaces `https://api.notion.com`.                      |
+
+```typescript
+import { NotionAdapter, ExtensionRegistry } from '@sensigo/realm';
+
+const registry = new ExtensionRegistry();
+registry.register(
+  'adapter',
+  'notion',
+  new NotionAdapter('notion', {
+    api_key: process.env['NOTION_API_KEY'] ?? '',
+  }),
+);
+```
+
+### YAML declaration
+
+```yaml
+services:
+  notion:
+    adapter: notion
+    trust: engine_delivered
+```
+
+### Operations — fetch (`service_method: fetch`)
+
+#### `get_page`
+
+Fetches a page by ID. `GET /v1/pages/{page_id}`.
+
+| Parameter           | Type     | Required | Description                                                     |
+| ------------------- | -------- | -------- | --------------------------------------------------------------- |
+| `page_id`           | string   | Yes      | Notion page ID.                                                 |
+| `filter_properties` | string[] | No       | Allowlist of property IDs to include. Reduces response payload. |
+
+**Response:** Raw Notion page object.
+
+---
+
+#### `list_block_children`
+
+Lists child blocks of a page or block. `GET /v1/blocks/{block_id}/children`.
+
+| Parameter      | Type   | Required | Description                                                 |
+| -------------- | ------ | -------- | ----------------------------------------------------------- |
+| `block_id`     | string | Yes      | Block or page ID.                                           |
+| `start_cursor` | string | No       | Pagination cursor from a previous response's `next_cursor`. |
+| `page_size`    | number | No       | Number of blocks to return. Notion's default and max apply. |
+
+**Response:** Raw Notion list object — `{ object: "list", results: [...], has_more: boolean, next_cursor: string|null }`.
+
+**Pagination:** pass `next_cursor` back as `start_cursor` on the next call. The caller manages the loop.
+
+---
+
+#### `query_data_source`
+
+Queries a Notion data source (database). `POST /v1/data_sources/{data_source_id}/query`.
+
+| Parameter           | Type     | Required | Description                                                 |
+| ------------------- | -------- | -------- | ----------------------------------------------------------- |
+| `data_source_id`    | string   | Yes      | Data source (database) ID.                                  |
+| `filter`            | object   | No       | Notion filter object, forwarded as-is.                      |
+| `sorts`             | array    | No       | Notion sorts array, forwarded as-is.                        |
+| `start_cursor`      | string   | No       | Pagination cursor from a previous response's `next_cursor`. |
+| `page_size`         | number   | No       | Number of results to return.                                |
+| `filter_properties` | string[] | No       | Allowlist of property IDs to include in the response.       |
+| `in_trash`          | boolean  | No       | When `true`, queries trashed entries instead.               |
+
+**Response:** Raw Notion list object — `{ object: "list", results: [...], has_more: boolean, next_cursor: string|null }`.
+
+**YAML step example:**
+
+```yaml
+query_tasks:
+  description: Query open tasks from the Notion database.
+  execution: auto
+  uses_service: notion
+  service_method: fetch
+  operation: query_data_source
+  input_map:
+    data_source_id: { $literal: 'abc123...' }
+    filter:
+      property: Status
+      status:
+        equals: In Progress
+```
+
+---
+
+#### `search`
+
+Searches across all pages and databases accessible to the integration. `POST /v1/search`.
+
+| Parameter      | Type   | Required | Description                                                                                               |
+| -------------- | ------ | -------- | --------------------------------------------------------------------------------------------------------- |
+| `query`        | string | No       | Text to search for. When omitted, all accessible objects are returned.                                    |
+| `filter`       | object | No       | Must be `{ property: "object", value: "page" \| "database" \| "data_source" }`. Validated before sending. |
+| `sort`         | object | No       | Notion sort object, forwarded as-is.                                                                      |
+| `start_cursor` | string | No       | Pagination cursor.                                                                                        |
+| `page_size`    | number | No       | Number of results to return.                                                                              |
+
+**Response:** Raw Notion list object — `{ object: "list", results: [...], has_more: boolean, next_cursor: string|null }`.
+
+---
+
+### Operations — create (`service_method: create`)
+
+#### `create_page`
+
+Creates a new page. `POST /v1/pages`.
+
+> **Non-retryable on network failure** — retrying a failed create risks creating a duplicate page.
+
+| Parameter    | Type   | Required | Description                                                                           |
+| ------------ | ------ | -------- | ------------------------------------------------------------------------------------- |
+| `parent`     | object | Yes      | One of: `{ page_id: "..." }`, `{ data_source_id: "..." }`, or `{ workspace: true }`.  |
+| `properties` | object | No       | Page properties map, forwarded as-is.                                                 |
+| `children`   | array  | No       | Block children to create with the page (max 100). Mutually exclusive with `markdown`. |
+| `markdown`   | string | No       | Markdown content to render as blocks. Mutually exclusive with `children`.             |
+| `icon`       | object | No       | Notion icon object, forwarded as-is.                                                  |
+| `cover`      | object | No       | Notion cover object, forwarded as-is.                                                 |
+
+**Response:** Raw Notion page object (HTTP 200).
+
+---
+
+#### `append_block_children`
+
+Appends block children to an existing page or block. `PATCH /v1/blocks/{block_id}/children`.
+
+> **Non-retryable on network failure** — retrying risks appending duplicate blocks.
+
+| Parameter  | Type   | Required | Description                                                                                                                                      |
+| ---------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `block_id` | string | Yes      | Block or page ID to append to.                                                                                                                   |
+| `children` | array  | Yes      | Non-empty array of block objects (max 100). Each must be a plain object with a non-empty `type` field.                                           |
+| `position` | object | No       | Where to insert: `{ type: "end" }`, `{ type: "start" }`, or `{ type: "after_block", after_block: { id: "..." } }`. Defaults to end when omitted. |
+
+**Response:** Raw Notion list object of created blocks.
+
+---
+
+### Operations — update (`service_method: update`)
+
+#### `update_page`
+
+Updates a page's properties or metadata. `PATCH /v1/pages/{page_id}`.
+
+| Parameter    | Type    | Required | Description                                              |
+| ------------ | ------- | -------- | -------------------------------------------------------- |
+| `page_id`    | string  | Yes      | Page ID.                                                 |
+| `properties` | object  | No       | Properties to update, forwarded as-is.                   |
+| `icon`       | object  | No       | New icon, forwarded as-is.                               |
+| `cover`      | object  | No       | New cover, forwarded as-is.                              |
+| `in_trash`   | boolean | No       | `true` to move the page to trash, `false` to restore it. |
+| `is_locked`  | boolean | No       | `true` to lock the page (prevents edits without unlock). |
+
+> `archived` is deprecated — use `in_trash` instead. Passing `archived` throws `ADAPTER_VALIDATION_FAILED`.
+
+**Response:** Raw Notion page object.
+
+---
+
+### Operations — delete (`service_method: delete`)
+
+#### `delete_block`
+
+Deletes (trashes) a block. `DELETE /v1/blocks/{block_id}`.
+
+| Parameter  | Type   | Required | Description |
+| ---------- | ------ | -------- | ----------- |
+| `block_id` | string | Yes      | Block ID.   |
+
+**Response:** Raw Notion block object of the deleted block.
+
+---
+
+### Errors
+
+| Condition                      | Error code                  | `agent_action`   | Retryable |
+| ------------------------------ | --------------------------- | ---------------- | --------- |
+| Bad params (pre-request)       | `ADAPTER_VALIDATION_FAILED` | `provide_input`  | No        |
+| Bad request (HTTP 400)         | `SERVICE_HTTP_4XX`          | `stop`           | No        |
+| Auth failed (HTTP 401)         | `SERVICE_AUTH_FAILED`       | `stop`           | No        |
+| Forbidden (HTTP 403)           | `SERVICE_HTTP_4XX`          | `stop`           | No        |
+| Not found (HTTP 404)           | `SERVICE_NOT_FOUND`         | `provide_input`  | No        |
+| Conflict (HTTP 409)            | `SERVICE_HTTP_4XX`          | `stop`           | No        |
+| Rate limited (HTTP 429)        | `SERVICE_RATE_LIMITED`      | `wait_for_human` | Yes       |
+| Service unavailable (HTTP 503) | `SERVICE_HTTP_5XX`          | `wait_for_human` | Yes       |
+| Other server error (HTTP 5xx)  | `SERVICE_HTTP_5XX`          | `report_to_user` | Yes       |
+| Malformed response body        | `SERVICE_RESPONSE_INVALID`  | `report_to_user` | No        |
+| Network unreachable            | `NETWORK_UNREACHABLE`       | `wait_for_human` | Yes       |
+| Request aborted (step timeout) | `STEP_ABORTED`              | `report_to_user` | No        |
+| Unknown operation              | `ADAPTER_OP_UNSUPPORTED`    | `report_to_user` | No        |
+
+HTTP 400 and 409 error responses include the Notion API's own `message` field in the error text.
+All errors include the `x-notion-request-id` response header in `details.notionRequestId` when
+present — useful for support tickets with Notion.
+
+Note: Notion's HTTP 429 uses `agent_action: wait_for_human` rather than `wait_and_proceed`.
+Notion's rate limit documentation does not provide reliable `Retry-After` values; manual
+acknowledgement is the safer recovery path.
