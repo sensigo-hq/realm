@@ -5,52 +5,6 @@ import { parseRetryAfterHeader } from './adapter-utils.js';
 
 const SHOPIFY_DEFAULT_API_VERSION = '2024-04';
 
-const ORDERS_BY_NAME_QUERY = `
-query OrderByName($query: String!) {
-  orders(first: 1, query: $query) {
-    edges {
-      node {
-        id
-        legacyResourceId
-        number
-        name
-        displayFinancialStatus
-        displayFulfillmentStatus
-        cancelledAt
-        cancelReason
-        createdAt
-        customer {
-          firstName
-          lastName
-          email
-        }
-        currentTotalPriceSet {
-          shopMoney { amount currencyCode }
-        }
-        currentSubtotalPriceSet {
-          shopMoney { amount }
-        }
-        currentShippingPriceSet {
-          shopMoney { amount }
-        }
-        discountCodes
-        lineItems(first: 50) {
-          edges {
-            node {
-              name
-              quantity
-              originalUnitPriceSet {
-                shopMoney { amount }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-`.trim();
-
 /**
  * Configuration for ShopifyAdapter.
  */
@@ -80,96 +34,18 @@ export interface ShopifyAdapterConfig {
   base_url?: string;
 }
 
-/** Normalized order returned by fetch('get_order'). */
-export interface NormalizedOrder {
-  /** Shopify global ID, e.g. "gid://shopify/Order/450789469" */
-  id: string;
-  /** Legacy numeric REST resource ID, e.g. "450789469" */
-  legacy_id: string;
-  /** Sequential order number, e.g. 1234 */
-  order_number: number;
-  /** Order name with store prefix, e.g. "#1234" or "#B1001" */
-  name: string;
-  /** Financial status for display, e.g. "PAID". Null if not available. */
-  financial_status: string | null;
-  /** Fulfillment status for display, e.g. "FULFILLED". Always present. */
-  fulfillment_status: string;
-  /** ISO 8601 datetime when the order was cancelled, or null. */
-  cancelled_at: string | null;
-  /** Cancellation reason, or null. */
-  cancel_reason: string | null;
-  /** ISO 8601 datetime when the order was created. */
-  created_at: string;
-  /** Customer details. Null for guest checkouts. */
-  customer: {
-    first_name: string;
-    last_name: string;
-    /** Customer email. Null for phone-only customers. */
-    email: string | null;
-  } | null;
-  /** Total order price including taxes and discounts, as a decimal string e.g. "99.99". */
-  total_price: string;
-  /** Subtotal price, as a decimal string. */
-  subtotal_price: string;
-  /** Current shipping price after refunds and discounts, as a decimal string. "0.00" if no shipping. */
-  shipping_total: string;
-  /** Currency code for shop money, e.g. "EUR". */
-  currency: string;
-  /** Discount codes applied to the order. */
-  discount_codes: string[];
-  /** Order line items. */
-  line_items: Array<{
-    name: string;
-    quantity: number;
-    price: string;
-  }>;
-}
-
-/** Raw GraphQL node shape from the Shopify API. */
-interface ShopifyOrderNode {
-  id: unknown;
-  legacyResourceId: unknown;
-  number: unknown;
-  name: unknown;
-  displayFinancialStatus: unknown;
-  displayFulfillmentStatus: unknown;
-  cancelledAt: unknown;
-  cancelReason: unknown;
-  createdAt: unknown;
-  customer:
-    | {
-        firstName: string;
-        lastName: string;
-        email: string;
-      }
-    | null
-    | undefined;
-  currentTotalPriceSet:
-    | { shopMoney: { amount: unknown; currencyCode: unknown } }
-    | null
-    | undefined;
-  currentSubtotalPriceSet: { shopMoney: { amount: unknown } } | null | undefined;
-  currentShippingPriceSet: { shopMoney: { amount: unknown } } | null | undefined;
-  discountCodes: unknown;
-  lineItems:
-    | {
-        edges: Array<{
-          node: {
-            name: string;
-            quantity: number;
-            originalUnitPriceSet: { shopMoney: { amount: unknown } } | null | undefined;
-          };
-        }>;
-      }
-    | null
-    | undefined;
-}
-
 /**
  * ShopifyAdapter communicates with the Shopify Admin GraphQL API.
  *
  * Supported operations:
- *   fetch('get_order', { store, order_name })   — POST /admin/api/{version}/graphql.json
+ *   fetch('query', { store, query, variables? })   — POST /admin/api/{version}/graphql.json
+ *
+ * The caller provides the complete GraphQL query string and optional variables.
+ * The adapter handles authentication, store routing, and error classification.
+ * The raw GraphQL response body is returned — no field selection or renaming.
+ *
+ * Throws SERVICE_RATE_LIMITED on HTTP 429 or GraphQL THROTTLED.
+ * All other GraphQL errors (partial success, field errors) pass through to the caller.
  */
 export class ShopifyAdapter implements ServiceAdapter {
   readonly id: string;
@@ -282,6 +158,16 @@ export class ShopifyAdapter implements ServiceAdapter {
       });
     }
 
+    if (status === 403) {
+      throw new WorkflowError(`Account lacks permission for Shopify operation '${operation}'`, {
+        code: 'SERVICE_HTTP_4XX',
+        category: 'SERVICE',
+        agentAction: 'stop',
+        retryable: false,
+        details,
+      });
+    }
+
     if (status >= 400 && status < 500) {
       throw new WorkflowError(`HTTP ${status}: ${response.statusText}`, {
         code: 'SERVICE_HTTP_4XX',
@@ -302,117 +188,17 @@ export class ShopifyAdapter implements ServiceAdapter {
     });
   }
 
-  private normalizeOrder(
-    node: ShopifyOrderNode,
-    store: string,
-    normalizedOrderName: string,
-  ): NormalizedOrder {
-    if (typeof node.id !== 'string' || node.id === '') {
-      throw new WorkflowError('ShopifyAdapter: missing order id in response', {
-        code: 'SERVICE_RESPONSE_INVALID',
-        category: 'SERVICE',
-        agentAction: 'report_to_user',
-        retryable: false,
-      });
-    }
-    if (typeof node.number !== 'number') {
-      throw new WorkflowError('ShopifyAdapter: missing order number in response', {
-        code: 'SERVICE_RESPONSE_INVALID',
-        category: 'SERVICE',
-        agentAction: 'report_to_user',
-        retryable: false,
-      });
-    }
-    if (typeof node.displayFulfillmentStatus !== 'string' || node.displayFulfillmentStatus === '') {
-      throw new WorkflowError('ShopifyAdapter: missing fulfillment_status in response', {
-        code: 'SERVICE_RESPONSE_INVALID',
-        category: 'SERVICE',
-        agentAction: 'report_to_user',
-        retryable: false,
-      });
-    }
-    if (typeof node.createdAt !== 'string') {
-      throw new WorkflowError('ShopifyAdapter: missing created_at in response', {
-        code: 'SERVICE_RESPONSE_INVALID',
-        category: 'SERVICE',
-        agentAction: 'report_to_user',
-        retryable: false,
-      });
-    }
-
-    const totalPrice = node.currentTotalPriceSet?.shopMoney?.amount;
-    if (typeof totalPrice !== 'string') {
-      throw new WorkflowError('ShopifyAdapter: missing total_price in response', {
-        code: 'SERVICE_RESPONSE_INVALID',
-        category: 'SERVICE',
-        agentAction: 'report_to_user',
-        retryable: false,
-      });
-    }
-
-    const subtotalPrice = node.currentSubtotalPriceSet?.shopMoney?.amount;
-    if (typeof subtotalPrice !== 'string') {
-      throw new WorkflowError('ShopifyAdapter: missing subtotal_price in response', {
-        code: 'SERVICE_RESPONSE_INVALID',
-        category: 'SERVICE',
-        agentAction: 'report_to_user',
-        retryable: false,
-      });
-    }
-
-    const customer =
-      node.customer != null
-        ? {
-            first_name: node.customer.firstName,
-            last_name: node.customer.lastName,
-            email: node.customer.email || null,
-          }
-        : null;
-
-    const lineItems = (node.lineItems?.edges ?? []).map((edge) => ({
-      name: edge.node.name,
-      quantity: edge.node.quantity,
-      price: (edge.node.originalUnitPriceSet?.shopMoney?.amount as string | undefined) ?? '0.00',
-    }));
-
-    void store;
-    void normalizedOrderName;
-
-    return {
-      id: node.id,
-      legacy_id: String(node.legacyResourceId ?? ''),
-      order_number: node.number,
-      name: String(node.name ?? ''),
-      financial_status:
-        typeof node.displayFinancialStatus === 'string' ? node.displayFinancialStatus : null,
-      fulfillment_status: node.displayFulfillmentStatus,
-      cancelled_at: typeof node.cancelledAt === 'string' ? node.cancelledAt : null,
-      cancel_reason: typeof node.cancelReason === 'string' ? node.cancelReason : null,
-      created_at: node.createdAt,
-      customer,
-      total_price: totalPrice,
-      subtotal_price: subtotalPrice,
-      shipping_total:
-        (node.currentShippingPriceSet?.shopMoney?.amount as string | undefined) ?? '0.00',
-      currency: (node.currentTotalPriceSet?.shopMoney?.currencyCode as string | undefined) ?? '',
-      discount_codes: Array.isArray(node.discountCodes) ? (node.discountCodes as string[]) : [],
-      line_items: lineItems,
-    };
-  }
-
   async fetch(
     operation: string,
     params: Record<string, unknown>,
     _config: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<ServiceResponse> {
-    // config.auth is ignored — auth is set at construction time via stores map
-
-    if (operation === 'get_order') {
-      // Validate store param
+    if (operation === 'query') {
+      // Validate store
       const store = params['store'];
-      if (typeof store !== 'string') {
-        throw new WorkflowError('ShopifyAdapter: store param must be a string', {
+      if (typeof store !== 'string' || store === '') {
+        throw new WorkflowError('ShopifyAdapter: store param must be a non-empty string', {
           code: 'ADAPTER_VALIDATION_FAILED',
           category: 'ENGINE',
           agentAction: 'provide_input',
@@ -430,10 +216,10 @@ export class ShopifyAdapter implements ServiceAdapter {
         });
       }
 
-      // Validate order_name
-      const rawOrderName = params['order_name'];
-      if (typeof rawOrderName !== 'string' || rawOrderName === '') {
-        throw new WorkflowError('ShopifyAdapter: order_name param must be a non-empty string', {
+      // Validate query
+      const query = params['query'];
+      if (typeof query !== 'string' || query === '') {
+        throw new WorkflowError('ShopifyAdapter: query param must be a non-empty string', {
           code: 'ADAPTER_VALIDATION_FAILED',
           category: 'ENGINE',
           agentAction: 'provide_input',
@@ -441,22 +227,16 @@ export class ShopifyAdapter implements ServiceAdapter {
         });
       }
 
-      // Normalize order_name
-      let normalizedOrderName = rawOrderName.trim();
-      if (!normalizedOrderName.startsWith('#')) {
-        normalizedOrderName = '#' + normalizedOrderName;
-      }
-      if (!/^#.+$/.test(normalizedOrderName)) {
-        throw new WorkflowError('ShopifyAdapter: order_name is invalid after normalization', {
-          code: 'ADAPTER_VALIDATION_FAILED',
-          category: 'ENGINE',
-          agentAction: 'provide_input',
-          retryable: false,
-        });
-      }
+      // Variables are optional — no validation, passed through as-is
+      const variables = params['variables'];
 
       const base = this.baseUrlOverride ?? `https://${storeConfig.shop_domain}`;
       const url = `${base}/admin/api/${this.apiVersion}/graphql.json`;
+
+      const requestBody: Record<string, unknown> = { query };
+      if (variables !== undefined && variables !== null) {
+        requestBody['variables'] = variables;
+      }
 
       const requestOptions: RequestInit = {
         method: 'POST',
@@ -465,22 +245,18 @@ export class ShopifyAdapter implements ServiceAdapter {
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
-        body: JSON.stringify({
-          query: ORDERS_BY_NAME_QUERY,
-          variables: { query: `name:${normalizedOrderName}` },
-        }),
+        body: JSON.stringify(requestBody),
       };
 
       const response = await this.executeRequest(url, requestOptions, signal);
 
       if (!response.ok) {
-        await this.throwHttpError(response, 'get_order');
+        await this.throwHttpError(response, 'query');
       }
 
-      // Parse JSON response
-      let gqlBody: unknown;
+      let json: unknown;
       try {
-        gqlBody = await response.json();
+        json = await response.json();
       } catch {
         throw new WorkflowError('ShopifyAdapter: failed to parse GraphQL response', {
           code: 'SERVICE_RESPONSE_INVALID',
@@ -490,9 +266,8 @@ export class ShopifyAdapter implements ServiceAdapter {
         });
       }
 
-      const body = gqlBody as Record<string, unknown>;
-
-      // Check for GraphQL errors
+      // Throw only on THROTTLED — all other GraphQL errors pass through to the caller
+      const body = json as Record<string, unknown>;
       if (Array.isArray(body['errors']) && (body['errors'] as unknown[]).length > 0) {
         const errors = body['errors'] as Array<Record<string, unknown>>;
         const firstError = errors[0] as Record<string, unknown> | undefined;
@@ -506,50 +281,9 @@ export class ShopifyAdapter implements ServiceAdapter {
             retry_after: 2,
           });
         }
-        throw new WorkflowError('ShopifyAdapter: GraphQL errors in response', {
-          code: 'SERVICE_RESPONSE_INVALID',
-          category: 'SERVICE',
-          agentAction: 'report_to_user',
-          retryable: false,
-          details: { errors: body['errors'] },
-        });
       }
 
-      // Validate edges shape
-      const data = body['data'] as Record<string, unknown> | undefined;
-      const orders = data?.['orders'] as Record<string, unknown> | undefined;
-      const edges = orders?.['edges'];
-      if (!Array.isArray(edges)) {
-        throw new WorkflowError('ShopifyAdapter: unexpected response shape — edges not an array', {
-          code: 'SERVICE_RESPONSE_INVALID',
-          category: 'SERVICE',
-          agentAction: 'report_to_user',
-          retryable: false,
-        });
-      }
-
-      if (edges.length === 0) {
-        throw new WorkflowError('ShopifyAdapter: order not found', {
-          code: 'SERVICE_NOT_FOUND',
-          category: 'SERVICE',
-          agentAction: 'provide_input',
-          retryable: false,
-          details: { store, order_name: normalizedOrderName },
-        });
-      }
-
-      if (edges.length > 1) {
-        throw new WorkflowError('ShopifyAdapter: unexpected multiple edges for first:1 query', {
-          code: 'SERVICE_RESPONSE_INVALID',
-          category: 'SERVICE',
-          agentAction: 'report_to_user',
-          retryable: false,
-        });
-      }
-
-      const edge = edges[0] as { node: ShopifyOrderNode };
-      const normalizedOrder = this.normalizeOrder(edge.node, store, normalizedOrderName);
-      return { status: 200, data: normalizedOrder };
+      return { status: response.status, data: json };
     }
 
     throw new WorkflowError(`ShopifyAdapter: unsupported fetch operation '${operation}'`, {
