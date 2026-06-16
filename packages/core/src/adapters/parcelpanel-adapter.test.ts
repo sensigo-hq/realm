@@ -574,6 +574,23 @@ describe('ParcelPanelAdapter fetch(get_tracking_by_id)', () => {
     ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
     expect(handlers).toHaveLength(0);
   });
+
+  it('missing store param → ADAPTER_VALIDATION_FAILED', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('get_tracking_by_id', { order_id: 6140516335690 }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+  });
+
+  it('unknown store → ADAPTER_VALIDATION_FAILED with details.store', async () => {
+    const adapter = makeAdapter();
+    const err = await adapter
+      .fetch('get_tracking_by_id', { store: 'no-such-store', order_id: 6140516335690 }, {})
+      .catch((e: unknown) => e as WorkflowError);
+    expect(err).toBeInstanceOf(WorkflowError);
+    expect(err.code).toBe('ADAPTER_VALIDATION_FAILED');
+    expect(err.details['store']).toBe('no-such-store');
+  });
 });
 
 // ---------------------------------------------------------------------------
