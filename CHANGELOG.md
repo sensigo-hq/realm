@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 
 ---
 
+## [0.6.4] — 2026-06-17
+
+### Changed
+
+- **ShopifyAdapter — GraphQL passthrough** — the previous `fetch('get_order', { store, order_name })` operation performed a fixed query (`ORDERS_BY_NAME_QUERY`), selected specific fields, and returned a normalised `NormalizedOrder` object. Replaced with a single `fetch('query', { store, query, variables? })` operation that accepts any GraphQL query or mutation string and returns the raw GraphQL response body. The caller owns all field selection; the adapter handles authentication, store routing, and error classification only.
+
+### Removed
+
+- **`ShopifyNormalizedOrder` exported type removed** — callers who were typing `result.data as ShopifyNormalizedOrder` should switch to a locally defined type that matches the fields they request in their own query.
+- **`get_order` operation removed** — replaced by `fetch('query', { store, query, variables? })`. Callers who were using `get_order` should rewrite the step to pass the `ORDERS_BY_NAME_QUERY` (or any query of their choice) as the `query` param.
+
+### Added
+
+- **Adapter reference documentation** — `docs/reference/adapters.md` now documents all seven shipped adapters. Four new sections added: `GorgiasAdapter` (10 operations), `ParcelPanelAdapter` (2 operations), `ShopifyAdapter` (1 GraphQL passthrough operation), `NotionAdapter` (8 operations). Each section covers constructor config, YAML declaration, per-operation param tables, and an error classification table.
+
+---
+
 ## [0.6.3] — 2026-06-16
 
 ### Added
