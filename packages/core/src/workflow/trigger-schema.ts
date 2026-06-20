@@ -96,13 +96,15 @@ export const TRIGGER_JSON_SCHEMA = {
             properties: {
               header: { type: 'string', minLength: 1 },
               path: { type: 'string', minLength: 1 },
-              // minItems:1 on the array branch hardens beyond the verbatim spec: an empty
-              // value array is an unsatisfiable allow-list (a dead-on-arrival condition that
-              // can never match), which the config-complete goal requires rejecting at load.
+              // value must be non-empty: a non-empty string OR a non-empty array of non-empty
+              // strings. An empty string / empty array / array with an empty element is an
+              // unsatisfiable allow-list (a dead-on-arrival condition that can never match), which
+              // the config-complete goal requires rejecting at load. Symmetric with every other
+              // string in this schema (secret_from, id_from, header, …), all of which require minLength:1.
               value: {
                 anyOf: [
-                  { type: 'string' },
-                  { type: 'array', items: { type: 'string' }, minItems: 1 },
+                  { type: 'string', minLength: 1 },
+                  { type: 'array', items: { type: 'string', minLength: 1 }, minItems: 1 },
                 ],
               },
             },

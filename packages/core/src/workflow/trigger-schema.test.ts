@@ -97,6 +97,42 @@ describe('validateTriggerStructure', () => {
     expect(errs).toEqual([]);
   });
 
+  it('rejects an empty-string filter value', () => {
+    const errs = validateTriggerStructure({
+      type: 'webhook',
+      signature: { provider: 'github', secret_from: 'X' },
+      filter: { all: [{ header: 'h', value: '' }] },
+    });
+    expect(errs.join(' ')).toMatch(/value/);
+  });
+
+  it('rejects an array filter value containing an empty element', () => {
+    const errs = validateTriggerStructure({
+      type: 'webhook',
+      signature: { provider: 'github', secret_from: 'X' },
+      filter: { all: [{ header: 'h', value: [''] }] },
+    });
+    expect(errs.join(' ')).toMatch(/value/);
+  });
+
+  it('rejects a mixed array filter value with an empty element', () => {
+    const errs = validateTriggerStructure({
+      type: 'webhook',
+      signature: { provider: 'github', secret_from: 'X' },
+      filter: { all: [{ header: 'h', value: ['a', ''] }] },
+    });
+    expect(errs.join(' ')).toMatch(/value/);
+  });
+
+  it('accepts a non-empty string filter value (regression guard)', () => {
+    const errs = validateTriggerStructure({
+      type: 'webhook',
+      signature: { provider: 'github', secret_from: 'X' },
+      filter: { all: [{ header: 'h', value: 'push' }] },
+    });
+    expect(errs).toEqual([]);
+  });
+
   it('never throws on non-object / null / primitive input', () => {
     expect(() => validateTriggerStructure(null)).not.toThrow();
     expect(() => validateTriggerStructure('nope')).not.toThrow();

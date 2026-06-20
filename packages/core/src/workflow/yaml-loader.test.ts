@@ -2071,6 +2071,36 @@ ${VALID_SIG}
     expect(def.trigger?.filter?.all?.[0]?.value).toEqual(['orders/create', 'orders/updated']);
   });
 
+  it('G2: empty-string value → error', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  filter:
+    all:
+      - { header: x-topic, value: "" }`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/value/);
+  });
+
+  it('G2: array value with an empty element → error', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  filter:
+    all:
+      - { header: x-topic, value: [""] }`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/value/);
+  });
+
+  it('G2: mixed array value with an empty element → error', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  filter:
+    all:
+      - { header: x-topic, value: [a, ""] }`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/value/);
+  });
+
   // G3 — dedup.on_missing_id enum
   it('G3: on_missing_id typo → error', () => {
     const trigger = `trigger:
