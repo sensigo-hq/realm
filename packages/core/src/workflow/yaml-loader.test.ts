@@ -1747,7 +1747,8 @@ steps:
   filter:
     all:
 ${conditions}`;
-    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/8 conditions/);
+    // Schema-driven (Ajv maxItems) message: "...filter/all must NOT have more than 8 items".
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/more than 8 items/);
   });
 
   it('shopify provider + dedup.ttl_minutes = 100 → console.warn called', () => {
@@ -1947,5 +1948,329 @@ ${conditions}`;
     header: x-signature`;
     const def = loadWorkflowFromString(wf(trigger));
     expect(def.trigger?.signature.provider).toBe('hmac');
+  });
+
+  // ── A-2 schema-driven gap closures (G1–G8) ─────────────────────────────────
+
+  // G1 — registration structure
+  const VALID_SIG = `  signature:
+    provider: github
+    secret_from: GH_SECRET`;
+
+  it('G1: registration github missing required fields → error', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  registration:
+    provider: github`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/scope|target|events|api_key_from/);
+  });
+
+  it('G1: registration invalid provider → error', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  registration:
+    provider: paypal`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/provider/);
+  });
+
+  it('G1: complete github registration → loads', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  registration:
+    provider: github
+    scope: repo
+    target: owner/repo
+    events: [push]
+    api_key_from: GH_TOKEN`;
+    const def = loadWorkflowFromString(wf(trigger));
+    expect(def.trigger?.registration?.provider).toBe('github');
+  });
+
+  // G2 — filter shape (no longer laundered)
+  it('G2: filter.all as non-array object → error', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  filter:
+    all:
+      foo: bar`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/must be array/);
+  });
+
+  it('G2: shorthand garbage filter (no header/path/value) → error', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  filter:
+    foo: bar`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/value/);
+  });
+
+  it('G2: condition with both header and path → error', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  filter:
+    header: x-h
+    path: body.x
+    value: v`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/oneOf/);
+  });
+
+  it('G2: condition missing value → error', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  filter:
+    header: x-h`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/value/);
+  });
+
+  it('G2: condition with non-string header → error', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  filter:
+    header: 123
+    value: v`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/header/);
+  });
+
+  it('G2: condition with empty-array value → error (unsatisfiable allow-list)', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  filter:
+    all:
+      - { header: x-topic, value: [] }`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/value/);
+  });
+
+  it('G2: valid shorthand condition → loads and normalises to { all: [condition] }', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  filter:
+    header: x-topic
+    value: orders/create`;
+    const def = loadWorkflowFromString(wf(trigger));
+    expect(def.trigger?.filter).toEqual({ all: [{ header: 'x-topic', value: 'orders/create' }] });
+  });
+
+  it('G2: valid value as non-empty string array → loads', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  filter:
+    all:
+      - { path: body.topic, value: [orders/create, orders/updated] }`;
+    const def = loadWorkflowFromString(wf(trigger));
+    expect(def.trigger?.filter?.all?.[0]?.value).toEqual(['orders/create', 'orders/updated']);
+  });
+
+  // G3 — dedup.on_missing_id enum
+  it('G3: on_missing_id typo → error', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  dedup:
+    id_from: body.id
+    on_missing_id: rejcet`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/on_missing_id/);
+  });
+
+  it('G3: on_missing_id skip → loads', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  dedup:
+    id_from: body.id
+    on_missing_id: skip`;
+    expect(() => loadWorkflowFromString(wf(trigger))).not.toThrow();
+  });
+
+  it('G3: on_missing_id reject → loads', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  dedup:
+    id_from: body.id
+    on_missing_id: reject`;
+    expect(() => loadWorkflowFromString(wf(trigger))).not.toThrow();
+  });
+
+  // G4 — max_age_seconds must be a positive integer
+  it('G4: stripe max_age_seconds non-numeric → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: stripe
+    secret_from: STRIPE_SECRET
+    max_age_seconds: "5 minutes"`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/max_age_seconds/);
+  });
+
+  it('G4: hmac max_age_seconds = 0 → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: hmac
+    secret_from: HMAC_SECRET
+    header: x-sig
+    max_age_seconds: 0`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/max_age_seconds/);
+  });
+
+  it('G4: stripe max_age_seconds = 300 → loads', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: stripe
+    secret_from: STRIPE_SECRET
+    max_age_seconds: 300`;
+    expect(() => loadWorkflowFromString(wf(trigger))).not.toThrow();
+  });
+
+  // G5 — empty secret_map
+  it('G5: shopify empty secret_map → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: shopify
+    secret_from_header: x-shopify-shop-domain
+    secret_map: {}`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/secret_map/);
+  });
+
+  // G6 — hmac algorithm/encoding enums
+  it('G6: hmac invalid algorithm → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: hmac
+    secret_from: HMAC_SECRET
+    header: x-sig
+    algorithm: sha265`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/algorithm/);
+  });
+
+  it('G6: hmac invalid encoding → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: hmac
+    secret_from: HMAC_SECRET
+    header: x-sig
+    encoding: hex64`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/encoding/);
+  });
+
+  it('G6: hmac valid algorithm/encoding → loads', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: hmac
+    secret_from: HMAC_SECRET
+    header: x-sig
+    algorithm: sha512
+    encoding: base64`;
+    expect(() => loadWorkflowFromString(wf(trigger))).not.toThrow();
+  });
+
+  // G7 — params_map values must be non-empty strings
+  it('G7: params_map non-string value → error', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  params_map:
+    order_id: 123`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/params_map/);
+  });
+
+  it('G7: valid params_map → loads', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  params_map:
+    order_id: body.id`;
+    expect(() => loadWorkflowFromString(wf(trigger))).not.toThrow();
+  });
+
+  // G8 — typo'd / wrong-typed keys rejected (additionalProperties:false + minLength/type)
+  it('G8: shopify secret_from_header empty string → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: shopify
+    secret_from_header: ""
+    secret_map:
+      store.myshopify.com: SHOPIFY_SECRET`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/secret_from_header/);
+  });
+
+  it('G8: shopify fallback_secret_from non-string → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: shopify
+    secret_from_header: x-shopify-shop-domain
+    secret_map:
+      store.myshopify.com: SHOPIFY_SECRET
+    fallback_secret_from: 123`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/fallback_secret_from/);
+  });
+
+  it('G8: dedup typo key (tt_minutes) → error', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  dedup:
+    id_from: body.id
+    tt_minutes: 10`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/tt_minutes/);
+  });
+
+  it('G8: signature typo key (secret_form) → error', () => {
+    // secret_from is present and valid, so the ONLY defect is the typo'd extra key —
+    // isolating the additionalProperties:false gap (old code ignored unknown keys and loaded).
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+    secret_form: GH_SECRET`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/secret_form/);
+  });
+
+  // N1 — likeliest real typo: blank id_from value (YAML null)
+  it('N1: dedup.id_from blank value (YAML null) → error', () => {
+    const trigger = `trigger:
+  type: webhook
+${VALID_SIG}
+  dedup:
+    id_from:`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/id_from/);
+  });
+
+  // N2 — default-TTL retry warning renders "10min", never "undefinedmin"
+  it('N2: default-TTL shopify warning says 10min and never undefined', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: shopify
+    secret_from: SHOPIFY_SECRET
+  dedup:
+    id_from: header.x-shopify-id`;
+    loadWorkflowFromString(wf(trigger));
+    const retryCall = warnSpy.mock.calls.find((args) =>
+      String(args[0]).includes('retries for 4320min'),
+    );
+    expect(retryCall).toBeDefined();
+    expect(String(retryCall?.[0])).toContain('10min');
+    expect(String(retryCall?.[0])).not.toContain('undefined');
   });
 });
