@@ -2303,4 +2303,66 @@ ${VALID_SIG}
     expect(String(retryCall?.[0])).toContain('10min');
     expect(String(retryCall?.[0])).not.toContain('undefined');
   });
+
+  // ── Hardening: per-provider closed sets reject cross-provider field bleed ────
+  // A field belonging to another provider used to load clean and be silently ignored
+  // at runtime; per-provider closed sets now reject it as an unknown property.
+
+  it('bleed: github signature with algorithm → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+    algorithm: sha256`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/unknown property|algorithm/);
+  });
+
+  it('bleed: github signature with max_age_seconds → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+    max_age_seconds: 300`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/unknown property|max_age_seconds/);
+  });
+
+  it('bleed: stripe signature with header → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: stripe
+    secret_from: STRIPE_SECRET
+    header: x-sig`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/unknown property|header/);
+  });
+
+  it('bleed: hmac signature with secret_map → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: hmac
+    secret_from: HMAC_SECRET
+    header: x-sig
+    secret_map:
+      store.myshopify.com: HMAC_SECRET`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/unknown property|secret_map/);
+  });
+
+  it('bleed: complete github registration with an extra unknown key → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+  registration:
+    provider: github
+    scope: repo
+    target: owner/repo
+    events: [push]
+    api_key_from: GH_TOKEN
+    extra_key: nope`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/unknown property|extra_key/);
+  });
 });

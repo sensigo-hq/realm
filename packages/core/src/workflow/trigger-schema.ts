@@ -36,46 +36,72 @@ export const TRIGGER_JSON_SCHEMA = {
     signature: {
       type: 'object',
       required: ['provider'],
-      additionalProperties: false,
+      // No additionalProperties here: each provider's `then` is a closed set, so a field that
+      // belongs to a different provider (e.g. github + `algorithm`) is rejected as unknown rather
+      // than silently ignored. The per-provider `then`s also declare every property they require,
+      // which keeps the schema clean under Ajv strict/strictRequired (see the strict:true Ajv below).
       properties: {
         provider: { enum: ['github', 'shopify', 'stripe', 'hmac'] },
-        secret_from: { type: 'string', minLength: 1 },
-        secret_map: {
-          type: 'object',
-          minProperties: 1,
-          additionalProperties: { type: 'string', minLength: 1 },
-        },
-        secret_from_header: { type: 'string', minLength: 1 },
-        fallback_secret_from: { type: 'string', minLength: 1 },
-        header: { type: 'string', minLength: 1 },
-        algorithm: { enum: ['sha1', 'sha256', 'sha512'] },
-        encoding: { enum: ['hex', 'base64'] },
-        timestamp_header: { type: 'string', minLength: 1 },
-        max_age_seconds: { type: 'integer', minimum: 1 },
       },
       allOf: [
         {
           if: { properties: { provider: { const: 'github' } }, required: ['provider'] },
-          then: { required: ['secret_from'] },
+          then: {
+            additionalProperties: false,
+            required: ['secret_from'],
+            properties: { provider: {}, secret_from: { type: 'string', minLength: 1 } },
+          },
         },
         {
           if: { properties: { provider: { const: 'stripe' } }, required: ['provider'] },
-          then: { required: ['secret_from'] },
+          then: {
+            additionalProperties: false,
+            required: ['secret_from'],
+            properties: {
+              provider: {},
+              secret_from: { type: 'string', minLength: 1 },
+              max_age_seconds: { type: 'integer', minimum: 1 },
+            },
+          },
         },
         {
           if: { properties: { provider: { const: 'hmac' } }, required: ['provider'] },
-          then: { required: ['secret_from', 'header'] },
+          then: {
+            additionalProperties: false,
+            required: ['secret_from', 'header'],
+            properties: {
+              provider: {},
+              secret_from: { type: 'string', minLength: 1 },
+              header: { type: 'string', minLength: 1 },
+              algorithm: { enum: ['sha1', 'sha256', 'sha512'] },
+              encoding: { enum: ['hex', 'base64'] },
+              timestamp_header: { type: 'string', minLength: 1 },
+              max_age_seconds: { type: 'integer', minimum: 1 },
+            },
+          },
         },
         {
           if: { properties: { provider: { const: 'shopify' } }, required: ['provider'] },
           then: {
-            anyOf: [{ required: ['secret_from'] }, { required: ['secret_map'] }],
-            allOf: [
-              {
-                if: { required: ['secret_map'] },
-                then: { required: ['secret_from_header'] },
+            additionalProperties: false,
+            properties: {
+              provider: {},
+              secret_from: { type: 'string', minLength: 1 },
+              secret_map: {
+                type: 'object',
+                minProperties: 1,
+                additionalProperties: { type: 'string', minLength: 1 },
               },
+              secret_from_header: { type: 'string', minLength: 1 },
+              fallback_secret_from: { type: 'string', minLength: 1 },
+            },
+            // secret_from OR secret_map. Property stubs in each branch satisfy strictRequired.
+            anyOf: [
+              { required: ['secret_from'], properties: { secret_from: {} } },
+              { required: ['secret_map'], properties: { secret_map: {} } },
             ],
+            // secret_map present ⇒ secret_from_header required (draft-07 property dependency).
+            dependencies: { secret_map: ['secret_from_header'] },
           },
         },
       ],
@@ -96,11 +122,8 @@ export const TRIGGER_JSON_SCHEMA = {
             properties: {
               header: { type: 'string', minLength: 1 },
               path: { type: 'string', minLength: 1 },
-              // value must be non-empty: a non-empty string OR a non-empty array of non-empty
-              // strings. An empty string / empty array / array with an empty element is an
-              // unsatisfiable allow-list (a dead-on-arrival condition that can never match), which
-              // the config-complete goal requires rejecting at load. Symmetric with every other
-              // string in this schema (secret_from, id_from, header, …), all of which require minLength:1.
+              // non-empty string OR non-empty array of non-empty strings (an empty / empty-element
+              // allow-list is an unsatisfiable, dead-on-arrival condition).
               value: {
                 anyOf: [
                   { type: 'string', minLength: 1 },
@@ -108,7 +131,11 @@ export const TRIGGER_JSON_SCHEMA = {
                 ],
               },
             },
-            oneOf: [{ required: ['header'] }, { required: ['path'] }],
+            // exactly one of header / path. Property stubs satisfy strictRequired.
+            oneOf: [
+              { required: ['header'], properties: { header: {} } },
+              { required: ['path'], properties: { path: {} } },
+            ],
           },
         },
       },
@@ -135,29 +162,49 @@ export const TRIGGER_JSON_SCHEMA = {
     registration: {
       type: 'object',
       required: ['provider'],
-      additionalProperties: false,
       properties: {
         provider: { enum: ['github', 'shopify', 'stripe'] },
-        scope: { enum: ['repo', 'org'] },
-        target: { type: 'string', minLength: 1 },
-        events: { type: 'array', items: { type: 'string' }, minItems: 1 },
-        api_key_from: { type: 'string', minLength: 1 },
-        store: { type: 'string', minLength: 1 },
-        topics: { type: 'array', items: { type: 'string' }, minItems: 1 },
-        api_version: { type: 'string', minLength: 1 },
       },
       allOf: [
         {
           if: { properties: { provider: { const: 'github' } }, required: ['provider'] },
-          then: { required: ['scope', 'target', 'events', 'api_key_from'] },
+          then: {
+            additionalProperties: false,
+            required: ['scope', 'target', 'events', 'api_key_from'],
+            properties: {
+              provider: {},
+              scope: { enum: ['repo', 'org'] },
+              target: { type: 'string', minLength: 1 },
+              events: { type: 'array', items: { type: 'string' }, minItems: 1 },
+              api_key_from: { type: 'string', minLength: 1 },
+            },
+          },
         },
         {
           if: { properties: { provider: { const: 'shopify' } }, required: ['provider'] },
-          then: { required: ['store', 'topics', 'api_key_from'] },
+          then: {
+            additionalProperties: false,
+            required: ['store', 'topics', 'api_key_from'],
+            properties: {
+              provider: {},
+              store: { type: 'string', minLength: 1 },
+              topics: { type: 'array', items: { type: 'string' }, minItems: 1 },
+              api_key_from: { type: 'string', minLength: 1 },
+              api_version: { type: 'string', minLength: 1 },
+            },
+          },
         },
         {
           if: { properties: { provider: { const: 'stripe' } }, required: ['provider'] },
-          then: { required: ['events', 'api_key_from'] },
+          then: {
+            additionalProperties: false,
+            required: ['events', 'api_key_from'],
+            properties: {
+              provider: {},
+              events: { type: 'array', items: { type: 'string' }, minItems: 1 },
+              api_key_from: { type: 'string', minLength: 1 },
+            },
+          },
         },
       ],
     },
@@ -167,7 +214,11 @@ export const TRIGGER_JSON_SCHEMA = {
 // Compile once. allErrors:true so that anyOf/oneOf subschema failures (e.g. the shopify
 // secret_from/secret_map alternatives, the dedup oneOf) surface their field-naming errors,
 // and so a misconfiguration reports every problem at load rather than one at a time.
-const ajv = new Ajv({ allErrors: true });
+// strict:true is now safe AND enforced: the per-provider `then`s declare every property they
+// require, and the combinators (shopify anyOf, filter oneOf) carry property stubs, so strictRequired
+// is satisfied. Keeping strict:true means any future schema edit that reintroduces a strictRequired
+// violation fails loudly at module import / in tests, instead of silently re-arming the landmine.
+const ajv = new Ajv({ allErrors: true, strict: true });
 const validateFn = ajv.compile(TRIGGER_JSON_SCHEMA);
 
 /**
@@ -181,6 +232,11 @@ function formatAjvError(err: ErrorObject): string {
   const params = (err.params ?? {}) as Record<string, unknown>;
 
   if (err.keyword === 'required' && typeof params['missingProperty'] === 'string') {
+    return `${base}: missing required property '${params['missingProperty']}'`;
+  }
+  // The shopify secret_map ⇒ secret_from_header rule surfaces as the `dependencies` keyword
+  // (draft-07 property dependency), with the missing field in params.missingProperty.
+  if (err.keyword === 'dependencies' && typeof params['missingProperty'] === 'string') {
     return `${base}: missing required property '${params['missingProperty']}'`;
   }
   if (err.keyword === 'additionalProperties' && typeof params['additionalProperty'] === 'string') {

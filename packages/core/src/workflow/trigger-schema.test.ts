@@ -1,5 +1,6 @@
 // Unit tests for the trigger-schema module in isolation (no YAML loader).
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { Ajv } from 'ajv';
 import {
   TRIGGER_JSON_SCHEMA,
   normalizeTriggerFilter,
@@ -190,5 +191,128 @@ describe('emitTriggerWarnings', () => {
       true,
     );
     expect(debugSpy.mock.calls.some((a) => String(a[0]).includes('metadata-only'))).toBe(true);
+  });
+});
+
+describe('strict-mode compilation', () => {
+  it('TRIGGER_JSON_SCHEMA compiles cleanly under Ajv strict:true', () => {
+    // The module already compiles it under strict:true at import; this pins it explicitly so
+    // any future edit that reintroduces a strictRequired violation fails loudly here.
+    expect(() =>
+      new Ajv({ allErrors: true, strict: true }).compile(TRIGGER_JSON_SCHEMA),
+    ).not.toThrow();
+  });
+});
+
+describe('valid-form sweep (regression guard — every legitimate config must load)', () => {
+  const wf = (signature: unknown, extra: Record<string, unknown> = {}) => ({
+    type: 'webhook',
+    signature,
+    ...extra,
+  });
+
+  const cases: Array<[string, unknown]> = [
+    ['github minimal', wf({ provider: 'github', secret_from: 'X' })],
+    ['stripe minimal', wf({ provider: 'stripe', secret_from: 'X' })],
+    [
+      'stripe + max_age_seconds',
+      wf({ provider: 'stripe', secret_from: 'X', max_age_seconds: 300 }),
+    ],
+    ['hmac minimal', wf({ provider: 'hmac', secret_from: 'X', header: 'h' })],
+    [
+      'hmac with all optionals',
+      wf({
+        provider: 'hmac',
+        secret_from: 'X',
+        header: 'h',
+        algorithm: 'sha512',
+        encoding: 'base64',
+        timestamp_header: 't',
+        max_age_seconds: 60,
+      }),
+    ],
+    ['shopify single-store', wf({ provider: 'shopify', secret_from: 'X' })],
+    [
+      'shopify multi-tenant',
+      wf({ provider: 'shopify', secret_map: { 'a.myshopify.com': 'k' }, secret_from_header: 'h' }),
+    ],
+    [
+      'shopify + fallback_secret_from',
+      wf({
+        provider: 'shopify',
+        secret_map: { 'a.myshopify.com': 'k' },
+        secret_from_header: 'h',
+        fallback_secret_from: 'F',
+      }),
+    ],
+    ['dedup:false', wf({ provider: 'github', secret_from: 'X' }, { dedup: false })],
+    [
+      'dedup object',
+      wf(
+        { provider: 'github', secret_from: 'X' },
+        { dedup: { id_from: 'body.id', ttl_minutes: 4320 } },
+      ),
+    ],
+    [
+      'filter string value',
+      wf(
+        { provider: 'github', secret_from: 'X' },
+        { filter: { all: [{ header: 'h', value: 'v' }] } },
+      ),
+    ],
+    [
+      'filter array value',
+      wf(
+        { provider: 'github', secret_from: 'X' },
+        { filter: { all: [{ path: 'body.t', value: ['a', 'b'] }] } },
+      ),
+    ],
+    [
+      'params_map',
+      wf({ provider: 'github', secret_from: 'X' }, { params_map: { order_id: 'body.id' } }),
+    ],
+    [
+      'registration github complete',
+      wf(
+        { provider: 'github', secret_from: 'X' },
+        {
+          registration: {
+            provider: 'github',
+            scope: 'repo',
+            target: 'o/r',
+            events: ['push'],
+            api_key_from: 'K',
+          },
+        },
+      ),
+    ],
+    [
+      'registration shopify complete',
+      wf(
+        { provider: 'github', secret_from: 'X' },
+        {
+          registration: {
+            provider: 'shopify',
+            store: 's',
+            topics: ['orders/create'],
+            api_key_from: 'K',
+            api_version: '2024-04',
+          },
+        },
+      ),
+    ],
+    [
+      'registration stripe complete',
+      wf(
+        { provider: 'github', secret_from: 'X' },
+        { registration: { provider: 'stripe', events: ['x'], api_key_from: 'K' } },
+      ),
+    ],
+    ['path set', wf({ provider: 'github', secret_from: 'X' }, { path: '/hooks/gh' })],
+    ['minimal trigger (type + signature only)', wf({ provider: 'github', secret_from: 'X' })],
+  ];
+
+  it.each(cases)('%s → loads (no errors)', (_label, trigger) => {
+    expect(validateTriggerStructure(trigger)).toEqual([]);
   });
 });
