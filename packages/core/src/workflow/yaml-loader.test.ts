@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   loadWorkflowFromString,
   loadWorkflowFromFile,
@@ -1621,5 +1621,219 @@ steps:
       expect((err as WorkflowError).message).toContain('input_map');
       expect((err as WorkflowError).message).toContain('auto');
     }
+  });
+});
+
+describe('trigger: block validation', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Wraps a top-level `trigger:` block (column 0) into a complete valid workflow. */
+  const wf = (trigger: string): string => `
+id: wf-trigger
+name: WF Trigger
+version: 1
+${trigger}
+steps:
+  step-one:
+    description: First
+    execution: auto
+    depends_on: []
+`;
+
+  const GITHUB_TRIGGER = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET`;
+
+  it('valid trigger block with github provider → no error', () => {
+    const def = loadWorkflowFromString(wf(GITHUB_TRIGGER));
+    expect(def.trigger?.type).toBe('webhook');
+    expect(def.trigger?.signature.provider).toBe('github');
+  });
+
+  it("trigger.type not 'webhook' → error", () => {
+    const trigger = `trigger:
+  type: cron
+  signature:
+    provider: github
+    secret_from: GH_SECRET`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(WorkflowError);
+  });
+
+  it('trigger.signature missing → error', () => {
+    const trigger = `trigger:
+  type: webhook`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/signature/);
+  });
+
+  it('trigger.signature.provider invalid value → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: paypal
+    secret_from: SECRET`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/provider/);
+  });
+
+  it('shopify secret_map present without secret_from_header → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: shopify
+    secret_map:
+      store.myshopify.com: SHOPIFY_SECRET`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/secret_from_header/);
+  });
+
+  it('shopify secret_map key without .myshopify.com suffix → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: shopify
+    secret_from_header: x-shopify-shop-domain
+    secret_map:
+      store.example.com: SHOPIFY_SECRET`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/myshopify\.com/);
+  });
+
+  it('dedup.id_from empty string → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+  dedup:
+    id_from: ""`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/id_from/);
+  });
+
+  it('dedup.ttl_minutes = 0 → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+  dedup:
+    id_from: body.id
+    ttl_minutes: 0`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/ttl_minutes/);
+  });
+
+  it('dedup.ttl_minutes = 44641 → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+  dedup:
+    id_from: body.id
+    ttl_minutes: 44641`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/ttl_minutes/);
+  });
+
+  it('filter.all with 9 conditions → error', () => {
+    const conditions = Array.from(
+      { length: 9 },
+      (_unused, i) => `      - { header: h${i}, value: v${i} }`,
+    ).join('\n');
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+  filter:
+    all:
+${conditions}`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/8 conditions/);
+  });
+
+  it('shopify provider + dedup.ttl_minutes = 100 → console.warn called', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: shopify
+    secret_from: SHOPIFY_SECRET
+  dedup:
+    id_from: body.id
+    ttl_minutes: 100`;
+    loadWorkflowFromString(wf(trigger));
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it('github provider + dedup.ttl_minutes = 100 → console.warn called', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+  dedup:
+    id_from: body.id
+    ttl_minutes: 100`;
+    loadWorkflowFromString(wf(trigger));
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it('hmac provider + dedup.ttl_minutes = 100 → console.warn NOT called', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: hmac
+    secret_from: HMAC_SECRET
+    header: x-signature
+  dedup:
+    id_from: body.id
+    ttl_minutes: 100`;
+    loadWorkflowFromString(wf(trigger));
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('fallback_secret_from present → console.warn called', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: shopify
+    secret_from_header: x-shopify-shop-domain
+    secret_map:
+      store.myshopify.com: SHOPIFY_SECRET
+    fallback_secret_from: FALLBACK_SECRET`;
+    loadWorkflowFromString(wf(trigger));
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it('registration block present → console.debug called', () => {
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+  registration:
+    provider: github
+    scope: repo
+    target: owner/repo
+    events: [push]
+    api_key_from: GH_TOKEN`;
+    loadWorkflowFromString(wf(trigger));
+    expect(debugSpy).toHaveBeenCalled();
+  });
+
+  it('filter shorthand (single condition) → normalised to { all: [condition] }', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+  filter:
+    header: x-event
+    value: push`;
+    const def = loadWorkflowFromString(wf(trigger));
+    expect(def.trigger?.filter).toEqual({ all: [{ header: 'x-event', value: 'push' }] });
   });
 });

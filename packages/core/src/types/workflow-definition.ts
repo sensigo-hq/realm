@@ -338,6 +338,12 @@ export interface WorkflowDefinition {
    * Runtime-only — do not write to workflow YAML.
    */
   agent?: string;
+  /**
+   * Optional automated trigger for this workflow.
+   * When set, 'realm listen' routes incoming webhook requests to this workflow.
+   * Runtime-only field on the listening process — not enforced by the engine itself.
+   */
+  trigger?: TriggerDefinition;
 }
 
 /** A single named entry in the workflow_context section. */
@@ -350,3 +356,132 @@ export interface WorkflowContextEntry {
 
 /** Wrapper format applied to {{ workflow.context.NAME }} template references. */
 export type ContextWrapperFormat = 'xml' | 'brackets' | 'none';
+
+// ─── Webhook Trigger ───────────────────────────────────────────────────────────
+
+export interface SignatureGithub {
+  provider: 'github';
+  secret_from: string;
+}
+
+export interface SignatureShopify {
+  provider: 'shopify';
+  /** Single-store: env var name containing the shared secret. */
+  secret_from?: string;
+  /**
+   * Multi-tenant: map of domain → env-var-name.
+   * All keys must end in .myshopify.com — loader error otherwise.
+   * Required: secret_from_header must also be set when secret_map is present.
+   */
+  secret_map?: Record<string, string>;
+  /**
+   * Fallback env var name for domains absent from secret_map.
+   * Loader emits a startup warning (not error) when this is set, because it
+   * accepts payloads from unregistered stores.
+   */
+  fallback_secret_from?: string;
+  /**
+   * Request header that identifies the store domain (e.g. 'x-shopify-shop-domain').
+   * Required when secret_map is present.
+   */
+  secret_from_header?: string;
+}
+
+export interface SignatureStripe {
+  provider: 'stripe';
+  secret_from: string;
+  /** Maximum age of the timestamp in the Stripe-Signature header. Default: 300. */
+  max_age_seconds?: number;
+}
+
+export interface SignatureHmac {
+  provider: 'hmac';
+  secret_from: string;
+  /** Header containing the computed signature. */
+  header: string;
+  /** HMAC algorithm. Default: 'sha256'. */
+  algorithm?: 'sha1' | 'sha256' | 'sha512';
+  /** Signature encoding in the header. Default: 'hex'. */
+  encoding?: 'hex' | 'base64';
+  /** Optional header containing the request timestamp for replay prevention. */
+  timestamp_header?: string;
+  /** Maximum age in seconds when timestamp_header is set. Default: 300. */
+  max_age_seconds?: number;
+}
+
+export type SignatureConfig = SignatureGithub | SignatureShopify | SignatureStripe | SignatureHmac;
+
+// Dot-notation: each segment is a property name or zero-based numeric array index.
+// Array at path without numeric index → condition evaluates to false.
+export type FilterCondition =
+  | { header: string; value: string | string[] }
+  | { path: string; value: string | string[] };
+
+/** Raw YAML form — a single condition (shorthand) or an explicit all: [] block. */
+export type TriggerFilterRaw = FilterCondition | { all: FilterCondition[] };
+
+/**
+ * Post-normalisation form (loader converts shorthand → { all: [...] }).
+ * Max 8 conditions — loader error if exceeded.
+ */
+export interface TriggerFilter {
+  all: FilterCondition[];
+}
+
+export interface DedupConfig {
+  /**
+   * Dot-path to the unique event ID (e.g. 'header.x-github-delivery' or 'body.id').
+   * Empty string is a loader error.
+   */
+  id_from: string;
+  /**
+   * TTL in minutes. Default: 10. Range: 1–44640 (31 days max).
+   * Performance: check() issues floor(ttl_minutes/60)+2 statSync calls per request.
+   * At 1440 (24h): 26 calls. At 4320 (3d): 74 calls. At 44640 (31d): 746 calls.
+   * For Shopify (48h) or GitHub (3d) retry coverage, use 4320 (~74 calls/request).
+   */
+  ttl_minutes?: number;
+  /**
+   * Behaviour when the dedup ID cannot be resolved from the payload.
+   * 'skip' (default): log warn and proceed without dedup protection.
+   * 'reject': return 400 { error: "dedup_id_unresolvable" }.
+   */
+  on_missing_id?: 'skip' | 'reject';
+}
+
+export type RegistrationConfig =
+  | {
+      provider: 'github';
+      scope: 'repo' | 'org';
+      target: string;
+      events: string[];
+      api_key_from: string;
+    }
+  | {
+      provider: 'shopify';
+      store: string;
+      topics: string[];
+      api_key_from: string;
+      api_version?: string;
+    }
+  | { provider: 'stripe'; events: string[]; api_key_from: string };
+
+export interface WebhookTrigger {
+  type: 'webhook';
+  /** URL path for this webhook. Default: /<workflow-id>. Loader error on collision. */
+  path?: string;
+  signature: SignatureConfig;
+  /** Loader normalises TriggerFilterRaw → TriggerFilter (all: [...]) at load time. */
+  filter?: TriggerFilter;
+  /** false = explicit dedup disable. */
+  dedup?: DedupConfig | false;
+  /** Maps run params from payload: keys = param names, values = dot-paths into { headers, body }. */
+  params_map?: Record<string, string>;
+  /**
+   * Structural metadata only — no runtime effect in this version.
+   * Loader emits a debug log when present. Future: 'realm webhook register' will use these.
+   */
+  registration?: RegistrationConfig;
+}
+
+export type TriggerDefinition = WebhookTrigger;

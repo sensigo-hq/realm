@@ -628,6 +628,129 @@ export function loadWorkflowFromString(
     }
   }
 
+  // Step 3b: Trigger block validation
+  const triggerRaw = doc['trigger'];
+  if (triggerRaw !== undefined) {
+    if (typeof triggerRaw !== 'object' || triggerRaw === null || Array.isArray(triggerRaw)) {
+      errors.push(`'trigger' must be an object`);
+    } else {
+      const trigger = triggerRaw as Record<string, unknown>;
+      const workflowId = String(doc['id']);
+
+      // 1. type must be 'webhook'
+      if (trigger['type'] !== 'webhook') {
+        errors.push(`trigger.type must be 'webhook'`);
+      }
+
+      // 2 & 3. signature present with a valid provider
+      let provider: string | undefined;
+      const signature = trigger['signature'];
+      if (typeof signature !== 'object' || signature === null || Array.isArray(signature)) {
+        errors.push(`trigger.signature is required and must have a 'provider' field`);
+      } else {
+        const sig = signature as Record<string, unknown>;
+        const rawProvider = sig['provider'];
+        const VALID_PROVIDERS = ['github', 'shopify', 'stripe', 'hmac'];
+        if (typeof rawProvider === 'string' && VALID_PROVIDERS.includes(rawProvider)) {
+          provider = rawProvider;
+        } else {
+          errors.push(
+            `trigger.signature.provider must be one of: 'github', 'shopify', 'stripe', 'hmac'`,
+          );
+        }
+
+        // 4. shopify-specific checks
+        if (provider === 'shopify') {
+          const secretMap = sig['secret_map'];
+          if (secretMap !== undefined) {
+            // a. secret_map without secret_from_header
+            if (sig['secret_from_header'] === undefined) {
+              errors.push(
+                `trigger.signature.secret_map requires trigger.signature.secret_from_header to be set`,
+              );
+            }
+            // b. secret_map keys must end in .myshopify.com
+            if (typeof secretMap === 'object' && secretMap !== null && !Array.isArray(secretMap)) {
+              for (const key of Object.keys(secretMap as Record<string, unknown>)) {
+                if (!key.endsWith('.myshopify.com')) {
+                  errors.push(
+                    `trigger.signature.secret_map key '${key}' must end in '.myshopify.com'`,
+                  );
+                }
+              }
+            }
+          }
+
+          // 9. fallback_secret_from present → warn
+          if (sig['fallback_secret_from'] !== undefined) {
+            console.warn(
+              `realm: workflow '${workflowId}': trigger.signature.fallback_secret_from is set — this accepts payloads from stores not in secret_map. Verify this is intentional.`,
+            );
+          }
+        }
+      }
+
+      // 5 & 6. dedup checks
+      const dedup = trigger['dedup'];
+      let dedupTtl: number | undefined;
+      if (
+        dedup !== undefined &&
+        dedup !== false &&
+        typeof dedup === 'object' &&
+        dedup !== null &&
+        !Array.isArray(dedup)
+      ) {
+        const d = dedup as Record<string, unknown>;
+        // 5. id_from empty string
+        if (d['id_from'] === '') {
+          errors.push(`trigger.dedup.id_from must not be an empty string`);
+        }
+        // 6. ttl_minutes range
+        const ttl = d['ttl_minutes'];
+        if (ttl !== undefined) {
+          if (typeof ttl !== 'number' || ttl < 1 || ttl > 44640) {
+            errors.push(`trigger.dedup.ttl_minutes must be between 1 and 44640`);
+          } else {
+            dedupTtl = ttl;
+          }
+        }
+      }
+
+      // 7. filter.all length > 8
+      const filter = trigger['filter'];
+      if (
+        typeof filter === 'object' &&
+        filter !== null &&
+        !Array.isArray(filter) &&
+        'all' in filter
+      ) {
+        const all = (filter as Record<string, unknown>)['all'];
+        if (Array.isArray(all) && all.length > 8) {
+          errors.push(`trigger.filter.all must not exceed 8 conditions`);
+        }
+      }
+
+      // 8. provider retry-window warning for shopify/github
+      if (
+        (provider === 'shopify' || provider === 'github') &&
+        dedup !== false &&
+        dedupTtl !== undefined &&
+        dedupTtl < 4320
+      ) {
+        console.warn(
+          `realm: workflow '${workflowId}': dedup ttl_minutes is ${dedupTtl}min; ${provider} retries for 4320min (3d) — duplicate runs will be created if the provider retries after ${dedupTtl} minutes. Consider setting ttl_minutes: 4320.`,
+        );
+      }
+
+      // 10. registration present → debug
+      if (trigger['registration'] !== undefined) {
+        console.debug(
+          `realm: workflow '${workflowId}': trigger.registration is metadata-only in this version — runtime behavior is unaffected.`,
+        );
+      }
+    }
+  }
+
   if (errors.length > 0) {
     throw new WorkflowError(`Invalid workflow: ${errors.join('; ')}`, {
       code: 'VALIDATION_WORKFLOW_SCHEMA',
@@ -635,6 +758,25 @@ export function loadWorkflowFromString(
       agentAction: 'report_to_user',
       retryable: false,
     });
+  }
+
+  // Step 3c: Trigger filter normalization — shorthand FilterCondition → { all: [condition] }
+  if (
+    triggerRaw !== undefined &&
+    typeof triggerRaw === 'object' &&
+    triggerRaw !== null &&
+    !Array.isArray(triggerRaw)
+  ) {
+    const trigger = triggerRaw as Record<string, unknown>;
+    const filter = trigger['filter'];
+    if (
+      typeof filter === 'object' &&
+      filter !== null &&
+      !Array.isArray(filter) &&
+      !('all' in filter)
+    ) {
+      trigger['filter'] = { all: [filter] };
+    }
   }
 
   // Step 4: Stamp schema version and return typed result
