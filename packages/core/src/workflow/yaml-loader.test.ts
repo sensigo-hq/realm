@@ -1836,4 +1836,116 @@ ${conditions}`;
     const def = loadWorkflowFromString(wf(trigger));
     expect(def.trigger?.filter).toEqual({ all: [{ header: 'x-event', value: 'push' }] });
   });
+
+  // ── Correction Fix 1: dedup.id_from required, not merely non-empty ──────────
+
+  it('dedup block present with no id_from → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+  dedup:
+    ttl_minutes: 10`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/id_from/);
+  });
+
+  it('dedup.id_from non-string (number) → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+  dedup:
+    id_from: 123`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/id_from/);
+  });
+
+  // ── Correction Fix 2: retry-window warning accounts for the default TTL ─────
+
+  it('shopify provider + dedup with id_from but no ttl_minutes → console.warn called', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: shopify
+    secret_from: SHOPIFY_SECRET
+  dedup:
+    id_from: header.x-shopify-id`;
+    loadWorkflowFromString(wf(trigger));
+    const retryWarned = warnSpy.mock.calls.some((args) =>
+      String(args[0]).includes('retries for 4320min'),
+    );
+    expect(retryWarned).toBe(true);
+  });
+
+  it('dedup: false → retry-window warn NOT called', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: shopify
+    secret_from: SHOPIFY_SECRET
+  dedup: false`;
+    loadWorkflowFromString(wf(trigger));
+    const retryWarned = warnSpy.mock.calls.some((args) =>
+      String(args[0]).includes('retries for 4320min'),
+    );
+    expect(retryWarned).toBe(false);
+  });
+
+  // ── Correction Fix 3: per-provider required signature fields ────────────────
+
+  it('github signature without secret_from → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/secret_from/);
+  });
+
+  it('stripe signature without secret_from → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: stripe`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/secret_from/);
+  });
+
+  it('hmac signature without header → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: hmac
+    secret_from: HMAC_SECRET`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/header/);
+  });
+
+  it('hmac signature without secret_from → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: hmac
+    header: x-sig`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/secret_from/);
+  });
+
+  it('shopify signature with neither secret_from nor secret_map → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: shopify`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/secret_from.*secret_map|secret_map/);
+  });
+
+  it('valid hmac signature (secret_from + header) → no error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: hmac
+    secret_from: HMAC_SECRET
+    header: x-signature`;
+    const def = loadWorkflowFromString(wf(trigger));
+    expect(def.trigger?.signature.provider).toBe('hmac');
+  });
 });

@@ -688,11 +688,40 @@ export function loadWorkflowFromString(
             );
           }
         }
+
+        // 3b. Per-provider required secret fields. The signature is the security
+        // boundary: a trigger that cannot resolve a secret must fail closed at load
+        // time (principles #2 fail-closed and #3 config-complete-at-startup).
+        const isNonEmptyString = (v: unknown): boolean => typeof v === 'string' && v !== '';
+        if (provider === 'github' || provider === 'stripe') {
+          if (!isNonEmptyString(sig['secret_from'])) {
+            errors.push(`trigger.signature.secret_from is required for provider '${provider}'`);
+          }
+        } else if (provider === 'hmac') {
+          if (!isNonEmptyString(sig['secret_from'])) {
+            errors.push(`trigger.signature.secret_from is required for provider 'hmac'`);
+          }
+          if (!isNonEmptyString(sig['header'])) {
+            errors.push(`trigger.signature.header is required for provider 'hmac'`);
+          }
+        } else if (provider === 'shopify') {
+          const hasSecretFrom = isNonEmptyString(sig['secret_from']);
+          const hasSecretMap =
+            typeof sig['secret_map'] === 'object' &&
+            sig['secret_map'] !== null &&
+            !Array.isArray(sig['secret_map']);
+          if (!hasSecretFrom && !hasSecretMap) {
+            errors.push(
+              `trigger.signature for provider 'shopify' requires either 'secret_from' or 'secret_map'`,
+            );
+          }
+        }
       }
 
       // 5 & 6. dedup checks
       const dedup = trigger['dedup'];
       let dedupTtl: number | undefined;
+      let dedupPresent = false;
       if (
         dedup !== undefined &&
         dedup !== false &&
@@ -700,10 +729,11 @@ export function loadWorkflowFromString(
         dedup !== null &&
         !Array.isArray(dedup)
       ) {
+        dedupPresent = true;
         const d = dedup as Record<string, unknown>;
-        // 5. id_from empty string
-        if (d['id_from'] === '') {
-          errors.push(`trigger.dedup.id_from must not be an empty string`);
+        // 5. id_from required and must be a non-empty string
+        if (typeof d['id_from'] !== 'string' || d['id_from'] === '') {
+          errors.push(`trigger.dedup.id_from is required and must be a non-empty string`);
         }
         // 6. ttl_minutes range
         const ttl = d['ttl_minutes'];
@@ -730,16 +760,15 @@ export function loadWorkflowFromString(
         }
       }
 
-      // 8. provider retry-window warning for shopify/github
-      if (
-        (provider === 'shopify' || provider === 'github') &&
-        dedup !== false &&
-        dedupTtl !== undefined &&
-        dedupTtl < 4320
-      ) {
-        console.warn(
-          `realm: workflow '${workflowId}': dedup ttl_minutes is ${dedupTtl}min; ${provider} retries for 4320min (3d) — duplicate runs will be created if the provider retries after ${dedupTtl} minutes. Consider setting ttl_minutes: 4320.`,
-        );
+      // 8. provider retry-window warning for shopify/github.
+      // An omitted ttl_minutes defaults to 10 — the case that needs the warning most.
+      if (provider === 'shopify' || provider === 'github') {
+        const effectiveTtl = dedupTtl ?? 10;
+        if (dedupPresent && effectiveTtl < 4320) {
+          console.warn(
+            `realm: workflow '${workflowId}': dedup ttl_minutes is ${effectiveTtl}min; ${provider} retries for 4320min (3d) — duplicate runs will be created if the provider retries after ${effectiveTtl} minutes. Consider setting ttl_minutes: 4320.`,
+          );
+        }
       }
 
       // 10. registration present → debug
