@@ -12,6 +12,7 @@ import type {
 import { WorkflowError } from '../types/workflow-error.js';
 import { resolveTemplates } from './template-resolver.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
+import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
 
 /** Bumped on every breaking change to WorkflowDefinition's serialized format. */
 export const CURRENT_WORKFLOW_SCHEMA_VERSION = 1;
@@ -626,6 +627,13 @@ export function loadWorkflowFromString(
         );
       }
     }
+  }
+
+  // Step 3b: Trigger block validation (schema-driven — see trigger-schema.ts)
+  const triggerRaw = doc['trigger'];
+  if (triggerRaw !== undefined) {
+    normalizeTriggerFilter(triggerRaw); // canonicalise shorthand BEFORE validation
+    errors.push(...validateTriggerStructure(triggerRaw));
   }
 
   if (errors.length > 0) {
