@@ -133,13 +133,13 @@ Go to https://github.com/sensigo-hq/realm/actions and confirm the **Publish** wo
 
 **7. Verify the published artifact**
 
-Install the package in a clean environment and confirm the minimal working example from the README runs correctly:
+Install the package in a clean environment and confirm the minimal working example from the README runs correctly. `@sensigo/realm` is **ESM-only**, so verify with an ESM `import` — `require()` throws `ERR_PACKAGE_PATH_NOT_EXPORTED`:
 
 ```bash
 mkdir /tmp/test-install && cd /tmp/test-install
 npm init -y
 npm install @sensigo/realm@<version>
-node -e "const { VERSION } = require('@sensigo/realm'); console.log(VERSION);"
+node --input-type=module -e "import { VERSION } from '@sensigo/realm'; console.log(VERSION);"
 ```
 
 **8. Rollback note**
