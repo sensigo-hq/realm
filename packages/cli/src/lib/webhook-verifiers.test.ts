@@ -61,6 +61,15 @@ describe('verifySharedSecret', () => {
   it('empty header name → false', () => {
     expect(verifySharedSecret({ authorization: TOKEN }, '', TOKEN)).toBe(false);
   });
+  it('polluted Object.prototype key does not authenticate an empty header map', () => {
+    // Defense-in-depth: an inherited prototype property must never satisfy the lookup.
+    (Object.prototype as Record<string, unknown>)['authorization'] = TOKEN;
+    try {
+      expect(verifySharedSecret({}, 'Authorization', TOKEN)).toBe(false);
+    } finally {
+      delete (Object.prototype as Record<string, unknown>)['authorization'];
+    }
+  });
 });
 
 describe('verifyStripe', () => {
