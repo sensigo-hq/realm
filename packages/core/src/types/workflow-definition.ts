@@ -419,7 +419,9 @@ export interface TriggerFilter {
 }
 
 export interface DedupConfig {
-  /** Dot-path to the unique event ID (e.g. 'body.id' or 'header.x-gorgias-...'). */
+  /** Dot-path to the unique event ID (e.g. 'body.id' or 'headers.x-gorgias-...').
+   *  The dot-path root is { headers, body } (plural 'headers') — matching params_map and the runtime
+   *  resolver. A singular 'header.x-...' resolves to undefined and silently disables dedup. */
   id_from: string;
   /** TTL in minutes. Default: 60. Range: 1–10080 (7 days max). */
   ttl_minutes?: number;

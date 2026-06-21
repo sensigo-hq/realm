@@ -507,29 +507,42 @@ The server refuses to start if neither `REALM_SERVE_TOKEN` nor `--dev` / `REALM_
 
 ---
 
-## realm webhook
+## realm listen
 
-Starts an HTTP server that receives GitHub webhook events, verifies HMAC-SHA256 signatures,
-and spawns `realm agent --run-id` for each matching, non-duplicate delivery.
+Starts an HTTP server that routes inbound webhooks to workflows by their `trigger:` block. For each
+request it verifies authenticity per the workflow's `trigger.auth`, optionally filters and dedups,
+creates a run, and spawns `realm agent --run-id` (detached) for it.
 
 ```
-realm webhook --workflow <path> --port <port> [--secret <secret>]
-              [--event event:action,...] [--provider openai|anthropic] [--model <model>]
+realm listen [workflows...] [--port <n>] [--host <addr>] [--body-timeout-ms <n>]
+             [--max-body-bytes <n>] [--max-concurrent <n>] [--dedup-store file|memory]
+             [--log-level debug|info|warn|error]
 ```
 
-**Required flags:**
+**Arguments:**
 
-- `--workflow <path>` — workflow YAML file to register and run for each delivery
-- `--port <port>` — port number to listen on
+- `[workflows...]` — workflow files or directories to mount (default: `./workflow.yaml`). Each must
+  declare a `trigger:` block; workflows without one are skipped (logged).
 
-**Optional flags:**
+**Flags:**
 
-- `--secret <secret>` — HMAC-SHA256 secret; may also be set via `GITHUB_WEBHOOK_SECRET` env var.
-  The command refuses to start if neither is set.
-- `--event <filter>` — comma-separated `event:action` pairs (default: `pull_request:opened`).
-  Non-matching deliveries are silently acknowledged with `200 OK`.
-- `--provider <name>` — forwarded to `realm agent` as `--provider`
-- `--model <name>` — forwarded to `realm agent` as `--model`
+- `--port <n>` — port to listen on (default `3000`)
+- `--host <addr>` — interface to bind (default `127.0.0.1`; a non-loopback host emits a TLS warning)
+- `--body-timeout-ms <n>` — max time to read a request body before `408` (default `5000`)
+- `--max-body-bytes <n>` — max request body size before `413` (default `1048576`)
+- `--max-concurrent <n>` — in-flight request ceiling before `503` (default `20`)
+- `--dedup-store file|memory` — durable file dedup (default) or in-memory best-effort
+- `--log-level <level>` — `debug` | `info` | `warn` | `error` (default `info`)
 
-**Security:** Signature verification always runs before event-type filtering.
-Requests with missing or invalid signatures receive `403 Forbidden`.
+**Verification (`trigger.auth.mode`):** `shared_secret` (header token — e.g. Gorgias `Authorization:
+Bearer …`), `github` / `stripe` / `hmac` (body signature), or `none` (explicit, discouraged escape
+hatch). Verification runs before filtering/dedup; failures receive `403 Forbidden` (an unknown path
+also returns `403`, never `404`).
+
+**Hardening:** binds loopback by default; caps and times out the request body _before_ any verification
+work; enforces a `--max-concurrent` `503` floor. TLS termination, rate limiting, and autoscaling are
+reverse-proxy concerns — front `realm listen` with nginx/Caddy/Traefik for public endpoints.
+
+> **`realm webhook` (GitHub-only) has been removed.** Express the GitHub PR flow as a `trigger:` block
+> with `auth: { mode: github }` and a `params_map` of the PR payload dot-paths — byte-parity-equivalent
+> to the old hardcoded mapping. See `examples/09-webhook-pr-review/`.

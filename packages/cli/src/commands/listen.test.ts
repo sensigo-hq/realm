@@ -366,6 +366,49 @@ describe('makeListenHandler — request pipeline', () => {
     const { status } = await invoke(handler, { url: '/wf', headers: JSON_CT, body: '{}' });
     expect(status).toBe(202);
   });
+
+  it('Content-Type matching is case-insensitive (Application/JSON → accepted)', async () => {
+    const handler = makeListenHandler(routesFor(wf(SHARED_SECRET_TRIGGER)), makeDeps());
+    const { status } = await invoke(handler, {
+      url: '/wf',
+      headers: { 'content-type': 'Application/JSON; charset=utf-8', authorization: SECRET },
+      body: '{}',
+    });
+    expect(status).toBe(202);
+  });
+
+  it('thrown spawnAgent → handled as spawn_failed (500 + run_id, marked, no dedup record, counter freed)', async () => {
+    const recordSpy = vi.fn();
+    const checkSpy = vi.fn(() => false);
+    const dedupStore = { check: checkSpy, record: recordSpy, cleanup: () => {} };
+    const deps = makeDeps({
+      spawnAgent: vi.fn(() => {
+        throw new Error('exec failed');
+      }),
+      dedupStoreFor: () => dedupStore,
+    });
+    const trigger: WebhookTrigger = { ...SHARED_SECRET_TRIGGER, dedup: { id_from: 'body.id' } };
+    const handler = makeListenHandler(routesFor(wf(trigger)), deps);
+    const reqOpts = {
+      url: '/wf',
+      headers: { ...JSON_CT, authorization: SECRET },
+      body: JSON.stringify({ id: 'evt-1' }),
+    };
+
+    const { status, body } = await invoke(handler, reqOpts);
+    expect(status).toBe(500);
+    expect(body['error']).toBe('spawn_failed');
+    expect(body['run_id']).toBeDefined();
+    const run = await deps.runStore.get(body['run_id'] as string);
+    expect(run.terminal_reason).toBe('spawn_failed');
+    expect(run.terminal_state).toBe(true);
+    // No dedup record on failure (so the provider's retry can re-create the run).
+    expect(recordSpy).not.toHaveBeenCalled();
+
+    // In-flight counter was freed (finally) — a follow-up request is not 503.
+    const second = await invoke(handler, reqOpts);
+    expect(second.status).toBe(500); // still spawn_failed, NOT 503
+  });
 });
 
 describe('buildRouteTable — startup (fail-closed)', () => {
