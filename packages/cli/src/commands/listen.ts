@@ -276,8 +276,8 @@ export function makeListenHandler(
 
       const headers = normalizeHeaders(req.headers);
 
-      // 5. Content-Type must be application/json.
-      const contentType = (headers['content-type'] ?? '').split(';')[0]?.trim();
+      // 5. Content-Type must be application/json (media type is case-insensitive per RFC 7231).
+      const contentType = (headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase();
       if (contentType !== 'application/json') {
         respond(res, 415, { error: 'unsupported_media_type' });
         return;
@@ -318,6 +318,10 @@ export function makeListenHandler(
       }
 
       // 8. Dedup (default on unless dedup === false).
+      // TOCTOU note: the window between check() here and record() after a successful spawn is
+      // intentional at-least-once semantics — two near-simultaneous duplicate deliveries can both
+      // pass check() and create runs. The run store's idempotencyKey (passed at create, = dedupId)
+      // is the cross-restart backstop; the in-flight dedup store is the primary, best-effort guard.
       const dedup = entry.trigger.dedup;
       let dedupId: string | undefined;
       let ttlMs = 0;
@@ -375,7 +379,15 @@ export function makeListenHandler(
       }
 
       // 11. Spawn detached agent.
-      const spawnResult = deps.spawnAgent(run.id, entry.workflowDir);
+      // A thrown spawnAgent (contract violation) is funnelled into the same spawn_failed handling
+      // below — so the created run is always marked and the response always carries a run_id,
+      // never a generic 500 that strands the run unmarked.
+      let spawnResult: SpawnResult;
+      try {
+        spawnResult = deps.spawnAgent(run.id, entry.workflowDir);
+      } catch (err) {
+        spawnResult = { error: err instanceof Error ? err : new Error(String(err)) };
+      }
       if ('error' in spawnResult) {
         deps.logger.error('webhook: spawn failed', {
           path,

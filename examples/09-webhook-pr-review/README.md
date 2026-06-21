@@ -149,9 +149,11 @@ webhook):
 You will need to supply the full `params_schema` fields — see the Configuration reference
 below for the complete list.
 
-### Option B — `realm webhook` CLI
+### Option B — `realm listen`
 
-Use this option to connect a live GitHub webhook.
+Use this option to connect a live GitHub webhook. The workflow's `trigger:` block (see
+`workflow.yaml`) handles verification, event filtering, dedup, and param mapping — there are no
+per-event CLI flags.
 
 **Step 1: Expose a local port**
 
@@ -165,30 +167,31 @@ Copy the `https://` forwarding URL.
 
 In your repository → **Settings → Webhooks → Add webhook**:
 
-- **Payload URL**: `https://<your-ngrok-id>.ngrok-free.app`
+- **Payload URL**: `https://<your-ngrok-id>.ngrok-free.app/webhook-pr-review` (the `trigger.path`)
 - **Content type**: `application/json`
-- **Secret**: any random string (pass it as `--secret` or set `GITHUB_WEBHOOK_SECRET`)
+- **Secret**: any random string — set it as `GITHUB_WEBHOOK_SECRET` (the workflow's
+  `trigger.auth.secret_from`)
 - **Events**: select **Pull requests**
 
-**Step 3: Start the webhook listener**
+**Step 3: Start the listener**
 
 ```bash
-realm webhook \
-  --workflow examples/09-webhook-pr-review/workflow.yaml \
-  --port 4000 \
-  --secret <your-webhook-secret> \
-  --event pull_request:opened,pull_request:synchronize
+GITHUB_WEBHOOK_SECRET=<your-webhook-secret> \
+realm listen examples/09-webhook-pr-review/workflow.yaml --port 4000
 ```
 
-Ensure all env vars from the Requirements section are set before running.
+The `trigger:` block declares `auth.mode: github` (verifying the HMAC signature against
+`GITHUB_WEBHOOK_SECRET`), filters to `pull_request` opened/synchronize, dedups by delivery id, and
+maps the PR payload into run params. Ensure all env vars from the Requirements section are set before
+running.
 
 **Step 4: Open or update a pull request**
 
 When the event arrives, the terminal logs:
 
 ```
-[realm webhook] received pull_request:opened delivery=abc-123-delivery
-[realm webhook] started run run-x1y2z3 — spawned agent pid 12345
+realm listen on 127.0.0.1:4000 — 1 workflow(s) mounted
+webhook: dispatched {"path":"/webhook-pr-review","run_id":"run-x1y2z3","pid":12345}
 ```
 
 The agent runs `fetch_pr` and `analyze_changes` autonomously. When `analyze_changes`
@@ -271,4 +274,4 @@ GitHub.
 - [Example 8 — PR Review](../08-pr-review/) — PR review without a webhook trigger; both
   gate choices post to GitHub.
 - [YAML Schema Reference](../../docs/reference/yaml-schema.md) — `trust: human_confirmed`,
-  `when` condition syntax, `resolution_messages`, `realm webhook` command.
+  `when` condition syntax, `resolution_messages`, the `trigger:` block, and `realm listen`.

@@ -1,6 +1,8 @@
 # Example 09 — Webhook PR Review
 # Triggered by GitHub pull_request:opened or pull_request:synchronize events.
-# Use `realm webhook` to receive and dispatch these events.
+# Use `realm listen` to receive and dispatch these events: the trigger: block below verifies the
+# GitHub HMAC signature, filters to pull_request opened/synchronize, dedups by delivery id, and maps
+# the PR payload into run params.
 #
 # Flow: GitHub webhook → fetch PR diff via MCP → analyze and draft review →
 #       notify reviewer on Slack → human approves or rejects via CLI →
@@ -12,6 +14,33 @@ description: >
   Reviews a GitHub pull request using MCP tools, notifies a Slack channel with
   the draft review, pauses for human approval, then posts the approved review
   as a GitHub comment and confirms on Slack.
+
+# `realm listen` mounts this workflow at /webhook-pr-review and routes verified GitHub
+# pull_request webhooks to it. The secret env var holds the GitHub webhook secret.
+trigger:
+  type: webhook
+  path: /webhook-pr-review
+  auth:
+    mode: github
+    secret_from: GITHUB_WEBHOOK_SECRET
+  filter:
+    all:
+      - { header: x-github-event, value: pull_request }
+      - { path: body.action, value: [opened, synchronize] }
+  dedup:
+    id_from: headers.x-github-delivery
+  params_map:
+    pr_number: body.pull_request.number
+    pr_url: body.pull_request.html_url
+    repo: body.repository.full_name
+    repo_owner: body.repository.owner.login
+    repo_name: body.repository.name
+    pr_title: body.pull_request.title
+    base_sha: body.pull_request.base.sha
+    head_sha: body.pull_request.head.sha
+    author: body.sender.login
+    pr_action: body.action
+    github_delivery_id: headers.x-github-delivery
 
 params_schema:
   type: object
