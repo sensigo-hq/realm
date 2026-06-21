@@ -19,6 +19,7 @@ Complete reference for `workflow.yaml` fields. Every field documented here is va
 | `workflow_context` | object  | No       | Named file entries loaded once at run start and available in all step prompts. See [Workflow context](#workflow-context).    |
 | `context_wrapper`  | string  | No       | Wrapper format applied to `{{ workflow.context.NAME }}` references. One of `xml` (default), `brackets`, `none`.              |
 | `mcp_servers`      | array   | No       | External MCP server definitions. Steps reference these via `tools`. See [MCP servers](#mcp-servers).                         |
+| `trigger`          | object  | No       | Webhook trigger. When set, `realm listen` routes inbound webhooks to this workflow. See [Webhook trigger](#webhook-trigger). |
 
 ---
 
@@ -957,3 +958,94 @@ mcp_servers:
 `env` values support `${VAR}` substitution resolved from `process.env` at connect time.
 An unresolved variable causes the run to fail with `MCP_CONNECTION_FAILED` at the point
 where the first tool call for that server is attempted.
+
+---
+
+## Webhook trigger
+
+The optional top-level `trigger` block makes a workflow reachable over HTTP: [`realm listen`](cli-commands.md#realm-listen)
+loads every workflow with a `trigger` block, builds a route table, and turns each verified inbound
+webhook into a run. The whole block is validated at register time (fail-closed — unknown/typo'd keys
+are rejected, every `auth` mode is a closed field set).
+
+```yaml
+# A Gorgias-style shared_secret trigger.
+trigger:
+  type: webhook
+  path: /gorgias-tickets # optional; defaults to /<workflow-id>
+  auth:
+    mode: shared_secret
+    header: Authorization # request header carrying the token (matched case-insensitively)
+    secret_from: GORGIAS_WEBHOOK_TOKEN # env var holding the EXACT expected header value
+  filter:
+    all:
+      - { path: body.type, value: [ticket-created, ticket-message-created] }
+  dedup:
+    id_from: body.id # dot-path; root is { headers, body }
+  params_map:
+    ticket_id: body.id
+```
+
+| Field        | Type              | Required | Description                                                                                                                 |
+| ------------ | ----------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `type`       | `webhook`         | Yes      | Only `webhook` is supported.                                                                                                |
+| `path`       | string            | No       | URL path `realm listen` mounts this workflow at. Default `/<workflow-id>`. A collision across workflows is a startup error. |
+| `auth`       | object            | Yes      | Verification config, discriminated on `mode` (see below).                                                                   |
+| `filter`     | object            | No       | Optional pre-dispatch match. See [filter](#filter).                                                                         |
+| `dedup`      | object \| `false` | No       | Duplicate-delivery suppression (default on). See [dedup](#dedup).                                                           |
+| `params_map` | object            | No       | Maps run params from the payload. See [params_map](#params_map).                                                            |
+
+### `auth`
+
+`auth.mode` selects the verification model. Each mode is a **closed** field set — a field belonging to
+another mode (e.g. `algorithm` on a `github` auth) is rejected at load. Verification runs before
+filtering and dedup; a failure returns `403`.
+
+| Mode            | Required fields         | Optional fields                                                                                                     | Verification                                                                                              |
+| --------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `shared_secret` | `header`, `secret_from` | —                                                                                                                   | The request header `header` must equal `env[secret_from]` (exact, timing-safe). The Gorgias model.        |
+| `github`        | `secret_from`           | —                                                                                                                   | `X-Hub-Signature-256` HMAC-SHA256 of the raw body against `env[secret_from]`.                             |
+| `stripe`        | `secret_from`           | `max_age_seconds` (integer ≥ 1)                                                                                     | `Stripe-Signature` timestamped HMAC; `max_age_seconds` bounds the replay window.                          |
+| `hmac`          | `secret_from`, `header` | `algorithm` (`sha1`\|`sha256`\|`sha512`), `encoding` (`hex`\|`base64`), `timestamp_header`, `max_age_seconds` (≥ 1) | Generic HMAC of the raw body in `header`; `algorithm` defaults `sha256`, `encoding` defaults `hex`.       |
+| `none`          | —                       | —                                                                                                                   | **Verification disabled.** Trusted-network/localhost only (discouraged); `realm listen` warns at startup. |
+
+All string fields (`header`, `secret_from`, `timestamp_header`) must be non-empty. `secret_from` is the
+**name of an environment variable**, resolved at `realm listen` startup (a missing var is a startup
+error, not a per-request failure).
+
+### `filter`
+
+Optional. `{ all: [ … ] }` — 1 to 8 conditions combined with AND; the request is dispatched only if
+every condition matches, otherwise `realm listen` responds `200 { status: "ignored" }`. A shorthand
+single condition (a bare `{ header|path, value }`) is normalised to `{ all: [ … ] }` at load.
+
+Each condition has **exactly one** of:
+
+- `header` — a request header name (matched against the lowercased header map), or
+- `path` — a dot-path resolved against `{ headers, body }`,
+
+plus `value` — a non-empty string, or a non-empty array of non-empty strings (matches if the resolved
+value equals the string, or is one of the array entries).
+
+### `dedup`
+
+Optional, **on by default**. Set `dedup: false` to disable. Otherwise an object:
+
+| Field           | Type               | Required | Description                                                                                       |
+| --------------- | ------------------ | -------- | ------------------------------------------------------------------------------------------------- |
+| `id_from`       | string (dot-path)  | Yes      | Non-empty dot-path to the unique event ID, resolved against `{ headers, body }` (e.g. `body.id`). |
+| `ttl_minutes`   | integer            | No       | Dedup window, `1`–`10080` (7 days). Default `60`.                                                 |
+| `on_missing_id` | `skip` \| `reject` | No       | When `id_from` resolves to nothing: `skip` (default — proceed without dedup) or `reject` (`400`). |
+
+A duplicate within the window returns `200 { status: "deduplicated" }`. Dedup is at-least-once
+(best-effort in-flight store + the run store's idempotency key as the cross-restart backstop).
+
+### `params_map`
+
+Optional `Record<string, string>` — run-param name → dot-path into `{ headers, body }`. Values must be
+non-empty strings. The dot-path root key is **`headers`** (plural) and **`body`**; a singular `header.…`
+silently resolves to nothing. Extracted params are validated against the workflow's `params_schema`
+before the run is created (invalid → `400`).
+
+> **Note:** the `trigger` block configures _how a webhook reaches the workflow_; it does not change the
+> workflow's steps. It has no effect unless the workflow is served by `realm listen`.

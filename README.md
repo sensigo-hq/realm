@@ -164,6 +164,8 @@ When no registered workflow matches the task, the agent calls `create_workflow` 
 
 Run `realm <command> --help` for full options on any command.
 
+> The GitHub-only `realm webhook` command was removed in favour of `realm listen` (a workflow `trigger:` block with `auth.mode: github` replaces it). Running `realm webhook` now prints a migration message and exits non-zero.
+
 ## Documentation
 
 - [Getting Started](docs/getting-started.md) — end-to-end walkthrough including service adapters, human gates, and step handlers
