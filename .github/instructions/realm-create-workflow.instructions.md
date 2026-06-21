@@ -252,3 +252,6 @@ them as described in `realm.instructions.md`.
   `realm workflow register` processes the workflow directory. Dynamic workflows have no
   directory, so no static context files can be attached. Use a YAML-registered workflow if
   your steps need static reference files injected into prompts via `{{ workflow.context.NAME }}`.
+- `trigger:` (webhook triggering via `realm listen`) is a YAML-loader feature and is not
+  available on dynamically-created workflows — `realm listen` mounts workflows from files, and a
+  dynamic workflow has no file to route to. Use a YAML-registered workflow if you need webhook triggering.

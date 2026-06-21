@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+> Planned version: **0.7.0** — the `realm webhook` removal is a breaking change; under SemVer 0.x the breaking signal is the minor segment.
+
+### Added
+
+- **`realm listen` — general-purpose webhook server.** Routes inbound webhooks to workflows that declare a `trigger:` block: verifies authenticity per `trigger.auth`, optionally filters and deduplicates, creates a run, and spawns a detached `realm agent` for it. Loopback-bound by default (a non-loopback host warns about missing TLS); the request body is capped and timed out before any verification work, and a `--max-concurrent` 503 floor caps in-flight requests. Flags: `--port`, `--host`, `--body-timeout-ms`, `--max-body-bytes`, `--max-concurrent`, `--dedup-store`, `--log-level`. TLS termination, rate limiting, and autoscaling are delegated to a reverse proxy.
+- **Workflow `trigger:` block** — a new `workflow.yaml` surface, validated at register time. `type: webhook` with an `auth` mode — `shared_secret` (header token, e.g. Gorgias), `github`, `stripe`, `hmac`, or `none` (verification disabled; trusted-network/localhost only) — plus optional `filter`, `dedup`, and `params_map`. See [YAML Schema Reference → Webhook trigger](docs/reference/yaml-schema.md#webhook-trigger).
+- **New exported types** from `@sensigo/realm`: `WebhookTrigger`, `TriggerDefinition`, `WebhookAuth` (and its `AuthSharedSecret` / `AuthGithub` / `AuthStripe` / `AuthHmac` / `AuthNone` members), `FilterCondition`, `TriggerFilter`, `DedupConfig`. New `RunRecord` fields `agent_pid` and `agent_started_at`, set by `realm listen` after spawning an agent.
+
+### Removed
+
+- **`realm webhook` (GitHub-only webhook server) removed.** Its function is replaced by `realm listen` with a workflow `trigger:` block (`auth: { mode: github }` + a `params_map` of the PR fields), proven byte-parity-equivalent to the old hardcoded mapping. `realm webhook` now prints a migration message and exits non-zero. **Migration:** see [`docs/reference/cli-commands.md`](docs/reference/cli-commands.md) (`realm listen`) and [`examples/09-webhook-pr-review/`](examples/09-webhook-pr-review/). The duplicate `checkWebhookSignature` helper was also removed — the shared `verifyGithub` verifier covers it.
+
+---
+
 ## [0.6.4] — 2026-06-17
 
 ### Changed
