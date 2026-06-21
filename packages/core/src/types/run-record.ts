@@ -203,6 +203,17 @@ export interface RunRecord {
    * Keyed by entry name. Separate from step evidence — not in evidence[].
    */
   workflow_context_snapshots?: Record<string, WorkflowContextSnapshot>;
+  /**
+   * PID of the agent process spawned by 'realm listen' for this run.
+   * Set after a successful spawn. Absent for runs not started by a webhook trigger.
+   * May be stale if the agent has exited — use for diagnostic purposes only.
+   */
+  agent_pid?: number;
+  /**
+   * ISO-8601 timestamp when the agent process was spawned.
+   * Set by 'realm listen' after a successful spawn.
+   */
+  agent_started_at?: string;
   created_at: string;
   updated_at: string;
   terminal_state: boolean;

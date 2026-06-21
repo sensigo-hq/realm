@@ -338,6 +338,12 @@ export interface WorkflowDefinition {
    * Runtime-only — do not write to workflow YAML.
    */
   agent?: string;
+  /**
+   * Optional automated trigger for this workflow.
+   * When set, 'realm listen' routes incoming webhook requests to this workflow.
+   * Runtime-only field on the listening process — not enforced by the engine itself.
+   */
+  trigger?: TriggerDefinition;
 }
 
 /** A single named entry in the workflow_context section. */
@@ -350,3 +356,92 @@ export interface WorkflowContextEntry {
 
 /** Wrapper format applied to {{ workflow.context.NAME }} template references. */
 export type ContextWrapperFormat = 'xml' | 'brackets' | 'none';
+
+// ─── Webhook Trigger ───────────────────────────────────────────────────────────
+// Minimal, Gorgias-anchored trigger config. `auth` carries a verification *mode* (these are
+// auth modes, not all signatures) — `shared_secret` (header token; primary) plus the HMAC
+// presets github/stripe/hmac, and a documented `none` escape hatch.
+
+/** Header-token auth — the request carries a user-configured header equal to a shared secret. */
+export interface AuthSharedSecret {
+  mode: 'shared_secret';
+  /** Request header carrying the token (matched case-insensitively), e.g. 'Authorization'. */
+  header: string;
+  /** Env var name holding the EXACT expected header value (e.g. 'Bearer abc123'). */
+  secret_from: string;
+}
+
+/** GitHub HMAC-SHA256 hex body signature (header 'X-Hub-Signature-256'). */
+export interface AuthGithub {
+  mode: 'github';
+  secret_from: string;
+}
+
+/** Stripe timestamped HMAC body signature (header 'Stripe-Signature'). */
+export interface AuthStripe {
+  mode: 'stripe';
+  secret_from: string;
+  /** Maximum age of the signature timestamp in seconds. */
+  max_age_seconds?: number;
+}
+
+/** Generic HMAC body signature with a configurable header / algorithm / encoding. */
+export interface AuthHmac {
+  mode: 'hmac';
+  secret_from: string;
+  /** Header carrying the computed signature. */
+  header: string;
+  /** HMAC algorithm. Default: 'sha256'. */
+  algorithm?: 'sha1' | 'sha256' | 'sha512';
+  /** Signature encoding in the header. Default: 'hex'. */
+  encoding?: 'hex' | 'base64';
+  /** Optional header carrying the request timestamp for replay prevention. */
+  timestamp_header?: string;
+  /** Maximum age in seconds when timestamp_header is set. */
+  max_age_seconds?: number;
+}
+
+/** Documented, discouraged escape hatch — accept without verification (trusted network / localhost only). */
+export interface AuthNone {
+  mode: 'none';
+}
+
+export type WebhookAuth = AuthSharedSecret | AuthGithub | AuthStripe | AuthHmac | AuthNone;
+
+// Dot-notation: each segment is a property name or zero-based numeric array index.
+export type FilterCondition =
+  | { header: string; value: string | string[] }
+  | { path: string; value: string | string[] };
+
+/** Post-normalisation form (loader converts shorthand → { all: [...] }). Max 8 conditions. */
+export interface TriggerFilter {
+  all: FilterCondition[];
+}
+
+export interface DedupConfig {
+  /** Dot-path to the unique event ID (e.g. 'body.id' or 'header.x-gorgias-...'). */
+  id_from: string;
+  /** TTL in minutes. Default: 60. Range: 1–10080 (7 days max). */
+  ttl_minutes?: number;
+  /**
+   * Behaviour when the dedup ID cannot be resolved from the payload.
+   * 'skip' (default): log warn and proceed without dedup protection.
+   * 'reject': return 400.
+   */
+  on_missing_id?: 'skip' | 'reject';
+}
+
+export interface WebhookTrigger {
+  type: 'webhook';
+  /** URL path for this webhook. Default: /<workflow-id>. */
+  path?: string;
+  auth: WebhookAuth;
+  /** Loader normalises a shorthand FilterCondition → TriggerFilter (all: [...]) at load time. */
+  filter?: TriggerFilter;
+  /** false = explicit dedup disable. */
+  dedup?: DedupConfig | false;
+  /** Maps run params from payload: keys = param names, values = dot-paths into { headers, body }. */
+  params_map?: Record<string, string>;
+}
+
+export type TriggerDefinition = WebhookTrigger;

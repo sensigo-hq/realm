@@ -1623,3 +1623,153 @@ steps:
     }
   });
 });
+
+describe('trigger: block validation', () => {
+  /** Wraps a top-level `trigger:` block (column 0) into a complete valid workflow. */
+  const wf = (trigger: string): string => `
+id: wf-trigger
+name: WF Trigger
+version: 1
+${trigger}
+steps:
+  step-one:
+    description: First
+    execution: auto
+    depends_on: []
+`;
+
+  it('valid Gorgias shared_secret trigger → loads', () => {
+    const trigger = `trigger:
+  type: webhook
+  path: /hooks/gorgias
+  auth:
+    mode: shared_secret
+    header: Authorization
+    secret_from: GORGIAS_WEBHOOK_TOKEN
+  filter:
+    all:
+      - { path: body.type, value: [ticket-created, ticket-message-created] }
+  dedup:
+    id_from: body.id
+  params_map:
+    ticket_id: body.id`;
+    const def = loadWorkflowFromString(wf(trigger));
+    expect(def.trigger?.type).toBe('webhook');
+    expect(def.trigger?.auth.mode).toBe('shared_secret');
+  });
+
+  it('each HMAC-preset auth mode loads', () => {
+    for (const auth of [
+      `mode: github
+    secret_from: GH_SECRET`,
+      `mode: stripe
+    secret_from: STRIPE_SECRET
+    max_age_seconds: 300`,
+      `mode: hmac
+    secret_from: HMAC_SECRET
+    header: x-signature`,
+      `mode: none`,
+    ]) {
+      const trigger = `trigger:
+  type: webhook
+  auth:
+    ${auth}`;
+      expect(() => loadWorkflowFromString(wf(trigger))).not.toThrow();
+    }
+  });
+
+  it('auth missing → error', () => {
+    const trigger = `trigger:
+  type: webhook`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/auth/);
+  });
+
+  it('shared_secret missing header → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  auth:
+    mode: shared_secret
+    secret_from: TOKEN`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/header/);
+  });
+
+  it('invalid auth mode → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  auth:
+    mode: paypal
+    secret_from: TOKEN`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/mode/);
+  });
+
+  it('cross-mode field bleed (github + algorithm) → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  auth:
+    mode: github
+    secret_from: GH_SECRET
+    algorithm: sha256`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/unknown property|algorithm/);
+  });
+
+  it('dedup missing id_from → error (clean message, no const/oneOf noise)', () => {
+    const trigger = `trigger:
+  type: webhook
+  auth:
+    mode: none
+  dedup:
+    ttl_minutes: 60`;
+    let message = '';
+    try {
+      loadWorkflowFromString(wf(trigger));
+    } catch (err) {
+      message = (err as WorkflowError).message;
+    }
+    expect(message).toMatch(/id_from/);
+    expect(message).not.toMatch(/equal to constant/);
+    expect(message).not.toMatch(/oneOf/);
+  });
+
+  it('filter both header and path → clear XOR message', () => {
+    const trigger = `trigger:
+  type: webhook
+  auth:
+    mode: none
+  filter:
+    header: x-h
+    path: body.x
+    value: v`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/exactly one of 'header' or 'path'/);
+  });
+
+  it('filter shorthand → normalised to { all: [condition] }', () => {
+    const trigger = `trigger:
+  type: webhook
+  auth:
+    mode: none
+  filter:
+    header: x-event
+    value: push`;
+    const def = loadWorkflowFromString(wf(trigger));
+    expect(def.trigger?.filter).toEqual({ all: [{ header: 'x-event', value: 'push' }] });
+  });
+
+  it('params_map non-string value → error', () => {
+    const trigger = `trigger:
+  type: webhook
+  auth:
+    mode: none
+  params_map:
+    ticket_id: 123`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/params_map/);
+  });
+
+  it("typo'd trigger key → error", () => {
+    const trigger = `trigger:
+  type: webhook
+  auth:
+    mode: none
+  dedpu: false`;
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/unknown property|dedpu/);
+  });
+});
