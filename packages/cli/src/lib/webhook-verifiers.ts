@@ -60,7 +60,10 @@ export function verifySharedSecret(
     if (typeof headers !== 'object' || headers === null) {
       return false;
     }
-    const provided = headers[headerName.toLowerCase()];
+    // Own-property lookup (defense-in-depth): a polluted Object.prototype[<header-name>]
+    // can never satisfy the compare, even if `headers` was not built with a null prototype.
+    const key = headerName.toLowerCase();
+    const provided = Object.hasOwn(headers, key) ? headers[key] : undefined;
     if (typeof provided !== 'string' || provided === '') {
       return false;
     }

@@ -242,6 +242,13 @@ export const webhookCommand = new Command('webhook')
       provider?: string;
       model?: string;
     }) => {
+      // Deprecation notice — `realm listen` supersedes `realm webhook` (GitHub flow maps via
+      // a `trigger:` block with `auth: { mode: github }` + `params_map`).
+      console.error(
+        'Warning: `realm webhook` is deprecated and will be removed in a future release. ' +
+          'Use `realm listen` with a `trigger:` block in your workflow (auth.mode: github) instead.',
+      );
+
       // 1. Resolve secret — CLI flag overrides env var; refuse to start if neither set
       const secret = opts.secret ?? process.env['GITHUB_WEBHOOK_SECRET'];
       if (!secret) {
