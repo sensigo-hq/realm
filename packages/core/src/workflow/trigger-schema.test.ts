@@ -316,3 +316,90 @@ describe('valid-form sweep (regression guard — every legitimate config must lo
     expect(validateTriggerStructure(trigger)).toEqual([]);
   });
 });
+
+describe('error-message cleanup (#3b — drops wrapper/const noise, keeps leaves)', () => {
+  const sigGH = { provider: 'github', secret_from: 'X' };
+  const msg = (trigger: unknown) => validateTriggerStructure(trigger).join(' ; ');
+
+  it('dedup missing id_from: keeps id_from leaf, drops const + oneOf', () => {
+    const m = msg({ type: 'webhook', signature: sigGH, dedup: { ttl_minutes: 10 } });
+    expect(m).toMatch(/id_from/);
+    expect(m).not.toMatch(/equal to constant/);
+    expect(m).not.toMatch(/oneOf/);
+  });
+
+  it('dedup: true → "must be object", drops misleading const', () => {
+    const m = msg({ type: 'webhook', signature: sigGH, dedup: true });
+    expect(m).toMatch(/must be object/);
+    expect(m).not.toMatch(/equal to constant/);
+    expect(m).not.toMatch(/oneOf/);
+  });
+
+  it('dedup ttl_minutes too big: keeps ttl leaf, drops const + oneOf', () => {
+    const m = msg({
+      type: 'webhook',
+      signature: sigGH,
+      dedup: { id_from: 'x', ttl_minutes: 44641 },
+    });
+    expect(m).toMatch(/ttl_minutes/);
+    expect(m).not.toMatch(/equal to constant/);
+    expect(m).not.toMatch(/oneOf/);
+  });
+
+  it('filter both header and path → clear XOR message, no cryptic oneOf', () => {
+    const m = msg({
+      type: 'webhook',
+      signature: sigGH,
+      filter: { all: [{ header: 'h', path: 'p', value: 'v' }] },
+    });
+    expect(m).toMatch(/exactly one of 'header' or 'path'/);
+    expect(m).not.toMatch(/schema in oneOf/);
+  });
+
+  it('filter neither header nor path → leaf required errors, no bare oneOf', () => {
+    const m = msg({ type: 'webhook', signature: sigGH, filter: { all: [{ value: 'v' }] } });
+    expect(m).toMatch(/header/);
+    expect(m).toMatch(/path/);
+    expect(m).not.toMatch(/schema in oneOf/);
+  });
+
+  it('shopify neither secret → both leaf errors, drops anyOf + then', () => {
+    const m = msg({ type: 'webhook', signature: { provider: 'shopify' } });
+    expect(m).toMatch(/secret_from/);
+    expect(m).toMatch(/secret_map/);
+    expect(m).not.toMatch(/anyOf/);
+    expect(m).not.toMatch(/then/);
+  });
+
+  it('github no secret_from → leaf error only, drops then wrapper', () => {
+    const m = msg({ type: 'webhook', signature: { provider: 'github' } });
+    expect(m).toMatch(/secret_from/);
+    expect(m).not.toMatch(/then/);
+  });
+
+  it('cross-provider bleed (github + algorithm) → unknown-property leaf, no then', () => {
+    const m = msg({
+      type: 'webhook',
+      signature: { provider: 'github', secret_from: 'X', algorithm: 'sha256' },
+    });
+    expect(m).toMatch(/unknown property 'algorithm'/);
+    expect(m).not.toMatch(/then/);
+  });
+
+  it('output is de-duplicated (no repeated message line)', () => {
+    // Representative multi-error case (shopify-neither emits two leaf errors + suppressed wrappers).
+    const errs = validateTriggerStructure({ type: 'webhook', signature: { provider: 'shopify' } });
+    expect(errs.length).toBeGreaterThan(1);
+    expect(new Set(errs).size).toBe(errs.length);
+  });
+
+  it('a failing trigger never produces an empty error list (safety net)', () => {
+    // Every malformed case above must yield at least one message.
+    expect(
+      validateTriggerStructure({ type: 'webhook', signature: { provider: 'shopify' } }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      validateTriggerStructure({ type: 'webhook', signature: sigGH, dedup: true }).length,
+    ).toBeGreaterThan(0);
+  });
+});

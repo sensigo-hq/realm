@@ -2017,7 +2017,8 @@ ${VALID_SIG}
     header: x-h
     path: body.x
     value: v`;
-    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/oneOf/);
+    // #3b cleanup replaced the cryptic Ajv `oneOf` wrapper with a clear XOR message.
+    expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/exactly one of 'header' or 'path'/);
   });
 
   it('G2: condition missing value → error', () => {
@@ -2364,5 +2365,46 @@ ${VALID_SIG}
     api_key_from: GH_TOKEN
     extra_key: nope`;
     expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/unknown property|extra_key/);
+  });
+
+  // ── Error-message cleanup (#3b): cleaned strings flow through the thrown WorkflowError ──
+
+  it('cleanup: filter both header+path → clear XOR message reaches the loader error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+  filter:
+    header: x-h
+    path: body.x
+    value: v`;
+    let message = '';
+    try {
+      loadWorkflowFromString(wf(trigger));
+    } catch (err) {
+      message = (err as WorkflowError).message;
+    }
+    expect(message).toMatch(/exactly one of 'header' or 'path'/);
+    expect(message).not.toMatch(/schema in oneOf/);
+  });
+
+  it('cleanup: dedup missing id_from → no misleading "equal to constant" in loader error', () => {
+    const trigger = `trigger:
+  type: webhook
+  signature:
+    provider: github
+    secret_from: GH_SECRET
+  dedup:
+    ttl_minutes: 10`;
+    let message = '';
+    try {
+      loadWorkflowFromString(wf(trigger));
+    } catch (err) {
+      message = (err as WorkflowError).message;
+    }
+    expect(message).toMatch(/id_from/);
+    expect(message).not.toMatch(/equal to constant/);
+    expect(message).not.toMatch(/oneOf/);
   });
 });

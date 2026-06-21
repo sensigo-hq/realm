@@ -245,6 +245,97 @@ function formatAjvError(err: ErrorObject): string {
   return `${base} ${err.message ?? 'is invalid'}`.trim();
 }
 
+// Structural combinator keywords. Their errors are wrappers around the real (leaf) failures,
+// so they add noise without information once the leaf is present.
+const WRAPPER_KEYWORDS = new Set(['oneOf', 'anyOf', 'if']);
+
+/**
+ * Cleans Ajv's raw error array into a concise, field-named, de-duplicated string list:
+ *  - drops structural wrapper noise (oneOf / anyOf / if) when a leaf error already explains it,
+ *  - drops the misleading dedup `{ const: false }` line (it implies "dedup must be false"),
+ *  - replaces the otherwise-cryptic filter header-XOR-path `oneOf` (both branches matched, so no
+ *    leaf exists) with a clear message,
+ *  - keeps every field-named leaf error and de-duplicates, preserving first-seen order.
+ *
+ * Pure and string-only: it never changes which configs validate — only the messages.
+ */
+function formatAjvErrors(errs: ErrorObject[]): string[] {
+  // Paths bearing a real (non-wrapper) leaf error — used to decide whether a bare
+  // anyOf/oneOf wrapper at that path (or an ancestor) is redundant.
+  const leafPaths = new Set<string>();
+  for (const err of errs) {
+    if (!WRAPPER_KEYWORDS.has(err.keyword)) {
+      leafPaths.add(typeof err.instancePath === 'string' ? err.instancePath : '');
+    }
+  }
+  const hasLeafAtOrUnder = (path: string): boolean => {
+    for (const leaf of leafPaths) {
+      if (leaf === path || leaf.startsWith(`${path}/`)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const out: string[] = [];
+  for (const err of errs) {
+    const instancePath = typeof err.instancePath === 'string' ? err.instancePath : '';
+    const params = (err.params ?? {}) as Record<string, unknown>;
+
+    // Rule 1: misleading dedup `{ const: false }` branch error.
+    if (err.keyword === 'const' && instancePath === '/dedup' && params['allowedValue'] === false) {
+      continue;
+    }
+
+    // Rule 2: `if` is always redundant — the failing `then`'s own leaf error is always present.
+    if (err.keyword === 'if') {
+      continue;
+    }
+
+    // Rule 3: `anyOf` — drop when a leaf exists at the same path or deeper.
+    if (err.keyword === 'anyOf') {
+      if (hasLeafAtOrUnder(instancePath)) {
+        continue;
+      }
+      out.push(formatAjvError(err));
+      continue;
+    }
+
+    // Rule 4: `oneOf`.
+    if (err.keyword === 'oneOf') {
+      const passing = params['passingSchemas'];
+      if (Array.isArray(passing) && passing.length >= 2) {
+        // More than one branch matched → no leaf error exists. Replace with a clear message.
+        if (/^\/filter\/all\/\d+$/.test(instancePath)) {
+          out.push(`trigger${instancePath}: must have exactly one of 'header' or 'path'`);
+        } else {
+          out.push(`trigger${instancePath}: must match exactly one of the allowed shapes`);
+        }
+        continue;
+      }
+      // Zero branches matched → leaf errors explain it; drop when one exists at/under the path.
+      if (hasLeafAtOrUnder(instancePath)) {
+        continue;
+      }
+      out.push(formatAjvError(err));
+      continue;
+    }
+
+    // Rule 5: leaf error — format with the field name.
+    out.push(formatAjvError(err));
+  }
+
+  // Rule 6: de-duplicate, preserving first-seen order.
+  const deduped = [...new Set(out)];
+
+  // Rule 7: non-empty safety net — a failure must never produce zero messages.
+  if (deduped.length === 0 && errs.length > 0) {
+    return [...new Set(errs.map(formatAjvError))];
+  }
+
+  return deduped;
+}
+
 /**
  * Normalises a shorthand filter (a single FilterCondition object with no `all` key) into the
  * canonical { all: [condition] } form, IN PLACE. Called BEFORE schema validation so a malformed
@@ -277,9 +368,7 @@ export function validateTriggerStructure(trigger: unknown): string[] {
 
   const valid = validateFn(trigger);
   if (!valid && validateFn.errors) {
-    for (const err of validateFn.errors) {
-      errors.push(formatAjvError(err));
-    }
+    errors.push(...formatAjvErrors(validateFn.errors));
   }
 
   // Code-only semantic check: shopify secret_map keys must end in '.myshopify.com'.
