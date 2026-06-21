@@ -4,9 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
-
-> Planned version: **0.7.0** — the `realm webhook` removal is a breaking change; under SemVer 0.x the breaking signal is the minor segment.
+## [0.7.0] — 2026-06-21
 
 ### Added
 
