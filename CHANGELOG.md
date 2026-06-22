@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **Defense-in-depth: `executeChain` now no-ops on an already-terminal run.** When invoked for a run whose phase is terminal (`completed`/`failed`/`aborted`/`abandoned`), `executeChain` returns immediately without executing a step or writing the store, instead of attempting to drive it. This is unreachable in normal operation — the eligibility guard added in 0.7.1 already prevents it — and has no observable effect on valid workflows; it hardens the chain boundary so the "terminal runs are never driven" invariant holds at the structural boundary regardless of how a caller reaches `executeChain`.
+
+---
+
 ## [0.7.1] — 2026-06-22
 
 ### Fixed
