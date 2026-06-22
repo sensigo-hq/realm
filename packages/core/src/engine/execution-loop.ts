@@ -29,7 +29,7 @@ import {
 } from '../validation/input-schema.js';
 import { normalizeTrace } from './trace-normalizer.js';
 import type { NormalizeTraceResult } from './trace-normalizer.js';
-import { TERMINAL_PHASES } from './lifecycle.js';
+import { TERMINAL_PHASES, isTerminalPhase } from './lifecycle.js';
 import {
   checkPreconditions,
   evaluateAllPreconditions,
@@ -1950,6 +1950,33 @@ export async function executeChain(
   definition: WorkflowDefinition,
   options: ExecuteChainOptions,
 ): Promise<ResponseEnvelope> {
+  // Defense-in-depth: never drive a run that is already terminal. The eligibility guard
+  // (findEligibleSteps) makes this unreachable in normal operation, but guarding the chain
+  // boundary protects every executeChain caller regardless of how it reached here. Placed in the
+  // public wrapper so it fires exactly once at entry; recursive depth>0 calls and runs that become
+  // terminal mid-chain are covered by the existing mid-chain check in executeChainInternal.
+  let entryRun: RunRecord | undefined;
+  try {
+    entryRun = await store.get(options.runId);
+  } catch {
+    entryRun = undefined; // run not readable → fall through to the normal path
+  }
+  if (entryRun !== undefined && isTerminalPhase(entryRun.run_phase)) {
+    return {
+      command: options.command,
+      run_id: options.runId,
+      run_version: entryRun.version,
+      status: 'ok',
+      data: {},
+      evidence: [],
+      warnings: [],
+      errors: [],
+      agent_action: 'stop' as const,
+      context_hint: `Run '${options.runId}' is already terminal (${entryRun.run_phase}); no steps executed.`,
+      next_actions: [],
+    };
+  }
+
   const effectiveOptions: ExecuteChainOptions = {
     ...options,
     registry: options.registry ?? createDefaultRegistry(),

@@ -4402,3 +4402,89 @@ describe('_debug stripping on direct auto-step invocation', () => {
     expect(snap?.debug_output).toBe('note');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Issue #91: executeChain terminal-run entry guard (defense-in-depth)
+// ---------------------------------------------------------------------------
+
+describe('executeChain — terminal-run entry guard (#91)', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-chain-entry-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  it('is a byte-unchanged no-op on a terminal aborted run (no step claimed)', async () => {
+    const run = await store.create({ workflowId: 'test-wf', workflowVersion: 1, params: {} });
+    await store.update({
+      ...run,
+      run_phase: 'aborted',
+      terminal_state: true,
+      terminal_reason: "Guard 'g' aborted the run",
+      aborted_at: { step_id: 'step-one' },
+    });
+    const before = await store.get(run.id);
+    const dispatcher = vi.fn(echoDispatcher);
+
+    const envelope = await executeChain(store, definition, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.agent_action).toBe('stop');
+    expect(envelope.next_actions).toEqual([]);
+    expect(envelope.run_version).toBe(before.version);
+    expect(dispatcher).not.toHaveBeenCalled(); // no step executed
+    const after = await store.get(run.id);
+    expect(after).toEqual(before); // byte-unchanged (version, step sets, everything)
+  });
+
+  it('is a byte-unchanged no-op on a terminal completed run (no aborted_at)', async () => {
+    const run = await store.create({ workflowId: 'test-wf', workflowVersion: 1, params: {} });
+    await store.update({
+      ...run,
+      run_phase: 'completed',
+      terminal_state: true,
+      terminal_reason: 'Workflow completed.',
+      completed_steps: ['step-one', 'step-two'],
+    });
+    const before = await store.get(run.id);
+    const dispatcher = vi.fn(echoDispatcher);
+
+    const envelope = await executeChain(store, definition, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.agent_action).toBe('stop');
+    expect(dispatcher).not.toHaveBeenCalled();
+    const after = await store.get(run.id);
+    expect(after).toEqual(before);
+  });
+
+  it('does NOT over-fire — a non-terminal (running) run is still driven', async () => {
+    const run = await store.create({ workflowId: 'test-wf', workflowVersion: 1, params: {} });
+    const createdVersion = run.version;
+    const dispatcher = vi.fn(echoDispatcher);
+
+    await executeChain(store, definition, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher,
+    });
+
+    expect(dispatcher).toHaveBeenCalled(); // the running run was driven
+    const after = await store.get(run.id);
+    expect(after.completed_steps).toContain('step-one');
+    expect(after.version).toBeGreaterThan(createdVersion);
+  });
+});
