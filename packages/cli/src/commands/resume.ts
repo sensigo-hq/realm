@@ -3,7 +3,7 @@ import { Command } from 'commander';
 import type { RunStore } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
 import { WorkflowError } from '@sensigo/realm';
-import { RESUMABLE_PHASES } from '@sensigo/realm';
+import { RESUMABLE_PHASES, propagateSkips } from '@sensigo/realm';
 
 /**
  * Removes `stepName` from `failed_steps` so the DAG engine can re-evaluate its
@@ -54,9 +54,23 @@ export async function resumeRun(
     });
   }
 
+  // Re-enable the failed step AND make the run runnable again. Filtering failed_steps alone leaves
+  // the run terminal (terminal_state:true), so `realm agent --run-id` throws on it and the
+  // `while (!terminal_state)` drivers skip it. Mirror the test-harness reference: strip
+  // terminal_reason (destructure-and-omit to honour exactOptionalPropertyTypes), re-derive
+  // skipped_steps from scratch so steps skipped only because of this failure become eligible again,
+  // and reset terminal_state to false. update() recomputes run_phase → 'running'.
+  const { terminal_reason: _terminalReason, ...rest } = run;
+  const failedSteps = rest.failed_steps.filter((s) => s !== stepName);
+  const skippedSteps = propagateSkips(
+    { ...rest, failed_steps: failedSteps, skipped_steps: [] as string[] },
+    workflow,
+  );
   await runStore.update({
-    ...run,
-    failed_steps: run.failed_steps.filter((s) => s !== stepName),
+    ...rest,
+    failed_steps: failedSteps,
+    skipped_steps: skippedSteps,
+    terminal_state: false,
   });
 }
 
@@ -70,7 +84,10 @@ export const resumeCommand = new Command('resume')
     const workflowStore = new JsonWorkflowStore();
     try {
       await resumeRun(runId, opts.from, runStore, workflowStore);
-      console.log(`Resumed: step '${opts.from}' removed from failed_steps on run '${runId}'.`);
+      console.log(
+        `Resumed run '${runId}': step '${opts.from}' re-enabled and run reset to 'running'.\n` +
+          `Drive it with: realm agent --run-id ${runId}`,
+      );
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);

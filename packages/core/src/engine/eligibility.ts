@@ -21,12 +21,18 @@ export function deriveRunPhase(
   >,
 ): RunPhase {
   if (run.pending_gate !== undefined) return 'gate_waiting';
+  // aborted_at is authoritative and is checked before both !terminal_state and the
+  // 'Workflow completed.' check. The only records that carry aborted_at are guard/handler-aborted
+  // runs (always written terminal_state:true); legitimately resumable runs (failed/abandoned) never
+  // carry it. Promoting this branch means an aborted run can never revert to 'running' if a
+  // write-path recomputes terminal_state while the record still carries aborted_at, and a stale
+  // success reason can never mask an abort — while every normal derivation is unchanged.
+  if (run.aborted_at !== undefined) return 'aborted';
   if (!run.terminal_state) return 'running';
   // A terminal run that completed successfully sets terminal_reason to 'Workflow completed.'.
   // Recovery workflows end with failed_steps non-empty but are still considered completed
-  // when the final recovery step succeeds, so terminal_reason takes precedence.
+  // when the final recovery step succeeds, so terminal_reason takes precedence over failed_steps.
   if (run.terminal_reason === 'Workflow completed.') return 'completed';
-  if (run.aborted_at !== undefined) return 'aborted';
   if (run.failed_steps.length > 0) return 'failed';
   // terminal_state is true but the run neither completed normally nor failed — it was abandoned.
   return 'abandoned';
@@ -180,6 +186,9 @@ export function buildEvidenceByStep(run: RunRecord): Record<string, Record<strin
  *   - when-condition (if present) is truthy
  */
 export function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord): string[] {
+  // A terminal run has no eligible steps — never re-drive a completed/failed/aborted/abandoned run
+  // (e.g. when re-encountered through an idempotency-key match on start_run/start_run_batch).
+  if (run.terminal_state) return [];
   // Gate serialization: if a gate is open, no new steps are eligible.
   if (run.pending_gate !== undefined) return [];
 
@@ -222,6 +231,9 @@ export function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord
  * not via agent execute_step calls).
  */
 export function findEligibleGuardSteps(definition: WorkflowDefinition, run: RunRecord): string[] {
+  // A terminal run has no eligible guard steps either — symmetric with findEligibleSteps so a
+  // terminal run is never re-driven through the guard surface.
+  if (run.terminal_state) return [];
   if (run.pending_gate !== undefined) return [];
 
   const eligible: string[] = [];

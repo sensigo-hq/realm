@@ -9,8 +9,21 @@ import {
   JsonWorkflowStore,
   WorkflowError,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  findEligibleSteps,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
+
+/** Two-step workflow (step-a → step-b) — used to prove skipped_steps re-derivation on resume. */
+const redriveWorkflow: WorkflowDefinition = {
+  id: 'resume-redrive-wf',
+  name: 'Resume Re-drive Workflow',
+  version: 1,
+  schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+  steps: {
+    'step-a': { description: 'First step', execution: 'agent' },
+    'step-b': { description: 'Second step', execution: 'agent', depends_on: ['step-a'] },
+  },
+};
 
 const testWorkflow: WorkflowDefinition = {
   id: 'resume-test-wf',
@@ -103,5 +116,35 @@ describe('resumeRun', () => {
     await expect(resumeRun(run.id, 'nonexistent-step', runStore, workflowStore)).rejects.toThrow(
       'not found',
     );
+  });
+
+  it('re-drives a failed run: resets to running, clears terminal_reason, re-derives skipped_steps, re-enables the step', async () => {
+    await workflowStore.register(redriveWorkflow);
+    const run = await runStore.create({
+      workflowId: 'resume-redrive-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    // step-a failed → step-b was skipped (all_success can no longer be satisfied) → run terminal failed.
+    await runStore.update({
+      ...run,
+      run_phase: 'failed',
+      failed_steps: ['step-a'],
+      skipped_steps: ['step-b'],
+      terminal_state: true,
+      terminal_reason: 'step-a failed',
+    });
+
+    await resumeRun(run.id, 'step-a', runStore, workflowStore);
+
+    const resumed = await runStore.get(run.id);
+    expect(resumed.terminal_state).toBe(false);
+    expect(resumed.run_phase).toBe('running');
+    expect(resumed.failed_steps).not.toContain('step-a');
+    expect(resumed.terminal_reason).toBeUndefined();
+    // step-b was skipped only because step-a failed — re-derived away now that step-a is re-enabled.
+    expect(resumed.skipped_steps).not.toContain('step-b');
+    // The re-enabled step is now eligible (proving the run is genuinely runnable again).
+    expect(findEligibleSteps(redriveWorkflow, resumed)).toContain('step-a');
   });
 });
