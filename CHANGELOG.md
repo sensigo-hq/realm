@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Terminal runs are no longer re-driven or un-aborted when re-encountered through an idempotency key.** `findEligibleSteps` and `findEligibleGuardSteps` now return no eligible steps for a run in a terminal state, so `start_run` / `start_run_batch` are a clean no-op on an already-processed run (previously a terminal aborted run could be silently re-driven via a permanent idempotency-key match, corrupting it on disk).
+- **`deriveRunPhase` now treats `aborted_at` as authoritative.** An aborted run can no longer revert to `running` (or be silently reclassified as `completed`) if a write-path recomputes `terminal_state` while the record still carries `aborted_at`.
+- **`realm resume` now actually re-enables a failed run for re-execution.** It resets the run to `running`, re-derives skipped steps, and clears the terminal reason, so the run can be driven with `realm agent --run-id <id>`. Previously it only edited `failed_steps`, leaving the run terminal and un-runnable.
+
+---
+
 ## [0.7.0] — 2026-06-21
 
 ### Added

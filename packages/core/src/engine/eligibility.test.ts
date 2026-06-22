@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   findEligibleSteps,
+  findEligibleGuardSteps,
   triggerRuleSatisfied,
   evaluateWhenCondition,
   deriveRunPhase,
@@ -741,5 +742,106 @@ describe('claimStep — double-claim prevention', () => {
     });
 
     await expect(store.claimStep(run.id, 'step-a', definition)).rejects.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue-2: terminal-run eligibility guard
+// ---------------------------------------------------------------------------
+
+describe('findEligibleSteps / findEligibleGuardSteps — terminal-run guard', () => {
+  it('returns no eligible steps for a terminal aborted run (none_failed downstream of a skipped dep)', () => {
+    // Reproduces the bug shape: a guard aborted the run; its downstream none_failed step has only a
+    // *skipped* (not failed) dependency, so pre-fix it was returned eligible and re-executed.
+    const wf = makeWorkflow({
+      guard_step: { execution: 'agent' },
+      downstream: { execution: 'agent', depends_on: ['guard_step'], trigger_rule: 'none_failed' },
+    });
+    const abortedRun = makeRun({
+      terminal_state: true,
+      run_phase: 'aborted',
+      aborted_at: { step_id: 'guard_step' },
+      skipped_steps: ['guard_step'], // aborting step skipped, NOT failed
+      // 'downstream' left unsettled — none_failed is satisfied (no failed dep), so pre-fix eligible
+    });
+    expect(findEligibleSteps(wf, abortedRun)).toEqual([]);
+  });
+
+  it('returns no eligible guard steps for a terminal aborted run', () => {
+    const wf = makeWorkflow({
+      check: { execution: 'guard', abort_unless: ['ctx.ok'] },
+    });
+    const abortedRun = makeRun({
+      terminal_state: true,
+      run_phase: 'aborted',
+      aborted_at: { step_id: 'other' },
+      // 'check' guard unsettled — pre-fix it would be returned eligible
+    });
+    expect(findEligibleGuardSteps(wf, abortedRun)).toEqual([]);
+  });
+
+  it('still returns eligible steps for a non-terminal (running) run (guard does not over-fire)', () => {
+    const wf = makeWorkflow({ open_step: { execution: 'agent' } });
+    const runningRun = makeRun({ terminal_state: false, run_phase: 'running' });
+    expect(findEligibleSteps(wf, runningRun)).toEqual(['open_step']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue-2: deriveRunPhase — aborted_at is authoritative
+// ---------------------------------------------------------------------------
+
+describe('deriveRunPhase — aborted_at precedence (Issue-2)', () => {
+  const aborted = { step_id: 'guard_step' };
+
+  it('a record carrying aborted_at with terminal_state:false derives back to aborted (the fix)', () => {
+    expect(deriveRunPhase(makeRun({ terminal_state: false, aborted_at: aborted }))).toBe('aborted');
+  });
+
+  it("aborted_at outranks a stale 'Workflow completed.' reason", () => {
+    expect(
+      deriveRunPhase(
+        makeRun({
+          terminal_state: true,
+          aborted_at: aborted,
+          terminal_reason: 'Workflow completed.',
+        }),
+      ),
+    ).toBe('aborted');
+  });
+
+  // Regression matrix — every normal derivation is unchanged by the reorder.
+  it('normal aborted run is unchanged', () => {
+    expect(
+      deriveRunPhase(
+        makeRun({ terminal_state: true, aborted_at: aborted, terminal_reason: 'guard aborted' }),
+      ),
+    ).toBe('aborted');
+  });
+  it('completed (no aborted_at) is unchanged', () => {
+    expect(
+      deriveRunPhase(makeRun({ terminal_state: true, terminal_reason: 'Workflow completed.' })),
+    ).toBe('completed');
+  });
+  it('failed (no aborted_at) is unchanged', () => {
+    expect(deriveRunPhase(makeRun({ terminal_state: true, failed_steps: ['s'] }))).toBe('failed');
+  });
+  it('abandoned (no aborted_at) is unchanged', () => {
+    expect(deriveRunPhase(makeRun({ terminal_state: true }))).toBe('abandoned');
+  });
+  it('running (no aborted_at) is unchanged', () => {
+    expect(deriveRunPhase(makeRun({ terminal_state: false }))).toBe('running');
+  });
+  it('gate_waiting outranks everything', () => {
+    const gate: PendingGate = {
+      gate_id: 'g1',
+      step_name: 'review',
+      preview: {},
+      choices: ['approve', 'reject'],
+      opened_at: '2024-01-01T00:00:00.000Z',
+    };
+    expect(
+      deriveRunPhase(makeRun({ pending_gate: gate, terminal_state: false, aborted_at: aborted })),
+    ).toBe('gate_waiting');
   });
 });
