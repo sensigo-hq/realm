@@ -189,3 +189,110 @@ describe('run_phase on the envelope', () => {
     expect(env.run_phase).toBeUndefined();
   });
 });
+
+describe('start_run / start_run_batch re-encounter policy (#92 PR 2)', () => {
+  let runStore: JsonFileStore;
+  let workflowStore: JsonWorkflowStore;
+
+  beforeEach(async () => {
+    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'pol-run-')));
+    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'pol-wf-')));
+    await workflowStore.register(agentFirst);
+  });
+
+  async function seedCompleted(key: string): Promise<string> {
+    const { run } = await runStore.create({
+      workflowId: 'agentflow',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: key,
+    });
+    await runStore.update({
+      ...run,
+      completed_steps: ['review'],
+      run_phase: 'completed',
+      terminal_state: true,
+      terminal_reason: 'Workflow completed.',
+    });
+    return run.id;
+  }
+
+  it('start_run on_terminal_match:reject throws a WorkflowError with STATE_IDEMPOTENCY_KEY_USED', async () => {
+    await seedCompleted('k1');
+    let caught: unknown;
+    try {
+      await handleStartRun(
+        { workflow_id: 'agentflow', idempotency_key: 'k1', on_terminal_match: 'reject' },
+        { runStore, workflowStore },
+      );
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toMatchObject({ code: 'STATE_IDEMPOTENCY_KEY_USED' });
+  });
+
+  it('start_run on_terminal_match:rerun supersedes → deduped:false, new run', async () => {
+    const oldId = await seedCompleted('k1');
+    const env = await handleStartRun(
+      { workflow_id: 'agentflow', idempotency_key: 'k1', on_terminal_match: 'rerun' },
+      { runStore, workflowStore },
+    );
+    expect(env.deduped).toBe(false);
+    expect(env.run_id).not.toBe(oldId);
+    expect(env.context_hint).toContain('created');
+  });
+
+  it('start_run on_live_match:fail throws STATE_RUN_ALREADY_ACTIVE on a running match', async () => {
+    await runStore.create({
+      workflowId: 'agentflow',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k2',
+    });
+    let caught: unknown;
+    try {
+      await handleStartRun(
+        { workflow_id: 'agentflow', idempotency_key: 'k2', on_live_match: 'fail' },
+        { runStore, workflowStore },
+      );
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toMatchObject({ code: 'STATE_RUN_ALREADY_ACTIVE' });
+  });
+
+  it('start_run_batch applies batch-level policy; a rejected item does not sink the batch', async () => {
+    await seedCompleted('dup'); // terminal match for the first item
+    const result = await handleStartRunBatch(
+      {
+        workflow_id: 'agentflow',
+        on_terminal_match: 'reject',
+        items: [
+          { params: {}, idempotency_key: 'dup' }, // → rejected (terminal + reject)
+          { params: {}, idempotency_key: 'fresh' }, // → started
+        ],
+      },
+      { runStore, workflowStore },
+    );
+    expect(result.started).toHaveLength(1);
+    expect(result.started[0]!.idempotency_key).toBe('fresh');
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]!.index).toBe(0);
+    expect(result.failed[0]!.idempotency_key).toBe('dup');
+    expect(result.failed[0]!.error_code).toBe('STATE_IDEMPOTENCY_KEY_USED');
+  });
+
+  it('start_run_batch defaults: omitting policy reproduces PR 1 (terminal match deduped, no failed)', async () => {
+    await seedCompleted('dup');
+    const result = await handleStartRunBatch(
+      {
+        workflow_id: 'agentflow',
+        items: [{ params: {}, idempotency_key: 'dup' }],
+      },
+      { runStore, workflowStore },
+    );
+    expect(result.failed).toHaveLength(0);
+    expect(result.started[0]!.deduped).toBe(true);
+    expect(result.started[0]!.run_phase).toBe('completed');
+  });
+});

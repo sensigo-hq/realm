@@ -3,6 +3,7 @@ import {
   WorkflowError,
   findEligibleSteps,
   deriveRunPhase,
+  decideIdempotencyPolicy,
   type RunStore,
   type RunRecord,
   type CreateRunOptions,
@@ -16,16 +17,20 @@ export class InMemoryStore implements RunStore {
   private readonly keyIndex = new Map<string, string>();
 
   async create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
-    // Idempotency: a key match returns the existing run (any phase), like JsonFileStore.
+    // Idempotency: a key match applies the re-encounter policy, like JsonFileStore.
     if (options.idempotencyKey !== undefined) {
       const gk = `${options.workflowId}\0${options.idempotencyKey}`;
       const existingId = this.keyIndex.get(gk);
       if (existingId !== undefined) {
         const existing = this.runs.get(existingId);
         if (existing !== undefined) {
-          return { run: existing, created: false };
+          // `reuse` → return the existing run; `supersede` → fall through to a fresh create
+          // (which overwrites the keyIndex entry below). `fail`/`reject` throw.
+          if (decideIdempotencyPolicy(existing, options) === 'reuse') {
+            return { run: existing, created: false };
+          }
         }
-        // mapped run vanished → reclaim by falling through to a fresh create.
+        // mapped run vanished (or superseded) → fall through to a fresh create.
       }
     }
 

@@ -10,6 +10,21 @@ export interface CreateRunOptions {
   idempotencyKey?: string;
   /** ID of the parent run that spawned this run via start_run_batch. */
   parentRunId?: string;
+  /**
+   * Policy when the idempotency key matches a **terminal** run (`completed`/`failed`/`aborted`/`abandoned`).
+   * - `reuse` *(default)* — return the existing run (`created:false`).
+   * - `reject` — throw `STATE_IDEMPOTENCY_KEY_USED`.
+   * - `rerun_if_failed` — supersede a `failed`/`aborted`/`abandoned` match (mint a fresh run, `created:true`);
+   *   a `completed` match is reused (benign skip).
+   * - `rerun` — always supersede the matched run and mint a fresh run (`created:true`).
+   */
+  onTerminalMatch?: 'reuse' | 'reject' | 'rerun_if_failed' | 'rerun';
+  /**
+   * Policy when the idempotency key matches a **non-terminal** run (`running`/`gate_waiting`).
+   * - `use_existing` *(default)* — return the live run (`created:false`).
+   * - `fail` — throw `STATE_RUN_ALREADY_ACTIVE`.
+   */
+  onLiveMatch?: 'use_existing' | 'fail';
 }
 
 export interface RunStore {
