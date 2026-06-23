@@ -4,9 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
-
-> **Version intent: 0.8.0.** This release carries a breaking change to the `RunStore` interface (see below). On a 0.x line a breaking change bumps the minor segment.
+## [0.8.0] — 2026-06-24
 
 ### Changed
 
