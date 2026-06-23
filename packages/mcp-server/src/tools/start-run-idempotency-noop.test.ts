@@ -43,7 +43,7 @@ describe('start_run / start_run_batch on a terminal aborted run (idempotency no-
 
   /** Seeds a terminal aborted run carrying the permanent idempotency key. */
   async function seedAbortedRun(): Promise<RunRecord> {
-    const run = await runStore.create({
+    const { run: run } = await runStore.create({
       workflowId: 'cs1',
       workflowVersion: 1,
       params: {},

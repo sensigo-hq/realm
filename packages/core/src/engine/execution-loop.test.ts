@@ -59,7 +59,7 @@ describe('executeStep', () => {
   });
 
   it('successful step returns status ok and updates completed_steps', async () => {
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -88,7 +88,7 @@ describe('executeStep', () => {
   });
 
   it('blocked state returns blocked envelope with blocked_reason', async () => {
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -126,7 +126,7 @@ describe('executeStep', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'blocked-wf',
       workflowVersion: 1,
       params: {},
@@ -146,7 +146,7 @@ describe('executeStep', () => {
   });
 
   it('dispatcher error returns error envelope with evidence', async () => {
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -167,7 +167,7 @@ describe('executeStep', () => {
   });
 
   it('completing final step sets run_phase to completed', async () => {
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -232,7 +232,7 @@ describe('executeStep', () => {
         },
       },
     };
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -266,7 +266,7 @@ describe('executeStep', () => {
         },
       },
     };
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -309,7 +309,7 @@ describe('executeStep', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -350,7 +350,7 @@ describe('executeStep', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -384,7 +384,7 @@ describe('executeStep', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -417,7 +417,7 @@ describe('executeStep', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -478,7 +478,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('adapter', 'mock_adapter', adapter);
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -519,7 +519,7 @@ describe('executeStep', () => {
       };
       const registry = new ExtensionRegistry();
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -540,7 +540,7 @@ describe('executeStep', () => {
     it('returns error envelope when adapter is not registered in the registry', async () => {
       const registry = new ExtensionRegistry(); // empty — no adapter registered
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -564,7 +564,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('adapter', 'mock_adapter', adapter);
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -587,7 +587,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('adapter', 'mock_adapter', adapter);
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -626,7 +626,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -665,7 +665,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -705,7 +705,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -745,7 +745,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -769,7 +769,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('adapter', 'mock_adapter', adapter);
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -806,7 +806,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -843,7 +843,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -875,7 +875,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('adapter', 'mock_adapter', adapter);
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -928,7 +928,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'handler-wf',
         workflowVersion: 1,
         params: { source: 'doc-1' },
@@ -957,7 +957,7 @@ describe('executeStep', () => {
     it('returns error envelope when handler is not registered', async () => {
       const registry = new ExtensionRegistry(); // empty
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1021,7 +1021,7 @@ describe('executeStep', () => {
       registry.register('adapter', 'mock_adapter', adapter);
       registry.register('handler', 'my_handler', handler);
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'two-step-wf',
         workflowVersion: 1,
         params: {},
@@ -1058,7 +1058,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1109,7 +1109,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'two-step-handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1139,7 +1139,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1168,7 +1168,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1193,7 +1193,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1225,7 +1225,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1272,7 +1272,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'prompt-wf',
         workflowVersion: 1,
         params: {},
@@ -1314,7 +1314,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'gate-prompt-wf',
         workflowVersion: 1,
         params: {},
@@ -1361,7 +1361,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'agent-instr-wf',
         workflowVersion: 1,
         params: {},
@@ -1405,7 +1405,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'auto-instr-wf',
         workflowVersion: 1,
         params: {},
@@ -1436,7 +1436,7 @@ describe('executeStep', () => {
           },
         },
       };
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'gate-nav-wf',
         workflowVersion: 1,
         params: {},
@@ -1492,7 +1492,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'gate-owner-wf',
         workflowVersion: 1,
         params: {},
@@ -1526,7 +1526,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'gate-no-owner-wf',
         workflowVersion: 1,
         params: {},
@@ -1552,7 +1552,7 @@ describe('executeStep', () => {
 
   describe('cleanup failure warning', () => {
     it('surfaces cleanup failure as warning when the failed-state store.update throws', async () => {
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'test-wf',
         workflowVersion: 1,
         params: {},
@@ -1606,7 +1606,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'chain-cmd-wf',
         workflowVersion: 1,
         params: {},
@@ -1648,7 +1648,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'profile-wf',
         workflowVersion: 1,
         params: {},
@@ -1668,7 +1668,7 @@ describe('executeStep', () => {
     });
 
     it('agent step without profile has no agent_profile on evidence', async () => {
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'test-wf',
         workflowVersion: 1,
         params: {},
@@ -1719,7 +1719,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'gate-msg-broken-wf',
         workflowVersion: 1,
         params: {},
@@ -1761,7 +1761,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'gate-msg-happy-wf',
         workflowVersion: 1,
         params: {},
@@ -1800,7 +1800,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'gate-msg-evidence-wf',
         workflowVersion: 1,
         params: {},
@@ -1847,7 +1847,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'gate-no-msg-wf',
         workflowVersion: 1,
         params: {},
@@ -1883,7 +1883,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'gate-no-msg-ev-wf',
         workflowVersion: 1,
         params: {},
@@ -1930,7 +1930,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'gate-msg-over-prompt-wf',
         workflowVersion: 1,
         params: {},
@@ -1964,7 +1964,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'trace-agent-wf',
         workflowVersion: 1,
         params: {},
@@ -1994,7 +1994,11 @@ describe('executeStep', () => {
 
     it('non-agent step silently drops provided trace', async () => {
       // step-one is execution: 'auto' in the default definition
-      const run = await store.create({ workflowId: 'test-wf', workflowVersion: 1, params: {} });
+      const { run: run } = await store.create({
+        workflowId: 'test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
       const envelope = await executeStep(store, definition, {
         runId: run.id,
         command: 'step-one',
@@ -2020,7 +2024,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'trace-reserved-wf',
         workflowVersion: 1,
         params: {},
@@ -2053,7 +2057,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'trace-count-wf',
         workflowVersion: 1,
         params: {},
@@ -2086,7 +2090,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run1 = await store.create({
+      const { run: run1 } = await store.create({
         workflowId: 'trace-hash-stable-wf',
         workflowVersion: 1,
         params: {},
@@ -2099,7 +2103,7 @@ describe('executeStep', () => {
         trace: [{ event: 'trace_a' }],
       });
 
-      const run2 = await store.create({
+      const { run: run2 } = await store.create({
         workflowId: 'trace-hash-stable-wf',
         workflowVersion: 1,
         params: {},
@@ -2126,7 +2130,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run1 = await store.create({
+      const { run: run1 } = await store.create({
         workflowId: 'trace-digest-diff-wf',
         workflowVersion: 1,
         params: {},
@@ -2139,7 +2143,7 @@ describe('executeStep', () => {
         trace: [{ event: 'alpha' }],
       });
 
-      const run2 = await store.create({
+      const { run: run2 } = await store.create({
         workflowId: 'trace-digest-diff-wf',
         workflowVersion: 1,
         params: {},
@@ -2200,7 +2204,7 @@ describe('executeStep', () => {
         return echoDispatcher(step, input, run, signal);
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2236,7 +2240,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2275,7 +2279,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2307,7 +2311,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2337,7 +2341,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2360,7 +2364,7 @@ describe('executeStep', () => {
 
     it('trace_schema default mode is warn when trace_schema set but mode omitted', async () => {
       // traceSchemaDefinitionBase has trace_schema but no trace_validation_mode
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2391,7 +2395,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2436,7 +2440,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2470,7 +2474,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2502,7 +2506,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2545,7 +2549,7 @@ describe('executeStep', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2599,7 +2603,11 @@ describe('WAL trace buffer integration (B-lite)', () => {
 
   it('WAL entries present + no execute_step.trace → evidence has trace from WAL', async () => {
     const bufferStore = new InMemoryTraceBufferStore();
-    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'wal-test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await bufferStore.append(run.id, 'step-agent', [
       { event: 'wal_event', data: { phase: 'pre' } },
@@ -2621,7 +2629,11 @@ describe('WAL trace buffer integration (B-lite)', () => {
 
   it('WAL entries + execute_step.trace entries → merged, WAL entries first', async () => {
     const bufferStore = new InMemoryTraceBufferStore();
-    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'wal-test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await bufferStore.append(run.id, 'step-agent', [{ event: 'wal_first' }]);
 
@@ -2665,7 +2677,11 @@ describe('WAL trace buffer integration (B-lite)', () => {
     };
 
     const bufferStore = new InMemoryTraceBufferStore();
-    const run = await store.create({ workflowId: 'wal-schema-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'wal-schema-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await bufferStore.append(run.id, 'step-agent', [{ event: 'buffered' }]);
 
@@ -2689,7 +2705,11 @@ describe('WAL trace buffer integration (B-lite)', () => {
 
   it('execute_step succeeds → WAL is deleted', async () => {
     const bufferStore = new InMemoryTraceBufferStore();
-    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'wal-test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await bufferStore.append(run.id, 'step-agent', [{ event: 'pre_step' }]);
 
@@ -2708,7 +2728,11 @@ describe('WAL trace buffer integration (B-lite)', () => {
 
   it('execute_step dispatch fails → WAL is deleted', async () => {
     const bufferStore = new InMemoryTraceBufferStore();
-    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'wal-test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await bufferStore.append(run.id, 'step-agent', [{ event: 'pre_fail' }]);
 
@@ -2733,7 +2757,11 @@ describe('WAL trace buffer integration (B-lite)', () => {
   });
 
   it('no traceBufferStore configured → behaviour identical to pre-B-lite (regression)', async () => {
-    const run = await store.create({ workflowId: 'wal-test-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'wal-test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     const envelope = await executeStep(store, agentDef, {
       runId: run.id,
@@ -2785,7 +2813,7 @@ describe('Step 5 dispatch-failure envelope', () => {
   };
 
   it('non-terminal failure with wait_for_human exposes recovery branch', async () => {
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'two-step-wf',
       workflowVersion: 1,
       params: {},
@@ -2816,7 +2844,7 @@ describe('Step 5 dispatch-failure envelope', () => {
   });
 
   it('non-terminal failure with provide_input is translated to report_to_user and exposes recovery branch', async () => {
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'two-step-wf',
       workflowVersion: 1,
       params: {},
@@ -2843,7 +2871,7 @@ describe('Step 5 dispatch-failure envelope', () => {
   });
 
   it('non-terminal failure with stop is translated to report_to_user and exposes recovery branch', async () => {
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'two-step-wf',
       workflowVersion: 1,
       params: {},
@@ -2883,7 +2911,7 @@ describe('Step 5 dispatch-failure envelope', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'single-step-wf',
       workflowVersion: 1,
       params: {},
@@ -2912,7 +2940,7 @@ describe('Step 5 dispatch-failure envelope', () => {
     const bufferStore = new InMemoryTraceBufferStore();
     vi.spyOn(bufferStore, 'delete').mockRejectedValue(new Error('disk contention'));
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'two-step-wf',
       workflowVersion: 1,
       params: {},
@@ -2944,7 +2972,7 @@ describe('Step 5 dispatch-failure envelope', () => {
   });
 
   it('store.update failure suppresses next_actions', async () => {
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'two-step-wf',
       workflowVersion: 1,
       params: {},
@@ -2975,7 +3003,7 @@ describe('Step 5 dispatch-failure envelope', () => {
   });
 
   it('run_version reflects persisted version not stale pre-persist version', async () => {
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'single-step-wf',
       workflowVersion: 1,
       params: {},
@@ -3057,7 +3085,7 @@ describe('retry_after on ResponseEnvelope', () => {
   };
 
   it('retry_after appears in ResponseEnvelope for wait_and_proceed dispatch failure', async () => {
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'two-step-retry-wf',
       workflowVersion: 1,
       params: {},
@@ -3084,7 +3112,7 @@ describe('retry_after on ResponseEnvelope', () => {
   });
 
   it('retry_after is absent from ResponseEnvelope when not set on the error', async () => {
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'two-step-retry-wf',
       workflowVersion: 1,
       params: {},
@@ -3168,7 +3196,7 @@ describe('retry_after on ResponseEnvelope', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'retry-delay-wf',
         workflowVersion: 1,
         params: {},
@@ -3230,7 +3258,7 @@ describe('retry_after on ResponseEnvelope', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'retry-fallback-wf',
         workflowVersion: 1,
         params: {},
@@ -3334,7 +3362,7 @@ describe('min_retry_seconds floor', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'min-retry-floor-wf',
         workflowVersion: 1,
         params: {},
@@ -3412,7 +3440,7 @@ describe('min_retry_seconds floor', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'min-retry-fallback-wf',
         workflowVersion: 1,
         params: {},
@@ -3490,7 +3518,7 @@ describe('min_retry_seconds floor', () => {
         },
       };
 
-      const run = await store.create({
+      const { run: run } = await store.create({
         workflowId: 'min-retry-regression-wf',
         workflowVersion: 1,
         params: {},
@@ -3551,7 +3579,11 @@ describe('guard step execution', () => {
   });
 
   it('guard passes — run continues with downstream agent step in next_actions', async () => {
-    const run = await store.create({ workflowId: 'guard-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'guard-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     const envelope = await executeChain(store, guardWorkflow, {
       runId: run.id,
@@ -3574,7 +3606,11 @@ describe('guard step execution', () => {
   });
 
   it('guard aborts — run_phase becomes aborted, next_actions is empty, aborted_at set', async () => {
-    const run = await store.create({ workflowId: 'guard-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'guard-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     const envelope = await executeChain(store, guardWorkflow, {
       runId: run.id,
@@ -3597,7 +3633,11 @@ describe('guard step execution', () => {
   });
 
   it('guard abort skips downstream steps (step_c goes into skipped_steps)', async () => {
-    const run = await store.create({ workflowId: 'guard-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'guard-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await executeChain(store, guardWorkflow, {
       runId: run.id,
@@ -3611,7 +3651,11 @@ describe('guard step execution', () => {
   });
 
   it('guard resolution error — run_phase becomes failed, guard in failed_steps', async () => {
-    const run = await store.create({ workflowId: 'guard-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'guard-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     // Dispatcher returns no 'status' field — path step_a.status is unresolvable
     const envelope = await executeChain(store, guardWorkflow, {
@@ -3647,7 +3691,11 @@ describe('guard step execution', () => {
       },
     };
 
-    const run = await store.create({ workflowId: 'guard-msg-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'guard-msg-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await executeChain(store, workflowWithMessage, {
       runId: run.id,
@@ -3683,7 +3731,7 @@ describe('guard step execution', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'cascade-guard-wf',
       workflowVersion: 1,
       params: {},
@@ -3730,7 +3778,7 @@ describe('guard step execution', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'cascade-abort-wf',
       workflowVersion: 1,
       params: {},
@@ -3788,7 +3836,11 @@ describe('handler warn result', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'warn_handler', handler);
 
-    const run = await store.create({ workflowId: 'warn-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'warn-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const envelope = await executeStep(store, warnDefinition, {
       runId: run.id,
       command: 'validate',
@@ -3824,7 +3876,11 @@ describe('handler warn result', () => {
       },
     };
 
-    const run = await store.create({ workflowId: 'warn-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'warn-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, retryDef, {
       runId: run.id,
       command: 'validate',
@@ -3867,7 +3923,11 @@ describe('handler warn result', () => {
       },
     };
 
-    const run = await store.create({ workflowId: 'warn-chain-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'warn-chain-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const envelope = await executeChain(store, chainDef, {
       runId: run.id,
       command: 'step1',
@@ -3888,7 +3948,11 @@ describe('handler warn result', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'warn_handler', handler);
 
-    const run = await store.create({ workflowId: 'warn-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'warn-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const envelope = await executeStep(store, warnDefinition, {
       runId: run.id,
       command: 'validate',
@@ -3952,7 +4016,7 @@ describe('when: run.params integration', () => {
     registry.register('handler', 'classify_handler', classifyHandler);
     registry.register('handler', 'post_handler', postHandler);
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'shadow-wf',
       workflowVersion: 1,
       params: { mode: 'shadow' },
@@ -4011,7 +4075,7 @@ describe('input_map on handler steps', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'inputmap-handler-wf',
       workflowVersion: 1,
       params: {},
@@ -4054,7 +4118,7 @@ describe('input_map on handler steps', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'inputmap-params-wf',
       workflowVersion: 1,
       params: { ticket_id: 'TKT-42' },
@@ -4097,7 +4161,7 @@ describe('input_map on handler steps', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'inputmap-evidence-wf',
       workflowVersion: 1,
       params: {},
@@ -4136,7 +4200,7 @@ describe('input_map on handler steps', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'no-inputmap-wf',
       workflowVersion: 1,
       params: {},
@@ -4185,7 +4249,11 @@ describe('_debug field capture', () => {
   };
 
   it('_debug passes schema validation and is stored as debug_output (not in output_summary)', async () => {
-    const run = await store.create({ workflowId: 'debug-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'debug-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await executeStep(store, debugDef, {
       runId: run.id,
@@ -4202,7 +4270,11 @@ describe('_debug field capture', () => {
   });
 
   it('_debug does not appear in output_summary', async () => {
-    const run = await store.create({ workflowId: 'debug-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'debug-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await executeStep(store, debugDef, {
       runId: run.id,
@@ -4216,7 +4288,11 @@ describe('_debug field capture', () => {
   });
 
   it('evidence_hash is the same whether or not _debug is present', async () => {
-    const run1 = await store.create({ workflowId: 'debug-wf', workflowVersion: 1, params: {} });
+    const { run: run1 } = await store.create({
+      workflowId: 'debug-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, debugDef, {
       runId: run1.id,
       command: 'classify',
@@ -4224,7 +4300,11 @@ describe('_debug field capture', () => {
       dispatcher: echoDispatcher,
     });
 
-    const run2 = await store.create({ workflowId: 'debug-wf', workflowVersion: 1, params: {} });
+    const { run: run2 } = await store.create({
+      workflowId: 'debug-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, debugDef, {
       runId: run2.id,
       command: 'classify',
@@ -4238,7 +4318,11 @@ describe('_debug field capture', () => {
   });
 
   it('step without _debug produces no debug_output field on the snapshot', async () => {
-    const run = await store.create({ workflowId: 'debug-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'debug-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await executeStep(store, debugDef, {
       runId: run.id,
@@ -4289,7 +4373,7 @@ describe('_debug stripping on direct auto-step invocation', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'debug-strip-handler-wf',
       workflowVersion: 1,
       params: {},
@@ -4340,7 +4424,7 @@ describe('_debug stripping on direct auto-step invocation', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'debug-strip-adapter-wf',
       workflowVersion: 1,
       params: {},
@@ -4383,7 +4467,7 @@ describe('_debug stripping on direct auto-step invocation', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'debug-strip-abort-wf',
       workflowVersion: 1,
       params: {},
@@ -4417,7 +4501,11 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
   });
 
   it('is a byte-unchanged no-op on a terminal aborted run (no step claimed)', async () => {
-    const run = await store.create({ workflowId: 'test-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       run_phase: 'aborted',
@@ -4439,13 +4527,18 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
     expect(envelope.agent_action).toBe('stop');
     expect(envelope.next_actions).toEqual([]);
     expect(envelope.run_version).toBe(before.version);
+    expect(envelope.run_phase).toBe('aborted'); // #92: signal present on the entry-guard envelope
     expect(dispatcher).not.toHaveBeenCalled(); // no step executed
     const after = await store.get(run.id);
     expect(after).toEqual(before); // byte-unchanged (version, step sets, everything)
   });
 
   it('is a byte-unchanged no-op on a terminal completed run (no aborted_at)', async () => {
-    const run = await store.create({ workflowId: 'test-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       run_phase: 'completed',
@@ -4471,7 +4564,11 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
   });
 
   it('does NOT over-fire — a non-terminal (running) run is still driven', async () => {
-    const run = await store.create({ workflowId: 'test-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const createdVersion = run.version;
     const dispatcher = vi.fn(echoDispatcher);
 

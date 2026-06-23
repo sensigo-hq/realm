@@ -50,7 +50,7 @@ describe('human gate', () => {
 
   it('trust: human_confirmed step opens gate after dispatcher runs', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,
       params: {},
@@ -78,7 +78,7 @@ describe('human gate', () => {
 
   it('agent step with trust: human_confirmed exposes agent output as gate preview', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'agent-gate-wf',
       workflowVersion: 1,
       params: {},
@@ -98,7 +98,7 @@ describe('human gate', () => {
 
   it('submitHumanResponse with valid choice advances state', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,
       params: {},
@@ -127,7 +127,7 @@ describe('human gate', () => {
 
   it('submitHumanResponse with wrong gate_id returns error', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,
       params: {},
@@ -152,7 +152,7 @@ describe('human gate', () => {
 
   it('submitHumanResponse with invalid choice returns error', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,
       params: {},
@@ -177,7 +177,7 @@ describe('human gate', () => {
 
   it('submitHumanResponse records a gate_response evidence entry', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,
       params: {},

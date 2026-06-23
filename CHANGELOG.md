@@ -6,9 +6,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+> **Version intent: 0.8.0.** This release carries a breaking change to the `RunStore` interface (see below). On a 0.x line a breaking change bumps the minor segment.
+
 ### Changed
 
 - **Defense-in-depth: `executeChain` now no-ops on an already-terminal run.** When invoked for a run whose phase is terminal (`completed`/`failed`/`aborted`/`abandoned`), `executeChain` returns immediately without executing a step or writing the store, instead of attempting to drive it. This is unreachable in normal operation — the eligibility guard added in 0.7.1 already prevents it — and has no observable effect on valid workflows; it hardens the chain boundary so the "terminal runs are never driven" invariant holds at the structural boundary regardless of how a caller reaches `executeChain`.
+- **BREAKING — `RunStore.create()` now returns `{ run, created }` instead of `RunRecord`.** `created` is `true` for a freshly written run and `false` when an existing run matched the supplied `idempotencyKey`. In-repo callers and both bundled stores (`JsonFileStore`, `InMemoryStore`) are updated. **External `RunStore` implementations (e.g. the cloud Postgres store) must update their `create()` signature and return the new shape** — destructure `{ run }` at call sites that only need the record.
+
+### Added
+
+- **Idempotency keys are now a first-class, atomically-managed identity.** `JsonFileStore` resolves an `idempotencyKey` through a deterministic per-key pointer index (`<runsDir>/keys/<sha256(workflowId\0key)>.json`) under a per-key lock, instead of an O(n) `readdir` scan with a first-match race. This closes a class of latent issues at the root (TOCTOU double-insert, readdir-order nondeterminism, per-create O(n) cost, silent key↔payload mismatch, and the `save()` import back door) and is crash-safe (run file written before pointer; a pointer to a missing run self-heals; a run written without its pointer is recovered by a lazy legacy-field fallback). Behavior is otherwise equivalent to the previous default: a key match returns the existing run unchanged — nothing is re-driven.
+- **`realm run reconcile`** — eagerly builds the key pointer index from existing run records (`--workflow <id>` to scope, `--dry-run` to report without writing). Idempotent and reversible (only creates `keys/`; never mutates run files). Skipping it is safe — the store self-migrates lazily on first touch.
+- **Idempotency re-encounter signal.** `ResponseEnvelope` gains an optional `run_phase` (present whenever a run is loaded). `start_run` reports `deduped: boolean`, a state-accurate `context_hint` on a match, and observational warnings when the matched run is still active or was created with different params. `start_run_batch` reports the same per `started[]` item (`deduped`, `run_phase`, `terminal_reason?`, `warnings`). Dedup activity is logged at the tool boundary.
 
 ---
 

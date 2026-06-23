@@ -103,7 +103,7 @@ describe('executeChain', () => {
 
   it('auto-chains 3 auto steps in one call — run ends at completed', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'chain-wf',
       workflowVersion: 1,
       params: {},
@@ -126,7 +126,7 @@ describe('executeChain', () => {
 
   it('stops at an agent step — step-b is NOT executed', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'stop-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -151,7 +151,7 @@ describe('executeChain', () => {
 
   it('chains into trust: human_confirmed — step-b opens gate and returns confirm_required', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'stop-gate-wf',
       workflowVersion: 1,
       params: {},
@@ -173,7 +173,7 @@ describe('executeChain', () => {
 
   it('stops and returns error when a step fails — run is marked failed', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'fail-wf',
       workflowVersion: 1,
       params: {},

@@ -710,7 +710,11 @@ describe('claimStep — double-claim prevention', () => {
   it('first claimStep adds the step to in_progress_steps', async () => {
     const store = new JsonFileStore(runDir);
     const definition = makeWorkflow({ 'step-a': { depends_on: [] } });
-    const run = await store.create({ workflowId: 'test-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     const claimed = await store.claimStep(run.id, 'step-a', definition);
     expect(claimed.in_progress_steps).toContain('step-a');
@@ -719,7 +723,11 @@ describe('claimStep — double-claim prevention', () => {
   it('second claimStep on the same step throws STATE_STEP_ALREADY_CLAIMED', async () => {
     const store = new JsonFileStore(runDir);
     const definition = makeWorkflow({ 'step-a': { depends_on: [] } });
-    const run = await store.create({ workflowId: 'test-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await store.claimStep(run.id, 'step-a', definition);
 
@@ -731,7 +739,11 @@ describe('claimStep — double-claim prevention', () => {
   it('claimStep on a completed step throws', async () => {
     const store = new JsonFileStore(runDir);
     const definition = makeWorkflow({ 'step-a': { depends_on: [] } });
-    const run = await store.create({ workflowId: 'test-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'test-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const claimed = await store.claimStep(run.id, 'step-a', definition);
 
     // Move step-a to completed_steps.

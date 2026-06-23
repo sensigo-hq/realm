@@ -4,6 +4,7 @@
 // auto-chaining with fan-out, and registry-based dispatch for adapter and handler steps.
 import type {
   RunRecord,
+  RunPhase,
   EvidenceSnapshot,
   WorkflowContextSnapshot,
   AgentTraceEntry,
@@ -590,6 +591,7 @@ function errorEnvelope(
   runVersion: number,
   err: WorkflowError,
   contextHint?: string,
+  runPhase?: RunPhase,
 ): ResponseEnvelope {
   return {
     command,
@@ -605,6 +607,7 @@ function errorEnvelope(
     agent_action: err.agentAction,
     ...(err.retry_after !== undefined ? { retry_after: err.retry_after } : {}),
     context_hint: contextHint ?? `Error during '${command}'.`,
+    ...(runPhase !== undefined ? { run_phase: runPhase } : {}),
     next_actions: [],
   };
 }
@@ -655,6 +658,7 @@ function makeErrorEnvelope(
     run !== null ? run.version : 0,
     err,
     hint,
+    run !== null ? run.run_phase : undefined,
   );
   // Apply pre-execution translation: provide_input / resolve_precondition cannot
   // apply before claimStep — translate them to report_to_user.
@@ -712,6 +716,7 @@ export async function executeStep(
       errors: [],
       agent_action: 'resolve_precondition' as const,
       context_hint: `Step '${options.command}' is not eligible in the current run state.`,
+      run_phase: run.run_phase,
       next_actions: nextActions,
       blocked_reason:
         nextActions.length > 0
@@ -744,6 +749,7 @@ export async function executeStep(
         errors: [],
         agent_action: 'stop' as const,
         context_hint: `Precondition failed for step '${options.command}'.`,
+        run_phase: run.run_phase,
         next_actions: [],
         blocked_reason: {
           eligible_steps: eligible,
@@ -879,6 +885,7 @@ export async function executeStep(
           errors: [],
           agent_action: 'resolve_precondition' as const,
           context_hint: `Step '${options.command}' was already claimed by another process.`,
+          run_phase: freshRun.run_phase,
           next_actions: buildNextActions(definition, freshRun),
           blocked_reason: {
             eligible_steps: findEligibleSteps(definition, freshRun),
@@ -1047,6 +1054,7 @@ export async function executeStep(
           warnings: [],
           errors: [],
           context_hint: `Handler step '${options.command}' aborted the run: ${abortMessage}`,
+          run_phase: (persistedAbortRun ?? abortedRun).run_phase,
           next_actions: [],
         };
       }
@@ -1243,6 +1251,7 @@ export async function executeStep(
         ? { retry_after: dispatchError.retry_after }
         : {}),
       context_hint: contextHint,
+      run_phase: (persistedRun ?? failedRun).run_phase,
       next_actions: nextActions,
     };
   }
@@ -1403,7 +1412,7 @@ export async function executeStep(
       warnings: [...traceWarnings],
       errors: [],
       context_hint: `Run is paused at gate '${gate_id}'. Available choices: ${choices.join(', ')}.`,
-
+      run_phase: gateRun.run_phase,
       next_actions: [gateNextAction],
       gate: {
         gate_id,
@@ -1493,6 +1502,7 @@ export async function executeStep(
     warnings: mergeWarnings(traceWarnings, currentWarn),
     errors: [],
     context_hint: orientation,
+    run_phase: savedRun.run_phase,
     next_actions: nextActions,
   };
 }
@@ -1636,6 +1646,7 @@ export async function submitHumanResponse(
       run.version,
       e,
       `Failed to persist gate response.`,
+      run.run_phase,
     );
   }
 
@@ -1656,6 +1667,7 @@ export async function submitHumanResponse(
     warnings: [],
     errors: [],
     context_hint: orientation,
+    run_phase: savedRun.run_phase,
     next_actions: nextActions,
   };
 }
@@ -1875,6 +1887,7 @@ async function executeChainInternal(
         errors: [`Failed to persist guard step '${guardName}': ${msg}`],
         agent_action: 'stop' as const,
         context_hint: `Guard step '${guardName}' could not be persisted. Run state may be inconsistent.`,
+        run_phase: run.run_phase,
         next_actions: [],
       };
     }
@@ -1898,6 +1911,7 @@ async function executeChainInternal(
         warnings: [],
         errors: [],
         context_hint: contextHint,
+        run_phase: persistedGuardRun.run_phase,
         next_actions: [],
       };
     }
@@ -1973,6 +1987,7 @@ export async function executeChain(
       errors: [],
       agent_action: 'stop' as const,
       context_hint: `Run '${options.runId}' is already terminal (${entryRun.run_phase}); no steps executed.`,
+      run_phase: entryRun.run_phase,
       next_actions: [],
     };
   }

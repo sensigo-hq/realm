@@ -290,7 +290,7 @@ describe('runAgent — MCP tools integration', () => {
   it('--run-id attaches to a persisted run and drives it to completion', async () => {
     // Create the run first using the normal path.
     const store = new InMemoryStore();
-    const initialRecord = await store.create({
+    const { run: initialRecord } = await store.create({
       workflowId: 'agent-only',
       workflowVersion: 1,
       params: {},
@@ -339,7 +339,7 @@ describe('runAgent — MCP tools integration', () => {
 
   it('--run-id on a terminal run throws error containing run id and terminal state', async () => {
     const store = new InMemoryStore();
-    const initialRecord = await store.create({
+    const { run: initialRecord } = await store.create({
       workflowId: 'agent-only',
       workflowVersion: 1,
       params: {},

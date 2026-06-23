@@ -6,6 +6,7 @@ import { registerCommand } from './commands/register.js';
 import { runCommand } from './commands/run.js';
 import { resumeCommand } from './commands/resume.js';
 import { cleanupCommand } from './commands/cleanup.js';
+import { reconcileCommand } from './commands/reconcile.js';
 import { respondCommand } from './commands/respond.js';
 import { inspectCommand } from './commands/inspect.js';
 import { replayCommand } from './commands/replay.js';
@@ -41,6 +42,7 @@ export const runCommands = [
   resumeCommand,
   respondCommand,
   cleanupCommand,
+  reconcileCommand,
 ];
 
 /** Top-level commands not nested under a subgroup. */

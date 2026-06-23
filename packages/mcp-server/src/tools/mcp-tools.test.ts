@@ -531,7 +531,7 @@ describe('mcp tool handlers', () => {
     const workflowStore = new JsonWorkflowStore(workflowDir);
     await workflowStore.register(makeSingleServiceDef());
     const runStore = new JsonFileStore(runDir);
-    const run = await runStore.create({
+    const { run: run } = await runStore.create({
       workflowId: 'single-service-wf',
       workflowVersion: 1,
       params: {},
@@ -563,7 +563,7 @@ describe('mcp tool handlers', () => {
     const workflowStore = new JsonWorkflowStore(workflowDir);
     await workflowStore.register(makeTwoStepServiceDef());
     const runStore = new JsonFileStore(runDir);
-    const run = await runStore.create({
+    const { run: run } = await runStore.create({
       workflowId: 'two-step-service-wf',
       workflowVersion: 1,
       params: {},
@@ -596,7 +596,7 @@ describe('mcp tool handlers', () => {
     const workflowStore = new JsonWorkflowStore(workflowDir);
     await workflowStore.register(makeTwoStepServiceDef());
     const runStore = new JsonFileStore(runDir);
-    const run = await runStore.create({
+    const { run: run } = await runStore.create({
       workflowId: 'two-step-service-wf',
       workflowVersion: 1,
       params: {},
@@ -627,7 +627,7 @@ describe('mcp tool handlers', () => {
     const workflowStore = new JsonWorkflowStore(workflowDir);
     await workflowStore.register(makeTwoStepServiceDef());
     const runStore = new JsonFileStore(runDir);
-    const run = await runStore.create({
+    const { run: run } = await runStore.create({
       workflowId: 'two-step-service-wf',
       workflowVersion: 1,
       params: {},

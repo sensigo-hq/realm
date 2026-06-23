@@ -177,7 +177,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     // in_progress_steps on attach: handled by engine's existing eligibility logic — no restart needed
   } else {
     // Normal path: create new run
-    const initialRecord = await deps.store.create({
+    const { run: initialRecord } = await deps.store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: options.params,

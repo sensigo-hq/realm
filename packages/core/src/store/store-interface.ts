@@ -13,8 +13,19 @@ export interface CreateRunOptions {
 }
 
 export interface RunStore {
-  /** Create a new run record. Returns the created record. */
-  create(options: CreateRunOptions): Promise<RunRecord>;
+  /**
+   * Create a new run record, or — when an `idempotencyKey` is supplied and a run with the
+   * same `(workflowId, idempotencyKey)` already exists — return that existing run instead.
+   *
+   * Returns `{ run, created }`:
+   * - `created: true`  — a new run record was written.
+   * - `created: false` — an existing run matched the idempotency key and is returned unchanged
+   *   (nothing is re-driven; callers inspect `run.run_phase` to decide what to surface).
+   *
+   * NOTE (breaking, 0.8.0): this previously returned `Promise<RunRecord>`. External store
+   * implementations (e.g. the cloud Postgres store) must update to the `{ run, created }` shape.
+   */
+  create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }>;
 
   /** Get a run record by ID. Throws WorkflowError(STATE_RUN_NOT_FOUND) if not found. */
   get(runId: string): Promise<RunRecord>;

@@ -82,7 +82,7 @@ describe('reliability', () => {
 
   it('timeout fires — step returns error and run is marked failed', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'timeout-wf',
       workflowVersion: 1,
       params: {},
@@ -108,7 +108,7 @@ describe('reliability', () => {
 
   it('step without timeout completes normally', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'no-timeout-wf',
       workflowVersion: 1,
       params: {},
@@ -130,7 +130,7 @@ describe('reliability', () => {
 
   it('retry succeeds on 2nd attempt — evidence has 2 entries with attempt numbers', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'retry-wf',
       workflowVersion: 1,
       params: {},
@@ -161,7 +161,7 @@ describe('reliability', () => {
 
   it('retry exhaustion — returns STEP_RETRY_EXHAUSTED and run is marked failed', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'retry-wf',
       workflowVersion: 1,
       params: {},
@@ -191,7 +191,7 @@ describe('reliability', () => {
 
   it('non-retryable error — dispatcher called exactly once and run is failed', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'retry-wf',
       workflowVersion: 1,
       params: {},
@@ -218,7 +218,7 @@ describe('reliability', () => {
 
   it('double-claim: two concurrent executeStep calls on the same step — second is blocked', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'no-timeout-wf',
       workflowVersion: 1,
       params: {},
@@ -273,7 +273,7 @@ describe('reliability', () => {
 
   it('pending state is written to the store while dispatcher is running', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'no-timeout-wf',
       workflowVersion: 1,
       params: {},
@@ -312,7 +312,7 @@ describe('reliability', () => {
 
   it('failed run is marked terminal — terminal_state is true', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'no-timeout-wf',
       workflowVersion: 1,
       params: {},
@@ -335,7 +335,7 @@ describe('reliability', () => {
 
   it('AbortSignal is aborted when timeout fires', async () => {
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'timeout-wf',
       workflowVersion: 1,
       params: {},
@@ -388,7 +388,7 @@ describe('reliability', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'optional-retry-wf',
       workflowVersion: 1,
       params: {},
@@ -427,7 +427,7 @@ describe('reliability', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'rate-limited-retry-wf',
       workflowVersion: 1,
       params: {},
@@ -521,7 +521,7 @@ describe('reliability', () => {
     };
 
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'rate-limit-integration-wf',
       workflowVersion: 1,
       params: {},

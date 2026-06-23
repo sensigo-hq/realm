@@ -7,16 +7,31 @@ import {
   WorkflowError,
   buildPreExecutionErrorEnvelope,
   validateInputSchema,
+  hashParams,
   type ResponseEnvelope,
+  type RunPhase,
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
+
+/** Lightweight structured telemetry. stderr is safe under the MCP stdio/SSE transport. */
+function logBatchDedup(fields: Record<string, unknown>): void {
+  console.error(JSON.stringify({ event: 'idempotency_dedup', ...fields }));
+}
 
 export interface StartRunBatchResult {
   started: Array<{
     run_id: string;
     idempotency_key?: string;
     params: Record<string, unknown>;
+    /** True when an existing run matched the idempotency key (inverse of the store's `created`). */
+    deduped: boolean;
+    /** Derived phase of the run at enqueue time — identical field name to the single-run path. */
+    run_phase: RunPhase;
+    /** Present only for a terminal matched run. */
+    terminal_reason?: string;
+    /** Observational warnings (active-match / param-mismatch) — identical field name to the single-run path. */
+    warnings: string[];
   }>;
 }
 
@@ -74,18 +89,50 @@ export async function handleStartRunBatch(
   }
 
   const started: StartRunBatchResult['started'] = [];
+  let dedupHits = 0;
   for (const item of args.items) {
-    const run = await runStore.create({
+    const { run, created } = await runStore.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: item.params,
       ...(item.idempotency_key !== undefined ? { idempotencyKey: item.idempotency_key } : {}),
       ...(args.parent_run_id !== undefined ? { parentRunId: args.parent_run_id } : {}),
     });
+    // The store reports `created`; the batch surfaces its inverse, `deduped`, per item.
+    const deduped = !created;
+    if (deduped) dedupHits++;
+
+    const warnings: string[] = [];
+    if (deduped) {
+      if (run.run_phase === 'running' || run.run_phase === 'gate_waiting') {
+        warnings.push(`Idempotency key matched a run still in phase '${run.run_phase}'.`);
+      }
+      if (
+        item.idempotency_key !== undefined &&
+        hashParams(item.params) !== hashParams(run.params)
+      ) {
+        warnings.push(
+          `Idempotency key matched an existing run created with different params; the original run is returned unchanged (params not updated).`,
+        );
+      }
+    }
+
     started.push({
       run_id: run.id,
       ...(item.idempotency_key !== undefined ? { idempotency_key: item.idempotency_key } : {}),
       params: item.params,
+      deduped,
+      run_phase: run.run_phase,
+      ...(run.terminal_reason !== undefined ? { terminal_reason: run.terminal_reason } : {}),
+      warnings,
+    });
+  }
+  if (dedupHits > 0) {
+    logBatchDedup({
+      tool: 'start_run_batch',
+      workflow_id: definition.id,
+      dedup_hits: dedupHits,
+      total: args.items.length,
     });
   }
   return { started };

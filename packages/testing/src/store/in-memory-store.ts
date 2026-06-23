@@ -12,13 +12,30 @@ import {
 /** In-memory implementation of RunStore. Uses a Map keyed by run ID. No I/O, no locking. */
 export class InMemoryStore implements RunStore {
   private readonly runs = new Map<string, RunRecord>();
+  /** Idempotency-key pointer equivalent: `${workflowId}\0${key}` → runId. Parity with JsonFileStore. */
+  private readonly keyIndex = new Map<string, string>();
 
-  async create(options: CreateRunOptions): Promise<RunRecord> {
+  async create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
+    // Idempotency: a key match returns the existing run (any phase), like JsonFileStore.
+    if (options.idempotencyKey !== undefined) {
+      const gk = `${options.workflowId}\0${options.idempotencyKey}`;
+      const existingId = this.keyIndex.get(gk);
+      if (existingId !== undefined) {
+        const existing = this.runs.get(existingId);
+        if (existing !== undefined) {
+          return { run: existing, created: false };
+        }
+        // mapped run vanished → reclaim by falling through to a fresh create.
+      }
+    }
+
     const now = new Date().toISOString();
     const record: RunRecord = {
       id: crypto.randomUUID(),
       workflow_id: options.workflowId,
       workflow_version: options.workflowVersion,
+      ...(options.parentRunId !== undefined ? { parent_run_id: options.parentRunId } : {}),
+      ...(options.idempotencyKey !== undefined ? { idempotency_key: options.idempotencyKey } : {}),
       completed_steps: [],
       in_progress_steps: [],
       failed_steps: [],
@@ -32,7 +49,10 @@ export class InMemoryStore implements RunStore {
       terminal_state: false,
     };
     this.runs.set(record.id, record);
-    return record;
+    if (options.idempotencyKey !== undefined) {
+      this.keyIndex.set(`${options.workflowId}\0${options.idempotencyKey}`, record.id);
+    }
+    return { run: record, created: true };
   }
 
   async get(runId: string): Promise<RunRecord> {

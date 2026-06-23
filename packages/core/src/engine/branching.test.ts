@@ -132,7 +132,7 @@ describe('trigger_rule: all_failed — recovery after step failure', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'always_fail', new FailingHandler());
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -164,7 +164,7 @@ describe('trigger_rule: all_failed — recovery after step failure', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'always_fail', new FailingHandler());
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -189,7 +189,7 @@ describe('trigger_rule: all_failed — recovery after step failure', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'always_fail', new FailingHandler());
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -276,7 +276,7 @@ describe('when condition routing', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'confidence_handler', new ConfidenceHandler('high'));
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -301,7 +301,7 @@ describe('when condition routing', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'confidence_handler', new ConfidenceHandler('low'));
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -326,7 +326,7 @@ describe('when condition routing', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'confidence_handler', new ConfidenceHandler('high'));
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -362,7 +362,7 @@ describe('when condition routing', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'confidence_handler', new ConfidenceHandler('low'));
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -422,7 +422,7 @@ describe('fan-out: multiple steps eligible simultaneously', () => {
         'step-c': { description: 'Branch 2', execution: 'agent', depends_on: ['step-a'] },
       },
     };
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -481,7 +481,7 @@ describe('gate-response flow', () => {
   });
 
   it('approve advances run — confirm moves to completed_steps, post-approve is eligible', async () => {
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: autoGateDef.id,
       workflowVersion: 1,
       params: {},
@@ -525,7 +525,7 @@ describe('gate-response flow', () => {
       },
     };
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: singleGateDef.id,
       workflowVersion: 1,
       params: {},

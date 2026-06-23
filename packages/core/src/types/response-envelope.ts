@@ -1,5 +1,5 @@
 // Types for the ResponseEnvelope returned by every step execution.
-import type { EvidenceSnapshot } from './run-record.js';
+import type { EvidenceSnapshot, RunPhase } from './run-record.js';
 import type { AgentAction, ErrorCode } from './workflow-error.js';
 
 export interface NextAction {
@@ -82,6 +82,12 @@ export interface ResponseEnvelope {
   retry_after?: number;
   /** Current state orientation. Always populated — describes what just happened and what state the run is in. */
   context_hint: string;
+  /**
+   * Derived phase of the run at the time of this response. Present whenever a run is loaded
+   * (sourced from `run.run_phase`); absent only on pre-execution error envelopes where no run
+   * could be loaded (`buildPreExecutionErrorEnvelope` / `errorEnvelope`).
+   */
+  run_phase?: RunPhase;
   /** Steps available for execution. Empty array means terminal or blocked — check status and run_phase. */
   next_actions: NextAction[];
   blocked_reason?: BlockedReason;

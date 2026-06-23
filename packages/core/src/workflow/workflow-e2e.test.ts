@@ -41,7 +41,7 @@ describe('workflow end-to-end', () => {
     const definition = loadWorkflowFromString(WORKFLOW_YAML);
     const dispatcher = async () => ({});
 
-    const run0 = await store.create({
+    const { run: run0 } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -73,7 +73,7 @@ describe('workflow end-to-end', () => {
     const definition = loadWorkflowFromString(WORKFLOW_YAML);
     const dispatcher = async () => ({});
 
-    const run0 = await store.create({
+    const { run: run0 } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -103,7 +103,7 @@ describe('workflow end-to-end', () => {
   it('depends_on blocks out-of-order execution', async () => {
     const definition = loadWorkflowFromString(WORKFLOW_YAML);
 
-    const run0 = await store.create({
+    const { run: run0 } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -149,7 +149,7 @@ steps:
     const registry = new ExtensionRegistry();
     registry.register('handler', 'config_capture', captureHandler);
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -192,7 +192,7 @@ describe('workflow_context integration', () => {
     );
     const definition = loadWorkflowFromFile(join(wfDir, 'workflow.yaml'));
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -220,7 +220,7 @@ describe('workflow_context integration', () => {
     );
     const definition = loadWorkflowFromFile(join(wfDir, 'workflow.yaml'));
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -260,7 +260,7 @@ describe('workflow_context integration', () => {
     );
     const definition = loadWorkflowFromFile(join(wfDir, 'workflow.yaml'));
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -289,7 +289,7 @@ describe('workflow_context integration', () => {
     );
     const definition = loadWorkflowFromFile(join(wfDir, 'workflow.yaml'));
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
