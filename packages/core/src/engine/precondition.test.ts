@@ -79,7 +79,7 @@ describe('executeStep blocks when precondition fails', () => {
     };
 
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'precond-wf',
       workflowVersion: 1,
       params: {},

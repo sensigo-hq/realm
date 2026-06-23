@@ -53,7 +53,7 @@ describe('resumeRun', () => {
   });
 
   it('removes the step from failed_steps, re-enabling it for execution', async () => {
-    const run = await runStore.create({
+    const { run: run } = await runStore.create({
       workflowId: 'resume-test-wf',
       workflowVersion: 1,
       params: {},
@@ -74,7 +74,7 @@ describe('resumeRun', () => {
   });
 
   it('throws when the run is in a non-resumable state (completed)', async () => {
-    const run = await runStore.create({
+    const { run: run } = await runStore.create({
       workflowId: 'resume-test-wf',
       workflowVersion: 1,
       params: {},
@@ -96,7 +96,7 @@ describe('resumeRun', () => {
   });
 
   it('throws when the step name does not exist in the workflow', async () => {
-    const run = await runStore.create({
+    const { run: run } = await runStore.create({
       workflowId: 'resume-test-wf',
       workflowVersion: 1,
       params: {},
@@ -120,7 +120,7 @@ describe('resumeRun', () => {
 
   it('re-drives a failed run: resets to running, clears terminal_reason, re-derives skipped_steps, re-enables the step', async () => {
     await workflowStore.register(redriveWorkflow);
-    const run = await runStore.create({
+    const { run: run } = await runStore.create({
       workflowId: 'resume-redrive-wf',
       workflowVersion: 1,
       params: {},

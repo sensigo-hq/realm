@@ -80,7 +80,7 @@ function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
 describe('InMemoryStore', () => {
   it('create() returns a record with version 0', async () => {
     const store = new InMemoryStore();
-    const record = await store.create({
+    const { run: record } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -92,7 +92,7 @@ describe('InMemoryStore', () => {
 
   it('get() returns the created record', async () => {
     const store = new InMemoryStore();
-    const created = await store.create({
+    const { run: created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -110,7 +110,7 @@ describe('InMemoryStore', () => {
 
   it('update() increments version on success', async () => {
     const store = new InMemoryStore();
-    const record = await store.create({
+    const { run: record } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -122,7 +122,7 @@ describe('InMemoryStore', () => {
 
   it('update() throws WorkflowError(STATE_SNAPSHOT_MISMATCH) on version mismatch', async () => {
     const store = new InMemoryStore();
-    const record = await store.create({
+    const { run: record } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -164,6 +164,46 @@ describe('InMemoryStore', () => {
     });
     const all = await store.list();
     expect(all).toHaveLength(2);
+  });
+
+  it('create() reports created:true for a new run and created:false on a same-key match (parity with JsonFileStore)', async () => {
+    const store = new InMemoryStore();
+    const first = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    expect(first.created).toBe(true);
+    const second = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    expect(second.created).toBe(false);
+    expect(second.run.id).toBe(first.run.id);
+    // Only one run exists for the key.
+    const all = await store.list('wf-1');
+    expect(all).toHaveLength(1);
+  });
+
+  it('create() idempotency is scoped per workflow and stores the key field', async () => {
+    const store = new InMemoryStore();
+    const { run: a } = await store.create({
+      workflowId: 'wf-a',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    const { run: b } = await store.create({
+      workflowId: 'wf-b',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    expect(a.id).not.toBe(b.id);
+    expect(a.idempotency_key).toBe('k1');
   });
 });
 

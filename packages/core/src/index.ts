@@ -6,6 +6,8 @@ export { resolvePreExecutionAgentAction } from './engine/error-resolution.js';
 export * from './types/workflow-definition.js';
 export * from './store/store-interface.js';
 export { JsonFileStore } from './store/json-file-store.js';
+export type { ReconcileSummary } from './store/json-file-store.js';
+export { hashParams, canonicalJson } from './store/params-hash.js';
 export { executeStep } from './engine/execution-loop.js';
 export type { StepDispatcher, ExecuteStepOptions } from './engine/execution-loop.js';
 export {

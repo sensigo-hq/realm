@@ -67,7 +67,7 @@ async function runSingleFixture(
       fixture.agent_errors,
     );
 
-    const run = await store.create({
+    const { run } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: fixture.params,

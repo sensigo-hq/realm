@@ -43,7 +43,7 @@ export const runCommand = new Command('run')
     // 3. Create store and initial run record
     const store = new JsonFileStore();
 
-    const initialRecord = await store.create({
+    const { run: initialRecord } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params,

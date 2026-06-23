@@ -7,6 +7,7 @@ import {
   executeChain,
   buildNextActions,
   findEligibleSteps,
+  hashParams,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
   type StepDispatcher,
@@ -15,6 +16,11 @@ import {
   ExtensionRegistry,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
+
+/** Lightweight structured telemetry. stderr is safe under the MCP stdio/SSE transport. */
+function logDedup(fields: Record<string, unknown>): void {
+  console.error(JSON.stringify({ event: 'idempotency_dedup', ...fields }));
+}
 
 export interface HandleRunStores {
   runStore?: JsonFileStore;
@@ -41,18 +47,40 @@ export async function handleStartRun(
     idempotency_key?: string | undefined;
   },
   stores?: HandleRunStores,
-): Promise<ResponseEnvelope> {
+): Promise<ResponseEnvelope & { deduped: boolean }> {
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
   const definition = await workflowStore.get(args.workflow_id);
   const params = args.params ?? {};
 
-  const run = await runStore.create({
+  const { run, created } = await runStore.create({
     workflowId: definition.id,
     workflowVersion: definition.version,
     params,
     ...(args.idempotency_key !== undefined ? { idempotencyKey: args.idempotency_key } : {}),
   });
+  // The store reports `created`; the tool surfaces its inverse, `deduped`.
+  const deduped = !created;
+
+  const warnings: string[] = [];
+  if (deduped) {
+    // Observational only — a legitimate same-caller retry also hits an active run.
+    if (run.run_phase === 'running' || run.run_phase === 'gate_waiting') {
+      warnings.push(`Idempotency key matched a run still in phase '${run.run_phase}'.`);
+    }
+    // PR 1 warns on a key↔payload mismatch; PR 2 may make this policy.
+    if (args.idempotency_key !== undefined && hashParams(params) !== hashParams(run.params)) {
+      warnings.push(
+        `Idempotency key matched an existing run created with different params; the original run is returned unchanged (params not updated).`,
+      );
+    }
+    logDedup({
+      tool: 'start_run',
+      workflow_id: definition.id,
+      run_id: run.id,
+      run_phase: run.run_phase,
+    });
+  }
 
   const eligible = findEligibleSteps(definition, run);
   const firstAutoStep = eligible.find((name) => definition.steps[name]?.execution === 'auto');
@@ -66,7 +94,17 @@ export async function handleStartRun(
       ...(stores?.registry !== undefined ? { registry: stores.registry } : {}),
       ...(stores?.secrets !== undefined ? { secrets: stores.secrets } : {}),
     });
-    return { ...result, run_id: run.id, data: {}, evidence: [] };
+    // Source run_phase from the final run so the spread can't drop it.
+    const finalRun = await runStore.get(run.id).catch(() => run);
+    return {
+      ...result,
+      run_id: run.id,
+      data: {},
+      evidence: [],
+      run_phase: finalRun.run_phase,
+      warnings: [...result.warnings, ...warnings],
+      deduped,
+    };
   }
 
   const nextActions = buildNextActions(definition, run);
@@ -77,9 +115,13 @@ export async function handleStartRun(
     status: 'ok',
     data: {},
     evidence: [],
-    warnings: [],
+    warnings,
     errors: [],
-    context_hint: `Run '${run.id}' created for workflow '${definition.id}'.`,
+    context_hint: deduped
+      ? `Matched existing run '${run.id}' (idempotent) in phase '${run.run_phase}'; no new run created.`
+      : `Run '${run.id}' created for workflow '${definition.id}'.`,
+    run_phase: run.run_phase,
+    deduped,
     next_actions: nextActions,
   };
 }

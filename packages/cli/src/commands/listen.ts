@@ -366,12 +366,15 @@ export function makeListenHandler(
       await deps.workflowStore.register(entry.definition);
       let run;
       try {
-        run = await deps.runStore.create({
+        // `created` is intentionally unused here: the DedupStore.check() above already
+        // short-circuits duplicates, so the run-store idempotency match is only a backstop.
+        // Do NOT wire the re-encounter signal here — it would risk a double-spawn.
+        ({ run } = await deps.runStore.create({
           workflowId: entry.definition.id,
           workflowVersion: entry.definition.version,
           params,
           ...(dedupId !== undefined ? { idempotencyKey: dedupId } : {}),
-        });
+        }));
       } catch (err) {
         deps.logger.error('webhook: run creation failed', { path, error: String(err) });
         respond(res, 500, { error: 'store_error', status: 'failed' });

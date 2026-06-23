@@ -43,7 +43,7 @@ describe('respondToGate', () => {
   });
 
   it('advances a gate-waiting run to completed on valid choice', async () => {
-    const run = await runStore.create({
+    const { run: run } = await runStore.create({
       workflowId: 'respond-test-wf',
       workflowVersion: 1,
       params: {},
@@ -73,7 +73,7 @@ describe('respondToGate', () => {
   });
 
   it('throws WorkflowError when gate_id does not match', async () => {
-    const run = await runStore.create({
+    const { run: run } = await runStore.create({
       workflowId: 'respond-test-wf',
       workflowVersion: 1,
       params: {},

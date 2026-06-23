@@ -41,7 +41,7 @@ describe('input_map', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
       params: {},
@@ -91,7 +91,7 @@ describe('input_map', () => {
     const store = new JsonFileStore(dir);
 
     // Start run with params.repo = 'acme/api'
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
       params: { repo: 'acme/api' },
@@ -159,7 +159,7 @@ describe('input_map', () => {
     registry.register('handler', 'make-pr', handler);
     const store = new JsonFileStore(dir);
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
       params: {},
@@ -207,7 +207,7 @@ describe('input_map', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
       params: {},
@@ -245,7 +245,7 @@ describe('input_map', () => {
     registry.register('adapter', 'mock', adapter);
     const store = new JsonFileStore(dir);
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
       params: { repo: 'acme/api' },
@@ -285,7 +285,7 @@ describe('input_map', () => {
     registry.register('adapter', 'mock', adapter);
     const store = new JsonFileStore(dir);
 
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
       params: {},
@@ -331,7 +331,7 @@ describe('input_map', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
       params: { customer_name: 'Alice', email: 'alice@example.com' },
@@ -379,7 +379,7 @@ describe('input_map', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
       params: { table: 'tbl_abc', status: 'open' },
@@ -423,7 +423,7 @@ describe('input_map', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
       params: { name: 'Bob' },
@@ -464,7 +464,11 @@ describe('input_map', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
     const store = new JsonFileStore(dir);
-    const run = await store.create({ workflowId: 'imap-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'imap-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await executeStep(store, def, {
       runId: run.id,
@@ -503,7 +507,11 @@ describe('input_map', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
     const store = new JsonFileStore(dir);
-    const run = await store.create({ workflowId: 'imap-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'imap-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await executeStep(store, def, {
       runId: run.id,
@@ -542,7 +550,11 @@ describe('input_map', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
     const store = new JsonFileStore(dir);
-    const run = await store.create({ workflowId: 'imap-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'imap-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await executeStep(store, def, {
       runId: run.id,
@@ -581,7 +593,11 @@ describe('input_map', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
     const store = new JsonFileStore(dir);
-    const run = await store.create({ workflowId: 'imap-wf', workflowVersion: 1, params: {} });
+    const { run: run } = await store.create({
+      workflowId: 'imap-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await executeStep(store, def, {
       runId: run.id,
@@ -618,7 +634,7 @@ describe('input_map', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
       params: { id: 'rec123' },
@@ -666,7 +682,7 @@ describe('input_map', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
     const store = new JsonFileStore(dir);
-    const run = await store.create({
+    const { run: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
       params: { id: 'rec456' },
