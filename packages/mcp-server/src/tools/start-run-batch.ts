@@ -33,6 +33,18 @@ export interface StartRunBatchResult {
     /** Observational warnings (active-match / param-mismatch) — identical field name to the single-run path. */
     warnings: string[];
   }>;
+  /**
+   * Items rejected by the idempotency policy (`on_terminal_match: 'reject'` / `on_live_match: 'fail'`).
+   * Carries the original item index so callers can correlate back to `items[]`. A rejected item does
+   * NOT abort the batch — successful items still appear in `started[]`.
+   */
+  failed: Array<{
+    index: number;
+    idempotency_key?: string;
+    params: Record<string, unknown>;
+    error: string;
+    error_code?: string;
+  }>;
 }
 
 export async function handleStartRunBatch(
@@ -41,6 +53,8 @@ export async function handleStartRunBatch(
     items: Array<{ params: Record<string, unknown>; idempotency_key?: string | undefined }>;
     parent_run_id?: string | undefined;
     max_items?: number | undefined;
+    on_terminal_match?: 'reuse' | 'reject' | 'rerun_if_failed' | 'rerun' | undefined;
+    on_live_match?: 'use_existing' | 'fail' | undefined;
   },
   stores?: HandleRunStores,
 ): Promise<StartRunBatchResult> {
@@ -89,15 +103,37 @@ export async function handleStartRunBatch(
   }
 
   const started: StartRunBatchResult['started'] = [];
+  const failed: StartRunBatchResult['failed'] = [];
   let dedupHits = 0;
-  for (const item of args.items) {
-    const { run, created } = await runStore.create({
-      workflowId: definition.id,
-      workflowVersion: definition.version,
-      params: item.params,
-      ...(item.idempotency_key !== undefined ? { idempotencyKey: item.idempotency_key } : {}),
-      ...(args.parent_run_id !== undefined ? { parentRunId: args.parent_run_id } : {}),
-    });
+  for (let i = 0; i < args.items.length; i++) {
+    const item = args.items[i]!;
+    let run;
+    let created;
+    try {
+      ({ run, created } = await runStore.create({
+        workflowId: definition.id,
+        workflowVersion: definition.version,
+        params: item.params,
+        ...(item.idempotency_key !== undefined ? { idempotencyKey: item.idempotency_key } : {}),
+        ...(args.parent_run_id !== undefined ? { parentRunId: args.parent_run_id } : {}),
+        ...(args.on_terminal_match !== undefined
+          ? { onTerminalMatch: args.on_terminal_match }
+          : {}),
+        ...(args.on_live_match !== undefined ? { onLiveMatch: args.on_live_match } : {}),
+      }));
+    } catch (err) {
+      // A policy rejection (`reject` / `fail`) must NOT sink the batch — record and continue.
+      const we = err instanceof WorkflowError ? err : undefined;
+      failed.push({
+        index: i,
+        ...(item.idempotency_key !== undefined ? { idempotency_key: item.idempotency_key } : {}),
+        params: item.params,
+        error: err instanceof Error ? err.message : String(err),
+        ...(we !== undefined ? { error_code: we.code } : {}),
+      });
+      continue;
+    }
+
     // The store reports `created`; the batch surfaces its inverse, `deduped`, per item.
     const deduped = !created;
     if (deduped) dedupHits++;
@@ -135,7 +171,7 @@ export async function handleStartRunBatch(
       total: args.items.length,
     });
   }
-  return { started };
+  return { started, failed };
 }
 
 export function registerStartRunBatch(
@@ -158,6 +194,8 @@ export function registerStartRunBatch(
       ),
       parent_run_id: z.string().optional(),
       max_items: z.number().int().positive().optional(),
+      on_terminal_match: z.enum(['reuse', 'reject', 'rerun_if_failed', 'rerun']).optional(),
+      on_live_match: z.enum(['use_existing', 'fail']).optional(),
     },
     async (args) => {
       try {

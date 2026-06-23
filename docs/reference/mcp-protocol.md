@@ -6,17 +6,17 @@ Realm exposes 9 MCP tools. This document covers the full protocol: tool call pat
 
 ## Tools
 
-| Tool                    | Description                                                                                                                                                                                                                                                                            |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `list_workflows`        | Returns all registered workflow IDs and names. Call this first to discover what is available.                                                                                                                                                                                          |
-| `get_workflow_protocol` | Returns the full agent briefing for a workflow: step list, input schemas, instructions, rules, and quick_start. Read this before `start_run`.                                                                                                                                          |
-| `start_run`             | Starts a new run for a workflow. Accepts `workflow_id`, optional `params`, and optional `idempotency_key` (if supplied and a run with that key already exists for the workflow, the existing run is returned instead of creating a new one).                                           |
-| `start_run_batch`       | Atomically enqueues multiple runs of the same workflow. Accepts a single `workflow_id`, an `items` array (each item has `params` and optional `idempotency_key`), optional `parent_run_id`, and optional `max_items` (default 100). All items are validated before any run is created. |
-| `execute_step`          | Submits agent output for the current step. Accepts `run_id`, `command` (step name), and `params`.                                                                                                                                                                                      |
-| `submit_human_response` | Submits a human gate response. Accepts `run_id`, `gate_id`, and `choice`.                                                                                                                                                                                                              |
-| `get_run_state`         | Returns the current state, evidence chain, and terminal status of a run. When `run_phase` is `aborted`, also returns `abort_context` (guard step ID, evaluated conditions, optional abort message).                                                                                    |
-| `create_workflow`       | Registers a dynamic workflow from a `steps` array and immediately starts a run. No YAML file or `realm register` required.                                                                                                                                                             |
-| `list_runs`             | Lists runs, optionally filtered by `workflow_id` or `status`.                                                                                                                                                                                                                          |
+| Tool                    | Description                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `list_workflows`        | Returns all registered workflow IDs and names. Call this first to discover what is available.                                                                                                                                                                                                                                                                                        |
+| `get_workflow_protocol` | Returns the full agent briefing for a workflow: step list, input schemas, instructions, rules, and quick_start. Read this before `start_run`.                                                                                                                                                                                                                                        |
+| `start_run`             | Starts a new run for a workflow. Accepts `workflow_id`, optional `params`, optional `idempotency_key` (if supplied and a run with that key already exists for the workflow, the existing run is returned instead of creating a new one), and optional `on_terminal_match` / `on_live_match` policy params — see [Idempotency re-encounter policy](#idempotency-re-encounter-policy). |
+| `start_run_batch`       | Atomically enqueues multiple runs of the same workflow. Accepts a single `workflow_id`, an `items` array (each item has `params` and optional `idempotency_key`), optional `parent_run_id`, and optional `max_items` (default 100). All items are validated before any run is created.                                                                                               |
+| `execute_step`          | Submits agent output for the current step. Accepts `run_id`, `command` (step name), and `params`.                                                                                                                                                                                                                                                                                    |
+| `submit_human_response` | Submits a human gate response. Accepts `run_id`, `gate_id`, and `choice`.                                                                                                                                                                                                                                                                                                            |
+| `get_run_state`         | Returns the current state, evidence chain, and terminal status of a run. When `run_phase` is `aborted`, also returns `abort_context` (guard step ID, evaluated conditions, optional abort message).                                                                                                                                                                                  |
+| `create_workflow`       | Registers a dynamic workflow from a `steps` array and immediately starts a run. No YAML file or `realm register` required.                                                                                                                                                                                                                                                           |
+| `list_runs`             | Lists runs, optionally filtered by `workflow_id` or `status`.                                                                                                                                                                                                                                                                                                                        |
 
 ---
 
@@ -137,24 +137,61 @@ Use `start_run_batch` to enqueue multiple runs of the same workflow atomically. 
 
 ### Arguments
 
-| Field           | Required | Description                                                                                                                                                                                                        |
-| --------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `workflow_id`   | Yes      | The workflow to start runs for. All items share the same workflow.                                                                                                                                                 |
-| `items`         | Yes      | Array of run inputs. Each item has `params` (required) and an optional `idempotency_key`. If `idempotency_key` is set and a run with that key already exists, it is returned as-is rather than creating a new run. |
-| `parent_run_id` | No       | Run ID of the orchestrating parent. Stored on each child run record for traceability.                                                                                                                              |
-| `max_items`     | No       | Maximum number of items allowed in a single call. Defaults to `100`. If `items.length` exceeds this cap, the call fails immediately with `VALIDATION_BATCH_TOO_LARGE` before any validation or creation.           |
+| Field               | Required | Description                                                                                                                                                                                                               |
+| ------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workflow_id`       | Yes      | The workflow to start runs for. All items share the same workflow.                                                                                                                                                        |
+| `items`             | Yes      | Array of run inputs. Each item has `params` (required) and an optional `idempotency_key`. If `idempotency_key` is set and a run with that key already exists, it is returned as-is rather than creating a new run.        |
+| `parent_run_id`     | No       | Run ID of the orchestrating parent. Stored on each child run record for traceability.                                                                                                                                     |
+| `max_items`         | No       | Maximum number of items allowed in a single call. Defaults to `100`. If `items.length` exceeds this cap, the call fails immediately with `VALIDATION_BATCH_TOO_LARGE` before any validation or creation.                  |
+| `on_terminal_match` | No       | Idempotency policy when a key matches a **terminal** run, applied to every item. One of `reuse` (default), `reject`, `rerun_if_failed`, `rerun`. See [Idempotency re-encounter policy](#idempotency-re-encounter-policy). |
+| `on_live_match`     | No       | Idempotency policy when a key matches a **non-terminal** run, applied to every item. One of `use_existing` (default), `fail`.                                                                                             |
 
 ### Response
 
-On success returns `{ started: Array<{ run_id, params, idempotency_key? }> }` — one entry per item in the same order as the input array.
+On success returns `{ started, failed }`:
 
-On failure returns a `ResponseEnvelope` with `status: error` and `agent_action: provide_input`.
+- `started: Array<{ run_id, params, idempotency_key?, deduped, run_phase, terminal_reason?, warnings }>` — one entry per accepted item. `deduped` is `true` when an existing run matched the key; `run_phase` is the matched/created run's phase; `warnings` carries observational active-match / param-mismatch notes.
+- `failed: Array<{ index, idempotency_key?, params, error, error_code? }>` — items rejected by the idempotency policy (`on_terminal_match: 'reject'` or `on_live_match: 'fail'`). `index` correlates back to `items[]`. **A rejected item does not abort the batch** — accepted items still appear in `started[]`.
+
+On failure (before any item is processed) returns a `ResponseEnvelope` with `status: error` and `agent_action: provide_input`.
 
 | Error code                   | Cause                                                                      |
 | ---------------------------- | -------------------------------------------------------------------------- |
 | `VALIDATION_BATCH_TOO_LARGE` | `items.length` exceeds `max_items`. No runs were created.                  |
 | `VALIDATION_BATCH_ITEMS`     | One or more items failed `params_schema` validation. No runs were created. |
 | `STATE_WORKFLOW_NOT_FOUND`   | `workflow_id` is not registered.                                           |
+
+---
+
+## Idempotency re-encounter policy
+
+When an `idempotency_key` matches an existing run, the caller decides what happens via two
+orthogonal, optional parameters on `start_run` and `start_run_batch`. Both **default to today's
+behavior** — omit them and a match returns the existing run unchanged (`deduped: true`).
+
+**`on_terminal_match`** — key matches a **terminal** run (`completed` / `failed` / `aborted` / `abandoned`):
+
+| Value               | Behavior                                                                                                                                                                                                                            |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reuse` _(default)_ | Return the existing run (`deduped: true`). Nothing is re-driven.                                                                                                                                                                    |
+| `reject`            | Throw `STATE_IDEMPOTENCY_KEY_USED` — the key was already used and its run is terminal.                                                                                                                                              |
+| `rerun_if_failed`   | A `failed` / `aborted` / `abandoned` match is **superseded** by a fresh run (`deduped: false`); a **`completed`** match is **reused** (benign skip — re-running a closed-ticket batch should not error on already-succeeded items). |
+| `rerun`             | Always supersede the matched run with a fresh run (`deduped: false`).                                                                                                                                                               |
+
+**`on_live_match`** — key matches a **non-terminal** run (`running` / `gate_waiting`):
+
+| Value                      | Behavior                                                                                      |
+| -------------------------- | --------------------------------------------------------------------------------------------- |
+| `use_existing` _(default)_ | Return the live run (`deduped: true`) plus an observational warning that it is still active.  |
+| `fail`                     | Throw `STATE_RUN_ALREADY_ACTIVE` — the key is owned by a still-active run (concurrency-safe). |
+
+**Supersede** repoints the idempotency key to the fresh run via a single atomic pointer overwrite;
+the superseded run remains on disk by id (auditable) but no longer owns the key.
+
+**`terminate`** (abort the live run, then restart) is **intentionally unsupported**: a daemonless
+file store cannot actually stop a detached `realm agent`, so marking its record aborted while it
+keeps writing would be a race. Recovering a genuinely-zombie run is a deliberate operator action,
+not an automatic policy.
 
 ---
 

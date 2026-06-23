@@ -675,3 +675,256 @@ describe('JsonFileStore.save() index routing', () => {
     expect(ptr.run_id).toBe('new-owner');
   });
 });
+
+// ── re-encounter policy (#92 PR 2) ─────────────────────────────────────────────
+
+describe('JsonFileStore re-encounter policy', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    ({ store, dir } = await makeTmpStore());
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  /** Create a keyed run and drive it to a terminal phase. */
+  async function seedTerminal(
+    key: string,
+    phase: 'completed' | 'failed' | 'aborted' | 'abandoned',
+  ): Promise<string> {
+    const { run } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: key,
+    });
+    const patch =
+      phase === 'completed'
+        ? {
+            run_phase: 'completed' as const,
+            terminal_state: true,
+            terminal_reason: 'Workflow completed.',
+          }
+        : phase === 'aborted'
+          ? { run_phase: 'aborted' as const, terminal_state: true, aborted_at: { step_id: 's' } }
+          : phase === 'failed'
+            ? { run_phase: 'failed' as const, terminal_state: true, failed_steps: ['s'] }
+            : { run_phase: 'abandoned' as const, terminal_state: true };
+    await store.update({ ...run, ...patch });
+    return run.id;
+  }
+
+  // --- Terminal axis ---
+
+  it('terminal reuse (default) returns the existing run', async () => {
+    const id = await seedTerminal('k1', 'failed');
+    const { run, created } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    expect(created).toBe(false);
+    expect(run.id).toBe(id);
+  });
+
+  it('terminal reject throws STATE_IDEMPOTENCY_KEY_USED', async () => {
+    await seedTerminal('k1', 'completed');
+    await expect(
+      store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+        idempotencyKey: 'k1',
+        onTerminalMatch: 'reject',
+      }),
+    ).rejects.toMatchObject({ code: 'STATE_IDEMPOTENCY_KEY_USED' });
+  });
+
+  it('rerun_if_failed supersedes a failed match (new run + repoint + old still gettable)', async () => {
+    const oldId = await seedTerminal('k1', 'failed');
+    const { run, created } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+      onTerminalMatch: 'rerun_if_failed',
+    });
+    expect(created).toBe(true);
+    expect(run.id).not.toBe(oldId);
+    const ptr = JSON.parse(await readFile(keyPointerPath(dir, 'wf-1', 'k1'), 'utf8'));
+    expect(ptr.run_id).toBe(run.id);
+    // Old run remains on disk (auditable).
+    expect((await store.get(oldId)).id).toBe(oldId);
+  });
+
+  it('rerun_if_failed reuses a completed match (no new run)', async () => {
+    const id = await seedTerminal('k1', 'completed');
+    const { run, created } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+      onTerminalMatch: 'rerun_if_failed',
+    });
+    expect(created).toBe(false);
+    expect(run.id).toBe(id);
+  });
+
+  it('rerun supersedes a completed match (new run + repoint)', async () => {
+    const oldId = await seedTerminal('k1', 'completed');
+    const { run, created } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+      onTerminalMatch: 'rerun',
+    });
+    expect(created).toBe(true);
+    expect(run.id).not.toBe(oldId);
+    const ptr = JSON.parse(await readFile(keyPointerPath(dir, 'wf-1', 'k1'), 'utf8'));
+    expect(ptr.run_id).toBe(run.id);
+  });
+
+  // --- Live axis ---
+
+  it('live use_existing (default) returns the running run', async () => {
+    const { run: owner } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    const { run, created } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    expect(created).toBe(false);
+    expect(run.id).toBe(owner.id);
+  });
+
+  it('live fail throws STATE_RUN_ALREADY_ACTIVE on a running match', async () => {
+    await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    await expect(
+      store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+        idempotencyKey: 'k1',
+        onLiveMatch: 'fail',
+      }),
+    ).rejects.toMatchObject({ code: 'STATE_RUN_ALREADY_ACTIVE' });
+  });
+
+  it('live fail throws on a gate_waiting match too', async () => {
+    const { run } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    await store.update({
+      ...run,
+      pending_gate: { gate_id: 'g', step_name: 's', preview: {}, choices: ['ok'] },
+    });
+    await expect(
+      store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+        idempotencyKey: 'k1',
+        onLiveMatch: 'fail',
+      }),
+    ).rejects.toMatchObject({ code: 'STATE_RUN_ALREADY_ACTIVE' });
+  });
+
+  // --- Supersede soundness + crash-safety ---
+
+  it('after rerun, deleting the pointer self-heals to the NEW run (not the superseded one)', async () => {
+    const oldId = await seedTerminal('k1', 'completed');
+    const { run: newRun } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+      onTerminalMatch: 'rerun',
+    });
+    // Delete the pointer → force the lazy-legacy fallback to re-pick the canonical run.
+    await unlink(keyPointerPath(dir, 'wf-1', 'k1'));
+    const { run: healed, created } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    expect(created).toBe(false);
+    expect(healed.id).toBe(newRun.id); // newer live successor wins, not oldId
+    expect(healed.id).not.toBe(oldId);
+  });
+
+  it('supersede writes the run file before repointing (both run files on disk, pointer at new)', async () => {
+    const oldId = await seedTerminal('k1', 'failed');
+    const { run: newRun } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+      onTerminalMatch: 'rerun',
+    });
+    expect(existsSync(join(dir, `${oldId}.json`))).toBe(true);
+    expect(existsSync(join(dir, `${newRun.id}.json`))).toBe(true);
+    const ptr = JSON.parse(await readFile(keyPointerPath(dir, 'wf-1', 'k1'), 'utf8'));
+    expect(ptr.run_id).toBe(newRun.id);
+  });
+
+  // --- Legacy-adopt + policy ---
+
+  it('rerun against an adopted legacy failed run supersedes it', async () => {
+    // Seed a legacy failed run directly (field set, no pointer).
+    const legacy = makeRunRecord({
+      id: 'legacy-failed',
+      workflow_id: 'wf-1',
+      idempotency_key: 'k1',
+      run_phase: 'failed',
+      terminal_state: true,
+      failed_steps: ['s'],
+    });
+    await writeFile(join(dir, 'legacy-failed.json'), JSON.stringify(legacy, null, 2), 'utf8');
+    const { run, created } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+      onTerminalMatch: 'rerun',
+    });
+    expect(created).toBe(true);
+    expect(run.id).not.toBe('legacy-failed');
+    const ptr = JSON.parse(await readFile(keyPointerPath(dir, 'wf-1', 'k1'), 'utf8'));
+    expect(ptr.run_id).toBe(run.id);
+  });
+
+  // --- Defaults reproduce PR 1 ---
+
+  it('omitting both policy params reproduces PR 1 behavior (terminal match → reuse)', async () => {
+    const id = await seedTerminal('k1', 'aborted');
+    const { run, created } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    expect(created).toBe(false);
+    expect(run.id).toBe(id);
+    expect(run.run_phase).toBe('aborted'); // byte-unchanged, not re-driven
+  });
+});

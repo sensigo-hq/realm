@@ -45,6 +45,8 @@ export async function handleStartRun(
     workflow_id: string;
     params?: Record<string, unknown>;
     idempotency_key?: string | undefined;
+    on_terminal_match?: 'reuse' | 'reject' | 'rerun_if_failed' | 'rerun' | undefined;
+    on_live_match?: 'use_existing' | 'fail' | undefined;
   },
   stores?: HandleRunStores,
 ): Promise<ResponseEnvelope & { deduped: boolean }> {
@@ -58,6 +60,8 @@ export async function handleStartRun(
     workflowVersion: definition.version,
     params,
     ...(args.idempotency_key !== undefined ? { idempotencyKey: args.idempotency_key } : {}),
+    ...(args.on_terminal_match !== undefined ? { onTerminalMatch: args.on_terminal_match } : {}),
+    ...(args.on_live_match !== undefined ? { onLiveMatch: args.on_live_match } : {}),
   });
   // The store reports `created`; the tool surfaces its inverse, `deduped`.
   const deduped = !created;
@@ -141,6 +145,8 @@ export function registerStartRun(
       workflow_id: z.string(),
       params: z.record(z.unknown()).optional().default({}),
       idempotency_key: z.string().optional(),
+      on_terminal_match: z.enum(['reuse', 'reject', 'rerun_if_failed', 'rerun']).optional(),
+      on_live_match: z.enum(['use_existing', 'fail']).optional(),
     },
     async (args) => {
       try {

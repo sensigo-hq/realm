@@ -13,6 +13,7 @@ import { WorkflowError } from '../types/workflow-error.js';
 import type { RunStore, CreateRunOptions } from './store-interface.js';
 import { findEligibleSteps, deriveRunPhase } from '../engine/eligibility.js';
 import { hashParams } from './params-hash.js';
+import { decideIdempotencyPolicy } from './idempotency-policy.js';
 
 const DEFAULT_RUNS_DIR = join(homedir(), '.realm', 'runs');
 
@@ -203,7 +204,13 @@ export class JsonFileStore implements RunStore {
           throw err;
         });
         if (target !== undefined) {
-          return { run: target, created: false };
+          // (b') Apply the re-encounter policy to the matched run (PR 2). decideIdempotencyPolicy
+          // is called directly here (not inside a nested async helper) so a `reject`/`fail` throw
+          // is synchronous within this try — avoiding a transiently-orphaned rejected promise.
+          if (decideIdempotencyPolicy(target, options) === 'reuse') {
+            return { run: target, created: false };
+          }
+          return await this.supersede(options, keyPath, key);
         }
         // target missing → crash-orphan pointer; fall through to reclaim (d).
       } else {
@@ -211,8 +218,13 @@ export class JsonFileStore implements RunStore {
         // recovers run-written-but-pointer-not crash orphans, which still carry the field).
         const canonical = await this.findCanonicalLegacyRun(options.workflowId, key);
         if (canonical !== undefined) {
-          await this.writePointer(keyPath, canonical, key);
-          return { run: canonical, created: false };
+          // A legacy match runs through the same policy.
+          if (decideIdempotencyPolicy(canonical, options) === 'reuse') {
+            // Migrate the adopted run into the pointer index (PR 1 behavior).
+            await this.writePointer(keyPath, canonical, key);
+            return { run: canonical, created: false };
+          }
+          return await this.supersede(options, keyPath, key);
         }
       }
 
@@ -223,6 +235,22 @@ export class JsonFileStore implements RunStore {
     } finally {
       await release();
     }
+  }
+
+  /**
+   * Supersede the current key owner with a fresh run (must be called under the per-key lock):
+   * run file FIRST, then an atomic pointer overwrite to the successor (PR 1 ordering). The
+   * superseded run stays on disk by id (auditable); `pickCanonical` prefers the newer successor,
+   * so a lost pointer self-heals to the new run.
+   */
+  private async supersede(
+    options: CreateRunOptions,
+    keyPath: string,
+    key: string,
+  ): Promise<{ run: RunRecord; created: boolean }> {
+    const run = await this.writeFreshRun(options);
+    await this.writePointer(keyPath, run, key);
+    return { run, created: true };
   }
 
   async get(runId: string): Promise<RunRecord> {

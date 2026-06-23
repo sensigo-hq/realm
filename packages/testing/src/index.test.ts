@@ -208,6 +208,144 @@ describe('InMemoryStore', () => {
 });
 
 // ---------------------------------------------------------------------------
+// InMemoryStore re-encounter policy parity (#92 PR 2)
+// ---------------------------------------------------------------------------
+
+describe('InMemoryStore re-encounter policy', () => {
+  async function seedTerminal(
+    store: InMemoryStore,
+    key: string,
+    phase: 'completed' | 'failed' | 'aborted' | 'abandoned',
+  ): Promise<string> {
+    const { run } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: key,
+    });
+    const patch =
+      phase === 'completed'
+        ? {
+            run_phase: 'completed' as const,
+            terminal_state: true,
+            terminal_reason: 'Workflow completed.',
+          }
+        : phase === 'aborted'
+          ? { run_phase: 'aborted' as const, terminal_state: true, aborted_at: { step_id: 's' } }
+          : phase === 'failed'
+            ? { run_phase: 'failed' as const, terminal_state: true, failed_steps: ['s'] }
+            : { run_phase: 'abandoned' as const, terminal_state: true };
+    await store.update({ ...run, ...patch });
+    return run.id;
+  }
+
+  it('terminal reuse (default) returns the existing run', async () => {
+    const store = new InMemoryStore();
+    const id = await seedTerminal(store, 'k1', 'failed');
+    const { run, created } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    expect(created).toBe(false);
+    expect(run.id).toBe(id);
+  });
+
+  it('terminal reject throws STATE_IDEMPOTENCY_KEY_USED', async () => {
+    const store = new InMemoryStore();
+    await seedTerminal(store, 'k1', 'completed');
+    await expect(
+      store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+        idempotencyKey: 'k1',
+        onTerminalMatch: 'reject',
+      }),
+    ).rejects.toMatchObject({ code: 'STATE_IDEMPOTENCY_KEY_USED' });
+  });
+
+  it('rerun_if_failed supersedes a failed match; reuses a completed match', async () => {
+    const store = new InMemoryStore();
+    const failedId = await seedTerminal(store, 'kf', 'failed');
+    const supersede = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'kf',
+      onTerminalMatch: 'rerun_if_failed',
+    });
+    expect(supersede.created).toBe(true);
+    expect(supersede.run.id).not.toBe(failedId);
+    // old run still retrievable
+    expect((await store.get(failedId)).id).toBe(failedId);
+
+    const completedId = await seedTerminal(store, 'kc', 'completed');
+    const reuse = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'kc',
+      onTerminalMatch: 'rerun_if_failed',
+    });
+    expect(reuse.created).toBe(false);
+    expect(reuse.run.id).toBe(completedId);
+  });
+
+  it('rerun supersedes a completed match (keyIndex repoints to the new run)', async () => {
+    const store = new InMemoryStore();
+    const oldId = await seedTerminal(store, 'k1', 'completed');
+    const { run, created } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+      onTerminalMatch: 'rerun',
+    });
+    expect(created).toBe(true);
+    expect(run.id).not.toBe(oldId);
+    // A subsequent default create resolves to the new run, not the superseded one.
+    const again = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    expect(again.created).toBe(false);
+    expect(again.run.id).toBe(run.id);
+  });
+
+  it('live use_existing (default) returns the running run; fail throws', async () => {
+    const store = new InMemoryStore();
+    const { run: owner } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    const reuse = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k1',
+    });
+    expect(reuse.created).toBe(false);
+    expect(reuse.run.id).toBe(owner.id);
+
+    await expect(
+      store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+        idempotencyKey: 'k1',
+        onLiveMatch: 'fail',
+      }),
+    ).rejects.toMatchObject({ code: 'STATE_RUN_ALREADY_ACTIVE' });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Fixture loader
 // ---------------------------------------------------------------------------
 
