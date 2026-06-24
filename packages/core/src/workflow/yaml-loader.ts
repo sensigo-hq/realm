@@ -398,20 +398,9 @@ export function loadWorkflowFromString(
       }
     }
 
-    // Validate step config: literal values only (no nested objects).
-    if (
-      step['config'] !== undefined &&
-      typeof step['config'] === 'object' &&
-      step['config'] !== null
-    ) {
-      for (const [key, value] of Object.entries(step['config'] as Record<string, unknown>)) {
-        if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-          errors.push(
-            `Step '${stepName}': config key '${key}' must be a literal value (string, number, boolean, null, or array) — nested objects are not supported in v1`,
-          );
-        }
-      }
-    }
+    // Step config may hold any JSON value (scalars, arrays, nested objects). It is passed through
+    // opaquely to handlers (context.config) and merged into adapter config for uses_service steps;
+    // the adapter's config_schema (below) remains the real validator for uses_service config.
 
     // Validate step config against adapter config_schema (requires registry).
     if (step['config'] !== undefined && step['uses_service'] !== undefined) {
@@ -692,11 +681,9 @@ function validateInputMapNode(
         );
         return;
       }
-      const val = obj['$literal'];
-      const allowed = ['string', 'number', 'boolean'];
-      if (val !== null && !allowed.includes(typeof val)) {
-        errors.push(`${pathDesc}: $literal value must be a string, number, boolean, or null`);
-      }
+      // The $literal value is passed through verbatim by the runtime — it may be any JSON value
+      // (string, number, boolean, null, array, or object). Do NOT recurse into it: an object value
+      // is a literal subtree, not a nested template. Return without further validation.
       return;
     }
 

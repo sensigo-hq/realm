@@ -81,9 +81,9 @@ if (typeof source_step !== 'string') {
 }
 ```
 
-Config values come directly from the YAML step's `config:` block. Always validate that
-required config keys are present and correctly typed — the engine does not validate `config:`
-contents.
+Config values come directly from the YAML step's `config:` block. `config` may hold any JSON
+value — scalars, arrays, and nested objects. Always validate that required config keys are
+present and correctly typed — the engine does not validate `config:` contents for handler steps.
 
 ### Accessing run params
 
