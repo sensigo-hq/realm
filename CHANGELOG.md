@@ -4,9 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
-
-> **Version intent: 0.9.0.** Additive, backward-compatible loosenings of load-time validation (previously-invalid YAML becomes valid; no existing valid workflow changes behavior).
+## [0.9.0] — 2026-06-24
 
 ### Changed
 
