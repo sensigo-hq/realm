@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+> **Version intent: 0.9.0.** Additive, backward-compatible loosenings of load-time validation (previously-invalid YAML becomes valid; no existing valid workflow changes behavior).
+
+### Changed
+
+- **`$literal` (input_map) now accepts any JSON value — arrays and objects, not just scalars — passed through verbatim** (the literal escape now covers whole subtrees, so a string leaf that looks like a dot-path inside a `$literal` object stays literal). A `$literal` node still must have exactly one key, and a **bare array** as an input_map node value remains rejected (wrap it in `$literal`).
+- **Step `config` may now contain nested objects** (previously rejected at load as "nested objects are not supported in v1"). Adapter `config_schema` remains the validator for `uses_service` config; the redundant load-time ban is removed.
+
+---
+
 ## [0.8.0] — 2026-06-24
 
 ### Changed

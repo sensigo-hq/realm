@@ -392,7 +392,7 @@ steps:
     }
   });
 
-  it('input_map with $literal array value is rejected', () => {
+  it('input_map with $literal array value loads (any JSON value accepted)', () => {
     const yaml = `
 id: wf
 name: WF
@@ -412,11 +412,69 @@ steps:
           - one
           - two
 `;
+    expect(() => loadWorkflowFromString(yaml)).not.toThrow();
+    const def = loadWorkflowFromString(yaml);
+    expect((def.steps['step1']?.input_map?.['ids'] as { $literal: unknown }).$literal).toEqual([
+      'one',
+      'two',
+    ]);
+  });
+
+  it('input_map with $literal object value loads (any JSON value accepted)', () => {
+    const yaml = `
+id: wf
+name: WF
+version: 1
+services:
+  svc:
+    adapter: mock
+    trust: engine_delivered
+steps:
+  step1:
+    description: step
+    execution: auto
+    uses_service: svc
+    input_map:
+      filter:
+        $literal:
+          tier: gold
+          ids: [1, 2]
+          x: run.params.y
+`;
+    expect(() => loadWorkflowFromString(yaml)).not.toThrow();
+    const def = loadWorkflowFromString(yaml);
+    expect((def.steps['step1']?.input_map?.['filter'] as { $literal: unknown }).$literal).toEqual({
+      tier: 'gold',
+      ids: [1, 2],
+      x: 'run.params.y',
+    });
+  });
+
+  it('input_map with a bare array node value is still rejected (must wrap in $literal)', () => {
+    const yaml = `
+id: wf
+name: WF
+version: 1
+services:
+  svc:
+    adapter: mock
+    trust: engine_delivered
+steps:
+  step1:
+    description: step
+    execution: auto
+    uses_service: svc
+    input_map:
+      ids:
+        - one
+        - two
+`;
     expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
     try {
       loadWorkflowFromString(yaml);
     } catch (err) {
-      expect((err as WorkflowError).message).toContain('$literal value must be');
+      expect((err as WorkflowError).message).toContain('expected a string or object');
+      expect((err as WorkflowError).message).toContain('array');
     }
   });
 
@@ -441,6 +499,32 @@ steps:
         id: run.params.id
 `;
     expect(() => loadWorkflowFromString(yaml)).not.toThrow();
+  });
+
+  it('step config with a nested object now loads (v1 ban lifted)', () => {
+    const yaml = `
+id: wf
+name: WF
+version: 1
+steps:
+  step1:
+    description: step
+    execution: auto
+    handler: my-handler
+    config:
+      retry:
+        attempts: 3
+        backoff: exponential
+      tags: [a, b]
+      enabled: true
+`;
+    expect(() => loadWorkflowFromString(yaml)).not.toThrow();
+    const def = loadWorkflowFromString(yaml);
+    expect(def.steps['step1']?.config).toEqual({
+      retry: { attempts: 3, backoff: 'exponential' },
+      tags: ['a', 'b'],
+      enabled: true,
+    });
   });
 });
 
@@ -1445,7 +1529,19 @@ steps:
     }
   });
 
-  it('step with nested object in config throws WorkflowError', () => {
+  it('step with a nested object in config now loads (v1 ban lifted) when the adapter config_schema allows it', () => {
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'my_adapter', {
+      id: 'my_adapter',
+      fetch: async () => ({ status: 200, data: {} }),
+      create: async () => ({ status: 201, data: {} }),
+      update: async () => ({ status: 200, data: {} }),
+      config_schema: {
+        type: 'object',
+        properties: { retry: { type: 'object' } },
+      },
+    } as ServiceAdapter);
+
     const yaml =
       BASE_YAML +
       `  fetch_step:
@@ -1454,15 +1550,38 @@ steps:
     depends_on: [step_a]
     uses_service: my_service
     config:
-      nested:
-        a: 1
+      retry:
+        attempts: 3
+        backoff: exponential
+`;
+    expect(() => loadWorkflowFromString(yaml, registry)).not.toThrow();
+    const def = loadWorkflowFromString(yaml, registry);
+    expect(def.steps['fetch_step']?.config).toEqual({
+      retry: { attempts: 3, backoff: 'exponential' },
+    });
+  });
+
+  it('a nested-object config that violates the adapter config_schema is still rejected (the real gate moved there, not vanished)', () => {
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'my_adapter', makeAdapter(true)); // requires { table: string }
+
+    const yaml =
+      BASE_YAML +
+      `  fetch_step:
+    description: Fetch from service
+    execution: auto
+    depends_on: [step_a]
+    uses_service: my_service
+    config:
+      table:
+        nested: object
 `;
     try {
-      loadWorkflowFromString(yaml);
+      loadWorkflowFromString(yaml, registry);
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(WorkflowError);
-      expect((err as WorkflowError).message).toContain('nested objects are not supported in v1');
+      expect((err as WorkflowError).message).toContain('config validation failed');
     }
   });
 });

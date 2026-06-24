@@ -51,6 +51,40 @@ describe('validateInputSchema', () => {
       expect((err as WorkflowError).stepId).toBe('target-step');
     }
   });
+
+  // Ajv handles array/object-typed params natively — relevant now that $literal may
+  // resolve to arrays/objects that flow through as params.
+  it('accepts an array-typed param', () => {
+    const arraySchema: JsonSchema = {
+      type: 'object',
+      properties: { tags: { type: 'array', items: { type: 'string' } } },
+      required: ['tags'],
+    };
+    expect(() => validateInputSchema({ tags: ['a', 'b'] }, arraySchema, 'my-step')).not.toThrow();
+    expect(() => validateInputSchema({ tags: 'not-an-array' }, arraySchema, 'my-step')).toThrow(
+      WorkflowError,
+    );
+  });
+
+  it('accepts a nested-object-typed param', () => {
+    const objectSchema: JsonSchema = {
+      type: 'object',
+      properties: {
+        filter: {
+          type: 'object',
+          properties: { tier: { type: 'string' }, ids: { type: 'array' } },
+          required: ['tier'],
+        },
+      },
+      required: ['filter'],
+    };
+    expect(() =>
+      validateInputSchema({ filter: { tier: 'gold', ids: [1, 2] } }, objectSchema, 'my-step'),
+    ).not.toThrow();
+    expect(() => validateInputSchema({ filter: { ids: [1] } }, objectSchema, 'my-step')).toThrow(
+      WorkflowError,
+    );
+  });
 });
 
 describe('validateTraceSchema', () => {

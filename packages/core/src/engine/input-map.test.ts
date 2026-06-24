@@ -703,4 +703,140 @@ describe('input_map', () => {
       undefined,
     );
   });
+
+  // --- $literal accepts full JSON (arrays/objects), passed through verbatim ---
+
+  it('input_map — $literal array resolves verbatim (not path-resolved)', async () => {
+    const def: WorkflowDefinition = {
+      id: 'imap-wf',
+      name: 'InputMap Workflow',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        query: {
+          description: 'Adapter step with literal array',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+          input_map: { tags: { $literal: ['a', 'b'] } },
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { query: { status: 200, data: {} } });
+    const fetchSpy = vi.spyOn(adapter, 'fetch');
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const { run: run } = await store.create({
+      workflowId: 'imap-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'query',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'query',
+      { tags: ['a', 'b'] },
+      expect.any(Object),
+      undefined,
+    );
+  });
+
+  it('input_map — $literal object resolves verbatim; a path-looking string leaf is NOT resolved', async () => {
+    const def: WorkflowDefinition = {
+      id: 'imap-wf',
+      name: 'InputMap Workflow',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        query: {
+          description: 'Adapter step with literal object',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+          // The string leaf "run.params.y" looks like a dot-path but, being inside $literal,
+          // must be passed through verbatim — proving the literal escape covers whole subtrees.
+          input_map: { filter: { $literal: { tier: 'gold', ids: [1, 2], x: 'run.params.y' } } },
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { query: { status: 200, data: {} } });
+    const fetchSpy = vi.spyOn(adapter, 'fetch');
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const { run: run } = await store.create({
+      workflowId: 'imap-wf',
+      workflowVersion: 1,
+      params: { y: 'SHOULD_NOT_APPEAR' },
+    });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'query',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'query',
+      { filter: { tier: 'gold', ids: [1, 2], x: 'run.params.y' } },
+      expect.any(Object),
+      undefined,
+    );
+  });
+
+  it('input_map — $literal object/array sibling resolves alongside a normal templated key', async () => {
+    const def: WorkflowDefinition = {
+      id: 'imap-wf',
+      name: 'InputMap Workflow',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        query: {
+          description: 'Mix literal subtree with a templated path',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+          input_map: {
+            id: 'run.params.id',
+            options: { $literal: { recursive: true, exclude: ['tmp'] } },
+          },
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { query: { status: 200, data: {} } });
+    const fetchSpy = vi.spyOn(adapter, 'fetch');
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const { run: run } = await store.create({
+      workflowId: 'imap-wf',
+      workflowVersion: 1,
+      params: { id: 'rec789' },
+    });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'query',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'query',
+      { id: 'rec789', options: { recursive: true, exclude: ['tmp'] } },
+      expect.any(Object),
+      undefined,
+    );
+  });
 });

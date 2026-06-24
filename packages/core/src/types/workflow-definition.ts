@@ -90,12 +90,13 @@ export type TriggerRule =
 /**
  * A node in an input_map tree. One of:
  * - string: a dot-path reference resolved against run state
- * - { $literal: scalar }: a static constant value
+ * - { $literal: value }: a static constant value (any JSON value: scalar, array, or object) —
+ *   passed through verbatim by the runtime, never path-resolved or recursed into
  * - { [key: string]: InputMapNode }: a nested object (recursive)
  *
  * The $literal sentinel must appear alone — no sibling keys are permitted.
  */
-export type LiteralNode = { $literal: string | number | boolean | null };
+export type LiteralNode = { $literal: unknown };
 export type InputMapNode = string | LiteralNode | { [key: string]: InputMapNode };
 
 export interface StepDefinition {
