@@ -17,9 +17,19 @@ import { resolvePath } from './render-template.js';
 export function deriveRunPhase(
   run: Pick<
     RunRecord,
-    'pending_gate' | 'terminal_state' | 'failed_steps' | 'terminal_reason' | 'aborted_at'
+    | 'pending_gate'
+    | 'terminal_state'
+    | 'failed_steps'
+    | 'terminal_reason'
+    | 'aborted_at'
+    | 'abandoned_at'
   >,
 ): RunPhase {
+  // abandoned_at is authoritative — explicit operator/cleanup abandonment wins over any field
+  // (failed_steps, pending_gate, terminal_reason). It is only ever set on a running run
+  // (gate_waiting abandonment is refused by abandonRun), so it never co-occurs with pending_gate
+  // in practice; top placement is future-proof and mirrors the aborted_at promotion rationale below.
+  if (run.abandoned_at !== undefined) return 'abandoned';
   if (run.pending_gate !== undefined) return 'gate_waiting';
   // aborted_at is authoritative and is checked before both !terminal_state and the
   // 'Workflow completed.' check. The only records that carry aborted_at are guard/handler-aborted

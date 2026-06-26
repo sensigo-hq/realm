@@ -211,6 +211,37 @@ describe('InMemoryStore', () => {
 // InMemoryStore re-encounter policy parity (#92 PR 2)
 // ---------------------------------------------------------------------------
 
+describe('abandonRun parity (InMemoryStore)', () => {
+  it('running → abandoned (abandoned_at set, phase abandoned), even with failed_steps', async () => {
+    const { abandonRun } = await import('@sensigo/realm');
+    const store = new InMemoryStore();
+    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    await store.update({ ...run, failed_steps: ['step_a'] }); // running, carries a failed step
+    const result = await abandonRun(store, run.id);
+    expect(result.abandoned_at).toBeDefined();
+    expect(result.terminal_state).toBe(true);
+    expect(result.run_phase).toBe('abandoned'); // authoritative marker beats failed_steps
+  });
+
+  it('already abandoned → idempotent no-op; terminal → STATE_RUN_TERMINAL', async () => {
+    const { abandonRun } = await import('@sensigo/realm');
+    const store = new InMemoryStore();
+    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const first = await abandonRun(store, run.id);
+    const second = await abandonRun(store, run.id);
+    expect(second.version).toBe(first.version); // no second write
+
+    const { run: done } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    await store.update({
+      ...done,
+      completed_steps: ['s'],
+      terminal_state: true,
+      terminal_reason: 'Workflow completed.',
+    });
+    await expect(abandonRun(store, done.id)).rejects.toMatchObject({ code: 'STATE_RUN_TERMINAL' });
+  });
+});
+
 describe('InMemoryStore re-encounter policy', () => {
   async function seedTerminal(
     store: InMemoryStore,

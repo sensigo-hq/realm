@@ -1533,6 +1533,24 @@ export async function submitHumanResponse(
     return errorEnvelope('submit_gate', options.runId, 0, e);
   }
 
+  // 1a. Defensive terminal guard (mirrors #91/#95): a late gate response must never re-drive a
+  // run that has already reached a terminal phase.
+  if (run.terminal_state) {
+    return errorEnvelope(
+      'submit_gate',
+      options.runId,
+      run.version,
+      new WorkflowError(`Run '${options.runId}' is terminal; cannot submit a gate response.`, {
+        code: 'STATE_RUN_TERMINAL',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: { runId: options.runId, run_phase: run.run_phase },
+      }),
+      `Run is terminal (${run.run_phase}); cannot submit a gate response.`,
+    );
+  }
+
   // 2. Verify a gate is open.
   if (run.pending_gate === undefined) {
     return errorEnvelope(

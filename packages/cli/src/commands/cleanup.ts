@@ -57,6 +57,7 @@ export async function cleanupRuns(
     for (const run of affected) {
       await runStore.update({
         ...run,
+        abandoned_at: new Date().toISOString(),
         run_phase: 'abandoned',
         terminal_state: true,
         terminal_reason: 'Marked abandoned by realm cleanup',

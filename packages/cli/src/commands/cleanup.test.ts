@@ -137,4 +137,24 @@ describe('cleanupRuns', () => {
     expect(unchanged.run_phase).toBe('gate_waiting');
     expect(unchanged.terminal_state).toBe(false);
   });
+
+  it('sets abandoned_at and derives abandoned (not failed) for an idle running run carrying failed_steps', async () => {
+    const now = new Date('2024-06-01T12:00:00Z');
+    vi.setSystemTime(now);
+
+    const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
+    // A running run that already accumulated a failed step — without the authoritative marker this
+    // would derive to 'failed' on cleanup's update().
+    const run = makeRun({ updated_at: oldTime, run_phase: 'running', failed_steps: ['step_a'] });
+    await injectRun(dir, run);
+
+    const store = new JsonFileStore(dir);
+    const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
+    expect(affected).toHaveLength(1);
+
+    const updated = await store.get(run.id);
+    expect(updated.abandoned_at).toBeDefined();
+    expect(updated.run_phase).toBe('abandoned'); // authoritative marker beats failed_steps
+    expect(updated.terminal_state).toBe(true);
+  });
 });

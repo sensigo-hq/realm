@@ -15,6 +15,7 @@ import { registerStartRun } from './tools/start-run.js';
 import { registerExecuteStep } from './tools/execute-step.js';
 import { registerSubmitHumanResponse } from './tools/submit-human-response.js';
 import { registerGetRunState } from './tools/get-run-state.js';
+import { registerAbandonRun } from './tools/abandon-run.js';
 import { registerCreateWorkflow } from './tools/create-workflow.js';
 import { registerAppendTrace } from './tools/append-trace.js';
 import { registerStartRunBatch } from './tools/start-run-batch.js';
@@ -79,6 +80,7 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   registerExecuteStep(server, { ...effectiveOptions, traceBufferStore });
   registerSubmitHumanResponse(server, effectiveOptions);
   registerGetRunState(server, effectiveOptions);
+  registerAbandonRun(server, effectiveOptions);
   registerCreateWorkflow(server, effectiveOptions);
   registerAppendTrace(server, {
     runStore: effectiveRunStore,

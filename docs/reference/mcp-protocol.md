@@ -1,6 +1,6 @@
 # MCP Protocol Reference
 
-Realm exposes 9 MCP tools. This document covers the full protocol: tool call patterns, response envelope fields, and error recovery.
+Realm exposes 10 MCP tools. This document covers the full protocol: tool call patterns, response envelope fields, and error recovery.
 
 ---
 
@@ -14,9 +14,28 @@ Realm exposes 9 MCP tools. This document covers the full protocol: tool call pat
 | `start_run_batch`       | Atomically enqueues multiple runs of the same workflow. Accepts a single `workflow_id`, an `items` array (each item has `params` and optional `idempotency_key`), optional `parent_run_id`, and optional `max_items` (default 100). All items are validated before any run is created.                                                                                               |
 | `execute_step`          | Submits agent output for the current step. Accepts `run_id`, `command` (step name), and `params`.                                                                                                                                                                                                                                                                                    |
 | `submit_human_response` | Submits a human gate response. Accepts `run_id`, `gate_id`, and `choice`.                                                                                                                                                                                                                                                                                                            |
-| `get_run_state`         | Returns the current state, evidence chain, and terminal status of a run. When `run_phase` is `aborted`, also returns `abort_context` (guard step ID, evaluated conditions, optional abort message).                                                                                                                                                                                  |
+| `get_run_state`         | Returns the current state, evidence chain, and terminal status of a run. When `run_phase` is `aborted`, also returns `abort_context` (guard step ID, evaluated conditions, optional abort message). Also returns `next_actions` + `next_actions_status` (see below).                                                                                                                 |
+| `abandon_run`           | Abandons a non-terminal run — marks it terminal with phase `abandoned`. Accepts `run_id` and optional `reason`. Idempotent; refuses already-terminal runs (`STATE_RUN_TERMINAL`) and `gate_waiting` runs (`STATE_TRANSITION_DENIED` — resolve the gate first). See [Operating & recovering runs](operating-runs.md).                                                                 |
 | `create_workflow`       | Registers a dynamic workflow from a `steps` array and immediately starts a run. No YAML file or `realm register` required.                                                                                                                                                                                                                                                           |
 | `list_runs`             | Lists runs, optionally filtered by `workflow_id` or `status`.                                                                                                                                                                                                                                                                                                                        |
+
+---
+
+## `get_run_state` diagnostics
+
+`get_run_state` is read-only and returns, in addition to the state summary, the run's eligible
+agent/handler steps as `next_actions` plus a `next_actions_status` that classifies the run:
+
+| `next_actions_status` | Meaning                                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `ok`                  | `next_actions` is authoritative — agent steps to call, or a healthy run with nothing pending now.             |
+| `auto_pending`        | Eligible steps exist but are all `auto` — the engine drives them; the run is not awaiting the agent.          |
+| `awaiting_human`      | A human gate is open — answer with `submit_human_response`.                                                   |
+| `skipped_terminal`    | The run is terminal; nothing to do.                                                                           |
+| `workflow_unresolved` | The workflow definition could not be loaded (unregistered / no workflow store) — `next_actions` not computed. |
+
+`auto_pending` vs an empty `ok` distinguishes a genuinely-parked run from one with no pending agent
+action. See [Operating & recovering runs](operating-runs.md).
 
 ---
 
