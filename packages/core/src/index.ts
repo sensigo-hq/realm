@@ -21,6 +21,11 @@ export type {
   FailedAttemptRecord,
   ValidationErrorSummaryEntry,
 } from './observability/failed-attempt-record.js';
+export {
+  FailedAttemptStore,
+  FAILED_ATTEMPT_SIDECAR_MAX_BYTES,
+} from './store/failed-attempt-store.js';
+export type { FailedAttemptReadResult } from './store/failed-attempt-store.js';
 export type { StepDispatcher, ExecuteStepOptions } from './engine/execution-loop.js';
 export {
   submitHumanResponse,

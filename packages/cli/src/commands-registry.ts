@@ -8,6 +8,7 @@ import { resumeCommand } from './commands/resume.js';
 import { abandonCommand } from './commands/abandon.js';
 import { cleanupCommand } from './commands/cleanup.js';
 import { reconcileCommand } from './commands/reconcile.js';
+import { attemptsCommand } from './commands/attempts.js';
 import { respondCommand } from './commands/respond.js';
 import { inspectCommand } from './commands/inspect.js';
 import { replayCommand } from './commands/replay.js';
@@ -45,6 +46,7 @@ export const runCommands = [
   respondCommand,
   cleanupCommand,
   reconcileCommand,
+  attemptsCommand,
 ];
 
 /** Top-level commands not nested under a subgroup. */

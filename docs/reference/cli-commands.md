@@ -428,6 +428,24 @@ realm run cleanup --dry-run          # preview without making changes
 
 ---
 
+### `realm run attempts <run-id>`
+
+Shows failed agent-step validation attempts recorded for a run (the durable `<id>.attempts.jsonl`
+sidecar — see [Operating & recovering runs](operating-runs.md#durable-sidecar--realm-run-attempts)).
+These are **pre-claim** validation rejections that never reach the run record, so this is the only
+post-mortem trail for them.
+
+```bash
+realm run attempts abc123          # table: ts, step, error_code, key count, validation summary
+realm run attempts abc123 --json   # raw metadata-only records + capped flag
+```
+
+Records are **metadata-only** (no raw model output). A run with no recorded failures prints a
+friendly message; if the sidecar reached its size ceiling, the output notes that later attempts were
+dropped.
+
+---
+
 ## MCP server commands
 
 ---
