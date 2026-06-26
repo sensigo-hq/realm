@@ -47,7 +47,7 @@ interface AirtableRecord {
  *   fetch('list_records', { table, ...query })       — GET  /v0/{base}/{table}
  *   fetch('search_records', { table, search_term, fields, ... }) — GET via filterByFormula
  *   create('create_record', { table, fields, ... })  — POST /v0/{base}/{table}
- *   update('upsert_record', { table, fields, ... })  — POST /v0/{base}/{table} (upsert)
+ *   update('upsert_record', { table, fields, ... })  — PATCH /v0/{base}/{table} (upsert via performUpsert)
  *   update('update_record', { table, record_id, fields, ... }) — PATCH /v0/{base}/{table}/{id}
  *   delete('delete_records', { table, record_ids })  — DELETE /v0/{base}/{table}?records[]=…
  */
@@ -705,7 +705,8 @@ export class AirtableAdapter implements ServiceAdapter {
       }
 
       const url = this.buildUrl(table);
-      const response = await this.executeRequest(url, 'POST', body, signal);
+      // Airtable accepts `performUpsert` ONLY on PATCH /v0/{base}/{table}; POST returns HTTP 422.
+      const response = await this.executeRequest(url, 'PATCH', body, signal);
 
       if (!response.ok) {
         await this.throwHttpError(response, 'upsert_record');

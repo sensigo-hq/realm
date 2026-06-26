@@ -68,6 +68,18 @@ function respondText(statusCode: number, text: string): void {
   });
 }
 
+// Captures the HTTP method of the next request, then responds with JSON (mirrors `respond`).
+// Used to assert each op uses the correct verb — the gap that let the upsert POST→422 bug ship.
+let capturedMethod = '';
+function respondCapturingMethod(statusCode: number, body: unknown): void {
+  capturedMethod = '';
+  handlers.push((req, res) => {
+    capturedMethod = req.method ?? '';
+    res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Adapter factory
 // ---------------------------------------------------------------------------
@@ -147,15 +159,18 @@ describe('AirtableAdapter auth header', () => {
 // ---------------------------------------------------------------------------
 
 describe('AirtableAdapter get_record', () => {
-  it('uses correct URL path: /v0/{base_id}/{table}/{record_id}', async () => {
+  it('uses GET to the correct URL path: /v0/{base_id}/{table}/{record_id}', async () => {
     let capturedUrl = '';
+    let capturedMethod = '';
     handlers.push((req, res) => {
       capturedUrl = req.url ?? '';
+      capturedMethod = req.method ?? '';
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(RECORD_FIXTURE));
     });
     const adapter = makeAdapter();
     await adapter.fetch('get_record', { table: 'Tickets', record_id: 'recABC' }, {});
+    expect(capturedMethod).toBe('GET');
     expect(capturedUrl).toBe('/v0/appXXXXXXXXXXXXXX/Tickets/recABC');
   });
 
@@ -190,10 +205,11 @@ describe('AirtableAdapter get_record', () => {
 // ---------------------------------------------------------------------------
 
 describe('AirtableAdapter list_records', () => {
-  it('returns records array and passes offset through when present', async () => {
-    respond(200, RECORDS_WITH_OFFSET_FIXTURE);
+  it('uses GET; returns records array and passes offset through when present', async () => {
+    respondCapturingMethod(200, RECORDS_WITH_OFFSET_FIXTURE);
     const adapter = makeAdapter();
     const result = await adapter.fetch('list_records', { table: 'Tickets' }, {});
+    expect(capturedMethod).toBe('GET');
     const data = result.data as typeof RECORDS_WITH_OFFSET_FIXTURE;
     expect(Array.isArray(data.records)).toBe(true);
     expect(data.offset).toBe('nextPageToken123');
@@ -322,19 +338,22 @@ describe('AirtableAdapter list_records', () => {
 // ---------------------------------------------------------------------------
 
 describe('AirtableAdapter search_records', () => {
-  function captureQuery(): { get: (key: string) => string | null } {
+  function captureQuery(): { get: (key: string) => string | null; method: () => string } {
     let capturedUrl = '';
+    let capturedMethod = '';
     handlers.push((req, res) => {
       capturedUrl = req.url ?? '';
+      capturedMethod = req.method ?? '';
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(RECORDS_FIXTURE));
     });
     return {
       get: (key: string) => new URLSearchParams(capturedUrl.split('?')[1] ?? '').get(key),
+      method: () => capturedMethod,
     };
   }
 
-  it('single field → filterByFormula is FIND("term", {field})', async () => {
+  it('uses GET; single field → filterByFormula is FIND("term", {field})', async () => {
     const query = captureQuery();
     const adapter = makeAdapter();
     await adapter.fetch(
@@ -342,6 +361,7 @@ describe('AirtableAdapter search_records', () => {
       { table: 'Tickets', search_term: 'x', fields: ['Name'] },
       {},
     );
+    expect(query.method()).toBe('GET');
     expect(query.get('filterByFormula')).toBe('FIND("x", {Name})');
   });
 
@@ -536,8 +556,10 @@ describe('AirtableAdapter list_records fetch_all', () => {
 // ---------------------------------------------------------------------------
 
 describe('AirtableAdapter create_record', () => {
-  it('request body contains fields key; response has data.id', async () => {
-    handlers.push((_req, res, body) => {
+  it('uses POST; request body contains fields key; response has data.id', async () => {
+    let capturedMethod = '';
+    handlers.push((req, res, body) => {
+      capturedMethod = req.method ?? '';
       const parsed = JSON.parse(body) as { fields?: unknown };
       if (parsed.fields === undefined) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -553,6 +575,7 @@ describe('AirtableAdapter create_record', () => {
       { table: 'Tickets', fields: { Name: 'New ticket' } },
       {},
     );
+    expect(capturedMethod).toBe('POST');
     expect(result.status).toBe(200);
     const data = result.data as typeof RECORD_FIXTURE;
     expect(data.id).toBe('recXXXXXXXXXXXXXX');
@@ -604,8 +627,8 @@ describe('AirtableAdapter upsert_record', () => {
     updatedRecords: [],
   };
 
-  it('request body contains records and performUpsert; createdRecords/updatedRecords passed through', async () => {
-    respond(200, UPSERT_RESPONSE);
+  it('uses PATCH (performUpsert is only valid on PATCH); body contains records and performUpsert; createdRecords/updatedRecords passed through', async () => {
+    respondCapturingMethod(200, UPSERT_RESPONSE);
     const adapter = makeAdapter();
     const result = await adapter.update(
       'upsert_record',
@@ -616,6 +639,8 @@ describe('AirtableAdapter upsert_record', () => {
       },
       {},
     );
+    // Method assertion catches the POST→422 bug: fails on the old 'POST', passes on 'PATCH'.
+    expect(capturedMethod).toBe('PATCH');
     expect(result.status).toBe(200);
     const data = result.data as typeof UPSERT_RESPONSE;
     expect(Array.isArray(data.records)).toBe(true);
