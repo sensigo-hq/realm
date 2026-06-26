@@ -66,7 +66,18 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   // adapters. When a registry is provided, the caller is responsible for its contents.
   const effectiveRegistry = options?.registry ?? createDefaultRegistry();
 
-  const effectiveOptions: RealmMcpServerOptions = { ...options, registry: effectiveRegistry };
+  // Default the workflow store the same way (mirrors effectiveRegistry / effectiveRunStore). This is
+  // what lets get_run_state compute next_actions on the option-less entrypoint path — without it,
+  // get_run_state would silently degrade to 'workflow_unresolved'. Behaviour-preserving for every
+  // other tool: start_run/start_run_batch/etc. already fall back to the same default
+  // (`~/.realm/workflows`) internally, so receiving it explicitly changes nothing for them.
+  const effectiveWorkflowStore = options?.workflowStore ?? new JsonWorkflowStore();
+
+  const effectiveOptions: RealmMcpServerOptions = {
+    ...options,
+    registry: effectiveRegistry,
+    workflowStore: effectiveWorkflowStore,
+  };
 
   // Shared trace buffer store: one instance used by both append_trace and execute_step so
   // WAL entries written by append_trace are visible when execute_step finalizes the step.
