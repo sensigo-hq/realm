@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+> **Version intent: 0.10.1** (patch — a `### Fixed` defect, no API or behaviour change to any other op).
+
+### Fixed
+
+- **`AirtableAdapter.upsert_record` now uses `PATCH` (was `POST`)** — Airtable's `performUpsert` is only valid on the PATCH records endpoint, so every `update('upsert_record', …)` previously returned HTTP 422 (`"Invalid request: parameter validation failed."`). Body, validation, and response handling are unchanged. Adapter op tests now also assert the HTTP method for every operation, closing the gap that let the wrong verb ship.
+
+---
+
 ## [0.10.0] — 2026-06-26
 
 ### Added
