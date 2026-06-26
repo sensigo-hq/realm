@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+> **Version intent: 0.10.0.** Additive run-recovery surface; defaults preserve current behavior, no breaking changes.
+
+### Added
+
+- **`abandon_run` MCP tool + `realm run abandon <run-id> [--reason …]` CLI** — explicitly abandon a non-terminal run (marks it terminal, phase `abandoned`) via a shared core `abandonRun()` primitive. Idempotent; refuses already-terminal runs (`STATE_RUN_TERMINAL`) and `gate_waiting` runs (`STATE_TRANSITION_DENIED` — resolve the gate via `submit_human_response` first); concurrency-safe (a live writer wins, abandon propagates `STATE_SNAPSHOT_MISMATCH` rather than corrupting). Brings the MCP tool count to 10.
+- **`get_run_state` now returns `next_actions` + `next_actions_status`** (`ok` / `auto_pending` / `awaiting_human` / `workflow_unresolved` / `skipped_terminal`) — read-only recovery diagnostics that distinguish a genuinely-parked run from one with no pending agent action.
+- **`realm run list --stuck`** — lists advanced-but-parked runs (phase `running` with no claimed step), with idle age.
+- **`docs/reference/operating-runs.md`** — "Operating & recovering runs" decision table + recovery loop.
+
+### Changed
+
+- **`deriveRunPhase` honors a new authoritative `abandoned_at` marker** (set by `abandon_run` / `realm run abandon` / `realm run cleanup`): its presence makes `abandoned` the derived phase regardless of `failed_steps` / `terminal_reason`. Fixes a latent case where an idle `running` run carrying `failed_steps` would be mislabeled `failed` on cleanup.
+- **`submit_human_response` now rejects a gate response on a terminal run** (`STATE_RUN_TERMINAL`) — defense-in-depth so a late response cannot re-drive a finished run.
+
+---
+
 ## [0.9.0] — 2026-06-24
 
 ### Changed

@@ -4585,3 +4585,69 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
     expect(after.version).toBeGreaterThan(createdVersion);
   });
 });
+
+// Issue #92 follow-up (0.10.0): submitHumanResponse defensive terminal guard.
+describe('submitHumanResponse — terminal-run guard', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  const gateWf: WorkflowDefinition = {
+    id: 'gate-terminal-wf',
+    name: 'Gate Terminal WF',
+    version: 1,
+    steps: {
+      gate_step: {
+        description: 'Gate',
+        execution: 'auto',
+        trust: 'human_confirmed',
+        depends_on: [],
+        gate: { choices: ['approve', 'reject'] },
+      },
+    },
+  };
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-gate-terminal-'));
+    store = new JsonFileStore(dir);
+  });
+
+  it('a gate response on a terminal run is rejected with STATE_RUN_TERMINAL (no re-drive)', async () => {
+    const { run } = await store.create({
+      workflowId: 'gate-terminal-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    // Open the gate.
+    const opened = await executeStep(store, gateWf, {
+      runId: run.id,
+      command: 'gate_step',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+    expect(opened.status).toBe('confirm_required');
+    const gateId = opened.gate!.gate_id;
+
+    // Force the run terminal underneath the open gate (simulating a late abandon/completion path),
+    // then attempt a late gate response.
+    const gated = await store.get(run.id);
+    await store.update({ ...gated, terminal_state: true, abandoned_at: new Date().toISOString() });
+    const before = await store.get(run.id);
+
+    const envelope = await submitHumanResponse(store, gateWf, {
+      runId: run.id,
+      gateId,
+      choice: 'approve',
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.error_code).toBe('STATE_RUN_TERMINAL');
+    // Run not re-driven by the late response.
+    const after = await store.get(run.id);
+    expect(after.version).toBe(before.version);
+    expect(after.terminal_state).toBe(true);
+  });
+
+  it('cleanup', async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+});

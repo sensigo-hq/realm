@@ -229,4 +229,10 @@ export interface RunRecord {
     conditions?: Array<{ condition: string; resolved_value: unknown; passed: boolean }>;
     abort_message?: string;
   };
+  /**
+   * ISO timestamp set when a run is explicitly abandoned via `abandon_run` / `realm run abandon` /
+   * `realm run cleanup`. Authoritative for `deriveRunPhase`: its presence makes `abandoned` the
+   * derived phase regardless of `failed_steps` / `terminal_reason` (mirrors `aborted_at`).
+   */
+  abandoned_at?: string;
 }

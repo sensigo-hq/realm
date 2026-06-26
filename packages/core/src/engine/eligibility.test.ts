@@ -160,6 +160,30 @@ describe('deriveRunPhase', () => {
       }),
     ).toBe('aborted');
   });
+
+  it('returns abandoned when abandoned_at is set (authoritative), even with failed_steps + a non-completed reason', () => {
+    expect(
+      deriveRunPhase({
+        pending_gate: undefined,
+        terminal_state: true,
+        failed_steps: ['main_step'],
+        terminal_reason: 'Abandoned via abandon_run',
+        abandoned_at: '2026-06-26T00:00:00.000Z',
+      }),
+    ).toBe('abandoned');
+  });
+
+  it('abandoned_at outranks a Workflow completed. reason (authoritative marker wins)', () => {
+    expect(
+      deriveRunPhase({
+        pending_gate: undefined,
+        terminal_state: true,
+        failed_steps: [],
+        terminal_reason: 'Workflow completed.',
+        abandoned_at: '2026-06-26T00:00:00.000Z',
+      }),
+    ).toBe('abandoned');
+  });
 });
 
 // ---------------------------------------------------------------------------

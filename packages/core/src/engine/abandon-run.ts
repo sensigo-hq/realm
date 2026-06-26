@@ -1,0 +1,83 @@
+// abandonRun — the single mutation primitive for explicitly abandoning a run.
+// Used by both the abandon_run MCP tool and the `realm run abandon` CLI command.
+// Run-mutation primitives live in core; command/tool wiring lives in cli/mcp.
+import type { RunStore } from '../store/store-interface.js';
+import type { RunRecord } from '../types/run-record.js';
+import { WorkflowError } from '../types/workflow-error.js';
+
+/**
+ * Explicitly abandon a run by stamping the authoritative `abandoned_at` marker. The run's phase
+ * derives to `abandoned` (via {@link deriveRunPhase}) regardless of `failed_steps`/`terminal_reason`.
+ *
+ * Behavior:
+ * - Missing run → propagates `STATE_RUN_NOT_FOUND` (from `store.get`).
+ * - Already abandoned (`abandoned_at` set) → idempotent no-op, returns the existing run.
+ * - `gate_waiting` (or `pending_gate` set) → throws `STATE_TRANSITION_DENIED` (gate abandonment is
+ *   out of scope — resolve/reject the gate via `submit_human_response` first).
+ * - Terminal (`completed`/`failed`/`aborted`) → throws `STATE_RUN_TERMINAL` (do not clobber a finished run).
+ * - Otherwise (`running`) → stamps `abandoned_at`, sets `terminal_state:true` + `terminal_reason`.
+ *
+ * Concurrency: if `update()` raises `STATE_SNAPSHOT_MISMATCH`, the run is reloaded once — if it is now
+ * abandoned, that is idempotent success; otherwise the mismatch is propagated (the run changed under
+ * us — likely a live runner — and abandon should lose). No retry loop beyond the single reload.
+ */
+export async function abandonRun(
+  store: RunStore,
+  runId: string,
+  reason?: string,
+): Promise<RunRecord> {
+  const run = await store.get(runId);
+
+  // Already abandoned → idempotent no-op.
+  if (run.abandoned_at !== undefined) {
+    return run;
+  }
+
+  // Gate abandonment is deliberately out of scope.
+  if (run.run_phase === 'gate_waiting' || run.pending_gate !== undefined) {
+    throw new WorkflowError(
+      `Run '${runId}' is waiting on a human gate; resolve or reject the gate via submit_human_response before abandoning.`,
+      {
+        code: 'STATE_TRANSITION_DENIED',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: { runId, run_phase: run.run_phase },
+      },
+    );
+  }
+
+  // Do not clobber a finished run.
+  if (run.terminal_state) {
+    throw new WorkflowError(
+      `Run '${runId}' is already terminal (${run.run_phase}); cannot abandon a finished run.`,
+      {
+        code: 'STATE_RUN_TERMINAL',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: { runId, run_phase: run.run_phase },
+      },
+    );
+  }
+
+  const abandonedReason = reason ?? 'Abandoned via abandon_run';
+  try {
+    return await store.update({
+      ...run,
+      abandoned_at: new Date().toISOString(),
+      terminal_state: true,
+      terminal_reason: abandonedReason,
+    });
+  } catch (err) {
+    if (err instanceof WorkflowError && err.code === 'STATE_SNAPSHOT_MISMATCH') {
+      // The run changed under us — reload once.
+      const reloaded = await store.get(runId);
+      if (reloaded.abandoned_at !== undefined) {
+        return reloaded; // someone else abandoned it concurrently → idempotent success
+      }
+      throw err; // a live writer advanced the run — abandon loses; do not retry
+    }
+    throw err;
+  }
+}

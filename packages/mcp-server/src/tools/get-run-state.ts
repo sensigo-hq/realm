@@ -3,15 +3,42 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   JsonFileStore,
+  JsonWorkflowStore,
   WorkflowError,
   resolvePreExecutionAgentAction,
+  buildNextActions,
+  findEligibleSteps,
   type RunPhase,
+  type NextAction,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 
 export interface HandleRunStateStores {
   runStore?: JsonFileStore;
+  /**
+   * Optional workflow store used to compute `next_actions`. When absent (or the workflow is not
+   * registered), `next_actions_status` is `'workflow_unresolved'`. Intentionally NOT defaulted to a
+   * fresh JsonWorkflowStore so the function stays hermetic for tests/programmatic callers.
+   */
+  workflowStore?: JsonWorkflowStore;
 }
+
+/**
+ * Diagnostic classification of `next_actions`:
+ * - `ok` — next_actions reflects what to do next (may be empty for a healthy run with only
+ *   downstream auto work that hasn't been triggered).
+ * - `auto_pending` — eligible steps exist but are all `auto` (buildNextActions drops them); the run
+ *   is making engine-side progress, not awaiting the agent.
+ * - `awaiting_human` — a human gate is open.
+ * - `workflow_unresolved` — no workflow store provided, or the workflow is not registered.
+ * - `skipped_terminal` — the run is terminal; nothing to do.
+ */
+export type NextActionsStatus =
+  | 'ok'
+  | 'auto_pending'
+  | 'awaiting_human'
+  | 'workflow_unresolved'
+  | 'skipped_terminal';
 
 export interface RunStateSummary {
   run_id: string;
@@ -33,6 +60,10 @@ export interface RunStateSummary {
     conditions?: Array<{ condition: string; resolved_value: unknown; passed: boolean }>;
     abort_message?: string;
   };
+  /** Eligible agent/handler steps for this run (empty unless `next_actions_status` is `'ok'`). */
+  next_actions: NextAction[];
+  /** Diagnostic classification — distinguishes a genuinely-stuck run from "nothing pending". */
+  next_actions_status: NextActionsStatus;
 }
 
 /**
@@ -45,6 +76,37 @@ export async function handleGetRunState(
 ): Promise<RunStateSummary> {
   const runStore = stores?.runStore ?? new JsonFileStore();
   const run = await runStore.get(args.run_id);
+
+  // Compute next_actions + diagnostic status (read-only). Precedence:
+  // terminal → skipped_terminal; gate open → awaiting_human; no/unresolved workflow →
+  // workflow_unresolved; else buildNextActions/findEligibleSteps → ok | auto_pending.
+  let nextActions: NextAction[] = [];
+  let nextActionsStatus: NextActionsStatus;
+  if (run.terminal_state) {
+    nextActionsStatus = 'skipped_terminal';
+  } else if (run.pending_gate !== undefined) {
+    nextActionsStatus = 'awaiting_human';
+  } else {
+    const definition =
+      stores?.workflowStore !== undefined
+        ? await stores.workflowStore.get(run.workflow_id).catch(() => undefined)
+        : undefined;
+    if (definition === undefined) {
+      nextActionsStatus = 'workflow_unresolved';
+    } else {
+      const na = buildNextActions(definition, run);
+      const eligible = findEligibleSteps(definition, run);
+      if (na.length > 0) {
+        nextActions = na;
+        nextActionsStatus = 'ok';
+      } else if (eligible.length > 0) {
+        // Eligible steps exist but are all auto (buildNextActions drops them).
+        nextActionsStatus = 'auto_pending';
+      } else {
+        nextActionsStatus = 'ok';
+      }
+    }
+  }
 
   return {
     run_id: run.id,
@@ -62,6 +124,8 @@ export async function handleGetRunState(
     updated_at: run.updated_at,
     params: run.params,
     ...(run.aborted_at !== undefined ? { abort_context: run.aborted_at } : {}),
+    next_actions: nextActions,
+    next_actions_status: nextActionsStatus,
   };
 }
 

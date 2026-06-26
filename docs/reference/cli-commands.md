@@ -231,11 +231,16 @@ Lists all runs, sorted by most recent first.
 realm run list
 realm run list --workflow <workflow-id>   # filter by workflow
 realm run list --status <phase>           # filter by run phase
+realm run list --stuck                    # only advanced-but-parked runs (running, no claimed step)
 ```
 
 Valid `--status` values: `running`, `gate_waiting`, `completed`, `failed`, `abandoned`.
 
 When filtering by `gate_waiting`, each line also shows the gate step name and gate age (time since the gate opened).
+
+`--stuck` (mutually exclusive with `--status`) shows only runs in phase `running` with no claimed
+step (`in_progress_steps` empty) — the stuck-run incident signature — and appends each run's idle
+age. See [Operating & recovering runs](operating-runs.md).
 
 Output per run: `run-id  workflow-id vN  run_phase  timestamp  N step(s)`
 
@@ -346,6 +351,23 @@ Resets a failed or abandoned run to a state where a specific step can re-execute
 ```bash
 realm run resume abc123 --from <step-name>
 ```
+
+---
+
+### `realm run abandon <run-id>`
+
+Explicitly abandons a non-terminal run — marks it terminal with phase `abandoned`. Use it on a run
+that is parked and not coming back (see `realm run list --stuck`).
+
+```bash
+realm run abandon abc123
+realm run abandon abc123 --reason "stale runner, no longer processing"
+```
+
+Idempotent (abandoning an already-abandoned run succeeds). Refuses an already-terminal run, and
+refuses a `gate_waiting` run (resolve the gate via `realm run respond` first). To re-run the same
+work afterward, use `start_run` with `on_terminal_match: 'rerun'` or a fresh idempotency key — the
+default returns the abandoned run. See [Operating & recovering runs](operating-runs.md).
 
 ---
 

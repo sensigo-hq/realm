@@ -150,6 +150,39 @@ describe('listRuns', () => {
     expect(result).toContain('run-a');
     expect(result).not.toContain('run-b');
   });
+
+  // --stuck diagnostic (0.10.0)
+  it('--stuck shows only running runs with no claimed step', async () => {
+    const stuck = makeRun({
+      id: 'run-stuck',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+    });
+    const active = makeRun({
+      id: 'run-active',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: ['step_a'],
+    });
+    const done = makeRun({ id: 'run-done', run_phase: 'completed', terminal_state: true });
+    const result = await listRuns(undefined, makeStore([stuck, active, done]), undefined, true);
+    expect(result).toContain('run-stuck');
+    expect(result).not.toContain('run-active'); // has a claimed step
+    expect(result).not.toContain('run-done'); // terminal
+    expect(result).toContain('idle:'); // idle age shown
+  });
+
+  it('--stuck returns a no-stuck-runs message when none match', async () => {
+    const active = makeRun({
+      id: 'run-active',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: ['step_a'],
+    });
+    const result = await listRuns(undefined, makeStore([active]), undefined, true);
+    expect(result).toContain('No stuck runs found');
+  });
 });
 
 describe('listRuns statusFilter', () => {
