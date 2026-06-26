@@ -63,3 +63,49 @@ abandoned run instead of starting fresh. To actually re-run, either:
 - start with a **new idempotency key**.
 
 See the idempotency re-encounter policy in [mcp-protocol.md](mcp-protocol.md#idempotency-re-encounter-policy).
+
+---
+
+## Failed agent attempts (`agent_step_attempt_failed` telemetry)
+
+When an agent calls `execute_step` with output that fails schema validation, the engine rejects it
+**before the step is claimed** — a write-free path: nothing is persisted to the run record and
+`version` is not bumped. The validation error is returned live to the caller (`error_details.errors`)
+but is otherwise ephemeral, so there is no post-mortem trail of _what the agent submitted_ or _which
+rule failed_.
+
+To give operators that trail, the MCP server emits a structured **stderr** event on each such
+rejection:
+
+```json
+{
+  "event": "agent_step_attempt_failed",
+  "run_id": "...",
+  "workflow_id": "...",
+  "step_id": "...",
+  "ts": "...",
+  "error_code": "VALIDATION_OUTPUT_SCHEMA",
+  "validation_error_summary": [
+    { "instancePath": "/category", "schemaPath": "...", "keyword": "required", "message": "..." }
+  ],
+  "submitted_key_count": 1,
+  "submitted_keys": ["ticket_body"],
+  "submitted_bytes": 48,
+  "trace_entry_count": 0
+}
+```
+
+- **Filter by `event`** (`agent_step_attempt_failed`) — stderr also carries other structured events
+  (e.g. `idempotency_dedup`).
+- Emitted only for the three pre-claim validation codes: `VALIDATION_INPUT_SCHEMA`,
+  `VALIDATION_OUTPUT_SCHEMA`, `VALIDATION_TRACE_SCHEMA`. Not for `blocked`, other errors, or success.
+- **Metadata-only — never raw model output.** The record carries Ajv error metadata (with the
+  offending-value echoes dropped), submitted key _names_ (capped), counts, and byte size — never
+  submitted values or trace content. (Key names are leak-resistant, not leak-proof — a hard cap
+  applies; a durable opt-in sidecar follows in a later phase.)
+
+**Pre-claim vs post-claim — the load-bearing distinction:** a pre-claim _validation_ rejection
+(this event) never reaches `failed_steps[]` and never bumps `version` — it is invisible on the run
+record, which is exactly why this telemetry exists. A post-claim _execution_ failure (the step
+claimed, then its handler/adapter failed) **does** land in `failed_steps[]`, bumps `version`, and is
+visible via `get_run_state` / `realm run inspect`.

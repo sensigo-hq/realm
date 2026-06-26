@@ -136,6 +136,8 @@ When the engine opens a gate:
 
 When `agent_action` is `provide_input` or `resolve_precondition` and `next_actions` is non-empty, follow the first item exactly as after a successful step.
 
+A `provide_input` rejection (the agent's `execute_step` output failed schema validation) is a **pre-claim, write-free** path: nothing is persisted to the run record and `version` is not bumped, so it leaves no run-record trail. The MCP server emits a metadata-only `agent_step_attempt_failed` stderr event for these rejections so operators retain a post-mortem trail — see [Operating & recovering runs → Failed agent attempts](operating-runs.md#failed-agent-attempts-agent_step_attempt_failed-telemetry).
+
 ---
 
 ## `start_run_batch`

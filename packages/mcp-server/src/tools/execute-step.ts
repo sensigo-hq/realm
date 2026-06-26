@@ -7,12 +7,63 @@ import {
   executeChain,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
+  buildFailedAttemptRecord,
+  serializeFailedAttemptLine,
   type StepDispatcher,
   type ResponseEnvelope,
   type AgentTraceEntry,
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
+
+/**
+ * Pre-claim validation rejections carry one of these error codes (claimStep runs strictly after all
+ * three schema gates, so they never reach failed_steps[] / never bump version — a write-free path).
+ * Failed agent attempts on these codes are surfaced as stderr telemetry below.
+ */
+const VALIDATION_TELEMETRY_CODES = new Set([
+  'VALIDATION_INPUT_SCHEMA',
+  'VALIDATION_OUTPUT_SCHEMA',
+  'VALIDATION_TRACE_SCHEMA',
+]);
+
+/**
+ * Best-effort, metadata-only stderr telemetry for a failed agent-step validation attempt. Emits a
+ * single structured `agent_step_attempt_failed` line iff the (pre-strip) envelope is a validation
+ * rejection. Never throws and never alters the execute_step response.
+ */
+function emitFailedAttemptTelemetry(
+  args: {
+    run_id: string;
+    command: string;
+    params?: Record<string, unknown>;
+    trace?: AgentTraceEntry[] | undefined;
+  },
+  workflowId: string,
+  result: ResponseEnvelope,
+): void {
+  try {
+    if (result.status !== 'error') return;
+    const code = result.error_code;
+    if (code === undefined || !VALIDATION_TELEMETRY_CODES.has(code)) return;
+    const ajvErrors = result.error_details?.['errors'];
+    const record = buildFailedAttemptRecord({
+      run_id: args.run_id,
+      workflow_id: workflowId,
+      step_id: args.command,
+      ts: new Date().toISOString(),
+      error_code: code,
+      ajv_errors: Array.isArray(ajvErrors) ? ajvErrors : [],
+      params: args.params ?? {},
+      trace_entry_count: args.trace?.length ?? 0,
+    });
+    console.error(
+      serializeFailedAttemptLine({ event: 'agent_step_attempt_failed', ...record }).line,
+    );
+  } catch {
+    // Best-effort: telemetry must never affect the execute_step response.
+  }
+}
 
 /** Zod schema for a single agent trace entry submitted to execute_step or append_trace. */
 export const traceEntrySchema = z.object({
@@ -47,7 +98,7 @@ export async function handleExecuteStep(
   const definition = await workflowStore.get(run.workflow_id);
   const params = args.params ?? {};
 
-  return executeChain(runStore, definition, {
+  const result = await executeChain(runStore, definition, {
     runId: args.run_id,
     command: args.command,
     input: params,
@@ -61,6 +112,12 @@ export async function handleExecuteStep(
       ? { traceBufferStore: stores.traceBufferStore }
       : {}),
   });
+
+  // P2 observability: emit metadata-only stderr telemetry on a pre-claim validation rejection.
+  // Reads the pre-strip envelope; best-effort (never throws, never alters the response).
+  emitFailedAttemptTelemetry(args, run.workflow_id, result);
+
+  return result;
 }
 
 /**

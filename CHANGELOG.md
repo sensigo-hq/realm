@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+> **Version intent: 0.11.0** (additive). Version constants are bumped at release time.
+
+### Added
+
+- **`agent_step_attempt_failed` stderr telemetry** — when an agent's `execute_step` output fails pre-claim schema validation (`VALIDATION_INPUT_SCHEMA` / `VALIDATION_OUTPUT_SCHEMA` / `VALIDATION_TRACE_SCHEMA`), the MCP server now emits a structured, **metadata-only** stderr event (filter by `event`). The record carries Ajv error metadata (offending-value echoes dropped), submitted key _names_ (capped), counts, and byte size — never raw model output. This gives operators a post-mortem trail for rejections that are otherwise write-free (never reach `failed_steps[]`, never bump `version`). Exposes pure `buildFailedAttemptRecord` / `serializeFailedAttemptLine` helpers from `@sensigo/realm`. Core stays I/O-free; the live `execute_step` response is unchanged.
+
+---
+
 ## [0.10.1] — 2026-06-26
 
 ### Fixed
