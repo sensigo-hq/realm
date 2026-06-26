@@ -4,9 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
-
-> **Version intent: 0.10.1** (patch — a `### Fixed` defect, no API or behaviour change to any other op).
+## [0.10.1] — 2026-06-26
 
 ### Fixed
 
