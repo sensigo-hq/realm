@@ -102,10 +102,39 @@ rejection:
 - **Metadata-only — never raw model output.** The record carries Ajv error metadata (with the
   offending-value echoes dropped), submitted key _names_ (capped), counts, and byte size — never
   submitted values or trace content. (Key names are leak-resistant, not leak-proof — a hard cap
-  applies; a durable opt-in sidecar follows in a later phase.)
+  applies; the durable sidecar below records the same metadata-only record.)
 
 **Pre-claim vs post-claim — the load-bearing distinction:** a pre-claim _validation_ rejection
 (this event) never reaches `failed_steps[]` and never bumps `version` — it is invisible on the run
 record, which is exactly why this telemetry exists. A post-claim _execution_ failure (the step
 claimed, then its handler/adapter failed) **does** land in `failed_steps[]`, bumps `version`, and is
 visible via `get_run_state` / `realm run inspect`.
+
+### Durable sidecar + `realm run attempts`
+
+stderr is ephemeral, so the same record is also appended to a **durable, co-located per-run sidecar**:
+
+```
+<runsDir>/<run-id>.attempts.jsonl     # one JSON record per line
+```
+
+- The suffix is **`.jsonl`** by design — `JsonFileStore.list()` parses every top-level `*.json` as a
+  run record, so a `<id>.attempts.json` sibling would corrupt `list()` / `cleanup` / `reconcile`.
+  `.jsonl` is invisible to that filter (like `trace-buffer-*.jsonl` and the `keys/` subdir). The path
+  is derived only from the server-generated UUID run id.
+- **Operator-managed retention** — the sidecar lives in `runsDir` next to the run files and is removed
+  when you clear the dir. Realm has no run-GC by design; there is no cleanup hook.
+- **Append-and-stop cap** — each sidecar is bounded at ~256 KB (~80+ records). Once at the ceiling,
+  later attempts are **dropped** (it keeps the **first N**, not a ring buffer), and reads report a
+  `capped` flag. The append is lock-free (each line is ≤ PIPE_BUF, so a single `O_APPEND` write is
+  atomic) and best-effort (a failed write never affects the `execute_step` response).
+
+Read the sidecar with the CLI:
+
+```bash
+realm run attempts <run-id>          # table: ts, step, error_code, key count, validation summary
+realm run attempts <run-id> --json   # raw records + capped flag
+```
+
+A run with no recorded failures prints a friendly empty message; if the sidecar hit its ceiling, the
+output notes that later attempts were dropped.

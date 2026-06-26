@@ -6,6 +6,7 @@ import {
   ExtensionRegistry,
   JsonWorkflowStore,
   JsonFileStore,
+  FailedAttemptStore,
   createDefaultRegistry,
 } from '@sensigo/realm';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
@@ -83,12 +84,14 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   // WAL entries written by append_trace are visible when execute_step finalizes the step.
   const effectiveRunStore = options?.runStore ?? new JsonFileStore();
   const traceBufferStore = new JsonTraceBufferStore(effectiveRunStore.runsDirPath);
+  // Durable failed-attempt sidecar store, co-located with run files (observability P3).
+  const failedAttemptStore = new FailedAttemptStore(effectiveRunStore.runsDirPath);
 
   registerListWorkflows(server, effectiveOptions);
   registerGetWorkflowProtocol(server, effectiveOptions);
   registerStartRun(server, effectiveOptions);
   registerStartRunBatch(server, effectiveOptions);
-  registerExecuteStep(server, { ...effectiveOptions, traceBufferStore });
+  registerExecuteStep(server, { ...effectiveOptions, traceBufferStore, failedAttemptStore });
   registerSubmitHumanResponse(server, effectiveOptions);
   registerGetRunState(server, effectiveOptions);
   registerAbandonRun(server, effectiveOptions);

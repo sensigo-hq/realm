@@ -4,7 +4,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import {
+  JsonFileStore,
+  JsonWorkflowStore,
+  FailedAttemptStore,
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+} from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { handleExecuteStep, handleExecuteStepTool } from './execute-step.js';
 
@@ -139,5 +144,93 @@ describe('execute_step failed-attempt telemetry', () => {
     // The summarized validation error is present (metadata), proving pre-strip error_details was read.
     expect(Array.isArray(events[0]!['validation_error_summary'])).toBe(true);
     expect((events[0]!['validation_error_summary'] as unknown[]).length).toBeGreaterThan(0);
+  });
+});
+
+describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
+  let runStore: JsonFileStore;
+  let workflowStore: JsonWorkflowStore;
+  let failedAttemptStore: FailedAttemptStore;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    const runsDir = await mkdtemp(join(tmpdir(), 'fat3-run-'));
+    runStore = new JsonFileStore(runsDir);
+    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'fat3-wf-')));
+    failedAttemptStore = new FailedAttemptStore(runsDir);
+    await workflowStore.register(wf);
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    errSpy.mockRestore();
+  });
+
+  it('appends a metadata-only record to the sidecar (no event tag) and is a pure side-channel', async () => {
+    const { run } = await runStore.create({
+      workflowId: 'classify-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const versionBefore = run.version;
+
+    const result = await handleExecuteStep(
+      { run_id: run.id, command: 'classify', params: { ticket_body: 'jane@example.com' } },
+      { runStore, workflowStore, failedAttemptStore },
+    );
+    expect(result.status).toBe('error');
+
+    const { records, capped } = await failedAttemptStore.read(run.id);
+    expect(records).toHaveLength(1);
+    expect(capped).toBe(false);
+    expect(records[0]!.step_id).toBe('classify');
+    expect(records[0]!.error_code).toBe('VALIDATION_OUTPUT_SCHEMA');
+    // The FILE line omits the `event` wrapper (the file IS the event stream).
+    expect((records[0]! as Record<string, unknown>)['event']).toBeUndefined();
+    // Metadata-only: no raw PII value persisted.
+    expect(JSON.stringify(records[0])).not.toContain('jane@example.com');
+
+    // Pure side-channel: the run record is untouched (pre-claim, write-free).
+    const after = await runStore.get(run.id);
+    expect(after.version).toBe(versionBefore);
+    expect(after.failed_steps).not.toContain('classify');
+    // stderr sink still fired too (both sinks independent).
+    expect(errSpy).toHaveBeenCalled();
+  });
+
+  it('writes nothing to the sidecar on a successful step', async () => {
+    const { run } = await runStore.create({
+      workflowId: 'classify-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const result = await handleExecuteStep(
+      { run_id: run.id, command: 'classify', params: { category: 'billing' } },
+      { runStore, workflowStore, failedAttemptStore },
+    );
+    expect(result.status).toBe('ok');
+    expect((await failedAttemptStore.read(run.id)).records).toHaveLength(0);
+  });
+
+  it('best-effort independence: a broken sidecar store does not throw and stderr still fires', async () => {
+    const { run } = await runStore.create({
+      workflowId: 'classify-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const brokenStore = new FailedAttemptStore(join('/does', 'not', 'exist'));
+
+    const result = await handleExecuteStep(
+      { run_id: run.id, command: 'classify', params: { wrong: 1 } },
+      { runStore, workflowStore, failedAttemptStore: brokenStore },
+    );
+    // Response unaffected.
+    expect(result.status).toBe('error');
+    expect(result.error_code).toBe('VALIDATION_OUTPUT_SCHEMA');
+    // stderr sink (sink 1) fired despite the sidecar (sink 2) being unwritable.
+    const emitted = errSpy.mock.calls
+      .map((c) => String(c[0]))
+      .filter((s) => s.includes('agent_step_attempt_failed'));
+    expect(emitted.length).toBeGreaterThan(0);
   });
 });

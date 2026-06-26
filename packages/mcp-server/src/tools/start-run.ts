@@ -13,6 +13,7 @@ import {
   type StepDispatcher,
   type ResponseEnvelope,
   type TraceBufferStore,
+  type FailedAttemptStore,
   ExtensionRegistry,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
@@ -31,6 +32,8 @@ export interface HandleRunStores {
   secrets?: Record<string, string>;
   /** Trace buffer store for incremental WAL-based trace ingestion (B-lite). */
   traceBufferStore?: TraceBufferStore;
+  /** Durable per-run sidecar for failed agent-attempt telemetry (observability P3). */
+  failedAttemptStore?: FailedAttemptStore;
 }
 
 // Fallback dispatcher for agent steps and auto steps without a registry entry.

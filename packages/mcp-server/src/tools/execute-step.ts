@@ -12,6 +12,7 @@ import {
   type StepDispatcher,
   type ResponseEnvelope,
   type AgentTraceEntry,
+  type FailedAttemptStore,
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
@@ -28,11 +29,13 @@ const VALIDATION_TELEMETRY_CODES = new Set([
 ]);
 
 /**
- * Best-effort, metadata-only stderr telemetry for a failed agent-step validation attempt. Emits a
- * single structured `agent_step_attempt_failed` line iff the (pre-strip) envelope is a validation
- * rejection. Never throws and never alters the execute_step response.
+ * Best-effort, metadata-only telemetry for a failed agent-step validation attempt. On a (pre-strip)
+ * validation rejection it fans the same record out to two INDEPENDENT sinks: an ephemeral stderr line
+ * (P2) and a durable per-run sidecar (P3, when a store is wired). Each sink is separately guarded so a
+ * throw in one cannot suppress the other; the whole thing never throws and never alters the
+ * execute_step response.
  */
-function emitFailedAttemptTelemetry(
+async function emitFailedAttemptTelemetry(
   args: {
     run_id: string;
     command: string;
@@ -41,13 +44,16 @@ function emitFailedAttemptTelemetry(
   },
   workflowId: string,
   result: ResponseEnvelope,
-): void {
+  failedAttemptStore?: FailedAttemptStore,
+): Promise<void> {
+  // Build the shared metadata-only record once (bail both sinks if it can't be built).
+  let record: ReturnType<typeof buildFailedAttemptRecord>;
   try {
     if (result.status !== 'error') return;
     const code = result.error_code;
     if (code === undefined || !VALIDATION_TELEMETRY_CODES.has(code)) return;
     const ajvErrors = result.error_details?.['errors'];
-    const record = buildFailedAttemptRecord({
+    record = buildFailedAttemptRecord({
       run_id: args.run_id,
       workflow_id: workflowId,
       step_id: args.command,
@@ -57,11 +63,32 @@ function emitFailedAttemptTelemetry(
       params: args.params ?? {},
       trace_entry_count: args.trace?.length ?? 0,
     });
+  } catch {
+    return;
+  }
+
+  // Sink 1 (P2): ephemeral stderr line — keeps the `event` tag. Independent best-effort.
+  try {
     console.error(
       serializeFailedAttemptLine({ event: 'agent_step_attempt_failed', ...record }).line,
     );
   } catch {
-    // Best-effort: telemetry must never affect the execute_step response.
+    // never let a stderr failure suppress the sidecar append
+  }
+
+  // Sink 2 (P3): durable sidecar — the file IS the event stream, so the line OMITS the `event` tag.
+  // Independent best-effort; the store's append already swallows its own I/O errors.
+  if (failedAttemptStore !== undefined) {
+    try {
+      const serialized = serializeFailedAttemptLine({ ...record });
+      // Fold the truncation flag into the persisted record when the serializer had to reduce.
+      const line = serialized.truncated
+        ? serializeFailedAttemptLine({ ...record, truncated: true }).line
+        : serialized.line;
+      await failedAttemptStore.append(args.run_id, line);
+    } catch {
+      // never let a sidecar failure suppress the stderr emit (already done) or the response
+    }
   }
 }
 
@@ -113,9 +140,10 @@ export async function handleExecuteStep(
       : {}),
   });
 
-  // P2 observability: emit metadata-only stderr telemetry on a pre-claim validation rejection.
-  // Reads the pre-strip envelope; best-effort (never throws, never alters the response).
-  emitFailedAttemptTelemetry(args, run.workflow_id, result);
+  // P2/P3 observability: on a pre-claim validation rejection, fan a metadata-only record out to the
+  // ephemeral stderr line (P2) and the durable per-run sidecar (P3, when wired). Reads the pre-strip
+  // envelope; awaited but best-effort — it never throws and never alters the response.
+  await emitFailedAttemptTelemetry(args, run.workflow_id, result, stores?.failedAttemptStore);
 
   return result;
 }
@@ -185,6 +213,7 @@ export function registerExecuteStep(
     registry?: import('@sensigo/realm').ExtensionRegistry;
     secrets?: Record<string, string>;
     traceBufferStore?: import('@sensigo/realm').TraceBufferStore;
+    failedAttemptStore?: FailedAttemptStore;
   },
 ): void {
   server.tool(
