@@ -17,6 +17,7 @@ const handlers: RequestHandler[] = [];
 
 // Last received request details for assertions
 let lastRequestHeaders: http.IncomingHttpHeaders = {};
+let lastRequestMethod = '';
 
 beforeAll(async () => {
   server = http.createServer((req, res) => {
@@ -25,6 +26,7 @@ beforeAll(async () => {
     req.on('end', () => {
       const body = Buffer.concat(chunks).toString('utf-8');
       lastRequestHeaders = req.headers;
+      lastRequestMethod = req.method ?? '';
       const handler = handlers.shift();
       if (handler === undefined) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -235,6 +237,7 @@ describe('ParcelPanelAdapter order_number normalization', () => {
     });
     const adapter = makeAdapter();
     await adapter.fetch('get_tracking', { store: 'mystore', order_number: '#1234' }, {});
+    expect(lastRequestMethod).toBe('GET');
     expect(capturedUrl).toContain('order_number=1234');
     expect(capturedUrl).not.toContain('order_number=%231234');
   });
@@ -555,6 +558,7 @@ describe('ParcelPanelAdapter fetch(get_tracking_by_id)', () => {
     });
     const adapter = makeAdapter();
     await adapter.fetch('get_tracking_by_id', { store: 'mystore', order_id: 6140516335690 }, {});
+    expect(lastRequestMethod).toBe('GET');
     expect(capturedUrl).toContain('order_id=6140516335690');
     expect(capturedUrl).not.toContain('order_number');
   });

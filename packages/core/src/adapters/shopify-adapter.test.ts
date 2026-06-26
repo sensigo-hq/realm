@@ -17,6 +17,7 @@ const handlers: RequestHandler[] = [];
 // Last received request details for assertions
 let lastRequestHeaders: http.IncomingHttpHeaders = {};
 let lastRequestBody = '';
+let lastRequestMethod = '';
 
 beforeAll(async () => {
   server = http.createServer((req, res) => {
@@ -26,6 +27,7 @@ beforeAll(async () => {
       const body = Buffer.concat(chunks).toString('utf-8');
       lastRequestHeaders = req.headers;
       lastRequestBody = body;
+      lastRequestMethod = req.method ?? '';
       const handler = handlers.shift();
       if (handler === undefined) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -294,6 +296,7 @@ describe("ShopifyAdapter fetch('query') request forwarding", () => {
     respondWith(200, { data: { shop: { name: 'My Store' } } });
     const adapter = makeAdapter();
     await adapter.fetch('query', { store: 'mystore', query: gqlQuery }, {});
+    expect(lastRequestMethod).toBe('POST');
     const body = JSON.parse(lastRequestBody) as { query: string };
     expect(body.query).toBe(gqlQuery);
   });

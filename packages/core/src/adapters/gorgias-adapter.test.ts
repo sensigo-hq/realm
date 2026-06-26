@@ -13,12 +13,16 @@ let port: number;
 let server: http.Server;
 const handlers: RequestHandler[] = [];
 
+// Captured on every request regardless of which response helper is used (see central handler).
+let lastRequestMethod = '';
+
 beforeAll(async () => {
   server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
       const body = Buffer.concat(chunks).toString('utf-8');
+      lastRequestMethod = req.method ?? '';
       const handler = handlers.shift();
       if (handler === undefined) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -163,6 +167,7 @@ describe("GorgiasAdapter fetch('get_ticket')", () => {
     respond(200, { id: 42, subject: 'Test ticket' });
     const adapter = makeAdapter();
     const result = await adapter.fetch('get_ticket', { ticket_id: 42 }, {});
+    expect(lastRequestMethod).toBe('GET');
     expect(result.status).toBe(200);
     const data = result.data as Record<string, unknown>;
     expect(data['id']).toBe(42);
@@ -299,6 +304,7 @@ describe("GorgiasAdapter fetch('list_tickets')", () => {
     });
     const adapter = makeAdapter();
     await adapter.fetch('list_tickets', {}, {});
+    expect(lastRequestMethod).toBe('GET');
     expect(capturedUrl).toBe('/tickets');
   });
 });
@@ -315,6 +321,7 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     });
     const adapter = makeAdapter();
     const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    expect(lastRequestMethod).toBe('GET');
     expect(result.status).toBe(200);
     const data = result.data as { messages: unknown[]; truncated: boolean };
     expect(data.truncated).toBe(false);
@@ -556,6 +563,7 @@ describe("GorgiasAdapter fetch('get_customer')", () => {
     respond(200, { id: 42, email: 'test@example.com', name: 'Test User' });
     const adapter = makeAdapter();
     const result = await adapter.fetch('get_customer', { customer_id: 42 }, {});
+    expect(lastRequestMethod).toBe('GET');
     expect(result.status).toBe(200);
     const data = result.data as Record<string, unknown>;
     expect(data['id']).toBe(42);
@@ -603,6 +611,7 @@ describe("GorgiasAdapter fetch('list_customers')", () => {
     });
     const adapter = makeAdapter();
     await adapter.fetch('list_customers', { email: 'test@example.com', limit: 5 }, {});
+    expect(lastRequestMethod).toBe('GET');
     expect(capturedUrl).toContain('email=test%40example.com');
     expect(capturedUrl).toContain('limit=5');
   });
@@ -658,6 +667,7 @@ describe("GorgiasAdapter create('create_message')", () => {
       { ticket_id: 42, body_html: '<p>hi</p>', channel: 'note', public: false, from_agent: true },
       {},
     );
+    expect(lastRequestMethod).toBe('POST');
     expect(result.status).toBe(201);
     const data = result.data as Record<string, unknown>;
     expect(data['id']).toBe(999);
@@ -754,6 +764,7 @@ describe("GorgiasAdapter create('create_ticket')", () => {
       { messages: [{ channel: 'email', from_agent: false }] },
       {},
     );
+    expect(lastRequestMethod).toBe('POST');
     expect(result.status).toBe(201);
     const data = result.data as Record<string, unknown>;
     expect(data['id']).toBe(100);
@@ -797,6 +808,7 @@ describe("GorgiasAdapter create('create_customer')", () => {
       { channels: [{ type: 'email', address: 'new@example.com' }] },
       {},
     );
+    expect(lastRequestMethod).toBe('POST');
     expect(result.status).toBe(201);
     const data = result.data as Record<string, unknown>;
     expect(data['id']).toBe(55);
@@ -846,6 +858,7 @@ describe("GorgiasAdapter update('update_ticket')", () => {
     respond(202, { id: 10, status: 'closed' });
     const adapter = makeAdapter();
     const result = await adapter.update('update_ticket', { ticket_id: 10, status: 'closed' }, {});
+    expect(lastRequestMethod).toBe('PUT');
     expect(result.status).toBe(202);
     const data = result.data as Record<string, unknown>;
     expect(data['status']).toBe('closed');
@@ -910,6 +923,7 @@ describe("GorgiasAdapter update('update_customer')", () => {
     });
     const adapter = makeAdapter();
     await adapter.update('update_customer', { customer_id: 42, name: 'Jane', language: 'fr' }, {});
+    expect(lastRequestMethod).toBe('PUT');
     expect(capturedBody).toEqual({ name: 'Jane', language: 'fr' });
     expect((capturedBody as Record<string, unknown>)['customer_id']).toBeUndefined();
   });
