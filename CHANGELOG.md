@@ -4,9 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
-
-> **Version intent: 0.10.0.** Additive run-recovery surface; defaults preserve current behavior, no breaking changes.
+## [0.10.0] — 2026-06-26
 
 ### Added
 
