@@ -3,4 +3,4 @@ export { createRealmMcpServer, createDefaultRegistry } from './server.js';
 export type { RealmMcpServerOptions } from './server.js';
 export { generateProtocol } from './protocol/generator.js';
 export type { WorkflowProtocol, ProtocolStep } from './protocol/generator.js';
-export const VERSION = '0.10.1';
+export const VERSION = '0.11.0';
