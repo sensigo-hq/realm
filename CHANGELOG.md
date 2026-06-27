@@ -4,9 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
-
-> **Version intent: 0.11.0** (additive). Version constants are bumped at release time.
+## [0.11.0] — 2026-06-27
 
 ### Added
 
