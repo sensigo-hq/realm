@@ -9,6 +9,7 @@ import {
   findEligibleGuardSteps,
   triggerRuleSatisfied,
   evaluateWhenCondition,
+  evaluateWhen,
   deriveRunPhase,
   propagateSkips,
 } from './eligibility.js';
@@ -320,6 +321,102 @@ describe('evaluateWhenCondition', () => {
   it('unquoted string rhs treated as bareword for equality', () => {
     const evidence = { step_a: { confidence: 'high' } };
     expect(evaluateWhenCondition('step_a.confidence == high', evidence)).toBe(true);
+  });
+
+  it('quote-aware: an operator inside the quoted RHS does not mis-split', () => {
+    const evidence = { step_a: { subject: 'a >= b' } };
+    expect(evaluateWhenCondition("step_a.subject == 'a >= b'", evidence)).toBe(true);
+    expect(evaluateWhenCondition("step_a.subject == 'a >= c'", evidence)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// evaluateWhenCondition — 1c absent/present-null truth-table (the corrected semantics)
+// ---------------------------------------------------------------------------
+
+describe('evaluateWhenCondition — 1c absent-LHS / present-null semantics', () => {
+  const absent = { step_a: {} }; // step_a.missing is absent
+  const presentNull = { step_a: { v: null } }; // step_a.v is present and null
+
+  // CHANGED rows (were untested; load-bearing)
+  it('absent == null → true (was false)', () => {
+    expect(evaluateWhenCondition('step_a.missing == null', absent)).toBe(true);
+  });
+  it('absent != null → false (was true — the incident)', () => {
+    expect(evaluateWhenCondition('step_a.missing != null', absent)).toBe(false);
+  });
+  it("absent != '<non-null literal>' → false (was true)", () => {
+    expect(evaluateWhenCondition("step_a.missing != 'shadow'", absent)).toBe(false);
+  });
+  it('present-null >= 0 / <= 0 / > / < → false (numeric guard; was true via null→0)', () => {
+    expect(evaluateWhenCondition('step_a.v >= 0', presentNull)).toBe(false);
+    expect(evaluateWhenCondition('step_a.v <= 0', presentNull)).toBe(false);
+    expect(evaluateWhenCondition('step_a.v > -1', presentNull)).toBe(false);
+    expect(evaluateWhenCondition('step_a.v < 1', presentNull)).toBe(false);
+  });
+
+  // UNCHANGED rows (regression guards)
+  it("absent == '<non-null literal>' → false (unchanged)", () => {
+    expect(evaluateWhenCondition("step_a.missing == 'shadow'", absent)).toBe(false);
+  });
+  it('absent relational (>= n etc.) → false (unchanged)', () => {
+    expect(evaluateWhenCondition('step_a.missing >= 1', absent)).toBe(false);
+    expect(evaluateWhenCondition('step_a.missing < 1', absent)).toBe(false);
+  });
+  it('present-null == null → true, != null → false (unchanged)', () => {
+    expect(evaluateWhenCondition('step_a.v == null', presentNull)).toBe(true);
+    expect(evaluateWhenCondition('step_a.v != null', presentNull)).toBe(false);
+  });
+  it("present-null == '<non-null>' → false, != '<non-null>' → true (unchanged)", () => {
+    expect(evaluateWhenCondition("step_a.v == 'x'", presentNull)).toBe(false);
+    expect(evaluateWhenCondition("step_a.v != 'x'", presentNull)).toBe(true);
+  });
+  it('resolved relational still works (present number)', () => {
+    expect(evaluateWhenCondition('step_a.n >= 3', { step_a: { n: 3 } })).toBe(true);
+    expect(evaluateWhenCondition('step_a.n >= 3', { step_a: { n: 2 } })).toBe(false);
+  });
+  it('bare path → Boolean(value), unchanged', () => {
+    expect(evaluateWhenCondition('step_a.flag', { step_a: { flag: true } })).toBe(true);
+    expect(evaluateWhenCondition('step_a.flag', { step_a: { flag: false } })).toBe(false);
+    expect(evaluateWhenCondition('step_a.flag', { step_a: {} })).toBe(false);
+  });
+
+  it("run.params.mode != 'shadow' SKIPS (false) when mode is absent (deliberate flip)", () => {
+    expect(evaluateWhenCondition("run.params.mode != 'shadow'", {}, {})).toBe(false);
+    // and still fires when mode is present and not 'shadow'
+    expect(evaluateWhenCondition("run.params.mode != 'shadow'", {}, { mode: 'live' })).toBe(true);
+  });
+
+  it('a compound string reaching runtime (load normally rejects it) → false', () => {
+    expect(
+      evaluateWhenCondition('step_a.x == 1 and step_a.y == 2', { step_a: { x: 1, y: 2 } }),
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// evaluateWhen — string[] implicit AND folding (Change 3)
+// ---------------------------------------------------------------------------
+
+describe('evaluateWhen — implicit AND folding', () => {
+  const evidence = { a: { ok: true }, b: { key: 'x' } };
+
+  it('a single string behaves as one leaf', () => {
+    expect(evaluateWhen('a.ok == true', evidence)).toBe(true);
+    expect(evaluateWhen('a.ok == false', evidence)).toBe(false);
+  });
+
+  it('an array ANDs its leaves (all true → true)', () => {
+    expect(evaluateWhen(['a.ok == true', 'b.key != null'], evidence)).toBe(true);
+  });
+
+  it('an array is false if any leaf is false', () => {
+    expect(evaluateWhen(['a.ok == true', "b.key == 'nope'"], evidence)).toBe(false);
+  });
+
+  it('a bare-path leaf inside an array is preserved', () => {
+    expect(evaluateWhen(['a.ok', 'b.key != null'], evidence)).toBe(true);
+    expect(evaluateWhen(['a.ok', 'b.missing'], evidence)).toBe(false);
   });
 });
 

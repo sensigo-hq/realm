@@ -1892,3 +1892,157 @@ steps:
     expect(() => loadWorkflowFromString(wf(trigger))).toThrow(/unknown property|dedpu/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Condition leaf validation: when / abort_unless / preconditions (Change 1b/2/3)
+// ---------------------------------------------------------------------------
+
+describe('loadWorkflowFromString — when/abort_unless/preconditions validation', () => {
+  /** A two-step workflow where `gate`/`act` can carry a `when`/`preconditions` block. */
+  function wf(actBlock: string): string {
+    return `
+id: cond-wf
+name: Cond WF
+version: 1
+steps:
+  classify:
+    description: classify
+    execution: agent
+    depends_on: []
+  act:
+    description: act
+    execution: agent
+    depends_on: [classify]
+${actBlock}
+`;
+  }
+
+  // --- Change 3: when string | string[] ---
+  it('accepts a single-string when referencing a direct dependency', () => {
+    expect(() =>
+      loadWorkflowFromString(wf('    when: "classify.category == \'billing\'"')),
+    ).not.toThrow();
+  });
+
+  it('accepts a string[] when (implicit AND) of valid leaves', () => {
+    const block =
+      '    when:\n      - "classify.category == \'billing\'"\n      - "classify.confidence >= 0.8"';
+    expect(() => loadWorkflowFromString(wf(block))).not.toThrow();
+  });
+
+  it('rejects an empty when array', () => {
+    expect(() => loadWorkflowFromString(wf('    when: []'))).toThrow(
+      /'when' array must not be empty/,
+    );
+  });
+
+  it('preserves a bare-path leaf inside a when array', () => {
+    const block = '    when:\n      - "classify.ready"\n      - "classify.category == \'billing\'"';
+    expect(() => loadWorkflowFromString(wf(block))).not.toThrow();
+  });
+
+  // --- 1b: compound rejection with actionable echo ---
+  it('rejects a compound `and` when string with an actionable list-form message', () => {
+    let msg = '';
+    try {
+      loadWorkflowFromString(
+        wf('    when: "classify.category == \'billing\' and classify.confidence >= 0.8"'),
+      );
+    } catch (e) {
+      msg = (e as WorkflowError).message;
+    }
+    expect(msg).toContain("'when' uses unsupported 'and' — write it as a list:");
+    expect(msg).toContain('- "classify.category == \'billing\'"');
+    expect(msg).toContain('- "classify.confidence >= 0.8"');
+  });
+
+  it('rejects a compound `or` when string', () => {
+    expect(() =>
+      loadWorkflowFromString(wf('    when: "classify.a == 1 or classify.b == 2"')),
+    ).toThrow(/uses unsupported 'or'/);
+  });
+
+  it('rejects a when leaf with multiple comparison operators', () => {
+    expect(() => loadWorkflowFromString(wf('    when: "classify.a == classify.b == 1"'))).toThrow(
+      /multiple comparison operators/,
+    );
+  });
+
+  // --- 1a quote-aware: operator inside quotes does NOT trip compound/multi-op detection ---
+  it('accepts a when whose quoted RHS contains an operator', () => {
+    expect(() =>
+      loadWorkflowFromString(wf('    when: "classify.subject == \'a >= b\'"')),
+    ).not.toThrow();
+  });
+
+  // --- Change 2: direct-depends_on reference check (when only) ---
+  it('rejects a when referencing a step not in depends_on', () => {
+    expect(() => loadWorkflowFromString(wf('    when: "other_step.x == 1"'))).toThrow(
+      /references step 'other_step' which is not in its depends_on/,
+    );
+  });
+
+  it('accepts a when referencing run.params.*', () => {
+    expect(() =>
+      loadWorkflowFromString(wf('    when: "run.params.mode == \'live\'"')),
+    ).not.toThrow();
+  });
+
+  it('rejects a when referencing run.<not-params>', () => {
+    expect(() => loadWorkflowFromString(wf('    when: "run.something == 1"'))).toThrow(
+      /only 'run.params.\*' is available/,
+    );
+  });
+
+  // --- Scope B: preconditions ---
+  it('rejects a compound precondition', () => {
+    const block = '    preconditions:\n      - "classify.count > 0 and classify.ok == true"';
+    expect(() => loadWorkflowFromString(wf(block))).toThrow(
+      /'preconditions' uses unsupported 'and'/,
+    );
+  });
+
+  it('rejects a bare-path precondition (must be a comparison)', () => {
+    const block = '    preconditions:\n      - "classify.ready"';
+    expect(() => loadWorkflowFromString(wf(block))).toThrow(/must be a comparison/);
+  });
+
+  it('accepts a valid comparison precondition', () => {
+    const block = '    preconditions:\n      - "classify.count > 0"';
+    expect(() => loadWorkflowFromString(wf(block))).not.toThrow();
+  });
+
+  // --- Scope B: abort_unless (guard step) ---
+  function guardWf(abortBlock: string): string {
+    return `
+id: guard-wf
+name: Guard WF
+version: 1
+steps:
+  classify:
+    description: classify
+    execution: agent
+    depends_on: []
+  gate:
+    description: gate
+    execution: guard
+    depends_on: [classify]
+${abortBlock}
+`;
+  }
+
+  it('rejects a compound abort_unless', () => {
+    const block = '    abort_unless:\n      - "classify.a == 1 and classify.b == 2"';
+    expect(() => loadWorkflowFromString(guardWf(block))).toThrow(
+      /'abort_unless' uses unsupported 'and'/,
+    );
+  });
+
+  it('accepts a valid abort_unless (string and array)', () => {
+    expect(() =>
+      loadWorkflowFromString(guardWf('    abort_unless: "classify.a == 1"')),
+    ).not.toThrow();
+    const block = '    abort_unless:\n      - "classify.a == 1"\n      - "classify.b != null"';
+    expect(() => loadWorkflowFromString(guardWf(block))).not.toThrow();
+  });
+});

@@ -1,5 +1,6 @@
 // Precondition evaluator — evaluates step precondition expressions against
 // the run's collected evidence map before allowing a step to execute.
+import { splitComparison } from './comparison-expr.js';
 
 /**
  * Resolves a dot-separated path into a nested object.
@@ -71,22 +72,19 @@ export function evaluatePrecondition(
   expression: string,
   evidenceByStep: Record<string, Record<string, unknown>>,
 ): boolean {
-  const match = /^([\w-]+)\.([\w.]+)\s*(>=|<=|!=|>|<|==)\s*(\S.*)$/.exec(expression);
-  if (match === null) return false;
+  // Split via the shared quote-aware splitter (same split used at load) — see comparison-expr.ts.
+  // A precondition is a comparison only; a bare path / compound / malformed leaf → false (the old
+  // regex's no-match behavior). Absent LHS → false. Coercion is unchanged (compare/parseLiteral).
+  const split = splitComparison(expression);
+  if (split.kind !== 'comparison') return false;
 
-  const stepName = match[1]!;
-  const fieldPath = match[2]!;
-  const op = match[3]!;
-  const literalRaw = match[4]!;
-
-  const stepEvidence = evidenceByStep[stepName];
-  if (stepEvidence === undefined) return false;
-
-  const lhs = resolvePath(stepEvidence, fieldPath);
+  // resolvePath(evidenceByStep, "step.field") walks the dotted path — equivalent to the old
+  // two-step (evidenceByStep[step] then resolvePath of the field path).
+  const lhs = resolvePath(evidenceByStep, split.lhsPath);
   if (lhs === undefined) return false;
 
-  const rhs = parseLiteral(literalRaw);
-  return compare(lhs, op, rhs);
+  const rhs = parseLiteral(split.rhsRaw);
+  return compare(lhs, split.op, rhs);
 }
 
 export interface PreconditionResult {
@@ -106,15 +104,10 @@ export function checkPreconditions(
   for (const expression of preconditions) {
     const passed = evaluatePrecondition(expression, evidenceByStep);
     if (!passed) {
-      // Resolve the LHS value for the failure message.
-      const match = /^([\w-]+)\.([\w.]+)/.exec(expression);
-      let resolvedValue: unknown = undefined;
-      if (match !== null) {
-        const stepEvidence = evidenceByStep[match[1]!];
-        if (stepEvidence !== undefined) {
-          resolvedValue = resolvePath(stepEvidence, match[2]!);
-        }
-      }
+      // Resolve the LHS value for the failure message (shared splitter — see comparison-expr.ts).
+      const split = splitComparison(expression);
+      const resolvedValue: unknown =
+        split.kind === 'comparison' ? resolvePath(evidenceByStep, split.lhsPath) : undefined;
       return { expression, passed: false, resolved_value: resolvedValue };
     }
   }
@@ -132,14 +125,9 @@ export function evaluateAllPreconditions(
 ): PreconditionResult[] {
   return preconditions.map((expression) => {
     const passed = evaluatePrecondition(expression, evidenceByStep);
-    const match = /^([\w-]+)\.([\w.]+)/.exec(expression);
-    let resolvedValue: unknown = undefined;
-    if (match !== null) {
-      const stepEvidence = evidenceByStep[match[1]!];
-      if (stepEvidence !== undefined) {
-        resolvedValue = resolvePath(stepEvidence, match[2]!);
-      }
-    }
+    const split = splitComparison(expression);
+    const resolvedValue: unknown =
+      split.kind === 'comparison' ? resolvePath(evidenceByStep, split.lhsPath) : undefined;
     return { expression, passed, resolved_value: resolvedValue };
   });
 }
@@ -182,26 +170,20 @@ export function evaluateGuardConditions(
   const results: GuardConditionResult[] = [];
 
   for (const condition of conditions) {
-    const operators = ['>=', '<=', '!=', '==', '>', '<'] as const;
-    let matched = false;
+    // Split via the shared quote-aware splitter (same split used at load) — see comparison-expr.ts.
+    // Absent-policy and type-coercion are UNCHANGED from the original indexOf-scan: an unresolved
+    // LHS or a non-numeric relational comparison is a resolution_error; a bare path is a truthy test.
+    const split = splitComparison(condition);
 
-    for (const op of operators) {
-      const opWithSpaces = ` ${op} `;
-      const idx = condition.indexOf(opWithSpaces);
-      if (idx === -1) continue;
+    if (split.kind === 'comparison') {
+      const { lhsPath, op, rhsRaw } = split;
 
-      matched = true;
-      const lhsPath = condition.slice(0, idx).trim();
-      const rhs = condition.slice(idx + opWithSpaces.length).trim();
-
-      // Resolve LHS.
       const lhsValue = resolvePath(root, lhsPath);
       if (lhsValue === undefined) {
         return { kind: 'resolution_error', condition, unresolvable_path: lhsPath };
       }
 
-      // Parse RHS literal.
-      const rhsValue = parseLiteral(rhs);
+      const rhsValue = parseLiteral(rhsRaw);
 
       // Numeric operators require both sides to be numbers.
       if (
@@ -214,17 +196,16 @@ export function evaluateGuardConditions(
 
       const passed = compare(lhsValue, op, rhsValue);
       results.push({ condition, resolved_value: lhsValue, passed });
-      break;
-    }
-
-    if (!matched) {
+    } else if (split.kind === 'path') {
       // Bare path — truthy/falsy check.
-      const path = condition.trim();
-      const value = resolvePath(root, path);
+      const value = resolvePath(root, split.path);
       if (value === undefined) {
-        return { kind: 'resolution_error', condition, unresolvable_path: path };
+        return { kind: 'resolution_error', condition, unresolvable_path: split.path };
       }
       results.push({ condition, resolved_value: value, passed: Boolean(value) });
+    } else {
+      // Compound/malformed leaf is rejected at load; if one reaches runtime, treat as unresolvable.
+      return { kind: 'resolution_error', condition, unresolvable_path: condition };
     }
   }
 
