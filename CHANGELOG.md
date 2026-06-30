@@ -4,9 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
-
-> **Version intent: 0.12.0** (a breaking change on a 0.x line bumps the minor segment). Version constants are bumped at release time.
+## [0.12.0] — 2026-06-30
 
 ### Changed
 
