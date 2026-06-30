@@ -13,6 +13,96 @@ import { WorkflowError } from '../types/workflow-error.js';
 import { resolveTemplates } from './template-resolver.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
+import { splitComparison, isPathShaped } from '../engine/comparison-expr.js';
+
+type ConditionSurface = 'when' | 'abort_unless' | 'preconditions';
+
+/**
+ * Validate one condition leaf at load time using the shared quote-aware splitter (the SAME split
+ * used at runtime). Rejects compound `and`/`or`, multiple operators, and non-path LHS. For `when`,
+ * also enforces the direct-`depends_on` reference check (Change 2). Pushes actionable errors.
+ */
+function validateConditionLeaf(
+  surface: ConditionSurface,
+  leaf: string,
+  stepName: string,
+  dependsOn: string[],
+  errors: string[],
+): void {
+  const split = splitComparison(leaf);
+
+  if (split.kind === 'invalid') {
+    if (split.reason === 'compound_and' || split.reason === 'compound_or') {
+      const kw = split.reason === 'compound_and' ? 'and' : 'or';
+      const listForm = (split.parts ?? [leaf]).map((p) => `    - "${p}"`).join('\n');
+      errors.push(
+        `Step '${stepName}': '${surface}' uses unsupported '${kw}' — write it as a list:\n` +
+          `  ${surface}:\n${listForm}`,
+      );
+    } else if (split.reason === 'multiple_operators') {
+      errors.push(
+        `Step '${stepName}': '${surface}' leaf '${leaf}' has multiple comparison operators — each leaf must be a single comparison.`,
+      );
+    } else {
+      errors.push(`Step '${stepName}': '${surface}' leaf must not be empty.`);
+    }
+    return;
+  }
+
+  if (split.kind === 'path') {
+    // A precondition is always a comparison; a bare path is not a valid precondition.
+    if (surface === 'preconditions') {
+      errors.push(
+        `Step '${stepName}': precondition '${leaf}' must be a comparison (e.g. "step.field >= 1").`,
+      );
+      return;
+    }
+    if (!isPathShaped(split.path)) {
+      errors.push(
+        `Step '${stepName}': '${surface}' leaf '${leaf}' is not a valid path or comparison.`,
+      );
+      return;
+    }
+    if (surface === 'when') validateWhenReference(split.path, stepName, dependsOn, errors);
+    return;
+  }
+
+  // comparison
+  if (!isPathShaped(split.lhsPath)) {
+    errors.push(
+      `Step '${stepName}': '${surface}' leaf '${leaf}' must have a path on the left-hand side (got '${split.lhsPath}').`,
+    );
+    return;
+  }
+  if (surface === 'when') validateWhenReference(split.lhsPath, stepName, dependsOn, errors);
+}
+
+/**
+ * Change 2 (when-only): a `when` leaf's `step.field` reference must resolve to `run.params.*` or to a
+ * step in this step's DIRECT `depends_on` (one-hop membership — no graph traversal). Field names are
+ * not checked (agent-step outputs aren't statically declared).
+ */
+function validateWhenReference(
+  path: string,
+  stepName: string,
+  dependsOn: string[],
+  errors: string[],
+): void {
+  const first = path.split('.')[0]!;
+  if (first === 'run') {
+    if (!(path === 'run.params' || path.startsWith('run.params.'))) {
+      errors.push(
+        `Step '${stepName}': 'when' references '${path}' — only 'run.params.*' is available from 'run'.`,
+      );
+    }
+    return;
+  }
+  if (!dependsOn.includes(first)) {
+    errors.push(
+      `Step '${stepName}': 'when' references step '${first}' which is not in its depends_on [${dependsOn.join(', ')}]. Add it to depends_on or use 'run.params.*'.`,
+    );
+  }
+}
 
 /** Bumped on every breaking change to WorkflowDefinition's serialized format. */
 export const CURRENT_WORKFLOW_SCHEMA_VERSION = 1;
@@ -467,10 +557,76 @@ export function loadWorkflowFromString(
       }
     }
 
-    // Validate when: must be a non-empty string.
+    // Validate when: string | string[] of single-comparison/bare-path leaves (implicit AND).
     if ('when' in step && step['when'] !== undefined) {
-      if (typeof step['when'] !== 'string' || step['when'].trim() === '') {
-        errors.push(`Step '${stepName}': 'when' must be a non-empty string`);
+      const rawWhen = step['when'];
+      const dependsOn = Array.isArray(step['depends_on'])
+        ? (step['depends_on'] as unknown[]).filter((d): d is string => typeof d === 'string')
+        : [];
+      if (typeof rawWhen === 'string') {
+        if (rawWhen.trim() === '') {
+          errors.push(`Step '${stepName}': 'when' must be a non-empty string`);
+        } else {
+          validateConditionLeaf('when', rawWhen, stepName, dependsOn, errors);
+        }
+      } else if (Array.isArray(rawWhen)) {
+        if (rawWhen.length === 0) {
+          errors.push(`Step '${stepName}': 'when' array must not be empty`);
+        } else {
+          for (const leaf of rawWhen) {
+            if (typeof leaf !== 'string' || leaf.trim() === '') {
+              errors.push(`Step '${stepName}': 'when' array entries must be non-empty strings`);
+            } else {
+              validateConditionLeaf('when', leaf, stepName, dependsOn, errors);
+            }
+          }
+        }
+      } else {
+        errors.push(`Step '${stepName}': 'when' must be a string or an array of strings`);
+      }
+    }
+
+    // Validate abort_unless leaf shape (guard steps only; reference check is when-only).
+    if (step['abort_unless'] !== undefined && step['execution'] === 'guard') {
+      const rawAbort = step['abort_unless'];
+      if (typeof rawAbort === 'string') {
+        if (rawAbort.trim() === '') {
+          errors.push(`Step '${stepName}': 'abort_unless' must be a non-empty string`);
+        } else {
+          validateConditionLeaf('abort_unless', rawAbort, stepName, [], errors);
+        }
+      } else if (Array.isArray(rawAbort)) {
+        if (rawAbort.length === 0) {
+          errors.push(`Step '${stepName}': 'abort_unless' array must not be empty`);
+        } else {
+          for (const leaf of rawAbort) {
+            if (typeof leaf !== 'string' || leaf.trim() === '') {
+              errors.push(
+                `Step '${stepName}': 'abort_unless' array entries must be non-empty strings`,
+              );
+            } else {
+              validateConditionLeaf('abort_unless', leaf, stepName, [], errors);
+            }
+          }
+        }
+      } else {
+        errors.push(`Step '${stepName}': 'abort_unless' must be a string or an array of strings`);
+      }
+    }
+
+    // Validate preconditions leaf shape (each must be a single comparison).
+    if (step['preconditions'] !== undefined) {
+      const rawPre = step['preconditions'];
+      if (!Array.isArray(rawPre)) {
+        errors.push(`Step '${stepName}': 'preconditions' must be an array of strings`);
+      } else {
+        for (const leaf of rawPre) {
+          if (typeof leaf !== 'string' || leaf.trim() === '') {
+            errors.push(`Step '${stepName}': 'preconditions' entries must be non-empty strings`);
+          } else {
+            validateConditionLeaf('preconditions', leaf, stepName, [], errors);
+          }
+        }
       }
     }
 

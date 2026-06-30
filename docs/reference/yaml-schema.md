@@ -31,7 +31,7 @@ Complete reference for `workflow.yaml` fields. Every field documented here is va
 | `execution`       | `agent` \| `auto` \| `guard`                | Yes      | Who executes this step. See [Execution modes](#execution-modes).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `depends_on`      | string[]                                    | No       | Step IDs this step waits for. Empty array or omitted means eligible from run start.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `trigger_rule`    | string                                      | No       | When to evaluate dependency satisfaction. Default: `all_success`. See [`trigger_rule`](#trigger_rule).                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `when`            | string                                      | No       | Expression evaluated against prior step evidence. A step is ineligible until this is truthy. See [`when` condition](#when-condition).                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `when`            | string \| string[]                          | No       | Condition controlling step eligibility — a step is ineligible until truthy. A `string[]` is the implicit AND of its leaves. See [`when` condition](#when-condition).                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `uses_service`    | string                                      | No       | Name of a service declared in `services`. Only valid on `execution: auto` steps.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `service_method`  | `fetch` \| `create` \| `update` \| `delete` | No       | Adapter method to call. Defaults to `fetch`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `operation`       | string                                      | No       | Operation name passed to the adapter. Defaults to the step name.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
@@ -243,11 +243,36 @@ steps:
     when: "classify_ticket.category == 'technical'"
 ```
 
-**Supported operators:** `==`, `!=`, `>`, `<`, `>=`, `<=`. The left side is a dot-path into prior step evidence (`step_name.field_name`). The right side is a quoted string, an unquoted number, `true`, `false`, or `null`.
+`when` is `string | string[]`. A single string is one leaf; **an array is the implicit AND of its leaves** (every leaf must hold). An empty array is a load error.
 
-`when` conditions are evaluated against each step's recorded `output_summary`. Comparison is strict — types must match (`"1"` does not equal `1`).
+```yaml
+when:
+  - 'extract_order.order_number_found == true'
+  - 'resolve_store.store_key != null'
+```
 
-Once all of a step's dependencies are settled, the engine evaluates the `when` condition. If it evaluates to false at that point, the step is moved to `skipped_steps` immediately — it does not remain indefinitely ineligible. In a mutual-exclusion pattern (two branches with opposite `when` conditions), the inactive branch is skipped as soon as the shared upstream step completes. No finalizer step is needed to close the run.
+**Leaf grammar:** `<path> <op> <literal>` or a bare `<path>` (truthy test). **Supported operators:** `==`, `!=`, `>`, `<`, `>=`, `<=`. The left side is a dot-path (`step_name.field_name`, or `run.params.field`). The right side is a quoted string, an unquoted number, `true`, `false`, or `null`. The split is quote-aware — an operator inside a quoted RHS (e.g. `subject == 'a >= b'`) does not mis-split.
+
+**Compound `and`/`or` inside a single string is rejected at load** — use the list form. The load error echoes the suggested list:
+
+```
+Step 'fetch_order': 'when' uses unsupported 'and' — write it as a list:
+  when:
+    - "extract_order.order_number_found == true"
+    - "resolve_store.store_key != null"
+```
+
+**Reference rule (load-time):** a `when` leaf's `step.field` must reference either `run.params.*` or a step in this step's **direct `depends_on`** (one-hop). Referencing a step not in `depends_on` is a load error (add it to `depends_on` or use `run.params.*`). Field names are not checked.
+
+**Comparison semantics.** A resolved LHS uses strict equality (`==`/`!=`; `"1"` does not equal `1`) and numeric-guarded relational comparison (`>` `<` `>=` `<=` require both operands to be numbers). When the LHS is **unresolved** (absent path):
+
+- `== null` / `!= null` are **presence tests** (loose null) — `== null` is true for a missing or present-`null` value; `!= null` is true only for a present non-null value.
+- relational ops (`> < >= <=`) → **false** (no `null → 0` coercion).
+- any other operator on an absent LHS → **false** (symmetric: a `!=` against a non-null literal does **not** fire when the path is absent).
+
+> **Field-name typo fire-direction (accepted residual).** Field names in a leaf are not statically checkable (agent-step outputs aren't declared). A typo'd field resolves as absent in **both** directions: `x.tcuont >= 0.8` → false → the step **skips**; but `x.tcuont == null` → "absent" → true → the step **fires**. This is consistent with Realm's lenient path resolution everywhere. The high-value typo (a mistyped **step name**) is caught loudly by the reference rule above; only field-name typos within a correctly-named dependency slip through.
+
+Once all of a step's dependencies are settled, the engine evaluates the `when` condition. If it is false at that point, the step is moved to `skipped_steps` immediately. In a mutual-exclusion pattern (two branches with opposite `when` conditions), the inactive branch is skipped as soon as the shared upstream step completes. No finalizer step is needed to close the run.
 
 ### Shadow mode via `run.params`
 

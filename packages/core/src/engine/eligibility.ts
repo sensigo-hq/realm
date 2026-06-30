@@ -9,6 +9,7 @@ import type {
 import type { RunRecord } from '../types/run-record.js';
 import type { RunPhase } from '../types/run-record.js';
 import { resolvePath } from './render-template.js';
+import { splitComparison, type ComparisonOp } from './comparison-expr.js';
 
 /**
  * Derives the run_phase from the run record fields.
@@ -97,72 +98,115 @@ export function triggerRuleSatisfied(step: StepDefinition, run: RunRecord): bool
   }
 }
 
+/** Parse a `when` RHS literal, flagging the bare `null` token (drives the 1c presence-test). */
+function parseWhenRhs(rhs: string): { value: unknown; isBareNull: boolean } {
+  if ((rhs.startsWith("'") && rhs.endsWith("'")) || (rhs.startsWith('"') && rhs.endsWith('"'))) {
+    return { value: rhs.slice(1, -1), isBareNull: false };
+  }
+  if (rhs === 'true') return { value: true, isBareNull: false };
+  if (rhs === 'false') return { value: false, isBareNull: false };
+  if (rhs === 'null') return { value: null, isBareNull: true };
+  const n = Number(rhs);
+  return { value: Number.isNaN(n) ? rhs : n, isBareNull: false };
+}
+
+/** Relational comparison requiring both operands numeric (no JS null→0 coercion). */
+function compareNumeric(op: ComparisonOp, lhs: unknown, rhs: unknown): boolean {
+  if (typeof lhs !== 'number' || typeof rhs !== 'number') return false;
+  switch (op) {
+    case '>':
+      return lhs > rhs;
+    case '<':
+      return lhs < rhs;
+    case '>=':
+      return lhs >= rhs;
+    case '<=':
+      return lhs <= rhs;
+    default:
+      return false;
+  }
+}
+
 /**
- * Evaluates a when-condition expression against prior step evidence.
- * Supports: path == 'value', path != 'value', path > n, path < n, path >= n, path <= n.
- * Returns false on parse error or missing value.
+ * Evaluates a single `when`-condition LEAF against prior step evidence (per-leaf; the array-AND
+ * folding lives in {@link evaluateWhen}). Splitting is quote-aware via the shared splitter, so the
+ * leaf is split the same way at load and at runtime (no validate/eval divergence).
+ *
+ * Absent-LHS semantics (unique to `when`):
+ * - `== null` / `!= null` (bare null RHS) → loose presence test (`lhs == null` / `lhs != null`),
+ *   covering both a missing path and a present-`null` value uniformly.
+ * - relational `> < >= <=` → both operands must be numeric, else false (no `null→0` coercion).
+ * - any other operator with an undefined LHS → false (symmetric `undefined → false`).
+ * - bare path → `Boolean(resolved)`.
+ * A resolved LHS uses strict `===`/`!==` (equality) or numeric-guarded relational comparison.
  */
 export function evaluateWhenCondition(
   expr: string,
   evidenceByStep: Record<string, Record<string, unknown>>,
   runParams: Record<string, unknown> = {},
 ): boolean {
-  // when-condition paths are relative to step outputs: "step_id.field" resolves
-  // directly against evidenceByStep (e.g. step_a.confidence == high).
-  // "run.params.field" resolves against run start params.
+  // when-condition paths are relative to step outputs: "step_id.field" resolves directly against
+  // evidenceByStep; "run.params.field" resolves against run start params.
   const root: Record<string, unknown> = { ...evidenceByStep, run: { params: runParams } };
 
-  const operators: Array<[string, (a: unknown, b: unknown) => boolean]> = [
-    [' >= ', (a, b) => (a as number) >= (b as number)],
-    [' <= ', (a, b) => (a as number) <= (b as number)],
-    [' != ', (a, b) => a !== b],
-    [' == ', (a, b) => a === b],
-    [' > ', (a, b) => (a as number) > (b as number)],
-    [' < ', (a, b) => (a as number) < (b as number)],
-  ];
+  const split = splitComparison(expr);
 
-  for (const [op, compare] of operators) {
-    const idx = expr.indexOf(op);
-    if (idx === -1) continue;
+  // A compound/malformed leaf is rejected at load; if one reaches runtime it is never eligible.
+  if (split.kind === 'invalid') return false;
 
-    const lhsPath = expr.slice(0, idx).trim();
-    const rhs = expr.slice(idx + op.length).trim();
-
-    let leftVal: unknown;
+  if (split.kind === 'path') {
     try {
-      leftVal = resolvePath(lhsPath, root as Record<string, unknown>);
-    } catch {
-      return false;
-    }
-
-    let rightVal: unknown;
-    if ((rhs.startsWith("'") && rhs.endsWith("'")) || (rhs.startsWith('"') && rhs.endsWith('"'))) {
-      rightVal = rhs.slice(1, -1);
-    } else if (rhs === 'true') {
-      rightVal = true;
-    } else if (rhs === 'false') {
-      rightVal = false;
-    } else if (rhs === 'null') {
-      rightVal = null;
-    } else {
-      const n = Number(rhs);
-      rightVal = Number.isNaN(n) ? rhs : n;
-    }
-
-    try {
-      return compare(leftVal, rightVal);
+      return Boolean(resolvePath(split.path, root));
     } catch {
       return false;
     }
   }
 
-  // No operator: treat the path value as a truthy/falsy boolean.
+  const { lhsPath, op, rhsRaw } = split;
+  let lhs: unknown;
   try {
-    const val = resolvePath(expr.trim(), root as Record<string, unknown>);
-    return Boolean(val);
+    lhs = resolvePath(lhsPath, root);
   } catch {
     return false;
   }
+  const { value: rhs, isBareNull } = parseWhenRhs(rhsRaw);
+
+  if (lhs === undefined) {
+    // Presence test first (covers missing + present-null uniformly via loose null).
+    if ((op === '==' || op === '!=') && isBareNull) {
+      return op === '==' ? lhs == null : lhs != null;
+    }
+    // Relational on an absent LHS → false (numeric guard); any other op on absent → false.
+    return false;
+  }
+
+  switch (op) {
+    case '==':
+      return lhs === rhs;
+    case '!=':
+      return lhs !== rhs;
+    case '>':
+    case '<':
+    case '>=':
+    case '<=':
+      return compareNumeric(op, lhs, rhs);
+    default:
+      return false;
+  }
+}
+
+/**
+ * AND-folds a `when` clause (`string | string[]`) over the per-leaf {@link evaluateWhenCondition}.
+ * A bare string is a single leaf; an array is the implicit AND of its leaves. An array NEVER reaches
+ * the single-string evaluator — normalization happens here, in one place.
+ */
+export function evaluateWhen(
+  clause: string | string[],
+  evidenceByStep: Record<string, Record<string, unknown>>,
+  runParams: Record<string, unknown> = {},
+): boolean {
+  const leaves = Array.isArray(clause) ? clause : [clause];
+  return leaves.every((leaf) => evaluateWhenCondition(leaf, evidenceByStep, runParams));
 }
 
 /**
@@ -223,9 +267,9 @@ export function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord
     // Trigger rule evaluation.
     if (!triggerRuleSatisfied(step, run)) continue;
 
-    // when-condition evaluation.
+    // when-condition evaluation (string | string[] implicit-AND).
     if (step.when !== undefined) {
-      if (!evaluateWhenCondition(step.when, evidenceByStep, run.params)) continue;
+      if (!evaluateWhen(step.when, evidenceByStep, run.params)) continue;
     }
 
     eligible.push(stepName);
@@ -264,10 +308,10 @@ export function findEligibleGuardSteps(definition: WorkflowDefinition, run: RunR
     // Trigger rule evaluation.
     if (!triggerRuleSatisfied(step, run)) continue;
 
-    // when-condition evaluation.
+    // when-condition evaluation (string | string[] implicit-AND).
     if (step.when !== undefined) {
       const evidenceByStep = buildEvidenceByStep(run);
-      if (!evaluateWhenCondition(step.when, evidenceByStep, run.params)) continue;
+      if (!evaluateWhen(step.when, evidenceByStep, run.params)) continue;
     }
 
     eligible.push(stepName);
@@ -386,10 +430,7 @@ export function propagateSkips(run: RunRecord, definition: WorkflowDefinition): 
             tempRun.failed_steps.includes(d) ||
             skipped.includes(d),
         );
-        if (
-          allDepsSettled &&
-          !evaluateWhenCondition(step.when, buildEvidenceByStep(run), run.params)
-        ) {
+        if (allDepsSettled && !evaluateWhen(step.when, buildEvidenceByStep(run), run.params)) {
           skipped.push(stepName);
           changed = true;
         }

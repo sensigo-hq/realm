@@ -4,6 +4,7 @@
 // Unknown references are left as-is. Object/array values are JSON-stringified.
 import type { WorkflowContextSnapshot } from '../types/run-record.js';
 import type { ContextWrapperFormat } from '../types/workflow-definition.js';
+import { splitOnUnquotedDelimiter } from './comparison-expr.js';
 
 /**
  * Resolves a dot-path like "context.resources.review_security.findings"
@@ -391,36 +392,8 @@ function stripOuterQuotes(token: string): string {
   return token;
 }
 
-// Splits input on every occurrence of delimiter that is not inside a quoted string.
-// Single or double quotes both open/close quote state; the other quote type is ignored
-// while inside a quote. delimiter must be a single character.
-// Returns raw substrings — no trimming, no quote stripping.
-function splitOnUnquotedDelimiter(input: string, delimiter: string): string[] {
-  const segments: string[] = [];
-  let current = '';
-  let inSingle = false;
-  let inDouble = false;
-  for (const ch of input) {
-    if (ch === '"' && !inSingle) {
-      inDouble = !inDouble;
-      current += ch;
-      continue;
-    }
-    if (ch === "'" && !inDouble) {
-      inSingle = !inSingle;
-      current += ch;
-      continue;
-    }
-    if (ch === delimiter && !inSingle && !inDouble) {
-      segments.push(current);
-      current = '';
-      continue;
-    }
-    current += ch;
-  }
-  segments.push(current);
-  return segments;
-}
+// splitOnUnquotedDelimiter now lives in comparison-expr.ts (shared with condition splitting) and is
+// imported above — keeping one quote-aware primitive across template rendering and condition parsing.
 
 function splitOnUnquotedPipes(expr: string): string[] {
   return splitOnUnquotedDelimiter(expr, '|');

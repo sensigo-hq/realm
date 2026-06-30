@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+> **Version intent: 0.12.0** (a breaking change on a 0.x line bumps the minor segment). Version constants are bumped at release time.
+
+### Changed
+
+- **BREAKING — corrected `when` absent-operand semantics.** When a `when` leaf's left-hand path is unresolved, the engine no longer lets `undefined` flow into the comparison (which made `undefined != null` → `true`, so a clause mis-fired). New per-operator behavior on an **absent** LHS: `== null` → **true**, `!= null` → **false** (presence tests, loose null), `!= '<non-null>'` → **false** (was `true`), relational `> < >= <=` → **false**; equality/relational on a **resolved** LHS is unchanged. A **present-`null`** LHS with a relational op is now **false** (numeric guard) instead of `true` (the old JS `null → 0` coercion). Symmetric `undefined → false` is deliberate. (External consequence: `run.params.mode != 'shadow'` now skips when `mode` is absent rather than firing — safe in practice; an external-workflow concern.)
+- **BREAKING — compound `when` strings are rejected at load.** `when:` never supported boolean composition; a compound string like `"A == x and B != y"` previously misparsed silently (latched a stray operator → always-true). It is now a loud, actionable load error pointing to the list form. The same load rejection now also applies to compound `abort_unless` / `preconditions` leaves (previously silently mis-evaluated; zero such clauses in known workflows).
+
+### Added
+
+- **`when: string[]` (implicit AND).** `when` is now `string | string[]`; an array ANDs its leaves (mirrors `abort_unless`). An empty array is a load error. `any`/OR is not added.
+- **Load-time condition validation across `when` / `abort_unless` / `preconditions`** via a shared zero-dependency quote-aware splitter (`comparison-expr.ts`): every leaf must be a single comparison (or, for `when`/`abort_unless`, a bare path) with a path-shaped LHS — compound / multi-operator / non-path leaves are rejected with actionable errors. The same splitter is used at runtime, so validation and evaluation never diverge.
+- **`when` direct-`depends_on` reference check (load-time).** A `when` leaf's `step.field` must reference `run.params.*` or a step in that step's direct `depends_on` (one-hop) — a mistyped/undeclared step name is now a load error.
+
+---
+
 ## [0.11.0] — 2026-06-27
 
 ### Added

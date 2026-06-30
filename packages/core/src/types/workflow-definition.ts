@@ -112,14 +112,21 @@ export interface StepDefinition {
    */
   trigger_rule?: TriggerRule;
   /**
-   * Optional condition expression evaluated against prior step evidence or run params.
-   * Step is ineligible until this expression is truthy.
+   * Optional condition controlling step eligibility — the step is ineligible until it is truthy.
+   * A single string is one comparison/bare-path leaf; a `string[]` is the **implicit AND** of its
+   * leaves (every leaf must hold). Compound `and`/`or` *inside a string* is rejected at load — use
+   * the array form instead. An empty array is rejected.
+   *
+   * Leaf grammar: `<path> <op> <literal>` (`op` ∈ `== != > >= < <=`) or a bare `<path>` (truthy test).
    * Path forms:
-   *   step_id.field        — prior step output (e.g. "classify.category == 'billing'")
-   *   run.params.field     — run start params (e.g. "run.params.mode == 'live'")
-   * Single expression only — compound conditions (AND/OR) are not supported.
+   *   step_id.field    — prior step output; the step must be in this step's `depends_on` (one-hop)
+   *   run.params.field — run start params (`when` only)
+   *
+   * Unresolved-LHS semantics: `== null` / `!= null` are presence tests (loose null, covering missing
+   * and present-null); relational ops require both operands numeric (else false); any other op on an
+   * absent LHS is false. A resolved LHS uses strict equality / numeric-guarded relational comparison.
    */
-  when?: string;
+  when?: string | string[];
   /**
    * Array of condition expressions evaluated against prior step evidence.
    * All conditions are evaluated; the run aborts (run_phase: 'aborted') if any is false.
