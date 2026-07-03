@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 // realm-mcp — MCP server exposing the Realm workflow engine to AI agents.
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -106,10 +108,20 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
 }
 
 // Entry point: start the MCP server on stdio when run directly.
-if (
-  process.argv[1] !== undefined &&
-  import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))
-) {
+// argv[1] is realpath-resolved because npm/npx bin shims invoke this file through
+// a symlink (node_modules/.bin/realm-mcp), while import.meta.url holds the resolved
+// target path — a plain string comparison never matches and the process would exit
+// silently without connecting the transport.
+function isRunDirectly(): boolean {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isRunDirectly()) {
   const server = createRealmMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
