@@ -102,3 +102,26 @@ export default { adapters: { github: adapter } };`,
     expect(runRegistry.has('adapter', 'github')).toBe(true);
   });
 });
+
+describe('legacy tier deprecation warning', () => {
+  it('warns when the env tier fires, silent when it does not', async () => {
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (msg: string) => void warns.push(String(msg));
+    try {
+      process.env['GITHUB_TOKEN'] = 'tok';
+      composeAgentRegistry(await loadProjectExtensions(makeDefinition()));
+      expect(warns.join('\n')).toContain('Deprecated: env-gated adapter registration');
+      expect(warns.join('\n')).toContain('github (GITHUB_TOKEN)');
+      expect(warns.join('\n')).toContain('v0.14.0');
+      warns.length = 0;
+      delete process.env['GITHUB_TOKEN'];
+      delete process.env['SLACK_WEBHOOK_URL'];
+      clearProjectExtensionsCache();
+      composeAgentRegistry(await loadProjectExtensions(makeDefinition()));
+      expect(warns).toEqual([]);
+    } finally {
+      console.warn = orig;
+    }
+  });
+});

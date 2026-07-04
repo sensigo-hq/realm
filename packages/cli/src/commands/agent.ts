@@ -37,17 +37,31 @@ export function composeAgentRegistry(loaded: {
   manifest: ExtensionManifest;
 }): ExtensionRegistry {
   const registry = loaded.registry.clone();
-  if (process.env['GITHUB_TOKEN'] !== undefined && !loaded.manifest.adapters.includes('github'))
+  const legacyFired: string[] = [];
+  if (process.env['GITHUB_TOKEN'] !== undefined && !loaded.manifest.adapters.includes('github')) {
+    legacyFired.push('github (GITHUB_TOKEN)');
     registry.register(
       'adapter',
       'github',
       new GitHubAdapter('github', { auth: { token: process.env['GITHUB_TOKEN'] } }),
     );
-  if (process.env['SLACK_WEBHOOK_URL'] !== undefined && !loaded.manifest.adapters.includes('slack'))
+  }
+  if (
+    process.env['SLACK_WEBHOOK_URL'] !== undefined &&
+    !loaded.manifest.adapters.includes('slack')
+  ) {
+    legacyFired.push('slack (SLACK_WEBHOOK_URL)');
     registry.register(
       'adapter',
       'slack',
       new SlackAdapter('slack', { webhook_url: process.env['SLACK_WEBHOOK_URL'] }),
+    );
+  }
+  if (legacyFired.length > 0)
+    console.warn(
+      `Deprecated: env-gated adapter registration (${legacyFired.join(', ')}) will be removed in ` +
+        `v0.14.0 — declare these adapters in a project extensions module instead ` +
+        `(docs/reference/project-extensions.md).`,
     );
   return registry;
 }
