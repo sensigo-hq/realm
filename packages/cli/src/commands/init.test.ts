@@ -45,4 +45,26 @@ describe('initWorkflow', () => {
     expect(def.steps).toHaveProperty('step_one');
     expect(def.steps).toHaveProperty('finalize');
   });
+
+  it('scaffolds a commented extensions line and a registry.sample.js (nothing active by default)', async () => {
+    const target = join(baseDir, 'ext-workflow');
+    await initWorkflow('ext-workflow', target);
+
+    const yaml = await readFile(join(target, 'workflow.yaml'), 'utf8');
+    expect(yaml).toContain('# extensions: ./registry.js');
+    expect(yaml).toContain('docs/reference/project-extensions.md');
+    // Commented out — the loader must see no extensions key.
+    expect(loadWorkflowFromString(yaml).extensions).toBeUndefined();
+
+    const sample = await readFile(join(target, 'registry.sample.js'), 'utf8');
+    expect(sample).toContain('export default {');
+    expect(sample).toContain('// adapters: {');
+    expect(sample).toContain('// handlers: {');
+    expect(sample).toContain('// processors: {');
+    expect(sample).toContain('docs/reference/project-extensions.md');
+    // The sample is valid JS whose default export declares nothing.
+    const dataUrl = `data:text/javascript;base64,${Buffer.from(sample).toString('base64')}`;
+    const mod = (await import(dataUrl)) as { default: Record<string, unknown> };
+    expect(mod.default).toEqual({});
+  });
 });

@@ -139,6 +139,17 @@ When no registered workflow matches the task, the agent calls `create_workflow` 
 
 **Multiple workflows:** register as many as you need with `realm workflow register`. The agent discovers them all via `list_workflows` and picks the right one by ID. Add a `skill.md` alongside each workflow for workflow-specific agent behaviour.
 
+## Project extensions
+
+Workflows can declare their own custom adapters, step handlers, and processors — no wrapper servers, no per-command wiring:
+
+```yaml
+# workflow.yaml
+extensions: ./registry.js # relative module path(s); the default export declares { adapters, handlers, processors }
+```
+
+Every step-executing entry point (`run`, `agent`, `listen`, `serve`, `mcp`, `test`, `validate`) resolves the declaration identically, with fail-fast loading and an enforced trust boundary. See [docs/reference/project-extensions.md](docs/reference/project-extensions.md).
+
 ## CLI Reference
 
 | Command                          | Description                                                                             |
