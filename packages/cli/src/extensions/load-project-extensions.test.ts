@@ -7,7 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
-import { loadProjectExtensions, clearProjectExtensionsCache } from './load-project-extensions.js';
+import {
+  loadProjectExtensions,
+  clearProjectExtensionsCache,
+  makeRegistryProvider,
+} from './load-project-extensions.js';
 
 /** A declarative module contributing one adapter, one handler, one processor. */
 const FULL_MODULE_SOURCE = `
@@ -312,5 +316,55 @@ describe('loadProjectExtensions — override module', () => {
       overrideModule: overrideModule.file,
     });
     expect(registry.getAdapter('solo')).toBeDefined();
+  });
+});
+
+describe('makeRegistryProvider', () => {
+  it('resolves each definition through the loader (extension entries present)', async () => {
+    const { declared } = writeModule(FULL_MODULE_SOURCE);
+    const provider = makeRegistryProvider();
+    const registry = await provider(makeDefinition({ extensions: [declared] }));
+    expect(registry.getAdapter('gorgias_custom')).toBeDefined();
+    expect(registry.getHandler('check_offer_phrase')).toBeDefined();
+  });
+
+  it('returns the extension-less default registry for extension-free definitions', async () => {
+    const provider = makeRegistryProvider();
+    const registry = await provider(
+      makeDefinition({ source_dir: undefined, trust_root: undefined }),
+    );
+    expect(registry.getAdapter('filesystem')).toBeDefined();
+    expect(registry.names('handler')).toEqual([]);
+  });
+
+  it('propagates loader errors (broken module rejects the provider call)', async () => {
+    const { declared } = writeModule(`export default { handler: {} };`);
+    const provider = makeRegistryProvider();
+    await expect(provider(makeDefinition({ extensions: [declared] }))).rejects.toThrow(
+      /unknown key 'handler'/,
+    );
+  });
+
+  it('honors the override module (declared modules replaced)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const declaredModule = writeModule(
+      `export default { handlers: { declared_h: { id: 'declared_h', execute: async () => ({ data: {} }) } } };`,
+    );
+    const overrideModule = writeModule(
+      `export default { handlers: { override_h: { id: 'override_h', execute: async () => ({ data: {} }) } } };`,
+    );
+    const provider = makeRegistryProvider(overrideModule.file);
+    const registry = await provider(makeDefinition({ extensions: [declaredModule.declared] }));
+    expect(registry.getHandler('override_h')).toBeDefined();
+    expect(registry.getHandler('declared_h')).toBeUndefined();
+  });
+
+  it('hits the process-lifetime cache — repeated calls return the identical registry instance', async () => {
+    const { declared } = writeModule(FULL_MODULE_SOURCE);
+    const provider = makeRegistryProvider();
+    const definition = makeDefinition({ extensions: [declared] });
+    const first = await provider(definition);
+    const second = await provider(definition);
+    expect(second).toBe(first);
   });
 });
