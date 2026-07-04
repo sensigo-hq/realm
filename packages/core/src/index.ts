@@ -72,6 +72,7 @@ export type {
 export type { Processor, ProcessorInput, ProcessorOutput } from './extensions/processor.js';
 export { ExtensionRegistry } from './extensions/registry.js';
 export { createDefaultRegistry } from './extensions/default-registry.js';
+export type { ExtensionManifest, ExtensionModuleRef } from './extensions/manifest.js';
 
 // Evidence
 export { captureEvidence } from './evidence/snapshot.js';

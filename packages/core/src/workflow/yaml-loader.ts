@@ -1,6 +1,6 @@
 // Workflow YAML loader — parses workflow.yaml files into typed WorkflowDefinition objects.
 import { readFileSync, existsSync } from 'node:fs';
-import { dirname, resolve, join } from 'node:path';
+import { dirname, resolve, join, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { load } from 'js-yaml';
 import { Ajv } from 'ajv';
@@ -119,6 +119,63 @@ const VALID_TRIGGER_RULES = new Set<TriggerRule>([
 ]);
 
 /**
+ * JSON Schema (Ajv strict) for the top-level `extensions` key: a non-empty module path or a
+ * non-empty array of them. Relative-path enforcement is a separate explicit check (isAbsolute)
+ * so the error message can be actionable.
+ */
+const EXTENSIONS_JSON_SCHEMA = {
+  anyOf: [
+    { type: 'string', minLength: 1 },
+    { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 } },
+  ],
+};
+
+/**
+ * Validates the authored `extensions` value: `string | string[]`, every entry a non-empty
+ * RELATIVE path. Returns actionable error strings (empty = valid).
+ */
+function validateExtensionsDeclaration(rawExtensions: unknown): string[] {
+  const errors: string[] = [];
+  const ajv = new Ajv({ strict: true });
+  if (!ajv.validate(EXTENSIONS_JSON_SCHEMA, rawExtensions)) {
+    errors.push(
+      `'extensions' must be a non-empty module path or a non-empty array of module paths ` +
+        `(e.g. extensions: ./dist/registry.js)`,
+    );
+    return errors;
+  }
+  const entries = typeof rawExtensions === 'string' ? [rawExtensions] : (rawExtensions as string[]);
+  for (const entry of entries) {
+    if (entry.trim() === '') {
+      errors.push(`'extensions' entries must be non-empty module paths`);
+    } else if (isAbsolute(entry)) {
+      errors.push(
+        `'extensions' entry '${entry}' is an absolute path — extension modules must be declared ` +
+          `RELATIVE to the workflow directory (e.g. ../dist/registry.js)`,
+      );
+    }
+  }
+  return errors;
+}
+
+/**
+ * Finds the trust root for extension resolution: the nearest ancestor of `dir` (inclusive)
+ * containing `package.json` or `.git`; falls back to `dir` itself when no such ancestor exists.
+ * Derived once, at registration time, from an operator-given path — never at execution time.
+ */
+function findTrustRoot(dir: string): string {
+  let current = dir;
+  for (;;) {
+    if (existsSync(join(current, 'package.json')) || existsSync(join(current, '.git'))) {
+      return current;
+    }
+    const parent = dirname(current);
+    if (parent === current) return dir;
+    current = parent;
+  }
+}
+
+/**
  * Loads a WorkflowDefinition from a YAML file on disk.
  * @throws WorkflowError on read failure or structural validation errors.
  */
@@ -138,7 +195,7 @@ export function loadWorkflowFromFile(
       retryable: false,
     });
   }
-  const definition = loadWorkflowFromString(content, registry);
+  const definition = parseWorkflowString(content, registry, { allowExtensions: true });
 
   // Resolve agent profiles — only possible when we have a file path.
   const workflowDir = dirname(resolve(filePath));
@@ -249,6 +306,16 @@ export function loadWorkflowFromFile(
     };
   }
 
+  // Project extensions: normalize to array (authored relative paths untouched) and stamp
+  // resolution metadata. Core resolves/stores PATHS only — it never imports the modules;
+  // loading lives in the CLI composition layer (loadProjectExtensions).
+  if (definition.extensions !== undefined) {
+    definition.extensions =
+      typeof definition.extensions === 'string' ? [definition.extensions] : definition.extensions;
+    definition.source_dir = workflowDir;
+    definition.trust_root = findTrustRoot(workflowDir);
+  }
+
   definition.origin = 'human';
 
   return definition;
@@ -257,11 +324,27 @@ export function loadWorkflowFromFile(
 /**
  * Loads a WorkflowDefinition from a YAML string.
  * Validates structure and DAG dependency references.
+ * A declared `extensions` key is a hard load error — extensions require file-based loading
+ * (no directory context exists to resolve relative extension module paths against).
  * @throws WorkflowError on parse failure or structural validation errors.
  */
 export function loadWorkflowFromString(
   content: string,
   registry?: ExtensionRegistry,
+): WorkflowDefinition {
+  return parseWorkflowString(content, registry, { allowExtensions: false });
+}
+
+/**
+ * Shared YAML → WorkflowDefinition parser. `allowExtensions` distinguishes file-based loading
+ * (extensions permitted — a directory context exists) from string-based loading (hard error,
+ * fired before any other processing).
+ * @throws WorkflowError on parse failure or structural validation errors.
+ */
+function parseWorkflowString(
+  content: string,
+  registry: ExtensionRegistry | undefined,
+  opts: { allowExtensions: boolean },
 ): WorkflowDefinition {
   // Step 1: Parse YAML
   let raw: unknown;
@@ -292,6 +375,26 @@ export function loadWorkflowFromString(
   }
 
   const doc = raw as Record<string, unknown>;
+
+  // Project extensions: hard error for string-based loading (fires before any other
+  // processing); shape validation (string | string[], relative-only) for file-based loading.
+  if ('extensions' in doc && doc['extensions'] !== undefined) {
+    if (!opts.allowExtensions) {
+      throw new WorkflowError(
+        `Invalid workflow: 'extensions' requires file-based loading — no directory context is ` +
+          `available to resolve extension module paths. Register this workflow from its YAML ` +
+          `file (realm workflow register <path>).`,
+        {
+          code: 'VALIDATION_WORKFLOW_SCHEMA',
+          category: 'VALIDATION',
+          agentAction: 'report_to_user',
+          retryable: false,
+        },
+      );
+    }
+    errors.push(...validateExtensionsDeclaration(doc['extensions']));
+  }
+
   const REQUIRED_TOP_LEVEL = ['id', 'name', 'version', 'steps'];
   for (const field of REQUIRED_TOP_LEVEL) {
     if (!(field in doc)) {

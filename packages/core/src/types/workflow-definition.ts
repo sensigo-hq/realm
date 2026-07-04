@@ -303,6 +303,29 @@ export interface WorkflowDefinition {
    *  Falls back to <workflow-dir>/profiles/ if omitted. */
   profiles_dir?: string;
   /**
+   * Optional project extension module path(s) — RELATIVE to the workflow directory.
+   * Authored as `string | string[]`; loadWorkflowFromFile normalizes to `string[]` and the
+   * authored relative paths are stored untouched. Absolute paths and empty strings/arrays
+   * are rejected at load time. Requires file-based loading — loadWorkflowFromString rejects
+   * a declared `extensions` key (no directory context). Core resolves and stores PATHS only;
+   * module loading lives in the CLI composition layer (loadProjectExtensions).
+   */
+  extensions?: string | string[];
+  /**
+   * Absolutized workflow directory, stamped by loadWorkflowFromFile when `extensions` is
+   * declared (precedent: workflow_context path absolutization). Extension paths resolve
+   * against this directory. Runtime-only — never write to workflow YAML.
+   */
+  source_dir?: string;
+  /**
+   * Containment root for extension resolution: nearest ancestor of source_dir (inclusive)
+   * containing package.json or .git; fallback source_dir itself. Stamped at registration
+   * time from an operator-given path — this is NOT execution-time discovery-walking.
+   * The loader refuses any extension module resolving outside this root (realpath-compared).
+   * Runtime-only — never write to workflow YAML.
+   */
+  trust_root?: string;
+  /**
    * Map of resolved profile content keyed by profile name.
    * Populated by loadWorkflowFromFile — absent when loaded from string.
    * Do not serialize/write to workflow YAML — this is a runtime-only field.
