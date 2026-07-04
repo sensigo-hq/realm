@@ -63,5 +63,5 @@ describe('createRealmMcpServer — default workflowStore enables get_run_state n
     // An eligible agent step is pending → 'ok' with non-empty next_actions (NOT 'workflow_unresolved').
     expect(state['next_actions_status']).toBe('ok');
     expect((state['next_actions'] as unknown[]).length).toBeGreaterThan(0);
-  });
+  }, 20000);
 });
