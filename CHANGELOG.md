@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **First-class project extensions** (issue #117). Workflows declare custom adapter/handler/processor modules in YAML — `extensions: <relative path> | <relative path>[]` — and every step-executing or config-validating entry point (`run`, `agent`, `listen` children, `serve`, `mcp`, `test`, `validate`, `register`, `watch`) resolves them through ONE shared loader. Consumers no longer need bespoke MCP wrapper servers.
+  - **Core (`@sensigo/realm`)**: `extensions` schema (relative-only; string-based loading rejects the key — no directory context); `loadWorkflowFromFile` stamps `source_dir` + `trust_root` (nearest `package.json`/`.git` ancestor) on the definition — core resolves PATHS only, never imports modules; `ExtensionRegistry.has()`/`names()`; new `ExtensionManifest` type; the adapter-not-registered error now hints at `extensions:` when the definition declares none.
+  - **CLI (`@sensigo/realm-cli`)**: `loadProjectExtensions()` — realpath containment within the trust root, duck-typed validation of the declarative default export (`{ adapters?, handlers?, processors? }`), collision policy (built-in override → WARN; duplicate across modules → ERROR), jiti-from-consumer-project for `.ts` modules, process-lifetime registry cache (restart to pick up module changes). `--extensions-module <path>` repair/override flag on `agent`, `run`, `serve`, `mcp`, `validate`, `test`. `agent --run-id` failure semantics: pre-execution extension-load failure writes `terminal_reason: 'extensions_load_failed'` (re-attach clears exactly that reason and retries); in-flight runs are never mutated by a failed attach.
+  - **MCP (`@sensigo/realm-mcp`)**: `RealmMcpServerOptions.registryProvider` — per-definition registry resolution awaited BEFORE `runStore.create` in `start_run`/`start_run_batch` and before execution in `execute_step` (provider wins over `registry`). `create_workflow` rejects `extensions` (register-time, operator-only).
+  - **Testing (`@sensigo/realm-testing`)**: `RunFixtureTestsOptions.extensions` — extension handlers/processors run REAL in fixtures; every extension adapter the fixture does not mock gets a tripwire that fails the fixture (in both the execution-loop and dispatcher-fallback paths) and enumerates unmatched mock keys.
+  - Docs: new `docs/reference/project-extensions.md` (module contract, precedence, trust model), plus `yaml-schema.md` / `cli-commands.md` sections.
+
+### Changed
+
+- **`realm listen` no longer re-registers workflows per webhook.** Routed workflows are registered ONCE at startup (the per-webhook `workflowStore.register` silently reverted fresher registrations). Restart `realm listen` after re-registering a workflow. Startup also fail-fast loads each routed workflow's extension modules (imported in the listen parent).
+
+---
+
 ## [0.12.1] — 2026-07-04
 
 ### Fixed

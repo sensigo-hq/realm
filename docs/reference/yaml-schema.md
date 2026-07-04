@@ -6,20 +6,21 @@ Complete reference for `workflow.yaml` fields. Every field documented here is va
 
 ## Top-level fields
 
-| Field              | Type    | Required | Description                                                                                                                  |
-| ------------------ | ------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `id`               | string  | Yes      | Unique workflow identifier. Used in all CLI commands and MCP tool calls.                                                     |
-| `name`             | string  | Yes      | Human-readable workflow name.                                                                                                |
-| `version`          | integer | Yes      | Workflow version number. Incremented on each `realm workflow register`.                                                      |
-| `params_schema`    | object  | No       | JSON Schema for the params accepted by `start_run`. The agent's `call_with.params` skeleton is derived from this at runtime. |
-| `services`         | object  | No       | Named service definitions. Referenced by steps via `uses_service`.                                                           |
-| `steps`            | object  | Yes      | Map of step name → step definition.                                                                                          |
-| `protocol`         | object  | No       | Optional protocol customisations. See [Protocol](#protocol-customisation).                                                   |
-| `profiles_dir`     | string  | No       | Path to agent profile files, relative to the workflow YAML. Defaults to `profiles/` in the same directory.                   |
-| `workflow_context` | object  | No       | Named file entries loaded once at run start and available in all step prompts. See [Workflow context](#workflow-context).    |
-| `context_wrapper`  | string  | No       | Wrapper format applied to `{{ workflow.context.NAME }}` references. One of `xml` (default), `brackets`, `none`.              |
-| `mcp_servers`      | array   | No       | External MCP server definitions. Steps reference these via `tools`. See [MCP servers](#mcp-servers).                         |
-| `trigger`          | object  | No       | Webhook trigger. When set, `realm listen` routes inbound webhooks to this workflow. See [Webhook trigger](#webhook-trigger). |
+| Field              | Type               | Required | Description                                                                                                                  |
+| ------------------ | ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `id`               | string             | Yes      | Unique workflow identifier. Used in all CLI commands and MCP tool calls.                                                     |
+| `name`             | string             | Yes      | Human-readable workflow name.                                                                                                |
+| `version`          | integer            | Yes      | Workflow version number. Incremented on each `realm workflow register`.                                                      |
+| `params_schema`    | object             | No       | JSON Schema for the params accepted by `start_run`. The agent's `call_with.params` skeleton is derived from this at runtime. |
+| `services`         | object             | No       | Named service definitions. Referenced by steps via `uses_service`.                                                           |
+| `steps`            | object             | Yes      | Map of step name → step definition.                                                                                          |
+| `protocol`         | object             | No       | Optional protocol customisations. See [Protocol](#protocol-customisation).                                                   |
+| `profiles_dir`     | string             | No       | Path to agent profile files, relative to the workflow YAML. Defaults to `profiles/` in the same directory.                   |
+| `workflow_context` | object             | No       | Named file entries loaded once at run start and available in all step prompts. See [Workflow context](#workflow-context).    |
+| `context_wrapper`  | string             | No       | Wrapper format applied to `{{ workflow.context.NAME }}` references. One of `xml` (default), `brackets`, `none`.              |
+| `mcp_servers`      | array              | No       | External MCP server definitions. Steps reference these via `tools`. See [MCP servers](#mcp-servers).                         |
+| `trigger`          | object             | No       | Webhook trigger. When set, `realm listen` routes inbound webhooks to this workflow. See [Webhook trigger](#webhook-trigger). |
+| `extensions`       | string \| string[] | No       | Project extension module path(s), **relative to the workflow directory**. See [Project extensions](#project-extensions).     |
 
 ---
 
@@ -1105,3 +1106,51 @@ before the run is created (invalid → `400`).
 
 > **Note:** the `trigger` block configures _how a webhook reaches the workflow_; it does not change the
 > workflow's steps. It has no effect unless the workflow is served by `realm listen`.
+
+---
+
+## Project extensions
+
+```yaml
+# workflow.yaml
+extensions: ../../dist/registry.js # string | string[] — RELATIVE paths only
+```
+
+Declares the ES module(s) providing this workflow's custom adapters, step handlers, and
+processors. Every step-executing or config-validating entry point (`run`, `agent`, `listen`
+children, `serve`, `mcp`, `test`, `validate`, `register`, `watch`) resolves the same declaration
+identically — no bespoke MCP wrappers or per-command wiring.
+
+**Contract:**
+
+- `string | string[]` — one or more module paths. Empty strings and empty arrays are rejected.
+- Paths are **relative to the workflow directory** — absolute paths are rejected at load time.
+- Requires **file-based loading**: registering the same YAML from a string (or via the MCP
+  `create_workflow` tool) is a hard error — there is no directory context to resolve against.
+- Each module's **default export** is a declarative object (see
+  [Project extensions guide](project-extensions.md) for the full contract):
+
+```js
+// registry.js
+export default {
+  adapters: { gorgias: new GorgiasAdapter('gorgias', { ... }) },
+  handlers: { check_offer_phrase_handler: myHandler },
+  processors: { normalize_offer: myProcessor },
+};
+```
+
+**Trust-root containment:** at registration time the loader records the workflow directory
+(`source_dir`) and its **trust root** — the nearest ancestor directory containing `package.json`
+or `.git` (falling back to the workflow directory itself). Declared paths resolve against the
+workflow directory and must land (realpath-resolved, symlinks included) **inside the trust
+root**; anything escaping it is refused. This keeps declarations like `../../dist/registry.js`
+working in a normal project layout while making the workflow store unusable as a
+load-arbitrary-code vector.
+
+**TypeScript:** compiled JS is the default. A declared `.ts`/`.mts` path loads through
+[`jiti`](https://github.com/unjs/jiti) **resolved from your project's own `node_modules`** —
+install it there (`npm install --save-dev jiti`) or compile to JS. jiti is never resolved from
+the Realm CLI install.
+
+See the full [Project extensions guide](project-extensions.md) for the module contract,
+collision/precedence rules, and the trust model.
