@@ -10,12 +10,14 @@ import {
   makeListenHandler,
   buildRouteTable,
   normalizeHeaders,
+  prepareListenWorkflows,
   type ListenDeps,
   type Logger,
   type WorkflowEntry,
   type SpawnResult,
 } from './listen.js';
 import { InMemoryDedupStore } from '../lib/dedup-store.js';
+import type { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 
 const SECRET = 'Bearer s3cr3t';
 const ENV = { GORGIAS_TOKEN: SECRET, HMAC_SECRET: 'hmac-key', GH_SECRET: 'gh-key' };
@@ -465,5 +467,46 @@ describe('buildRouteTable — startup (fail-closed)', () => {
       logger: silentLogger,
     });
     expect(routes.has('/gorgias-wf')).toBe(true);
+  });
+});
+
+describe('project extensions — listen startup and webhook pipeline', () => {
+  const okLoader = (): typeof loadProjectExtensions =>
+    vi.fn(async () => ({
+      registry: {} as never,
+      manifest: { modules: [], adapters: [], handlers: [], processors: [] },
+    })) as unknown as typeof loadProjectExtensions;
+
+  it('prepareListenWorkflows registers each routed workflow ONCE and loads its extensions', async () => {
+    const deps = makeDeps();
+    const routes = routesFor(wf(SHARED_SECRET_TRIGGER));
+    const loader = okLoader();
+    await prepareListenWorkflows(routes, deps, loader);
+    expect(deps.workflowStore.register).toHaveBeenCalledTimes(1);
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  it('prepareListenWorkflows fails fast on a broken extensions module', async () => {
+    const deps = makeDeps();
+    const routes = routesFor(wf(SHARED_SECRET_TRIGGER));
+    const brokenLoader = vi.fn(async () => {
+      throw new Error('broken extensions module');
+    }) as unknown as typeof loadProjectExtensions;
+    await expect(prepareListenWorkflows(routes, deps, brokenLoader)).rejects.toThrow(
+      'broken extensions module',
+    );
+  });
+
+  it('a dispatched webhook does NOT re-register the workflow (per-webhook register removed)', async () => {
+    const deps = makeDeps();
+    const handler = makeListenHandler(routesFor(wf(SHARED_SECRET_TRIGGER)), deps);
+    const { status } = await invoke(handler, {
+      url: '/wf',
+      headers: { ...JSON_CT, authorization: SECRET },
+      body: '{}',
+    });
+    expect(status).toBe(202);
+    expect(deps.spawnAgent).toHaveBeenCalledOnce();
+    expect(deps.workflowStore.register).not.toHaveBeenCalled();
   });
 });

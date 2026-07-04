@@ -1,8 +1,28 @@
 // realm register <path> — validates and registers a workflow from a YAML file.
+// Registering MINTS the trust decision for project extensions: when the workflow declares
+// `extensions:`, the modules are fully loaded + duck-validated and step config is validated
+// against the resolved adapters' config_schema (two-pass) BEFORE anything is persisted.
 import { Command } from 'commander';
 import { join } from 'node:path';
 import { loadWorkflowFromFile, JsonWorkflowStore } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
+import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+
+/**
+ * Loads and validates a workflow for registration. Extension-declaring workflows get the
+ * full extension load + config_schema two-pass; extension-free workflows are untouched.
+ * @throws on any validation or extension-load failure — nothing is persisted on throw.
+ */
+export async function loadWorkflowForRegistration(filePath: string): Promise<WorkflowDefinition> {
+  const definition = loadWorkflowFromFile(filePath);
+  if (definition.extensions !== undefined) {
+    const { registry } = await loadProjectExtensions(definition);
+    // Two-pass: re-validate with the resolved registry so step config is checked against
+    // each custom adapter's config_schema before the definition is persisted.
+    loadWorkflowFromFile(filePath, registry);
+  }
+  return definition;
+}
 
 export const registerCommand = new Command('register')
   .argument('<path>', 'Path to workflow directory or workflow.yaml file')
@@ -14,7 +34,7 @@ export const registerCommand = new Command('register')
         : join(inputPath, 'workflow.yaml');
 
     try {
-      const definition = loadWorkflowFromFile(filePath);
+      const definition = await loadWorkflowForRegistration(filePath);
       const store = new JsonWorkflowStore();
       await store.register(definition);
       const contextWarnings = lintWorkflowContext(definition);

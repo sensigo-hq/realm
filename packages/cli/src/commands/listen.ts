@@ -38,6 +38,7 @@ import {
 } from '../lib/webhook-verifiers.js';
 import { extractParams, extractDedupId, resolveDotPath } from '../lib/webhook-params.js';
 import { FileDedupStore, InMemoryDedupStore, type DedupStore } from '../lib/dedup-store.js';
+import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 
 const DEFAULT_TTL_MINUTES = 60;
 // Fixed signature-header names for the body-signature presets.
@@ -363,7 +364,8 @@ export function makeListenHandler(
       }
 
       // 10. Create run via Realm's own infra. dedupId doubles as the run store's idempotency backstop.
-      await deps.workflowStore.register(entry.definition);
+      // Workflows are registered ONCE at startup (prepareListenWorkflows) — the old per-webhook
+      // register silently reverted fresher registrations. Restart listen after re-registering.
       let run;
       try {
         // `created` is intentionally unused here: the DedupStore.check() above already
@@ -500,6 +502,35 @@ export function buildRouteTable(
     deps.logger.info('listen: mounted', { workflow: definition.id, path, mode: auth.mode });
   }
   return routes;
+}
+
+/**
+ * Startup preparation for the routed workflows (fail-fast — any error must abort startup):
+ *  - registers each routed workflow ONCE (the per-webhook `workflowStore.register` was removed:
+ *    it silently reverted fresher registrations; restart listen after re-registering);
+ *  - loads each workflow's project extension modules. NOTE: the modules are imported in the
+ *    LISTEN PARENT process here — top-level side effects run in the parent (the cost of
+ *    fail-fast). Children re-resolve at spawn via `realm agent --run-id`; their failure branch
+ *    writes terminal_reason 'extensions_load_failed' on the run.
+ */
+export async function prepareListenWorkflows(
+  routes: Map<string, WorkflowEntry>,
+  deps: Pick<ListenDeps, 'workflowStore' | 'logger'>,
+  loadExtensions: typeof loadProjectExtensions = loadProjectExtensions,
+): Promise<void> {
+  for (const entry of routes.values()) {
+    await deps.workflowStore.register(entry.definition);
+    const { manifest } = await loadExtensions(entry.definition);
+    if (manifest.modules.length > 0) {
+      deps.logger.info('listen: extensions loaded', {
+        workflow: entry.definition.id,
+        modules: manifest.modules.map((m) => m.resolved),
+        adapters: manifest.adapters,
+        handlers: manifest.handlers,
+        processors: manifest.processors,
+      });
+    }
+  }
 }
 
 export interface ListenOptions {
@@ -678,6 +709,17 @@ export const listenCommand = new Command('listen')
       clock: () => Date.now(),
       logger,
     };
+
+    // Register routed workflows once + load their extension modules — fail-fast on any error.
+    try {
+      await prepareListenWorkflows(routes, deps);
+    } catch (err) {
+      console.error(
+        `Error: listen startup failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+      return;
+    }
 
     const handle = await startListen(
       routes,
