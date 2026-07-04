@@ -83,6 +83,10 @@ function normalizeDeclared(extensions: string | string[] | undefined): string[] 
  *
  * Precedence: defaults < legacy env-gated built-ins (applied by `realm agent`, see agent.ts)
  * < declared extensions < --extensions-module override.
+ *
+ * CONTRACT: returned registries are shared process-lifetime cache entries. The only
+ * permitted mutation is `getOrCreateRateLimiter` (serve bucket persistence, by design);
+ * any tier composition on top requires `ExtensionRegistry.clone()`.
  */
 export async function loadProjectExtensions(
   definition: WorkflowDefinition,

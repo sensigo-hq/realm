@@ -24,6 +24,34 @@ import {
   checkSlackBidirectionalConfig,
 } from '../agent/preflight.js';
 
+/**
+ * Composes the registry an agent run executes with: CLONES the loader-returned registry
+ * (loader results are shared process-lifetime cache entries and must never be mutated),
+ * then applies the legacy env-gated built-ins tier — the legacy tier of the precedence
+ * chain (defaults < legacy env-gated < declared extensions < --extensions-module) — on
+ * the clone, skipping names claimed by an extensions module.
+ * Exported for the cache-decontamination regression test.
+ */
+export function composeAgentRegistry(loaded: {
+  registry: ExtensionRegistry;
+  manifest: ExtensionManifest;
+}): ExtensionRegistry {
+  const registry = loaded.registry.clone();
+  if (process.env['GITHUB_TOKEN'] !== undefined && !loaded.manifest.adapters.includes('github'))
+    registry.register(
+      'adapter',
+      'github',
+      new GitHubAdapter('github', { auth: { token: process.env['GITHUB_TOKEN'] } }),
+    );
+  if (process.env['SLACK_WEBHOOK_URL'] !== undefined && !loaded.manifest.adapters.includes('slack'))
+    registry.register(
+      'adapter',
+      'slack',
+      new SlackAdapter('slack', { webhook_url: process.env['SLACK_WEBHOOK_URL'] }),
+    );
+  return registry;
+}
+
 export const agentCommand = new Command('agent')
   .description('Run a workflow autonomously using an LLM provider')
   .option('--workflow <path>', 'Path to workflow directory or workflow.yaml file')
@@ -117,42 +145,18 @@ export const agentCommand = new Command('agent')
         const extensionOpts =
           opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {};
 
-        // Legacy env-gated built-ins — the legacy tier of the precedence chain
-        // (defaults < legacy env-gated < declared extensions < --extensions-module):
-        // applied only when the name was not claimed by an extensions module.
-        const applyLegacyEnvAdapters = (
-          registry: ExtensionRegistry,
-          manifest: ExtensionManifest,
-        ): void => {
-          if (process.env['GITHUB_TOKEN'] !== undefined && !manifest.adapters.includes('github'))
-            registry.register(
-              'adapter',
-              'github',
-              new GitHubAdapter('github', { auth: { token: process.env['GITHUB_TOKEN'] } }),
-            );
-          if (
-            process.env['SLACK_WEBHOOK_URL'] !== undefined &&
-            !manifest.adapters.includes('slack')
-          )
-            registry.register(
-              'adapter',
-              'slack',
-              new SlackAdapter('slack', { webhook_url: process.env['SLACK_WEBHOOK_URL'] }),
-            );
-        };
-
         let result: import('../agent/run-agent.js').AgentRunResult;
 
         if (opts.runId !== undefined) {
           // --run-id path: attach to existing run, load definition from store.
           // resolveRunAttach loads project extensions BEFORE the run is claimed and carries
           // the extensions_load_failed write / re-attach semantics.
-          const { definition, registry, manifest } = await resolveRunAttach(
+          const { definition, ...loaded } = await resolveRunAttach(
             opts.runId,
             { store, workflowStore },
             extensionOpts,
           );
-          applyLegacyEnvAdapters(registry, manifest);
+          const registry = composeAgentRegistry(loaded);
 
           const hasSlack =
             process.env['SLACK_BOT_TOKEN'] !== undefined ||
@@ -211,8 +215,8 @@ export const agentCommand = new Command('agent')
           const definition = loadWorkflowFromFile(filePath);
 
           // Load project extensions BEFORE the run is created (fail-before-create).
-          const { registry, manifest } = await loadProjectExtensions(definition, extensionOpts);
-          applyLegacyEnvAdapters(registry, manifest);
+          const loaded = await loadProjectExtensions(definition, extensionOpts);
+          const registry = composeAgentRegistry(loaded);
 
           // Fail fast if required adapter env vars are missing.
           const preflightFindings = checkAdapterPrerequisites(definition);

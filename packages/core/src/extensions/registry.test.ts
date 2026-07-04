@@ -97,4 +97,47 @@ describe('ExtensionRegistry', () => {
     expect(registry.names('handler')).toEqual([]);
     expect(registry.names('processor')).toEqual([]);
   });
+
+  describe('clone()', () => {
+    it('shares the same adapter/processor/handler instances', () => {
+      const registry = new ExtensionRegistry();
+      registry.register('adapter', 'a1', stubAdapter);
+      registry.register('processor', 'p1', stubProcessor);
+      registry.register('handler', 'h1', stubHandler);
+      const copy = registry.clone();
+      expect(copy.getAdapter('a1')).toBe(stubAdapter);
+      expect(copy.getProcessor('p1')).toBe(stubProcessor);
+      expect(copy.getHandler('h1')).toBe(stubHandler);
+    });
+
+    it('registrations on the clone do not leak into the original (and vice versa)', () => {
+      const registry = new ExtensionRegistry();
+      registry.register('adapter', 'a1', stubAdapter);
+      const copy = registry.clone();
+      copy.register('adapter', 'clone-only', stubAdapter);
+      registry.register('adapter', 'original-only', stubAdapter);
+      expect(registry.has('adapter', 'clone-only')).toBe(false);
+      expect(copy.has('adapter', 'original-only')).toBe(false);
+    });
+
+    it('starts with a fresh rate-limiter map — clone buckets are independent of the original', () => {
+      const registry = new ExtensionRegistry();
+      const config = { requests_per_second: 5 };
+      const originalLimiter = registry.getOrCreateRateLimiter('svc', config);
+      const copy = registry.clone();
+      const cloneLimiter = copy.getOrCreateRateLimiter('svc', config);
+      expect(cloneLimiter).not.toBe(originalLimiter);
+      // And the original still returns its own instance (untouched by the clone's create).
+      expect(registry.getOrCreateRateLimiter('svc', config)).toBe(originalLimiter);
+    });
+
+    it('a limiter created on the clone first does not appear on the original', () => {
+      const registry = new ExtensionRegistry();
+      const config = { requests_per_second: 5 };
+      const copy = registry.clone();
+      const cloneLimiter = copy.getOrCreateRateLimiter('svc', config);
+      const originalLimiter = registry.getOrCreateRateLimiter('svc', config);
+      expect(originalLimiter).not.toBe(cloneLimiter);
+    });
+  });
 });
