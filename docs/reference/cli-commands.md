@@ -4,6 +4,39 @@ All `@sensigo/realm-cli` commands. Run `realm <group> <command> --help` for full
 
 ---
 
+## Project extensions across commands
+
+Workflows may declare custom adapters/handlers/processors via a top-level `extensions:` key —
+see the [Project extensions guide](project-extensions.md). Command behavior:
+
+| Command                        | Behavior                                                                                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `run`, `agent` (fresh)         | Extensions load **before the run is created** — a broken module means no run.                                                                    |
+| `agent --run-id`               | Extensions load before the run is claimed. Pre-execution failure marks the run `terminal_reason: 'extensions_load_failed'` (see recovery below). |
+| `listen`                       | Loads every routed workflow's extensions at startup (fail-fast); registers each workflow **once** at startup. Children re-resolve at spawn.      |
+| `serve`, `mcp`                 | Per-definition registries via a **process-lifetime cache** — restart the process to pick up module content changes.                              |
+| `workflow register`, `watch`   | Full module load + validation + `config_schema` two-pass **before persisting** (each watch reload re-validates).                                 |
+| `workflow test`                | Extension handlers run real; unmocked extension adapters fail the fixture (tripwire).                                                            |
+| `workflow validate`            | Declaring workflows get two-pass `config_schema` validation against the resolved registry.                                                       |
+| `run replay/inspect/list/diff` | Never load extension code.                                                                                                                       |
+
+**`--extensions-module <path>`** (on `agent`, `run`, `serve`, `mcp`, `validate`, `test`)
+REPLACES the workflow's declared modules for that invocation — a loudly-logged repair/override
+tool, not the primary mechanism.
+
+**Recovering `extensions_load_failed`:** fix the module (or pass `--extensions-module`), then
+re-run `realm agent --run-id <id>` — attaching to a run whose terminal reason is exactly
+`extensions_load_failed` clears that marker and retries (nothing executed before the failure).
+All other terminal reasons keep the normal refusal.
+
+**Restart semantics for long-lived processes:** `listen`, `serve`, and `mcp` cache extension
+registries for the process lifetime and never re-import changed module content — restart the
+process after rebuilding extension modules. Also restart `realm listen` after re-registering a
+workflow: it serves the definitions snapshotted at startup (and if two listen instances mount
+the same workflow from different directories, the last registration wins for `source_dir`).
+
+---
+
 ## Workflow commands
 
 Operations on workflow definitions and YAML files.
@@ -31,6 +64,12 @@ and invalid `depends_on` references.
 realm workflow validate ./my-workflow
 ```
 
+Workflows declaring `extensions:` (or validated with `--extensions-module <path>`) are loaded
+file-based, their extension modules are loaded, and step `config` is then validated against each
+resolved adapter's `config_schema` (two-pass). Extension-free workflows keep the historical
+string-based validation surface — a deliberate strictness asymmetry (file-context checks like
+agent-profile resolution only run for declaring workflows).
+
 ---
 
 ### `realm workflow register <path>`
@@ -42,6 +81,11 @@ on each call. Fails immediately if any agent profile declared in the workflow is
 ```bash
 realm workflow register ./my-workflow
 ```
+
+Registering **mints the trust decision** for project extensions: when the workflow declares
+`extensions:`, the modules are fully loaded and duck-validated and step `config` gets the
+`config_schema` two-pass — all **before** anything is persisted. See the
+[Project extensions guide](project-extensions.md).
 
 ---
 
@@ -582,6 +626,15 @@ also returns `403`, never `404`).
 **Hardening:** binds loopback by default; caps and times out the request body _before_ any verification
 work; enforces a `--max-concurrent` `503` floor. TLS termination, rate limiting, and autoscaling are
 reverse-proxy concerns — front `realm listen` with nginx/Caddy/Traefik for public endpoints.
+
+**Startup registration & project extensions:** each routed workflow is registered **once at
+startup** (the old per-webhook re-register was removed — it silently reverted fresher
+registrations; restart `realm listen` after re-registering a workflow). Workflows declaring
+`extensions:` have their modules loaded at startup, fail-fast — note the modules are imported in
+the listen **parent** process, so top-level side effects run there. Spawned children re-resolve
+extensions when they attach; a child that cannot load them exits nonzero and marks its run
+`terminal_reason: 'extensions_load_failed'` (recoverable — see
+[Project extensions across commands](#project-extensions-across-commands)).
 
 > **`realm webhook` (GitHub-only) has been removed.** Express the GitHub PR flow as a `trigger:` block
 > with `auth: { mode: github }` and a `params_map` of the PR payload dot-paths — byte-parity-equivalent
