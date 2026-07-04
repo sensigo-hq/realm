@@ -11,6 +11,7 @@ import {
   FailedAttemptStore,
   createDefaultRegistry,
 } from '@sensigo/realm';
+import type { WorkflowDefinition } from '@sensigo/realm';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import { registerListWorkflows } from './tools/list-workflows.js';
 import { registerGetWorkflowProtocol } from './tools/get-workflow-protocol.js';
@@ -26,6 +27,13 @@ import { registerStartRunBatch } from './tools/start-run-batch.js';
 export interface RealmMcpServerOptions {
   /** Extension registry for resolving service adapters and step handlers at runtime. */
   registry?: ExtensionRegistry;
+  /**
+   * Per-definition registry resolution (project extensions). Awaited BEFORE `runStore.create`
+   * in start_run / start_run_batch (a throwing provider means no run is created) and before
+   * execution in execute_step. When both `registry` and `registryProvider` are supplied, the
+   * provider wins. Additive — absent provider preserves existing behavior.
+   */
+  registryProvider?: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
   /** Resolved secrets to pass to adapter configs (e.g. API tokens). */
   secrets?: Record<string, string>;
   /** Pre-populated workflow store. When provided, tools use this instead of creating
