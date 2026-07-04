@@ -50,6 +50,12 @@ export interface StartServerOptions {
 export async function startHttpMcpServer(options: StartServerOptions): Promise<Server> {
   const { port, host, devMode, token, workflowStore, registryProvider } = options;
 
+  // ONE workflow store per process (constructed at startup when none is injected).
+  // JsonWorkflowStore.get() is readFileSync-per-call, so reusing the instance across
+  // requests introduces zero staleness — re-registered workflows are picked up on the
+  // next read.
+  const store = workflowStore ?? new JsonWorkflowStore();
+
   const httpServer = createServer(async (req, res) => {
     // Auth gate — evaluated before any MCP logic.
     if (!devMode) {
@@ -90,9 +96,9 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
         }
       }
 
-      const store = workflowStore ?? new JsonWorkflowStore();
-      // The per-request MCP server shares the process-lifetime registryProvider — extension
-      // registries (and their rate-limiter buckets) stay stable across requests.
+      // The per-request MCP server shares the process-lifetime workflow store and
+      // registryProvider — extension registries (and their rate-limiter buckets) stay
+      // stable across requests.
       const mcpServer = createRealmMcpServer({
         workflowStore: store,
         ...(registryProvider !== undefined ? { registryProvider } : {}),
