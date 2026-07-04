@@ -29,6 +29,27 @@ export class ExtensionRegistry {
     }
   }
 
+  /**
+   * Returns a new registry sharing this registry's adapter/processor/handler INSTANCES
+   * (shallow copies of the three maps — extension instances are stateless by contract)
+   * with a fresh, EMPTY rate-limiter map.
+   *
+   * Why the rate limiters are NOT copied: rate-limiter buckets are per-registry-instance
+   * state. Sharing them across a clone would couple a future co-resident server's
+   * throttling to one-shot agent runs; a fresh map preserves the 0.12 behavior where
+   * `realm agent` built its own registry per invocation.
+   *
+   * Use clone() before composing additional tiers on top of a shared/cached registry —
+   * the shared instance must never be mutated.
+   */
+  clone(): ExtensionRegistry {
+    const copy = new ExtensionRegistry();
+    copy.adapters = new Map(this.adapters);
+    copy.processors = new Map(this.processors);
+    copy.handlers = new Map(this.handlers);
+    return copy;
+  }
+
   /** Returns true when an extension of the given type is registered under `name`. */
   has(type: 'adapter' | 'processor' | 'handler', name: string): boolean {
     if (type === 'adapter') return this.adapters.has(name);
