@@ -269,10 +269,17 @@ async function callAdapter(
 
   // Adapter lookup: use the caller-provided registry for custom adapters; fall back to
   // the built-in default registry (FileSystemAdapter etc.) when none is provided.
-  const adapter = (options.registry ?? createDefaultRegistry()).getAdapter(serviceDef.adapter);
+  const lookupRegistry = options.registry ?? createDefaultRegistry();
+  const adapter = lookupRegistry.getAdapter(serviceDef.adapter);
   if (adapter === undefined) {
+    // UX hint: when the missing name is not among the registry's current names and the
+    // definition declares no `extensions`, point at the project-extensions mechanism.
+    const extensionHint =
+      !lookupRegistry.has('adapter', serviceDef.adapter) && definition.extensions === undefined
+        ? `. If this adapter is a project extension, declare it under 'extensions:' in workflow.yaml and re-register the workflow.`
+        : '';
     throw new WorkflowError(
-      `Adapter '${serviceDef.adapter}' for service '${serviceName}' is not registered`,
+      `Adapter '${serviceDef.adapter}' for service '${serviceName}' is not registered${extensionHint}`,
       {
         code: 'ENGINE_ADAPTER_FAILED',
         category: 'ENGINE',

@@ -559,6 +559,55 @@ describe('executeStep', () => {
       expect(envelope.errors[0]).toContain('not registered');
     });
 
+    it('adapter-not-registered error carries the project-extensions hint when the definition declares no extensions', async () => {
+      const registry = new ExtensionRegistry(); // empty — no adapter registered
+
+      const { run: run } = await store.create({
+        workflowId: 'adapter-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, adapterDefinition, {
+        runId: run.id,
+        command: 'fetch_data',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(envelope.status).toBe('error');
+      expect(envelope.errors[0]).toContain(
+        "If this adapter is a project extension, declare it under 'extensions:' in workflow.yaml and re-register the workflow.",
+      );
+    });
+
+    it('adapter-not-registered error omits the hint when the definition already declares extensions', async () => {
+      const registry = new ExtensionRegistry(); // empty — no adapter registered
+
+      const { run: run } = await store.create({
+        workflowId: 'adapter-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(
+        store,
+        { ...adapterDefinition, extensions: ['./registry.js'] },
+        {
+          runId: run.id,
+          command: 'fetch_data',
+          input: {},
+          dispatcher: echoDispatcher,
+          registry,
+        },
+      );
+
+      expect(envelope.status).toBe('error');
+      expect(envelope.errors[0]).toContain('not registered');
+      expect(envelope.errors[0]).not.toContain('project extension');
+    });
+
     it('wraps non-object adapter response in { data, status }', async () => {
       const adapter = makeAdapter('raw string' as unknown as Record<string, unknown>);
       const registry = new ExtensionRegistry();

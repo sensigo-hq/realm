@@ -29,6 +29,20 @@ export class ExtensionRegistry {
     }
   }
 
+  /** Returns true when an extension of the given type is registered under `name`. */
+  has(type: 'adapter' | 'processor' | 'handler', name: string): boolean {
+    if (type === 'adapter') return this.adapters.has(name);
+    if (type === 'processor') return this.processors.has(name);
+    return this.handlers.has(name);
+  }
+
+  /** Returns the registered names for the given extension type (registration order). */
+  names(type: 'adapter' | 'processor' | 'handler'): string[] {
+    if (type === 'adapter') return [...this.adapters.keys()];
+    if (type === 'processor') return [...this.processors.keys()];
+    return [...this.handlers.keys()];
+  }
+
   getAdapter(name: string): ServiceAdapter | undefined {
     return this.adapters.get(name);
   }

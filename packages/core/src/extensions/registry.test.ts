@@ -70,4 +70,31 @@ describe('ExtensionRegistry', () => {
     registry.register('adapter', 'my-adapter', second);
     expect(registry.getAdapter('my-adapter')).toBe(second);
   });
+
+  it('has() reports registered names per type without cross-type leakage', () => {
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'shared-name', stubAdapter);
+    expect(registry.has('adapter', 'shared-name')).toBe(true);
+    expect(registry.has('handler', 'shared-name')).toBe(false);
+    expect(registry.has('processor', 'shared-name')).toBe(false);
+    expect(registry.has('adapter', 'unknown')).toBe(false);
+  });
+
+  it('names() lists registered names per type in registration order', () => {
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'a1', stubAdapter);
+    registry.register('adapter', 'a2', stubAdapter);
+    registry.register('handler', 'h1', stubHandler);
+    registry.register('processor', 'p1', stubProcessor);
+    expect(registry.names('adapter')).toEqual(['a1', 'a2']);
+    expect(registry.names('handler')).toEqual(['h1']);
+    expect(registry.names('processor')).toEqual(['p1']);
+  });
+
+  it('names() is empty for a fresh registry', () => {
+    const registry = new ExtensionRegistry();
+    expect(registry.names('adapter')).toEqual([]);
+    expect(registry.names('handler')).toEqual([]);
+    expect(registry.names('processor')).toEqual([]);
+  });
 });
