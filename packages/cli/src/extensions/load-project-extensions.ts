@@ -212,7 +212,18 @@ async function importExtensionModule(ref: ExtensionModuleRef): Promise<unknown> 
       );
     }
   }
-  const exported = mod['default'];
+  let exported = mod['default'];
+  // CJS-ESM interop: `import()` of a tsc-CommonJS build ("type" not "module") yields
+  // namespace.default = module.exports = { __esModule: true, default: <manifest> }.
+  // Unwrap that wrapper so CJS consumers get the same contract as ESM ones.
+  if (
+    typeof exported === 'object' &&
+    exported !== null &&
+    (exported as Record<string, unknown>)['__esModule'] === true &&
+    'default' in (exported as Record<string, unknown>)
+  ) {
+    exported = (exported as Record<string, unknown>)['default'];
+  }
   if (exported === undefined) {
     throw new Error(
       `Extension module '${ref.declared}' has no default export — export a declarative object: ` +

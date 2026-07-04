@@ -58,6 +58,13 @@ Consequences for module authors:
 - After upgrading Realm across a minor/major boundary, rebuild your compiled registry and
   re-register your workflows.
 
+### Module formats
+
+Both module systems work. ESM projects (`"type": "module"`) export the manifest directly.
+tsc-CommonJS builds (`module: commonjs`, no `"type": "module"`) work too — the loader unwraps
+Node's CJS-ESM interop (`__esModule` + `default`) automatically, so `export default {...}`
+compiles and loads correctly under either configuration.
+
 ### TypeScript modules
 
 Compiled JS is the documented default. A declared `.ts` / `.mts` path is loaded through

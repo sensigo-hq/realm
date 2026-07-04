@@ -110,3 +110,64 @@ ${config}
     expect(code).toBe(0);
   }, 20_000);
 });
+
+describe('realm workflow validate — CJS-ESM interop (raw Node semantics)', () => {
+  // This MUST be spawn-based: under vitest, vite-node's module interop auto-unwraps
+  // __esModule CJS wrappers, so an in-process test passes with or without the loader's
+  // unwrap. Only a raw `node` child proves the production behavior.
+  let proj: string;
+
+  beforeAll(() => {
+    proj = mkdtempSync(join(tmpdir(), 'realm-cjs-interop-'));
+    mkdirSync(join(proj, 'workflows', 'wf'), { recursive: true });
+    mkdirSync(join(proj, 'dist'), { recursive: true });
+    // NO "type": "module" — Node loads dist/*.js as CJS; import() then yields
+    // { __esModule: true, default: <manifest> } (the tsc "module: commonjs" emit shape).
+    writeFileSync(
+      join(proj, 'package.json'),
+      '{ "name": "cjs-consumer", "version": "1.0.0" }\n',
+      'utf8',
+    );
+    writeFileSync(
+      join(proj, 'dist', 'registry.js'),
+      `"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = {
+  handlers: { cjs_handler: { id: 'cjs_handler', async execute() { return { output: { ok: true }, warnings: [] }; } } },
+};
+`,
+      'utf8',
+    );
+    writeFileSync(
+      join(proj, 'workflows', 'wf', 'workflow.yaml'),
+      `
+id: cjs-wf
+name: CJS WF
+version: 1
+extensions: ../../dist/registry.js
+params_schema: { type: object }
+steps:
+  s1:
+    description: handled
+    execution: auto
+    depends_on: []
+    handler: cjs_handler
+`,
+      'utf8',
+    );
+  });
+
+  afterAll(() => {
+    rmSync(proj, { recursive: true, force: true });
+  });
+
+  it('accepts a tsc-CommonJS extension module (unwraps the __esModule wrapper)', async () => {
+    const { code, stdout, stderr } = await runValidate([
+      join(proj, 'workflows', 'wf', 'workflow.yaml'),
+    ]);
+    expect(stderr).not.toMatch(/unknown key 'default'/);
+    expect(stdout).toContain('Valid: cjs-wf v1');
+    expect(stdout).toContain('handlers: 1');
+    expect(code).toBe(0);
+  }, 20_000);
+});
