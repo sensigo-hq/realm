@@ -4,8 +4,10 @@ import { createServer, type Server } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { Command } from 'commander';
 import { JsonWorkflowStore } from '@sensigo/realm';
+import type { ExtensionRegistry, WorkflowDefinition } from '@sensigo/realm';
 import { createRealmMcpServer } from '@sensigo/realm-mcp';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { makeRegistryProvider } from '../extensions/load-project-extensions.js';
 
 const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MiB
 
@@ -30,6 +32,11 @@ export interface StartServerOptions {
   token: string | undefined;
   /** Custom workflow store — useful in tests to avoid writing to ~/.realm/. */
   workflowStore?: JsonWorkflowStore;
+  /**
+   * Per-definition registry resolution (project extensions). Backed by the process-lifetime
+   * loader cache — module content changes require a server restart.
+   */
+  registryProvider?: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
 }
 
 /**
@@ -41,7 +48,7 @@ export interface StartServerOptions {
  * per-request isolation is the correct pattern for stateless HTTP mode.
  */
 export async function startHttpMcpServer(options: StartServerOptions): Promise<Server> {
-  const { port, host, devMode, token, workflowStore } = options;
+  const { port, host, devMode, token, workflowStore, registryProvider } = options;
 
   const httpServer = createServer(async (req, res) => {
     // Auth gate — evaluated before any MCP logic.
@@ -84,7 +91,12 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
       }
 
       const store = workflowStore ?? new JsonWorkflowStore();
-      const mcpServer = createRealmMcpServer({ workflowStore: store });
+      // The per-request MCP server shares the process-lifetime registryProvider — extension
+      // registries (and their rate-limiter buckets) stay stable across requests.
+      const mcpServer = createRealmMcpServer({
+        workflowStore: store,
+        ...(registryProvider !== undefined ? { registryProvider } : {}),
+      });
       // Omitting sessionIdGenerator enables stateless mode (SDK default when absent).
       const transport = new StreamableHTTPServerTransport({});
       // @ts-expect-error — SDK type mismatch under exactOptionalPropertyTypes:
@@ -133,11 +145,16 @@ export const serveCommand = new Command('serve')
   .option('--port <number>', 'Port to listen on', '3001')
   .option('--host <address>', 'Bind address', '127.0.0.1')
   .option('--dev', 'Disable authentication (for local development only)')
+  .option(
+    '--extensions-module <path>',
+    "Extensions module that REPLACES every workflow's declared 'extensions' modules (repair/override)",
+  )
   .action(async (options) => {
     const port = parseInt(options.port, 10);
     const host = options.host as string;
     const devMode = options.dev === true || process.env.REALM_DEV === '1';
     const token = process.env.REALM_SERVE_TOKEN;
+    const registryProvider = makeRegistryProvider(options.extensionsModule as string | undefined);
 
     if (!devMode && !token) {
       console.error(
@@ -154,7 +171,7 @@ export const serveCommand = new Command('serve')
       );
     }
 
-    const httpServer = await startHttpMcpServer({ port, host, devMode, token });
+    const httpServer = await startHttpMcpServer({ port, host, devMode, token, registryProvider });
     console.log(`Realm MCP server listening on http://${host}:${port}/`);
     if (!devMode) {
       console.log('Authentication: Bearer token (REALM_SERVE_TOKEN)');

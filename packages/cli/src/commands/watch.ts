@@ -4,17 +4,22 @@ import { join, dirname, resolve } from 'node:path';
 import { Command } from 'commander';
 import { loadWorkflowFromFile, WorkflowError } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
+import { loadWorkflowForRegistration } from './register.js';
 
 /**
  * Attempts to load and register a workflow YAML file.
  * Logs the result (success or validation error) to stdout/stderr.
+ * Like `realm workflow register`, each (re-)registration mints the trust decision: when the
+ * workflow declares `extensions:`, the modules load + duck-validate and step config gets the
+ * config_schema two-pass BEFORE persisting. NOTE: long-lived watch processes keep the FIRST
+ * imported content of each module path (ESM cache) — restart watch to pick up module changes.
  * @param filePath Path to the workflow YAML file.
  * @param store    The registrar to register into.
  */
 async function registerFile(filePath: string, store: WorkflowRegistrar): Promise<void> {
   const timestamp = new Date().toISOString();
   try {
-    const definition = loadWorkflowFromFile(filePath);
+    const definition = await loadWorkflowForRegistration(filePath);
     await store.register(definition);
     console.log(
       `[${timestamp}] Registered: ${definition.id} v${definition.version} (${Object.keys(definition.steps).length} steps)`,

@@ -7,13 +7,15 @@ import {
   loadWorkflowFromFile,
   JsonFileStore,
   JsonWorkflowStore,
-  createDefaultRegistry,
   GitHubAdapter,
   SlackAdapter,
 } from '@sensigo/realm';
+import type { ExtensionRegistry, ExtensionManifest } from '@sensigo/realm';
 import { LlmProvider, resolveProvider } from '../agent/providers/llm-provider.js';
 import type { ProviderName } from '../agent/providers/llm-provider.js';
 import { runAgent } from '../agent/run-agent.js';
+import { resolveRunAttach } from '../agent/run-attach.js';
+import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { createSlackGateHandler } from '../agent/gate/slack-gate-notifier.js';
 import type { SlackGateHandlerConfig } from '../agent/gate/slack-gate-notifier.js';
 import {
@@ -41,6 +43,10 @@ export const agentCommand = new Command('agent')
     '--register',
     'Persist the workflow definition to ~/.realm/workflows/ (same as realm workflow register)',
   )
+  .option(
+    '--extensions-module <path>',
+    "Extensions module that REPLACES the workflow's declared 'extensions' modules (repair/override)",
+  )
   .action(
     async (opts: {
       workflow?: string;
@@ -51,6 +57,7 @@ export const agentCommand = new Command('agent')
       baseUrl?: string;
       providerModule?: string;
       register?: boolean;
+      extensionsModule?: string;
     }) => {
       if (!opts.workflow && !opts.runId) {
         console.error('Error: one of --workflow or --run-id is required');
@@ -107,26 +114,45 @@ export const agentCommand = new Command('agent')
             opts.baseUrl,
           );
         }
-        const registry = createDefaultRegistry();
-        if (process.env['GITHUB_TOKEN'] !== undefined)
-          registry.register(
-            'adapter',
-            'github',
-            new GitHubAdapter('github', { auth: { token: process.env['GITHUB_TOKEN'] } }),
-          );
-        if (process.env['SLACK_WEBHOOK_URL'] !== undefined)
-          registry.register(
-            'adapter',
-            'slack',
-            new SlackAdapter('slack', { webhook_url: process.env['SLACK_WEBHOOK_URL'] }),
-          );
+        const extensionOpts =
+          opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {};
+
+        // Legacy env-gated built-ins — the legacy tier of the precedence chain
+        // (defaults < legacy env-gated < declared extensions < --extensions-module):
+        // applied only when the name was not claimed by an extensions module.
+        const applyLegacyEnvAdapters = (
+          registry: ExtensionRegistry,
+          manifest: ExtensionManifest,
+        ): void => {
+          if (process.env['GITHUB_TOKEN'] !== undefined && !manifest.adapters.includes('github'))
+            registry.register(
+              'adapter',
+              'github',
+              new GitHubAdapter('github', { auth: { token: process.env['GITHUB_TOKEN'] } }),
+            );
+          if (
+            process.env['SLACK_WEBHOOK_URL'] !== undefined &&
+            !manifest.adapters.includes('slack')
+          )
+            registry.register(
+              'adapter',
+              'slack',
+              new SlackAdapter('slack', { webhook_url: process.env['SLACK_WEBHOOK_URL'] }),
+            );
+        };
 
         let result: import('../agent/run-agent.js').AgentRunResult;
 
         if (opts.runId !== undefined) {
           // --run-id path: attach to existing run, load definition from store.
-          const runRecord = await store.get(opts.runId);
-          const definition = await workflowStore.get(runRecord.workflow_id);
+          // resolveRunAttach loads project extensions BEFORE the run is claimed and carries
+          // the extensions_load_failed write / re-attach semantics.
+          const { definition, registry, manifest } = await resolveRunAttach(
+            opts.runId,
+            { store, workflowStore },
+            extensionOpts,
+          );
+          applyLegacyEnvAdapters(registry, manifest);
 
           const hasSlack =
             process.env['SLACK_BOT_TOKEN'] !== undefined ||
@@ -183,6 +209,10 @@ export const agentCommand = new Command('agent')
               ? inputPath
               : join(inputPath, 'workflow.yaml');
           const definition = loadWorkflowFromFile(filePath);
+
+          // Load project extensions BEFORE the run is created (fail-before-create).
+          const { registry, manifest } = await loadProjectExtensions(definition, extensionOpts);
+          applyLegacyEnvAdapters(registry, manifest);
 
           // Fail fast if required adapter env vars are missing.
           const preflightFindings = checkAdapterPrerequisites(definition);

@@ -9,14 +9,19 @@ import {
   executeChain,
   submitHumanResponse,
 } from '@sensigo/realm';
-import type { WorkflowDefinition, StepDefinition } from '@sensigo/realm';
+import type { WorkflowDefinition, StepDefinition, ExtensionRegistry } from '@sensigo/realm';
 import type { StepDispatcher } from '@sensigo/realm';
+import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 
 export const runCommand = new Command('run')
   .argument('<path>', 'Path to workflow directory or workflow.yaml file')
   .option('--params <json>', 'Initial run parameters as JSON string', '{}')
+  .option(
+    '--extensions-module <path>',
+    "Extensions module that REPLACES the workflow's declared 'extensions' modules (repair/override)",
+  )
   .description('Run a workflow interactively (development mode)')
-  .action(async (inputPath: string, options: { params: string }) => {
+  .action(async (inputPath: string, options: { params: string; extensionsModule?: string }) => {
     const filePath =
       inputPath.endsWith('.yaml') || inputPath.endsWith('.yml')
         ? inputPath
@@ -28,6 +33,20 @@ export const runCommand = new Command('run')
       definition = loadWorkflowFromFile(filePath);
     } catch (err) {
       console.error(`Error loading workflow: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+
+    // 1b. Load project extensions BEFORE run creation (fail-before-create).
+    let registry: ExtensionRegistry;
+    try {
+      ({ registry } = await loadProjectExtensions(
+        definition,
+        options.extensionsModule !== undefined ? { overrideModule: options.extensionsModule } : {},
+      ));
+    } catch (err) {
+      console.error(
+        `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
+      );
       process.exit(1);
     }
 
@@ -121,6 +140,7 @@ export const runCommand = new Command('run')
           command: stepName,
           input: userOutput,
           dispatcher,
+          registry,
         });
 
         if (result.status === 'ok') {

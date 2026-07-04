@@ -2,8 +2,11 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { loadWorkflowFromFile } from '@sensigo/realm';
 import { runFixtureTests } from '@sensigo/realm-testing';
-import type { TestResult } from '@sensigo/realm-testing';
+import type { TestResult, RunFixtureTestsOptions } from '@sensigo/realm-testing';
+import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 
 /**
  * Formats fixture test results for display.
@@ -26,11 +29,24 @@ export function formatTestResults(results: TestResult[]): { lines: string[]; exi
   return { lines, exitCode: allPassed ? 0 : 1 };
 }
 
+/** Mirrors the test-runner's workflow path resolution (kept in sync with runFixtureTests). */
+function resolveWorkflowFilePath(workflowPath: string): string {
+  return workflowPath.endsWith('.yaml') || workflowPath.endsWith('.yml')
+    ? workflowPath
+    : existsSync(join(workflowPath, 'workflow.yaml'))
+      ? join(workflowPath, 'workflow.yaml')
+      : workflowPath;
+}
+
 export const testCommand = new Command('test')
   .argument('<workflow-path>', 'Path to workflow directory or workflow.yaml file')
   .requiredOption('-f, --fixtures <dir>', 'Directory containing fixture YAML files')
+  .option(
+    '--extensions-module <path>',
+    "Extensions module that REPLACES the workflow's declared 'extensions' modules (repair/override)",
+  )
   .description('Run fixture-based workflow tests')
-  .action(async (workflowPath: string, opts: { fixtures: string }) => {
+  .action(async (workflowPath: string, opts: { fixtures: string; extensionsModule?: string }) => {
     if (!existsSync(opts.fixtures)) {
       console.error(`Error: fixtures directory does not exist: ${opts.fixtures}`);
       process.exit(1);
@@ -39,7 +55,22 @@ export const testCommand = new Command('test')
 
     let results: TestResult[];
     try {
-      results = await runFixtureTests({ workflowPath, fixturesPath: opts.fixtures });
+      // Resolve project extensions so custom HANDLERS run real and custom ADAPTERS get
+      // fail-if-unmocked tripwires inside the fixture runner. Extension-free workflows
+      // (without an override) pass no `extensions` — current behavior byte-for-byte.
+      const definition = loadWorkflowFromFile(resolveWorkflowFilePath(workflowPath));
+      let extensions: RunFixtureTestsOptions['extensions'];
+      if (definition.extensions !== undefined || opts.extensionsModule !== undefined) {
+        extensions = await loadProjectExtensions(
+          definition,
+          opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {},
+        );
+      }
+      results = await runFixtureTests({
+        workflowPath,
+        fixturesPath: opts.fixtures,
+        ...(extensions !== undefined ? { extensions } : {}),
+      });
     } catch (err) {
       console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
