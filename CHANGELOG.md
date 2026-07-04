@@ -17,6 +17,10 @@ All notable changes to this project are documented here.
   - **`ExtensionRegistry.clone()`** — shallow-copies the extension instances with a fresh rate-limiter map; `realm agent` composes its per-run registry (legacy env-gated tier) on a clone, so shared loader-cache entries are never mutated.
 - **`realm init` scaffolds project-extensions templates** — a commented `extensions:` line in the generated workflow.yaml and a `registry.sample.js` with the declarative contract shape (nothing registered by default).
 
+### Deprecated
+
+- **Env-gated adapter registration in `realm agent`** (`GITHUB_TOKEN`/`SLACK_WEBHOOK_URL` auto-registering github/slack). A deprecation warning now fires when the tier is used; removal targeted for v0.14.0 — declare these adapters in a project extensions module instead (#120).
+
 ### Changed
 
 - **`realm listen` no longer re-registers workflows per webhook.** Routed workflows are registered ONCE at startup (the per-webhook `workflowStore.register` silently reverted fresher registrations). Restart `realm listen` after re-registering a workflow. Startup also fail-fast loads each routed workflow's extension modules (imported in the listen parent).
