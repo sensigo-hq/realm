@@ -7,6 +7,7 @@ import {
   executeChain,
   propagateSkips,
   type WorkflowDefinition,
+  type ExtensionManifest,
 } from '@sensigo/realm';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -15,6 +16,7 @@ import { loadFixturesFromDir, type TestFixture } from '../fixtures/fixture-loade
 import { MockServiceRecorder } from '../mocks/mock-service.js';
 import { createAgentDispatcher } from '../mocks/mock-agent.js';
 import { createGateResponder } from '../mocks/mock-gate.js';
+import { createTripwireAdapter } from '../mocks/tripwire-adapter.js';
 import { assertFinalState } from '../assertions/evidence.js';
 
 /** Result of a single fixture test run. */
@@ -38,6 +40,90 @@ export interface RunFixtureTestsOptions {
    * registry is created per fixture run.
    */
   registry?: ExtensionRegistry;
+  /**
+   * Project extensions loaded for the workflow (registry + manifest from the CLI loader).
+   * Extension HANDLERS and PROCESSORS merge REAL into the fixture registry — testing custom
+   * handlers is the point. Extension ADAPTER names the fixture does not mock get a tripwire
+   * adapter (throws instead of hitting a real service) in BOTH leak paths: the execution-loop
+   * registry lookup and the mock-agent dispatcher fallback.
+   */
+  extensions?: { registry: ExtensionRegistry; manifest: ExtensionManifest };
+}
+
+/**
+ * Builds the per-fixture registries. Exported for direct testing of the fail-if-unmocked
+ * guarantees — the tripwire must be present in BOTH leak paths.
+ *
+ * - `fixtureRegistry`: defaults + fixture mocks (+ extension handlers/processors real,
+ *   + tripwires for unmocked extension adapters). Used by the execution loop.
+ * - `fallbackRegistry`: the mock-agent dispatcher fallback — caller-provided entries plus
+ *   the same extension handlers/processors and tripwires.
+ * @internal
+ */
+export function buildFixtureRegistries(
+  fixture: TestFixture,
+  definition: WorkflowDefinition,
+  options: Pick<RunFixtureTestsOptions, 'registry' | 'extensions'>,
+): { fixtureRegistry: ExtensionRegistry; fallbackRegistry: ExtensionRegistry | undefined } {
+  // Build per-fixture registry: start from built-in adapters, then overlay
+  // mock adapters so fixture mocks take precedence over the real ones.
+  const fixtureRegistry = createDefaultRegistry();
+  const mockedAdapterNames = new Set<string>();
+  const unmatchedMockKeys: string[] = [];
+  for (const [serviceName, mockOps] of Object.entries(fixture.mocks)) {
+    const serviceDef = definition.services?.[serviceName];
+    if (serviceDef !== undefined) {
+      const recorder = new MockServiceRecorder(serviceDef.adapter, mockOps);
+      fixtureRegistry.register('adapter', serviceDef.adapter, recorder);
+      mockedAdapterNames.add(serviceDef.adapter);
+    } else {
+      // A mock naming no service in the workflow — surfaced in the tripwire error.
+      unmatchedMockKeys.push(serviceName);
+    }
+  }
+
+  // Project extensions: real handlers/processors in, tripwires for unmocked adapters.
+  let fallbackRegistry = options.registry;
+  if (options.extensions !== undefined) {
+    const ext = options.extensions;
+    // Preserve any caller-provided fallback entries underneath the extension material.
+    const extFallback = new ExtensionRegistry();
+    if (options.registry !== undefined) {
+      const caller = options.registry;
+      for (const n of caller.names('adapter'))
+        extFallback.register('adapter', n, caller.getAdapter(n)!);
+      for (const n of caller.names('handler'))
+        extFallback.register('handler', n, caller.getHandler(n)!);
+      for (const n of caller.names('processor'))
+        extFallback.register('processor', n, caller.getProcessor(n)!);
+    }
+    // Real extension handlers/processors merge in — testing them is the point.
+    for (const name of ext.manifest.handlers) {
+      const handler = ext.registry.getHandler(name);
+      if (handler !== undefined) {
+        fixtureRegistry.register('handler', name, handler);
+        extFallback.register('handler', name, handler);
+      }
+    }
+    for (const name of ext.manifest.processors) {
+      const processor = ext.registry.getProcessor(name);
+      if (processor !== undefined) {
+        fixtureRegistry.register('processor', name, processor);
+        extFallback.register('processor', name, processor);
+      }
+    }
+    // Fail-if-unmocked: every extension-provided adapter name without a fixture mock trips
+    // in BOTH leak paths — never silently real.
+    for (const name of ext.manifest.adapters) {
+      if (mockedAdapterNames.has(name)) continue;
+      const tripwire = createTripwireAdapter(name, unmatchedMockKeys);
+      fixtureRegistry.register('adapter', name, tripwire);
+      extFallback.register('adapter', name, tripwire);
+    }
+    fallbackRegistry = extFallback;
+  }
+
+  return { fixtureRegistry, fallbackRegistry };
 }
 
 async function runSingleFixture(
@@ -48,22 +134,17 @@ async function runSingleFixture(
   try {
     const store = new InMemoryStore();
 
-    // Build per-fixture registry: start from built-in adapters, then overlay
-    // mock adapters so fixture mocks take precedence over the real ones.
-    const fixtureRegistry = createDefaultRegistry();
-    for (const [serviceName, mockOps] of Object.entries(fixture.mocks)) {
-      const serviceDef = definition.services?.[serviceName];
-      if (serviceDef !== undefined) {
-        const recorder = new MockServiceRecorder(serviceDef.adapter, mockOps);
-        fixtureRegistry.register('adapter', serviceDef.adapter, recorder);
-      }
-    }
+    const { fixtureRegistry, fallbackRegistry } = buildFixtureRegistries(
+      fixture,
+      definition,
+      options,
+    );
 
     const dispatcher = createAgentDispatcher(
       definition,
       fixtureRegistry,
       fixture.agent_responses,
-      options.registry,
+      fallbackRegistry,
       fixture.agent_errors,
     );
 
