@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 
 ---
 
+## [0.12.1] — 2026-07-04
+
+### Fixed
+
+- **`realm-mcp` bin entry exited silently when invoked via npm/npx bin shims** (`npx @sensigo/realm-mcp`, `node_modules/.bin/realm-mcp`). The entry-point guard compared `import.meta.url` against `process.argv[1]` with a string-suffix check; bin shims are symlinks, so `argv[1]` held the symlink path while `import.meta.url` held the resolved target — the guard never matched and the process exited 0 without connecting the stdio transport. The guard now realpath-resolves both sides. Direct `node dist/server.js` invocation and library import behavior are unchanged; all three invocation modes are covered by spawn-based regression tests. (PR #115)
+
+---
+
 ## [0.12.0] — 2026-06-30
 
 ### Changed
