@@ -14,10 +14,13 @@ All notable changes to this project are documented here.
   - **MCP (`@sensigo/realm-mcp`)**: `RealmMcpServerOptions.registryProvider` — per-definition registry resolution awaited BEFORE `runStore.create` in `start_run`/`start_run_batch` and before execution in `execute_step` (provider wins over `registry`). `create_workflow` rejects `extensions` (register-time, operator-only).
   - **Testing (`@sensigo/realm-testing`)**: `RunFixtureTestsOptions.extensions` — extension handlers/processors run REAL in fixtures; every extension adapter the fixture does not mock gets a tripwire that fails the fixture (in both the execution-loop and dispatcher-fallback paths) and enumerates unmatched mock keys.
   - Docs: new `docs/reference/project-extensions.md` (module contract, precedence, trust model), plus `yaml-schema.md` / `cli-commands.md` sections.
+  - **`ExtensionRegistry.clone()`** — shallow-copies the extension instances with a fresh rate-limiter map; `realm agent` composes its per-run registry (legacy env-gated tier) on a clone, so shared loader-cache entries are never mutated.
+- **`realm init` scaffolds project-extensions templates** — a commented `extensions:` line in the generated workflow.yaml and a `registry.sample.js` with the declarative contract shape (nothing registered by default).
 
 ### Changed
 
 - **`realm listen` no longer re-registers workflows per webhook.** Routed workflows are registered ONCE at startup (the per-webhook `workflowStore.register` silently reverted fresher registrations). Restart `realm listen` after re-registering a workflow. Startup also fail-fast loads each routed workflow's extension modules (imported in the listen parent).
+- **`realm serve` constructs ONE workflow store per process** (was one per request). `JsonWorkflowStore.get()` re-reads from disk per call, so the shared instance introduces no staleness.
 
 ---
 
