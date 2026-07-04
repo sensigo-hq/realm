@@ -31,6 +31,11 @@ export interface CreateWorkflowArgs {
     model?: string;
     agent?: string;
   };
+  /**
+   * Never supported — present in the schema only so a submitted value survives parsing and
+   * is rejected with an actionable error (extensions are register-time, operator-only).
+   */
+  extensions?: unknown;
 }
 
 function makeErrorEnvelope(errors: string[]): ResponseEnvelope {
@@ -63,6 +68,20 @@ function validateArgs(args: CreateWorkflowArgs): string[] {
     if ('agent_profile' in (step as unknown as Record<string, unknown>)) {
       errors.push(
         `Step '${step.id}': agent_profile is not supported on dynamically-created workflows. Use realm register with a YAML workflow file for profile-based execution.`,
+      );
+    }
+  }
+
+  // Rule 8: extensions are not supported on dynamic workflows (register-time, operator-only).
+  if ('extensions' in (args as unknown as Record<string, unknown>)) {
+    errors.push(
+      `extensions is not supported on dynamically-created workflows. Project extensions are register-time and operator-only: declare them in workflow.yaml and register with realm workflow register.`,
+    );
+  }
+  for (const step of args.steps) {
+    if ('extensions' in (step as unknown as Record<string, unknown>)) {
+      errors.push(
+        `Step '${step.id}': extensions is not supported on dynamically-created workflows. Project extensions are register-time and operator-only: declare them in workflow.yaml and register with realm workflow register.`,
       );
     }
   }
@@ -259,6 +278,10 @@ export function registerCreateWorkflow(server: McpServer, opts?: HandleRunStores
           agent: z.string().optional(),
         })
         .optional(),
+      // Declared so a submitted value is NOT silently stripped by the schema — validateArgs
+      // rejects it with an actionable "register-time, operator-only" error (mirrors the
+      // per-step agent_profile rejection).
+      extensions: z.unknown().optional(),
     },
     async (args) => {
       try {

@@ -28,6 +28,14 @@ export interface HandleRunStores {
   workflowStore?: JsonWorkflowStore;
   /** Extension registry for resolving service adapters and step handlers. */
   registry?: ExtensionRegistry;
+  /**
+   * Per-definition registry resolution (project extensions). Awaited BEFORE `runStore.create`
+   * (a throwing provider means no run is created) and before execution in execute_step.
+   * Wins over `registry` when both are supplied.
+   */
+  registryProvider?: (
+    definition: import('@sensigo/realm').WorkflowDefinition,
+  ) => Promise<ExtensionRegistry>;
   /** Resolved secrets for use by service adapters. */
   secrets?: Record<string, string>;
   /** Trace buffer store for incremental WAL-based trace ingestion (B-lite). */
@@ -57,6 +65,13 @@ export async function handleStartRun(
   const runStore = stores?.runStore ?? new JsonFileStore();
   const definition = await workflowStore.get(args.workflow_id);
   const params = args.params ?? {};
+
+  // Resolve the effective registry BEFORE run creation — a throwing registryProvider must
+  // fail this tool call with NO run created. Provider wins over construction-time registry.
+  const registry =
+    stores?.registryProvider !== undefined
+      ? await stores.registryProvider(definition)
+      : stores?.registry;
 
   const { run, created } = await runStore.create({
     workflowId: definition.id,
@@ -98,7 +113,7 @@ export async function handleStartRun(
       command: firstAutoStep,
       input: params,
       dispatcher: passthroughDispatcher,
-      ...(stores?.registry !== undefined ? { registry: stores.registry } : {}),
+      ...(registry !== undefined ? { registry } : {}),
       ...(stores?.secrets !== undefined ? { secrets: stores.secrets } : {}),
     });
     // Source run_phase from the final run so the spread can't drop it.
@@ -134,13 +149,7 @@ export async function handleStartRun(
 }
 
 /** Registers the start_run MCP tool on the server. */
-export function registerStartRun(
-  server: McpServer,
-  opts?: {
-    registry?: import('@sensigo/realm').ExtensionRegistry;
-    secrets?: Record<string, string>;
-  },
-): void {
+export function registerStartRun(server: McpServer, opts?: HandleRunStores): void {
   server.tool(
     'start_run',
     'Create a new workflow run and chain through initial auto steps.',

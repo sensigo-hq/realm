@@ -77,6 +77,13 @@ export async function handleStartRunBatch(
 
   const definition = await workflowStore.get(args.workflow_id);
 
+  // Awaited BEFORE any runStore.create — a throwing registryProvider (broken project
+  // extensions) must fail the batch with NO runs created. The batch itself executes no
+  // steps, so the resolved registry is not used here; the await is the fail-fast gate.
+  if (stores?.registryProvider !== undefined) {
+    await stores.registryProvider(definition);
+  }
+
   if (definition.params_schema !== undefined) {
     const failures: Array<{ index: number; reason: string }> = [];
     for (let i = 0; i < args.items.length; i++) {
@@ -174,13 +181,7 @@ export async function handleStartRunBatch(
   return { started, failed };
 }
 
-export function registerStartRunBatch(
-  server: McpServer,
-  opts?: {
-    registry?: import('@sensigo/realm').ExtensionRegistry;
-    secrets?: Record<string, string>;
-  },
-): void {
+export function registerStartRunBatch(server: McpServer, opts?: HandleRunStores): void {
   server.tool(
     'start_run_batch',
     'Atomically enqueue multiple runs of the same workflow. All items are validated before any run is created. If idempotency keys are provided, duplicate runs are returned instead of created.',

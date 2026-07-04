@@ -125,12 +125,19 @@ export async function handleExecuteStep(
   const definition = await workflowStore.get(run.workflow_id);
   const params = args.params ?? {};
 
+  // Per-definition registry (project extensions) — awaited before execution; a throwing
+  // provider fails the tool call before any step is claimed. Provider wins over `registry`.
+  const registry =
+    stores?.registryProvider !== undefined
+      ? await stores.registryProvider(definition)
+      : stores?.registry;
+
   const result = await executeChain(runStore, definition, {
     runId: args.run_id,
     command: args.command,
     input: params,
     dispatcher: makeParamsDispatcher(params),
-    ...(stores?.registry !== undefined ? { registry: stores.registry } : {}),
+    ...(registry !== undefined ? { registry } : {}),
     ...(stores?.secrets !== undefined ? { secrets: stores.secrets } : {}),
     // trace is a top-level execute_step field — never embedded in params.
     ...(args.trace !== undefined ? { trace: args.trace } : {}),
@@ -207,15 +214,7 @@ export async function handleExecuteStepTool(
 }
 
 /** Registers the execute_step MCP tool on the server. */
-export function registerExecuteStep(
-  server: McpServer,
-  opts?: {
-    registry?: import('@sensigo/realm').ExtensionRegistry;
-    secrets?: Record<string, string>;
-    traceBufferStore?: import('@sensigo/realm').TraceBufferStore;
-    failedAttemptStore?: FailedAttemptStore;
-  },
-): void {
+export function registerExecuteStep(server: McpServer, opts?: HandleRunStores): void {
   server.tool(
     'execute_step',
     'Execute a workflow step. For agent steps, pass your output in params.',
