@@ -2,10 +2,27 @@
 // (The legacy server — checkWebhookSignature / isDuplicate / startWebhookServer — was removed; its
 //  GitHub flow is now covered by `realm listen` + a trigger: block, proven byte-parity-equivalent in
 //  listen-github-parity.test.ts.)
-import { describe, it, expect, vi, afterEach } from 'vitest';
+// Commander's own error output (e.g. "too many arguments" for the legacy-flags case) is captured
+// via configureOutput and asserted explicitly — the test suite output must stay free of it.
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { webhookCommand } from './webhook.js';
 
-afterEach(() => vi.restoreAllMocks());
+let commanderStderr: string[];
+
+beforeEach(() => {
+  commanderStderr = [];
+  webhookCommand.configureOutput({
+    writeErr: (str: string) => {
+      commanderStderr.push(str);
+    },
+  });
+});
+
+afterEach(() => {
+  // Restore commander's default stderr behavior for any other consumer of the command object.
+  webhookCommand.configureOutput({ writeErr: (str: string) => process.stderr.write(str) });
+  vi.restoreAllMocks();
+});
 
 describe('realm webhook (removed alias)', () => {
   it('prints a migration error pointing to `realm listen` and exits non-zero', async () => {
@@ -30,5 +47,7 @@ describe('realm webhook (removed alias)', () => {
       webhookCommand.parseAsync(['--workflow', 'x', '--port', '3000'], { from: 'user' }),
     ).rejects.toThrow('process.exit');
     expect(exitSpy).toHaveBeenCalledWith(1);
+    // Unknown legacy flags surface as commander's excess-argument error — captured, not printed.
+    expect(commanderStderr.join('')).toMatch(/too many arguments/);
   });
 });
