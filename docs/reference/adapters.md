@@ -1,3 +1,9 @@
+> **One auth channel (v0.14): construction.** Adapters receive credentials in their
+> constructor config, bound in the deployment manifest ([realm.yaml](deployment-manifest.md))
+> via `${secret:NAME}` references. Per-step `config` never carries auth, and the engine
+> injects none (`auth.token_from` is gone). The `slack` ADAPTER (workflow steps posting
+> to Slack) and the `slack_gate` NOTIFIER (gate approvals) are configured separately.
+
 # Built-in Service Adapters
 
 Reference documentation for the service adapters shipped with `@sensigo/realm`. Each

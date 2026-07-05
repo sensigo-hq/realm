@@ -1,0 +1,8 @@
+# realm.yaml — deployment manifest for this example (docs/reference/deployment-manifest.md).
+# Credentials bind HERE (not in workflow.yaml): the github adapter is constructed from the
+# built-in catalog with the token resolved from ./.env (the default dotenv secret source).
+version: 1
+adapters:
+  github:
+    use: github
+    config: { auth: { token: '${secret:GITHUB_TOKEN}' } }

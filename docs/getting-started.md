@@ -131,9 +131,9 @@ Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` before running. Use `--provider anth
 
 `realm agent` registers the workflow temporarily, starts a run, and drives every `execution: agent` step. Auto steps run without any LLM call. Schema validation applies exactly as in the interactive run — if the LLM returns invalid output, the engine rejects it, the agent retries, and the run only advances when the schema passes.
 
-If the workflow contains a human gate, `realm agent` pauses and prints the gate message. When no Slack bot integration is configured, it also prints a `realm run respond` command for each choice — run it in a second terminal to submit your response. When `SLACK_BOT_TOKEN` + `SLACK_CHANNEL_ID` are set (Mode 2 or 3), the terminal commands are suppressed — resolve the gate directly in Slack. `realm agent` detects the resolved gate in either case and continues automatically.
+If the workflow contains a human gate, `realm agent` pauses and prints the gate message. When no Slack bot integration is configured, it also prints a `realm run respond` command for each choice — run it in a second terminal to submit your response. When a `notifiers.slack_gate` block with `bot_token` + `channel_id` is configured in your deployment manifest ([realm.yaml](reference/deployment-manifest.md)), the terminal commands are suppressed — resolve the gate directly in Slack. `realm agent` detects the resolved gate in either case and continues automatically.
 
-**Slack gate notifications:** instead of responding in the terminal, you can have `realm agent` post the gate message to Slack. Set `SLACK_WEBHOOK_URL` for a one-way notification (terminal command still required), or `SLACK_BOT_TOKEN` + `SLACK_CHANNEL_ID` for full bidirectional resolution — reply in the Slack thread and the gate resolves automatically. A third mode using the Slack Events API gives real-time push delivery for production deployments. For setup instructions, see [Slack Gate Modes](reference/realm-agent-slack.md).
+**Slack gate notifications:** instead of responding in the terminal, you can have `realm agent` post the gate message to Slack. Configure `notifiers.slack_gate` in your deployment manifest ([realm.yaml](reference/deployment-manifest.md)): `webhook_url` alone gives one-way notification (terminal command still required); `bot_token` + `channel_id` give full bidirectional resolution — reply in the Slack thread and the gate resolves automatically. A third mode using the Slack Events API gives real-time push delivery for production deployments. For setup instructions, see [Slack Gate Modes](reference/realm-agent-slack.md).
 
 When the run completes, `realm agent` prints the last agent step's output directly to the terminal:
 
@@ -253,7 +253,7 @@ const server = createRealmMcpServer({ workflowStore, registry });
 ### GitHubAdapter
 
 `@sensigo/realm` also ships `GitHubAdapter`, which speaks to the GitHub REST API (and GitHub
-Enterprise Server). It is not pre-registered — when using `realm agent`, set `GITHUB_TOKEN`
+Enterprise Server). It is not pre-registered — declare it under `adapters:` in your deployment manifest with `config: { auth: { token: "${secret:GITHUB_TOKEN}" } }`
 in your environment and the CLI registers it automatically. For the full operation list
 (`get_pr_diff`, `get_issue`, `post_comment`, `apply_labels`, and more), auth token scope
 requirements, GitHub Enterprise setup, and the MCP server registration pattern, see
@@ -270,8 +270,6 @@ For fully custom logic, add the service declaration to `workflow.yaml`:
 services:
   source:
     adapter: google_docs
-    auth:
-      token_from: secrets.GDOCS_TOKEN
     trust: engine_delivered
 
 steps:

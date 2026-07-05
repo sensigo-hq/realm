@@ -20,6 +20,18 @@ see the [Project extensions guide](project-extensions.md). Command behavior:
 | `workflow validate`            | Declaring workflows get two-pass `config_schema` validation against the resolved registry.                                                       |
 | `run replay/inspect/list/diff` | Never load extension code.                                                                                                                       |
 
+**`--project <dir>`** (on `agent`, `run`, `serve`, `mcp`) — the CONFIG anchor: the
+deployment root whose [realm.yaml](deployment-manifest.md) applies to definitions without a
+stored trust_root (agent-created, from-string). Defaults to the current directory for the
+operator-launched `agent`/`run`/`serve`; **`realm mcp` has NO default** — its stdio cwd is
+client-controlled, so the manifest loads only when `--project` is explicitly configured
+(recorded security decision).
+
+**Sentinel secret mode:** `validate` and `test` resolve `${secret:NAME}` references to
+labeled sentinels (no real credentials; constructor failures become warnings);
+`register`/`watch` resolve real secrets when available and degrade with a loud WARN when
+not. Execution paths always require real resolution.
+
 **`--extensions-module <path>`** (on `agent`, `run`, `serve`, `mcp`, `validate`, `test`)
 REPLACES the workflow's declared modules for that invocation — a loudly-logged repair/override
 tool, not the primary mechanism.

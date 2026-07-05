@@ -72,8 +72,6 @@ services:
   github:
     adapter: github
     trust: engine_delivered
-    auth:
-      token_from: secrets.GITHUB_TOKEN
     config:
       base_url: 'https://api.github.com'
 

@@ -93,10 +93,10 @@ OPENAI_API_KEY=sk-...
 # ANTHROPIC_API_KEY=sk-ant-...
 
 # Slack — required for gate notification and post-approval confirmation
-SLACK_WEBHOOK_URL=https://hooks.slack.com/...  # used by the Slack adapter (notify_posted)
-SLACK_BOT_TOKEN=xoxb-...         # used by the gate transport to post the gate to Slack
-SLACK_CHANNEL_ID=C...            # channel where gate notifications are posted
-SLACK_APP_TOKEN=xapp-...         # Socket Mode — enables resolving the gate by replying in Slack
+SLACK_WEBHOOK_URL=https://hooks.slack.com/...  # bound in realm.yaml (slack adapter / notifier)
+SLACK_BOT_TOKEN=xoxb-...         # bound in realm.yaml notifiers.slack_gate
+SLACK_CHANNEL_ID=C...            # bound in realm.yaml notifiers.slack_gate
+SLACK_APP_TOKEN=xapp-...         # bound in realm.yaml notifiers.slack_gate (Socket Mode)
 
 # Webhook secret — must match the secret set in GitHub webhook settings
 GITHUB_WEBHOOK_SECRET=<your-secret>
@@ -106,6 +106,8 @@ GITHUB_WEBHOOK_SECRET=<your-secret>
 
 Your Slack bot needs the OAuth scopes `chat:write` and `channels:history` on the target
 channel.
+
+All of these are **secret values in `.env`**, referenced from this example's `realm.yaml` deployment manifest (`${secret:NAME}` bindings) — the gate notifier and adapters are constructed from the manifest, not from environment reads.
 
 `SLACK_WEBHOOK_URL` is used by the Slack adapter for `notify_posted` — the confirmation
 message sent to Slack after the review is approved and posted to GitHub.

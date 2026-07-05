@@ -1,0 +1,17 @@
+# realm.yaml — deployment manifest for this example (docs/reference/deployment-manifest.md).
+# Credentials bind HERE (not in workflow.yaml): the github adapter comes from the built-in
+# catalog; the human gate in this workflow is notified via the slack_gate notifier.
+# All ${secret:NAME} references resolve from ./.env (the default dotenv secret source).
+version: 1
+adapters:
+  github:
+    use: github
+    config: { auth: { token: '${secret:GITHUB_TOKEN}' } }
+notifiers:
+  slack_gate:
+    type: slack
+    config:
+      webhook_url: '${secret:SLACK_WEBHOOK_URL}'
+      bot_token: '${secret:SLACK_BOT_TOKEN}'
+      channel_id: '${secret:SLACK_CHANNEL_ID}'
+      app_token: '${secret:SLACK_APP_TOKEN}'

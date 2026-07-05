@@ -199,7 +199,7 @@ export interface BidirectionalGateParams {
   gateThreadTs: string | undefined;
   slackSigningSecret?: string;
   slackEventsPort: number;
-  /** SLACK_APP_TOKEN — enables Socket Mode when set. */
+  /** App-level token (xapp-…) — enables Socket Mode when set (manifest: notifiers.slack_gate.app_token). */
   slackAppToken?: string;
   gateReminderIntervalMs: number;
   gateEscalationThresholdMs: number;
@@ -313,7 +313,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
   } else if (gateThreadTs !== undefined) {
     // Gate notification posted but no listener configured.
     console.log(
-      '  ℹ  Gate notification posted. Set SLACK_APP_TOKEN (Socket Mode) or SLACK_SIGNING_SECRET (Events API) to resolve via Slack. Using terminal command fallback.',
+      '  ℹ  Gate notification posted. Configure app_token (Socket Mode) or signing_secret + events_port (Events API) under notifiers.slack_gate in realm.yaml to resolve via Slack. Using terminal command fallback.',
     );
   }
 

@@ -1,10 +1,10 @@
 // slack-socket-client.ts — Slack Socket Mode WebSocket client for gate thread event delivery.
 // Opens a persistent WebSocket connection to Slack (no public URL required).
-// Used when SLACK_APP_TOKEN (xapp-...) is set alongside SLACK_BOT_TOKEN.
+// Used when notifiers.slack_gate.app_token (xapp-...) is configured alongside bot_token.
 import type { SlackGateEvent } from './slack-gate-server.js';
 
 export interface SlackSocketConfig {
-  /** SLACK_APP_TOKEN — App-level token (starts with xapp-). */
+  /** App-level token (starts with xapp-) — notifiers.slack_gate.app_token. */
   appToken: string;
   /** Gate thread timestamp — only events in this thread are forwarded to onEvent. */
   threadTs: string;

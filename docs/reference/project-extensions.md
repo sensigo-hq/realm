@@ -25,6 +25,18 @@ export default {
 
 ---
 
+## Code vs config (v0.14)
+
+`extensions:` in workflow.yaml declares **CODE** — modules whose exports are ready
+instances (no secrets, no per-deployment values). ALL deployment **CONFIG** — adapter
+construction, secret bindings, handler/processor construction config, notifiers — lives in
+the [deployment manifest](deployment-manifest.md) (`realm.yaml` at the deployment root),
+where module exports can also be consumed as **factories** (`use: ./dist/registry.js#name`)
+receiving secret-resolved config. Code-trust is workflow-declared + containment-checked;
+config-trust is project-scoped at the stored trust root.
+
+---
+
 ## Module contract
 
 The module's **default export** is a plain declarative object with up to three optional maps:
