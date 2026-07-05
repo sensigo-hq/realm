@@ -4,6 +4,28 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### BREAKING
+
+- **The legacy env-gated adapter tier in `realm agent` is REMOVED** (completes #120): `GITHUB_TOKEN`/`SLACK_WEBHOOK_URL` no longer auto-register adapters. Declare adapters in your deployment manifest (`realm.yaml`) instead.
+- **`services.auth.token_from` is REMOVED** from workflow YAML (permanent targeted rejection with a migration message); the engine injects no auth — credentials bind at adapter CONSTRUCTION time in the manifest. `ExecuteStepOptions.secrets`/`executeChain({secrets})` and core `loadSecrets`/`resolveSecret` are gone.
+- **`createDefaultRegistry()` is filesystem-only** — the env-read SlackAdapter registration is gone; `slack` comes from the manifest catalog.
+- **`RealmMcpServerOptions.secrets` is REMOVED** (breaking type; realm-cloud call site verified unaffected).
+- **Gate-notifier config moved to the manifest** (`notifiers.slack_gate`) — the nine `SLACK_*` env reads in `realm agent` are deleted; gate presence = manifest presence. `events_port` is now per-project (no more one-global-port contention).
+- `ExtensionRegistry.clone()` removed (existed solely for the deleted tier); `services:` entries are now schema-validated with a closed key set.
+
+### Added
+
+- **Deployment manifest** — `<deployment root>/realm.yaml` (Ajv-strict, `version: 1`): adapter construction via a **built-in catalog** (github, slack, http, airtable, gorgias, shopify, notion, parcelpanel + config-less filesystem/mock) or custom **factories** (`use: ./path.js#Export`, contract `({ id, config }) => instance`), handler/processor construction config, and gate notifiers. Manifest names and workflow-declared extension exports share one namespace/collision map.
+- **Declared secret sources** — `${secret:NAME}` bindings (composite refs, `$$` escape) resolved from `secrets.sources` (default `[dotenv]`, `env` opt-in, declared order = precedence); dotenv parsed without touching `process.env`; ONE aggregated unresolved-refs error naming every binding site; constructor errors redacted (secret values never appear in logs/errors/drift records).
+- **Anchors** — registered workflows anchor at their stored trust_root; agent-created/from-string definitions anchor at the daemon's `--project` root (cwd default for `agent`/`run`/`serve`; **`realm mcp` requires explicit `--project`** — its cwd is client-controlled, a recorded security decision).
+- **Hot rotation** — a memory-only freshness hash over manifest+dotenv bytes is re-checked per run-start: dotenv secret rotation reaches the next run WITHOUT a daemon restart (the rebuild resets that entry's rate-limiter buckets; module code stays restart-required; concurrent rebuilds race benignly last-wins). Rotation mints zero drift entries; an edited manifest IS drift (`manifest.content_hash` joins the identity compare set; referenced secret NAMES are recorded, never compared, never values).
+- **Sentinel secret mode** — `validate`/`test` run with labeled sentinel credentials (constructor failures downgrade to warnings); `register`/`watch` degrade-with-WARN when sources are unavailable; execution paths always require real resolution. `realm test` fails a fixture the first time a secret-bearing handler executes (never silently real, never fake-credential passes).
+- `realm init` scaffolds `realm.yaml` + an aligned `.env.example`; `registry.sample.js` demonstrates the factory contract. Examples 07/08/09 ship minimal manifests (09 demonstrates `notifiers:`). New docs: `docs/reference/deployment-manifest.md`.
+
+---
+
 ## [0.13.0] — 2026-07-05
 
 ### Added

@@ -624,20 +624,22 @@ fetch_document:
 
 ## Services
 
+> **v0.14:** each `services:` entry is validated against a strict schema — the key set is
+> closed (`adapter`, `trust`, `rate_limit`). **`auth.token_from` was removed**: credentials
+> bind at adapter CONSTRUCTION time in the deployment manifest
+> ([realm.yaml](deployment-manifest.md)), never in workflow YAML.
+
 ```yaml
 services:
   source:
     adapter: google_docs
-    auth:
-      token_from: secrets.GDOCS_TOKEN
     trust: engine_delivered
 ```
 
-| Field             | Type   | Description                                                   |
-| ----------------- | ------ | ------------------------------------------------------------- |
-| `adapter`         | string | Name of a registered `ServiceAdapter`.                        |
-| `auth.token_from` | string | Secret key path. Resolved at runtime from the loaded secrets. |
-| `trust`           | string | Service trust level. See below.                               |
+| Field     | Type   | Description                                                               |
+| --------- | ------ | ------------------------------------------------------------------------- |
+| `adapter` | string | Name of a registered `ServiceAdapter` (built-in, extension, or manifest). |
+| `trust`   | string | Service trust level. See below.                                           |
 
 > **Current limitation — content injection:** The adapter response is injected in full into
 > `context.resources.<step_name>` and flows into every subsequent agent step's prompt context.

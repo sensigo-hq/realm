@@ -247,3 +247,98 @@ expected:
     expect(results[0]!.passed).toBe(true);
   });
 });
+
+describe('secret-bearing handlers (v0.14 manifest sentinel guard)', () => {
+  const HANDLER_WORKFLOW: string = `
+id: secret-handler-wf
+name: Secret Handler WF
+version: 1
+steps:
+  record:
+    description: record via secret-bearing handler
+    execution: auto
+    handler: secret_handler
+  plain:
+    description: plain handler step
+    execution: auto
+    handler: my_custom_handler
+    depends_on: [record]
+`;
+
+  function makeSecretExtensions(): NonNullable<
+    Parameters<typeof buildFixtureRegistries>[2]['extensions']
+  > {
+    const registry = createDefaultRegistry();
+    registry.register('handler', 'secret_handler', {
+      id: 'secret_handler',
+      execute: async () => ({ data: { leaked: '<sentinel:KEY>' } }),
+    });
+    registry.register('handler', 'my_custom_handler', realHandler);
+    return {
+      registry,
+      manifest: {
+        modules: [],
+        adapters: [],
+        handlers: ['secret_handler', 'my_custom_handler'],
+        processors: [],
+        secret_bearing_handlers: ['secret_handler'],
+      },
+    };
+  }
+
+  it('the runner FAILS the fixture the first time a secret-bearing handler executes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'realm-secret-handler-'));
+    try {
+      writeFileSync(join(dir, 'workflow.yaml'), HANDLER_WORKFLOW, 'utf8');
+      const fixturesDir = join(dir, 'fixtures');
+      mkdirSync(fixturesDir);
+      writeFileSync(
+        join(fixturesDir, 'f.yaml'),
+        `name: f\nexpected:\n  final_state: completed\n`,
+        'utf8',
+      );
+      const results = await runFixtureTests({
+        workflowPath: join(dir, 'workflow.yaml'),
+        fixturesPath: fixturesDir,
+        extensions: makeSecretExtensions(),
+      });
+      expect(results[0]!.passed).toBe(false);
+      expect(results[0]!.error).toContain(
+        "handler 'secret_handler' is secret-bearing; fixture tests cannot exercise it — adapter-mediate its I/O or exclude the step.",
+      );
+      // The sentinel-constructed handler never executed.
+      expect(results[0]!.error).not.toContain('<sentinel:KEY>');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('secret-free handlers still execute real (0.13 semantics)', () => {
+    const { fixtureRegistry, fallbackRegistry } = buildFixtureRegistries(
+      makeFixture(),
+      SERVICE_DEFINITION,
+      { extensions: makeSecretExtensions() },
+    );
+    // Poisoned in BOTH paths...
+    expect(fixtureRegistry.getHandler('secret_handler')).not.toBeUndefined();
+    expect(fallbackRegistry!.getHandler('secret_handler')).not.toBeUndefined();
+    // ...while the secret-free handler is the REAL instance in both.
+    expect(fixtureRegistry.getHandler('my_custom_handler')).toBe(realHandler);
+    expect(fallbackRegistry!.getHandler('my_custom_handler')).toBe(realHandler);
+  });
+
+  it('the poisoned handler throws the targeted message in both registries', async () => {
+    const { fixtureRegistry, fallbackRegistry } = buildFixtureRegistries(
+      makeFixture(),
+      SERVICE_DEFINITION,
+      { extensions: makeSecretExtensions() },
+    );
+    for (const registry of [fixtureRegistry, fallbackRegistry!]) {
+      await expect(
+        registry
+          .getHandler('secret_handler')!
+          .execute({ params: {} }, { run_id: 'r', run_params: {}, config: {} }),
+      ).rejects.toThrow(/secret-bearing; fixture tests cannot exercise it/);
+    }
+  });
+});

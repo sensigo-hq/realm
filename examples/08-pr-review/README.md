@@ -94,7 +94,7 @@ GITHUB_TOKEN=ghp_...
 
 Token needs `contents:read` (to fetch the diff) and `issues:write` (to post the comment —
 GitHub's PR comment endpoint is the Issues API). The workflow reads the token via
-`auth.token_from: secrets.GITHUB_TOKEN`.
+the deployment manifest (`realm.yaml`): the github adapter is constructed with `${secret:GITHUB_TOKEN}` resolved from `.env`.
 
 ---
 

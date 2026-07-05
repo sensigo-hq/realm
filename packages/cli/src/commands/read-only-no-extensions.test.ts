@@ -38,6 +38,20 @@ describe('read-only commands never gain code-execution capability', () => {
     expect(identitySource).not.toContain('createRequire');
   });
 
+  it('the manifest/secrets modules satisfy the same invariant (no dynamic import, no createRequire, no secret resolution capability leak into read-only paths)', () => {
+    // manifest-secrets.ts is pure fs+parse; the CORE manifest modules are pure data/shape.
+    const secretsSource = readFileSync(
+      join(COMMANDS_DIR, '..', 'extensions', 'manifest-secrets.ts'),
+      'utf8',
+    );
+    expect(secretsSource).not.toMatch(/\bimport\s*\(/);
+    expect(secretsSource).not.toContain('createRequire');
+    // Read-only commands must not import the secrets engine at all.
+    for (const name of ['replay', 'inspect', 'list', 'diff', 'replay-format']) {
+      expect(source(name)).not.toContain('manifest-secrets');
+    }
+  });
+
   it('sanity: inspect references the pure identity module (drift rendering is wired)', () => {
     expect(source('inspect')).toContain('extension-identity');
   });

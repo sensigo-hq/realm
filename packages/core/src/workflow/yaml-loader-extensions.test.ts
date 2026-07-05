@@ -129,3 +129,55 @@ describe('extensions schema (loadWorkflowFromFile)', () => {
     expect(definition.trust_root).toBeDefined();
   });
 });
+
+describe('services schema (v0.14)', () => {
+  const withService = (entry: string): string => `
+id: svc-schema-wf
+name: Svc Schema WF
+version: 1
+services:
+  my_svc:
+${entry}
+steps:
+  s1:
+    description: step
+    execution: auto
+    uses_service: my_svc
+`;
+
+  it('token_from gets the TARGETED migration error (not a generic unknown-key error)', () => {
+    const yaml = withService(
+      `    adapter: github\n    trust: engine_managed\n    auth:\n      token_from: secrets.GITHUB_TOKEN`,
+    );
+    expect(() => loadWorkflowFromString(yaml)).toThrow(
+      /Service 'my_svc': 'auth\.token_from' was removed in v0\.14\.0 — bind credentials in your deployment manifest \(realm\.yaml\)/,
+    );
+    expect(() => loadWorkflowFromString(yaml)).not.toThrow(/unknown key/);
+  });
+
+  it('unknown service keys are rejected by the strict schema', () => {
+    const yaml = withService(
+      `    adapter: github\n    trust: engine_managed\n    base_url: https://x`,
+    );
+    expect(() => loadWorkflowFromString(yaml)).toThrow(/Service 'my_svc': unknown key 'base_url'/);
+  });
+
+  it('adapter is required; trust must be a valid enum value', () => {
+    expect(() => loadWorkflowFromString(withService(`    trust: engine_managed`))).toThrow(
+      /my_svc/,
+    );
+    expect(() =>
+      loadWorkflowFromString(withService(`    adapter: github\n    trust: nonsense`)),
+    ).toThrow(/my_svc/);
+  });
+
+  it('a well-formed service entry passes', () => {
+    expect(() =>
+      loadWorkflowFromString(
+        withService(
+          `    adapter: github\n    trust: engine_managed\n    rate_limit:\n      requests_per_second: 2`,
+        ),
+      ),
+    ).not.toThrow();
+  });
+});

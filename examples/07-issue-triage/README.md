@@ -37,7 +37,7 @@ triage_issue   (agent + gate — severity, labels, comment_draft)
   `reject` paths — no extra step or CLI change required.
 - `GITHUB_TOKEN` must be present for write operations to authenticate with GitHub. Add it
   to a `.env` file in the repo root — the workflow is configured with
-  `auth.token_from: secrets.GITHUB_TOKEN` and the engine injects the value at run time.
+  `realm.yaml` binds the github adapter's token via `${secret:GITHUB_TOKEN}` (resolved from `.env`).
 
 ---
 
@@ -92,7 +92,7 @@ Create a `.env` file in the repo root with your GitHub token:
 GITHUB_TOKEN=ghp_...
 ```
 
-The workflow is configured with `auth.token_from: secrets.GITHUB_TOKEN` — the engine reads
+Credentials live in the deployment manifest (`realm.yaml`) — the loader reads
 the value from `.env` and injects it into the GitHubAdapter at run time. The `realm agent`
 preflight enforces that `GITHUB_TOKEN` is set before starting a run.
 

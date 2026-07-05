@@ -18,7 +18,7 @@ export interface SlackGateEvent {
 }
 
 export interface SlackGateServerOptions {
-  /** Local port to listen on. Default: 3100. Configurable via SLACK_EVENTS_PORT. */
+  /** Local port to listen on. Default: 3100. Configured via notifiers.slack_gate.events_port in realm.yaml. */
   port: number;
   /** Slack signing secret for HMAC-SHA256 verification. Never logged. */
   signingSecret: string;
