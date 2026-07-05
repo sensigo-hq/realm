@@ -50,7 +50,6 @@ export interface RateLimitConfig {
 
 export interface ServiceDefinition {
   adapter: string;
-  auth?: { token_from: string };
   trust: ServiceTrust;
   rate_limit?: RateLimitConfig;
 }

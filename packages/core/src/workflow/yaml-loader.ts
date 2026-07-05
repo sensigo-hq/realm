@@ -107,6 +107,23 @@ function validateWhenReference(
 /** Bumped on every breaking change to WorkflowDefinition's serialized format. */
 export const CURRENT_WORKFLOW_SCHEMA_VERSION = 1;
 
+/**
+ * Ajv-strict schema for one `services:` entry — CLOSED key set (`adapter`, `trust`,
+ * `rate_limit`). `auth`/`token_from` get a targeted migration rejection BEFORE this schema
+ * runs (removed in v0.14.0 — credentials bind in the deployment manifest). rate_limit's
+ * field-level numeric rules keep their existing dedicated checks below.
+ */
+const SERVICE_ENTRY_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['adapter'],
+  properties: {
+    adapter: { type: 'string', minLength: 1 },
+    trust: { enum: ['engine_delivered', 'engine_managed', 'agent_provided'] },
+    rate_limit: { type: 'object' },
+  },
+};
+
 const VALID_EXECUTIONS = new Set(['auto', 'agent', 'guard']);
 const VALID_SERVICE_METHODS = new Set(['fetch', 'create', 'update', 'delete']);
 const VALID_TRIGGER_RULES = new Set<TriggerRule>([
@@ -814,13 +831,33 @@ function parseWorkflowString(
     }
   }
 
-  // Validate services: rate_limit fields.
+  // Validate services: Ajv-strict entry schema (closed key set) + rate_limit fields.
   if (typeof doc['services'] === 'object' && doc['services'] !== null) {
     for (const [serviceName, serviceRaw] of Object.entries(
       doc['services'] as Record<string, unknown>,
     )) {
       if (typeof serviceRaw !== 'object' || serviceRaw === null) continue;
       const service = serviceRaw as Record<string, unknown>;
+
+      // PERMANENT targeted rejection — must win over the generic unknown-key error.
+      if ('auth' in service || 'token_from' in service) {
+        errors.push(
+          `Service '${serviceName}': 'auth.token_from' was removed in v0.14.0 — bind ` +
+            `credentials in your deployment manifest (realm.yaml); see the migration note.`,
+        );
+      } else {
+        const serviceAjv = new Ajv({ strict: true, allErrors: true });
+        if (!serviceAjv.validate(SERVICE_ENTRY_JSON_SCHEMA, service)) {
+          for (const err of serviceAjv.errors ?? []) {
+            const detail =
+              err.keyword === 'additionalProperties'
+                ? `unknown key '${String((err.params as { additionalProperty?: string }).additionalProperty)}'`
+                : `${err.instancePath.replace(/^\//, '').replace(/\//g, '.') || 'entry'} ${err.message ?? 'invalid'}`;
+            errors.push(`Service '${serviceName}': ${detail}`);
+          }
+        }
+      }
+
       const rateLimit = service['rate_limit'];
       if (rateLimit === undefined) continue;
       if (typeof rateLimit !== 'object' || rateLimit === null) {
