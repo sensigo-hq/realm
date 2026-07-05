@@ -496,3 +496,35 @@ steps:
     expect(reloaded.trust_root).toBe(root);
   });
 });
+
+describe('sentinel/real cache isolation (fix-holder for the mode cache-key component)', () => {
+  it('a sentinel-mode load never serves a subsequent real-mode load for the same definition', async () => {
+    writeEnv('MY_TOKEN=real-value\n');
+    writeManifest(
+      `version: 1
+secrets: { sources: [dotenv] }
+handlers:
+  h1:
+    use: ./dist/registry.js#makeHandler
+    config: { token: "\${secret:MY_TOKEN}" }
+`,
+    );
+    writeFileSync(
+      join(root, 'dist', 'registry.js'),
+      `export function makeHandler(ctx) {
+  return { id: ctx.id, token: ctx.config.token, async execute() { return { output: {}, warnings: [] }; } };
+}
+`,
+      'utf8',
+    );
+    const def = anchoredDefinition();
+    const sentinel = await loadProjectExtensions(def, { secretMode: 'sentinel' });
+    const real = await loadProjectExtensions(def, { secretMode: 'real' });
+    // distinct registries, and the real path carries the REAL secret, never the sentinel label
+    expect(real.registry).not.toBe(sentinel.registry);
+    const sHandler = sentinel.registry.getHandler('h1') as unknown as { token: string };
+    const rHandler = real.registry.getHandler('h1') as unknown as { token: string };
+    expect(sHandler.token).toBe('<sentinel:MY_TOKEN>');
+    expect(rHandler.token).toBe('real-value');
+  });
+});
