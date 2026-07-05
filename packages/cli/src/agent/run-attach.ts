@@ -18,6 +18,7 @@ import type {
   ExtensionManifest,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+import { identityDiffers, errorExtensionIdentityEntry } from '../extensions/extension-identity.js';
 
 /** Terminal reason written when extension loading fails before a run has started executing. */
 export const EXTENSIONS_LOAD_FAILED = 'extensions_load_failed';
@@ -70,11 +71,38 @@ export async function resolveRunAttach(
       definition,
       opts?.overrideModule !== undefined ? { overrideModule: opts.overrideModule } : {},
     );
+
+    // Drift evidence (issue #119): WARN immediately when the freshly loaded identity
+    // differs from the run's LAST recorded identity. Advisory only — never a gate, and
+    // NO pre-claim write on the success path (a pre-claim CAS bump would kill a live
+    // driver's in-flight step update). The append lands via the core lazy
+    // append-on-change site after this attacher claims a step.
+    const freshIdentity = registry.identity;
+    const history = run.extension_identity ?? [];
+    const lastIdentity = history[history.length - 1];
+    if (
+      freshIdentity !== undefined &&
+      lastIdentity !== undefined &&
+      identityDiffers(lastIdentity, freshIdentity)
+    ) {
+      console.error(
+        `[realm] WARN: extension code identity differs from this run's last recorded identity — ` +
+          `recorded tree_hash ${lastIdentity.tree.tree_hash || '(none)'} (captured ${lastIdentity.captured_at}), ` +
+          `current tree_hash ${freshIdentity.tree.tree_hash || '(none)'} (captured ${freshIdentity.captured_at}). ` +
+          `Advisory only — the run proceeds; the new identity is appended to the run's history at the next step.`,
+      );
+    }
+
     return { definition, registry, manifest };
   } catch (err) {
     // Not-yet-started guard: mark only pre-execution runs; never mutate an in-flight or
     // already-terminal run. Double failure (store write also fails) → stderr, error still
     // propagates (exit nonzero) — same handling class as listen's spawn_failed.
+    // The failed load is itself drift evidence: the extensions_load_failed write carries
+    // an identity entry with `error` set, so the repair loop gets its before/after pair.
+    // When the run has begun executing nothing is mutated — no error entry either (the
+    // pair lands via the post-claim append on a successful re-attach); this asymmetry is
+    // deliberate.
     try {
       const fresh = await deps.store.get(runId);
       if (
@@ -85,6 +113,13 @@ export async function resolveRunAttach(
         fresh.terminal_state = true;
         fresh.terminal_reason = EXTENSIONS_LOAD_FAILED;
         fresh.run_phase = 'failed';
+        fresh.extension_identity = [
+          ...(fresh.extension_identity ?? []),
+          errorExtensionIdentityEntry(
+            `extension load failed: ${err instanceof Error ? err.message : String(err)}`,
+            opts?.overrideModule !== undefined ? { overrideActive: true } : {},
+          ),
+        ];
         await deps.store.update(fresh);
       }
     } catch (writeErr) {

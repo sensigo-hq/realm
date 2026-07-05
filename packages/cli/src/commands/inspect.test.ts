@@ -1,6 +1,10 @@
 // Tests for inspectRun business logic.
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { inspectRun } from './inspect.js';
+import { computeExtensionIdentity } from '../extensions/extension-identity.js';
 import type {
   RunStore,
   RunRecord,
@@ -8,6 +12,7 @@ import type {
   WorkflowDefinition,
   EvidenceSnapshot,
   StepDiagnostics,
+  ExtensionIdentityEntry,
 } from '@sensigo/realm';
 
 function makeSnapshot(stepId: string, overrides: Partial<EvidenceSnapshot> = {}): EvidenceSnapshot {
@@ -436,5 +441,140 @@ describe('inspectRun', () => {
     expect(result).toContain('Trace Summary:');
     expect(result).toContain('steps_with_trace:        3');
     expect(result).toContain('steps_with_trace_unique: 2');
+  });
+});
+
+describe('inspectRun — extension identity (drift evidence)', () => {
+  it('renders the identity history with the exact coverage sentence, flags, and signals', async () => {
+    const entry: ExtensionIdentityEntry = {
+      captured_at: '2026-07-05T10:00:00.000Z',
+      pid: 777,
+      modules: [
+        {
+          declared: '../../dist/registry.js',
+          resolved: '/proj/dist/registry.js',
+          entry_hash: 'aa11bb22',
+          format: 'esm',
+        },
+      ],
+      tree: {
+        roots: ['/proj/dist'],
+        rules: 'dir_tree_v1: test-rules',
+        file_count: 3,
+        total_bytes: 999,
+        tree_hash: 'cc33dd44',
+        truncated: false,
+      },
+      signals: { package_version: '2.0.0', git_head: 'feedface' },
+      coverage: 'dir_tree_v1',
+    };
+    const overrideErrorEntry: ExtensionIdentityEntry = {
+      captured_at: '2026-07-05T11:00:00.000Z',
+      modules: [],
+      tree: {
+        roots: [],
+        rules: 'dir_tree_v1: test-rules',
+        file_count: 0,
+        total_bytes: 0,
+        tree_hash: '',
+        truncated: false,
+      },
+      coverage: 'dir_tree_v1',
+      override_active: true,
+      error: 'extension load failed: boom',
+    };
+    const run = makeRun([], { extension_identity: [entry, overrideErrorEntry] });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+
+    expect(result).toContain('Extension Identity (2 entries):');
+    expect(result).toContain('captured 2026-07-05T10:00:00.000Z (pid 777)');
+    expect(result).toContain('module: ../../dist/registry.js -> /proj/dist/registry.js (esm)');
+    expect(result).toContain('entry_hash aa11bb22');
+    expect(result).toContain('tree: 3 files, 999 bytes');
+    expect(result).toContain('tree_hash cc33dd44');
+    expect(result).toContain('signals: package_version 2.0.0, git_head feedface');
+    // The fixed coverage sentence, exact:
+    expect(result).toContain(
+      'covers files under /proj/dist matching dir_tree_v1: test-rules; imports outside these roots, node_modules, and runtime dynamic imports are NOT covered.',
+    );
+    expect(result).toContain('[override]');
+    expect(result).toContain('[error]');
+    expect(result).toContain('error: extension load failed: boom');
+  });
+
+  it('renders nothing extra for runs without identity history', async () => {
+    const run = makeRun([]);
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).not.toContain('Extension Identity');
+  });
+
+  it('--check-drift recomputes the LAST entry against current disk: same, then DIFFERS after edit', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'realm-inspect-drift-'));
+    try {
+      const entryFile = join(dir, 'registry.js');
+      writeFileSync(entryFile, 'export default {};', 'utf8');
+      writeFileSync(join(dir, 'helper.js'), 'export const x = 1;', 'utf8');
+      const identity = computeExtensionIdentity([
+        { declared: './registry.js', resolved: entryFile, format: 'esm' },
+      ]);
+      const run = makeRun([], { extension_identity: [identity] });
+
+      const same = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef), {
+        checkDrift: true,
+      });
+      expect(same).toContain('Drift check');
+      expect(same).toContain(`module ${entryFile}: same`);
+      expect(same).toContain('tree: same');
+
+      writeFileSync(join(dir, 'helper.js'), 'export const x = 2;', 'utf8');
+      const treeDrift = await inspectRun(
+        'run_test1',
+        makeRunStore(run),
+        makeWorkflowStore(basicDef),
+        { checkDrift: true },
+      );
+      expect(treeDrift).toContain(`module ${entryFile}: same`);
+      expect(treeDrift).toContain('tree: DIFFERS');
+
+      rmSync(entryFile);
+      const missing = await inspectRun(
+        'run_test1',
+        makeRunStore(run),
+        makeWorkflowStore(basicDef),
+        { checkDrift: true },
+      );
+      expect(missing).toContain(`module ${entryFile}: MISSING`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('--check-drift on an unknown rules version prints the explicit cannot-compare', async () => {
+    const entry: ExtensionIdentityEntry = {
+      captured_at: '2026-07-05T10:00:00.000Z',
+      modules: [],
+      tree: {
+        roots: [],
+        rules: 'dir_tree_v9: future',
+        file_count: 0,
+        total_bytes: 0,
+        tree_hash: 'x',
+        truncated: false,
+      },
+      coverage: 'dir_tree_v1',
+    };
+    const run = makeRun([], { extension_identity: [entry] });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef), {
+      checkDrift: true,
+    });
+    expect(result).toContain("cannot compare (unknown rules 'dir_tree_v9: future')");
+  });
+
+  it('--check-drift with no recorded identity says so', async () => {
+    const run = makeRun([]);
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef), {
+      checkDrift: true,
+    });
+    expect(result).toContain('no extension identity recorded for this run');
   });
 });

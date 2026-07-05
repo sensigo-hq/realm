@@ -1,4 +1,9 @@
 // inspect command — displays the full evidence chain and diagnostics for a run.
+//
+// Read-only invariant: this command must never gain the capability to execute project
+// code. The drift-evidence rendering and --check-drift recomputation below therefore use
+// ONLY the pure fingerprint module (extension-identity.ts — fs reads + sha256, no dynamic
+// import, no createRequire), never the extensions loader.
 import chalk from 'chalk';
 import { Command } from 'commander';
 import type {
@@ -7,7 +12,111 @@ import type {
   WorkflowRegistrar,
   EvidenceSnapshot,
   StepDiagnostics,
+  ExtensionIdentityEntry,
 } from '@sensigo/realm';
+import { recomputeIdentity } from '../extensions/extension-identity.js';
+
+/**
+ * Renders the run's extension-code identity history (drift evidence, issue #119) plus,
+ * with `checkDrift`, a pure-fs recomputation of the LAST entry against current disk state
+ * under the entry's RECORDED rules — no code loading, ever.
+ */
+function renderExtensionIdentity(
+  history: ExtensionIdentityEntry[],
+  checkDrift: boolean,
+  trustRoot: string | undefined,
+): string[] {
+  const lines: string[] = [];
+  lines.push('');
+  lines.push(
+    `Extension Identity (${history.length} ${history.length === 1 ? 'entry' : 'entries'}):`,
+  );
+
+  history.forEach((entry, idx) => {
+    const flags = [
+      entry.override_active === true ? chalk.yellow('[override]') : '',
+      entry.error !== undefined ? chalk.red('[error]') : '',
+    ]
+      .filter((f) => f !== '')
+      .join(' ');
+    lines.push(
+      `  ${idx + 1}. captured ${entry.captured_at}${entry.pid !== undefined ? ` (pid ${entry.pid})` : ''}${flags ? ` ${flags}` : ''}`,
+    );
+    if (entry.error !== undefined) {
+      lines.push(chalk.red(`     error: ${entry.error}`));
+    }
+    for (const mod of entry.modules) {
+      lines.push(`     module: ${mod.declared} -> ${mod.resolved} (${mod.format})`);
+      lines.push(`             entry_hash ${mod.entry_hash}`);
+    }
+    lines.push(
+      `     tree: ${entry.tree.file_count} files, ${entry.tree.total_bytes} bytes${entry.tree.truncated ? ', TRUNCATED' : ''}`,
+    );
+    lines.push(`           tree_hash ${entry.tree.tree_hash || '(none)'}`);
+    if (entry.signals !== undefined) {
+      const sig: string[] = [];
+      if (entry.signals.package_version !== undefined)
+        sig.push(`package_version ${entry.signals.package_version}`);
+      if (entry.signals.git_head !== undefined) sig.push(`git_head ${entry.signals.git_head}`);
+      lines.push(`     signals: ${sig.join(', ')}`);
+    }
+    lines.push(
+      chalk.dim(
+        `     coverage (${entry.coverage}): covers files under ${entry.tree.roots.join(', ') || '(none)'} matching ${entry.tree.rules}; imports outside these roots, node_modules, and runtime dynamic imports are NOT covered.`,
+      ),
+    );
+  });
+
+  if (checkDrift) {
+    lines.push('');
+    lines.push('Drift check (pure recompute of the last entry under its recorded rules):');
+    const last = history[history.length - 1]!;
+    if (last.error !== undefined) {
+      lines.push(
+        chalk.yellow(
+          '  last entry records a load/capture error — nothing to compare against current disk state.',
+        ),
+      );
+      return lines;
+    }
+    const result = recomputeIdentity(last, trustRoot !== undefined ? { trustRoot } : {});
+    if (!result.comparable) {
+      lines.push(chalk.yellow(`  ${result.reason}`));
+      return lines;
+    }
+    for (const mod of result.modules) {
+      if (mod.current_hash === undefined) {
+        lines.push(chalk.red(`  module ${mod.resolved}: MISSING (unreadable on current disk)`));
+      } else if (mod.current_hash === mod.recorded_hash) {
+        lines.push(chalk.green(`  module ${mod.resolved}: same`));
+      } else {
+        lines.push(
+          chalk.yellow(
+            `  module ${mod.resolved}: DIFFERS (recorded ${mod.recorded_hash}, current ${mod.current_hash})`,
+          ),
+        );
+      }
+    }
+    if (result.tree.current_hash === result.tree.recorded_hash) {
+      lines.push(chalk.green('  tree: same'));
+    } else {
+      lines.push(
+        chalk.yellow(
+          `  tree: DIFFERS (recorded ${result.tree.recorded_hash || '(none)'}, current ${result.tree.current_hash}${result.tree.current_truncated ? ', current truncated' : ''})`,
+        ),
+      );
+    }
+    if (result.signals !== undefined || last.signals !== undefined) {
+      lines.push(
+        chalk.dim(
+          `  signals (informational): recorded ${JSON.stringify(last.signals ?? {})}, current ${JSON.stringify(result.signals ?? {})}`,
+        ),
+      );
+    }
+  }
+
+  return lines;
+}
 
 /** Truncates a JSON-serialised summary to a readable single line. */
 function formatSummary(value: unknown, maxLength = 120): string {
@@ -48,16 +157,18 @@ export async function inspectRun(
   runId: string,
   store: RunStore,
   workflowStore: WorkflowRegistrar,
-  options?: { verbose?: boolean },
+  options?: { verbose?: boolean; checkDrift?: boolean },
 ): Promise<string> {
   const run: RunRecord = await store.get(runId);
 
   // Try to load workflow definition; gracefully handle missing definition.
   let workflowLabel: string;
   let definitionMissing = false;
+  let trustRoot: string | undefined;
   try {
     const def = await workflowStore.get(run.workflow_id);
     workflowLabel = `${def.id} v${def.version}`;
+    trustRoot = def.trust_root;
   } catch {
     workflowLabel = run.workflow_id;
     definitionMissing = true;
@@ -139,6 +250,16 @@ export async function inspectRun(
     if (topEvents.length > 0) {
       lines.push(`  top_events:             ${topEvents.join(', ')}`);
     }
+  }
+
+  // Drift evidence (issue #119): render the extension-identity history when present.
+  if (run.extension_identity !== undefined && run.extension_identity.length > 0) {
+    lines.push(
+      ...renderExtensionIdentity(run.extension_identity, options?.checkDrift === true, trustRoot),
+    );
+  } else if (options?.checkDrift === true) {
+    lines.push('');
+    lines.push('Drift check: no extension identity recorded for this run.');
   }
 
   lines.push('');
@@ -248,17 +369,19 @@ export const inspectCommand = new Command('inspect')
   .argument('<run-id>', 'ID of the run to inspect')
   .description('Display the full evidence chain and diagnostics for a run')
   .option('--verbose', 'Show full tool call args and results')
-  .action(async (runId: string, cmdOpts: { verbose?: boolean }) => {
+  .option(
+    '--check-drift',
+    'Recompute the last recorded extension identity against current disk state (pure hashing — never loads code)',
+  )
+  .action(async (runId: string, cmdOpts: { verbose?: boolean; checkDrift?: boolean }) => {
     const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
     const store = new JsonFileStore();
     const workflowStore = new JsonWorkflowStore();
     try {
-      const output = await inspectRun(
-        runId,
-        store,
-        workflowStore,
-        cmdOpts.verbose === true ? { verbose: true } : undefined,
-      );
+      const output = await inspectRun(runId, store, workflowStore, {
+        ...(cmdOpts.verbose === true ? { verbose: true } : {}),
+        ...(cmdOpts.checkDrift === true ? { checkDrift: true } : {}),
+      });
       console.log(output);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
