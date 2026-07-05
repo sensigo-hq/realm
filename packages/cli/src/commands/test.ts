@@ -59,13 +59,21 @@ export const testCommand = new Command('test')
       // fail-if-unmocked tripwires inside the fixture runner. Extension-free workflows
       // (without an override) pass no `extensions` — current behavior byte-for-byte.
       const definition = loadWorkflowFromFile(resolveWorkflowFilePath(workflowPath));
-      let extensions: RunFixtureTestsOptions['extensions'];
-      if (definition.extensions !== undefined || opts.extensionsModule !== undefined) {
-        extensions = await loadProjectExtensions(
-          definition,
-          opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {},
-        );
-      }
+      // Sentinel mode: fixtures never see real credentials — secret-bearing handlers are
+      // constructed with sentinels and FAIL the fixture on first execution (runner-side).
+      const loaded = await loadProjectExtensions(definition, {
+        ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
+        secretMode: 'sentinel',
+      });
+      for (const warning of loaded.sentinelWarnings ?? []) console.warn(`⚠  ${warning}`);
+      const hasExtensionContent =
+        loaded.manifest.modules.length > 0 ||
+        loaded.manifest.adapters.length > 0 ||
+        loaded.manifest.handlers.length > 0 ||
+        loaded.manifest.processors.length > 0;
+      const extensions: RunFixtureTestsOptions['extensions'] = hasExtensionContent
+        ? { registry: loaded.registry, manifest: loaded.manifest }
+        : undefined;
       results = await runFixtureTests({
         workflowPath,
         fixturesPath: opts.fixtures,

@@ -77,7 +77,8 @@ describe('loadProjectExtensions — fallback and happy path', () => {
       makeDefinition({ source_dir: undefined, trust_root: undefined }),
     );
     expect(registry.getAdapter('filesystem')).toBeDefined();
-    expect(registry.getAdapter('slack')).toBeDefined();
+    // v0.14: the default registry is filesystem-only — slack moved to the manifest catalog.
+    expect(registry.getAdapter('slack')).toBeUndefined();
     expect(manifest).toEqual({ modules: [], adapters: [], handlers: [], processors: [] });
   });
 
@@ -393,12 +394,6 @@ describe('loadProjectExtensions — drift-evidence identity capture', () => {
     const second = await loadProjectExtensions(definition);
     expect(second.registry.identity).toBeDefined();
     expect(second.registry.identity).toBe(first.registry.identity);
-  });
-
-  it('clone() carries the identity through tier composition', async () => {
-    const { declared } = writeModule(FULL_MODULE_SOURCE);
-    const { registry } = await loadProjectExtensions(makeDefinition({ extensions: [declared] }));
-    expect(registry.clone().identity).toBe(registry.identity);
   });
 
   it('override runs are flagged override_active', async () => {

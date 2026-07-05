@@ -153,14 +153,21 @@ export const serveCommand = new Command('serve')
   .option('--dev', 'Disable authentication (for local development only)')
   .option(
     '--extensions-module <path>',
-    "Extensions module that REPLACES every workflow's declared 'extensions' modules (repair/override)",
+    "CODE override: module that REPLACES every workflow's declared 'extensions' modules (repair tool)",
+  )
+  .option(
+    '--project <dir>',
+    'CONFIG anchor: deployment root whose realm.yaml applies to definitions without a stored trust_root (default: current directory — serve is operator-launched)',
   )
   .action(async (options) => {
     const port = parseInt(options.port, 10);
     const host = options.host as string;
     const devMode = options.dev === true || process.env.REALM_DEV === '1';
     const token = process.env.REALM_SERVE_TOKEN;
-    const registryProvider = makeRegistryProvider(options.extensionsModule as string | undefined);
+    const registryProvider = makeRegistryProvider(
+      options.extensionsModule as string | undefined,
+      (options.project as string | undefined) ?? process.cwd(),
+    );
 
     if (!devMode && !token) {
       console.error(

@@ -6,7 +6,11 @@ import { Command } from 'commander';
 import { join } from 'node:path';
 import { loadWorkflowFromFile, JsonWorkflowStore } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
-import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+import {
+  loadProjectExtensions,
+  type LoadedProjectExtensions,
+} from '../extensions/load-project-extensions.js';
+import { ManifestSecretsError } from '../extensions/manifest-secrets.js';
 
 /**
  * Loads and validates a workflow for registration. Extension-declaring workflows get the
@@ -15,12 +19,25 @@ import { loadProjectExtensions } from '../extensions/load-project-extensions.js'
  */
 export async function loadWorkflowForRegistration(filePath: string): Promise<WorkflowDefinition> {
   const definition = loadWorkflowFromFile(filePath);
-  if (definition.extensions !== undefined) {
-    const { registry } = await loadProjectExtensions(definition);
-    // Two-pass: re-validate with the resolved registry so step config is checked against
-    // each custom adapter's config_schema before the definition is persisted.
-    loadWorkflowFromFile(filePath, registry);
+  // Full module load + duck validation + manifest construction + config_schema two-pass
+  // BEFORE persisting. Secret sources may be unavailable at provisioning time: degrade to
+  // SENTINEL construction with a loud WARN (never silent, never a registration blocker);
+  // execution paths still require real resolution.
+  let loaded: LoadedProjectExtensions;
+  try {
+    loaded = await loadProjectExtensions(definition);
+  } catch (err) {
+    if (!(err instanceof ManifestSecretsError)) throw err;
+    console.warn(`⚠  ${err.message}`);
+    console.warn(
+      '⚠  Registering with SENTINEL credentials — execution paths still require real secret resolution.',
+    );
+    loaded = await loadProjectExtensions(definition, { secretMode: 'sentinel' });
   }
+  for (const warning of loaded.sentinelWarnings ?? []) console.warn(`⚠  ${warning}`);
+  // Two-pass: re-validate with the resolved registry so step config is checked against
+  // each adapter's config_schema before the definition is persisted.
+  loadWorkflowFromFile(filePath, loaded.registry);
   return definition;
 }
 

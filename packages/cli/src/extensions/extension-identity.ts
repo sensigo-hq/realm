@@ -42,6 +42,15 @@ export interface ComputeIdentityOptions {
   capturedAt?: string;
   /** Injected for tests; defaults to `process.pid`. */
   pid?: number;
+  /** Deployment-manifest identity (path + raw-bytes sha256) — recorded AND compared. */
+  manifest?: { path: string; content_hash: string };
+  /** Secret NAMES referenced by the manifest — recorded, never compared, never values. */
+  secretNames?: string[];
+}
+
+/** sha256 hex of raw bytes/text — exported for the loader's manifest content hash. */
+export function sha256HexOf(data: Buffer | string): string {
+  return sha256Hex(data);
 }
 
 function sha256Hex(data: Buffer | string): string {
@@ -190,6 +199,10 @@ export function computeExtensionIdentity(
     tree: { roots, rules: DIR_TREE_V1_RULES, ...tree },
     ...(signals !== undefined ? { signals } : {}),
     coverage: 'dir_tree_v1',
+    ...(opts.manifest !== undefined ? { manifest: opts.manifest } : {}),
+    ...(opts.secretNames !== undefined && opts.secretNames.length > 0
+      ? { secret_names: opts.secretNames }
+      : {}),
     ...(opts.overrideActive === true ? { override_active: true as const } : {}),
   };
 }

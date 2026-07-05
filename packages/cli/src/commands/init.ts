@@ -57,8 +57,38 @@ steps:
     2,
   );
 
-  const envExample = `# Add your secrets here
+  const envExample = `# Secret values referenced by realm.yaml (\${secret:NAME} bindings).
+# This file is the default 'dotenv' secret source — see docs/reference/deployment-manifest.md
 # EXAMPLE_API_KEY=your_key_here
+`;
+
+  const realmYaml = `# realm.yaml — deployment manifest for this project (see docs/reference/deployment-manifest.md).
+# The manifest owns deployment CONFIG: adapter construction, secret bindings
+# (\${secret:NAME}), handler/processor config, and gate-notifier config.
+# Workflows keep declaring CODE via 'extensions:' in workflow.yaml.
+version: 1
+
+# secrets:
+#   sources: [dotenv]        # dotenv | env; default [dotenv]; order = precedence
+#   dotenv: ./.env           # default: .env next to this file
+
+# adapters:
+#   github:
+#     use: github            # built-in catalog name, or ./dist/registry.js#myFactory
+#     config: { auth: { token: "\${secret:GITHUB_TOKEN}" } }
+
+# handlers:
+#   my_handler:
+#     use: ./registry.js#myHandlerFactory
+#     config: { api_key: "\${secret:MY_API_KEY}" }
+
+# notifiers:
+#   slack_gate:
+#     type: slack
+#     config:
+#       webhook_url: "\${secret:SLACK_WEBHOOK_URL}"
+#       bot_token: "\${secret:SLACK_BOT_TOKEN}"
+#       channel_id: C0XXXX
 `;
 
   const readmeMd = `# ${name}
@@ -85,37 +115,32 @@ realm workflow test ./ --fixtures ./fixtures/
   // Project extensions sample: the documented declarative contract shape, fully commented
   // out — nothing is registered by default. Activate by uncommenting and declaring
   // `extensions: ./registry.js` in workflow.yaml (then re-register the workflow).
-  const registrySampleJs = `// registry.sample.js — project extension module template for ${name}.
-// Docs: docs/reference/project-extensions.md (module contract, trust model, precedence).
+  const registrySampleJs = `// registry.sample.js — extension module template for ${name}.
+// Docs: docs/reference/project-extensions.md (code) + docs/reference/deployment-manifest.md (config).
 //
-// To use: rename to registry.js, fill in your extensions, then declare it in workflow.yaml:
-//   extensions: ./registry.js
-// and re-register the workflow (realm workflow register ./).
-//
-// The default export is a declarative object — instances keyed by REGISTRATION NAME
-// (the map key is the name your workflow YAML references).
+// TWO export shapes:
+//  1. The workflow-declared DEFAULT export ('extensions:' in workflow.yaml) — a declarative
+//     object of ready instances (no config, no secrets — code only).
+//  2. Named FACTORY exports for realm.yaml 'use:' refs — (ctx: { id, config }) => instance,
+//     where config arrives with \${secret:NAME} references already resolved.
+
+// export function myAdapterFactory({ id, config }) {
+//   return {
+//     id,
+//     fetch: async (operation, params, cfg) => ({ status: 200, data: {} }),
+//     create: async (operation, params, cfg) => ({ status: 201, data: {} }),
+//     update: async (operation, params, cfg) => ({ status: 200, data: {} }),
+//   };
+// }
+
+// export function myHandlerFactory({ id, config }) {
+//   return { id, execute: async (inputs, context) => ({ data: { ok: true } }) };
+// }
 
 export default {
-  // adapters: {
-  //   my_service: {
-  //     id: 'my_service',
-  //     fetch: async (operation, params, config) => ({ status: 200, data: {} }),
-  //     create: async (operation, params, config) => ({ status: 201, data: {} }),
-  //     update: async (operation, params, config) => ({ status: 200, data: {} }),
-  //   },
-  // },
-  // handlers: {
-  //   my_handler: {
-  //     id: 'my_handler',
-  //     execute: async (inputs, context) => ({ data: { ok: true } }),
-  //   },
-  // },
-  // processors: {
-  //   my_processor: {
-  //     id: 'my_processor',
-  //     process: async (content, config) => content,
-  //   },
-  // },
+  // adapters: { my_adapter: /* ready instance */ },
+  // handlers: { my_handler: /* ready instance */ },
+  // processors: { my_processor: /* ready instance */ },
 };
 `;
 
@@ -124,6 +149,7 @@ export default {
   await writeFile(join(targetDir, '.env.example'), envExample, 'utf8');
   await writeFile(join(targetDir, 'README.md'), readmeMd, 'utf8');
   await writeFile(join(targetDir, 'registry.sample.js'), registrySampleJs, 'utf8');
+  await writeFile(join(targetDir, 'realm.yaml'), realmYaml, 'utf8');
 }
 
 export const initCommand = new Command('init')
@@ -140,6 +166,7 @@ export const initCommand = new Command('init')
       console.log('  .env.example');
       console.log('  README.md');
       console.log('  registry.sample.js');
+      console.log('  realm.yaml');
       console.log('');
       console.log(`Next: realm workflow validate ./${name}/`);
     } catch (err) {
