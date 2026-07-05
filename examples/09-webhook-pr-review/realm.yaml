@@ -1,12 +1,18 @@
 # realm.yaml — deployment manifest for this example (docs/reference/deployment-manifest.md).
-# Credentials bind HERE (not in workflow.yaml): the github adapter comes from the built-in
-# catalog; the human gate in this workflow is notified via the slack_gate notifier.
-# All ${secret:NAME} references resolve from ./.env (the default dotenv secret source).
+# Credentials bind HERE (not in workflow.yaml). This example teaches the slack
+# ADAPTER-vs-NOTIFIER distinction: `adapters.slack` constructs the SERVICE adapter the
+# notify_posted step calls (uses_service: slack), while `notifiers.slack_gate` configures
+# the human-gate notification channel — two constructions, one Slack integration, sharing
+# the same ${secret:NAME} values. All references resolve from ./.env (the default dotenv
+# secret source).
 version: 1
 adapters:
   github:
     use: github
     config: { auth: { token: '${secret:GITHUB_TOKEN}' } }
+  slack:
+    use: slack
+    config: { webhook_url: '${secret:SLACK_WEBHOOK_URL}' }
 notifiers:
   slack_gate:
     type: slack

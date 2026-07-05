@@ -36,8 +36,8 @@ triage_issue   (agent + gate — severity, labels, comment_draft)
 - `resolution_messages` on the gate provides a confirmation message for both `approve` and
   `reject` paths — no extra step or CLI change required.
 - `GITHUB_TOKEN` must be present for write operations to authenticate with GitHub. Add it
-  to a `.env` file in the repo root — the workflow is configured with
-  `realm.yaml` binds the github adapter's token via `${secret:GITHUB_TOKEN}` (resolved from `.env`).
+  to a `.env` file **in this example's directory** (next to `realm.yaml`) — the manifest
+  binds the github adapter's token via `${secret:GITHUB_TOKEN}`, resolved from that `.env`.
 
 ---
 
@@ -86,15 +86,18 @@ Realm Test — examples/07-issue-triage/workflow.yaml
 
 ## Requirements
 
-Create a `.env` file in the repo root with your GitHub token:
+Create a `.env` file in this example's directory (next to `realm.yaml`):
 
 ```bash
 GITHUB_TOKEN=ghp_...
 ```
 
-Credentials live in the deployment manifest (`realm.yaml`) — the loader reads
-the value from `.env` and injects it into the GitHubAdapter at run time. The `realm agent`
-preflight enforces that `GITHUB_TOKEN` is set before starting a run.
+Credentials live in the deployment manifest (`realm.yaml`) — the loader resolves
+`${secret:GITHUB_TOKEN}` from that `.env` and constructs the GitHubAdapter with it.
+A missing secret fails loudly BEFORE any run is created, naming the binding site.
+
+The fixture tests above need **no credentials**: `realm workflow test` runs in sentinel
+mode and the fixtures mock the github service.
 
 Ensure the token has `issues:write` and `issues:read` scope on the target repository.
 

@@ -82,7 +82,7 @@ Realm Test — examples/09-webhook-pr-review/workflow.yaml
 
 ## Requirements
 
-Create a `.env` file in the repo root:
+Create a `.env` file in this example's directory (next to `realm.yaml`):
 
 ```bash
 # GitHub — PR read and write
@@ -93,7 +93,7 @@ OPENAI_API_KEY=sk-...
 # ANTHROPIC_API_KEY=sk-ant-...
 
 # Slack — required for gate notification and post-approval confirmation
-SLACK_WEBHOOK_URL=https://hooks.slack.com/...  # bound in realm.yaml (slack adapter / notifier)
+SLACK_WEBHOOK_URL=https://hooks.slack.com/...  # bound TWICE in realm.yaml: adapters.slack AND notifiers.slack_gate
 SLACK_BOT_TOKEN=xoxb-...         # bound in realm.yaml notifiers.slack_gate
 SLACK_CHANNEL_ID=C...            # bound in realm.yaml notifiers.slack_gate
 SLACK_APP_TOKEN=xapp-...         # bound in realm.yaml notifiers.slack_gate (Socket Mode)
@@ -108,6 +108,10 @@ Your Slack bot needs the OAuth scopes `chat:write` and `channels:history` on the
 channel.
 
 All of these are **secret values in `.env`**, referenced from this example's `realm.yaml` deployment manifest (`${secret:NAME}` bindings) — the gate notifier and adapters are constructed from the manifest, not from environment reads.
+
+This example is the canonical illustration of the **slack adapter-vs-notifier distinction**: `adapters.slack` constructs the SERVICE adapter the `notify_posted` step calls (`uses_service: slack`), while `notifiers.slack_gate` configures the human-gate notification channel. Two constructions, one Slack integration — both reference the same `${secret:SLACK_WEBHOOK_URL}`.
+
+The fixture tests above need **no credentials**: `realm workflow test` runs in sentinel mode and the fixtures mock the github and slack services.
 
 `SLACK_WEBHOOK_URL` is used by the Slack adapter for `notify_posted` — the confirmation
 message sent to Slack after the review is approved and posted to GitHub.

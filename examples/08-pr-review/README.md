@@ -86,15 +86,18 @@ Realm Test — examples/08-pr-review/workflow.yaml
 
 ## Requirements
 
-Create a `.env` file in the repo root:
+Create a `.env` file in this example's directory (next to `realm.yaml`):
 
 ```bash
 GITHUB_TOKEN=ghp_...
 ```
 
 Token needs `contents:read` (to fetch the diff) and `issues:write` (to post the comment —
-GitHub's PR comment endpoint is the Issues API). The workflow reads the token via
-the deployment manifest (`realm.yaml`): the github adapter is constructed with `${secret:GITHUB_TOKEN}` resolved from `.env`.
+GitHub's PR comment endpoint is the Issues API). The deployment manifest (`realm.yaml`)
+constructs the github adapter with `${secret:GITHUB_TOKEN}` resolved from that `.env`.
+
+The fixture tests above need **no credentials**: `realm workflow test` runs in sentinel
+mode and the fixtures mock the github service.
 
 ---
 
