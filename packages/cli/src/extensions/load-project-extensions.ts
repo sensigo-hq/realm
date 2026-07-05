@@ -15,6 +15,7 @@ import { resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createDefaultRegistry, ExtensionRegistry } from '@sensigo/realm';
 import type { ExtensionManifest, ExtensionModuleRef, WorkflowDefinition } from '@sensigo/realm';
+import { computeExtensionIdentity, errorExtensionIdentityEntry } from './extension-identity.js';
 
 export interface LoadProjectExtensionsOptions {
   /**
@@ -124,9 +125,42 @@ export async function loadProjectExtensions(
     processors: [],
   };
 
+  const moduleFormats = new Map<string, 'esm' | 'cjs' | 'ts-jiti'>();
   for (const ref of moduleRefs) {
-    const exported = await importExtensionModule(ref);
+    const { exported, format } = await importExtensionModule(ref);
+    moduleFormats.set(ref.resolved, format);
     applyModule(exported, ref, registry, builtinNames, claimedBy, manifest);
+  }
+
+  // Drift evidence (issue #119): capture the identity of the loaded code ONCE per cache
+  // entry, at module-LOAD time (what is actually in memory). Capture failure NEVER fails
+  // loading — an error entry is attached and logged instead. The extension-less sentinel
+  // above gets NO identity: extension-free runs record nothing.
+  const overrideActive = opts?.overrideModule !== undefined;
+  try {
+    registry.setIdentity(
+      computeExtensionIdentity(
+        moduleRefs.map((ref) => ({
+          declared: ref.declared,
+          resolved: ref.resolved,
+          format: moduleFormats.get(ref.resolved) ?? 'esm',
+        })),
+        {
+          ...(definition.trust_root !== undefined ? { trustRoot: definition.trust_root } : {}),
+          ...(overrideActive ? { overrideActive: true } : {}),
+        },
+      ),
+    );
+  } catch (err) {
+    console.error(
+      `[realm] extension identity capture failed: ${errMsg(err)} — drift evidence will carry an error entry for this load.`,
+    );
+    registry.setIdentity(
+      errorExtensionIdentityEntry(
+        `identity capture failed: ${errMsg(err)}`,
+        overrideActive ? { overrideActive: true } : {},
+      ),
+    );
   }
 
   const result: LoadedProjectExtensions = { registry, manifest };
@@ -197,8 +231,14 @@ function resolveModuleRefs(
   });
 }
 
-/** Imports one extension module (jiti-bridged for TypeScript paths) and returns its default export. */
-async function importExtensionModule(ref: ExtensionModuleRef): Promise<unknown> {
+/**
+ * Imports one extension module (jiti-bridged for TypeScript paths) and returns its default
+ * export plus the load format (descriptive metadata for the drift-evidence identity record:
+ * ts-jiti for TypeScript paths, cjs for .cjs / detected CJS-interop wrappers, esm otherwise).
+ */
+async function importExtensionModule(
+  ref: ExtensionModuleRef,
+): Promise<{ exported: unknown; format: 'esm' | 'cjs' | 'ts-jiti' }> {
   const isTypescript = /\.(ts|mts|cts)$/.test(ref.resolved);
   let mod: Record<string, unknown>;
   if (isTypescript) {
@@ -212,6 +252,11 @@ async function importExtensionModule(ref: ExtensionModuleRef): Promise<unknown> 
       );
     }
   }
+  let format: 'esm' | 'cjs' | 'ts-jiti' = isTypescript
+    ? 'ts-jiti'
+    : ref.resolved.endsWith('.cjs')
+      ? 'cjs'
+      : 'esm';
   let exported = mod['default'];
   // CJS-ESM interop: `import()` of a tsc-CommonJS build ("type" not "module") yields
   // namespace.default = module.exports = { __esModule: true, default: <manifest> }.
@@ -223,6 +268,7 @@ async function importExtensionModule(ref: ExtensionModuleRef): Promise<unknown> 
     'default' in (exported as Record<string, unknown>)
   ) {
     exported = (exported as Record<string, unknown>)['default'];
+    if (!isTypescript) format = 'cjs';
   }
   if (exported === undefined) {
     throw new Error(
@@ -230,7 +276,7 @@ async function importExtensionModule(ref: ExtensionModuleRef): Promise<unknown> 
         `export default { adapters: { name: instance }, handlers: { ... }, processors: { ... } }`,
     );
   }
-  return exported;
+  return { exported, format };
 }
 
 /**

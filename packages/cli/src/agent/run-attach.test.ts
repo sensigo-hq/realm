@@ -4,7 +4,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
-import type { WorkflowDefinition, EvidenceSnapshot } from '@sensigo/realm';
+import type { WorkflowDefinition, EvidenceSnapshot, ExtensionIdentityEntry } from '@sensigo/realm';
 import { resolveRunAttach, EXTENSIONS_LOAD_FAILED } from './run-attach.js';
 import type { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 
@@ -156,5 +156,128 @@ describe('resolveRunAttach', () => {
         loadExtensions: okLoader(),
       }),
     ).rejects.toThrow(/already in terminal state/);
+  });
+});
+
+describe('resolveRunAttach — drift evidence (issue #119)', () => {
+  function makeIdentity(treeHash: string): ExtensionIdentityEntry {
+    return {
+      captured_at: `2026-07-05T00:00:00.000Z`,
+      modules: [
+        {
+          declared: './registry.js',
+          resolved: '/proj/dist/registry.js',
+          entry_hash: `entry-${treeHash}`,
+          format: 'esm',
+        },
+      ],
+      tree: {
+        roots: ['/proj/dist'],
+        rules: 'dir_tree_v1: test',
+        file_count: 1,
+        total_bytes: 10,
+        tree_hash: treeHash,
+        truncated: false,
+      },
+      coverage: 'dir_tree_v1',
+    };
+  }
+
+  function loaderWithIdentity(treeHash: string): typeof loadProjectExtensions {
+    return vi.fn(async () => {
+      const registry = createDefaultRegistry();
+      registry.setIdentity(makeIdentity(treeHash));
+      return {
+        registry,
+        manifest: { modules: [], adapters: [], handlers: [], processors: [] },
+      };
+    }) as unknown as typeof loadProjectExtensions;
+  }
+
+  async function seedIdentityHistory(store: InMemoryStore, runId: string, treeHash: string) {
+    const run = await store.get(runId);
+    run.extension_identity = [makeIdentity(treeHash)];
+    await store.update(run);
+  }
+
+  it('WARNs on stderr when the fresh identity differs from the last recorded one — with NO pre-claim write', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new InMemoryStore();
+    const runId = await createRun(store);
+    await seedIdentityHistory(store, runId, 'hash-old');
+    const before = await store.get(runId);
+
+    await resolveRunAttach(runId, {
+      store,
+      workflowStore: makeWorkflowStore(),
+      loadExtensions: loaderWithIdentity('hash-new'),
+    });
+
+    const logged = errSpy.mock.calls.flat().map(String).join(' ');
+    expect(logged).toContain('extension code identity differs');
+    expect(logged).toContain('hash-old');
+    expect(logged).toContain('hash-new');
+    // Success path writes NOTHING pre-claim (CAS bystander hazard): version unchanged.
+    const after = await store.get(runId);
+    expect(after.version).toBe(before.version);
+    expect(after.extension_identity).toHaveLength(1);
+    errSpy.mockRestore();
+  });
+
+  it('no WARN when identities match, and none when the run has no recorded history', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new InMemoryStore();
+    const runId = await createRun(store);
+    await resolveRunAttach(runId, {
+      store,
+      workflowStore: makeWorkflowStore(),
+      loadExtensions: loaderWithIdentity('hash-a'),
+    });
+    await seedIdentityHistory(store, runId, 'hash-a');
+    await resolveRunAttach(runId, {
+      store,
+      workflowStore: makeWorkflowStore(),
+      loadExtensions: loaderWithIdentity('hash-a'),
+    });
+    const logged = errSpy.mock.calls.flat().map(String).join(' ');
+    expect(logged).not.toContain('extension code identity differs');
+    errSpy.mockRestore();
+  });
+
+  it('the extensions_load_failed write includes an error identity entry (pre-execution only)', async () => {
+    const store = new InMemoryStore();
+    const runId = await createRun(store);
+    await expect(
+      resolveRunAttach(runId, {
+        store,
+        workflowStore: makeWorkflowStore(),
+        loadExtensions: brokenLoader(),
+      }),
+    ).rejects.toThrow('broken extension module');
+    const run = await store.get(runId);
+    expect(run.terminal_reason).toBe(EXTENSIONS_LOAD_FAILED);
+    expect(run.extension_identity).toHaveLength(1);
+    expect(run.extension_identity![0]!.error).toContain(
+      'extension load failed: broken extension module',
+    );
+  });
+
+  it('in-flight load failure mutates nothing — no error identity entry either (deliberate asymmetry)', async () => {
+    const store = new InMemoryStore();
+    const runId = await createRun(store);
+    const run = await store.get(runId);
+    run.evidence = [FAKE_EVIDENCE];
+    await store.update(run);
+
+    await expect(
+      resolveRunAttach(runId, {
+        store,
+        workflowStore: makeWorkflowStore(),
+        loadExtensions: brokenLoader(),
+      }),
+    ).rejects.toThrow('broken extension module');
+    const after = await store.get(runId);
+    expect(after.terminal_state).toBe(false);
+    expect(after.extension_identity).toBeUndefined();
   });
 });

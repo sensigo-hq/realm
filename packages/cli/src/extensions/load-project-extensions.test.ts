@@ -368,3 +368,52 @@ describe('makeRegistryProvider', () => {
     expect(second).toBe(first);
   });
 });
+
+describe('loadProjectExtensions — drift-evidence identity capture', () => {
+  it('attaches a dir_tree_v1 identity to the registry (modules, tree, trust-root signals)', async () => {
+    const { declared, file } = writeModule(FULL_MODULE_SOURCE);
+    const definition = makeDefinition({ extensions: [declared] });
+    const { registry } = await loadProjectExtensions(definition);
+    const identity = registry.identity;
+    expect(identity).toBeDefined();
+    expect(identity!.coverage).toBe('dir_tree_v1');
+    expect(identity!.modules).toHaveLength(1);
+    expect(identity!.modules[0]!.declared).toBe(declared);
+    expect(identity!.modules[0]!.resolved).toBe(realpathSync(file));
+    expect(identity!.modules[0]!.entry_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(identity!.tree.tree_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(identity!.override_active).toBeUndefined();
+    expect(identity!.error).toBeUndefined();
+  });
+
+  it('identity is computed ONCE per cache entry — a cache hit returns the same entry object', async () => {
+    const { declared } = writeModule(FULL_MODULE_SOURCE);
+    const definition = makeDefinition({ extensions: [declared] });
+    const first = await loadProjectExtensions(definition);
+    const second = await loadProjectExtensions(definition);
+    expect(second.registry.identity).toBeDefined();
+    expect(second.registry.identity).toBe(first.registry.identity);
+  });
+
+  it('clone() carries the identity through tier composition', async () => {
+    const { declared } = writeModule(FULL_MODULE_SOURCE);
+    const { registry } = await loadProjectExtensions(makeDefinition({ extensions: [declared] }));
+    expect(registry.clone().identity).toBe(registry.identity);
+  });
+
+  it('override runs are flagged override_active', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const overrideModule = writeModule(FULL_MODULE_SOURCE);
+    const definition = makeDefinition({ source_dir: undefined, trust_root: undefined });
+    const { registry } = await loadProjectExtensions(definition, {
+      overrideModule: overrideModule.file,
+    });
+    expect(registry.identity?.override_active).toBe(true);
+  });
+
+  it('the extension-less sentinel gets NO identity (extension-free runs record nothing)', async () => {
+    const definition = makeDefinition({ source_dir: undefined, trust_root: undefined });
+    const { registry } = await loadProjectExtensions(definition);
+    expect(registry.identity).toBeUndefined();
+  });
+});
