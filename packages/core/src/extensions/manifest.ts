@@ -18,4 +18,10 @@ export interface ExtensionManifest {
   adapters: string[];
   handlers: string[];
   processors: string[];
+  /**
+   * Handler names whose deployment-manifest config contains `${secret:}` references.
+   * In `realm test`, such handlers are constructed with SENTINEL credentials and the
+   * fixture runner fails the first time one executes (never silently real).
+   */
+  secret_bearing_handlers?: string[];
 }

@@ -34,8 +34,6 @@ export interface RealmMcpServerOptions {
    * provider wins. Additive — absent provider preserves existing behavior.
    */
   registryProvider?: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
-  /** Resolved secrets to pass to adapter configs (e.g. API tokens). */
-  secrets?: Record<string, string>;
   /** Pre-populated workflow store. When provided, tools use this instead of creating
    *  a new JsonWorkflowStore() pointing at ~/.realm/workflows/. */
   workflowStore?: JsonWorkflowStore;

@@ -8,6 +8,7 @@ import {
   propagateSkips,
   type WorkflowDefinition,
   type ExtensionManifest,
+  type StepHandler,
 } from '@sensigo/realm';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -98,7 +99,25 @@ export function buildFixtureRegistries(
         extFallback.register('processor', n, caller.getProcessor(n)!);
     }
     // Real extension handlers/processors merge in — testing them is the point.
+    // EXCEPT secret-bearing handlers (manifest config contains ${secret:} refs): they were
+    // constructed with SENTINEL credentials — executing them would exercise fake-credential
+    // I/O. The runner FAILS the fixture the first time such a handler executes.
+    const secretBearing = new Set(ext.manifest.secret_bearing_handlers ?? []);
     for (const name of ext.manifest.handlers) {
+      if (secretBearing.has(name)) {
+        const poisoned: StepHandler = {
+          id: name,
+          execute: async () => {
+            throw new Error(
+              `handler '${name}' is secret-bearing; fixture tests cannot exercise it — ` +
+                `adapter-mediate its I/O or exclude the step.`,
+            );
+          },
+        };
+        fixtureRegistry.register('handler', name, poisoned);
+        extFallback.register('handler', name, poisoned);
+        continue;
+      }
       const handler = ext.registry.getHandler(name);
       if (handler !== undefined) {
         fixtureRegistry.register('handler', name, handler);

@@ -122,10 +122,10 @@ describe('extensions schema (loadWorkflowFromFile)', () => {
     expect(definition.trust_root).toBe(workflowDir);
   });
 
-  it('extension-free workflows get no source_dir / trust_root stamped', () => {
+  it('extension-free workflows ALSO get source_dir / trust_root stamped (v0.14 manifest anchor)', () => {
     const definition = loadWorkflowFromFile(writeWorkflow(WORKFLOW_BODY));
     expect(definition.extensions).toBeUndefined();
-    expect(definition.source_dir).toBeUndefined();
-    expect(definition.trust_root).toBeUndefined();
+    expect(definition.source_dir).toBe(workflowDir);
+    expect(definition.trust_root).toBeDefined();
   });
 });

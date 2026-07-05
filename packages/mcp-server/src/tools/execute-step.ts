@@ -138,7 +138,6 @@ export async function handleExecuteStep(
     input: params,
     dispatcher: makeParamsDispatcher(params),
     ...(registry !== undefined ? { registry } : {}),
-    ...(stores?.secrets !== undefined ? { secrets: stores.secrets } : {}),
     // trace is a top-level execute_step field — never embedded in params.
     ...(args.trace !== undefined ? { trace: args.trace } : {}),
     // Pass WAL buffer store so execution loop can merge and clean up the WAL.
