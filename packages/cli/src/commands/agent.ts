@@ -180,6 +180,9 @@ export const agentCommand = new Command('agent')
               provider,
               registry: loaded.registry,
               ...(gateHandler ? { gateHandler } : {}),
+              ...(loaded.secretValues !== undefined
+                ? { redactionValues: loaded.secretValues }
+                : {}),
             },
             {
               existingRunId: opts.runId,
@@ -215,6 +218,9 @@ export const agentCommand = new Command('agent')
               provider,
               registry: loaded.registry,
               ...(gateHandler ? { gateHandler } : {}),
+              ...(loaded.secretValues !== undefined
+                ? { redactionValues: loaded.secretValues }
+                : {}),
             },
             {
               definition,

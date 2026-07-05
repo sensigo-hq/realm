@@ -239,6 +239,12 @@ export interface RecomputeResult {
   /** Per recorded module: current entry hash (undefined = file unreadable/missing). */
   modules: Array<{ resolved: string; recorded_hash: string; current_hash?: string }>;
   tree: { recorded_hash: string; current_hash: string; current_truncated: boolean };
+  /**
+   * Deployment-manifest bytes-hash recompute (pure fs read of entry.manifest.path — no
+   * YAML parsing, no secret resolution). Absent when the entry recorded no manifest
+   * (older entries); current_hash undefined = manifest file missing/unreadable.
+   */
+  manifest?: { path: string; recorded_hash: string; current_hash?: string };
   signals?: ExtensionIdentitySignals;
 }
 
@@ -279,6 +285,22 @@ export function recomputeIdentity(
   });
 
   const tree = sweepTree(entry.tree.roots);
+
+  let manifestResult: RecomputeResult['manifest'];
+  if (entry.manifest !== undefined) {
+    let currentHash: string | undefined;
+    try {
+      currentHash = sha256Hex(readFileSync(entry.manifest.path));
+    } catch {
+      currentHash = undefined; // missing/unreadable — reported as MISSING by inspect
+    }
+    manifestResult = {
+      path: entry.manifest.path,
+      recorded_hash: entry.manifest.content_hash,
+      ...(currentHash !== undefined ? { current_hash: currentHash } : {}),
+    };
+  }
+
   const signals = collectSignals(opts.trustRoot);
   return {
     comparable: true,
@@ -288,6 +310,7 @@ export function recomputeIdentity(
       current_hash: tree.tree_hash,
       current_truncated: tree.truncated,
     },
+    ...(manifestResult !== undefined ? { manifest: manifestResult } : {}),
     ...(signals !== undefined ? { signals } : {}),
   };
 }

@@ -129,6 +129,15 @@ directory-walking discovery at execution time. Registering a workflow **is** the
 code-execution-equivalent; never derive filesystem-write paths from request data in triggered
 workflows.**
 
+### Secret redaction limits
+
+Redaction is **literal-value masking** (the GitHub-Actions add-mask class): resolved secret
+values are masked in provider-loop tool results, tool errors, and loader construction
+errors — but encoded or derived forms (base64, URL-encoded, embedded in other structures)
+are NOT caught, so traces are best-effort scrubbed, not a secret-safe channel. Step outputs
+returned by handlers are recorded VERBATIM in run evidence — never return secret values
+from handler outputs.
+
 ### realm-cloud / cross-host note
 
 `source_dir` / `trust_root` are **host-specific absolute paths**. A definition registered on one
