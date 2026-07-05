@@ -129,11 +129,18 @@ describe('anchors', () => {
     expect(anchored.registry.getAdapter('fs2')).toBeDefined();
   });
 
-  it('mcp refusal: makeRegistryProvider WITHOUT projectDir never loads the manifest for anchor-less definitions', async () => {
+  it('mcp refusal: makeRegistryProvider WITHOUT projectDir never loads the manifest for anchor-less definitions — even when the process cwd HAS one', async () => {
     writeManifest(`version: 1\nadapters:\n  fs2:\n    use: filesystem\n`);
-    const noProject = makeRegistryProvider(undefined, undefined);
-    const registry = await noProject(agentOriginDefinition());
-    expect(registry.getAdapter('fs2')).toBeUndefined();
+    // Simulate the mcp threat model: the client-controlled cwd contains a realm.yaml.
+    const previousCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const noProject = makeRegistryProvider(undefined, undefined);
+      const registry = await noProject(agentOriginDefinition());
+      expect(registry.getAdapter('fs2')).toBeUndefined();
+    } finally {
+      process.chdir(previousCwd);
+    }
     const withProject = makeRegistryProvider(undefined, root);
     const registry2 = await withProject(agentOriginDefinition());
     expect(registry2.getAdapter('fs2')).toBeDefined();
