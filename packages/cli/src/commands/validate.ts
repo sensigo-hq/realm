@@ -6,11 +6,19 @@
 // file-based loading so extension modules can be resolved, then a SECOND pass validates
 // step `config` against each resolved adapter's `config_schema` (two-pass).
 import { Command } from 'commander';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { load } from 'js-yaml';
-import { loadWorkflowFromString, loadWorkflowFromFile, WorkflowError } from '@sensigo/realm';
-import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+import {
+  loadWorkflowFromString,
+  loadWorkflowFromFile,
+  findTrustRoot,
+  WorkflowError,
+} from '@sensigo/realm';
+import {
+  loadProjectExtensions,
+  checkForOrphanedManifests,
+} from '../extensions/load-project-extensions.js';
 
 /** Pre-scan: does the YAML carry a top-level `extensions` key? (Parse errors → false; the
  *  real loader below reports them with its existing error surface.) */
@@ -52,9 +60,17 @@ export const validateCommand = new Command('validate')
     }
 
     if (!hasTopLevelExtensions(content) && opts.extensionsModule === undefined) {
-      // Extension-free: the exact current from-string path — byte-identical behavior.
+      // Extension-free: the exact current from-string path — byte-identical behavior,
+      // plus the orphaned-manifest guard (#123). The from-string loader stamps no
+      // source_dir/trust_root, so resolve the same trust root the file-based path would
+      // (findTrustRoot walks package.json/.git from the workflow dir) and run the guard
+      // structural-first — after the workflow parses, before the `Valid:` print. It throws
+      // WorkflowError, which the catch below renders as `Invalid:` + exit(1). resolve()
+      // before dirname so a relative `workflow.yaml` doesn't collapse the walk to '.'.
       try {
         const definition = loadWorkflowFromString(content);
+        const workflowDir = dirname(resolve(filePath));
+        checkForOrphanedManifests(workflowDir, findTrustRoot(workflowDir));
         console.log(
           `Valid: ${definition.id} v${definition.version} (${Object.keys(definition.steps).length} steps)`,
         );

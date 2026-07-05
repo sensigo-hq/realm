@@ -123,4 +123,15 @@ describe('orphaned-manifest guard (#123)', () => {
     const { manifest } = await loadProjectExtensions(def());
     expect(manifest.adapters).toEqual(['fs2']); // trust_root manifest, no throw
   });
+
+  it('9. M1 regression — agent-origin (no source_dir) never scans, even with a stray manifest in the subtree', async () => {
+    // A stray realm.yaml sits where a span scan would trip — but an agent-origin definition
+    // has no source_dir, so the loader must never invoke the guard. Loads the --project
+    // root manifest cleanly.
+    writeManifest(root);
+    writeManifest(workflowDir); // would be an orphan for a file-loaded def; ignored here
+    const agentDef = def({ source_dir: undefined, trust_root: undefined, origin: 'agent' });
+    const loaded = await loadProjectExtensions(agentDef, { projectDir: root });
+    expect(loaded.manifest.adapters).toEqual(['fs2']); // no throw, root manifest loaded
+  });
 });

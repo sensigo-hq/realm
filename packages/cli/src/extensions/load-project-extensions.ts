@@ -25,6 +25,7 @@ import { load as loadYaml } from 'js-yaml';
 import {
   createDefaultRegistry,
   ExtensionRegistry,
+  WorkflowError,
   validateDeploymentManifest,
   collectManifestSecretRefs,
   interpolateConfigTree,
@@ -186,23 +187,21 @@ interface ManifestContext {
 
 /**
  * Orphaned-manifest guard (#123): throws when a `realm.yaml` sits anywhere in the span
- * `[source_dir, trust_root)` — from the workflow directory walking UP to, but NOT
- * including, the resolved trust_root. Such a manifest is silently ignored by the
- * strict-single-location loader, so surfacing it loudly before run creation turns a
- * confusing downstream `adapter 'X' not registered` (or total silence under
- * validate/sentinel/fixture paths) into an actionable placement error.
+ * `[sourceDir, trustRoot)` — from the workflow directory walking UP to, but NOT including,
+ * the trust root. Such a manifest is silently ignored by the strict-single-location loader,
+ * so surfacing it loudly turns a confusing downstream `adapter 'X' not registered` (or total
+ * silence under validate/sentinel/fixture paths) into an actionable placement error.
  *
- * No-op unless the definition carries BOTH `source_dir` and `trust_root` and they differ
- * (agent-origin / from-string definitions have no source_dir; a workflow dir that is its
- * own trust_root has an empty span). Never scans at or above trust_root — a stray at
+ * Path-keyed (takes the two directories, NOT a definition) so callers that don't stamp a
+ * definition — `realm workflow validate` on an extension-free workflow — can reuse it with a
+ * `findTrustRoot(workflowDir)` result. Callers guarantee both paths are known: the loader
+ * calls it only when a definition carries both source_dir and trust_root (agent-origin /
+ * from-string definitions have no source_dir → never scanned). A workflow dir that is its
+ * own trust root has an empty span (no-op). Never scans at or above trust_root — a stray at
  * trust_root IS the loaded manifest; Case C (above trust_root) is deliberately out of #123.
  */
-function checkForOrphanedManifests(definition: WorkflowDefinition, root: string): void {
-  const sourceDir = definition.source_dir;
-  const trustRoot = definition.trust_root;
-  // Only meaningful for file-loaded definitions whose trust_root is the resolved root.
-  if (sourceDir === undefined || trustRoot === undefined || trustRoot !== root) return;
-  if (sourceDir === trustRoot) return;
+export function checkForOrphanedManifests(sourceDir: string, trustRoot: string): void {
+  if (sourceDir === trustRoot) return; // empty span
 
   const orphans: string[] = [];
   let current = sourceDir;
@@ -222,11 +221,21 @@ function checkForOrphanedManifests(definition: WorkflowDefinition, root: string)
       ? `Deployment manifest at '${orphans[0]!}'`
       : `Deployment manifests at ${orphans.map((o) => `'${o}'`).join(', ')}`;
   const nearest = orphans[0]!;
-  throw new Error(
+  // Throw WorkflowError (VALIDATION class — the same class the yaml-loader raises for
+  // structural validation failures) so `realm workflow validate`'s existing
+  // `if (err instanceof WorkflowError)` handler renders it as `Invalid:` rather than a stack
+  // trace, and every execution/registration path treats it as a load failure.
+  throw new WorkflowError(
     `${found} will NOT be loaded — manifests are read only from the deployment root ` +
       `'${join(trustRoot, 'realm.yaml')}'. Move it to '${join(trustRoot, 'realm.yaml')}' ` +
       `(the nearest package.json/.git ancestor of the workflow), or add a package.json/.git ` +
       `at '${dirname(nearest)}' to make that the deployment root.`,
+    {
+      code: 'VALIDATION_WORKFLOW_SCHEMA',
+      category: 'VALIDATION',
+      agentAction: 'report_to_user',
+      retryable: false,
+    },
   );
 }
 
@@ -251,7 +260,15 @@ function loadManifestContext(
   // manifest does NOT excuse a stray one below it (the stray is still ignored, still
   // operator error). Detection-only — LOADING semantics stay strict-single-location.
   // Case C (realm.yaml ABOVE trust_root) is deliberately NOT scanned (see #123).
-  checkForOrphanedManifests(definition, root);
+  //
+  // Scan only when the definition carries both source_dir and trust_root: agent-origin /
+  // from-string definitions have no source_dir (and reach the manifest via `--project`),
+  // and `root === trust_root` here whenever trust_root is defined (root = trust_root ??
+  // projectDir), so passing definition.trust_root preserves the previous trust_root===root
+  // gate — the `--project`-fallback path never scans.
+  if (definition.source_dir !== undefined && definition.trust_root !== undefined) {
+    checkForOrphanedManifests(definition.source_dir, definition.trust_root);
+  }
 
   const manifestPath = join(root, 'realm.yaml');
   let bytes: Buffer;

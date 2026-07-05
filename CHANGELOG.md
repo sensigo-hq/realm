@@ -8,7 +8,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
-- **Orphaned deployment manifest is now a loud error** (#123). A `realm.yaml` placed in the span `[source_dir, trust_root)` — the workflow directory or an intermediate directory below the resolved deployment root — was silently ignored (manifests load only from `<trust_root>/realm.yaml`), giving a confusing downstream `adapter 'X' not registered` at execution time and no signal at all under validate/sentinel/fixture paths. The loader now scans that span and throws before run creation, naming the orphaned path(s), the resolved trust root, and the fix. Detection-only: manifest loading stays strict-single-location. A manifest _above_ the trust root (monorepo-root case) is intentionally not scanned.
+- **Orphaned deployment manifest is now a loud error** (#123). A `realm.yaml` placed in the span `[source_dir, trust_root)` — the workflow directory or an intermediate directory below the resolved deployment root — was silently ignored (manifests load only from `<trust_root>/realm.yaml`), giving a confusing downstream `adapter 'X' not registered` at execution time and no signal at all under validate/sentinel/fixture paths. Every workflow-loading command now scans that span and throws before run creation, naming the orphaned path(s), the resolved trust root, and the fix. Detection-only: manifest loading stays strict-single-location. A manifest _above_ the trust root (monorepo-root case) is intentionally not scanned. **`realm workflow validate` now also surfaces this** — a misplaced `realm.yaml` may turn a previously-green validate red; that is correct topology reporting (the manifest was never being loaded), not a regression.
 
 ---
 
