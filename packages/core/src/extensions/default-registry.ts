@@ -1,35 +1,24 @@
-// default-registry.ts — pre-populates ExtensionRegistry with Realm's built-in adapters.
-// Used by the execution engine as the fallback when no registry is explicitly provided,
-// ensuring built-in adapters are always available without any developer wiring.
+// default-registry.ts — pre-populates ExtensionRegistry with Realm's config-less built-ins.
+// Used by the execution engine as the fallback when no registry is explicitly provided.
+//
+// Since v0.14.0 the default registry contains ONLY the filesystem adapter: every adapter
+// that needs configuration or credentials (slack, github, gorgias, …) is constructed from
+// the deployment manifest (`<deployment root>/realm.yaml`) via the CLI loader's built-in
+// catalog — the previous env-read SlackAdapter registration (SLACK_WEBHOOK_URL) is gone.
 import { ExtensionRegistry } from './registry.js';
 import { FileSystemAdapter } from '../adapters/file-adapter.js';
-import { SlackAdapter } from '../adapters/slack-adapter.js';
 
 /**
- * Returns an ExtensionRegistry pre-populated with Realm's built-in adapters.
- * `FileSystemAdapter` is registered under `'filesystem'`.
- * `SlackAdapter` is registered under `'slack'` with `webhook_url` taken from the
- * `SLACK_WEBHOOK_URL` environment variable. If the variable is absent the adapter
- * is still registered but will fail at call time via `ADAPTER_REQUEST_FAILED`.
+ * Returns an ExtensionRegistry pre-populated with the config-less built-in adapters:
+ * `FileSystemAdapter` under `'filesystem'`. Nothing here reads the environment.
  *
- * The engine uses this automatically when no registry is provided — workflows that only
- * use built-in adapters need no registry code at all.
- *
- * Use this as a starting point when you need to add your own handlers or adapters on top:
- * ```ts
- * const registry = createDefaultRegistry();
- * registry.register('handler', 'my_handler', myHandler);
- * ```
+ * Configured adapters (slack, github, …) come from the deployment manifest — declare
+ * them under `adapters:` in realm.yaml and the CLI loader constructs them with their
+ * secret-resolved config. Library consumers composing registries by hand can still
+ * `registry.register(...)` their own instances on top of this.
  */
 export function createDefaultRegistry(): ExtensionRegistry {
   const r = new ExtensionRegistry();
   r.register('adapter', 'filesystem', new FileSystemAdapter('filesystem'));
-  r.register(
-    'adapter',
-    'slack',
-    new SlackAdapter('slack', {
-      webhook_url: process.env['SLACK_WEBHOOK_URL'] ?? '',
-    }),
-  );
   return r;
 }

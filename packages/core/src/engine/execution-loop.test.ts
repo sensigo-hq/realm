@@ -578,7 +578,7 @@ describe('executeStep', () => {
 
       expect(envelope.status).toBe('error');
       expect(envelope.errors[0]).toContain(
-        "If this adapter is a project extension, declare it under 'extensions:' in workflow.yaml and re-register the workflow.",
+        "Declare this adapter under 'adapters:' in realm.yaml at your deployment root.",
       );
     });
 
@@ -605,7 +605,7 @@ describe('executeStep', () => {
 
       expect(envelope.status).toBe('error');
       expect(envelope.errors[0]).toContain('not registered');
-      expect(envelope.errors[0]).not.toContain('project extension');
+      expect(envelope.errors[0]).not.toContain('realm.yaml');
     });
 
     it('wraps non-object adapter response in { data, status }', async () => {

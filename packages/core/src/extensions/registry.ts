@@ -31,30 +31,9 @@ export class ExtensionRegistry {
     }
   }
 
-  /**
-   * Returns a new registry sharing this registry's adapter/processor/handler INSTANCES
-   * (shallow copies of the three maps — extension instances are stateless by contract)
-   * with a fresh, EMPTY rate-limiter map.
-   *
-   * Why the rate limiters are NOT copied: rate-limiter buckets are per-registry-instance
-   * state. Sharing them across a clone would couple a future co-resident server's
-   * throttling to one-shot agent runs; a fresh map preserves the 0.12 behavior where
-   * `realm agent` built its own registry per invocation.
-   *
-   * Use clone() before composing additional tiers on top of a shared/cached registry —
-   * the shared instance must never be mutated.
-   */
-  clone(): ExtensionRegistry {
-    const copy = new ExtensionRegistry();
-    copy.adapters = new Map(this.adapters);
-    copy.processors = new Map(this.processors);
-    copy.handlers = new Map(this.handlers);
-    // The identity describes the loaded extension CODE — the clone executes the same
-    // instances, so it MUST carry the identity or tiered paths (agent/mcp) silently
-    // lose the run's drift evidence.
-    copy.identityEntry = this.identityEntry;
-    return copy;
-  }
+  /* clone() was removed in v0.14.0: it existed solely for the legacy env-gated adapter
+   * tier in `realm agent` (composeAgentRegistry), which is gone — loader registries flow
+   * into runs directly and are never mutated. */
 
   /**
    * Attaches the CLI-computed extension-code identity record (issue #119). Core never

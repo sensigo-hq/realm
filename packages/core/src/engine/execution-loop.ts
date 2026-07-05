@@ -40,7 +40,6 @@ import {
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
-import { resolveSecret } from '../config/secrets.js';
 import { renderTemplate, resolvePath, UnknownFilterError } from './render-template.js';
 import { generateSchemaSkeleton } from '../utils/schema-skeleton.js';
 import { loadWorkflowContext } from './workflow-context-loader.js';
@@ -73,8 +72,6 @@ export interface ExecuteStepOptions {
    * When omitted, the engine uses the built-in default registry (includes `FileSystemAdapter`).
    */
   registry?: ExtensionRegistry;
-  /** Resolved secrets passed to adapter configs (e.g. API tokens). */
-  secrets?: Record<string, string>;
   /**
    * Tool calls produced by callStepWithTools for this step.
    * Absent on the callStep path (no tools configured).
@@ -109,8 +106,6 @@ export interface ExecuteChainOptions {
   dispatcher: StepDispatcher;
   /** @see ExecuteStepOptions.registry */
   registry?: ExtensionRegistry;
-  /** @see ExecuteStepOptions.secrets */
-  secrets?: Record<string, string>;
   /**
    * Tool calls produced by callStepWithTools for this step.
    * Absent on the callStep path (no tools configured).
@@ -274,10 +269,10 @@ async function callAdapter(
   const adapter = lookupRegistry.getAdapter(serviceDef.adapter);
   if (adapter === undefined) {
     // UX hint: when the missing name is not among the registry's current names and the
-    // definition declares no `extensions`, point at the project-extensions mechanism.
+    // definition declares no `extensions`, point at the deployment manifest.
     const extensionHint =
       !lookupRegistry.has('adapter', serviceDef.adapter) && definition.extensions === undefined
-        ? `. If this adapter is a project extension, declare it under 'extensions:' in workflow.yaml and re-register the workflow.`
+        ? `. Declare this adapter under 'adapters:' in realm.yaml at your deployment root.`
         : '';
     throw new WorkflowError(
       `Adapter '${serviceDef.adapter}' for service '${serviceName}' is not registered${extensionHint}`,
@@ -291,15 +286,13 @@ async function callAdapter(
     );
   }
 
-  const secrets = options.secrets ?? {};
+  // Credentials are bound at adapter CONSTRUCTION time via the deployment manifest
+  // (realm.yaml) — the engine injects no auth. `auth.token_from` was removed in v0.14.0.
   const config: Record<string, unknown> = {
     adapter: serviceDef.adapter,
     trust: serviceDef.trust,
     ...(stepDef.config ?? {}),
   };
-  if (serviceDef.auth?.token_from !== undefined) {
-    config['auth'] = { token: resolveSecret(serviceDef.auth.token_from, secrets) };
-  }
 
   const method = stepDef.service_method ?? 'fetch';
   const operation = stepDef.operation ?? options.command;
@@ -948,7 +941,10 @@ export async function executeStep(
     const identityHistory = pendingRun.extension_identity ?? [];
     const lastIdentity = identityHistory[identityHistory.length - 1];
     if (lastIdentity === undefined || extensionIdentityDiffers(lastIdentity, registryIdentity)) {
-      if (lastIdentity !== undefined) {
+      // A differing RULES string means the entries are not comparable fingerprints (a
+      // future sweep-rules change must never manufacture phantom drift): append the new
+      // entry WITHOUT the advisory warn. Same-rules changes warn as genuine drift.
+      if (lastIdentity !== undefined && lastIdentity.tree.rules === registryIdentity.tree.rules) {
         traceWarnings.push(
           "extension code identity changed since this run's last recorded identity",
         );

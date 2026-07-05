@@ -73,6 +73,27 @@ export type { Processor, ProcessorInput, ProcessorOutput } from './extensions/pr
 export { ExtensionRegistry } from './extensions/registry.js';
 export { createDefaultRegistry } from './extensions/default-registry.js';
 export type { ExtensionManifest, ExtensionModuleRef } from './extensions/manifest.js';
+export {
+  validateDeploymentManifest,
+  collectManifestSecretRefs,
+  DEPLOYMENT_MANIFEST_JSON_SCHEMA,
+} from './manifest/deployment-manifest.js';
+export type {
+  DeploymentManifest,
+  ManifestEntry,
+  ManifestSecretsConfig,
+  SlackGateNotifierConfig,
+  ExtensionFactory,
+  ExtensionFactoryContext,
+} from './manifest/deployment-manifest.js';
+export {
+  scanSecretString,
+  stringHasSecretRefs,
+  interpolateSecretString,
+  interpolateConfigTree,
+  findSecretRefSites,
+} from './manifest/secret-refs.js';
+export type { SecretRefSite, SecretScanResult } from './manifest/secret-refs.js';
 export type {
   ExtensionIdentityEntry,
   ExtensionIdentityModule,
@@ -89,6 +110,7 @@ export type { CaptureEvidenceParams } from './evidence/snapshot.js';
 export { GenericHttpAdapter } from './adapters/http-adapter.js';
 export type { HttpAdapterConfig } from './adapters/http-adapter.js';
 export { FileSystemAdapter } from './adapters/file-adapter.js';
+export { MockAdapter } from './adapters/mock-adapter.js';
 export { GitHubAdapter } from './adapters/github-adapter.js';
 export type { GitHubAdapterConfig } from './adapters/github-adapter.js';
 export { SlackAdapter } from './adapters/slack-adapter.js';
@@ -114,9 +136,6 @@ export type { TracePolicyDescriptor, TracePolicyVersion } from './engine/trace-p
 
 // Validation
 export { validateInputSchema } from './validation/input-schema.js';
-
-// Config
-export { loadSecrets, resolveSecret } from './config/secrets.js';
 
 // Workflow
 export {
