@@ -1,5 +1,6 @@
 // Types for an active or historical workflow run record stored on disk.
 import type { ToolCallRecord } from './mcp-types.js';
+import type { ExtensionIdentityEntry } from './extension-identity.js';
 
 /**
  * A single trace entry submitted by the agent. Submitted as-is; the engine
@@ -203,6 +204,14 @@ export interface RunRecord {
    * Keyed by entry name. Separate from step evidence — not in evidence[].
    */
   workflow_context_snapshots?: Record<string, WorkflowContextSnapshot>;
+  /**
+   * Append-on-change history of the project-extension code identity that executed this run
+   * (issue #119). Each entry is captured at module-LOAD time by the CLI and appended lazily
+   * by the execution loop when it differs from the last recorded entry. Advisory evidence —
+   * WARN-never-gate. Absent for extension-free runs. JSON-file-store-only until external
+   * stores round-trip unknown optional RunRecord fields through update().
+   */
+  extension_identity?: ExtensionIdentityEntry[];
   /**
    * PID of the agent process spawned by 'realm listen' for this run.
    * Set after a successful spawn. Absent for runs not started by a webhook trigger.
