@@ -141,6 +141,7 @@ export { validateInputSchema } from './validation/input-schema.js';
 export {
   loadWorkflowFromFile,
   loadWorkflowFromString,
+  findTrustRoot,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from './workflow/yaml-loader.js';
 export { JsonWorkflowStore } from './workflow/registrar.js';

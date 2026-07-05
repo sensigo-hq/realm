@@ -179,8 +179,11 @@ function validateExtensionsDeclaration(rawExtensions: unknown): string[] {
  * Finds the trust root for extension resolution: the nearest ancestor of `dir` (inclusive)
  * containing `package.json` or `.git`; falls back to `dir` itself when no such ancestor exists.
  * Derived once, at registration time, from an operator-given path — never at execution time.
+ * Exported so CLI paths that don't stamp a definition (e.g. `realm workflow validate` on an
+ * extension-free workflow) can resolve the same trust root for the orphaned-manifest guard.
+ * Pure `package.json`/`.git` walk — zero manifest knowledge.
  */
-function findTrustRoot(dir: string): string {
+export function findTrustRoot(dir: string): string {
   let current = dir;
   for (;;) {
     if (existsSync(join(current, 'package.json')) || existsSync(join(current, '.git'))) {
