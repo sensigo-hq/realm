@@ -1,4 +1,4 @@
-// Tests for runAgent(), resolveProvider(), checkAdapterPrerequisites(), and the agentCommand CLI guards.
+// Tests for runAgent(), resolveProvider(), and the agentCommand CLI guards.
 // Uses InMemoryStore and MockLlmProvider to run the agent loop without real I/O.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
@@ -12,7 +12,6 @@ import { runAgent } from '../agent/run-agent.js';
 import type { AgentDeps, AgentRunOptions } from '../agent/run-agent.js';
 import { LlmProvider } from '../agent/providers/llm-provider.js';
 import { resolveProvider } from '../agent/providers/llm-provider.js';
-import { checkAdapterPrerequisites, formatPreflightError } from '../agent/preflight.js';
 import { agentCommand } from './agent.js';
 
 // ---------------------------------------------------------------------------
@@ -262,107 +261,6 @@ describe('resolveProvider', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Workflow definitions for preflight tests.
-// ---------------------------------------------------------------------------
-
-const githubWorkflow: WorkflowDefinition = {
-  id: 'github-wf',
-  name: 'GitHub Workflow',
-  version: 1,
-  schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-  services: {
-    github: { adapter: 'github', trust: 'engine_delivered' },
-  },
-  steps: {
-    fetch: {
-      description: 'Fetch',
-      execution: 'auto',
-      uses_service: 'github',
-      service_method: 'fetch',
-      operation: 'get_pr_diff',
-    },
-  },
-};
-
-const slackWorkflow: WorkflowDefinition = {
-  id: 'slack-wf',
-  name: 'Slack Workflow',
-  version: 1,
-  schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-  services: {
-    notifications: { adapter: 'slack', trust: 'engine_delivered' },
-  },
-  steps: {
-    notify: {
-      description: 'Notify',
-      execution: 'auto',
-      uses_service: 'notifications',
-      service_method: 'create',
-      operation: 'post_message',
-    },
-  },
-};
-
-const bothAdaptersWorkflow: WorkflowDefinition = {
-  id: 'both-wf',
-  name: 'Both Adapters',
-  version: 1,
-  schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-  services: {
-    github: { adapter: 'github', trust: 'engine_delivered' },
-    notifications: { adapter: 'slack', trust: 'engine_delivered' },
-  },
-  steps: {
-    fetch: {
-      description: 'Fetch',
-      execution: 'auto',
-      uses_service: 'github',
-      service_method: 'fetch',
-      operation: 'get_pr_diff',
-    },
-  },
-};
-
-describe('checkAdapterPrerequisites', () => {
-  it('returns a finding when the workflow uses adapter: github and GITHUB_TOKEN is missing', () => {
-    const findings = checkAdapterPrerequisites(githubWorkflow, {});
-    expect(findings).toHaveLength(1);
-    expect(findings[0]!.serviceName).toBe('github');
-    expect(findings[0]!.adapter).toBe('github');
-    expect(findings[0]!.missingVar).toBe('GITHUB_TOKEN');
-  });
-
-  it('returns a finding when the workflow uses adapter: slack and SLACK_WEBHOOK_URL is missing', () => {
-    const findings = checkAdapterPrerequisites(slackWorkflow, {});
-    expect(findings).toHaveLength(1);
-    expect(findings[0]!.serviceName).toBe('notifications');
-    expect(findings[0]!.adapter).toBe('slack');
-    expect(findings[0]!.missingVar).toBe('SLACK_WEBHOOK_URL');
-  });
-
-  it('returns no findings when both required vars are set', () => {
-    const findings = checkAdapterPrerequisites(bothAdaptersWorkflow, {
-      GITHUB_TOKEN: 'ghp_test',
-      SLACK_WEBHOOK_URL: 'https://hooks.slack.com/test',
-    });
-    expect(findings).toHaveLength(0);
-  });
-
-  it('returns no findings for workflows with no external adapter services', () => {
-    const findings = checkAdapterPrerequisites(agentOnlyWorkflow, {});
-    expect(findings).toHaveLength(0);
-  });
-
-  it('formatPreflightError includes service name, adapter name, and export guidance', () => {
-    const findings = checkAdapterPrerequisites(githubWorkflow, {});
-    const msg = formatPreflightError(findings);
-    expect(msg).toContain("service 'github'");
-    expect(msg).toContain("adapter 'github'");
-    expect(msg).toContain('GITHUB_TOKEN');
-    expect(msg).toContain('export GITHUB_TOKEN=');
-  });
-});
-
 describe('agentCommand CLI guards', () => {
   beforeEach(() => {
     vi.spyOn(process, 'exit').mockImplementation((() => {}) as () => never);

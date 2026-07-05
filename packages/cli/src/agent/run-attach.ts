@@ -10,14 +10,11 @@
 //    spawn_failed mechanics) so listen-spawned children fail their runs visibly; if it HAS
 //    begun executing, propagate the error with NO run mutation — a failed bystander attach
 //    can never kill a healthy in-flight run.
-import type {
-  RunStore,
-  WorkflowRegistrar,
-  WorkflowDefinition,
-  ExtensionRegistry,
-  ExtensionManifest,
-} from '@sensigo/realm';
-import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+import type { RunStore, WorkflowRegistrar, WorkflowDefinition } from '@sensigo/realm';
+import {
+  loadProjectExtensions,
+  type LoadedProjectExtensions,
+} from '../extensions/load-project-extensions.js';
 import { identityDiffers, errorExtensionIdentityEntry } from '../extensions/extension-identity.js';
 
 /** Terminal reason written when extension loading fails before a run has started executing. */
@@ -30,11 +27,7 @@ export interface ResolveRunAttachDeps {
   loadExtensions?: typeof loadProjectExtensions;
 }
 
-export interface ResolveRunAttachResult {
-  definition: WorkflowDefinition;
-  registry: ExtensionRegistry;
-  manifest: ExtensionManifest;
-}
+export type ResolveRunAttachResult = { definition: WorkflowDefinition } & LoadedProjectExtensions;
 
 /**
  * Resolves everything `realm agent --run-id` needs before the run is claimed:
@@ -44,7 +37,7 @@ export interface ResolveRunAttachResult {
 export async function resolveRunAttach(
   runId: string,
   deps: ResolveRunAttachDeps,
-  opts?: { overrideModule?: string },
+  opts?: { overrideModule?: string; projectDir?: string },
 ): Promise<ResolveRunAttachResult> {
   let run = await deps.store.get(runId);
 
@@ -67,10 +60,11 @@ export async function resolveRunAttach(
   const loadExtensions = deps.loadExtensions ?? loadProjectExtensions;
 
   try {
-    const { registry, manifest } = await loadExtensions(
-      definition,
-      opts?.overrideModule !== undefined ? { overrideModule: opts.overrideModule } : {},
-    );
+    const loaded = await loadExtensions(definition, {
+      ...(opts?.overrideModule !== undefined ? { overrideModule: opts.overrideModule } : {}),
+      ...(opts?.projectDir !== undefined ? { projectDir: opts.projectDir } : {}),
+    });
+    const { registry } = loaded;
 
     // Drift evidence (issue #119): WARN immediately when the freshly loaded identity
     // differs from the run's LAST recorded identity. Advisory only — never a gate, and
@@ -93,7 +87,7 @@ export async function resolveRunAttach(
       );
     }
 
-    return { definition, registry, manifest };
+    return { definition, ...loaded };
   } catch (err) {
     // Not-yet-started guard: mark only pre-execution runs; never mutate an in-flight or
     // already-terminal run. Double failure (store write also fails) → stderr, error still

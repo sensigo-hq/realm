@@ -72,10 +72,11 @@ export const validateCommand = new Command('validate')
     try {
       // Pass 1: structural validation + extension resolution metadata (source_dir/trust_root).
       const definition = loadWorkflowFromFile(filePath);
-      const { registry, manifest } = await loadProjectExtensions(
-        definition,
-        opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {},
-      );
+      const { registry, manifest, sentinelWarnings } = await loadProjectExtensions(definition, {
+        ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
+        secretMode: 'sentinel',
+      });
+      for (const warning of sentinelWarnings ?? []) console.warn(`⚠  ${warning}`);
       // Pass 2: step config validated against each resolved adapter's config_schema.
       loadWorkflowFromFile(filePath, registry);
       console.log(

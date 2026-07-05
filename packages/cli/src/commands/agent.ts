@@ -1,69 +1,56 @@
 // realm agent — autonomous CLI command that drives a workflow using an LLM provider.
 // Core loop logic lives in packages/cli/src/agent/run-agent.ts for testability.
+//
+// v0.14: the legacy env-gated adapter tier (GITHUB_TOKEN/SLACK_WEBHOOK_URL) is GONE —
+// adapters are constructed from the deployment manifest (realm.yaml); the loader registry
+// (with its drift identity attached) flows directly into the run. Gate-notifier config is
+// sourced from `manifest.notifiers.slack_gate` (the nine SLACK_* env reads are deleted).
 import { Command } from 'commander';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import {
-  loadWorkflowFromFile,
-  JsonFileStore,
-  JsonWorkflowStore,
-  GitHubAdapter,
-  SlackAdapter,
-} from '@sensigo/realm';
-import type { ExtensionRegistry, ExtensionManifest } from '@sensigo/realm';
+import { loadWorkflowFromFile, JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
+import type { RunStore, WorkflowDefinition } from '@sensigo/realm';
 import { LlmProvider, resolveProvider } from '../agent/providers/llm-provider.js';
 import type { ProviderName } from '../agent/providers/llm-provider.js';
 import { runAgent } from '../agent/run-agent.js';
 import { resolveRunAttach } from '../agent/run-attach.js';
-import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+import {
+  loadProjectExtensions,
+  type LoadedProjectExtensions,
+} from '../extensions/load-project-extensions.js';
 import { createSlackGateHandler } from '../agent/gate/slack-gate-notifier.js';
 import type { SlackGateHandlerConfig } from '../agent/gate/slack-gate-notifier.js';
-import {
-  checkAdapterPrerequisites,
-  formatPreflightError,
-  checkSlackBidirectionalConfig,
-} from '../agent/preflight.js';
 
 /**
- * Composes the registry an agent run executes with: CLONES the loader-returned registry
- * (loader results are shared process-lifetime cache entries and must never be mutated),
- * then applies the legacy env-gated built-ins tier — the legacy tier of the precedence
- * chain (defaults < legacy env-gated < declared extensions < --extensions-module) — on
- * the clone, skipping names claimed by an extensions module.
- * Exported for the cache-decontamination regression test.
+ * Builds the Slack gate handler from the deployment manifest's `notifiers.slack_gate`
+ * config (secret-resolved by the loader). Manifest presence IS the gate switch — no
+ * environment reads. Returns undefined when no notifier is configured (terminal fallback).
+ * Exported for the manifest-sourced-gate-config tests.
  */
-export function composeAgentRegistry(loaded: {
-  registry: ExtensionRegistry;
-  manifest: ExtensionManifest;
-}): ExtensionRegistry {
-  const registry = loaded.registry.clone();
-  const legacyFired: string[] = [];
-  if (process.env['GITHUB_TOKEN'] !== undefined && !loaded.manifest.adapters.includes('github')) {
-    legacyFired.push('github (GITHUB_TOKEN)');
-    registry.register(
-      'adapter',
-      'github',
-      new GitHubAdapter('github', { auth: { token: process.env['GITHUB_TOKEN'] } }),
-    );
-  }
-  if (
-    process.env['SLACK_WEBHOOK_URL'] !== undefined &&
-    !loaded.manifest.adapters.includes('slack')
-  ) {
-    legacyFired.push('slack (SLACK_WEBHOOK_URL)');
-    registry.register(
-      'adapter',
-      'slack',
-      new SlackAdapter('slack', { webhook_url: process.env['SLACK_WEBHOOK_URL'] }),
-    );
-  }
-  if (legacyFired.length > 0)
-    console.warn(
-      `Deprecated: env-gated adapter registration (${legacyFired.join(', ')}) will be removed in ` +
-        `v0.14.0 — declare these adapters in a project extensions module instead ` +
-        `(docs/reference/project-extensions.md).`,
-    );
-  return registry;
+export function buildManifestGateHandler(
+  notifiers: LoadedProjectExtensions['notifiers'],
+  deps: { store: RunStore; definition: WorkflowDefinition; provider: LlmProvider },
+): ((runId: string, gate: import('@sensigo/realm').PendingGate) => Promise<void>) | undefined {
+  const slack = notifiers?.slack_gate;
+  if (slack === undefined) return undefined;
+  const config: SlackGateHandlerConfig = {
+    store: deps.store,
+    definition: deps.definition,
+    provider: deps.provider,
+    ...(slack.webhook_url !== undefined && { webhookUrl: slack.webhook_url }),
+    ...(slack.bot_token !== undefined && { botToken: slack.bot_token }),
+    ...(slack.channel_id !== undefined && { channelId: slack.channel_id }),
+    ...(slack.signing_secret !== undefined && { signingSecret: slack.signing_secret }),
+    ...(slack.events_port !== undefined && { eventsPort: slack.events_port }),
+    ...(slack.app_token !== undefined && { appToken: slack.app_token }),
+    ...(slack.reminder_interval_ms !== undefined && {
+      reminderIntervalMs: slack.reminder_interval_ms,
+    }),
+    ...(slack.escalation_threshold_ms !== undefined && {
+      escalationThresholdMs: slack.escalation_threshold_ms,
+    }),
+  };
+  return createSlackGateHandler(config);
 }
 
 export const agentCommand = new Command('agent')
@@ -87,7 +74,11 @@ export const agentCommand = new Command('agent')
   )
   .option(
     '--extensions-module <path>',
-    "Extensions module that REPLACES the workflow's declared 'extensions' modules (repair/override)",
+    "CODE override: module that REPLACES the workflow's declared 'extensions' modules (repair tool)",
+  )
+  .option(
+    '--project <dir>',
+    'CONFIG anchor: deployment root whose realm.yaml applies to definitions without a stored trust_root (default: current directory)',
   )
   .action(
     async (opts: {
@@ -100,6 +91,7 @@ export const agentCommand = new Command('agent')
       providerModule?: string;
       register?: boolean;
       extensionsModule?: string;
+      project?: string;
     }) => {
       if (!opts.workflow && !opts.runId) {
         console.error('Error: one of --workflow or --run-id is required');
@@ -156,61 +148,39 @@ export const agentCommand = new Command('agent')
             opts.baseUrl,
           );
         }
-        const extensionOpts =
-          opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {};
+        // `realm agent` is operator-launched: cwd is a legitimate deployment-root default.
+        const projectDir = resolve(opts.project ?? process.cwd());
+        const extensionOpts = {
+          ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
+          projectDir,
+        };
 
         let result: import('../agent/run-agent.js').AgentRunResult;
 
         if (opts.runId !== undefined) {
           // --run-id path: attach to existing run, load definition from store.
-          // resolveRunAttach loads project extensions BEFORE the run is claimed and carries
-          // the extensions_load_failed write / re-attach semantics.
+          // resolveRunAttach loads project extensions + manifest BEFORE the run is claimed
+          // and carries the extensions_load_failed write / re-attach semantics.
           const { definition, ...loaded } = await resolveRunAttach(
             opts.runId,
             { store, workflowStore },
             extensionOpts,
           );
-          const registry = composeAgentRegistry(loaded);
 
-          const hasSlack =
-            process.env['SLACK_BOT_TOKEN'] !== undefined ||
-            process.env['SLACK_WEBHOOK_URL'] !== undefined;
-          const slackConfig: SlackGateHandlerConfig = {
+          const gateHandler = buildManifestGateHandler(loaded.notifiers, {
             store,
             definition,
             provider,
-            ...(process.env['SLACK_WEBHOOK_URL'] !== undefined && {
-              webhookUrl: process.env['SLACK_WEBHOOK_URL'],
-            }),
-            ...(process.env['SLACK_BOT_TOKEN'] !== undefined && {
-              botToken: process.env['SLACK_BOT_TOKEN'],
-            }),
-            ...(process.env['SLACK_CHANNEL_ID'] !== undefined && {
-              channelId: process.env['SLACK_CHANNEL_ID'],
-            }),
-            ...(process.env['SLACK_SIGNING_SECRET'] !== undefined && {
-              signingSecret: process.env['SLACK_SIGNING_SECRET'],
-            }),
-            ...(process.env['SLACK_EVENTS_PORT'] !== undefined && {
-              eventsPort: parseInt(process.env['SLACK_EVENTS_PORT'], 10),
-            }),
-            ...(process.env['SLACK_APP_TOKEN'] !== undefined && {
-              appToken: process.env['SLACK_APP_TOKEN'],
-            }),
-            ...(process.env['SLACK_GATE_REMINDER_INTERVAL_MS'] !== undefined && {
-              reminderIntervalMs: parseInt(process.env['SLACK_GATE_REMINDER_INTERVAL_MS'], 10),
-            }),
-            ...(process.env['SLACK_GATE_ESCALATION_THRESHOLD_MS'] !== undefined && {
-              escalationThresholdMs: parseInt(
-                process.env['SLACK_GATE_ESCALATION_THRESHOLD_MS'],
-                10,
-              ),
-            }),
-          };
-          const gateHandler = hasSlack ? createSlackGateHandler(slackConfig) : undefined;
+          });
 
           result = await runAgent(
-            { store, workflowStore, provider, registry, ...(gateHandler ? { gateHandler } : {}) },
+            {
+              store,
+              workflowStore,
+              provider,
+              registry: loaded.registry,
+              ...(gateHandler ? { gateHandler } : {}),
+            },
             {
               existingRunId: opts.runId,
               definition,
@@ -228,67 +198,23 @@ export const agentCommand = new Command('agent')
               : join(inputPath, 'workflow.yaml');
           const definition = loadWorkflowFromFile(filePath);
 
-          // Load project extensions BEFORE the run is created (fail-before-create).
+          // Load project extensions + deployment manifest BEFORE the run is created
+          // (fail-before-create); the loader registry flows directly into the run.
           const loaded = await loadProjectExtensions(definition, extensionOpts);
-          const registry = composeAgentRegistry(loaded);
 
-          // Fail fast if required adapter env vars are missing.
-          const preflightFindings = checkAdapterPrerequisites(definition);
-          if (preflightFindings.length > 0) {
-            console.error(formatPreflightError(preflightFindings));
-            process.exit(1);
-          }
-
-          // Print advisory warnings for incomplete Slack bidirectional config.
-          const slackWarnings = checkSlackBidirectionalConfig();
-          for (const warning of slackWarnings) {
-            console.warn(`  ⚠  ${warning.message}`);
-          }
-
-          const hasSlack2 =
-            process.env['SLACK_BOT_TOKEN'] !== undefined ||
-            process.env['SLACK_WEBHOOK_URL'] !== undefined;
-          const slackConfig2: SlackGateHandlerConfig = {
+          const gateHandler = buildManifestGateHandler(loaded.notifiers, {
             store,
             definition,
             provider,
-            ...(process.env['SLACK_WEBHOOK_URL'] !== undefined && {
-              webhookUrl: process.env['SLACK_WEBHOOK_URL'],
-            }),
-            ...(process.env['SLACK_BOT_TOKEN'] !== undefined && {
-              botToken: process.env['SLACK_BOT_TOKEN'],
-            }),
-            ...(process.env['SLACK_CHANNEL_ID'] !== undefined && {
-              channelId: process.env['SLACK_CHANNEL_ID'],
-            }),
-            ...(process.env['SLACK_SIGNING_SECRET'] !== undefined && {
-              signingSecret: process.env['SLACK_SIGNING_SECRET'],
-            }),
-            ...(process.env['SLACK_EVENTS_PORT'] !== undefined && {
-              eventsPort: parseInt(process.env['SLACK_EVENTS_PORT'], 10),
-            }),
-            ...(process.env['SLACK_APP_TOKEN'] !== undefined && {
-              appToken: process.env['SLACK_APP_TOKEN'],
-            }),
-            ...(process.env['SLACK_GATE_REMINDER_INTERVAL_MS'] !== undefined && {
-              reminderIntervalMs: parseInt(process.env['SLACK_GATE_REMINDER_INTERVAL_MS'], 10),
-            }),
-            ...(process.env['SLACK_GATE_ESCALATION_THRESHOLD_MS'] !== undefined && {
-              escalationThresholdMs: parseInt(
-                process.env['SLACK_GATE_ESCALATION_THRESHOLD_MS'],
-                10,
-              ),
-            }),
-          };
-          const gateHandler2 = hasSlack2 ? createSlackGateHandler(slackConfig2) : undefined;
+          });
 
           result = await runAgent(
             {
               store,
               workflowStore,
               provider,
-              registry,
-              ...(gateHandler2 ? { gateHandler: gateHandler2 } : {}),
+              registry: loaded.registry,
+              ...(gateHandler ? { gateHandler } : {}),
             },
             {
               definition,
