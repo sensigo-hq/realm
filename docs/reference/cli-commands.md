@@ -29,6 +29,15 @@ re-run `realm agent --run-id <id>` — attaching to a run whose terminal reason 
 `extensions_load_failed` clears that marker and retries (nothing executed before the failure).
 All other terminal reasons keep the normal refusal.
 
+**Drift evidence:** runs of extension-declaring workflows carry an append-on-change
+`extension_identity` history (see the
+[Project extensions guide](project-extensions.md#drift-evidence)). `realm agent --run-id`
+WARNs on stderr when the freshly loaded extension code differs from the run's last recorded
+identity — advisory only, never a gate; the new identity is appended at the next executed
+step. `realm run inspect <run-id>` renders the history; `realm run inspect <run-id>
+--check-drift` recomputes the last entry against current disk state with pure hashing
+(read-only commands never load project code).
+
 **Restart semantics for long-lived processes:** `listen`, `serve`, and `mcp` cache extension
 registries for the process lifetime and never re-import changed module content — restart the
 process after rebuilding extension modules. Also restart `realm listen` after re-registering a
@@ -303,7 +312,15 @@ debugging tool — use it whenever a run fails, gets stuck, or produces unexpect
 
 ```bash
 realm run inspect abc12345-0000-0000-0000-000000000000
+realm run inspect abc12345-0000-0000-0000-000000000000 --check-drift
 ```
+
+For runs of extension-declaring workflows, the output includes the `Extension Identity`
+history (drift evidence: per-module entry hashes, the dir_tree_v1 fingerprint, signals,
+override/error flags, and the coverage sentence). `--check-drift` recomputes the LAST
+recorded entry against current disk state under its recorded rules — pure hashing, no
+code loading — and prints same/DIFFERS/MISSING per component. See the
+[Project extensions guide](project-extensions.md#drift-evidence).
 
 #### Output format
 

@@ -160,3 +160,52 @@ Available on `agent`, `run`, `serve`, `mcp`, `validate`, `test`. **Replaces** th
 modules for that invocation and logs loudly. It is an operator-typed path, so trust-root
 containment does not apply. Use it for moved files, drift experiments, and repairs — not as the
 primary mechanism.
+
+---
+
+## Drift evidence
+
+Every run records the identity of the extension code that actually executed it — captured
+at module-**LOAD** time (what is in memory, not what is on disk at some later moment),
+recorded as an **append-on-change history** on the run, compared and **WARNed — never
+gated** — at attach time and in `realm run inspect`.
+
+**What is recorded** (`RunRecord.extension_identity[]`, one entry per identity change):
+
+- per module: the declared and resolved paths, a sha256 `entry_hash` of the entry file,
+  and the load format (`esm` / `cjs` / `ts-jiti`);
+- a versioned deterministic directory-tree fingerprint (`dir_tree_v1`) over the deduped
+  parent directories of the resolved entries: included extensions
+  `.js,.mjs,.cjs,.ts,.mts,.cts,.json`; directories named `node_modules` and `.git`
+  excluded at any depth; symlinks skipped; sorted by relative path; caps 2000 files /
+  50 MB (over-cap sweeps hash a deterministic prefix and set `truncated: true`);
+- labeled advisory `signals` (never compared): `package_version` from the trust root's
+  package.json and `git_head` from `.git/HEAD` (one ref-file dereference, no child
+  processes) — each independently fail-soft;
+- `override_active: true` when `--extensions-module` replaced the declared modules;
+- `error` when the capture (or the extension load itself) failed — the failure is itself
+  a record.
+
+**Coverage, stated verbatim in `inspect`:** covers files under the recorded roots matching
+the recorded rules; imports outside these roots, node_modules, and runtime dynamic imports
+are NOT covered.
+
+**When entries are written** (append-on-change): the execution loop appends an entry at
+step execution when the run has no history or the last entry denotes different code — so
+idempotent creates, batch children, and multi-process resumes never duplicate entries,
+and a mid-run code change (fix-registry-then-resume) lands as a second entry with an
+advisory envelope warning. `realm agent --run-id` WARNs on stderr when the freshly loaded
+identity differs from the run's last recorded one (nothing is written pre-claim); a
+pre-execution `extensions_load_failed` write carries an `error` identity entry, giving
+the repair loop its before/after pair. Comparison always recomputes under the **recorded**
+rule string — an unknown rules version yields an explicit "cannot compare", never a guess.
+
+**`realm run inspect <run-id> --check-drift`** recomputes the last recorded entry against
+current disk state with pure hashing (the fingerprint module is structurally incapable of
+loading code — no dynamic import, no createRequire) and prints same/DIFFERS/MISSING per
+module and for the tree, plus the recorded-vs-current signals.
+
+**Store support:** drift evidence is **JSON-file-store-only for now** — external stores
+must round-trip unknown optional RunRecord fields through `update()`; realm-cloud's
+columnar store does not yet (its migration spec now includes `extension_identity` and
+`workflow_context_snapshots`).
