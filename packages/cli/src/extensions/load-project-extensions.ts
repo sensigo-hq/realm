@@ -18,7 +18,7 @@
 // module paths and manifest `use:` refs originate ONLY from operator-registered definitions,
 // the operator's deployment root, or operator-typed flags — never from request data.
 import { createRequire } from 'node:module';
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync, realpathSync, existsSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { load as loadYaml } from 'js-yaml';
@@ -185,6 +185,52 @@ interface ManifestContext {
 }
 
 /**
+ * Orphaned-manifest guard (#123): throws when a `realm.yaml` sits anywhere in the span
+ * `[source_dir, trust_root)` — from the workflow directory walking UP to, but NOT
+ * including, the resolved trust_root. Such a manifest is silently ignored by the
+ * strict-single-location loader, so surfacing it loudly before run creation turns a
+ * confusing downstream `adapter 'X' not registered` (or total silence under
+ * validate/sentinel/fixture paths) into an actionable placement error.
+ *
+ * No-op unless the definition carries BOTH `source_dir` and `trust_root` and they differ
+ * (agent-origin / from-string definitions have no source_dir; a workflow dir that is its
+ * own trust_root has an empty span). Never scans at or above trust_root — a stray at
+ * trust_root IS the loaded manifest; Case C (above trust_root) is deliberately out of #123.
+ */
+function checkForOrphanedManifests(definition: WorkflowDefinition, root: string): void {
+  const sourceDir = definition.source_dir;
+  const trustRoot = definition.trust_root;
+  // Only meaningful for file-loaded definitions whose trust_root is the resolved root.
+  if (sourceDir === undefined || trustRoot === undefined || trustRoot !== root) return;
+  if (sourceDir === trustRoot) return;
+
+  const orphans: string[] = [];
+  let current = sourceDir;
+  // Walk [source_dir, trust_root): stop BEFORE trust_root; guard against a source_dir that
+  // is not actually under trust_root (never terminates otherwise).
+  while (current !== trustRoot) {
+    const candidate = join(current, 'realm.yaml');
+    if (existsSync(candidate)) orphans.push(candidate);
+    const parent = dirname(current);
+    if (parent === current) break; // hit the filesystem root without meeting trust_root
+    current = parent;
+  }
+
+  if (orphans.length === 0) return;
+  const found =
+    orphans.length === 1
+      ? `Deployment manifest at '${orphans[0]!}'`
+      : `Deployment manifests at ${orphans.map((o) => `'${o}'`).join(', ')}`;
+  const nearest = orphans[0]!;
+  throw new Error(
+    `${found} will NOT be loaded — manifests are read only from the deployment root ` +
+      `'${join(trustRoot, 'realm.yaml')}'. Move it to '${join(trustRoot, 'realm.yaml')}' ` +
+      `(the nearest package.json/.git ancestor of the workflow), or add a package.json/.git ` +
+      `at '${dirname(nearest)}' to make that the deployment root.`,
+  );
+}
+
+/**
  * Resolves the deployment root and loads+validates the manifest document when present.
  * Definitions WITH trust_root anchor there; definitions WITHOUT it anchor at the daemon's
  * `--project` root (absent → no manifest, defaults only — NO walking, NO error).
@@ -195,6 +241,18 @@ function loadManifestContext(
 ): ManifestContext | undefined {
   const root = definition.trust_root ?? projectDir;
   if (root === undefined) return undefined;
+
+  // Orphaned-manifest guard (#123): manifests load ONLY from <trust_root>/realm.yaml.
+  // A realm.yaml placed anywhere in the span [source_dir, trust_root) — the workflow dir
+  // or an intermediate dir below the resolved trust_root — is silently ignored, which is
+  // the common misplacement (workflow in a repo subdir whose package.json/.git is an
+  // ancestor). Detect it and fail loud BEFORE loading, consistent with the invalid-YAML /
+  // schema-error throws below. Runs before the trust_root load: a correctly-placed
+  // manifest does NOT excuse a stray one below it (the stray is still ignored, still
+  // operator error). Detection-only — LOADING semantics stay strict-single-location.
+  // Case C (realm.yaml ABOVE trust_root) is deliberately NOT scanned (see #123).
+  checkForOrphanedManifests(definition, root);
+
   const manifestPath = join(root, 'realm.yaml');
   let bytes: Buffer;
   try {

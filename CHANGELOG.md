@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Orphaned deployment manifest is now a loud error** (#123). A `realm.yaml` placed in the span `[source_dir, trust_root)` — the workflow directory or an intermediate directory below the resolved deployment root — was silently ignored (manifests load only from `<trust_root>/realm.yaml`), giving a confusing downstream `adapter 'X' not registered` at execution time and no signal at all under validate/sentinel/fixture paths. The loader now scans that span and throws before run creation, naming the orphaned path(s), the resolved trust root, and the fix. Detection-only: manifest loading stays strict-single-location. A manifest _above_ the trust root (monorepo-root case) is intentionally not scanned.
+
+---
+
 ## [0.14.0] — 2026-07-05
 
 ### BREAKING
