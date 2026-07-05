@@ -1,10 +1,10 @@
 // Tests for inspectRun business logic.
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inspectRun } from './inspect.js';
-import { computeExtensionIdentity } from '../extensions/extension-identity.js';
+import { computeExtensionIdentity, sha256HexOf } from '../extensions/extension-identity.js';
 import type {
   RunStore,
   RunRecord,
@@ -576,5 +576,65 @@ describe('inspectRun — extension identity (drift evidence)', () => {
       checkDrift: true,
     });
     expect(result).toContain('no extension identity recorded for this run');
+  });
+});
+
+describe('--check-drift manifest hash (v0.14 hardening)', () => {
+  it('same / DIFFERS / MISSING for the recorded manifest; line omitted when no manifest was recorded', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'realm-inspect-manifest-'));
+    try {
+      const entryFile = join(dir, 'registry.js');
+      writeFileSync(entryFile, 'export default {};', 'utf8');
+      const manifestPath = join(dir, 'realm.yaml');
+      writeFileSync(manifestPath, 'version: 1\n', 'utf8');
+      const identity = computeExtensionIdentity(
+        [{ declared: './registry.js', resolved: entryFile, format: 'esm' }],
+        {
+          manifest: {
+            path: manifestPath,
+            content_hash: sha256HexOf(readFileSync(manifestPath)),
+          },
+        },
+      );
+      const run = makeRun([], { extension_identity: [identity] });
+
+      const same = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef), {
+        checkDrift: true,
+      });
+      expect(same).toContain(`manifest ${manifestPath}: same`);
+
+      writeFileSync(manifestPath, 'version: 1\nadapters: {}\n', 'utf8');
+      const differs = await inspectRun(
+        'run_test1',
+        makeRunStore(run),
+        makeWorkflowStore(basicDef),
+        { checkDrift: true },
+      );
+      expect(differs).toContain(`manifest ${manifestPath}: DIFFERS (recorded `);
+
+      rmSync(manifestPath);
+      const missing = await inspectRun(
+        'run_test1',
+        makeRunStore(run),
+        makeWorkflowStore(basicDef),
+        { checkDrift: true },
+      );
+      expect(missing).toContain(`manifest ${manifestPath}: MISSING`);
+
+      // Older entries without a recorded manifest → no manifest line at all.
+      const legacyIdentity = computeExtensionIdentity([
+        { declared: './registry.js', resolved: entryFile, format: 'esm' },
+      ]);
+      const legacyRun = makeRun([], { extension_identity: [legacyIdentity] });
+      const legacy = await inspectRun(
+        'run_test1',
+        makeRunStore(legacyRun),
+        makeWorkflowStore(basicDef),
+        { checkDrift: true },
+      );
+      expect(legacy).not.toContain('manifest ');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

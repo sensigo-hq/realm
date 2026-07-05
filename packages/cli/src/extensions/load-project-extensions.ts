@@ -85,6 +85,12 @@ export interface LoadedProjectExtensions {
   notifiers?: { slack_gate?: SlackGateNotifierConfig['config'] };
   /** Sentinel-mode construction warnings (entries skipped, listed — never silent). */
   sentinelWarnings?: string[];
+  /**
+   * REAL resolved manifest-secret VALUES (values only, frozen, never names→values;
+   * sentinel-mode values excluded; values < 4 chars excluded). Consumed by the agent
+   * redaction pass — must never ride any persisted or serialized structure.
+   */
+  secretValues?: readonly string[];
 }
 
 /** Registration surfaces of a declarative extension module, keyed by export map name. */
@@ -317,6 +323,7 @@ export async function loadProjectExtensions(
 
   const sentinelWarnings: string[] = [];
   let notifiers: LoadedProjectExtensions['notifiers'];
+  let secretValues: readonly string[] | undefined;
   const identityModules: Array<{
     declared: string;
     resolved: string;
@@ -341,6 +348,7 @@ export async function loadProjectExtensions(
     );
     notifiers = applied.notifiers;
     secretNames = applied.secretNames;
+    secretValues = applied.secretValues;
     for (const [use, real] of useModuleRefs) {
       identityModules.push({
         declared: use,
@@ -383,6 +391,7 @@ export async function loadProjectExtensions(
     manifest,
     ...(notifiers !== undefined ? { notifiers } : {}),
     ...(sentinelWarnings.length > 0 ? { sentinelWarnings } : {}),
+    ...(secretValues !== undefined && secretValues.length > 0 ? { secretValues } : {}),
   };
   cache.set(cacheKey, { result, ...(freshness !== undefined ? { freshness } : {}) });
   return result;
@@ -432,6 +441,7 @@ async function applyDeploymentManifest(
 ): Promise<{
   notifiers?: LoadedProjectExtensions['notifiers'];
   secretNames: string[];
+  secretValues: readonly string[];
   useFormats: Map<string, 'esm' | 'cjs' | 'ts-jiti'>;
 }> {
   const refs = collectManifestSecretRefs(ctx.document);
@@ -440,6 +450,7 @@ async function applyDeploymentManifest(
   const secretValues = Object.values(resolved.values);
   const useFormats = new Map<string, 'esm' | 'cjs' | 'ts-jiti'>();
   const secretBearingHandlers: string[] = [];
+  const secretBearingProcessors: string[] = [];
 
   const sections = [
     { key: 'adapters' as const, type: 'adapter' as const },
@@ -469,6 +480,7 @@ async function applyDeploymentManifest(
 
       const hasRefs = findSecretRefSites(entry.config, site).sites.length > 0;
       if (section.type === 'handler' && hasRefs) secretBearingHandlers.push(name);
+      if (section.type === 'processor' && hasRefs) secretBearingProcessors.push(name);
 
       const config = interpolateConfigTree(entry.config ?? {}, resolveName);
 
@@ -514,6 +526,8 @@ async function applyDeploymentManifest(
   }
 
   if (secretBearingHandlers.length > 0) manifest.secret_bearing_handlers = secretBearingHandlers;
+  if (secretBearingProcessors.length > 0)
+    manifest.secret_bearing_processors = secretBearingProcessors;
 
   let notifiers: LoadedProjectExtensions['notifiers'];
   const slackGate = ctx.document.notifiers?.slack_gate;
@@ -526,6 +540,10 @@ async function applyDeploymentManifest(
   return {
     ...(notifiers !== undefined ? { notifiers } : {}),
     secretNames: [...new Set(refs.map((r) => r.name))].sort(),
+    // Values-only, frozen, real-mode only: the agent redaction feed. Never persisted.
+    secretValues: resolved.sentinel
+      ? Object.freeze([])
+      : Object.freeze([...new Set(Object.values(resolved.values))].filter((v) => v.length >= 4)),
     useFormats,
   };
 }

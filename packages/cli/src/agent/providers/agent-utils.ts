@@ -18,8 +18,24 @@ export function buildSystemPrompt(
 }
 
 /**
- * Converts an error value to a string and strips sensitive patterns:
- * Bearer tokens, query-string tokens, and any process.env value longer than 4 characters.
+ * Additional literal values to redact on the provider-loop surfaces — manifest-resolved
+ * secret VALUES (dotenv-sourced values are absent from process.env, so without this they
+ * would pass unredacted). Values only, module-level, never persisted anywhere; set once
+ * per agent run by runAgent from the loaded extensions result.
+ */
+let additionalRedactionValues: readonly string[] = [];
+
+/** Sets the manifest-secret values redacted alongside process.env values. */
+export function setAdditionalRedactionValues(values: readonly string[]): void {
+  additionalRedactionValues = values;
+}
+
+/**
+ * Converts an error value to a string and strips sensitive patterns: Bearer tokens,
+ * query-string tokens, process.env values longer than 4 characters, and the additional
+ * (manifest-secret) values. All literal values are redacted in ONE combined pass,
+ * deduped and applied LONGEST-FIRST — a short value contained in a longer one can no
+ * longer leave fragments of the longer value behind.
  */
 export function sanitizeError(err: unknown): string {
   let text: string;
@@ -32,10 +48,14 @@ export function sanitizeError(err: unknown): string {
   }
   text = text.replace(/Bearer [A-Za-z0-9._-]+/g, 'Bearer [REDACTED]');
   text = text.replace(/token=[A-Za-z0-9._-]+/g, 'token=[REDACTED]');
-  for (const val of Object.values(process.env)) {
-    if (val !== undefined && val.length > 4) {
-      text = text.split(val).join('[REDACTED]');
-    }
+  const envValues = Object.values(process.env).filter(
+    (val): val is string => val !== undefined && val.length > 4,
+  );
+  const combined = [...new Set([...envValues, ...additionalRedactionValues])].sort(
+    (a, b) => b.length - a.length,
+  );
+  for (const val of combined) {
+    text = text.split(val).join('[REDACTED]');
   }
   return text;
 }

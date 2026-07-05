@@ -24,4 +24,9 @@ export interface ExtensionManifest {
    * fixture runner fails the first time one executes (never silently real).
    */
   secret_bearing_handlers?: string[];
+  /**
+   * Processor names whose deployment-manifest config contains `${secret:}` references —
+   * the symmetric guard: poisoned in `realm test`, failing the fixture on first execution.
+   */
+  secret_bearing_processors?: string[];
 }

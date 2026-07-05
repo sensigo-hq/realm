@@ -9,6 +9,7 @@ import {
   type WorkflowDefinition,
   type ExtensionManifest,
   type StepHandler,
+  type Processor,
 } from '@sensigo/realm';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -124,7 +125,22 @@ export function buildFixtureRegistries(
         extFallback.register('handler', name, handler);
       }
     }
+    const secretBearingProcessors = new Set(ext.manifest.secret_bearing_processors ?? []);
     for (const name of ext.manifest.processors) {
+      if (secretBearingProcessors.has(name)) {
+        const poisoned: Processor = {
+          id: name,
+          process: async () => {
+            throw new Error(
+              `processor '${name}' is secret-bearing; fixture tests cannot exercise it — ` +
+                `keep processors pure or exclude the step.`,
+            );
+          },
+        };
+        fixtureRegistry.register('processor', name, poisoned);
+        extFallback.register('processor', name, poisoned);
+        continue;
+      }
       const processor = ext.registry.getProcessor(name);
       if (processor !== undefined) {
         fixtureRegistry.register('processor', name, processor);

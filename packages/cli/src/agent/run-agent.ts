@@ -18,6 +18,7 @@ import {
 } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
 import type { LlmProvider } from './providers/llm-provider.js';
+import { setAdditionalRedactionValues } from './providers/agent-utils.js';
 import { isToolCapable } from './providers/llm-provider.js';
 import type { McpClient, ToolDefinition, ToolExecutor } from './mcp/mcp-extensions.js';
 import { McpClient as McpClientImpl } from './mcp/mcp-client.js';
@@ -40,6 +41,12 @@ export interface AgentDeps {
    * Defaults to constructing a real McpClient when absent.
    */
   mcpClientFactory?: (servers: McpServerConfig[], signal?: AbortSignal) => McpClient;
+  /**
+   * REAL manifest-secret VALUES (values only, from the loaded extensions result) fed to
+   * the provider-loop redaction pass — dotenv-sourced values are absent from process.env
+   * and would otherwise pass tool results/traces unredacted. Never persisted.
+   */
+  redactionValues?: readonly string[];
 }
 
 export interface AgentRunOptions {
@@ -145,6 +152,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   if (options.existingRunId !== undefined && options.workflowPath !== undefined) {
     throw new Error('existingRunId and workflowPath are mutually exclusive');
   }
+
+  // Manifest-secret redaction (values only, set ONCE per run): tool results and
+  // tool-execution errors serialized by the provider loop get these values masked
+  // alongside process.env values.
+  setAdditionalRedactionValues(deps.redactionValues ?? []);
 
   // Load or use provided definition.
   const definition: WorkflowDefinition =

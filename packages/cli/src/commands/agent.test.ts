@@ -13,6 +13,10 @@ import type { AgentDeps, AgentRunOptions } from '../agent/run-agent.js';
 import { LlmProvider } from '../agent/providers/llm-provider.js';
 import { resolveProvider } from '../agent/providers/llm-provider.js';
 import { agentCommand } from './agent.js';
+import {
+  serializeToolResult,
+  setAdditionalRedactionValues,
+} from '../agent/providers/agent-utils.js';
 
 // ---------------------------------------------------------------------------
 // MockLlmProvider — queue-based: returns responses in order of callStep() calls.
@@ -293,5 +297,32 @@ describe('agentCommand CLI guards', () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining('--params cannot be used with --run-id'),
     );
+  });
+});
+
+describe('manifest-secret redaction threading (fix holder)', () => {
+  afterEach(() => setAdditionalRedactionValues([]));
+
+  class EchoingProvider extends LlmProvider {
+    async callStep(): Promise<Record<string, unknown>> {
+      // Simulates the provider-loop serialization site: a tool result echoing a
+      // manifest-bound secret is serialized through serializeToolResult and the
+      // serialized form lands in the step output persisted to evidence.
+      return { summary: serializeToolResult('upstream said: manifest-bound-secret-abc123') };
+    }
+  }
+
+  it('runAgent threads deps.redactionValues into the redaction pass BEFORE the provider runs', async () => {
+    const deps = makeDeps({
+      provider: new EchoingProvider(),
+      redactionValues: Object.freeze(['manifest-bound-secret-abc123']),
+    });
+    const result = await runAgent(deps, { definition: agentOnlyWorkflow, params: {} });
+    expect(result).toBe('completed');
+    const runs = await deps.store.list();
+    const evidence = runs[0]!.evidence.find((e) => e.step_id === 'summarize')!;
+    const persisted = JSON.stringify(evidence.output_summary);
+    expect(persisted).toContain('[REDACTED]');
+    expect(persisted).not.toContain('manifest-bound-secret-abc123');
   });
 });

@@ -528,3 +528,58 @@ handlers:
     expect(rHandler.token).toBe('real-value');
   });
 });
+
+describe('v0.14 final hardening — loader surfaces', () => {
+  it('exposes REAL resolved secret VALUES as a frozen values-only array (>=4 chars); sentinel mode exposes none', async () => {
+    const mod = writeFactoryModule();
+    writeEnv('LONG_TOK=real-long-token-value\nTINY=ab\n');
+    writeManifest(
+      `version: 1
+adapters:
+  a1:
+    use: ${mod}#adapterFactory
+    config: { token: "\${secret:LONG_TOK}", tiny: "\${secret:TINY}" }
+`,
+    );
+    const definition = anchoredDefinition();
+    const loaded = await loadProjectExtensions(definition);
+    expect(loaded.secretValues).toEqual(['real-long-token-value']); // TINY (<4) excluded
+    expect(Object.isFrozen(loaded.secretValues)).toBe(true);
+    // Never rides persisted/serialized structures.
+    expect(JSON.stringify(loaded.registry.identity)).not.toContain('real-long-token-value');
+    expect(JSON.stringify(loaded.manifest)).not.toContain('real-long-token-value');
+
+    clearProjectExtensionsCache();
+    const sentinel = await loadProjectExtensions(definition, { secretMode: 'sentinel' });
+    expect(sentinel.secretValues).toBeUndefined();
+  });
+
+  it('records secret-bearing PROCESSORS on the manifest (symmetric to handlers)', async () => {
+    const procModule = join(root, 'dist', `proc-${counter++}.js`);
+    writeFileSync(
+      procModule,
+      `export function procFactory({ id, config }) {
+  return { id, process: async (content) => ({ ...content, metadata: { key: config.api_key } }) };
+}
+export function pureProcFactory({ id }) {
+  return { id, process: async (content) => content };
+}
+`,
+      'utf8',
+    );
+    writeEnv('PKEY=proc-key-value\n');
+    writeManifest(
+      `version: 1
+processors:
+  secret_proc:
+    use: ./dist/${procModule.split('/').pop()!}#procFactory
+    config: { api_key: "\${secret:PKEY}" }
+  pure_proc:
+    use: ./dist/${procModule.split('/').pop()!}#pureProcFactory
+`,
+    );
+    const { manifest } = await loadProjectExtensions(anchoredDefinition());
+    expect(manifest.secret_bearing_processors).toEqual(['secret_proc']);
+    expect(manifest.processors.sort()).toEqual(['pure_proc', 'secret_proc']);
+  });
+});

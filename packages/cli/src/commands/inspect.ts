@@ -97,6 +97,21 @@ function renderExtensionIdentity(
         );
       }
     }
+    if (result.manifest !== undefined) {
+      if (result.manifest.current_hash === undefined) {
+        lines.push(
+          chalk.red(`  manifest ${result.manifest.path}: MISSING (unreadable on current disk)`),
+        );
+      } else if (result.manifest.current_hash === result.manifest.recorded_hash) {
+        lines.push(chalk.green(`  manifest ${result.manifest.path}: same`));
+      } else {
+        lines.push(
+          chalk.yellow(
+            `  manifest ${result.manifest.path}: DIFFERS (recorded ${result.manifest.recorded_hash}, current ${result.manifest.current_hash})`,
+          ),
+        );
+      }
+    }
     if (result.tree.current_hash === result.tree.recorded_hash) {
       lines.push(chalk.green('  tree: same'));
     } else {

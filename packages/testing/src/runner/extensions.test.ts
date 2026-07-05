@@ -342,3 +342,61 @@ steps:
     }
   });
 });
+
+describe('secret-bearing processors (v0.14 symmetric guard)', () => {
+  function makeProcessorExtensions(): NonNullable<
+    Parameters<typeof buildFixtureRegistries>[2]['extensions']
+  > {
+    const registry = createDefaultRegistry();
+    registry.register('processor', 'secret_proc', {
+      id: 'secret_proc',
+      process: async (content) => content,
+    });
+    registry.register('processor', 'pure_proc', {
+      id: 'pure_proc',
+      process: async (content) => content,
+    });
+    return {
+      registry,
+      manifest: {
+        modules: [],
+        adapters: [],
+        handlers: [],
+        processors: ['secret_proc', 'pure_proc'],
+        secret_bearing_processors: ['secret_proc'],
+      },
+    };
+  }
+
+  it('poisons the secret-bearing processor in BOTH registries with the targeted message', async () => {
+    const { fixtureRegistry, fallbackRegistry } = buildFixtureRegistries(
+      makeFixture(),
+      SERVICE_DEFINITION,
+      { extensions: makeProcessorExtensions() },
+    );
+    for (const registry of [fixtureRegistry, fallbackRegistry!]) {
+      await expect(
+        registry.getProcessor('secret_proc')!.process({ text: 'x', metadata: {} }, {}),
+      ).rejects.toThrow(
+        "processor 'secret_proc' is secret-bearing; fixture tests cannot exercise it — keep processors pure or exclude the step.",
+      );
+    }
+  });
+
+  it('secret-free processors stay REAL in both registries (0.13 semantics)', async () => {
+    const ext = makeProcessorExtensions();
+    const { fixtureRegistry, fallbackRegistry } = buildFixtureRegistries(
+      makeFixture(),
+      SERVICE_DEFINITION,
+      { extensions: ext },
+    );
+    expect(fixtureRegistry.getProcessor('pure_proc')).toBe(ext.registry.getProcessor('pure_proc'));
+    expect(fallbackRegistry!.getProcessor('pure_proc')).toBe(
+      ext.registry.getProcessor('pure_proc'),
+    );
+    const out = await fixtureRegistry
+      .getProcessor('pure_proc')!
+      .process({ text: 'hello', metadata: {} }, {});
+    expect(out.text).toBe('hello');
+  });
+});
