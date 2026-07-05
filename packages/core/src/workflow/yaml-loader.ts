@@ -323,14 +323,15 @@ export function loadWorkflowFromFile(
     };
   }
 
-  // Project extensions: normalize to array (authored relative paths untouched) and stamp
-  // resolution metadata. Core resolves/stores PATHS only — it never imports the modules;
-  // loading lives in the CLI composition layer (loadProjectExtensions).
+  // Resolution metadata: stamped for EVERY file-loaded definition (v0.14) — trust_root is
+  // the deployment-manifest anchor (`<trust_root>/realm.yaml`), needed by extension-free
+  // workflows that consume manifest-constructed adapters by name. Core resolves/stores
+  // PATHS only — it never imports modules or reads the manifest; that is the CLI's job.
+  definition.source_dir = workflowDir;
+  definition.trust_root = findTrustRoot(workflowDir);
   if (definition.extensions !== undefined) {
     definition.extensions =
       typeof definition.extensions === 'string' ? [definition.extensions] : definition.extensions;
-    definition.source_dir = workflowDir;
-    definition.trust_root = findTrustRoot(workflowDir);
   }
 
   definition.origin = 'human';

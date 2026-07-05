@@ -36,8 +36,6 @@ export interface HandleRunStores {
   registryProvider?: (
     definition: import('@sensigo/realm').WorkflowDefinition,
   ) => Promise<ExtensionRegistry>;
-  /** Resolved secrets for use by service adapters. */
-  secrets?: Record<string, string>;
   /** Trace buffer store for incremental WAL-based trace ingestion (B-lite). */
   traceBufferStore?: TraceBufferStore;
   /** Durable per-run sidecar for failed agent-attempt telemetry (observability P3). */
@@ -114,7 +112,6 @@ export async function handleStartRun(
       input: params,
       dispatcher: passthroughDispatcher,
       ...(registry !== undefined ? { registry } : {}),
-      ...(stores?.secrets !== undefined ? { secrets: stores.secrets } : {}),
     });
     // Source run_phase from the final run so the spread can't drop it.
     const finalRun = await runStore.get(run.id).catch(() => run);

@@ -24,8 +24,6 @@ protocol:
 services:
   source:
     adapter: google_docs
-    auth:
-      token_from: secrets.GDOCS_TOKEN
     trust: engine_delivered
 
 steps:
