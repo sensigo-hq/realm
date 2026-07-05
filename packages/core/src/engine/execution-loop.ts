@@ -10,6 +10,7 @@ import type {
   AgentTraceEntry,
 } from '../types/run-record.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
+import { extensionIdentityDiffers } from '../types/extension-identity.js';
 import type { ResponseEnvelope, NextAction } from '../types/response-envelope.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type {
@@ -933,6 +934,54 @@ export async function executeStep(
       ...pendingRun,
       workflow_context_snapshots: contextSnapshots,
     });
+  }
+
+  // Extension-code drift evidence (issue #119): lazy append-on-change, mirroring the
+  // workflow-context lazy write above. When the caller's registry carries a CLI-computed
+  // identity entry, append it when the run has no history or the last entry denotes
+  // DIFFERENT code; on change also surface an advisory envelope warning. WARN-never-gate:
+  // a CAS loser retries once then logs-and-drops (an evidence entry may be lost under
+  // contention but never silently; step execution is never affected). No registry
+  // identity (extension-free runs) → byte-identical behavior, field never written.
+  const registryIdentity = options.registry?.identity;
+  if (registryIdentity !== undefined) {
+    const identityHistory = pendingRun.extension_identity ?? [];
+    const lastIdentity = identityHistory[identityHistory.length - 1];
+    if (lastIdentity === undefined || extensionIdentityDiffers(lastIdentity, registryIdentity)) {
+      if (lastIdentity !== undefined) {
+        traceWarnings.push(
+          "extension code identity changed since this run's last recorded identity",
+        );
+      }
+      try {
+        pendingRun = await store.update({
+          ...pendingRun,
+          extension_identity: [...identityHistory, registryIdentity],
+        });
+      } catch {
+        // CAS loser: another writer bumped the version between our read and update.
+        // Retry ONCE on fresh state (re-checking append-on-change), then log-and-drop.
+        try {
+          const freshRun = await store.get(options.runId);
+          const freshHistory = freshRun.extension_identity ?? [];
+          const freshLast = freshHistory[freshHistory.length - 1];
+          if (freshLast === undefined || extensionIdentityDiffers(freshLast, registryIdentity)) {
+            pendingRun = await store.update({
+              ...freshRun,
+              extension_identity: [...freshHistory, registryIdentity],
+            });
+          } else {
+            pendingRun = freshRun;
+          }
+        } catch (retryErr) {
+          console.error(
+            `extension identity append dropped for run '${options.runId}' after CAS retry: ${
+              retryErr instanceof Error ? retryErr.message : String(retryErr)
+            }`,
+          );
+        }
+      }
+    }
   }
 
   // Step 4: Dispatch with retry and timeout.

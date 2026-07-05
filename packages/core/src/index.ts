@@ -73,6 +73,13 @@ export type { Processor, ProcessorInput, ProcessorOutput } from './extensions/pr
 export { ExtensionRegistry } from './extensions/registry.js';
 export { createDefaultRegistry } from './extensions/default-registry.js';
 export type { ExtensionManifest, ExtensionModuleRef } from './extensions/manifest.js';
+export type {
+  ExtensionIdentityEntry,
+  ExtensionIdentityModule,
+  ExtensionIdentityTree,
+  ExtensionIdentitySignals,
+} from './types/extension-identity.js';
+export { extensionIdentityDiffers } from './types/extension-identity.js';
 
 // Evidence
 export { captureEvidence } from './evidence/snapshot.js';

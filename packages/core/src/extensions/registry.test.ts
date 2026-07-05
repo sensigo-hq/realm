@@ -139,5 +139,32 @@ describe('ExtensionRegistry', () => {
       const originalLimiter = registry.getOrCreateRateLimiter('svc', config);
       expect(originalLimiter).not.toBe(cloneLimiter);
     });
+
+    it('REQUIRED: clone() carries the attached extension identity', () => {
+      const registry = new ExtensionRegistry();
+      const entry = {
+        captured_at: '2026-07-05T00:00:00.000Z',
+        modules: [],
+        tree: {
+          roots: [],
+          rules: 'dir_tree_v1: test',
+          file_count: 0,
+          total_bytes: 0,
+          tree_hash: 'abc',
+          truncated: false,
+        },
+        coverage: 'dir_tree_v1' as const,
+      };
+      registry.setIdentity(entry);
+      expect(registry.identity).toBe(entry);
+      const copy = registry.clone();
+      expect(copy.identity).toBe(entry);
+    });
+
+    it('identity is undefined until attached (and on a fresh clone of a bare registry)', () => {
+      const registry = new ExtensionRegistry();
+      expect(registry.identity).toBeUndefined();
+      expect(registry.clone().identity).toBeUndefined();
+    });
   });
 });
