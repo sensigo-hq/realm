@@ -10,7 +10,7 @@
 #
 # Run with: realm agent --workflow examples/08-pr-review/workflow.yaml \
 #           --params '{"repo":"owner/repo","pr_number":42}'
-id: 08-pr-review
+id: pr-review
 name: PR Review
 version: 1
 
