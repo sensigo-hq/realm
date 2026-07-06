@@ -2,7 +2,9 @@
 import { Command } from 'commander';
 import type { RunStore } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
+import type { ExtensionRegistry } from '@sensigo/realm';
 import { WorkflowError, submitHumanResponse } from '@sensigo/realm';
+import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 
 /**
  * Submits a human choice response for a gate-waiting run.
@@ -14,17 +16,34 @@ import { WorkflowError, submitHumanResponse } from '@sensigo/realm';
  */
 export async function respondToGate(
   runId: string,
-  options: { gate: string; choice: string },
+  options: { gate: string; choice: string; project?: string; extensionsModule?: string },
   runStore: RunStore,
   workflowStore: WorkflowRegistrar,
+  registry?: ExtensionRegistry,
 ): Promise<{ choice: string; newState: string }> {
   const run = await runStore.get(runId);
   const workflow = await workflowStore.get(run.workflow_id);
+
+  // Resolve the project registry (unless a caller/test injected one) so that resolving a gate
+  // which COMPLETES the run fires its finalizers with project handlers — consistent with
+  // `realm run`. Same options/cwd handling as run.ts; reuses loadProjectExtensions so the
+  // orphan-manifest topology guard is honoured (no hand-rolled registry).
+  const effectiveRegistry =
+    registry ??
+    (
+      await loadProjectExtensions(workflow, {
+        ...(options.extensionsModule !== undefined
+          ? { overrideModule: options.extensionsModule }
+          : {}),
+        projectDir: options.project ?? process.cwd(),
+      })
+    ).registry;
 
   const result = await submitHumanResponse(runStore, workflow, {
     runId,
     gateId: options.gate,
     choice: options.choice,
+    registry: effectiveRegistry,
   });
 
   if (result.status !== 'ok') {
@@ -45,15 +64,28 @@ export const respondCommand = new Command('respond')
   .argument('<run-id>', 'ID of the run waiting at a gate')
   .requiredOption('--gate <gate-id>', 'Gate ID from the confirm_required response')
   .requiredOption('--choice <choice>', 'The choice to submit (e.g. approve, reject)')
-  .action(async (runId: string, opts: { gate: string; choice: string }) => {
-    const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
-    const runStore = new JsonFileStore();
-    const workflowStore = new JsonWorkflowStore();
-    try {
-      const { choice, newState } = await respondToGate(runId, opts, runStore, workflowStore);
-      console.log(`Responded: ${runId} | choice '${choice}' | new state '${newState}'`);
-    } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
-      process.exit(1);
-    }
-  });
+  .option(
+    '--project <dir>',
+    'CONFIG anchor: deployment root whose realm.yaml applies to definitions without a stored trust_root (default: current directory)',
+  )
+  .option(
+    '--extensions-module <path>',
+    "CODE override: module that REPLACES the workflow's declared 'extensions' modules (repair tool)",
+  )
+  .action(
+    async (
+      runId: string,
+      opts: { gate: string; choice: string; project?: string; extensionsModule?: string },
+    ) => {
+      const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
+      const runStore = new JsonFileStore();
+      const workflowStore = new JsonWorkflowStore();
+      try {
+        const { choice, newState } = await respondToGate(runId, opts, runStore, workflowStore);
+        console.log(`Responded: ${runId} | choice '${choice}' | new state '${newState}'`);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    },
+  );

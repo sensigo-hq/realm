@@ -9,7 +9,7 @@ import { Command } from 'commander';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadWorkflowFromFile, JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
-import type { RunStore, WorkflowDefinition } from '@sensigo/realm';
+import type { RunStore, WorkflowDefinition, ExtensionRegistry } from '@sensigo/realm';
 import { LlmProvider, resolveProvider } from '../agent/providers/llm-provider.js';
 import type { ProviderName } from '../agent/providers/llm-provider.js';
 import { runAgent } from '../agent/run-agent.js';
@@ -29,7 +29,12 @@ import type { SlackGateHandlerConfig } from '../agent/gate/slack-gate-notifier.j
  */
 export function buildManifestGateHandler(
   notifiers: LoadedProjectExtensions['notifiers'],
-  deps: { store: RunStore; definition: WorkflowDefinition; provider: LlmProvider },
+  deps: {
+    store: RunStore;
+    definition: WorkflowDefinition;
+    provider: LlmProvider;
+    registry?: ExtensionRegistry;
+  },
 ): ((runId: string, gate: import('@sensigo/realm').PendingGate) => Promise<void>) | undefined {
   const slack = notifiers?.slack_gate;
   if (slack === undefined) return undefined;
@@ -37,6 +42,7 @@ export function buildManifestGateHandler(
     store: deps.store,
     definition: deps.definition,
     provider: deps.provider,
+    ...(deps.registry !== undefined ? { registry: deps.registry } : {}),
     ...(slack.webhook_url !== undefined && { webhookUrl: slack.webhook_url }),
     ...(slack.bot_token !== undefined && { botToken: slack.bot_token }),
     ...(slack.channel_id !== undefined && { channelId: slack.channel_id }),
@@ -171,6 +177,7 @@ export const agentCommand = new Command('agent')
             store,
             definition,
             provider,
+            registry: loaded.registry,
           });
 
           result = await runAgent(
@@ -209,6 +216,7 @@ export const agentCommand = new Command('agent')
             store,
             definition,
             provider,
+            registry: loaded.registry,
           });
 
           result = await runAgent(

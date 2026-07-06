@@ -13,6 +13,7 @@ All notable changes to this project are documented here.
   - **Failure is non-fatal and never changes the run outcome.** A finalizer that throws, times out (`timeout_seconds`, default 30s), or returns `{ abort }` is recorded in `failed_steps` with evidence, but never mutates `aborted_at`/`terminal_reason`/`terminal_state` and never un-terminates the run — the drain continues to the next finalizer. Finalizers are held out of the DAG: they never appear in the agent-eligible set, are never `execute_step`-able, and are excluded from DAG-completion accounting.
   - **Operator-abandon runs no finalizers** (a kill runs no `finally`), matching every runtime.
   - Workflows that declare no finalizers are byte-identical to the prior engine (zero-finalizer fast path).
+  - **Gate-completed runs now fire their finalizers end-to-end.** The resolved project extension registry is threaded into `submitHumanResponse` at every gate-resolution driver — `realm run` (interactive loop), `realm respond` (`respondToGate`, with `--project`/`--extensions-module` and an injectable registry), the MCP `submit_human_response` tool (via `registry`/`registryProvider`, mirroring `execute_step`), and the Slack auto-resolver (`agent`/`listen` daemon) — so a workflow with a **gate** and a finalizer whose handler is a **project handler** runs that finalizer when resolving the gate completes the run, exactly as a normally-completing run does. (The engine gate-completion drain already honoured `SubmitGateOptions.registry`; no driver had been supplying it.)
 
 ### Fixed
 
