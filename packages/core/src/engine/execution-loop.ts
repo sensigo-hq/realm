@@ -16,6 +16,7 @@ import { WorkflowError } from '../types/workflow-error.js';
 import type {
   WorkflowDefinition,
   StepDefinition,
+  FinalizerTrigger,
   RetryConfig,
   ContextWrapperFormat,
   InputMapNode,
@@ -31,7 +32,7 @@ import {
 } from '../validation/input-schema.js';
 import { normalizeTrace } from './trace-normalizer.js';
 import type { NormalizeTraceResult } from './trace-normalizer.js';
-import { TERMINAL_PHASES, isTerminalPhase } from './lifecycle.js';
+import { TERMINAL_PHASES, isTerminalPhase, DRAIN_CEILING_SECONDS } from './lifecycle.js';
 import {
   checkPreconditions,
   evaluateAllPreconditions,
@@ -97,6 +98,14 @@ export interface SubmitGateOptions {
   runId: string;
   gateId: string;
   choice: string;
+  /**
+   * Extension registry for resolving finalizer handlers when resolving this gate completes
+   * the run (the gate-completion terminal transition drains `complete`/`always` finalizers).
+   * When omitted, the engine uses the default (filesystem-only) registry — a finalizer whose
+   * handler is not in that registry is recorded as a non-fatal failure. Callers that resolve
+   * gates on workflows with finalizers should thread their run registry here.
+   */
+  registry?: ExtensionRegistry;
 }
 
 export interface ExecuteChainOptions {
@@ -1081,7 +1090,7 @@ export async function executeStep(
           ...withHandlerSkipped,
           skipped_steps: propagateSkips(withHandlerSkipped, definition),
         };
-        const abortedRun: RunRecord = {
+        const abortDraft: RunRecord = {
           ...withAllSkipped,
           terminal_state: true,
           terminal_reason: `Handler '${options.command}' aborted the run: ${abortMessage}`,
@@ -1090,6 +1099,14 @@ export async function executeStep(
             abort_message: abortMessage,
           },
         };
+        // NEW: a handler-abort now drains the abort/always finalizers before sealing
+        // (previously it sealed-and-returned immediately). Single seal write below.
+        const abortedRun = await buildFinalizedSeal(
+          definition,
+          abortDraft,
+          'abort',
+          options.registry,
+        );
         let persistedAbortRun: RunRecord | undefined;
         try {
           persistedAbortRun = await store.update(abortedRun);
@@ -1230,7 +1247,7 @@ export async function executeStep(
       (withSkippedFail.in_progress_steps.length === 0 &&
         findEligibleSteps(definition, withSkippedFail).length === 0 &&
         findEligibleGuardSteps(definition, withSkippedFail).length === 0);
-    const failedRun: RunRecord = {
+    const failDraft: RunRecord = {
       ...withSkippedFail,
       evidence: [...pendingRun.evidence, ...allEvidence],
       terminal_state: isComplete,
@@ -1238,6 +1255,11 @@ export async function executeStep(
         ? { terminal_reason: `Step '${options.command}' failed: ${dispatchError.message}` }
         : {}),
     };
+    // On the terminal transition, drain the fail/always finalizers before the single seal.
+    // Non-terminal failures (recovery steps remain) run no finalizers.
+    const failedRun: RunRecord = isComplete
+      ? await buildFinalizedSeal(definition, failDraft, 'fail', options.registry)
+      : failDraft;
 
     // Persist run state and WAL cleanup in separate try/catch blocks so a WAL deletion
     // failure does not mask a successful store.update.
@@ -1499,11 +1521,15 @@ export async function executeStep(
     (withSkippedComplete.in_progress_steps.length === 0 &&
       findEligibleSteps(definition, withSkippedComplete).length === 0 &&
       findEligibleGuardSteps(definition, withSkippedComplete).length === 0);
-  const finalRun: RunRecord = {
+  const completeDraft: RunRecord = {
     ...withSkippedComplete,
     terminal_state: isComplete,
     ...(isComplete ? { terminal_reason: `Workflow completed.` } : {}),
   };
+  // On the terminal transition, drain the complete/always finalizers before the single seal.
+  const finalRun: RunRecord = isComplete
+    ? await buildFinalizedSeal(definition, completeDraft, 'complete', options.registry)
+    : completeDraft;
 
   let savedRun: RunRecord;
   try {
@@ -1691,11 +1717,15 @@ export async function submitHumanResponse(
     (withSkippedGate.in_progress_steps.length === 0 &&
       findEligibleSteps(definition, withSkippedGate).length === 0 &&
       findEligibleGuardSteps(definition, withSkippedGate).length === 0);
-  const finalRun: RunRecord = {
+  const gateDraft: RunRecord = {
     ...withSkippedGate,
     terminal_state: isComplete,
     ...(isComplete ? { terminal_reason: `Workflow completed.` } : {}),
   };
+  // On the gate-completion terminal transition, drain complete/always finalizers before seal.
+  const finalRun: RunRecord = isComplete
+    ? await buildFinalizedSeal(definition, gateDraft, 'complete', options.registry)
+    : gateDraft;
 
   let savedRun: RunRecord;
   try {
@@ -1871,6 +1901,135 @@ async function executeGuardStep(
   };
 }
 
+/** Normalizes a finalizer's `on_outcome` to a set of triggers. */
+function finalizerTriggers(stepDef: StepDefinition): Set<FinalizerTrigger> {
+  const raw = stepDef.on_outcome;
+  if (raw === undefined) return new Set();
+  return new Set(Array.isArray(raw) ? raw : [raw]);
+}
+
+/**
+ * Drains the finalizers matching a run's terminal `outcome` and returns the FINALIZED
+ * RunRecord — the workflow-level try/catch/finally at the seal. Modeled on
+ * executeGuardStep, but it does NOT persist: the caller performs the run's single seal
+ * `store.update` with its own error/WAL/envelope handling.
+ *
+ * Selection & order:
+ *  - Group A (rank 0): `on_outcome` contains `outcome` (the specific catch/complete arm).
+ *  - Group B (rank 1): `on_outcome` contains `'always'` but NOT `outcome` (the `finally` arm;
+ *    a finalizer listing both runs once, in Group A).
+ *  - Each group in declaration order (`Object.entries`); Group A then Group B (`always` last).
+ *  - Idempotent at-most-once: any finalizer already in completed/failed_steps is skipped
+ *    (resume / re-drive safety).
+ *
+ * Each finalizer runs its handler via `callHandler` (never `claimStep`), wrapped in
+ * `withTimeout` honoring `timeout_seconds` (default `DRAIN_CEILING_SECONDS`). Success →
+ * evidence + completed_steps; thrown error / STEP_TIMEOUT / handler `{ abort }` → evidence
+ * marked failed + failed_steps, NON-FATAL (the drain continues). A finalizer NEVER mutates
+ * `aborted_at`, `terminal_reason`, `terminal_state`, `skipped_steps`, or emits next_actions —
+ * the terminal marks come from `sealDraft` and `deriveRunPhase` precedence keeps the phase.
+ */
+async function buildFinalizedSeal(
+  definition: WorkflowDefinition,
+  sealDraft: RunRecord,
+  outcome: 'complete' | 'fail' | 'abort',
+  registry: ExtensionRegistry | undefined,
+): Promise<RunRecord> {
+  // Zero-finalizer fast path: no finalizer steps declared ⇒ return the seal draft
+  // completely untouched (byte-identical to the pre-finalizer engine — the damage rail).
+  const hasFinalizers = Object.values(definition.steps).some((s) => s.execution === 'finalizer');
+  if (!hasFinalizers) return sealDraft;
+
+  const settled = new Set([...sealDraft.completed_steps, ...sealDraft.failed_steps]);
+  const groupA: Array<[string, StepDefinition]> = [];
+  const groupB: Array<[string, StepDefinition]> = [];
+  for (const [name, step] of Object.entries(definition.steps)) {
+    if (step.execution !== 'finalizer') continue;
+    if (settled.has(name)) continue; // at-most-once per run (resume / re-drive safety)
+    const triggers = finalizerTriggers(step);
+    if (triggers.has(outcome)) groupA.push([name, step]);
+    else if (triggers.has('always')) groupB.push([name, step]);
+  }
+
+  let record = sealDraft;
+  for (const [name, step] of [...groupA, ...groupB]) {
+    const now = new Date();
+    const evidenceByStep = buildEvidenceByStep(record);
+    const timeoutMs = (step.timeout_seconds ?? DRAIN_CEILING_SECONDS) * 1000;
+    // Minimal per-finalizer dispatch options: handler-only, no input (input_map prohibited),
+    // no agent dispatcher path. callHandler resolves the handler from the injected registry.
+    const options: ExecuteStepOptions = {
+      runId: record.id,
+      command: name,
+      input: {},
+      dispatcher: async () => ({}),
+      ...(registry !== undefined ? { registry } : {}),
+    };
+    try {
+      const result = await withTimeout(
+        (signal) => callHandler(step, options, record, evidenceByStep, signal),
+        timeoutMs,
+        name,
+      );
+      if (result.kind === 'abort') {
+        // A finalizer handler returning { abort } is a recorded NON-FATAL failure — it must
+        // never mutate aborted_at/terminal_reason (that would corrupt the sealed outcome).
+        record = {
+          ...record,
+          evidence: [
+            ...record.evidence,
+            captureEvidence({
+              stepId: name,
+              startedAt: now,
+              completedAt: new Date(),
+              input: {},
+              output: { aborted: true, abort_message: result.message },
+              error: `Finalizer '${name}' returned abort: ${result.message}`,
+            }),
+          ],
+          failed_steps: [...record.failed_steps, name],
+        };
+      } else {
+        record = {
+          ...record,
+          evidence: [
+            ...record.evidence,
+            captureEvidence({
+              stepId: name,
+              startedAt: now,
+              completedAt: new Date(),
+              input: {},
+              output: result.output,
+              ...(result.kind === 'warn' ? { warn: result.message } : {}),
+            }),
+          ],
+          completed_steps: [...record.completed_steps, name],
+        };
+      }
+    } catch (err) {
+      // Thrown handler error OR STEP_TIMEOUT → recorded failed, drain continues (non-fatal).
+      const message = err instanceof Error ? err.message : String(err);
+      record = {
+        ...record,
+        evidence: [
+          ...record.evidence,
+          captureEvidence({
+            stepId: name,
+            startedAt: now,
+            completedAt: new Date(),
+            input: {},
+            output: {},
+            error: `Finalizer '${name}' failed: ${message}`,
+          }),
+        ],
+        failed_steps: [...record.failed_steps, name],
+      };
+    }
+  }
+
+  return { ...record, terminal_state: true };
+}
+
 async function executeChainInternal(
   store: RunStore,
   definition: WorkflowDefinition,
@@ -1940,10 +2099,32 @@ async function executeChainInternal(
     // Execute inline (pure in-memory; returns updated RunRecord).
     const guardResult = await executeGuardStep(guardName, guardStepDef, definition, run);
 
+    // Capture the guard's OWN evidence (its last entry) BEFORE the finalizer drain appends
+    // finalizer evidence — the terminal return below surfaces only the guard's evidence.
+    const guardOwnEvidence = guardResult.evidence.slice(-1);
+
+    // Blocking fix #1: classify the terminal outcome by the SEALED record, not aborted_at
+    // alone. executeGuardStep sets terminal_state in THREE cases — abort (aborted_at set),
+    // resolution-error (failed, no aborted_at), and a PASS that completes the run
+    // (terminal_reason 'Workflow completed.', no aborted_at). `aborted_at ? 'abort' : 'fail'`
+    // would wrongly run the catch finalizers on that success. When terminal, drain the
+    // matching finalizers before the single seal write; non-terminal guard passes persist as-is.
+    const guardOutcome: 'complete' | 'fail' | 'abort' | undefined = guardResult.terminal_state
+      ? guardResult.aborted_at !== undefined
+        ? 'abort'
+        : guardResult.terminal_reason === 'Workflow completed.'
+          ? 'complete'
+          : 'fail'
+      : undefined;
+    const guardSealed =
+      guardOutcome !== undefined
+        ? await buildFinalizedSeal(definition, guardResult, guardOutcome, options.registry)
+        : guardResult;
+
     // Persist the guard step result.
     let persistedGuardRun: RunRecord;
     try {
-      persistedGuardRun = await store.update(guardResult);
+      persistedGuardRun = await store.update(guardSealed);
     } catch (storeErr) {
       const msg = storeErr instanceof Error ? storeErr.message : String(storeErr);
       return {
@@ -1966,18 +2147,23 @@ async function executeChainInternal(
     chainedSteps.push({ step: guardName, run_phase: persistedGuardRun.run_phase });
 
     if (persistedGuardRun.terminal_state) {
-      // Guard aborted or had a resolution error — run is terminal.
+      // Run is terminal via this guard. Adjacent pre-existing bug fixed: a PASSING guard that
+      // COMPLETES the run was mislabeled "failed with a resolution error" — describe each of
+      // the three terminal outcomes correctly (classified by guardOutcome, not aborted_at alone).
       const contextHint =
-        persistedGuardRun.aborted_at !== undefined
+        guardOutcome === 'abort'
           ? `Guard step '${guardName}' aborted the run.`
-          : `Guard step '${guardName}' failed with a resolution error. Run is terminated.`;
+          : guardOutcome === 'complete'
+            ? `Guard step '${guardName}' passed and completed the run.`
+            : `Guard step '${guardName}' failed with a resolution error. Run is terminated.`;
       return {
         command: options.command,
         run_id: options.runId,
         run_version: persistedGuardRun.version,
         status: 'ok',
         data: {},
-        evidence: persistedGuardRun.evidence.slice(-1),
+        // The guard's own evidence entry, captured before the finalizer drain appended any.
+        evidence: guardOwnEvidence,
         warnings: [],
         errors: [],
         context_hint: contextHint,

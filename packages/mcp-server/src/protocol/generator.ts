@@ -71,7 +71,12 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
     let agent_involvement: string;
     let possible_gate: ProtocolStepGate | undefined;
 
-    if (step.execution === 'auto' && !hasGate) {
+    if (step.execution === 'guard' || step.execution === 'finalizer') {
+      // Engine-run steps — never agent-executed. Previously these fell through to the final
+      // branch and were wrongly briefed as "YOU execute this step" (guard was already
+      // mis-briefed; finalizer would be too). The agent must never call execute_step for them.
+      agent_involvement = `none — the engine runs this ${step.execution} step automatically; do NOT call execute_step for it.`;
+    } else if (step.execution === 'auto' && !hasGate) {
       agent_involvement = 'none — engine handles this automatically';
       autoStepCount++;
     } else if (step.execution === 'auto' && hasGate) {

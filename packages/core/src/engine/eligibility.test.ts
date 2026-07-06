@@ -12,6 +12,7 @@ import {
   evaluateWhen,
   deriveRunPhase,
   propagateSkips,
+  isWorkflowComplete,
 } from './eligibility.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
@@ -976,5 +977,82 @@ describe('deriveRunPhase — aborted_at precedence (Issue-2)', () => {
     expect(
       deriveRunPhase(makeRun({ pending_gate: gate, terminal_state: false, aborted_at: aborted })),
     ).toBe('gate_waiting');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// execution: finalizer — held out of the DAG (eligibility + completion + skips)
+// ---------------------------------------------------------------------------
+
+describe('finalizer steps — held out of the DAG', () => {
+  const finalizerWorkflow = makeWorkflow({
+    work: { execution: 'agent', depends_on: [] },
+    cleanup: { execution: 'finalizer', on_outcome: 'always', handler: 'do_cleanup' },
+  });
+
+  it('findEligibleSteps never returns a finalizer (even with its deps trivially satisfied)', () => {
+    const run = makeRun();
+    expect(findEligibleSteps(finalizerWorkflow, run)).toEqual(['work']);
+  });
+
+  it('findEligibleSteps still excludes the finalizer after the domain step completes', () => {
+    const run = makeRun({ completed_steps: ['work'] });
+    expect(findEligibleSteps(finalizerWorkflow, run)).not.toContain('cleanup');
+    expect(findEligibleSteps(finalizerWorkflow, run)).toEqual([]);
+  });
+
+  it('findEligibleGuardSteps never returns a finalizer', () => {
+    const run = makeRun({ completed_steps: ['work'] });
+    expect(findEligibleGuardSteps(finalizerWorkflow, run)).toEqual([]);
+  });
+
+  it('isWorkflowComplete is true when only unrun finalizers remain (domain steps all settled)', () => {
+    const run = makeRun({ completed_steps: ['work'] });
+    expect(isWorkflowComplete(run, finalizerWorkflow)).toBe(true);
+  });
+
+  it('isWorkflowComplete is false while a domain step is still unrun', () => {
+    const run = makeRun();
+    expect(isWorkflowComplete(run, finalizerWorkflow)).toBe(false);
+  });
+
+  it('propagateSkips never places a finalizer in skipped_steps', () => {
+    const workflow = makeWorkflow({
+      a: { execution: 'agent', depends_on: [] },
+      b: { execution: 'agent', depends_on: ['a'] }, // all_success — unreachable once a fails
+      cleanup: { execution: 'finalizer', on_outcome: 'always', handler: 'do_cleanup' },
+    });
+    const run = makeRun({ failed_steps: ['a'] });
+    const skipped = propagateSkips(run, workflow);
+    expect(skipped).toContain('b');
+    expect(skipped).not.toContain('cleanup');
+  });
+
+  // deriveRunPhase precedence is UNCHANGED — these pin that a finalizer landing in
+  // failed_steps/completed_steps never flips the sealed phase.
+  it('deriveRunPhase: a completed run stays completed even with a failed finalizer in failed_steps', () => {
+    expect(
+      deriveRunPhase(
+        makeRun({
+          terminal_state: true,
+          failed_steps: ['cleanup'], // a finalizer that threw
+          terminal_reason: 'Workflow completed.',
+        }),
+      ),
+    ).toBe('completed');
+  });
+
+  it('deriveRunPhase: a failed run stays failed even with a completed on_fail finalizer', () => {
+    // The on_fail finalizer completed (would be in completed_steps), but deriveRunPhase keys
+    // off failed_steps + terminal_reason — the domain failure keeps the phase 'failed'.
+    expect(
+      deriveRunPhase(
+        makeRun({
+          terminal_state: true,
+          failed_steps: ['work'],
+          terminal_reason: "Step 'work' failed: boom",
+        }),
+      ),
+    ).toBe('failed');
   });
 });

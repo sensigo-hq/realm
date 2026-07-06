@@ -250,9 +250,10 @@ export function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord
   const eligible: string[] = [];
 
   for (const [stepName, step] of Object.entries(definition.steps)) {
-    // Guard steps are executed inline by the engine, not by the agent.
-    // They never appear as eligible steps returned to callers.
-    if (step.execution === 'guard') continue;
+    // Guard and finalizer steps are executed inline by the engine, not by the agent.
+    // They never appear as eligible steps returned to callers, and must never be
+    // claimStep-able (finalizers run only in the terminal drain, held out of the DAG).
+    if (step.execution === 'guard' || step.execution === 'finalizer') continue;
 
     // Already done or in-flight.
     if (
@@ -325,7 +326,12 @@ export function findEligibleGuardSteps(definition: WorkflowDefinition, run: RunR
  * and no steps are in-progress. Used to detect run completion after each step write.
  */
 export function isWorkflowComplete(run: RunRecord, definition: WorkflowDefinition): boolean {
-  const allSteps = Object.keys(definition.steps);
+  // Finalizers are held out of the DAG and run only in the terminal drain — DAG completion
+  // resolves on domain (non-finalizer) steps alone. Including finalizers here would deadlock
+  // the seal (they never enter completed/failed/skipped before the drain that seals).
+  const allSteps = Object.entries(definition.steps)
+    .filter(([, step]) => step.execution !== 'finalizer')
+    .map(([name]) => name);
   return (
     allSteps.every(
       (name) =>
@@ -402,6 +408,11 @@ export function propagateSkips(run: RunRecord, definition: WorkflowDefinition): 
   while (changed) {
     changed = false;
     for (const [stepName, step] of Object.entries(definition.steps)) {
+      // Finalizers are held out of the DAG (no depends_on/when) and settle only in the
+      // terminal drain — never mark them skipped here (defensive: keep them out of
+      // skipped_steps so the seal and deriveRunPhase see only domain-step skips).
+      if (step.execution === 'finalizer') continue;
+
       // Only evaluate steps that are not yet settled.
       if (
         run.completed_steps.includes(stepName) ||

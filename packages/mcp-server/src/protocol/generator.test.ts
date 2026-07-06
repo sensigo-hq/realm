@@ -128,4 +128,40 @@ describe('generateProtocol', () => {
     const step = protocol.steps[0]!;
     expect(step.agent_profile_instructions).toBeUndefined();
   });
+
+  it('never briefs a guard or finalizer step as "YOU execute" (engine-run only)', () => {
+    const definition: WorkflowDefinition = {
+      id: 'engine-run-wf',
+      name: 'Engine Run Workflow',
+      version: 1,
+      steps: {
+        work: { description: 'Domain step', execution: 'agent', depends_on: [] },
+        gate_check: {
+          description: 'A guard',
+          execution: 'guard',
+          depends_on: ['work'],
+          abort_unless: ["work.status == 'open'"],
+        },
+        cleanup: {
+          description: 'A finalizer',
+          execution: 'finalizer',
+          on_outcome: 'always',
+          handler: 'do_cleanup',
+        },
+      },
+    };
+    const protocol = generateProtocol(definition);
+
+    const guard = protocol.steps.find((s) => s.id === 'gate_check')!;
+    expect(guard.agent_involvement).not.toContain('YOU execute');
+    expect(guard.agent_involvement).toContain('do NOT call execute_step');
+
+    const finalizer = protocol.steps.find((s) => s.id === 'cleanup')!;
+    expect(finalizer.agent_involvement).not.toContain('YOU execute');
+    expect(finalizer.agent_involvement).toContain('do NOT call execute_step');
+
+    // The domain agent step is still briefed for the agent.
+    const work = protocol.steps.find((s) => s.id === 'work')!;
+    expect(work.agent_involvement).toContain('YOU execute');
+  });
 });

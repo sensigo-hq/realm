@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`execution: finalizer` step class — a workflow-level try/catch/finally.** A finalizer is an engine-run step the engine drains as the final steps before it seals a run, matched to the run's terminal outcome via a required `on_outcome:` matcher (`FinalizerTrigger | FinalizerTrigger[]`, where `FinalizerTrigger = 'complete' | 'fail' | 'abort' | 'always'`, OR-membership). `complete` = the success/`try` arm, `fail`/`abort` = the `catch` arm, `always` = the `finally` arm. At each terminal transition the engine drains the matching finalizers **in-memory** — outcome-specific finalizers first (declaration order), then `always` finalizers (declaration order, so `finally` runs last) — each **at most once per run**, then performs the run's existing single seal write. Realm owns only _which_ finalizers run, _when_, in what _order_, and _once_; what a finalizer does internally is the workflow developer's business (it runs its `handler` through the injected registry exactly like any other handler step).
+  - **Handler-only in v1.** Allowed fields: `description`, `handler`, `on_outcome`, `timeout_seconds`. The loader rejects (per offending field) `depends_on`, `trigger_rule`, `abort_unless`, `abort_message`, `output_schema`, `agent_profile`, `tools`, `uses_service`, `service_method`, `operation`, `input_map`, `when`, `retry`, and any human-gate `trust`. `on_outcome` is required, non-empty, and every value must be a known trigger; `on_outcome` is rejected on any non-finalizer step; a step whose `depends_on` names a finalizer is rejected (would deadlock); a workflow of only finalizers is rejected.
+  - **Failure is non-fatal and never changes the run outcome.** A finalizer that throws, times out (`timeout_seconds`, default 30s), or returns `{ abort }` is recorded in `failed_steps` with evidence, but never mutates `aborted_at`/`terminal_reason`/`terminal_state` and never un-terminates the run — the drain continues to the next finalizer. Finalizers are held out of the DAG: they never appear in the agent-eligible set, are never `execute_step`-able, and are excluded from DAG-completion accounting.
+  - **Operator-abandon runs no finalizers** (a kill runs no `finally`), matching every runtime.
+  - Workflows that declare no finalizers are byte-identical to the prior engine (zero-finalizer fast path).
+
+### Fixed
+
+- **Integer-like step names are now rejected by the loader** (names matching `/^\d+$/`). JS object iteration reorders integer-like keys ahead of insertion order, which would silently break the declaration-order guarantees the eligibility loops and the finalizer drain rely on (both iterate via `Object.entries`).
+- **Guard-completion `context_hint` mislabel.** A passing guard that completed the run was described as "failed with a resolution error"; the three terminal guard outcomes (aborted / completed / resolution-error) are now labeled distinctly.
+- **Protocol generator mis-briefed engine-run steps.** `guard` and (now) `finalizer` steps were briefed to the agent as "YOU execute this step"; they are now described as engine-run with an explicit "do NOT call `execute_step`" instruction.
+
+---
+
 ## [0.14.1] — 2026-07-06
 
 ### Fixed
