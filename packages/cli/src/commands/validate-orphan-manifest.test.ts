@@ -9,6 +9,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { workflowCommands } from '../commands-registry.js';
 
 const CLI_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIST_CLI = join(CLI_DIR, 'dist', 'index.js');
@@ -119,4 +120,29 @@ describe('every workflow-loading command rejects an orphaned manifest (behaviora
     },
     25_000,
   );
+
+  // ENFORCED enumeration (not comment-discipline): this feature was bitten twice by
+  // coverage gaps (#123 missed validate; the coverage correction fixed it). Partition
+  // `workflowCommands` into behaviorally-COVERED (derived from `cases` above — never a second
+  // hand-list) vs explicitly-EXCLUDED-with-reason, and fail if any command is neither. A
+  // newly-added workflow-loading command then cannot silently escape the guard's test net —
+  // its author must add it to `cases` or justify it here.
+  const ORPHAN_GUARD_EXCLUDED: Record<string, string> = {
+    init: 'scaffolds a new workflow; loads no existing definition',
+    migrate: 'rewrites a workflow file in place; does not load-to-run',
+    watch:
+      'long-running watcher; loads via register.ts (covered through register), not spawn-testable here',
+  };
+
+  it('every workflow-loading command is either behaviorally covered or explicitly excluded', () => {
+    // COVERED is the subcommand encoded at args(...)[1] of each behavioral case — dummy
+    // inputs are fine, we only read the subcommand slot (e.g. ['workflow','validate','x'][1]).
+    const covered = new Set(cases.map((c) => c.args('x', 'y')[1]));
+    const unclassified = workflowCommands
+      .map((c) => c.name())
+      .filter((n) => !covered.has(n) && !(n in ORPHAN_GUARD_EXCLUDED));
+    // A new `realm workflow` command MUST be added to `cases` (behaviorally exercised
+    // against the orphan) or to ORPHAN_GUARD_EXCLUDED (with a reason).
+    expect(unclassified).toEqual([]);
+  });
 });
