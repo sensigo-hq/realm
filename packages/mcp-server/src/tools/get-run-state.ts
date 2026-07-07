@@ -8,6 +8,7 @@ import {
   resolvePreExecutionAgentAction,
   buildNextActions,
   findEligibleSteps,
+  classifyInProgressClaims,
   type RunPhase,
   type NextAction,
 } from '@sensigo/realm';
@@ -32,13 +33,19 @@ export interface HandleRunStateStores {
  * - `awaiting_human` — a human gate is open.
  * - `workflow_unresolved` — no workflow store provided, or the workflow is not registered.
  * - `skipped_terminal` — the run is terminal; nothing to do.
+ * - `claim_stale` — a non-terminal run has an in-progress claim past its deadline (a likely-dead
+ *   runner / the after-claim wedge, issue #101). Surfaced even when a healthy sibling is in flight.
+ * - `claim_unknown_age` — a non-terminal run's only in-progress claims have no deadline (agent /
+ *   finalizer-bearing / legacy) and there is nothing else to do — detect-only, human-judged.
  */
 export type NextActionsStatus =
   | 'ok'
   | 'auto_pending'
   | 'awaiting_human'
   | 'workflow_unresolved'
-  | 'skipped_terminal';
+  | 'skipped_terminal'
+  | 'claim_stale'
+  | 'claim_unknown_age';
 
 export interface RunStateSummary {
   run_id: string;
@@ -60,7 +67,11 @@ export interface RunStateSummary {
     conditions?: Array<{ condition: string; resolved_value: unknown; passed: boolean }>;
     abort_message?: string;
   };
-  /** Eligible agent/handler steps for this run (empty unless `next_actions_status` is `'ok'`). */
+  /**
+   * Eligible agent/handler steps for this run. Empty unless `next_actions_status` is `'ok'` —
+   * except a `claim_stale` status may accompany still-actionable steps when a dead claim coexists
+   * with eligible work mid-fan-out (the dead claim overrides the status but does not hide the work).
+   */
   next_actions: NextAction[];
   /** Diagnostic classification — distinguishes a genuinely-stuck run from "nothing pending". */
   next_actions_status: NextActionsStatus;
@@ -104,6 +115,21 @@ export async function handleGetRunState(
         nextActionsStatus = 'auto_pending';
       } else {
         nextActionsStatus = 'ok';
+      }
+    }
+
+    // Wedge detection (issue #101) — definition-free (reads the stored per-claim deadline), so it
+    // also refines the `workflow_unresolved` path. Carves the wedge states OUT of the
+    // 'ok'/'auto_pending'/'workflow_unresolved' fall-through:
+    //  - a `claim_stale` claim (past deadline → likely-dead runner) is surfaced even mid-fan-out;
+    //  - when only unknown-age claims remain and there is nothing else to do, surface
+    //    `claim_unknown_age` (detect-only). A `healthy` in-flight claim (a live runner) stays 'ok'.
+    if (run.in_progress_steps.length > 0) {
+      const claimStates = classifyInProgressClaims(run).map((c) => c.state);
+      if (claimStates.includes('claim_stale')) {
+        nextActionsStatus = 'claim_stale';
+      } else if (nextActions.length === 0 && !claimStates.includes('healthy')) {
+        nextActionsStatus = 'claim_unknown_age';
       }
     }
   }

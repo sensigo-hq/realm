@@ -4,6 +4,7 @@ import {
   findEligibleSteps,
   deriveRunPhase,
   decideIdempotencyPolicy,
+  computeClaimDeadline,
   type RunStore,
   type RunRecord,
   type CreateRunOptions,
@@ -15,6 +16,9 @@ export class InMemoryStore implements RunStore {
   private readonly runs = new Map<string, RunRecord>();
   /** Idempotency-key pointer equivalent: `${workflowId}\0${key}` → runId. Parity with JsonFileStore. */
   private readonly keyIndex = new Map<string, string>();
+
+  /** Parity with JsonFileStore: round-trips the per-claim `claims` liveness clock (issue #101). */
+  readonly persistsClaims = true;
 
   async create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
     // Idempotency: a key match applies the re-encounter policy, like JsonFileStore.
@@ -131,9 +135,13 @@ export class InMemoryStore implements RunStore {
         retryable: false,
       });
     }
+    // Per-claim liveness clock (issue #101) — mirrors JsonFileStore.claimStep: stamp claims[S]
+    // atomically with the in_progress add (OVERWRITE, so a missed settle-site delete self-heals).
+    const deadline = computeClaimDeadline(definition, stepName, new Date());
     const updated: RunRecord = {
       ...run,
       in_progress_steps: [...run.in_progress_steps, stepName],
+      claims: { ...run.claims, [stepName]: { deadline } },
       run_phase: 'running',
       version: run.version + 1,
       updated_at: new Date().toISOString(),

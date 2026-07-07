@@ -167,6 +167,21 @@ export interface WorkflowContextSnapshot {
   error?: string;
 }
 
+/**
+ * Per-claim liveness record (issue #101). Written atomically when a step is claimed.
+ */
+export interface ClaimRecord {
+  /**
+   * ISO-8601 timestamp after which the claim is presumed stale (a likely-dead runner), or
+   * `null` when the claim has no reliable wall-clock bound — an `execution: agent` step (its
+   * dispatcher returns instantly; `timeout_seconds` is advisory), or ANY step in a
+   * finalizer-bearing workflow (its claim can legitimately span the terminal finalizer drain).
+   * A `null` deadline surfaces as `claim_unknown_age`: detect-only, human-judged, never
+   * auto-reclaimed. A concrete deadline is set only for reliably time-boundable claims.
+   */
+  deadline: string | null;
+}
+
 export interface RunRecord {
   id: string;
   workflow_id: string;
@@ -189,6 +204,17 @@ export interface RunRecord {
   failed_steps: string[];
   /** Steps whose trigger_rule can no longer be satisfied; recorded for auditability. */
   skipped_steps: string[];
+
+  /**
+   * Per-claim liveness clock (issue #101), keyed by step name. Written ATOMICALLY in
+   * `claimStep` (the same write that adds the step to `in_progress_steps`) and deleted when the
+   * step settles. Advisory metadata for wedge DETECTION and reclaim ONLY — `in_progress_steps`
+   * stays authoritative for eligibility. Additive-optional (the `extension_identity` precedent):
+   * legacy records lack it, so their in-progress claims classify as `claim_unknown_age`. A store
+   * that drops this field must declare `persistsClaims: false` so liveness recovery loud-fails
+   * rather than silently no-opping.
+   */
+  claims?: Record<string, ClaimRecord>;
 
   /**
    * Derived convenience field — set by the engine on every write, read by CLI and get_run_state.

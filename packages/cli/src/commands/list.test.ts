@@ -164,11 +164,13 @@ describe('listRuns', () => {
       run_phase: 'running',
       terminal_state: false,
       in_progress_steps: ['step_a'],
+      // A HEALTHY in-flight claim (a live runner) — not stuck under the #101 3-state model.
+      claims: { step_a: { deadline: new Date(Date.now() + 3_600_000).toISOString() } },
     });
     const done = makeRun({ id: 'run-done', run_phase: 'completed', terminal_state: true });
     const result = await listRuns(undefined, makeStore([stuck, active, done]), undefined, true);
     expect(result).toContain('run-stuck');
-    expect(result).not.toContain('run-active'); // has a claimed step
+    expect(result).not.toContain('run-active'); // has a HEALTHY claimed step (live runner)
     expect(result).not.toContain('run-done'); // terminal
     expect(result).toContain('idle:'); // idle age shown
   });
@@ -179,9 +181,37 @@ describe('listRuns', () => {
       run_phase: 'running',
       terminal_state: false,
       in_progress_steps: ['step_a'],
+      // HEALTHY in-flight claim → not stuck under the #101 3-state model.
+      claims: { step_a: { deadline: new Date(Date.now() + 3_600_000).toISOString() } },
     });
     const result = await listRuns(undefined, makeStore([active]), undefined, true);
     expect(result).toContain('No stuck runs found');
+  });
+
+  it('--stuck flags a claimed-but-idle run with a STALE claim, labeled with its state (#101)', async () => {
+    const wedge = makeRun({
+      id: 'run-wedge',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: ['step_a'],
+      claims: { step_a: { deadline: new Date(Date.now() - 60_000).toISOString() } },
+    });
+    const result = await listRuns(undefined, makeStore([wedge]), undefined, true);
+    expect(result).toContain('run-wedge');
+    expect(result).toContain('step_a=claim_stale');
+  });
+
+  it('--stuck flags a claimed-but-idle run with an UNKNOWN-AGE claim (#101)', async () => {
+    const wedge = makeRun({
+      id: 'run-wedge2',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: ['step_a'],
+      claims: { step_a: { deadline: null } },
+    });
+    const result = await listRuns(undefined, makeStore([wedge]), undefined, true);
+    expect(result).toContain('run-wedge2');
+    expect(result).toContain('step_a=claim_unknown_age');
   });
 });
 

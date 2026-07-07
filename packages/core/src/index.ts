@@ -52,6 +52,18 @@ export {
   isTerminalState,
 } from './engine/lifecycle.js';
 export {
+  computeClaimDeadline,
+  classifyClaim,
+  classifyInProgressClaims,
+  omitClaim,
+  DEFAULT_STEP_TIMEOUT_SECONDS,
+  RECLAIM_MARGIN_SECONDS,
+  RECLAIM_FLOOR_SECONDS,
+} from './engine/claim-liveness.js';
+export type { ClaimState, InProgressClaimInfo } from './engine/claim-liveness.js';
+export { reclaimStep } from './engine/reclaim-step.js';
+export type { ReclaimResult, ReclaimOutcome, ReclaimStepOptions } from './engine/reclaim-step.js';
+export {
   evaluatePrecondition,
   checkPreconditions,
   evaluateAllPreconditions,

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   loadWorkflowFromFile,
   findEligibleSteps,
+  classifyInProgressClaims,
   executeChain,
   buildNextActions,
   WorkflowError,
@@ -270,7 +271,30 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
 
       // --- Step execution ---
       const eligible = findEligibleSteps(definition, currentRun);
-      if (eligible.length === 0) break;
+      if (eligible.length === 0) {
+        // Detect-only wedge surfacing (issue #101): before exiting on "nothing eligible", check
+        // whether the run is an after-claim wedge (an in-progress claim that is stale or
+        // unknown-age). If so, print the claim state(s) + the exact reclaim remediation so the
+        // operator is never silently parked. Phase 1 attach does NOT auto-reclaim.
+        if (currentRun.in_progress_steps.length > 0) {
+          const wedged = classifyInProgressClaims(currentRun).filter((c) => c.state !== 'healthy');
+          if (wedged.length > 0) {
+            console.log(
+              `\n   ⚠ Run '${runId}' is wedged — a claimed step never settled (its runner likely died):`,
+            );
+            for (const c of wedged) {
+              console.log(`     • ${c.step}: ${c.state}`);
+              console.log(
+                `       recover with: realm run reclaim ${runId} --step ${c.step} --force`,
+              );
+            }
+            console.log(
+              `   (reclaim re-drives the step; its side effects may repeat — see 'realm run reclaim ${runId}' for a dry-run.)`,
+            );
+          }
+        }
+        break;
+      }
 
       const stepName = eligible[0]!;
       const stepDef: StepDefinition = definition.steps[stepName]!;

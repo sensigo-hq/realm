@@ -400,3 +400,45 @@ describe('runAgent — MCP tools integration', () => {
     ).rejects.toThrow('mutually exclusive');
   });
 });
+
+describe('runAgent — wedge detection on attach (#101, detect-only)', () => {
+  const wedgeWf: WorkflowDefinition = {
+    id: 'wedge-wf',
+    name: 'Wedge WF',
+    version: 1,
+    schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+    steps: { review: { description: 'Agent step', execution: 'agent', depends_on: [] } },
+  };
+
+  it('prints the claim state + reclaim remediation before exiting on a wedged run (no execution)', async () => {
+    const store = new InMemoryStore();
+    const { run } = await store.create({ workflowId: 'wedge-wf', workflowVersion: 1, params: {} });
+    // Wedge it: `review` claimed but never settled (unknown-age), and it is the only step, so
+    // findEligibleSteps returns [] on attach → the wedge branch fires before the break.
+    await store.update({
+      ...run,
+      in_progress_steps: ['review'],
+      claims: { review: { deadline: null } },
+    });
+
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn();
+    })();
+    const deps: AgentDeps = {
+      store,
+      workflowStore: makeWorkflowStore(wedgeWf),
+      provider,
+      registry: createDefaultRegistry(),
+    };
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runAgent(deps, { definition: wedgeWf, existingRunId: run.id, params: {} });
+    const out = logSpy.mock.calls.flat().join('\n');
+    logSpy.mockRestore();
+
+    expect(out).toContain('wedged');
+    expect(out).toContain('review: claim_unknown_age');
+    expect(out).toContain(`realm run reclaim ${run.id} --step review --force`);
+    expect(provider.callStep).not.toHaveBeenCalled(); // detect-only — attach does NOT execute
+  });
+});

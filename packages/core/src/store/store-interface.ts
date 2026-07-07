@@ -29,6 +29,16 @@ export interface CreateRunOptions {
 
 export interface RunStore {
   /**
+   * Whether this store round-trips the optional per-claim `claims` liveness clock (issue #101)
+   * through `create`/`update`/`claimStep`. In-repo stores (`JsonFileStore`, `InMemoryStore`)
+   * return `true`. An external store that drops unknown optional `RunRecord` fields must return
+   * `false` — reclaim then loud-fails ("liveness recovery unavailable") rather than silently
+   * no-opping, and a legacy/claims-less state on such a store is distinguishable from a genuine
+   * `claim_unknown_age` claim on a claims-persisting store.
+   */
+  persistsClaims: boolean;
+
+  /**
    * Create a new run record, or — when an `idempotencyKey` is supplied and a run with the
    * same `(workflowId, idempotencyKey)` already exists — return that existing run instead.
    *

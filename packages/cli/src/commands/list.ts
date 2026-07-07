@@ -1,6 +1,7 @@
 // list command — displays all runs in the store, sorted by most recent first.
 import chalk from 'chalk';
 import { Command } from 'commander';
+import { classifyInProgressClaims } from '@sensigo/realm';
 import type { RunStore, RunRecord, RunPhase } from '@sensigo/realm';
 
 /** Returns a chalk-coloured phase label. */
@@ -50,8 +51,16 @@ export async function listRuns(
 
   let filtered = runs;
   if (stuck === true) {
-    // Advanced-but-parked: phase running with no claimed step (the stuck-run incident signature).
-    filtered = runs.filter((r) => r.run_phase === 'running' && r.in_progress_steps.length === 0);
+    // A run is "stuck" when it is phase `running` and either:
+    //  - advanced-but-parked: no claimed step (the original stuck-run incident signature), or
+    //  - claimed-but-idle: an in-progress claim is stale or unknown-age (the after-claim wedge,
+    //    issue #101) — a healthy in-flight claim (a live runner) is NOT stuck.
+    filtered = runs.filter(
+      (r) =>
+        r.run_phase === 'running' &&
+        (r.in_progress_steps.length === 0 ||
+          classifyInProgressClaims(r).some((c) => c.state !== 'healthy')),
+    );
   } else if (statusFilter !== undefined) {
     filtered = runs.filter((r) => r.run_phase === statusFilter);
   }
@@ -74,6 +83,13 @@ export async function listRuns(
     if (stuck === true) {
       // Show how long the run has been parked (idle age since last update).
       line += `  idle: ${formatGateAge(run.updated_at)}`;
+      if (run.in_progress_steps.length > 0) {
+        // Claimed-but-idle: label each non-healthy claim with its state (issue #101 wedge).
+        const wedged = classifyInProgressClaims(run).filter((c) => c.state !== 'healthy');
+        if (wedged.length > 0) {
+          line += `  ${wedged.map((c) => `${c.step}=${c.state}`).join(', ')}`;
+        }
+      }
     } else if (run.run_phase === 'gate_waiting' && run.pending_gate !== undefined) {
       const age = formatGateAge(run.pending_gate.opened_at);
       line += `  gate: ${run.pending_gate.step_name} (${age})`;

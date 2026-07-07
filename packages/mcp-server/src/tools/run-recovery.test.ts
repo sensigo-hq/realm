@@ -190,3 +190,62 @@ describe('get_run_state — next_actions_status', () => {
     expect(state.next_actions).toEqual([]);
   });
 });
+
+describe('get_run_state — claim liveness (issue #101 wedge detection)', () => {
+  let runStore: JsonFileStore;
+  let workflowStore: JsonWorkflowStore;
+
+  beforeEach(async () => {
+    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'claim-run-')));
+    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'claim-wf-')));
+    await workflowStore.register(autoFirst);
+  });
+
+  async function wedgeRun(
+    claims: Record<string, { deadline: string | null }> | undefined,
+  ): Promise<string> {
+    const { run } = await runStore.create({
+      workflowId: 'autoflow',
+      workflowVersion: 1,
+      params: {},
+    });
+    await runStore.update({
+      ...run,
+      in_progress_steps: ['compute'],
+      ...(claims !== undefined ? { claims } : {}),
+    });
+    return run.id;
+  }
+
+  it('claim_stale: an in-progress claim past its deadline (carved out of ok)', async () => {
+    const id = await wedgeRun({ compute: { deadline: new Date(Date.now() - 1000).toISOString() } });
+    const state = await handleGetRunState({ run_id: id }, { runStore, workflowStore });
+    expect(state.next_actions_status).toBe('claim_stale');
+  });
+
+  it('claim_unknown_age: an in-progress claim with a null deadline', async () => {
+    const id = await wedgeRun({ compute: { deadline: null } });
+    const state = await handleGetRunState({ run_id: id }, { runStore, workflowStore });
+    expect(state.next_actions_status).toBe('claim_unknown_age');
+  });
+
+  it("stays 'ok' when a healthy claim is in flight (a live runner is presumed on it)", async () => {
+    const id = await wedgeRun({
+      compute: { deadline: new Date(Date.now() + 3_600_000).toISOString() },
+    });
+    const state = await handleGetRunState({ run_id: id }, { runStore, workflowStore });
+    expect(state.next_actions_status).toBe('ok');
+  });
+
+  it('reports the wedge even when the workflow is unresolved (definition-free detection)', async () => {
+    const id = await wedgeRun({ compute: { deadline: new Date(Date.now() - 1000).toISOString() } });
+    const state = await handleGetRunState({ run_id: id }, { runStore }); // no workflowStore
+    expect(state.next_actions_status).toBe('claim_stale');
+  });
+
+  it('a legacy run with no claims entry → claim_unknown_age', async () => {
+    const id = await wedgeRun(undefined); // in_progress set, but no claims field at all
+    const state = await handleGetRunState({ run_id: id }, { runStore, workflowStore });
+    expect(state.next_actions_status).toBe('claim_unknown_age');
+  });
+});

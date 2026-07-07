@@ -12,6 +12,7 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunStore, CreateRunOptions } from './store-interface.js';
 import { findEligibleSteps, deriveRunPhase } from '../engine/eligibility.js';
+import { computeClaimDeadline } from '../engine/claim-liveness.js';
 import { hashParams } from './params-hash.js';
 import { decideIdempotencyPolicy } from './idempotency-policy.js';
 
@@ -132,6 +133,9 @@ function pickCanonical(runs: RunRecord[]): { canonical: RunRecord; extraLive: Ru
 
 export class JsonFileStore implements RunStore {
   private readonly runsDir: string;
+
+  /** This store round-trips the per-claim `claims` liveness clock (issue #101). */
+  readonly persistsClaims = true;
 
   constructor(runsDir?: string) {
     this.runsDir = runsDir ?? DEFAULT_RUNS_DIR;
@@ -431,9 +435,15 @@ export class JsonFileStore implements RunStore {
         );
       }
 
+      // Per-claim liveness clock (issue #101): stamp claims[stepName] ATOMICALLY in the SAME
+      // write that adds the step to in_progress_steps. There must be no second write — a torn
+      // `S ∈ in_progress` with no claims[S] would silently re-create the permanent wedge.
+      // OVERWRITE (not add-if-absent) so a missed settle-site delete self-heals on re-claim.
+      const deadline = computeClaimDeadline(definition, stepName, new Date());
       const claimed: RunRecord = {
         ...run,
         in_progress_steps: [...run.in_progress_steps, stepName],
+        claims: { ...run.claims, [stepName]: { deadline } },
         run_phase: deriveRunPhase(run),
         version: run.version + 1,
         updated_at: new Date().toISOString(),
