@@ -6,7 +6,9 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
-## [0.15.0] — 2026-07-07
+### Changed
+
+- **Test suite is now reliable-by-construction under parallel turbo.** `turbo run test` ran all four test-having packages at once with no concurrency cap, and each `vitest run` forked ≈`cores` workers → ≈ packages × cores competing forks (≈3–4× CPU oversubscription), so against vitest's 5s `testTimeout` the starved forks intermittently timed out (a diverse batch failed together, clean on isolated re-run). Fixed structurally with a machine-invariant resource budget: a new root `vitest.config.ts` (`maxWorkers: '50%'`, plus pinned `pool: 'forks'` / `isolate: true` / `testTimeout: 5000` / `retry: 0` — the verified vitest 4.1.8 defaults, made explicit as future-flip guards) paired with `turbo run test --concurrency=2` in the root `test` script → `2 × 0.5·C = C` (exactly full subscription, zero oversubscription, on any core count). No retry (a real hang still fails at 5s — the signal stays honest) and no test-file changes. Test-infra only; no product code.
 
 ### Added
 
