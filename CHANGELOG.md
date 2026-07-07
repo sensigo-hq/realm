@@ -13,6 +13,9 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - **Slack gate replies are now reliably delivered (and submit failures surfaced).** `handleBidirectionalGate` dispatched candidate processing fire-and-forget at both the Socket Mode and Events API sites, so on a run-completing gate the confirmation reply could be truncated by `process.exit` before it flushed. In-flight candidate processing is now **tracked at both dispatch sites** and **drained (bounded by `DRAIN_TIMEOUT_MS = 2000`, timer cleared) in the `finally`** before the handler returns — the reply is guaranteed sent, while a hung Slack can never stall the run loop. A failed gate submit (an error envelope from `submitHumanResponse`, or an unexpected throw) now posts **one** operator-facing error reply and, deliberately, does **not** resolve or abort the gate (it stays open for retry / the terminal fallback) — previously a failed submit was silently `console.warn`-swallowed while a false confirmation was still posted. Test-infra: the two formerly-flaky bidirectional-gate tests are now deterministic (the `setTimeout(50)` wall-clock barriers are removed; the drain guarantees replies have landed), with added Socket-Mode, bounded-drain, and submit-error coverage.
+- **JsonFileStore now writes run and key-pointer files atomically** (unique temp + POSIX `rename`), eliminating a torn read (`Unexpected end of JSON input`) that could hit any concurrent unlocked reader (`get_run_state`, `list`, gate poll loops) during a write. Reads stay lock-free. On Windows the store falls back to the prior non-atomic write (POSIX atomicity only).
+
+## [0.15.0] — 2026-07-07
 
 ### Added
 
