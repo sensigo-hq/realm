@@ -6,6 +6,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-07-07
+
 ### Added
 
 - **`execution: finalizer` step class — a workflow-level try/catch/finally.** A finalizer is an engine-run step the engine drains as the final steps before it seals a run, matched to the run's terminal outcome via a required `on_outcome:` matcher (`FinalizerTrigger | FinalizerTrigger[]`, where `FinalizerTrigger = 'complete' | 'fail' | 'abort' | 'always'`, OR-membership). `complete` = the success/`try` arm, `fail`/`abort` = the `catch` arm, `always` = the `finally` arm. At each terminal transition the engine drains the matching finalizers **in-memory** — outcome-specific finalizers first (declaration order), then `always` finalizers (declaration order, so `finally` runs last) — each **at most once per run**, then performs the run's existing single seal write. Realm owns only _which_ finalizers run, _when_, in what _order_, and _once_; what a finalizer does internally is the workflow developer's business (it runs its `handler` through the injected registry exactly like any other handler step).
