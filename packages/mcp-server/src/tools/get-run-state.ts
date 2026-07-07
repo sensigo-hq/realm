@@ -11,6 +11,7 @@ import {
   classifyInProgressClaims,
   type RunPhase,
   type NextAction,
+  type ClaimState,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 
@@ -75,6 +76,14 @@ export interface RunStateSummary {
   next_actions: NextAction[];
   /** Diagnostic classification — distinguishes a genuinely-stuck run from "nothing pending". */
   next_actions_status: NextActionsStatus;
+  /**
+   * Advisory (issue #101): non-healthy in-progress claims that are NOT the open-gate step —
+   * present on any non-terminal run whenever such claims exist. This surfaces an after-claim wedge
+   * even when the aggregate `next_actions_status` cannot show it: notably a `gate_waiting` run
+   * (status stays `awaiting_human`) that carries a crashed sibling claim on another fan-out branch.
+   * The `pending_gate` step is never included (it is legitimately pinned while its gate is open).
+   */
+  stuck_claims?: Array<{ step: string; state: ClaimState }>;
 }
 
 /**
@@ -134,6 +143,16 @@ export async function handleGetRunState(
     }
   }
 
+  // Advisory wedge surfacing (issue #101), computed UNIFORMLY for every non-terminal path (gate,
+  // workflow_unresolved, running) — definition-free. It never alters next_actions_status: on the
+  // gate path the status MUST stay `awaiting_human` (drivers key on it), but a crashed non-gated
+  // sibling claim on another fan-out branch is still surfaced here. The open-gate step is excluded.
+  const stuckClaims = run.terminal_state
+    ? []
+    : classifyInProgressClaims(run)
+        .filter((c) => c.state !== 'healthy' && c.step !== run.pending_gate?.step_name)
+        .map((c) => ({ step: c.step, state: c.state }));
+
   return {
     run_id: run.id,
     workflow_id: run.workflow_id,
@@ -152,6 +171,7 @@ export async function handleGetRunState(
     ...(run.aborted_at !== undefined ? { abort_context: run.aborted_at } : {}),
     next_actions: nextActions,
     next_actions_status: nextActionsStatus,
+    ...(stuckClaims.length > 0 ? { stuck_claims: stuckClaims } : {}),
   };
 }
 

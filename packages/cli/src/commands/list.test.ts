@@ -213,6 +213,71 @@ describe('listRuns', () => {
     expect(result).toContain('run-wedge2');
     expect(result).toContain('step_a=claim_unknown_age');
   });
+
+  // #101 gate/fan-out correction: a wedged NON-gated sibling on a gate_waiting run must surface.
+  it('--stuck flags a gate_waiting run with a STALE non-gated sibling; does NOT label the gated step', async () => {
+    const wedge = makeRun({
+      id: 'run-gatewedge',
+      run_phase: 'gate_waiting',
+      terminal_state: false,
+      in_progress_steps: ['gated', 'branch_b'],
+      claims: {
+        gated: { deadline: new Date(Date.now() - 60_000).toISOString() }, // gated step, even if stale...
+        branch_b: { deadline: new Date(Date.now() - 60_000).toISOString() },
+      },
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 'gated',
+        choices: ['approve'],
+        opened_at: new Date().toISOString(),
+        preview: {},
+      },
+    });
+    const result = await listRuns(undefined, makeStore([wedge]), undefined, true);
+    expect(result).toContain('run-gatewedge');
+    expect(result).toContain('branch_b=claim_stale');
+    expect(result).not.toContain('gated=claim_stale'); // the open-gate step is never a wedge
+  });
+
+  it('--stuck flags a gate_waiting run with an UNKNOWN-AGE non-gated sibling', async () => {
+    const wedge = makeRun({
+      id: 'run-gatewedge2',
+      run_phase: 'gate_waiting',
+      terminal_state: false,
+      in_progress_steps: ['gated', 'branch_b'],
+      claims: { gated: { deadline: null }, branch_b: { deadline: null } },
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 'gated',
+        choices: ['approve'],
+        opened_at: new Date().toISOString(),
+        preview: {},
+      },
+    });
+    const result = await listRuns(undefined, makeStore([wedge]), undefined, true);
+    expect(result).toContain('run-gatewedge2');
+    expect(result).toContain('branch_b=claim_unknown_age');
+    expect(result).not.toContain('gated=');
+  });
+
+  it('--stuck does NOT flag a gate_waiting run whose only in-progress claim is the gated step', async () => {
+    const plainGate = makeRun({
+      id: 'run-plaingate',
+      run_phase: 'gate_waiting',
+      terminal_state: false,
+      in_progress_steps: ['gated'],
+      claims: { gated: { deadline: new Date(Date.now() - 60_000).toISOString() } },
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 'gated',
+        choices: ['approve'],
+        opened_at: new Date().toISOString(),
+        preview: {},
+      },
+    });
+    const result = await listRuns(undefined, makeStore([plainGate]), undefined, true);
+    expect(result).toContain('No stuck runs found');
+  });
 });
 
 describe('listRuns statusFilter', () => {

@@ -35,6 +35,37 @@ export function formatGateAge(openedAt: string, now: Date = new Date()): string 
 const VALID_PHASES: RunPhase[] = ['running', 'gate_waiting', 'completed', 'failed', 'abandoned'];
 
 /**
+ * Non-healthy in-progress claims that are NOT the open-gate step (issue #101). The gated step is
+ * NEVER a wedge target — it is legitimately pinned while its gate is open. For a `running` run
+ * (no gate) this is every non-healthy in-progress claim.
+ */
+function wedgedNonGatedClaims(run: RunRecord): ReturnType<typeof classifyInProgressClaims> {
+  return classifyInProgressClaims(run).filter(
+    (c) => c.state !== 'healthy' && c.step !== run.pending_gate?.step_name,
+  );
+}
+
+/**
+ * A run is "stuck" for `--stuck` when it is:
+ *  - `running` and advanced-but-parked (no claimed step) OR claimed-but-idle (a stale/unknown-age
+ *    claim) — the Phase-1 behavior, unchanged; or
+ *  - `gate_waiting` with a crashed NON-gated sibling claim on another fan-out branch — a wedge that
+ *    is otherwise invisible while the gate is open, and self-resolves once it closes (#101).
+ */
+function isStuckRun(run: RunRecord): boolean {
+  if (run.run_phase === 'running') {
+    return (
+      run.in_progress_steps.length === 0 ||
+      classifyInProgressClaims(run).some((c) => c.state !== 'healthy')
+    );
+  }
+  if (run.run_phase === 'gate_waiting') {
+    return wedgedNonGatedClaims(run).length > 0;
+  }
+  return false;
+}
+
+/**
  * Lists runs from the store, sorted by updated_at descending.
  * @param workflowId    Optional filter — only show runs from this workflow.
  * @param store         Store holding run records.
@@ -51,16 +82,7 @@ export async function listRuns(
 
   let filtered = runs;
   if (stuck === true) {
-    // A run is "stuck" when it is phase `running` and either:
-    //  - advanced-but-parked: no claimed step (the original stuck-run incident signature), or
-    //  - claimed-but-idle: an in-progress claim is stale or unknown-age (the after-claim wedge,
-    //    issue #101) — a healthy in-flight claim (a live runner) is NOT stuck.
-    filtered = runs.filter(
-      (r) =>
-        r.run_phase === 'running' &&
-        (r.in_progress_steps.length === 0 ||
-          classifyInProgressClaims(r).some((c) => c.state !== 'healthy')),
-    );
+    filtered = runs.filter(isStuckRun);
   } else if (statusFilter !== undefined) {
     filtered = runs.filter((r) => r.run_phase === statusFilter);
   }
@@ -83,12 +105,11 @@ export async function listRuns(
     if (stuck === true) {
       // Show how long the run has been parked (idle age since last update).
       line += `  idle: ${formatGateAge(run.updated_at)}`;
-      if (run.in_progress_steps.length > 0) {
-        // Claimed-but-idle: label each non-healthy claim with its state (issue #101 wedge).
-        const wedged = classifyInProgressClaims(run).filter((c) => c.state !== 'healthy');
-        if (wedged.length > 0) {
-          line += `  ${wedged.map((c) => `${c.step}=${c.state}`).join(', ')}`;
-        }
+      // Label each non-healthy claim with its state — excluding the open-gate step, which is never
+      // a wedge (a gate_waiting run flagged here carries a crashed NON-gated sibling, #101).
+      const wedged = wedgedNonGatedClaims(run);
+      if (wedged.length > 0) {
+        line += `  ${wedged.map((c) => `${c.step}=${c.state}`).join(', ')}`;
       }
     } else if (run.run_phase === 'gate_waiting' && run.pending_gate !== undefined) {
       const age = formatGateAge(run.pending_gate.opened_at);
