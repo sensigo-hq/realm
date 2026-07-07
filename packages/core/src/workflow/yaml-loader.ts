@@ -124,7 +124,8 @@ const SERVICE_ENTRY_JSON_SCHEMA = {
   },
 };
 
-const VALID_EXECUTIONS = new Set(['auto', 'agent', 'guard']);
+const VALID_EXECUTIONS = new Set(['auto', 'agent', 'guard', 'finalizer']);
+const VALID_FINALIZER_TRIGGERS = new Set(['complete', 'fail', 'abort', 'always']);
 const VALID_SERVICE_METHODS = new Set(['fetch', 'create', 'update', 'delete']);
 const VALID_TRIGGER_RULES = new Set<TriggerRule>([
   'all_success',
@@ -462,6 +463,16 @@ function parseWorkflowString(
       errors.push(`Step name '${stepName}' is reserved and cannot be used as a step identifier`);
     }
 
+    // Reject integer-like step names: JS object iteration reorders integer-like keys ahead
+    // of insertion order, which would silently break the declaration-order guarantees the
+    // eligibility loops and finalizer drain rely on (both iterate via Object.entries).
+    if (/^\d+$/.test(stepName)) {
+      errors.push(
+        `Step name '${stepName}' is invalid: integer-like names reorder under JS object ` +
+          `iteration and would break declaration-order execution. Use a non-numeric name.`,
+      );
+    }
+
     const REQUIRED_STEP = ['description', 'execution'];
     for (const field of REQUIRED_STEP) {
       if (!(field in step)) {
@@ -471,8 +482,66 @@ function parseWorkflowString(
 
     if ('execution' in step && !VALID_EXECUTIONS.has(step['execution'] as string)) {
       errors.push(
-        `Step '${stepName}': invalid execution value '${String(step['execution'])}'; must be 'auto', 'agent', or 'guard'`,
+        `Step '${stepName}': invalid execution value '${String(step['execution'])}'; must be 'auto', 'agent', 'guard', or 'finalizer'`,
       );
+    }
+
+    // Finalizer step constraints (a workflow-level try/catch/finally). handler-only in v1.
+    if (step['execution'] === 'finalizer') {
+      const prohibited = [
+        'depends_on',
+        'trigger_rule',
+        'abort_unless',
+        'abort_message',
+        'output_schema',
+        'agent_profile',
+        'tools',
+        'uses_service',
+        'service_method',
+        'operation',
+        'input_map',
+        'when',
+        'retry',
+      ];
+      for (const field of prohibited) {
+        if (step[field] !== undefined) {
+          errors.push(`Step '${stepName}': '${field}' is not valid on execution: finalizer steps`);
+        }
+      }
+      // A finalizer must not gate — reject any human-gate trust level.
+      if (step['trust'] !== undefined && step['trust'] !== 'auto') {
+        errors.push(
+          `Step '${stepName}': 'trust: ${String(step['trust'])}' is not valid on execution: finalizer steps (a finalizer must not gate)`,
+        );
+      }
+      // v1 is handler-only.
+      if (step['handler'] === undefined) {
+        errors.push(
+          `Step '${stepName}': execution: finalizer requires 'handler' (handler-only in v1)`,
+        );
+      }
+      // on_outcome is required, non-empty, every value in the FinalizerTrigger enum.
+      const rawOutcome = step['on_outcome'];
+      if (rawOutcome === undefined) {
+        errors.push(`Step '${stepName}': execution: finalizer requires 'on_outcome'`);
+      } else {
+        const outcomes = Array.isArray(rawOutcome) ? rawOutcome : [rawOutcome];
+        if (outcomes.length === 0) {
+          errors.push(`Step '${stepName}': 'on_outcome' must not be empty`);
+        }
+        for (const o of outcomes) {
+          if (typeof o !== 'string' || !VALID_FINALIZER_TRIGGERS.has(o)) {
+            errors.push(
+              `Step '${stepName}': invalid on_outcome value '${String(o)}'; must be one of ${[...VALID_FINALIZER_TRIGGERS].join(', ')}`,
+            );
+          }
+        }
+      }
+    }
+
+    // on_outcome is only valid on execution: finalizer steps.
+    if (step['on_outcome'] !== undefined && step['execution'] !== 'finalizer') {
+      errors.push(`Step '${stepName}': 'on_outcome' is only valid on execution: finalizer steps`);
     }
 
     // Guard step constraints.
@@ -676,6 +745,14 @@ function parseWorkflowString(
             errors.push(`Step '${stepName}': a step cannot depend on itself`);
           } else if (!(dep in stepsRaw)) {
             errors.push(`Step '${stepName}': depends_on references unknown step '${dep}'`);
+          } else if ((stepsRaw[dep] as Record<string, unknown>)['execution'] === 'finalizer') {
+            // A domain step depending on a held-out finalizer would deadlock: the finalizer
+            // never enters the eligible set, so this step never becomes eligible and the run
+            // never seals.
+            errors.push(
+              `Step '${stepName}': depends_on references finalizer step '${dep}' — finalizers ` +
+                `run at the terminal transition and are held out of the DAG; a step cannot depend on one.`,
+            );
           }
         }
       }
@@ -822,6 +899,18 @@ function parseWorkflowString(
     ) {
       errors.push(`Step '${stepName}': 'tool_timeout' must be a positive integer`);
     }
+  }
+
+  // Require at least one non-finalizer step: a workflow of only finalizers is meaningless
+  // (nothing runs in the DAG, so it would seal immediately with no domain work).
+  const stepEntries = Object.values(stepsRaw).filter(
+    (s): s is Record<string, unknown> => typeof s === 'object' && s !== null && !Array.isArray(s),
+  );
+  if (stepEntries.length > 0 && stepEntries.every((s) => s['execution'] === 'finalizer')) {
+    errors.push(
+      `Workflow has only finalizer steps — at least one non-finalizer step is required ` +
+        `(finalizers run at the terminal transition of the DAG's domain steps).`,
+    );
   }
 
   // Validate mcp_servers: ids must be unique (workflow-level check).

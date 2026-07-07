@@ -7,6 +7,7 @@ import {
   type RunStore,
   type WorkflowDefinition,
   type PendingGate,
+  type ExtensionRegistry,
 } from '@sensigo/realm';
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { startSlackGateServer } from './slack-gate-server.js';
@@ -204,6 +205,12 @@ export interface BidirectionalGateParams {
   gateReminderIntervalMs: number;
   gateEscalationThresholdMs: number;
   pollIntervalMs: number;
+  /**
+   * Resolved project registry for the run — threaded into submitHumanResponse so a gate
+   * resolution that COMPLETES the run fires its finalizers with project handlers. Undefined
+   * falls back to the engine's default (filesystem-only) registry.
+   */
+  registry?: ExtensionRegistry;
 }
 
 /**
@@ -230,6 +237,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     gateReminderIntervalMs,
     gateEscalationThresholdMs,
     pollIntervalMs,
+    registry,
   } = params;
 
   let clarificationCount = 0;
@@ -249,6 +257,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           runId,
           gateId: gate.gate_id,
           choice: exactMatch,
+          ...(registry !== undefined ? { registry } : {}),
         });
         if (gateThreadTs !== undefined) {
           const confirmationText =
@@ -393,6 +402,8 @@ export interface SlackGateHandlerConfig {
   reminderIntervalMs?: number;
   escalationThresholdMs?: number;
   pollIntervalMs?: number;
+  /** Resolved project registry for the run — forwarded so gate-completed runs fire finalizers. */
+  registry?: ExtensionRegistry;
 }
 
 /**
@@ -421,6 +432,7 @@ export function createSlackGateHandler(
         gateReminderIntervalMs: config.reminderIntervalMs ?? 600_000,
         gateEscalationThresholdMs: config.escalationThresholdMs ?? 1_800_000,
         pollIntervalMs: config.pollIntervalMs ?? 3000,
+        ...(config.registry !== undefined ? { registry: config.registry } : {}),
       });
     } else if (config.webhookUrl !== undefined) {
       // One-way webhook + inline poll loop (avoids circular dependency with run-agent.ts).

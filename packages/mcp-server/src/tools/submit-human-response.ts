@@ -25,10 +25,19 @@ export async function handleSubmitHumanResponse(
   const run = await runStore.get(args.run_id);
   const definition = await workflowStore.get(run.workflow_id);
 
+  // Per-definition registry (project extensions) — awaited before the call (fail-fast),
+  // provider wins over `registry`. Mirrors execute-step.ts. Threaded into submitHumanResponse
+  // so that resolving a gate which COMPLETES the run fires its finalizers with project handlers.
+  const registry =
+    stores?.registryProvider !== undefined
+      ? await stores.registryProvider(definition)
+      : stores?.registry;
+
   return submitHumanResponse(runStore, definition, {
     runId: args.run_id,
     gateId: args.gate_id,
     choice: args.choice,
+    ...(registry !== undefined ? { registry } : {}),
   });
 }
 

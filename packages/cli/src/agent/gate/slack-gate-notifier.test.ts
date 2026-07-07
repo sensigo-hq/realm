@@ -10,7 +10,16 @@ import {
   handleBidirectionalGate,
 } from './slack-gate-notifier.js';
 import type { BidirectionalGateParams } from './slack-gate-notifier.js';
-import type { PendingGate, RunStore, WorkflowDefinition } from '@sensigo/realm';
+import type { PendingGate, RunStore, WorkflowDefinition, StepHandler } from '@sensigo/realm';
+import {
+  JsonFileStore,
+  ExtensionRegistry,
+  executeStep,
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+} from '@sensigo/realm';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { LlmProvider } from '../providers/llm-provider.js';
 import { startSlackGateServer } from './slack-gate-server.js';
 import type { SlackGateEvent } from './slack-gate-server.js';
@@ -635,5 +644,98 @@ describe('handleBidirectionalGate', () => {
     // Must not silently resolve with a guessed choice
     expect(replyBody.text).not.toContain('Changes requested');
     expect(replyBody.text).not.toContain('Gate resolved');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleBidirectionalGate — registry threading fires finalizers (end-to-end)
+// ---------------------------------------------------------------------------
+
+function gateFinalizerDef(): WorkflowDefinition {
+  return {
+    id: 'slack-gate-fin-wf',
+    name: 'Slack Gate Finalizer WF',
+    version: 1,
+    schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+    steps: {
+      'step-one': {
+        description: 'Auto step with gate',
+        execution: 'auto',
+        trust: 'human_confirmed',
+        gate: { choices: ['approve', 'reject'] },
+      },
+      record_outcome: {
+        description: 'Record terminal outcome',
+        execution: 'finalizer',
+        on_outcome: 'complete',
+        handler: 'record_outcome',
+      },
+    } as unknown as WorkflowDefinition['steps'],
+  } as unknown as WorkflowDefinition;
+}
+
+describe('handleBidirectionalGate — threads the registry so gate-completed runs fire finalizers', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('runs the complete finalizer (project handler) via the threaded registry when a Slack reply completes the run', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'realm-slack-fin-'));
+    const store = new JsonFileStore(dir);
+    const def = gateFinalizerDef();
+    const { run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    // Open the gate for real.
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+    const opened = await store.get(run.id);
+    const gate = opened.pending_gate!;
+
+    // Project handler registered ONLY in this custom registry (not the default).
+    const ran = vi.fn();
+    const handler: StepHandler = {
+      id: 'record_outcome',
+      execute: vi.fn(async () => {
+        ran();
+        return { data: { recorded: true } };
+      }),
+    };
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'record_outcome', handler);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
+    vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
+      capturedOnEvent = opts.onEvent;
+      return { close: vi.fn() };
+    });
+
+    const promise = handleBidirectionalGate(
+      makeGateParams({ gate, runId: run.id, definition: def, store, registry }),
+    );
+    expect(capturedOnEvent).toBeDefined();
+
+    capturedOnEvent!({
+      event_id: 'E1',
+      thread_ts: '1234567890.000',
+      user: 'U1',
+      text: 'approve',
+      ts: '1234567890.001',
+    });
+
+    await promise;
+
+    const updated = await store.get(run.id);
+    expect(updated.run_phase).toBe('completed');
+    expect(updated.completed_steps).toContain('record_outcome');
+    expect(ran).toHaveBeenCalledTimes(1);
   });
 });

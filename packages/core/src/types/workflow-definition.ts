@@ -1,7 +1,14 @@
 // Typed representation of a parsed workflow YAML definition.
 import type { McpServerConfig } from './mcp-types.js';
 
-export type ExecutionMode = 'auto' | 'agent' | 'guard';
+export type ExecutionMode = 'auto' | 'agent' | 'guard' | 'finalizer';
+
+/**
+ * Terminal outcome(s) a finalizer step matches. `execution: finalizer` steps run at the
+ * run's terminal transition (a workflow-level try/catch/finally): `complete` = success,
+ * `fail`/`abort` = catch, `always` = finally. OR-membership when given as an array.
+ */
+export type FinalizerTrigger = 'complete' | 'fail' | 'abort' | 'always';
 
 export interface ProtocolConfig {
   /** Override for the generated quick-start paragraph. */
@@ -142,6 +149,13 @@ export interface StepDefinition {
    * Only valid on execution: 'guard' steps.
    */
   abort_message?: string;
+  /**
+   * Terminal outcome(s) this finalizer matches (a workflow-level try/catch/finally). The
+   * engine runs matching `execution: finalizer` steps at the run's terminal transition —
+   * outcome-specific first, then `always` — each at most once, via the injected registry.
+   * Required on (and only valid on) execution: 'finalizer' steps.
+   */
+  on_outcome?: FinalizerTrigger | FinalizerTrigger[];
   uses_service?: string;
   /**
    * Which adapter method to invoke for this service step.

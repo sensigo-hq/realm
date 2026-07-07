@@ -103,6 +103,9 @@ export const runCommand = new Command('run')
               runId,
               gateId: g.gate_id,
               choice,
+              // Thread the resolved project registry so a gate-completed run fires its
+              // finalizers with project handlers (same registry passed to executeChain below).
+              registry,
             });
             if (respondResult.status === 'ok') {
               run = await store.get(runId);
