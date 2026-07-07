@@ -479,7 +479,8 @@ function makeGateParams(overrides: Partial<BidirectionalGateParams> = {}): Bidir
 describe('handleBidirectionalGate', () => {
   afterEach(() => {
     vi.clearAllMocks();
-    vi.unstubAllGlobals();
+    vi.unstubAllGlobals(); // restore the repeated stubGlobal('fetch', …)
+    vi.restoreAllMocks(); // restore console spies between tests
   });
 
   it('does not start Events server when gateThreadTs is undefined', async () => {
@@ -528,7 +529,7 @@ describe('handleBidirectionalGate', () => {
     capturedOnEvent!(event); // first delivery
     capturedOnEvent!(event); // duplicate — must be ignored
 
-    await new Promise<void>((r) => setTimeout(r, 50));
+    // The finally's bounded drain guarantees in-flight replies have landed — no wall-clock barrier.
     await promise;
 
     // Only one clarification reply should have been sent (dedupe is working).
@@ -629,13 +630,13 @@ describe('handleBidirectionalGate', () => {
       ts: '1234567890.002',
     });
 
-    await new Promise<void>((r) => setTimeout(r, 50));
+    // The finally's bounded drain guarantees in-flight replies have landed — no wall-clock barrier.
     await promise;
 
     const replyCalls = mockFetch.mock.calls.filter(([url]: [string]) =>
       (url as string).includes('postMessage'),
     );
-    expect(replyCalls.length).toBeGreaterThan(0);
+    expect(replyCalls).toHaveLength(1); // EXACT — the drain closes the dedupe-masking window
     const replyBody = JSON.parse(replyCalls[replyCalls.length - 1][1].body as string) as {
       text: string;
     };
@@ -644,6 +645,172 @@ describe('handleBidirectionalGate', () => {
     // Must not silently resolve with a guessed choice
     expect(replyBody.text).not.toContain('Changes requested');
     expect(replyBody.text).not.toContain('Gate resolved');
+  });
+
+  // Sig-1: the tests above drive the Events API (startSlackGateServer). Prove the Socket Mode
+  // dispatch site (connectSocketMode) is ALSO tracked+drained, else it silently drops in production.
+  it('Socket Mode: an exact match is tracked+drained → confirmation reply landed, gate resolved', async () => {
+    const gate: PendingGate = {
+      gate_id: 'g1',
+      step_name: 'confirm_review',
+      preview: { headline: 'PR #7' },
+      choices: ['approve', 'request_changes'],
+      opened_at: new Date().toISOString(),
+    };
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', mockFetch);
+
+    let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
+    vi.mocked(connectSocketMode).mockImplementationOnce((opts) => {
+      capturedOnEvent = opts.onEvent;
+      return { close: vi.fn() };
+    });
+
+    const promise = handleBidirectionalGate(
+      makeGateParams({
+        gate,
+        store: makeGateStore(gate),
+        slackSigningSecret: undefined,
+        slackAppToken: 'xapp-test', // selects Socket Mode
+      }),
+    );
+    expect(connectSocketMode).toHaveBeenCalledOnce();
+    expect(capturedOnEvent).toBeDefined();
+
+    capturedOnEvent!({
+      event_id: 'S1',
+      thread_ts: '1234567890.000',
+      user: 'U1',
+      text: 'approve',
+      ts: '1234567890.001',
+    });
+
+    await promise; // bounded drain guarantees the reply landed — no wall-clock barrier
+
+    const replyCalls = mockFetch.mock.calls.filter(([url]: [string]) =>
+      (url as string).includes('postMessage'),
+    );
+    expect(replyCalls).toHaveLength(1); // the confirmation reply (only posted on submit success)
+    const body = JSON.parse(replyCalls[0][1].body as string) as { text: string };
+    expect(body.text).toContain('approve');
+  });
+
+  // Bounded drain: a hung Slack (postSlackReply's fetch never resolves) must NOT stall the run loop.
+  it('bounded drain: a never-resolving reply does not hang the gate handler (returns within the bound)', async () => {
+    const gate: PendingGate = {
+      gate_id: 'g1',
+      step_name: 'confirm_review',
+      preview: { headline: 'PR #9' },
+      choices: ['approve', 'request_changes'],
+      opened_at: new Date().toISOString(),
+    };
+    // fetch (used by postSlackReply's confirmation) never resolves → processCandidate hangs after
+    // the store write; the finally's bounded drain must give up after DRAIN_TIMEOUT_MS.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {})),
+    );
+
+    let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
+    vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
+      capturedOnEvent = opts.onEvent;
+      return { close: vi.fn() };
+    });
+
+    const promise = handleBidirectionalGate(makeGateParams({ gate, store: makeGateStore(gate) }));
+    expect(capturedOnEvent).toBeDefined();
+    capturedOnEvent!({
+      event_id: 'H1',
+      thread_ts: '1234567890.000',
+      user: 'U1',
+      text: 'approve',
+      ts: '1234567890.001',
+    });
+
+    const start = Date.now();
+    await promise; // must resolve via the bounded drain, not hang on the never-resolving reply
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(4500); // bounded — without the drain-timeout it would hang to 5s
+    expect(elapsed).toBeGreaterThanOrEqual(1500); // the drain actually engaged (~DRAIN_TIMEOUT_MS)
+  });
+
+  // Submit failure (submitHumanResponse returns an error envelope) must surface ONE error reply,
+  // NOT a confirmation, and NOT resolve/abort the gate — and never post twice.
+  it('submit failure posts exactly one error reply, no confirmation, and does not abort the gate', async () => {
+    const gate: PendingGate = {
+      gate_id: 'g1',
+      step_name: 'confirm_review',
+      preview: { headline: 'PR #11' },
+      choices: ['approve', 'request_changes'],
+      opened_at: new Date().toISOString(),
+    };
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', mockFetch);
+
+    // Our gate g1 is open until update is attempted, which throws (submit fails) → submitHumanResponse
+    // returns an error envelope; then the run reads terminal so the poll loop returns. Order-independent.
+    let updateAttempted = false;
+    const openRun = {
+      id: 'run1',
+      terminal_state: undefined,
+      pending_gate: gate,
+      run_phase: 'waiting_for_human',
+      version: 1,
+      in_progress_steps: [gate.step_name],
+      completed_steps: [],
+      skipped_steps: [],
+      evidence: [],
+    };
+    const terminalRun = {
+      ...openRun,
+      terminal_state: 'failed',
+      pending_gate: undefined,
+      run_phase: 'failed',
+    };
+    const store = {
+      get: vi.fn(async () => (updateAttempted ? terminalRun : openRun)),
+      update: vi.fn(async () => {
+        updateAttempted = true;
+        throw new Error('persist failed');
+      }),
+    } as unknown as RunStore;
+
+    let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
+    vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
+      capturedOnEvent = opts.onEvent;
+      return { close: vi.fn() };
+    });
+
+    const promise = handleBidirectionalGate(makeGateParams({ gate, store }));
+    expect(capturedOnEvent).toBeDefined();
+
+    // Fire the same exact match twice (distinct event_ids) → the at-most-once guard must hold.
+    capturedOnEvent!({
+      event_id: 'F1',
+      thread_ts: '1234567890.000',
+      user: 'U1',
+      text: 'approve',
+      ts: '1234567890.001',
+    });
+    capturedOnEvent!({
+      event_id: 'F2',
+      thread_ts: '1234567890.000',
+      user: 'U1',
+      text: 'approve',
+      ts: '1234567890.002',
+    });
+
+    await promise;
+
+    const replyCalls = mockFetch.mock.calls.filter(([url]: [string]) =>
+      (url as string).includes('postMessage'),
+    );
+    expect(replyCalls).toHaveLength(1); // exactly one error reply — never posts twice
+    const body = JSON.parse(replyCalls[0][1].body as string) as { text: string };
+    expect(body.text).toContain("Couldn't record your response");
+    // Not a confirmation → the success branch (confirmation + abort) did NOT run; gate not resolved.
+    expect(body.text).not.toContain('run continuing');
+    expect(body.text).not.toContain('Gate resolved');
   });
 });
 
