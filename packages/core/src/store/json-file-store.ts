@@ -1,6 +1,6 @@
 // Local file-backed run store. Stores each run as a JSON file in ~/.realm/runs/.
 // Uses proper-lockfile to prevent concurrent writes.
-import { mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, rename, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -19,6 +19,52 @@ const DEFAULT_RUNS_DIR = join(homedir(), '.realm', 'runs');
 
 /** Bounded per-key lock retry policy — used for the resolve-or-claim critical section. */
 const KEY_LOCK_RETRIES = { retries: 10, minTimeout: 50 } as const;
+
+let atomicWriteCounter = 0;
+
+/**
+ * Torn-read-safe write for JsonFileStore run and key-pointer files.
+ *
+ * POSIX (Linux/macOS): writes a unique sibling temp then rename(2)s it over the
+ * target. rename-over-existing is atomic on POSIX within one filesystem, so any
+ * concurrent unlocked reader (get/list/readPointer) sees the complete old file
+ * XOR the complete new file — never a truncated buffer. The temp is a path
+ * sibling (`${path}.<pid>.<counter>.tmp`), so it is guaranteed same-directory /
+ * same-filesystem (rename never EXDEV) and is excluded from list()'s `.json`
+ * scan (it ends in `.tmp`).
+ *
+ * Windows (win32): rename-over-an-open-file throws EPERM/EBUSY — exactly the
+ * concurrent-reader case this store lives in — so on win32 we fall back to the
+ * pre-existing plain writeFile (status quo: racy but non-throwing). Real Windows
+ * atomicity is deferred to a follow-up (write-file-atomic in its own PR).
+ *
+ * fsync is intentionally omitted: the bug is a live-process page-cache
+ * truncation read, which rename fixes by construction; fsync would only add
+ * power-loss durability, a contract this store does not hold (durable tier =
+ * realm-cloud/Postgres). Add fsync(temp)+fsync(dir) here if durability ever
+ * becomes a requirement.
+ *
+ * INVARIANT: every `.json` file written into the runs/keys directories MUST go
+ * through this helper. A raw writeFile of a run/pointer file reintroduces the
+ * torn read in list()/get()/readPointer. (Enforced by a structural test.)
+ */
+async function atomicWriteFile(path: string, data: string): Promise<void> {
+  if (process.platform === 'win32') {
+    await writeFile(path, data, 'utf8');
+    return;
+  }
+  // pid separates processes; atomicWriteCounter separates concurrent in-process
+  // writers (counter++ is atomic in the single-threaded event loop — no await
+  // between read and increment). Sufficient for uniqueness; no randomBytes.
+  const tmp = `${path}.${process.pid}.${atomicWriteCounter++}.tmp`;
+  try {
+    await writeFile(tmp, data, 'utf8');
+    await rename(tmp, path);
+  } catch (err) {
+    await unlink(tmp).catch(() => {}); // best-effort cleanup of our own temp only
+    throw err;
+  }
+}
 
 /**
  * A pointer file: the authoritative, deterministic index entry for one idempotency key.
@@ -138,7 +184,7 @@ export class JsonFileStore implements RunStore {
       params_hash: hashParams(run.params),
       updated_at: new Date().toISOString(),
     };
-    await writeFile(keyPath, JSON.stringify(pointer, null, 2), 'utf8');
+    await atomicWriteFile(keyPath, JSON.stringify(pointer, null, 2));
   }
 
   /** Build and persist a brand-new run record (today's path, factored out). */
@@ -162,7 +208,7 @@ export class JsonFileStore implements RunStore {
       updated_at: now,
       terminal_state: false,
     };
-    await writeFile(this.filePath(record.id), JSON.stringify(record, null, 2), 'utf8');
+    await atomicWriteFile(this.filePath(record.id), JSON.stringify(record, null, 2));
     return record;
   }
 
@@ -320,7 +366,7 @@ export class JsonFileStore implements RunStore {
         version: record.version + 1,
         updated_at: new Date().toISOString(),
       };
-      await writeFile(path, JSON.stringify(updated, null, 2), 'utf8');
+      await atomicWriteFile(path, JSON.stringify(updated, null, 2));
       return updated;
     } finally {
       await release();
@@ -392,7 +438,7 @@ export class JsonFileStore implements RunStore {
         version: run.version + 1,
         updated_at: new Date().toISOString(),
       };
-      await writeFile(path, JSON.stringify(claimed, null, 2), 'utf8');
+      await atomicWriteFile(path, JSON.stringify(claimed, null, 2));
       return claimed;
     } finally {
       await release();
@@ -430,7 +476,7 @@ export class JsonFileStore implements RunStore {
       );
     }
     // Run file FIRST (consistent with create()), then register the key pointer.
-    await writeFile(path, JSON.stringify(record, null, 2), 'utf8');
+    await atomicWriteFile(path, JSON.stringify(record, null, 2));
     await this.registerImportedKey(record);
   }
 
@@ -538,6 +584,10 @@ export class JsonFileStore implements RunStore {
   async list(workflowId?: string): Promise<RunRecord[]> {
     await this.ensureDir();
     const entries: string[] = await readdir(this.runsDir);
+    // Torn-read-safe: every run file here is written atomically via atomicWriteFile (temp +
+    // rename), so this unlocked read never sees a truncated file. Temps end in '.tmp' → excluded
+    // by the '.json' filter. A raw non-atomic writeFile of a '.json' into runsDir would reintroduce
+    // the torn read here.
     const jsonFiles: string[] = entries.filter((f: string) => f.endsWith('.json'));
 
     const records: RunRecord[] = await Promise.all(

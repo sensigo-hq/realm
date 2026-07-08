@@ -928,3 +928,130 @@ describe('JsonFileStore re-encounter policy', () => {
     expect(run.run_phase).toBe('aborted'); // byte-unchanged, not re-driven
   });
 });
+
+// ---------------------------------------------------------------------------
+// Atomic writes — torn-read concurrency (PR-C)
+// A ≥32 KB record makes a non-atomic writeFile span multiple page writes, so an unlocked
+// reader racing a writer reliably observes a truncated buffer on pre-fix code
+// (`SyntaxError: Unexpected end of JSON input`). With atomic temp+rename writes, every
+// unlocked reader sees the complete old XOR new file — zero torn reads.
+// ---------------------------------------------------------------------------
+
+const PAD_32KB = 'x'.repeat(40_000); // > 32 KB of JSON once serialized
+
+describe('JsonFileStore — atomic writes (torn-read safety)', () => {
+  it('T1 — concurrency hammer: K updates × N concurrent reads, zero torn reads', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({
+        workflowId: 'hammer-wf',
+        workflowVersion: 1,
+        params: { pad: PAD_32KB },
+      });
+
+      const readErrors: string[] = [];
+      let reads = 0;
+      let done = false;
+      const reader = async (): Promise<void> => {
+        while (!done) {
+          try {
+            await store.get(run.id);
+            reads += 1;
+            if (reads % 20 === 0) await store.list();
+          } catch (err) {
+            readErrors.push(err instanceof Error ? err.message : String(err));
+          }
+        }
+      };
+      const readers = Array.from({ length: 16 }, () => reader()); // N: 16 loops → thousands of reads
+
+      let rec = run;
+      for (let i = 0; i < 120; i++) {
+        // K = 120 sequential updates, each writing the ≥32 KB record; version feeds the next.
+        rec = await store.update({ ...rec, params: { pad: PAD_32KB, i } });
+      }
+      done = true;
+      await Promise.all(readers);
+
+      expect(readErrors).toEqual([]); // ZERO torn reads (RED on pre-fix code)
+      expect(reads).toBeGreaterThan(500); // the readers genuinely raced the writer
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 20_000); // per-test: a concurrency hammer legitimately exceeds the 5s default
+
+  it('T2 — every write path is torn-read-safe (fresh-run, pointer, update, claimStep, save)', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const readErrors: string[] = [];
+      let done = false;
+      // list() reads EVERY run file, so it races whichever writer is mid-write, whatever the path.
+      const reader = async (): Promise<void> => {
+        while (!done) {
+          try {
+            await store.list();
+          } catch (err) {
+            readErrors.push(err instanceof Error ? err.message : String(err));
+          }
+        }
+      };
+      const readers = Array.from({ length: 2 }, () => reader());
+
+      for (let i = 0; i < 12; i++) {
+        // fresh-run write
+        const { run } = await store.create({
+          workflowId: 'wf-1',
+          workflowVersion: 1,
+          params: { pad: PAD_32KB, i },
+        });
+        // key-pointer write (idempotencyKey path)
+        await store.create({
+          workflowId: 'wf-1',
+          workflowVersion: 1,
+          params: { pad: PAD_32KB, i },
+          idempotencyKey: `key-${i}`,
+        });
+        // update write
+        await store.update({ ...run, params: { pad: PAD_32KB, i, updated: true } });
+        // claimStep write (step-one is eligible on a fresh wf-1 run)
+        await store.claimStep(run.id, 'step-one', minimalDef);
+        // save write (create-if-absent import of a fresh record)
+        await store.save(
+          makeRunRecord({ id: `imported-${i}`, workflow_id: 'wf-1', params: { pad: PAD_32KB } }),
+        );
+      }
+      done = true;
+      await Promise.all(readers);
+
+      expect(readErrors).toEqual([]); // ZERO torn reads across all five write paths
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 20_000); // per-test: concurrent list() over a padded corpus legitimately exceeds the 5s default
+
+  it('T3 — structural guard: no raw writeFile of a run/pointer file outside atomicWriteFile', async () => {
+    // Anti-recurrence (#123-style): every run/pointer write MUST route through atomicWriteFile.
+    // The only raw writeFile( calls allowed are the two INSIDE the helper (win32 passthrough + the
+    // temp write). A future dev adding a raw writeFile of a '.json' run/pointer file — reintroducing
+    // the torn read — makes this test fail loudly.
+    const src = await readFile(new URL('./json-file-store.ts', import.meta.url), 'utf8');
+
+    expect(src).not.toMatch(/writeFileSync\(/); // no sync writer sneaks in either
+
+    const helperStart = src.indexOf('async function atomicWriteFile(');
+    const classStart = src.indexOf('export class JsonFileStore');
+    expect(helperStart).toBeGreaterThan(-1);
+    expect(classStart).toBeGreaterThan(helperStart); // helper is module-scope, before the class
+
+    const writeFileIdx = [...src.matchAll(/\bwriteFile\(/g)].map((m) => m.index ?? -1);
+    expect(writeFileIdx).toHaveLength(2); // exactly two — both inside the helper
+    for (const idx of writeFileIdx) {
+      expect(idx).toBeGreaterThan(helperStart);
+      expect(idx).toBeLessThan(classStart); // → inside the helper, never in a class method
+    }
+
+    // 6 occurrences of atomicWriteFile( = 1 definition + 5 call-sites (the 5 write paths).
+    const atomicIdx = [...src.matchAll(/\batomicWriteFile\(/g)];
+    expect(atomicIdx).toHaveLength(6);
+  });
+});

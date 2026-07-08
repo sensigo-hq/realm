@@ -221,6 +221,15 @@ export interface BidirectionalGateParams {
  * - Falls back to store polling for terminal-command gate resolution
  * Exported for testing.
  */
+/**
+ * Bounded ceiling for the in-flight candidate drain in {@link handleBidirectionalGate}'s finally.
+ * `postSlackReply`'s fetch has no signal/timeout, so an unbounded drain would stall runAgent on a
+ * hung Slack. 2s comfortably covers a healthy postSlackReply flush (~100-300ms); on a hung Slack +
+ * run-completing gate it exits after 2s with the same reply drop as today (the drop is unchanged,
+ * only the latency ceiling is added — never a stall).
+ */
+const DRAIN_TIMEOUT_MS = 2000;
+
 export async function handleBidirectionalGate(params: BidirectionalGateParams): Promise<void> {
   const {
     gate,
@@ -241,7 +250,18 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
   } = params;
 
   let clarificationCount = 0;
+  // Posted at most once per gate — a repeatedly-failing submit must not hammer Slack.
+  let submitErrorPosted = false;
   const abortController = new AbortController();
+
+  // Track in-flight candidate processing so the finally can drain it (bounded) before returning —
+  // otherwise a run-completing gate can process.exit() and truncate the confirmation reply that is
+  // still in flight inside the un-awaited processCandidate chain.
+  const inFlight = new Set<Promise<void>>();
+  const track = (p: Promise<void>): void => {
+    inFlight.add(p);
+    void p.finally(() => inFlight.delete(p));
+  };
 
   const processCandidate = async (text: string): Promise<void> => {
     if (abortController.signal.aborted) return;
@@ -252,24 +272,46 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     const exactMatch = gate.choices.find((c) => c.toLowerCase() === normalised);
 
     if (exactMatch !== undefined) {
+      // Surface a submit failure to the operator ONCE. Deliberately does NOT abort()/resolve — the
+      // gate stays open so the poll loop keeps waiting and the operator can retry or use the terminal
+      // fallback. Runs inside processCandidate → tracked + drained (§track), so it is guaranteed sent
+      // before handleBidirectionalGate returns.
+      const postSubmitError = async (detail: string): Promise<void> => {
+        console.warn(`Gate response submission failed: ${detail}`);
+        if (gateThreadTs !== undefined && !submitErrorPosted) {
+          submitErrorPosted = true;
+          await postSlackReply(
+            slackBotToken,
+            slackChannelId,
+            gateThreadTs,
+            `⚠️ Couldn't record your response (\`${detail}\`). Try again, or use the terminal command shown above.`,
+          );
+        }
+      };
       try {
-        await submitHumanResponse(store, definition, {
+        // submitHumanResponse signals failure by RETURNING an error envelope (it does not throw);
+        // gate on that status so we never post a false confirmation or abort on a failed submit.
+        // (The catch below still handles an unexpected throw identically.)
+        const result = await submitHumanResponse(store, definition, {
           runId,
           gateId: gate.gate_id,
           choice: exactMatch,
           ...(registry !== undefined ? { registry } : {}),
         });
-        if (gateThreadTs !== undefined) {
-          const confirmationText =
-            gate.resolution_messages?.[exactMatch] ??
-            `✅ Gate resolved: \`${exactMatch}\` — run continuing.`;
-          await postSlackReply(slackBotToken, slackChannelId, gateThreadTs, confirmationText);
+        if (result.status === 'error') {
+          await postSubmitError(result.errors[0] ?? result.context_hint ?? 'unknown error');
+        } else {
+          // Success — resolution IS the store write inside submitHumanResponse. Confirm + stop.
+          if (gateThreadTs !== undefined) {
+            const confirmationText =
+              gate.resolution_messages?.[exactMatch] ??
+              `✅ Gate resolved: \`${exactMatch}\` — run continuing.`;
+            await postSlackReply(slackBotToken, slackChannelId, gateThreadTs, confirmationText);
+          }
+          abortController.abort();
         }
-        abortController.abort();
       } catch (err) {
-        console.warn(
-          `Gate response submission failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        await postSubmitError(err instanceof Error ? err.message : String(err));
       }
     } else if (clarificationCount < 2 && gateThreadTs !== undefined) {
       clarificationCount++;
@@ -295,11 +337,13 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
       onEvent: (event) => {
         if (seenEventIds.has(event.event_id)) return;
         seenEventIds.add(event.event_id);
-        processCandidate(event.text).catch((err) => {
-          console.warn(
-            `Candidate processing failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
+        track(
+          processCandidate(event.text).catch((err) => {
+            console.warn(
+              `Candidate processing failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }),
+        );
       },
       signal: abortController.signal,
     });
@@ -312,11 +356,13 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
         if (seenEventIds.has(event.event_id)) return;
         seenEventIds.add(event.event_id);
         if (event.thread_ts !== gateThreadTs) return;
-        processCandidate(event.text).catch((err) => {
-          console.warn(
-            `Candidate processing failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
+        track(
+          processCandidate(event.text).catch((err) => {
+            console.warn(
+              `Candidate processing failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }),
+        );
       },
     });
   } else if (gateThreadTs !== undefined) {
@@ -354,6 +400,22 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     abortController.abort();
     clearTimers();
     serverHandle?.close();
+    // Let the resolving candidate's confirmation (or submit-error) reply flush before process.exit()
+    // can truncate it on a run-completing gate. BOUNDED by DRAIN_TIMEOUT_MS so a hung Slack can't
+    // stall run progress; the timer is CLEARED so it never leaks a pending handle (this is a
+    // de-flake change). ~instant on the common single-exact-match path (the resolving
+    // processCandidate calls abort() only AFTER awaiting postSlackReply, so by the time the poll
+    // loop breaks the reply has flushed); it waits (≤2s) only when a reply is genuinely still in
+    // flight. Candidate-scoped: reminder/escalation replies stay best-effort (cleared on resolve).
+    let drainTimer: ReturnType<typeof setTimeout>;
+    const bound = new Promise<void>((resolve) => {
+      drainTimer = setTimeout(resolve, DRAIN_TIMEOUT_MS);
+    });
+    try {
+      await Promise.race([Promise.allSettled([...inFlight]).then(() => undefined), bound]);
+    } finally {
+      clearTimeout(drainTimer!);
+    }
   }
 }
 
