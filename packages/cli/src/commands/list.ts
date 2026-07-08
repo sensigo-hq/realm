@@ -1,7 +1,7 @@
 // list command — displays all runs in the store, sorted by most recent first.
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { classifyInProgressClaims } from '@sensigo/realm';
+import { classifyInProgressClaims, findCapabilityBlockedSteps } from '@sensigo/realm';
 import type { RunStore, RunRecord, RunPhase } from '@sensigo/realm';
 
 /** Returns a chalk-coloured phase label. */
@@ -47,12 +47,16 @@ function wedgedNonGatedClaims(run: RunRecord): ReturnType<typeof classifyInProgr
 
 /**
  * A run is "stuck" for `--stuck` when it is:
+ *  - non-terminal with a capability-blocked step (a not-registered handler/adapter parked the step,
+ *    still eligible) — surfaced regardless of phase or a healthy in-progress sibling, since the plain
+ *    in_progress/claim checks below miss a block masked by a live sibling on another branch (#134); or
  *  - `running` and advanced-but-parked (no claimed step) OR claimed-but-idle (a stale/unknown-age
  *    claim) — the Phase-1 behavior, unchanged; or
  *  - `gate_waiting` with a crashed NON-gated sibling claim on another fan-out branch — a wedge that
  *    is otherwise invisible while the gate is open, and self-resolves once it closes (#101).
  */
 function isStuckRun(run: RunRecord): boolean {
+  if (!run.terminal_state && findCapabilityBlockedSteps(run).length > 0) return true;
   if (run.run_phase === 'running') {
     return (
       run.in_progress_steps.length === 0 ||
@@ -110,6 +114,13 @@ export async function listRuns(
       const wedged = wedgedNonGatedClaims(run);
       if (wedged.length > 0) {
         line += `  ${wedged.map((c) => `${c.step}=${c.state}`).join(', ')}`;
+      }
+      // #134: name the missing capability so the operator knows what to provision before re-attaching.
+      const blocked = run.terminal_state ? [] : findCapabilityBlockedSteps(run);
+      if (blocked.length > 0) {
+        line += `  ${blocked
+          .map((b) => `${b.step}: needs ${b.requirement.kind} '${b.requirement.name}'`)
+          .join(', ')}`;
       }
     } else if (run.run_phase === 'gate_waiting' && run.pending_gate !== undefined) {
       const age = formatGateAge(run.pending_gate.opened_at);

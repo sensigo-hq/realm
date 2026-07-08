@@ -51,7 +51,9 @@ import {
   isWorkflowComplete,
   buildEvidenceByStep,
   propagateSkips,
+  deriveRunPhase,
 } from './eligibility.js';
+import { requirementForStep } from './capability.js';
 import {
   resolvePreExecutionAgentAction,
   resolvePostDispatchAgentAction,
@@ -287,7 +289,9 @@ async function callAdapter(
     throw new WorkflowError(
       `Adapter '${serviceDef.adapter}' for service '${serviceName}' is not registered${extensionHint}`,
       {
-        code: 'ENGINE_ADAPTER_FAILED',
+        // #134 discriminator: minted at the NOT-REGISTERED site ONLY (not the service-not-found or
+        // adapter-runtime throws), so Step 5 can settle this RECOVERABLY instead of terminal-burning.
+        code: 'ENGINE_ADAPTER_NOT_REGISTERED',
         category: 'ENGINE',
         agentAction: 'stop',
         retryable: false,
@@ -453,7 +457,9 @@ async function callHandler(
   const handler = (options.registry ?? createDefaultRegistry()).getHandler(handlerName);
   if (handler === undefined) {
     throw new WorkflowError(`Handler '${handlerName}' is not registered`, {
-      code: 'ENGINE_HANDLER_FAILED',
+      // #134 discriminator: minted at the NOT-REGISTERED site ONLY (not the ran-and-threw throw
+      // below), so Step 5 can settle this RECOVERABLY instead of terminal-burning the step.
+      code: 'ENGINE_HANDLER_NOT_REGISTERED',
       category: 'ENGINE',
       agentAction: 'stop',
       retryable: false,
@@ -1212,25 +1218,125 @@ export async function executeStep(
 
   if (dispatchError !== null && retryConfig !== undefined && attemptsUsed === maxAttempts) {
     const lastError = dispatchError;
-    dispatchError = new WorkflowError(
-      `Step '${options.command}' failed after ${attemptsUsed} attempts`,
-      {
-        code: 'STEP_RETRY_EXHAUSTED',
-        category: 'ENGINE',
-        agentAction: 'report_to_user',
-        retryable: false,
-        details: {
-          stepName: options.command,
-          attempts: attemptsUsed,
-          lastError: lastError.message,
-          ...(lastError.retry_after !== undefined ? { retry_after: lastError.retry_after } : {}),
+    // #134: do NOT wrap a recoverable-incapability error (a max_attempts:1 not-registered failure
+    // hits attemptsUsed === maxAttempts). The STEP_RETRY_EXHAUSTED wrap discards the inner code, which
+    // would rob Step 5 of the discriminator it needs to settle recoverably. Leave dispatchError as the
+    // original not-registered error; all other codes wrap unchanged.
+    const isRecoverableIncapability =
+      lastError instanceof WorkflowError &&
+      (lastError.code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
+        lastError.code === 'ENGINE_ADAPTER_NOT_REGISTERED');
+    if (!isRecoverableIncapability) {
+      dispatchError = new WorkflowError(
+        `Step '${options.command}' failed after ${attemptsUsed} attempts`,
+        {
+          code: 'STEP_RETRY_EXHAUSTED',
+          category: 'ENGINE',
+          agentAction: 'report_to_user',
+          retryable: false,
+          details: {
+            stepName: options.command,
+            attempts: attemptsUsed,
+            lastError: lastError.message,
+            ...(lastError.retry_after !== undefined ? { retry_after: lastError.retry_after } : {}),
+          },
         },
-      },
-    );
+      );
+    }
   }
 
   // Step 5: Handle dispatch failure — move step to failed_steps.
   if (dispatchError !== null) {
+    // #134 recoverable-incapability settle: a NOT-REGISTERED handler/adapter means THIS runner cannot
+    // execute the step, but a correctly-provisioned runner can. Terminal-burning it into failed_steps
+    // would make it permanently un-reclaimable. Instead settle RECOVERABLY: drop it from in_progress and
+    // omit its claim (same mutation), do NOT add it to failed_steps, do NOT seal the run, record a
+    // capability_blocks marker for diagnostics, and let it fall back to eligible so a capable runner
+    // reclaims it. Genuine ran-and-threw / service-not-found / adapter-runtime failures keep their
+    // ENGINE_*_FAILED codes and fall through to the terminal path below unchanged.
+    const recoverableCode =
+      dispatchError instanceof WorkflowError &&
+      (dispatchError.code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
+        dispatchError.code === 'ENGINE_ADAPTER_NOT_REGISTERED')
+        ? dispatchError.code
+        : undefined;
+    if (recoverableCode !== undefined) {
+      const requirement = requirementForStep(options.command, stepDef!, definition);
+      const blockedDraft: RunRecord = {
+        ...pendingRun,
+        in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== options.command),
+        // Delete the claim clock in the SAME mutation that removes the step (issue #101).
+        claims: omitClaim(pendingRun.claims, options.command),
+        evidence: [...pendingRun.evidence, ...allEvidence],
+        capability_blocks: {
+          ...pendingRun.capability_blocks,
+          [options.command]: {
+            requirement:
+              requirement !== undefined
+                ? { kind: requirement.kind, name: requirement.name }
+                : {
+                    kind:
+                      recoverableCode === 'ENGINE_HANDLER_NOT_REGISTERED' ? 'handler' : 'adapter',
+                    name: 'unknown',
+                  },
+            code: recoverableCode,
+            at: new Date().toISOString(),
+          },
+        },
+      };
+      // Non-terminal: recompute the phase so the store-fail fallback below is correct too
+      // (on the happy path store.update recomputes it identically via deriveRunPhase).
+      const blockedRun: RunRecord = { ...blockedDraft, run_phase: deriveRunPhase(blockedDraft) };
+
+      let persistedBlockedRun: RunRecord | undefined;
+      let blockStoreWarning: string | undefined;
+      try {
+        persistedBlockedRun = await store.update(blockedRun);
+      } catch (storeErr) {
+        blockStoreWarning = `Failed to persist capability block: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`;
+      }
+      let blockWalWarning: string | undefined;
+      try {
+        // Delete WAL after run state is written — the step's entries are now in evidence.
+        await options.traceBufferStore?.delete(options.runId, options.command);
+      } catch (walErr) {
+        blockWalWarning = `Failed to clean up trace buffer after capability block: ${walErr instanceof Error ? walErr.message : String(walErr)}`;
+      }
+
+      // Non-terminal 'stop' → 'report_to_user' via the existing mapping: a human must provision the
+      // runner (or re-run on a capable one); no further progress is possible on THIS runner.
+      const blockedAction = resolvePostDispatchAgentAction(dispatchError, false);
+      let blockedNextActions: NextAction[] = [];
+      if (blockedAction !== 'stop' && blockStoreWarning === undefined) {
+        try {
+          blockedNextActions = buildNextActions(definition, persistedBlockedRun ?? blockedRun);
+        } catch {
+          // buildNextActions can throw for unresolvable template references; fall back to [].
+        }
+      }
+      const reqLabel =
+        requirement !== undefined
+          ? `${requirement.kind} '${requirement.name}'`
+          : recoverableCode === 'ENGINE_HANDLER_NOT_REGISTERED'
+            ? 'handler'
+            : 'adapter';
+      return {
+        command: options.command,
+        run_id: options.runId,
+        run_version: (persistedBlockedRun ?? blockedRun).version,
+        status: 'error',
+        data: {},
+        evidence: allEvidence,
+        warnings: mergeWarnings(traceWarnings, blockStoreWarning ?? blockWalWarning),
+        errors: [dispatchError.message],
+        agent_action: blockedAction,
+        error_code: recoverableCode,
+        context_hint: `Step '${options.command}' is blocked: its ${reqLabel} is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this ${requirement?.kind ?? 'capability'} can execute it. Provision this runner (or re-run on a capable one), then follow next_actions.`,
+        run_phase: (persistedBlockedRun ?? blockedRun).run_phase,
+        next_actions: blockedNextActions,
+      };
+    }
+
     // Pure in-memory derivations — no I/O, no try required.
     const afterFail: RunRecord = {
       ...pendingRun,

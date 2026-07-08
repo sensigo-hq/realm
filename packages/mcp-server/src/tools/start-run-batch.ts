@@ -8,6 +8,9 @@ import {
   buildPreExecutionErrorEnvelope,
   validateInputSchema,
   hashParams,
+  unmetCapabilities,
+  capabilityWarning,
+  createDefaultRegistry,
   type ResponseEnvelope,
   type RunPhase,
 } from '@sensigo/realm';
@@ -77,12 +80,22 @@ export async function handleStartRunBatch(
 
   const definition = await workflowStore.get(args.workflow_id);
 
-  // Awaited BEFORE any runStore.create — a throwing registryProvider (broken project
-  // extensions) must fail the batch with NO runs created. The batch itself executes no
-  // steps, so the resolved registry is not used here; the await is the fail-fast gate.
-  if (stores?.registryProvider !== undefined) {
-    await stores.registryProvider(definition);
-  }
+  // Resolved BEFORE any runStore.create — a throwing registryProvider (broken project extensions) must
+  // fail the batch with NO runs created (fail-fast gate). Provider wins over the construction-time
+  // registry. Captured (not just awaited) so the #134 pre-flight can inspect the same effective registry.
+  const registry =
+    stores?.registryProvider !== undefined
+      ? await stores.registryProvider(definition)
+      : stores?.registry;
+
+  // #134 pre-flight (WARN-only, never refuse): capability gaps are workflow-invariant, so compute ONCE
+  // and attach to every item. Caveated — a batch item may ultimately be driven by a DIFFERENT runner
+  // than the one whose registry we see at creation time. The `?? createDefaultRegistry()` fallback is the
+  // HARD invariant that stops a filesystem-only workflow from false-warning when no registry is supplied.
+  const capabilityWarnings = unmetCapabilities(definition, registry ?? createDefaultRegistry()).map(
+    (req) =>
+      `${capabilityWarning(req)} (Based on the creation-time registry; the driving runner may differ.)`,
+  );
 
   if (definition.params_schema !== undefined) {
     const failures: Array<{ index: number; reason: string }> = [];
@@ -145,7 +158,7 @@ export async function handleStartRunBatch(
     const deduped = !created;
     if (deduped) dedupHits++;
 
-    const warnings: string[] = [];
+    const warnings: string[] = [...capabilityWarnings];
     if (deduped) {
       if (run.run_phase === 'running' || run.run_phase === 'gate_waiting') {
         warnings.push(`Idempotency key matched a run still in phase '${run.run_phase}'.`);

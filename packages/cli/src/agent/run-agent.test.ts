@@ -3,7 +3,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { runAgent } from './run-agent.js';
 import type { AgentDeps } from './run-agent.js';
 import type { WorkflowDefinition, ToolCallRecord } from '@sensigo/realm';
-import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
+import {
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+  createDefaultRegistry,
+  ExtensionRegistry,
+} from '@sensigo/realm';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { McpClient, McpTool } from './mcp/mcp-extensions.js';
@@ -440,5 +444,70 @@ describe('runAgent — wedge detection on attach (#101, detect-only)', () => {
     expect(out).toContain('review: claim_unknown_age');
     expect(out).toContain(`realm run reclaim ${run.id} --step review --force`);
     expect(provider.callStep).not.toHaveBeenCalled(); // detect-only — attach does NOT execute
+  });
+});
+
+describe('runAgent — capability recovery (#134)', () => {
+  const handlerWorkflow: WorkflowDefinition = {
+    id: 'handler-agent',
+    name: 'Handler Agent',
+    version: 1,
+    schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+    steps: { enrich: { description: 'Enrich', execution: 'auto', handler: 'enricher' } },
+  };
+  const stubProvider = new (class extends LlmProvider {
+    callStep = vi.fn();
+  })();
+
+  it('not-registered handler → capability-aware guidance (not ✗ Step failed), then RECOVERS on re-attach with a fixed registry', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new InMemoryStore();
+    const { run } = await store.create({
+      workflowId: 'handler-agent',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // 1) Broken runner (empty registry) → the auto step blocks recoverably; guidance, not a bare fail.
+    const broken = await runAgent(
+      {
+        store,
+        workflowStore: makeWorkflowStore(handlerWorkflow),
+        provider: stubProvider,
+        registry: new ExtensionRegistry(),
+      },
+      { existingRunId: run.id, definition: handlerWorkflow, params: {} },
+    );
+    expect(broken).toBe('failed'); // no 'blocked' AgentRunResult variant, by design
+    const printed = errorSpy.mock.calls.flat().join('\n');
+    expect(printed).toContain('is blocked');
+    expect(printed).toContain("handler 'enricher'");
+    expect(printed).toContain('re-attach');
+    expect(printed).not.toContain('✗ Step');
+    const afterBlock = await store.get(run.id);
+    expect(afterBlock.terminal_state).toBe(false); // NOT terminal-burned
+    expect(afterBlock.failed_steps).not.toContain('enrich');
+    expect(afterBlock.capability_blocks?.['enrich']).toBeDefined();
+    errorSpy.mockRestore();
+
+    // 2) Fixed runner re-attaches and drives the SAME run to completion (recovery proof).
+    const good = new ExtensionRegistry();
+    good.register('handler', 'enricher', {
+      id: 'enricher',
+      execute: async () => ({ data: { enriched: true } }),
+    });
+    const recovered = await runAgent(
+      {
+        store,
+        workflowStore: makeWorkflowStore(handlerWorkflow),
+        provider: stubProvider,
+        registry: good,
+      },
+      { existingRunId: run.id, definition: handlerWorkflow, params: {} },
+    );
+    expect(recovered).toBe('completed');
+    const done = await store.get(run.id);
+    expect(done.terminal_state).toBe(true);
+    expect(done.completed_steps).toContain('enrich');
   });
 });

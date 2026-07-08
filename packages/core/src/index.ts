@@ -64,6 +64,13 @@ export type { ClaimState, InProgressClaimInfo } from './engine/claim-liveness.js
 export { reclaimStep } from './engine/reclaim-step.js';
 export type { ReclaimResult, ReclaimOutcome, ReclaimStepOptions } from './engine/reclaim-step.js';
 export {
+  requirementForStep,
+  unmetCapabilities,
+  findCapabilityBlockedSteps,
+  capabilityWarning,
+} from './engine/capability.js';
+export type { Requirement, CapabilityBlockInfo } from './engine/capability.js';
+export {
   evaluatePrecondition,
   checkPreconditions,
   evaluateAllPreconditions,

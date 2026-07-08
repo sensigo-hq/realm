@@ -8,6 +8,8 @@ import {
   findEligibleSteps,
   executeChain,
   submitHumanResponse,
+  unmetCapabilities,
+  capabilityWarning,
 } from '@sensigo/realm';
 import type { WorkflowDefinition, StepDefinition, ExtensionRegistry } from '@sensigo/realm';
 import type { StepDispatcher } from '@sensigo/realm';
@@ -83,6 +85,13 @@ export const runCommand = new Command('run')
 
       console.log(`\nRealm — ${definition.name} v${definition.version}`);
       console.log(`Run ID: ${runId}\n`);
+
+      // #134 pre-flight (WARN-only, never refuse): surface capability gaps up front so a dev sees them
+      // before a step blocks recoverably. `registry` here is always a real registry (loadProjectExtensions
+      // returns one or the CLI has already exited), so the `?? createDefaultRegistry()` invariant holds.
+      for (const req of unmetCapabilities(definition, registry)) {
+        console.warn(`⚠ ${capabilityWarning(req)}`);
+      }
 
       // 4. Set up readline
       const rl = createInterface({ input: process.stdin, output: process.stdout });

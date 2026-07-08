@@ -8,6 +8,9 @@ import {
   classifyInProgressClaims,
   executeChain,
   buildNextActions,
+  findCapabilityBlockedSteps,
+  unmetCapabilities,
+  capabilityWarning,
   WorkflowError,
   type RunStore,
   type WorkflowDefinition,
@@ -197,6 +200,14 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     });
     runId = initialRecord.id;
     currentRun = await deps.store.get(runId);
+
+    // #134 pre-flight (WARN-only, never refuse): warn at CREATE only. The attach path (--run-id) above
+    // is N-A — it re-drives an EXISTING run, where recoverable-settle + the A5 surfaces already handle a
+    // capability block. `deps.registry` is always a real registry, so the `?? createDefaultRegistry()`
+    // invariant holds structurally.
+    for (const req of unmetCapabilities(definition, deps.registry)) {
+      console.warn(`⚠ ${capabilityWarning(req)}`);
+    }
   }
 
   console.log(`\nRealm Agent — ${definition.name} v${definition.version}`);
@@ -477,7 +488,29 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       });
 
       if (result.status === 'error') {
-        console.error(`\n✗ Step '${stepName}' failed: ${result.errors.join(', ')}`);
+        // #134: a NOT-REGISTERED handler/adapter settles RECOVERABLY — the run is NOT failed, the step
+        // is parked awaiting a capable runner. Detect structurally via error_code (not message text) and
+        // print capability-aware guidance instead of a bare `✗ Step failed`. The return stays 'failed'
+        // (no 'blocked' AgentRunResult variant, by design) — the distinction lives in the message.
+        const isCapabilityBlock =
+          result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
+          result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED';
+        if (isCapabilityBlock) {
+          currentRun = await deps.store.get(runId);
+          const block = findCapabilityBlockedSteps(currentRun).find((b) => b.step === stepName);
+          const need =
+            block !== undefined
+              ? `${block.requirement.kind} '${block.requirement.name}'`
+              : result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED'
+                ? 'the missing handler'
+                : 'the missing adapter';
+          console.error(
+            `\n⚠ Step '${stepName}' is blocked: ${need} is not registered in this runner. ` +
+              `The run is NOT failed — add ${need} and re-attach (\`realm agent --run-id ${runId}\`).`,
+          );
+        } else {
+          console.error(`\n✗ Step '${stepName}' failed: ${result.errors.join(', ')}`);
+        }
         return 'failed';
       }
 
