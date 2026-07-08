@@ -33,6 +33,7 @@ import {
 import { normalizeTrace } from './trace-normalizer.js';
 import type { NormalizeTraceResult } from './trace-normalizer.js';
 import { TERMINAL_PHASES, isTerminalPhase, DRAIN_CEILING_SECONDS } from './lifecycle.js';
+import { omitClaim } from './claim-liveness.js';
 import {
   checkPreconditions,
   evaluateAllPreconditions,
@@ -1083,6 +1084,8 @@ export async function executeStep(
         const withHandlerSkipped: RunRecord = {
           ...pendingRun,
           in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== options.command),
+          // Delete the claim clock in the SAME mutation that removes the step (issue #101).
+          claims: omitClaim(pendingRun.claims, options.command),
           evidence: [...pendingRun.evidence, abortEvidence],
           skipped_steps: [...pendingRun.skipped_steps, options.command],
         };
@@ -1232,6 +1235,8 @@ export async function executeStep(
     const afterFail: RunRecord = {
       ...pendingRun,
       in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== options.command),
+      // Delete the claim clock in the SAME mutation that removes the step (issue #101).
+      claims: omitClaim(pendingRun.claims, options.command),
       failed_steps: [...pendingRun.failed_steps, options.command],
     };
     // Propagate skips: mark steps whose trigger_rule can never be satisfied after this failure.
@@ -1504,6 +1509,8 @@ export async function executeStep(
   const afterComplete: RunRecord = {
     ...pendingRun,
     in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== options.command),
+    // Delete the claim clock in the SAME mutation that removes the step (issue #101).
+    claims: omitClaim(pendingRun.claims, options.command),
     completed_steps: [...pendingRun.completed_steps, options.command],
     evidence: [...pendingRun.evidence, ...allEvidence],
   };
@@ -1700,6 +1707,8 @@ export async function submitHumanResponse(
   const afterGate: RunRecord = {
     ...rest,
     in_progress_steps: rest.in_progress_steps.filter((s) => s !== gateStepName),
+    // Delete the claim clock in the SAME mutation that removes the step (issue #101).
+    claims: omitClaim(rest.claims, gateStepName),
     completed_steps: [...rest.completed_steps, gateStepName],
     evidence: [...rest.evidence, gateSnapshot],
   };

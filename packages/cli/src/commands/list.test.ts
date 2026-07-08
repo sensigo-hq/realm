@@ -164,11 +164,13 @@ describe('listRuns', () => {
       run_phase: 'running',
       terminal_state: false,
       in_progress_steps: ['step_a'],
+      // A HEALTHY in-flight claim (a live runner) — not stuck under the #101 3-state model.
+      claims: { step_a: { deadline: new Date(Date.now() + 3_600_000).toISOString() } },
     });
     const done = makeRun({ id: 'run-done', run_phase: 'completed', terminal_state: true });
     const result = await listRuns(undefined, makeStore([stuck, active, done]), undefined, true);
     expect(result).toContain('run-stuck');
-    expect(result).not.toContain('run-active'); // has a claimed step
+    expect(result).not.toContain('run-active'); // has a HEALTHY claimed step (live runner)
     expect(result).not.toContain('run-done'); // terminal
     expect(result).toContain('idle:'); // idle age shown
   });
@@ -179,8 +181,101 @@ describe('listRuns', () => {
       run_phase: 'running',
       terminal_state: false,
       in_progress_steps: ['step_a'],
+      // HEALTHY in-flight claim → not stuck under the #101 3-state model.
+      claims: { step_a: { deadline: new Date(Date.now() + 3_600_000).toISOString() } },
     });
     const result = await listRuns(undefined, makeStore([active]), undefined, true);
+    expect(result).toContain('No stuck runs found');
+  });
+
+  it('--stuck flags a claimed-but-idle run with a STALE claim, labeled with its state (#101)', async () => {
+    const wedge = makeRun({
+      id: 'run-wedge',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: ['step_a'],
+      claims: { step_a: { deadline: new Date(Date.now() - 60_000).toISOString() } },
+    });
+    const result = await listRuns(undefined, makeStore([wedge]), undefined, true);
+    expect(result).toContain('run-wedge');
+    expect(result).toContain('step_a=claim_stale');
+  });
+
+  it('--stuck flags a claimed-but-idle run with an UNKNOWN-AGE claim (#101)', async () => {
+    const wedge = makeRun({
+      id: 'run-wedge2',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: ['step_a'],
+      claims: { step_a: { deadline: null } },
+    });
+    const result = await listRuns(undefined, makeStore([wedge]), undefined, true);
+    expect(result).toContain('run-wedge2');
+    expect(result).toContain('step_a=claim_unknown_age');
+  });
+
+  // #101 gate/fan-out correction: a wedged NON-gated sibling on a gate_waiting run must surface.
+  it('--stuck flags a gate_waiting run with a STALE non-gated sibling; does NOT label the gated step', async () => {
+    const wedge = makeRun({
+      id: 'run-gatewedge',
+      run_phase: 'gate_waiting',
+      terminal_state: false,
+      in_progress_steps: ['gated', 'branch_b'],
+      claims: {
+        gated: { deadline: new Date(Date.now() - 60_000).toISOString() }, // gated step, even if stale...
+        branch_b: { deadline: new Date(Date.now() - 60_000).toISOString() },
+      },
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 'gated',
+        choices: ['approve'],
+        opened_at: new Date().toISOString(),
+        preview: {},
+      },
+    });
+    const result = await listRuns(undefined, makeStore([wedge]), undefined, true);
+    expect(result).toContain('run-gatewedge');
+    expect(result).toContain('branch_b=claim_stale');
+    expect(result).not.toContain('gated=claim_stale'); // the open-gate step is never a wedge
+  });
+
+  it('--stuck flags a gate_waiting run with an UNKNOWN-AGE non-gated sibling', async () => {
+    const wedge = makeRun({
+      id: 'run-gatewedge2',
+      run_phase: 'gate_waiting',
+      terminal_state: false,
+      in_progress_steps: ['gated', 'branch_b'],
+      claims: { gated: { deadline: null }, branch_b: { deadline: null } },
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 'gated',
+        choices: ['approve'],
+        opened_at: new Date().toISOString(),
+        preview: {},
+      },
+    });
+    const result = await listRuns(undefined, makeStore([wedge]), undefined, true);
+    expect(result).toContain('run-gatewedge2');
+    expect(result).toContain('branch_b=claim_unknown_age');
+    expect(result).not.toContain('gated=');
+  });
+
+  it('--stuck does NOT flag a gate_waiting run whose only in-progress claim is the gated step', async () => {
+    const plainGate = makeRun({
+      id: 'run-plaingate',
+      run_phase: 'gate_waiting',
+      terminal_state: false,
+      in_progress_steps: ['gated'],
+      claims: { gated: { deadline: new Date(Date.now() - 60_000).toISOString() } },
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 'gated',
+        choices: ['approve'],
+        opened_at: new Date().toISOString(),
+        preview: {},
+      },
+    });
+    const result = await listRuns(undefined, makeStore([plainGate]), undefined, true);
     expect(result).toContain('No stuck runs found');
   });
 });

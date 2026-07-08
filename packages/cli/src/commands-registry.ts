@@ -6,6 +6,7 @@ import { registerCommand } from './commands/register.js';
 import { runCommand } from './commands/run.js';
 import { resumeCommand } from './commands/resume.js';
 import { abandonCommand } from './commands/abandon.js';
+import { reclaimCommand } from './commands/reclaim.js';
 import { cleanupCommand } from './commands/cleanup.js';
 import { reconcileCommand } from './commands/reconcile.js';
 import { attemptsCommand } from './commands/attempts.js';
@@ -43,6 +44,7 @@ export const runCommands = [
   diffCommand,
   resumeCommand,
   abandonCommand,
+  reclaimCommand,
   respondCommand,
   cleanupCommand,
   reconcileCommand,
