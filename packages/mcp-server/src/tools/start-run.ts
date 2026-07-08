@@ -10,6 +10,9 @@ import {
   hashParams,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
+  unmetCapabilities,
+  capabilityWarning,
+  createDefaultRegistry,
   type StepDispatcher,
   type ResponseEnvelope,
   type TraceBufferStore,
@@ -82,7 +85,13 @@ export async function handleStartRun(
   // The store reports `created`; the tool surfaces its inverse, `deduped`.
   const deduped = !created;
 
-  const warnings: string[] = [];
+  // #134 pre-flight (WARN-only, never refuse): if the effective registry can't satisfy the workflow's
+  // auto-step handlers/adapters, warn so the operator can provision before a step blocks recoverably.
+  // The `?? createDefaultRegistry()` fallback is a HARD invariant — it mirrors the dispatch sites, so a
+  // filesystem-only workflow with no supplied registry does not false-warn.
+  const warnings: string[] = unmetCapabilities(definition, registry ?? createDefaultRegistry()).map(
+    capabilityWarning,
+  );
   if (deduped) {
     // Observational only — a legitimate same-caller retry also hits an active run.
     if (run.run_phase === 'running' || run.run_phase === 'gate_waiting') {

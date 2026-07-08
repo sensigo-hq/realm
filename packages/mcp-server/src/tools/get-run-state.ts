@@ -9,6 +9,7 @@ import {
   buildNextActions,
   findEligibleSteps,
   classifyInProgressClaims,
+  findCapabilityBlockedSteps,
   type RunPhase,
   type NextAction,
   type ClaimState,
@@ -38,6 +39,10 @@ export interface HandleRunStateStores {
  *   runner / the after-claim wedge, issue #101). Surfaced even when a healthy sibling is in flight.
  * - `claim_unknown_age` — a non-terminal run's only in-progress claims have no deadline (agent /
  *   finalizer-bearing / legacy) and there is nothing else to do — detect-only, human-judged.
+ * - `blocked_on_capability` — a non-terminal run has a step parked by a not-registered handler/adapter
+ *   (issue #134): the step settled recoverably and is eligible again, awaiting a runner that provides
+ *   the missing capability. Computed definition-free, so it also refines the `workflow_unresolved` path.
+ *   Outranks `claim_stale` (a more specific, actionable diagnosis); ranks below `awaiting_human`.
  */
 export type NextActionsStatus =
   | 'ok'
@@ -46,7 +51,8 @@ export type NextActionsStatus =
   | 'workflow_unresolved'
   | 'skipped_terminal'
   | 'claim_stale'
-  | 'claim_unknown_age';
+  | 'claim_unknown_age'
+  | 'blocked_on_capability';
 
 export interface RunStateSummary {
   run_id: string;
@@ -84,6 +90,18 @@ export interface RunStateSummary {
    * The `pending_gate` step is never included (it is legitimately pinned while its gate is open).
    */
   stuck_claims?: Array<{ step: string; state: ClaimState }>;
+  /**
+   * Advisory (issue #134): steps parked by a not-registered handler/adapter that are still eligible —
+   * present on any non-terminal run whenever such markers exist. Definition-free (via
+   * `findCapabilityBlockedSteps`), so it surfaces even on the `workflow_unresolved` path and behind a
+   * healthy in-progress sibling. May coexist with `stuck_claims` on a fan-out run. Names the missing
+   * requirement so an operator (or a pure-MCP consumer, via `execute_step` on the named step) can recover.
+   */
+  capability_blocks?: Array<{
+    step: string;
+    requirement: { kind: 'handler' | 'adapter'; name: string };
+    code: string;
+  }>;
 }
 
 /**
@@ -96,6 +114,11 @@ export async function handleGetRunState(
 ): Promise<RunStateSummary> {
   const runStore = stores?.runStore ?? new JsonFileStore();
   const run = await runStore.get(args.run_id);
+
+  // #134 capability-block detection — definition-free (reads capability_blocks + the four step sets),
+  // computed once and used both to refine the status (below) and as the advisory array (in the return).
+  // Terminal guard mirrors stuck_claims: a sealed run surfaces nothing to do.
+  const capabilityBlocks = run.terminal_state ? [] : findCapabilityBlockedSteps(run);
 
   // Compute next_actions + diagnostic status (read-only). Precedence:
   // terminal → skipped_terminal; gate open → awaiting_human; no/unresolved workflow →
@@ -141,6 +164,13 @@ export async function handleGetRunState(
         nextActionsStatus = 'claim_unknown_age';
       }
     }
+
+    // #134 capability block outranks the claim-wedge states (a missing capability is a more specific,
+    // actionable diagnosis than a stale/unknown-age claim) but ranks below `awaiting_human` — the gate
+    // path returns above without entering this else block, so it wins naturally.
+    if (capabilityBlocks.length > 0) {
+      nextActionsStatus = 'blocked_on_capability';
+    }
   }
 
   // Advisory wedge surfacing (issue #101), computed UNIFORMLY for every non-terminal path (gate,
@@ -172,6 +202,15 @@ export async function handleGetRunState(
     next_actions: nextActions,
     next_actions_status: nextActionsStatus,
     ...(stuckClaims.length > 0 ? { stuck_claims: stuckClaims } : {}),
+    ...(capabilityBlocks.length > 0
+      ? {
+          capability_blocks: capabilityBlocks.map((b) => ({
+            step: b.step,
+            requirement: b.requirement,
+            code: b.code,
+          })),
+        }
+      : {}),
   };
 }
 

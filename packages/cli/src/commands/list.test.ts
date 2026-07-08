@@ -278,6 +278,45 @@ describe('listRuns', () => {
     const result = await listRuns(undefined, makeStore([plainGate]), undefined, true);
     expect(result).toContain('No stuck runs found');
   });
+
+  // #134 fan-out fix — a capability-blocked step behind a HEALTHY in-progress sibling.
+  it('--stuck flags a capability-blocked step even behind a healthy in-progress sibling (fan-out fix)', async () => {
+    const blocked = makeRun({
+      id: 'run-capblock',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: ['sibling'], // a live sibling — the plain claim check would read this 'ok'
+      claims: { sibling: { deadline: new Date(Date.now() + 3_600_000).toISOString() } },
+      capability_blocks: {
+        enrich: {
+          requirement: { kind: 'adapter', name: 'shopify' },
+          code: 'ENGINE_ADAPTER_NOT_REGISTERED',
+          at: new Date().toISOString(),
+        },
+      },
+    });
+    const result = await listRuns(undefined, makeStore([blocked]), undefined, true);
+    expect(result).toContain('run-capblock');
+    expect(result).toContain("enrich: needs adapter 'shopify'"); // names the missing requirement
+  });
+
+  it('--stuck does NOT flag a terminal run whose capability block step has since settled', async () => {
+    const settled = makeRun({
+      id: 'run-capdone',
+      run_phase: 'completed',
+      terminal_state: true,
+      completed_steps: ['enrich'],
+      capability_blocks: {
+        enrich: {
+          requirement: { kind: 'adapter', name: 'shopify' },
+          code: 'ENGINE_ADAPTER_NOT_REGISTERED',
+          at: new Date().toISOString(),
+        },
+      },
+    });
+    const result = await listRuns(undefined, makeStore([settled]), undefined, true);
+    expect(result).toContain('No stuck runs found');
+  });
 });
 
 describe('listRuns statusFilter', () => {

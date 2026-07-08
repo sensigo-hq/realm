@@ -182,6 +182,25 @@ export interface ClaimRecord {
   deadline: string | null;
 }
 
+/**
+ * A recoverable-incapability marker (issue #134), keyed by step name in {@link RunRecord.capability_blocks}.
+ * Written when an auto step's handler/adapter is NOT REGISTERED in the executing runner's registry: the
+ * step settles RECOVERABLY (removed from `in_progress_steps`, claim omitted, NOT added to `failed_steps`,
+ * run NOT terminal-sealed) so a correctly-provisioned runner can reclaim it. Advisory metadata for
+ * DETECTION and operator diagnostics ONLY — the four step sets stay authoritative for eligibility, so a
+ * stale marker (step since completed on another runner) self-suppresses via the eligibility cross-check in
+ * `findCapabilityBlockedSteps`. Clearing it on recovery is hygiene, not correctness. Additive-optional (the
+ * `claims` / `extension_identity` precedent): legacy records lack it; JSON-file-store-only until external
+ * stores round-trip unknown optional RunRecord fields through update().
+ */
+export interface CapabilityBlock {
+  requirement: { kind: 'handler' | 'adapter'; name: string };
+  /** The minted discriminator: `ENGINE_HANDLER_NOT_REGISTERED` | `ENGINE_ADAPTER_NOT_REGISTERED`. */
+  code: string;
+  /** ISO-8601 timestamp of the block. */
+  at: string;
+}
+
 export interface RunRecord {
   id: string;
   workflow_id: string;
@@ -215,6 +234,14 @@ export interface RunRecord {
    * rather than silently no-opping.
    */
   claims?: Record<string, ClaimRecord>;
+
+  /**
+   * Recoverable-incapability markers (issue #134), keyed by step name. Written when an auto step's
+   * handler/adapter is not registered in the executing runner's registry — see {@link CapabilityBlock}.
+   * Advisory DETECTION metadata only; the four step sets stay authoritative for eligibility.
+   * Additive-optional (the `claims` precedent): absent on legacy records and capability-clean runs.
+   */
+  capability_blocks?: Record<string, CapabilityBlock>;
 
   /**
    * Derived convenience field — set by the engine on every write, read by CLI and get_run_state.
