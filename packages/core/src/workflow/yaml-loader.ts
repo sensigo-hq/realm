@@ -451,6 +451,15 @@ function parseWorkflowString(
 
   const stepsRaw = doc['steps'] as Record<string, unknown>;
 
+  // Finalizer-bearing workflows write every claim `deadline: null` (issue #101), so a per-step
+  // `idempotent` hint is INERT there (never cron-reclaimable). Used only to WARN below.
+  const hasFinalizerStep = Object.values(stepsRaw).some(
+    (s) =>
+      typeof s === 'object' &&
+      s !== null &&
+      (s as Record<string, unknown>)['execution'] === 'finalizer',
+  );
+
   // Step 3: Per-step validation
   for (const [stepName, stepRaw] of Object.entries(stepsRaw)) {
     if (typeof stepRaw !== 'object' || stepRaw === null || Array.isArray(stepRaw)) {
@@ -581,6 +590,23 @@ function parseWorkflowString(
     // agent_profile is only valid on agent steps.
     if ('agent_profile' in step && step['execution'] !== 'agent') {
       errors.push(`Step '${stepName}': 'agent_profile' is only valid on execution: agent steps`);
+    }
+
+    // idempotent (issue #101 Phase 2) is only valid on execution: auto steps — the reliably
+    // time-boundable, deadline-carrying class. It is inert (no concrete deadline is ever written)
+    // on agent/guard/finalizer, so it is rejected there rather than silently ignored.
+    if (step['idempotent'] !== undefined && step['execution'] !== 'auto') {
+      errors.push(`Step '${stepName}': 'idempotent' is only valid on execution: auto steps`);
+    }
+    // WARN (do not reject): an idempotent auto step in a finalizer-bearing workflow gets
+    // `deadline: null` (issue #101), so the flag is inert — `realm run reclaim --all` can never
+    // select it. The author should know it stays per-step-manual-reclaim-only.
+    if (step['idempotent'] === true && step['execution'] === 'auto' && hasFinalizerStep) {
+      console.warn(
+        `Step '${stepName}': 'idempotent: true' is inert in a finalizer-bearing workflow (its claim ` +
+          `carries no deadline, so 'realm run reclaim --all' can never select it). Recover it with ` +
+          `'realm run reclaim --step ${stepName} --force'.`,
+      );
     }
 
     // output_schema is only valid on execution: agent steps.

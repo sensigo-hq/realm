@@ -156,6 +156,16 @@ export interface StepDefinition {
    * Required on (and only valid on) execution: 'finalizer' steps.
    */
   on_outcome?: FinalizerTrigger | FinalizerTrigger[];
+  /**
+   * Advisory hint (issue #101 Phase 2) that this step's handler is safe to re-execute. It is
+   * READ-ONLY and WIDEN-ONLY: it does NOTHING to normal execution and NEVER forces an outcome — it
+   * solely adds the step to the opt-in bounded-time auto-reclaim allow-list (`realm run reclaim
+   * --all`). A concrete `claims[S].deadline` is still required for auto-reclaim, so this is only
+   * meaningful on `execution: 'auto'` steps in a workflow with NO finalizer steps (those write
+   * `deadline: null` → `claim_unknown_age` → never cron-reclaimable). Absent ⇒ false. Deliberately
+   * NOT `orphan_policy` (which would force a fail-seal); `idempotent` only ever *permits* auto-reclaim.
+   */
+  idempotent?: boolean;
   uses_service?: string;
   /**
    * Which adapter method to invoke for this service step.
