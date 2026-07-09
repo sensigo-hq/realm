@@ -102,7 +102,9 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     const retry = await makeRequest(retryMessages);
     const retryParsed = extractJsonObject(retry);
     if (retryParsed !== null) return retryParsed;
-    throw new Error(`OpenAI returned non-JSON content after retry: ${retry.slice(0, 200)}`);
+    throw new Error(
+      sanitizeError(`OpenAI returned non-JSON content after retry: ${retry.slice(0, 200)}`),
+    );
   }
 
   /**

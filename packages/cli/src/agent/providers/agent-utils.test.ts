@@ -130,7 +130,7 @@ describe('extractJsonObject (mandate test 3 — the P1 robust extractor)', () =>
     expect(extractJsonObject('{"a":1} — that is my final answer.')).toEqual({ a: 1 });
   });
 
-  it('a top-level array is rejected (object-only, preserving tryParseJson behavior)', () => {
+  it('a top-level array is rejected (object-only)', () => {
     expect(extractJsonObject('[1,2,3]')).toBeNull();
   });
 

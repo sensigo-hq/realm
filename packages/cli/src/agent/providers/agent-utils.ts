@@ -96,19 +96,6 @@ export function parseNamespacedId(id: string): { serverId: string; toolName: str
   return { serverId: id.slice(0, colonIdx), toolName: id.slice(colonIdx + 1) };
 }
 
-/** Tries to parse JSON; returns a plain object or null if parsing fails or the result is not an object. */
-export function tryParseJson(text: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 /** Returns the text of every ```-fenced code block (language tag optional), in document order. */
 function extractFencedBlocks(text: string): string[] {
   const blocks: string[] = [];
@@ -180,7 +167,7 @@ function lastParsedObject(candidates: string[]): Record<string, unknown> | null 
  * Extracts a single JSON object from LLM output text — the robust fallback for a model that
  * ignores "respond with JSON only" and instead wraps its answer in a fenced code block, a
  * preamble/postamble, or an illustrative example before the real answer. Object-only: a bare
- * top-level array or scalar is rejected (returns null), preserving {@link tryParseJson}'s behavior.
+ * top-level array or scalar is rejected (returns null).
  *
  * Algorithm: prefer the content of ```-fenced code blocks, if any are present (falling back to
  * the raw text if fences yield no usable object); scan for top-level balanced `{...}` substrings

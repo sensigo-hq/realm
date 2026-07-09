@@ -1,7 +1,7 @@
 // openai-reasoning-provider.ts — OpenAI reasoning model provider (o1-series) for realm agent.
 // Extends LlmProvider (not ToolCapableLlmProvider) — o1-series models do not support the tools parameter.
 import { LlmProvider } from './llm-provider.js';
-import { buildSystemPrompt, extractJsonObject } from './agent-utils.js';
+import { buildSystemPrompt, extractJsonObject, sanitizeError } from './agent-utils.js';
 
 /**
  * Returns the max_completion_tokens for the given OpenAI reasoning model.
@@ -89,6 +89,8 @@ export class OpenAIReasoningProvider extends LlmProvider {
     const retry = await makeRequest(retryMessages);
     const retryParsed = extractJsonObject(retry);
     if (retryParsed !== null) return retryParsed;
-    throw new Error(`OpenAI returned non-JSON content after retry: ${retry.slice(0, 200)}`);
+    throw new Error(
+      sanitizeError(`OpenAI returned non-JSON content after retry: ${retry.slice(0, 200)}`),
+    );
   }
 }

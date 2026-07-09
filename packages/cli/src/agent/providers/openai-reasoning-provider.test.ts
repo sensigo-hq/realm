@@ -138,6 +138,24 @@ describe('OpenAIReasoningProvider.callStep', () => {
     const provider = new OpenAIReasoningProvider('o1-mini');
     expect(provider.capabilities()).toEqual({ jsonMode: false });
   });
+
+  // -----------------------------------------------------------------------
+  // Correction D2: redaction symmetry — mirrors the AnthropicProvider redaction test.
+  // -----------------------------------------------------------------------
+  it('redaction: a failure-path model string containing a secret is redacted in the thrown error', async () => {
+    vi.stubEnv('OPENAI_REASONING_TEST_SECRET', 'super-secret-value-123');
+    mockCreate
+      .mockResolvedValueOnce(makeTextResponse('leak super-secret-value-123 here, not JSON'))
+      .mockResolvedValueOnce(makeTextResponse('leak super-secret-value-123 here again, not JSON'));
+    const provider = new OpenAIReasoningProvider('o1-mini');
+    const err = await provider.callStep('prompt').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).not.toContain('super-secret-value-123');
+    expect(message).toContain('[REDACTED]');
+    vi.unstubAllEnvs();
+  });
 });
 
 // =========================================================================
