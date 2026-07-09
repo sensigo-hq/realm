@@ -1,4 +1,24 @@
 /**
+ * Bounds and redacts an adapter error body before it is attached to a WorkflowError's
+ * `details` (which surfaces in the user-facing envelope as error_details). Caps length and
+ * scrubs email addresses — the realistic PII an API error body echoes back from a request.
+ */
+export function redactErrorBody(body: unknown): string {
+  let text: string;
+  if (typeof body === 'string') {
+    text = body;
+  } else {
+    try {
+      text = JSON.stringify(body);
+    } catch {
+      text = String(body);
+    }
+  }
+  const capped = text.length > 500 ? `${text.slice(0, 500)}…[truncated]` : text;
+  return capped.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[REDACTED_EMAIL]');
+}
+
+/**
  * Parses the Retry-After HTTP header value into a delay in seconds.
  * Handles both integer-seconds form (e.g. "30") and HTTP-date form
  * (e.g. "Sat, 31 May 2026 12:00:00 GMT").

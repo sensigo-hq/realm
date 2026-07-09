@@ -286,6 +286,22 @@ describe("GorgiasAdapter fetch('get_ticket')", () => {
     expect(err.code).toBe('SERVICE_HTTP_4XX');
     expect(err.details['body']).toBe('not found');
   });
+
+  // A4: the error body echoed into details.body must never leak PII (e.g. a customer email
+  // submitted in the request and echoed back by a 4xx validation response) into the user-facing
+  // response envelope. Mutation-probe (report it): storing the raw body instead of
+  // redactErrorBody(body) must redden this test.
+  it('4xx body containing an email → details.body is redacted, not the raw email', async () => {
+    respond(400, { error: 'Invalid request', email: 'customer@example.com' });
+    const adapter = makeAdapter();
+    const err = await adapter
+      .fetch('get_ticket', { ticket_id: 1 }, {})
+      .catch((e: unknown) => e as WorkflowError);
+    expect(err).toBeInstanceOf(WorkflowError);
+    const body = err.details['body'] as string;
+    expect(body).toContain('[REDACTED_EMAIL]');
+    expect(body).not.toContain('customer@example.com');
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 // GorgiasAdapter — communicates with the Gorgias REST API.
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
-import { parseRetryAfterHeader } from './adapter-utils.js';
+import { parseRetryAfterHeader, redactErrorBody } from './adapter-utils.js';
 
 /**
  * Configuration for GorgiasAdapter.
@@ -192,7 +192,7 @@ export class GorgiasAdapter implements ServiceAdapter {
     }
 
     const status = response.status;
-    const details = { status, operation, body };
+    const details = { status, operation, body: redactErrorBody(body) };
 
     if (status === 429) {
       const retryAfterFromHeader = parseRetryAfterHeader(response.headers.get('Retry-After'));
