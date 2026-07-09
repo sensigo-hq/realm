@@ -45,6 +45,18 @@ function warnRetryWithoutExplicitTimeout(definition: WorkflowDefinition): void {
   }
 }
 
+/**
+ * The single success site BOTH validation branches (extension-free and file-based) share: the
+ * advisory warning is structurally inseparable from the `Valid:` line it accompanies — a branch
+ * cannot drop the advisory without also dropping the `Valid:` print that existing tests assert.
+ */
+function printValidationSuccess(definition: WorkflowDefinition): void {
+  warnRetryWithoutExplicitTimeout(definition);
+  console.log(
+    `Valid: ${definition.id} v${definition.version} (${Object.keys(definition.steps).length} steps)`,
+  );
+}
+
 /** Pre-scan: does the YAML carry a top-level `extensions` key? (Parse errors → false; the
  *  real loader below reports them with its existing error surface.) */
 function hasTopLevelExtensions(content: string): boolean {
@@ -96,10 +108,7 @@ export const validateCommand = new Command('validate')
         const definition = loadWorkflowFromString(content);
         const workflowDir = dirname(resolve(filePath));
         checkForOrphanedManifests(workflowDir, findTrustRoot(workflowDir));
-        warnRetryWithoutExplicitTimeout(definition);
-        console.log(
-          `Valid: ${definition.id} v${definition.version} (${Object.keys(definition.steps).length} steps)`,
-        );
+        printValidationSuccess(definition);
       } catch (err) {
         if (err instanceof WorkflowError) {
           console.error(`Invalid: ${err.message}`);
@@ -121,10 +130,7 @@ export const validateCommand = new Command('validate')
       for (const warning of sentinelWarnings ?? []) console.warn(`⚠  ${warning}`);
       // Pass 2: step config validated against each resolved adapter's config_schema.
       loadWorkflowFromFile(filePath, registry);
-      warnRetryWithoutExplicitTimeout(definition);
-      console.log(
-        `Valid: ${definition.id} v${definition.version} (${Object.keys(definition.steps).length} steps)`,
-      );
+      printValidationSuccess(definition);
       if (manifest.modules.length > 0) {
         console.log(
           `Extensions: ${manifest.modules.map((m) => m.declared).join(', ')} ` +
