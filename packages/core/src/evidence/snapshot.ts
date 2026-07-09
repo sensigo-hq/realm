@@ -36,6 +36,11 @@ export interface CaptureEvidenceParams {
   warn?: string;
   /** Agent-submitted reasoning extracted from _debug. Not hashed. */
   debugOutput?: unknown;
+  /**
+   * The timeout (in seconds) actually enforced on this step's dispatch (issue A3). Pass only
+   * when shouldEnforceTimeout(step) was true for this step; omit otherwise (additive-optional).
+   */
+  effectiveTimeoutSeconds?: number;
 }
 
 /** Builds an EvidenceSnapshot from step execution parameters, including a SHA-256 content hash.
@@ -85,6 +90,9 @@ export function captureEvidence(params: CaptureEvidenceParams): EvidenceSnapshot
     ...(params.warn !== undefined ? { warn: params.warn } : {}),
     ...(params.debugOutput !== undefined ? { debug_output: params.debugOutput } : {}),
     ...(params.toolCalls !== undefined ? { tool_calls: params.toolCalls } : {}),
+    ...(params.effectiveTimeoutSeconds !== undefined
+      ? { effective_timeout_seconds: params.effectiveTimeoutSeconds }
+      : {}),
     ...traceEntry,
   };
 }

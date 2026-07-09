@@ -1007,10 +1007,14 @@ export async function executeStep(
   // generous DEFAULT_EXECUTION_TIMEOUT_SECONDS default. Resolved ONCE here (before the retry loop
   // below), not per-attempt. Agent/guard steps (shouldEnforceTimeout false) are untouched: agent
   // dispatch stays the instant-return no-op it always was, never wrapped in withTimeout.
+  // effectiveTimeoutSeconds is the single source of truth; timeoutMs is derived from it so the
+  // two can never diverge. It is also surfaced onto the evidence snapshot below.
   const enforceTimeout = stepDef !== undefined && shouldEnforceTimeout(stepDef);
-  const timeoutMs = enforceTimeout
-    ? (stepDef!.timeout_seconds ?? DEFAULT_EXECUTION_TIMEOUT_SECONDS) * 1000
+  const effectiveTimeoutSeconds = enforceTimeout
+    ? (stepDef!.timeout_seconds ?? DEFAULT_EXECUTION_TIMEOUT_SECONDS)
     : undefined;
+  const timeoutMs =
+    effectiveTimeoutSeconds !== undefined ? effectiveTimeoutSeconds * 1000 : undefined;
 
   // Create a stable rate-limiter registry for all retry attempts of this step.
   // Shared state ensures that a pause() triggered on attempt N is still in effect
@@ -1191,6 +1195,7 @@ export async function executeStep(
       ...(options.stepMeta?.toolCalls !== undefined
         ? { toolCalls: options.stepMeta.toolCalls }
         : {}),
+      ...(effectiveTimeoutSeconds !== undefined ? { effectiveTimeoutSeconds } : {}),
       // Gate trace to agent steps only — drop silently for auto/adapter/handler steps.
       // When pre-normalized (WAL merge + schema validation ran), pass the pre-normalized
       // result to avoid double normalization. Also handle WAL-only case (options.trace may

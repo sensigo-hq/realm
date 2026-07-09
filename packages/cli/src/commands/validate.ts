@@ -14,11 +14,36 @@ import {
   loadWorkflowFromFile,
   findTrustRoot,
   WorkflowError,
+  shouldEnforceTimeout,
+  DEFAULT_EXECUTION_TIMEOUT_SECONDS,
 } from '@sensigo/realm';
+import type { WorkflowDefinition } from '@sensigo/realm';
 import {
   loadProjectExtensions,
   checkForOrphanedManifests,
 } from '../extensions/load-project-extensions.js';
+
+/**
+ * Advisory (issue A3, never rejects): an auto step declaring `retry:` but no `timeout_seconds`
+ * has EVERY attempt bounded by the generous DEFAULT_EXECUTION_TIMEOUT_SECONDS default — a hung
+ * attempt can take up to that long before the retry loop even considers the next one. Surfaces
+ * one warning per such step so the author can opt into a tighter explicit timeout_seconds.
+ */
+function warnRetryWithoutExplicitTimeout(definition: WorkflowDefinition): void {
+  for (const [stepName, step] of Object.entries(definition.steps)) {
+    if (
+      shouldEnforceTimeout(step) &&
+      step.retry !== undefined &&
+      step.timeout_seconds === undefined
+    ) {
+      console.warn(
+        `⚠  Step '${stepName}': declares 'retry' but no 'timeout_seconds' — each attempt is ` +
+          `bounded by the default execution timeout (${DEFAULT_EXECUTION_TIMEOUT_SECONDS}s). ` +
+          `Consider an explicit 'timeout_seconds' if attempts should fail faster.`,
+      );
+    }
+  }
+}
 
 /** Pre-scan: does the YAML carry a top-level `extensions` key? (Parse errors → false; the
  *  real loader below reports them with its existing error surface.) */
@@ -71,6 +96,7 @@ export const validateCommand = new Command('validate')
         const definition = loadWorkflowFromString(content);
         const workflowDir = dirname(resolve(filePath));
         checkForOrphanedManifests(workflowDir, findTrustRoot(workflowDir));
+        warnRetryWithoutExplicitTimeout(definition);
         console.log(
           `Valid: ${definition.id} v${definition.version} (${Object.keys(definition.steps).length} steps)`,
         );
@@ -95,6 +121,7 @@ export const validateCommand = new Command('validate')
       for (const warning of sentinelWarnings ?? []) console.warn(`⚠  ${warning}`);
       // Pass 2: step config validated against each resolved adapter's config_schema.
       loadWorkflowFromFile(filePath, registry);
+      warnRetryWithoutExplicitTimeout(definition);
       console.log(
         `Valid: ${definition.id} v${definition.version} (${Object.keys(definition.steps).length} steps)`,
       );

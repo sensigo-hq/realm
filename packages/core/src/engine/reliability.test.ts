@@ -12,6 +12,7 @@ import type { StepDispatcher } from './execution-loop.js';
 import { MockAdapter } from '../adapters/mock-adapter.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
+import { DEFAULT_EXECUTION_TIMEOUT_SECONDS } from './claim-liveness.js';
 
 // Workflow with a single step that times out at 0.05s and allows 2 retry attempts.
 const timeoutDef: WorkflowDefinition = {
@@ -77,6 +78,22 @@ const timeoutInFinalizerWorkflowDef: WorkflowDefinition = {
       execution: 'finalizer',
       on_outcome: 'always',
       handler: 'do_cleanup',
+    },
+  },
+};
+
+// Issue A3: an auto step with an explicit, generous timeout_seconds that never fires — used to
+// confirm the DECLARED value (not the default) is the one surfaced onto the evidence snapshot.
+const explicitTimeoutDef: WorkflowDefinition = {
+  id: 'explicit-timeout-wf',
+  name: 'Explicit Timeout Workflow',
+  version: 1,
+  steps: {
+    'step-one': {
+      description: 'Succeeds well within its declared timeout',
+      execution: 'auto',
+      depends_on: [],
+      timeout_seconds: 5,
     },
   },
 };
@@ -466,6 +483,48 @@ describe('reliability', () => {
     const updated = await store.get(run.id);
     expect(updated.run_phase).toBe('failed');
     expect(updated.terminal_state).toBe(true);
+  });
+
+  it('issue A3: evidence surfaces effective_timeout_seconds — the default when undeclared', async () => {
+    const store = new JsonFileStore(dir);
+    const { run: run } = await store.create({
+      workflowId: 'no-timeout-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const fastDispatcher: StepDispatcher = async () => ({ done: true });
+
+    const envelope = await executeStep(store, noTimeoutDef, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: fastDispatcher,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.evidence[0]?.effective_timeout_seconds).toBe(DEFAULT_EXECUTION_TIMEOUT_SECONDS);
+  });
+
+  it('issue A3: evidence surfaces effective_timeout_seconds — the declared value when present', async () => {
+    const store = new JsonFileStore(dir);
+    const { run: run } = await store.create({
+      workflowId: 'explicit-timeout-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const fastDispatcher: StepDispatcher = async () => ({ done: true });
+
+    const envelope = await executeStep(store, explicitTimeoutDef, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: fastDispatcher,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.evidence[0]?.effective_timeout_seconds).toBe(5);
   });
 
   it('MockAdapter rejects with STEP_ABORTED when signal is already aborted', async () => {
