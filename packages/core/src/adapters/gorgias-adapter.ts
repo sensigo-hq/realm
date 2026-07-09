@@ -1,7 +1,7 @@
 // GorgiasAdapter — communicates with the Gorgias REST API.
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
-import { parseRetryAfterHeader } from './adapter-utils.js';
+import { parseRetryAfterHeader, redactErrorBody } from './adapter-utils.js';
 
 /**
  * Configuration for GorgiasAdapter.
@@ -78,7 +78,7 @@ interface GorgiasMessage {
  * Supported operations:
  *   fetch('get_ticket',       { ticket_id })                         — GET  /tickets/{id}
  *   fetch('list_tickets',     { order_by?, cursor?, limit?, ... })   — GET  /tickets
- *   fetch('get_messages',     { ticket_id?, limit?, order_by? })     — GET  /messages
+ *   fetch('get_messages',     { ticket_id?, limit?, order_by? })     — GET /tickets/{id}/messages (per-ticket) | GET /messages (global scan when ticket_id omitted)
  *   fetch('get_customer',     { customer_id })                       — GET  /customers/{id}
  *   fetch('list_customers',   { order_by?, cursor?, limit?, ... })   — GET  /customers
  *   create('create_message',  { ticket_id, ...messageFields })       — POST /tickets/{id}/messages
@@ -192,7 +192,7 @@ export class GorgiasAdapter implements ServiceAdapter {
     }
 
     const status = response.status;
-    const details = { status, operation, body };
+    const details = { status, operation, body: redactErrorBody(body) };
 
     if (status === 429) {
       const retryAfterFromHeader = parseRetryAfterHeader(response.headers.get('Retry-After'));
@@ -306,25 +306,40 @@ export class GorgiasAdapter implements ServiceAdapter {
 
     if (operation === 'get_messages') {
       const ticketId = params['ticket_id'] !== undefined ? this.validateTicketId(params) : null;
-      const userLimit =
-        typeof params['limit'] === 'number' && params['limit'] > 0 ? params['limit'] : 30;
-      const effectiveLimit = Math.min(userLimit, 200);
       const PAGE_SIZE = 100;
+      // A no-limit per-ticket fetch defaults to the WHOLE thread, guarded by PER_TICKET_DEFAULT against
+      // a pathological thread. An explicit caller `limit` is AUTHORITATIVE and honored as-is (the caller
+      // owns the size/cost tradeoff) — the guard applies ONLY when no limit is given.
+      const PER_TICKET_DEFAULT = 500; // no-limit default for a per-ticket fetch (safety guard, not a cap)
+      const GLOBAL_SCAN_DEFAULT = 30; // ticket_id omitted → unbounded corpus; keep a modest default
+      const explicitLimit =
+        typeof params['limit'] === 'number' && params['limit'] > 0 ? params['limit'] : undefined;
+      const effectiveLimit =
+        explicitLimit ?? (ticketId !== null ? PER_TICKET_DEFAULT : GLOBAL_SCAN_DEFAULT);
 
       const orderBy = typeof params['order_by'] === 'string' ? params['order_by'] : undefined;
       const stableParts: string[] = [`limit=${PAGE_SIZE}`];
-      if (ticketId !== null) stableParts.push(`ticket_id=${ticketId}`);
       if (orderBy !== undefined) stableParts.push(`order_by=${encodeURIComponent(orderBy)}`);
 
       const accumulated: GorgiasMessage[] = [];
       let cursor: string | undefined = undefined;
+      // INVARIANT: truncated === true iff at least one message the API would have returned for
+      // this request was NOT included in `messages` — i.e. we stopped because of effectiveLimit,
+      // never merely because the API ran out. (A1 fix: the prior version checked next_cursor===null
+      // FIRST and unconditionally set truncated: false there, so a single over-limit page with no
+      // next page silently dropped the surplus while reporting success.)
       let truncated = false;
 
       for (;;) {
         this.checkAborted(signal);
 
         const urlParts = cursor !== undefined ? [...stableParts, `cursor=${cursor}`] : stableParts;
-        const url = `${this.baseUrl}/messages?${urlParts.join('&')}`;
+        // Per-ticket endpoint when a ticket_id is supplied — the flat /messages?ticket_id= filter
+        // is inconsistent (returns 0, 1, or all messages for the same request; live evidence:
+        // ticket 71355453 → 0 via the flat filter vs 4 via the per-ticket path, same moment).
+        // Retained for the global-scan case (ticketId === null), where there is no id to path on.
+        const messagesPath = ticketId !== null ? `/tickets/${ticketId}/messages` : `/messages`;
+        const url = `${this.baseUrl}${messagesPath}?${urlParts.join('&')}`;
 
         const response = await this.executeRequest('GET', url, 'get_messages', undefined, signal);
         const json = response.data as {
@@ -335,18 +350,17 @@ export class GorgiasAdapter implements ServiceAdapter {
         for (const message of json.data) {
           if (accumulated.length < effectiveLimit) {
             accumulated.push(message);
+          } else {
+            truncated = true; // a message we had no room for → the result is incomplete
           }
         }
 
         const nextCursor = json.meta.next_cursor ?? null;
-        if (nextCursor === null) {
-          truncated = false;
-          break;
-        }
         if (accumulated.length >= effectiveLimit) {
-          truncated = true;
+          if (nextCursor !== null) truncated = true; // more pages remain past the limit
           break;
         }
+        if (nextCursor === null) break; // API exhausted with room to spare — nothing dropped
         cursor = nextCursor;
       }
 

@@ -79,6 +79,26 @@ function respondText(status: number, text: string): void {
   });
 }
 
+/**
+ * Registers a handler that captures the request's method + URL (path + query string) and
+ * responds with `body` (default: a harmless empty page, satisfying get_messages' pagination
+ * termination and passing through as raw JSON for every other operation). The returned object is
+ * populated once the request lands — read its fields AFTER awaiting the adapter call.
+ */
+function captureRequest(body: unknown = { data: [], meta: { next_cursor: null } }): {
+  method: string;
+  url: string;
+} {
+  const captured = { method: '', url: '' };
+  handlers.push((req, res) => {
+    captured.method = req.method ?? '';
+    captured.url = req.url ?? '';
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+  });
+  return captured;
+}
+
 // ---------------------------------------------------------------------------
 // Adapter factory — points at the mock server
 // ---------------------------------------------------------------------------
@@ -266,6 +286,22 @@ describe("GorgiasAdapter fetch('get_ticket')", () => {
     expect(err.code).toBe('SERVICE_HTTP_4XX');
     expect(err.details['body']).toBe('not found');
   });
+
+  // A4: the error body echoed into details.body must never leak PII (e.g. a customer email
+  // submitted in the request and echoed back by a 4xx validation response) into the user-facing
+  // response envelope. Mutation-probe (report it): storing the raw body instead of
+  // redactErrorBody(body) must redden this test.
+  it('4xx body containing an email → details.body is redacted, not the raw email', async () => {
+    respond(400, { error: 'Invalid request', email: 'customer@example.com' });
+    const adapter = makeAdapter();
+    const err = await adapter
+      .fetch('get_ticket', { ticket_id: 1 }, {})
+      .catch((e: unknown) => e as WorkflowError);
+    expect(err).toBeInstanceOf(WorkflowError);
+    const body = err.details['body'] as string;
+    expect(body).toContain('[REDACTED_EMAIL]');
+    expect(body).not.toContain('customer@example.com');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -369,19 +405,88 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     expect(data.truncated).toBe(false);
   });
 
-  it('hard cap of 200 enforced: truncated: true, messages.length === 200', async () => {
-    // Page 1: 100 messages, with cursor
+  // ---------------------------------------------------------------------
+  // A1 regression (MA-probe made permanent): the loop used to check next_cursor === null
+  // FIRST and unconditionally set truncated: false there, so a single over-limit page with no
+  // next page silently dropped the surplus while reporting success. Mutation check: restoring
+  // that check-order must redden the second test below.
+  // ---------------------------------------------------------------------
+  it('single page of 45 messages, no limit (per-ticket default): returns all 45, truncated: false', async () => {
+    const page = Array.from({ length: 45 }, (_, i) => makeMsg(i + 1));
+    respond(200, { data: page, meta: { next_cursor: null } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages).toHaveLength(45);
+    expect(data.truncated).toBe(false);
+  });
+
+  it('single page of 45 messages, explicit limit: 30, next_cursor: null: returns 30, truncated: true (honest — dropped within the page)', async () => {
+    const page = Array.from({ length: 45 }, (_, i) => makeMsg(i + 1));
+    respond(200, { data: page, meta: { next_cursor: null } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10, limit: 30 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages).toHaveLength(30);
+    expect(data.truncated).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------
+  // A2: per-ticket default is now the full thread (was capped at 30), with a 500-message
+  // safety ceiling guarding a pathological thread (not a normal-operation cap).
+  // ---------------------------------------------------------------------
+  it('multi-page thread (100+100+50), no limit: returns the full 250-message thread, truncated: false', async () => {
     const page1 = Array.from({ length: 100 }, (_, i) => makeMsg(i + 1));
+    const page2 = Array.from({ length: 100 }, (_, i) => makeMsg(i + 101));
+    const page3 = Array.from({ length: 50 }, (_, i) => makeMsg(i + 201));
     respond(200, { data: page1, meta: { next_cursor: 'cursor-p2' } });
-    // Page 2: 101 messages, with cursor (so more exist)
-    const page2 = Array.from({ length: 101 }, (_, i) => makeMsg(i + 101));
     respond(200, { data: page2, meta: { next_cursor: 'cursor-p3' } });
+    respond(200, { data: page3, meta: { next_cursor: null } });
 
     const adapter = makeAdapter();
-    const result = await adapter.fetch('get_messages', { ticket_id: 10, limit: 201 }, {});
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
     const data = result.data as { messages: unknown[]; truncated: boolean };
-    expect(data.messages).toHaveLength(200);
+    expect(data.messages).toHaveLength(250);
+    expect(data.truncated).toBe(false);
+  });
+
+  // Replaces the old "hard cap of 200" test — A2 raised the per-ticket ceiling to 500.
+  it('no-limit per-ticket fetch is guarded at the 500 default (truncated: true)', async () => {
+    // 5 pages of 100 (500 total); the 5th page's own cursor proves more exist past the ceiling —
+    // a correct implementation breaks immediately on reaching the ceiling and never fetches a 6th.
+    for (let page = 0; page < 5; page++) {
+      const isLast = page === 4;
+      const messages = Array.from({ length: 100 }, (_, i) => makeMsg(page * 100 + i + 1));
+      respond(200, {
+        data: messages,
+        meta: { next_cursor: isLast ? 'cursor-p6' : `cursor-p${page + 2}` },
+      });
+    }
+
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages).toHaveLength(500);
     expect(data.truncated).toBe(true);
+  });
+
+  // Correction: the 500 guard is a no-limit DEFAULT, not an absolute cap — an explicit caller
+  // `limit` is authoritative and honored as-is, even above 500.
+  it('explicit limit above the default is honored, not clamped: limit 600 → 600 messages', async () => {
+    // 6 pages of 100 (600 total), last page next_cursor null.
+    for (let page = 0; page < 6; page++) {
+      const isLast = page === 5;
+      const messages = Array.from({ length: 100 }, (_, i) => makeMsg(page * 100 + i + 1));
+      respond(200, {
+        data: messages,
+        meta: { next_cursor: isLast ? null : `cursor-p${page + 2}` },
+      });
+    }
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10, limit: 600 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages).toHaveLength(600); // NOT clamped to 500
+    expect(data.truncated).toBe(false); // fetched the whole thread the caller asked for
   });
 
   it('body_text and body_html are returned as-is', async () => {
@@ -491,6 +596,33 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     expect(capturedUrl).toContain('order_by=created_datetime%3Adesc');
   });
 
+  // ---------------------------------------------------------------------
+  // Bug fix regression: get_messages must use the per-ticket endpoint, not the flat
+  // /messages?ticket_id= filter (inconsistent on Gorgias's side — see gorgias-get-messages-
+  // per-ticket-endpoint.md). Mutation check: reverting the conditional URL-path change back to
+  // the flat `/messages?...` must redden BOTH of the next two tests.
+  // ---------------------------------------------------------------------
+  it('per-ticket path: fetch({ ticket_id: 10 }) requests GET /tickets/10/messages, not the flat ticket_id filter', async () => {
+    const captured = captureRequest();
+    const adapter = makeAdapter();
+    await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    expect(captured.url.split('?')[0]).toBe('/tickets/10/messages');
+    expect(captured.url).not.toContain('ticket_id=');
+  });
+
+  it('acceptance case: ticket 71355453 returns the complete 4-message thread via the per-ticket endpoint', async () => {
+    const captured = captureRequest({
+      data: [makeMsg(1), makeMsg(2), makeMsg(3), makeMsg(4)],
+      meta: { next_cursor: null },
+    });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 71355453 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages.length).toBe(4);
+    expect(data.truncated).toBe(false);
+    expect(captured.url.split('?')[0]).toBe('/tickets/71355453/messages');
+  });
+
   it('omits ticket_id from URL when not provided', async () => {
     let capturedUrl = '';
     handlers.push((req, res) => {
@@ -502,6 +634,7 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     await adapter.fetch('get_messages', {}, {});
     expect(capturedUrl).not.toContain('ticket_id=');
     expect(capturedUrl).toContain('limit=');
+    expect(capturedUrl.split('?')[0]).toBe('/messages');
   });
 
   it('returns messages when ticket_id is not provided', async () => {
@@ -940,5 +1073,99 @@ describe("GorgiasAdapter fetch('unknown_operation')", () => {
       code: 'ADAPTER_OP_UNSUPPORTED',
     });
     await expect(adapter.fetch('unknown_op', {}, {})).rejects.toBeInstanceOf(WorkflowError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// URL contract — every operation asserts method + path.
+//
+// Anti-recurrence: the get_messages bug this file's earlier tests catch shipped because its
+// tests asserted the HTTP *method* but never the URL *path* — method-was-asserted, path-was-not.
+// This matrix is the enumerable enforcement point: a new Gorgias operation MUST be added here
+// with its method + path, or it has no path coverage.
+// ---------------------------------------------------------------------------
+
+type GorgiasDispatch = 'fetch' | 'create' | 'update';
+
+interface UrlContractRow {
+  dispatch: GorgiasDispatch;
+  operation: string;
+  args: Record<string, unknown>;
+  method: string;
+  /** Expected URL path — the portion before `?`. */
+  path: string;
+}
+
+const URL_CONTRACT_MATRIX: UrlContractRow[] = [
+  {
+    dispatch: 'fetch',
+    operation: 'get_ticket',
+    args: { ticket_id: 42 },
+    method: 'GET',
+    path: '/tickets/42',
+  },
+  {
+    dispatch: 'fetch',
+    operation: 'get_messages',
+    args: { ticket_id: 10 },
+    method: 'GET',
+    path: '/tickets/10/messages',
+  },
+  { dispatch: 'fetch', operation: 'get_messages', args: {}, method: 'GET', path: '/messages' },
+  { dispatch: 'fetch', operation: 'list_tickets', args: {}, method: 'GET', path: '/tickets' },
+  {
+    dispatch: 'fetch',
+    operation: 'get_customer',
+    args: { customer_id: 7 },
+    method: 'GET',
+    path: '/customers/7',
+  },
+  { dispatch: 'fetch', operation: 'list_customers', args: {}, method: 'GET', path: '/customers' },
+  {
+    dispatch: 'create',
+    operation: 'create_message',
+    args: { ticket_id: 10, body_text: 'x' },
+    method: 'POST',
+    path: '/tickets/10/messages',
+  },
+  {
+    dispatch: 'create',
+    operation: 'create_ticket',
+    args: { subject: 'x' },
+    method: 'POST',
+    path: '/tickets',
+  },
+  {
+    dispatch: 'create',
+    operation: 'create_customer',
+    args: { email: 'a@b.c' },
+    method: 'POST',
+    path: '/customers',
+  },
+  {
+    dispatch: 'update',
+    operation: 'update_ticket',
+    args: { ticket_id: 10, status: 'closed' },
+    method: 'PUT',
+    path: '/tickets/10',
+  },
+  {
+    dispatch: 'update',
+    operation: 'update_customer',
+    args: { customer_id: 7, name: 'X' },
+    method: 'PUT',
+    path: '/customers/7',
+  },
+];
+
+describe('URL contract — every operation asserts method + path', () => {
+  it('every operation in the matrix hits its documented HTTP method + URL path', async () => {
+    const adapter = makeAdapter();
+    for (const row of URL_CONTRACT_MATRIX) {
+      const captured = captureRequest();
+      await adapter[row.dispatch](row.operation, row.args, {});
+      expect(captured.method).toBe(row.method);
+      expect(captured.url.split('?')[0]).toBe(row.path);
+    }
   });
 });
