@@ -1055,6 +1055,138 @@ steps:
 });
 
 // ---------------------------------------------------------------------------
+// Tests: timeout_seconds validation (issue A3)
+// ---------------------------------------------------------------------------
+describe('loadWorkflowFromString — timeout_seconds validation', () => {
+  it('timeout_seconds: 0 on an auto step throws WorkflowError about positive integer', () => {
+    const content = VALID_YAML.replace(
+      'execution: auto',
+      'execution: auto\n    timeout_seconds: 0',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain(
+        "'timeout_seconds' must be a positive integer",
+      );
+    }
+  });
+
+  it('timeout_seconds: -5 on an auto step throws WorkflowError about positive integer', () => {
+    const content = VALID_YAML.replace(
+      'execution: auto',
+      'execution: auto\n    timeout_seconds: -5',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain(
+        "'timeout_seconds' must be a positive integer",
+      );
+    }
+  });
+
+  it('timeout_seconds: 1.5 on an auto step throws WorkflowError about positive integer', () => {
+    const content = VALID_YAML.replace(
+      'execution: auto',
+      'execution: auto\n    timeout_seconds: 1.5',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain(
+        "'timeout_seconds' must be a positive integer",
+      );
+    }
+  });
+
+  it("timeout_seconds: 'x' (non-numeric) on an auto step throws WorkflowError about positive integer", () => {
+    const content = VALID_YAML.replace(
+      'execution: auto',
+      "execution: auto\n    timeout_seconds: 'x'",
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain(
+        "'timeout_seconds' must be a positive integer",
+      );
+    }
+  });
+
+  it('timeout_seconds: 60 (positive integer) on an auto step loads without error', () => {
+    const content = VALID_YAML.replace(
+      'execution: auto',
+      'execution: auto\n    timeout_seconds: 60',
+    );
+    const def = loadWorkflowFromString(content);
+    expect(def.steps['step-one']?.timeout_seconds).toBe(60);
+  });
+
+  it('timeout_seconds: 60 on a finalizer step loads without error (finalizers use their own drain-ceiling default)', () => {
+    const content = `
+id: finalizer-timeout-test
+name: Finalizer Timeout Test
+version: 1
+steps:
+  step-one:
+    description: First step
+    execution: auto
+    depends_on: []
+  cleanup:
+    description: Cleanup
+    execution: finalizer
+    on_outcome: always
+    handler: do_cleanup
+    timeout_seconds: 60
+`;
+    const def = loadWorkflowFromString(content);
+    expect(def.steps['cleanup']?.timeout_seconds).toBe(60);
+  });
+
+  it('timeout_seconds: 60 on an agent step loads without error (advisory only — agent dispatch is never wrapped)', () => {
+    const content = VALID_YAML.replace(
+      'execution: agent',
+      'execution: agent\n    timeout_seconds: 60',
+    );
+    const def = loadWorkflowFromString(content);
+    expect(def.steps['step-two']?.timeout_seconds).toBe(60);
+  });
+
+  it('guard-prohibition is unchanged: timeout_seconds on a guard step reports exactly the prohibited-field error, not also a positive-integer error', () => {
+    const yaml = `
+id: guard-test
+name: Guard Test
+version: 1
+steps:
+  step_a:
+    description: First step
+    execution: agent
+    depends_on: []
+  guard_b:
+    description: Guard step
+    execution: guard
+    depends_on: [step_a]
+    abort_unless: "step_a.status == 'open'"
+    timeout_seconds: 0
+`;
+    try {
+      loadWorkflowFromString(yaml);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkflowError);
+      const message = (err as WorkflowError).message;
+      expect(message).toContain("'timeout_seconds' is not valid on execution: guard steps");
+      expect(message).not.toContain("'timeout_seconds' must be a positive integer");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: rate_limit validation
 // ---------------------------------------------------------------------------
 

@@ -940,6 +940,18 @@ function parseWorkflowString(
     ) {
       errors.push(`Step '${stepName}': 'tool_timeout' must be a positive integer`);
     }
+
+    // Validate timeout_seconds: must be a positive integer (issue A3). Skipped on
+    // execution: guard — the guard-prohibited-fields check above already flatly rejects
+    // 'timeout_seconds' there ('is not valid on execution: guard steps'); re-checking its
+    // shape here would double-report the same root cause under a second, confusing message.
+    if (
+      step['timeout_seconds'] !== undefined &&
+      step['execution'] !== 'guard' &&
+      (!Number.isInteger(step['timeout_seconds']) || (step['timeout_seconds'] as number) <= 0)
+    ) {
+      errors.push(`Step '${stepName}': 'timeout_seconds' must be a positive integer`);
+    }
   }
 
   // Require at least one non-finalizer step: a workflow of only finalizers is meaningless
