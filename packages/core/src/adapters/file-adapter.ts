@@ -15,7 +15,7 @@ export class FileSystemAdapter implements ServiceAdapter {
     operation: string,
     params: Record<string, unknown>,
     _config: Record<string, unknown>,
-    _signal?: AbortSignal,
+    signal?: AbortSignal,
   ): Promise<ServiceResponse> {
     if (operation !== 'read') {
       throw new WorkflowError(`unknown operation: ${operation}`, {
@@ -47,8 +47,16 @@ export class FileSystemAdapter implements ServiceAdapter {
 
     let content: string;
     try {
-      content = await readFile(path, 'utf8');
+      content = await readFile(path, { encoding: 'utf8', signal });
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new WorkflowError('Adapter request aborted', {
+          code: 'STEP_ABORTED',
+          category: 'ENGINE',
+          agentAction: 'report_to_user',
+          retryable: false,
+        });
+      }
       const isEnoent = (err as NodeJS.ErrnoException).code === 'ENOENT';
       if (isEnoent) {
         throw new WorkflowError(`file not found: ${path}`, {
