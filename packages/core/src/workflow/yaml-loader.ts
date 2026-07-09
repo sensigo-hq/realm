@@ -614,6 +614,21 @@ function parseWorkflowString(
       errors.push(`Step '${stepName}': 'output_schema' is only valid on execution: agent steps`);
     }
 
+    // WARN (do not reject): an agent step declaring BOTH input_schema and output_schema has its
+    // submitted output validated against BOTH (execution-loop.ts validateInputSchema AND
+    // validateOutputSchema) — a divergence between the two degrades to a confusing recoverable
+    // VALIDATION_*_SCHEMA error rather than a clean failure. Detection/warn only; no schema change.
+    if (
+      step['execution'] === 'agent' &&
+      step['input_schema'] !== undefined &&
+      step['output_schema'] !== undefined
+    ) {
+      console.warn(
+        `Step '${stepName}': declares both input_schema and output_schema; the agent's submitted ` +
+          `output is validated against both — prefer one to avoid divergence.`,
+      );
+    }
+
     // trace_schema is only valid on execution: agent steps.
     if (step['trace_schema'] !== undefined && step['execution'] !== 'agent') {
       errors.push(`Step '${stepName}': 'trace_schema' is only valid on execution: agent steps`);

@@ -4,15 +4,33 @@ const SYSTEM_PROMPT_BASE =
   'You are an AI agent executing a step in a structured workflow.\n' +
   'Your task is described below. Respond with a JSON object only — no markdown, no explanation.';
 
-/** Builds the system prompt for an agent step, optionally prepending an agent profile and/or including the output schema. */
+// Used only when a `__realm_submit__` tool is actually offered on the call this prompt accompanies
+// (anthropic-provider.ts callStep) — the JSON-only line is replaced with a call-the-tool-or-answer
+// line so the model knows the tool exists. Otherwise output is byte-unchanged (see structuredToolOffered).
+const SYSTEM_PROMPT_BASE_WITH_TOOL =
+  'You are an AI agent executing a step in a structured workflow.\n' +
+  'Your task is described below. Call the `__realm_submit__` tool with your result, or respond ' +
+  'with a JSON object only — no markdown, no explanation.';
+
+/**
+ * Builds the system prompt for an agent step, optionally prepending an agent profile and/or
+ * including the output schema.
+ *
+ * @param structuredToolOffered When true, the JSON-only line is replaced to mention the
+ *   `__realm_submit__` tool. Pass true ONLY when a call actually offers that tool (never true
+ *   just because a schema is present) — the default/absent path is byte-identical to before.
+ */
 export function buildSystemPrompt(
   inputSchema?: Record<string, unknown>,
   agentProfileInstructions?: string,
+  structuredToolOffered?: boolean,
 ): string {
+  const basePrompt =
+    structuredToolOffered === true ? SYSTEM_PROMPT_BASE_WITH_TOOL : SYSTEM_PROMPT_BASE;
   const base =
     agentProfileInstructions !== undefined
-      ? `${agentProfileInstructions}\n\n${SYSTEM_PROMPT_BASE}`
-      : SYSTEM_PROMPT_BASE;
+      ? `${agentProfileInstructions}\n\n${basePrompt}`
+      : basePrompt;
   if (inputSchema === undefined) return base;
   return `${base}\nThe JSON must conform to this schema: ${JSON.stringify(inputSchema)}`;
 }
@@ -78,17 +96,93 @@ export function parseNamespacedId(id: string): { serverId: string; toolName: str
   return { serverId: id.slice(0, colonIdx), toolName: id.slice(colonIdx + 1) };
 }
 
-/** Tries to parse JSON; returns a plain object or null if parsing fails or the result is not an object. */
-export function tryParseJson(text: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-    return null;
-  } catch {
-    return null;
+/** Returns the text of every ```-fenced code block (language tag optional), in document order. */
+function extractFencedBlocks(text: string): string[] {
+  const blocks: string[] = [];
+  const fenceRe = /```[^\n`]*\n?([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+  while ((match = fenceRe.exec(text)) !== null) {
+    blocks.push(match[1] ?? '');
   }
+  return blocks;
+}
+
+/**
+ * Scans text for top-level (depth-0) balanced `{...}` substrings, left to right. A `{`/`}`
+ * inside a string literal — including an escaped quote `\"` or escaped backslash `\\` — never
+ * affects brace depth, so a value like `{"a":"}"}` is captured whole rather than truncated at
+ * the brace inside the string.
+ */
+function findBalancedObjectCandidates(text: string): string[] {
+  const candidates: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escapeNext = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escapeNext) {
+        escapeNext = false;
+      } else if (ch === '\\') {
+        escapeNext = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}' && depth > 0) {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        candidates.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+  return candidates;
+}
+
+/** Parses each candidate; returns the LAST one that is a plain object, or null if none are. */
+function lastParsedObject(candidates: string[]): Record<string, unknown> | null {
+  let result: Record<string, unknown> | null = null;
+  for (const candidate of candidates) {
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        result = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // A brace-balanced substring is not necessarily valid JSON on its own — skip and keep scanning.
+    }
+  }
+  return result;
+}
+
+/**
+ * Extracts a single JSON object from LLM output text — the robust fallback for a model that
+ * ignores "respond with JSON only" and instead wraps its answer in a fenced code block, a
+ * preamble/postamble, or an illustrative example before the real answer. Object-only: a bare
+ * top-level array or scalar is rejected (returns null).
+ *
+ * Algorithm: prefer the content of ```-fenced code blocks, if any are present (falling back to
+ * the raw text if fences yield no usable object); scan for top-level balanced `{...}` substrings
+ * (string/escape-aware); return the LAST candidate that parses to a plain object. Preferring the
+ * last candidate — not the first — defeats the "For example {...}. Answer: {...}" preamble trap,
+ * where an earlier illustrative example must not be mistaken for the real answer.
+ */
+export function extractJsonObject(text: string): Record<string, unknown> | null {
+  const fenced = extractFencedBlocks(text);
+  if (fenced.length > 0) {
+    const fromFences = lastParsedObject(findBalancedObjectCandidates(fenced.join('\n')));
+    if (fromFences !== null) return fromFences;
+    // Fences present but didn't contain a usable object — fall back to the full raw text.
+  }
+  return lastParsedObject(findBalancedObjectCandidates(text));
 }
 
 /**

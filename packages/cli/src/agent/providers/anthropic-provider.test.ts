@@ -98,6 +98,99 @@ describe('AnthropicProvider.callStep', () => {
     await provider.callStep('prompt');
     expect(mockCreate.mock.calls[0][0].max_tokens).toBe(4096);
   });
+
+  // -----------------------------------------------------------------------
+  // P0: schema present → offers __realm_submit__ at tool_choice:'auto'; tool_use.input returned
+  // directly (no parse step).
+  // -----------------------------------------------------------------------
+  it('schema present: offers __realm_submit__ at tool_choice:auto; tool_use.input returned directly', async () => {
+    const schema = { type: 'object', properties: { category: { type: 'string' } } };
+    mockCreate.mockResolvedValueOnce(
+      makeToolUseResponse([
+        { id: 'submit1', name: '__realm_submit__', input: { category: 'billing' } },
+      ]),
+    );
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStep('prompt', schema);
+
+    expect(result).toEqual({ category: 'billing' });
+    expect(mockCreate.mock.calls[0][0].tool_choice).toEqual({ type: 'auto' }); // never forced
+    expect(mockCreate.mock.calls[0][0].tools).toEqual([
+      expect.objectContaining({ name: '__realm_submit__', input_schema: schema }),
+    ]);
+  });
+
+  it('schema present, no tool offered without a schema: absent schema sends no tools/tool_choice', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    await provider.callStep('prompt'); // no schema
+    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('tools');
+    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('tool_choice');
+  });
+
+  // -----------------------------------------------------------------------
+  // Mandate test 6: no-tool_use / truncation guard.
+  // -----------------------------------------------------------------------
+  it('a text block with no tool_use (schema present) falls back to the extractor cleanly (no raw TypeError)', async () => {
+    const schema = { type: 'object', properties: { x: { type: 'string' } } };
+    mockCreate.mockResolvedValueOnce(makeTextResponse('```json\n{"x":"ok"}\n```'));
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStep('prompt', schema);
+    expect(result).toEqual({ x: 'ok' });
+  });
+
+  it('stop_reason: max_tokens with no usable object → sanitized truncation error (never a silent partial)', async () => {
+    mockCreate
+      .mockResolvedValueOnce({
+        content: [{ type: 'text', text: 'incomplete respo' }],
+        stop_reason: 'max_tokens',
+      })
+      .mockResolvedValueOnce({
+        content: [{ type: 'text', text: 'still incomplete' }],
+        stop_reason: 'max_tokens',
+      });
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const err = await provider.callStep('prompt').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WorkflowError);
+    expect((err as WorkflowError).code).toBe('ENGINE_STEP_FAILED');
+    expect((err as WorkflowError).message).toContain('truncated');
+    expect((err as WorkflowError).message).toContain('max_tokens');
+  });
+
+  it('a non-max_tokens failure (e.g. end_turn) still gets the generic non-JSON error, not the truncation one', async () => {
+    mockCreate
+      .mockResolvedValueOnce({
+        content: [{ type: 'text', text: 'not JSON' }],
+        stop_reason: 'end_turn',
+      })
+      .mockResolvedValueOnce({
+        content: [{ type: 'text', text: 'still not JSON' }],
+        stop_reason: 'end_turn',
+      });
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const err = await provider.callStep('prompt').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WorkflowError);
+    expect((err as WorkflowError).message).not.toContain('truncated');
+    expect((err as WorkflowError).message).toContain('non-JSON content after retry');
+  });
+
+  // -----------------------------------------------------------------------
+  // Mandate test 7: redaction — closes the historical :94 gap (a plain, unredacted Error).
+  // -----------------------------------------------------------------------
+  it('redaction: a failure-path model string containing a secret is redacted in the thrown error', async () => {
+    vi.stubEnv('ANTHROPIC_TEST_SECRET', 'super-secret-value-123');
+    mockCreate
+      .mockResolvedValueOnce(makeTextResponse('leak super-secret-value-123 here, not JSON'))
+      .mockResolvedValueOnce(makeTextResponse('leak super-secret-value-123 here again, not JSON'));
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const err = await provider.callStep('prompt').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(WorkflowError);
+    const message = (err as WorkflowError).message;
+    expect(message).not.toContain('super-secret-value-123');
+    expect(message).toContain('[REDACTED]');
+    vi.unstubAllEnvs();
+  });
 });
 
 // =========================================================================
@@ -153,7 +246,38 @@ describe('AnthropicProvider.callStepWithTools', () => {
   // -----------------------------------------------------------------------
   // 2. max_tool_calls reached → final extraction uses tool_choice:none, no tools, no response_format
   // -----------------------------------------------------------------------
-  it('max_tool_calls reached → final extraction has tool_choice:none, no tools, no response_format', async () => {
+  it('max_tool_calls reached, schema present → final extraction offers __realm_submit__ at tool_choice:auto', async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    const schema = {
+      type: 'object',
+      properties: { answer: { type: 'string' } },
+      required: ['answer'],
+    };
+    mockCreate
+      .mockResolvedValueOnce(makeToolUseResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(
+        makeToolUseResponse([
+          { id: 'submit1', name: '__realm_submit__', input: { answer: 'done' } },
+        ]),
+      );
+
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      maxToolCalls: 1,
+      inputSchema: schema,
+    });
+
+    // tool_use.input arrives pre-parsed — no parse step.
+    expect(result.output).toEqual({ answer: 'done' });
+    const finalCallOpts = mockCreate.mock.calls[1][0];
+    expect(finalCallOpts.tool_choice).toEqual({ type: 'auto' }); // never forced — preserves reasoning
+    expect(finalCallOpts.tools).toEqual([
+      expect.objectContaining({ name: '__realm_submit__', input_schema: schema }),
+    ]);
+    expect(finalCallOpts).not.toHaveProperty('response_format');
+  });
+
+  it('max_tool_calls reached, NO schema → final extraction still forces text (tool_choice:none, no tools)', async () => {
     const executor = vi.fn().mockResolvedValue('data');
     mockCreate
       .mockResolvedValueOnce(makeToolUseResponse([{ id: 'c1', name: 'op' }]))
@@ -164,6 +288,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
       maxToolCalls: 1,
     });
 
+    // No schema → can't type a tool → falls straight to the extractor on plain text.
     expect(result.output).toEqual({ answer: 'done' });
     const finalCallOpts = mockCreate.mock.calls[1][0];
     expect(finalCallOpts.tool_choice).toEqual({ type: 'none' });
@@ -172,14 +297,76 @@ describe('AnthropicProvider.callStepWithTools', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Mandate test 4: synthetic-tool-not-in-trace — __realm_submit__ is an extraction mechanism,
+  // never an agent-chosen tool, so it must never pollute stepMeta.toolCalls (run-agent.ts:487).
+  // -----------------------------------------------------------------------
+  it('__realm_submit__ is excluded from result.toolCalls even though it resolved the final extraction', async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    const schema = { type: 'object', properties: { answer: { type: 'string' } } };
+    mockCreate
+      .mockResolvedValueOnce(makeToolUseResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(
+        makeToolUseResponse([
+          { id: 'submit1', name: '__realm_submit__', input: { answer: 'done' } },
+        ]),
+      );
+
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      maxToolCalls: 1,
+      inputSchema: schema,
+    });
+
+    expect(result.output).toEqual({ answer: 'done' });
+    expect(result.toolCalls).toHaveLength(1); // only the real 'op' call — not __realm_submit__
+    expect(result.toolCalls.map((c) => c.tool)).not.toContain('__realm_submit__');
+  });
+
+  // -----------------------------------------------------------------------
+  // Mandate test 5: tools-path degradation — a fenced natural-completion answer is caught on
+  // the FIRST such turn via extractJsonObject, proving the :320 fix (previously tryParseJson
+  // would fail on a fenced answer and nudge the model up to maxCalls).
+  // -----------------------------------------------------------------------
+  it('a fenced natural-completion answer is caught immediately (≤2 API calls, not maxCalls)', async () => {
+    const executor = vi.fn().mockResolvedValue('file data');
+    const schema = {
+      type: 'object',
+      properties: { summary: { type: 'string' } },
+      required: ['summary'],
+    };
+    mockCreate
+      .mockResolvedValueOnce(makeToolUseResponse([{ id: 'c1', name: 'get_file' }]))
+      .mockResolvedValueOnce(makeTextResponse('```json\n{"summary":"ok"}\n```'));
+
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStepWithTools(
+      'prompt',
+      [oneTool('github:get_file')],
+      executor,
+      { inputSchema: schema, maxToolCalls: 20 }, // generous budget — proves this isn't exhaustion
+    );
+
+    expect(result.output).toEqual({ summary: 'ok' });
+    expect(mockCreate).toHaveBeenCalledTimes(2); // tool call + fenced natural completion — done
+  });
+
+  // -----------------------------------------------------------------------
   // 3. max_tool_calls reached → final extraction fails schema → throws ENGINE_STEP_FAILED
   // -----------------------------------------------------------------------
-  it('max_tool_calls reached → final extraction fails schema → throws ENGINE_STEP_FAILED', async () => {
-    const schema = { required: ['answer', 'confidence'] };
+  // Note: performFinalExtraction no longer gates on validateSchema (schema conformance is the
+  // engine Ajv validators' job) — a tool_use.input or an extractable object is now accepted
+  // directly. This test is rewritten to a GENUINE total-failure: no tool_use match AND no
+  // extractable JSON object anywhere in the text.
+  it('max_tool_calls reached → final extraction produces no usable object → throws ENGINE_STEP_FAILED', async () => {
+    const schema = {
+      type: 'object',
+      properties: { answer: { type: 'string' } },
+      required: ['answer'],
+    };
     const executor = vi.fn().mockResolvedValue('data');
     mockCreate
       .mockResolvedValueOnce(makeToolUseResponse([{ id: 'c1', name: 'op' }]))
-      .mockResolvedValueOnce(makeTextResponse('{"answer":"yes"}')); // 'confidence' missing
+      .mockResolvedValueOnce(makeTextResponse('I was unable to determine a final answer.'));
 
     const provider = new AnthropicProvider('claude-sonnet-4-5');
     const err = await provider
@@ -200,14 +387,19 @@ describe('AnthropicProvider.callStepWithTools', () => {
     const hangingExecutor = vi.fn().mockReturnValue(new Promise<unknown>(() => {}));
     mockCreate
       .mockResolvedValueOnce(makeToolUseResponse([{ id: 'toolu_timeout', name: 'op' }]))
-      .mockResolvedValueOnce(makeTextResponse('{"done":true}'));
+      .mockResolvedValueOnce(
+        makeToolUseResponse([{ id: 'submit1', name: '__realm_submit__', input: { done: true } }]),
+      );
 
     const provider = new AnthropicProvider('claude-sonnet-4-5');
     const result = await provider.callStepWithTools('p', [oneTool()], hangingExecutor, {
       toolTimeoutMs: 1, // 1ms real timer
       maxToolCalls: 1, // ensures final extraction fires
+      inputSchema: { type: 'object', properties: { done: { type: 'boolean' } } },
     });
 
+    // Final extraction resolved via tool_use.input this time — no parse step.
+    expect(result.output).toEqual({ done: true });
     expect(result.toolCalls).toHaveLength(1);
     expect(result.toolCalls[0].error).toBeDefined();
 
@@ -221,6 +413,12 @@ describe('AnthropicProvider.callStepWithTools', () => {
       (userMsg?.content as Array<{ type?: string; tool_use_id?: string }> | undefined) ?? [];
     const toolResult = toolResultBlocks.find((b) => b.type === 'tool_result');
     expect(toolResult?.tool_use_id).toBe('toolu_timeout');
+
+    // Final extraction call offers the submit tool at tool_choice:'auto' (schema present).
+    expect(mockCreate.mock.calls[1][0].tool_choice).toEqual({ type: 'auto' });
+    expect(mockCreate.mock.calls[1][0].tools).toEqual([
+      expect.objectContaining({ name: '__realm_submit__' }),
+    ]);
   });
 
   // -----------------------------------------------------------------------
@@ -364,6 +562,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
   // -----------------------------------------------------------------------
   it('mid-batch budget exhaustion: first K execute, remaining get budget error, single user message', async () => {
     const executor = vi.fn().mockResolvedValue('ok');
+    const schema = { type: 'object', properties: { final: { type: 'boolean' } } };
     mockCreate
       .mockResolvedValueOnce(
         makeToolUseResponse([
@@ -372,18 +571,19 @@ describe('AnthropicProvider.callStepWithTools', () => {
           { id: 'x3', name: 't3' }, // budget exhausted
         ]),
       )
-      .mockResolvedValueOnce(makeTextResponse('{"final":true}'));
+      // Fenced text this time — proves the P1 extractor works inside performFinalExtraction too.
+      .mockResolvedValueOnce(makeTextResponse('```json\n{"final":true}\n```'));
 
     const provider = new AnthropicProvider('claude-sonnet-4-5');
     const result = await provider.callStepWithTools(
       'prompt',
       [oneTool('srv:t1'), oneTool('srv:t2'), oneTool('srv:t3')],
       executor,
-      { maxToolCalls: 1 },
+      { maxToolCalls: 1, inputSchema: schema },
     );
 
     expect(result.toolCalls).toHaveLength(1); // only x1 was actually executed
-    expect(result.output).toEqual({ final: true });
+    expect(result.output).toEqual({ final: true }); // extracted from the fenced text block
 
     // The second call's messages must contain a user message with 3 tool_result blocks + text
     const secondCallMsgs = mockCreate.mock.calls[1][0].messages as Array<{
@@ -409,8 +609,11 @@ describe('AnthropicProvider.callStepWithTools', () => {
     const textBlock = blocks?.find((b) => b.type === 'text');
     expect(textBlock?.text).toContain('maximum number of tool calls');
 
-    // Final extraction call must use tool_choice: none
-    expect(mockCreate.mock.calls[1][0].tool_choice).toEqual({ type: 'none' });
+    // Final extraction call now offers __realm_submit__ at tool_choice:'auto' (schema present).
+    expect(mockCreate.mock.calls[1][0].tool_choice).toEqual({ type: 'auto' });
+    expect(mockCreate.mock.calls[1][0].tools).toEqual([
+      expect.objectContaining({ name: '__realm_submit__', input_schema: schema }),
+    ]);
   });
 
   // -----------------------------------------------------------------------
@@ -432,6 +635,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
   // -----------------------------------------------------------------------
   it('max_fan_out: 1 — second start_run call triggers final extraction', async () => {
     const executor = vi.fn().mockResolvedValue('ok');
+    const schema = { type: 'object', properties: { done: { type: 'boolean' } } };
     mockCreate
       .mockResolvedValueOnce(
         makeToolUseResponse([
@@ -446,12 +650,17 @@ describe('AnthropicProvider.callStepWithTools', () => {
       'prompt',
       [oneTool('realm:start_run')],
       executor,
-      { maxFanOut: 1 },
+      { maxFanOut: 1, inputSchema: schema },
     );
 
     expect(result.output).toEqual({ done: true });
     // Only the first start_run should have been executed; second was budget-blocked
     expect(executor).toHaveBeenCalledTimes(1);
+    // Final extraction offers __realm_submit__ at tool_choice:'auto' (schema present).
+    expect(mockCreate.mock.calls[1][0].tool_choice).toEqual({ type: 'auto' });
+    expect(mockCreate.mock.calls[1][0].tools).toEqual([
+      expect.objectContaining({ name: '__realm_submit__' }),
+    ]);
   });
 
   // -----------------------------------------------------------------------

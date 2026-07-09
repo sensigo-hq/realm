@@ -325,7 +325,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           ) ?? nextActions[0];
 
         const prompt = nextAction?.prompt ?? stepDef.description;
+        // #robust-anthropic-provider Part 1: route the schema the ENGINE validates output against
+        // (output_schema, execution-loop.ts validateOutputSchema) ahead of the execute_step-param
+        // schema (input_schema / nextAction.input_schema) the provider was fed until now. Both-
+        // declared-and-divergent degrades to a clean recoverable VALIDATION_*_SCHEMA error downstream,
+        // not a parse-strand — see the Part 6 loader warning for the authoring-time signal.
         const inputSchema =
+          (stepDef.output_schema as Record<string, unknown> | undefined) ??
           (nextAction?.input_schema as Record<string, unknown> | undefined) ??
           (stepDef.input_schema as Record<string, unknown> | undefined);
         const agentProfileInstructions =
@@ -430,9 +436,14 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 'invariant: provider lost tool capability between startup and step execution',
               );
             }
+            // #robust-anthropic-provider Part 1: same output-over-input precedence as the callStep
+            // path above.
+            const toolsEffectiveOutputSchema =
+              (stepDef.output_schema as Record<string, unknown> | undefined) ??
+              (stepDef.input_schema as Record<string, unknown> | undefined);
             toolsResult = await deps.provider.callStepWithTools(prompt, toolDefs, executor, {
-              ...(stepDef.input_schema !== undefined
-                ? { inputSchema: stepDef.input_schema as Record<string, unknown> }
+              ...(toolsEffectiveOutputSchema !== undefined
+                ? { inputSchema: toolsEffectiveOutputSchema }
                 : {}),
               maxToolCalls: stepDef.max_tool_calls ?? 20,
               ...(stepDef.max_fan_out !== undefined ? { maxFanOut: stepDef.max_fan_out } : {}),

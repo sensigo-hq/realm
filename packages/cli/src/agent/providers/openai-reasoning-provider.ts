@@ -1,7 +1,7 @@
 // openai-reasoning-provider.ts — OpenAI reasoning model provider (o1-series) for realm agent.
 // Extends LlmProvider (not ToolCapableLlmProvider) — o1-series models do not support the tools parameter.
 import { LlmProvider } from './llm-provider.js';
-import { buildSystemPrompt } from './agent-utils.js';
+import { buildSystemPrompt, extractJsonObject, sanitizeError } from './agent-utils.js';
 
 /**
  * Returns the max_completion_tokens for the given OpenAI reasoning model.
@@ -75,24 +75,22 @@ export class OpenAIReasoningProvider extends LlmProvider {
     };
 
     const content = await makeRequest(messages);
-    try {
-      return JSON.parse(content) as Record<string, unknown>;
-    } catch {
-      // Retry once with an explicit reminder to return JSON.
-      const retryMessages: Message[] = [
-        ...messages,
-        { role: 'assistant', content },
-        {
-          role: 'user',
-          content: 'Your previous response was not valid JSON. Respond with a JSON object only.',
-        },
-      ];
-      const retry = await makeRequest(retryMessages);
-      try {
-        return JSON.parse(retry) as Record<string, unknown>;
-      } catch {
-        throw new Error(`OpenAI returned non-JSON content after retry: ${retry.slice(0, 200)}`);
-      }
-    }
+    const parsed = extractJsonObject(content);
+    if (parsed !== null) return parsed;
+    // Retry once with an explicit reminder to return JSON.
+    const retryMessages: Message[] = [
+      ...messages,
+      { role: 'assistant', content },
+      {
+        role: 'user',
+        content: 'Your previous response was not valid JSON. Respond with a JSON object only.',
+      },
+    ];
+    const retry = await makeRequest(retryMessages);
+    const retryParsed = extractJsonObject(retry);
+    if (retryParsed !== null) return retryParsed;
+    throw new Error(
+      sanitizeError(`OpenAI returned non-JSON content after retry: ${retry.slice(0, 200)}`),
+    );
   }
 }
