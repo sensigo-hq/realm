@@ -12,11 +12,31 @@ import {
   sanitizeError,
   serializeToolResult,
   parseNamespacedId,
-  tryParseJson,
+  extractJsonObject,
   validateSchema,
   rejectAfter,
   buildSystemPrompt,
 } from './agent-utils.js';
+
+/** The tool offered at `tool_choice:'auto'` so the model can return structured output directly —
+ * `tool_use.input` arrives pre-parsed, eliminating the fenced/prefaced-JSON parse-failure class by
+ * construction. `auto` (never forced) preserves reason-then-answer: a workflow whose output schema
+ * declares a reasoning field LAST must not have the model rationalize post-hoc (see the design
+ * decision in prompts/robust-anthropic-provider.md). Not pushed into tool_call_records anywhere it's
+ * used — it's an extraction mechanism, not an agent-chosen tool. */
+const SUBMIT_TOOL_NAME = '__realm_submit__';
+
+function buildSubmitTool(schema: Record<string, unknown>): {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+} {
+  return {
+    name: SUBMIT_TOOL_NAME,
+    description: 'Return your final result for this step as structured data.',
+    input_schema: schema,
+  };
+}
 
 /**
  * Returns the maximum output tokens for the given Anthropic model.
@@ -64,36 +84,81 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       apiKey: process.env['ANTHROPIC_API_KEY'],
     });
 
-    const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
+    // P0: offer a schema-typed __realm_submit__ tool at tool_choice:'auto' (never forced — see the
+    // module-level SUBMIT_TOOL_NAME comment) when a schema is available; a tool_use.input arrives
+    // pre-parsed, so this eliminates the fenced/prefaced-JSON parse-failure class by construction.
+    // Without a schema there is nothing to type the tool with, so no tool is offered — falls straight
+    // to the P1 extractor below.
+    const submitTool = inputSchema !== undefined ? buildSubmitTool(inputSchema) : undefined;
+    const systemPrompt = buildSystemPrompt(
+      inputSchema,
+      agentProfileInstructions,
+      /* structuredToolOffered */ submitTool !== undefined,
+    );
 
-    const makeRequest = async (userContent: string): Promise<string> => {
-      const response = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (client.messages.create as (opts: Record<string, unknown>) => Promise<any>)({
+    interface CallResult {
+      toolInput?: Record<string, unknown>;
+      text: string;
+      stopReason?: string;
+    }
+
+    const makeRequest = async (userContent: string): Promise<CallResult> => {
+      const opts: Record<string, unknown> = {
         model: this.model,
         max_tokens: resolveMaxTokens(this.model),
         system: systemPrompt,
         messages: [{ role: 'user', content: userContent }],
-      });
-      const block = (response.content as unknown[]).find(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (b: any) => (b as { type?: string }).type === 'text',
-      ) as { text?: string } | undefined;
-      return block?.text ?? '';
+      };
+      if (submitTool !== undefined) {
+        opts['tools'] = [submitTool];
+        opts['tool_choice'] = { type: 'auto' };
+      }
+      const response = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (client.messages.create as (opts: Record<string, unknown>) => Promise<any>)(opts);
+      const blocks = response.content as Array<{
+        type: string;
+        text?: string;
+        name?: string;
+        input?: unknown;
+      }>;
+      const toolUse = blocks.find((b) => b.type === 'tool_use' && b.name === SUBMIT_TOOL_NAME);
+      const textBlock = blocks.find((b) => b.type === 'text');
+      return {
+        ...(toolUse !== undefined ? { toolInput: toolUse.input as Record<string, unknown> } : {}),
+        text: textBlock?.text ?? '',
+        ...(typeof response.stop_reason === 'string' ? { stopReason: response.stop_reason } : {}),
+      };
     };
 
-    const content = await makeRequest(prompt);
-    try {
-      return JSON.parse(content) as Record<string, unknown>;
-    } catch {
-      // Retry once with an explicit reminder to return JSON.
-      const retryPrompt = `${prompt}\n\nYour previous response was not valid JSON. Respond with a JSON object only.`;
-      const retry = await makeRequest(retryPrompt);
-      try {
-        return JSON.parse(retry) as Record<string, unknown>;
-      } catch {
-        throw new Error(`Anthropic returned non-JSON content after retry: ${retry.slice(0, 200)}`);
-      }
+    // If the model called the tool, its input is ALREADY a parsed object — no parse step, done.
+    // Otherwise fall back to the robust extractor (P1) on the text answer.
+    const extract = (result: CallResult): Record<string, unknown> | null =>
+      result.toolInput ?? extractJsonObject(result.text);
+
+    const first = await makeRequest(prompt);
+    const firstParsed = extract(first);
+    if (firstParsed !== null) return firstParsed;
+
+    // Retry once with an explicit reminder to return JSON (preserves today's retry shape).
+    const retryPrompt = `${prompt}\n\nYour previous response was not valid JSON. Respond with a JSON object only.`;
+    const retry = await makeRequest(retryPrompt);
+    const retryParsed = extract(retry);
+    if (retryParsed !== null) return retryParsed;
+
+    // Guard: a response cut short by the token budget must never silently return a partial object —
+    // give a clear, distinct error rather than the generic "non-JSON content" message.
+    if (retry.stopReason === 'max_tokens') {
+      throw new WorkflowError(
+        sanitizeError(
+          'Anthropic response was truncated (max_tokens) before a usable JSON object was produced.',
+        ),
+        { code: 'ENGINE_STEP_FAILED', category: 'ENGINE', agentAction: 'stop', retryable: false },
+      );
     }
+    throw new WorkflowError(
+      sanitizeError(`Anthropic returned non-JSON content after retry: ${retry.text.slice(0, 200)}`),
+      { code: 'ENGINE_STEP_FAILED', category: 'ENGINE', agentAction: 'stop', retryable: false },
+    );
   }
 
   /**
@@ -174,33 +239,61 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       return opts;
     };
 
-    // Calls the API with tool_choice: none and no tools array to force a plain text answer.
-    // Does NOT push to history — callers must ensure history ends with a valid user turn.
+    // Forces a final answer: offers the __realm_submit__ tool at tool_choice:'auto' when a schema is
+    // available (mirrors callStep's P0 mechanism — tool_use.input arrives pre-parsed, no parse step);
+    // otherwise forces a plain text answer (tool_choice:'none', no tools array — can't type a tool
+    // without a schema) and falls to the P1 extractor. Does NOT push to history — callers must ensure
+    // history ends with a valid user turn. NOT restructuring the agentic loop / MCP tools array —
+    // this synthetic tool only ever appears on this ONE isolated extraction call.
     const performFinalExtraction = async (): Promise<StepWithToolsResult> => {
-      const final = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (client.messages.create as (opts: Record<string, unknown>) => Promise<any>)({
+      const finalSubmitTool =
+        options.inputSchema !== undefined ? buildSubmitTool(options.inputSchema) : undefined;
+      const finalOpts: Record<string, unknown> = {
         model: this.model,
         max_tokens: resolveMaxTokens(this.model),
         system,
         messages: history,
-        tool_choice: { type: 'none' },
+      };
+      if (finalSubmitTool !== undefined) {
+        finalOpts['tools'] = [finalSubmitTool];
+        finalOpts['tool_choice'] = { type: 'auto' };
+      } else {
+        finalOpts['tool_choice'] = { type: 'none' };
         // NO tools array — enforces text-only response
         // NO response_format — not a valid Anthropic parameter
-      });
-      const textBlock = (final.content as Array<{ type: string; text?: string }>).find(
-        (b) => b.type === 'text',
-      );
+      }
+      const final = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (client.messages.create as (opts: Record<string, unknown>) => Promise<any>)(finalOpts);
+      const blocks = final.content as Array<{
+        type: string;
+        text?: string;
+        name?: string;
+        input?: unknown;
+      }>;
+      // Extraction mechanism, not an agent-chosen tool — deliberately NOT pushed into
+      // tool_call_records (would pollute stepMeta.toolCalls, run-agent.ts:487).
+      const toolUse = blocks.find((b) => b.type === 'tool_use' && b.name === SUBMIT_TOOL_NAME);
+      if (toolUse !== undefined) {
+        return {
+          output: toolUse.input as Record<string, unknown>,
+          toolCalls: tool_call_records,
+        };
+      }
+      const textBlock = blocks.find((b) => b.type === 'text');
       const text = textBlock?.text ?? '';
-      const parsed = tryParseJson(text);
-      if (parsed && validateSchema(parsed, options.inputSchema)) {
+      const parsed = extractJsonObject(text);
+      if (parsed !== null) {
         return { output: parsed, toolCalls: tool_call_records };
       }
-      throw new WorkflowError('max_tool_calls reached; final extraction failed', {
-        code: 'ENGINE_STEP_FAILED',
-        category: 'ENGINE',
-        agentAction: 'stop',
-        retryable: false,
-      });
+      throw new WorkflowError(
+        sanitizeError(`max_tool_calls reached; final extraction failed: ${text.slice(0, 200)}`),
+        {
+          code: 'ENGINE_STEP_FAILED',
+          category: 'ENGINE',
+          agentAction: 'stop',
+          retryable: false,
+        },
+      );
     };
 
     while (true) {
@@ -312,12 +405,14 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         // Normal continuation — single user message with all tool_result blocks.
         history.push({ role: 'user', content: anthropic_result_blocks });
       } else {
-        // No tool calls — attempt to parse the final answer.
+        // No tool calls — attempt to parse the final answer. extractJsonObject (P1) parses a fenced
+        // text answer immediately instead of nudging the model up to maxCalls; validateSchema stays
+        // the cheap required-keys pre-check for this correction loop (NOT the engine's Ajv validator).
         const textBlock = (response.content as Array<{ type: string; text?: string }>).find(
           (b) => b.type === 'text',
         );
         const text = textBlock?.text ?? '';
-        const parsed = tryParseJson(text);
+        const parsed = extractJsonObject(text);
         if (parsed && validateSchema(parsed, options.inputSchema)) {
           return { output: parsed, toolCalls: tool_call_records };
         }

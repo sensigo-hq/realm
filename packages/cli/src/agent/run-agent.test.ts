@@ -511,3 +511,89 @@ describe('runAgent — capability recovery (#134)', () => {
     expect(done.completed_steps).toContain('enrich');
   });
 });
+
+describe('runAgent — effective output schema routing (#robust-anthropic-provider Part 1, mandate test 2)', () => {
+  // A step declaring ONLY output_schema (no input_schema) — mirrors assess_message_actionability /
+  // classify_intent. Before Part 1 the provider received `undefined` for its schema argument;
+  // reverting run-agent.ts's `stepDef.output_schema ?? ...` precedence (Part 1) makes these strand
+  // on `undefined` again — see reports/robust-anthropic-provider.md for the by-value mutation-probe.
+  const outputSchema = {
+    type: 'object',
+    properties: { category: { type: 'string' } },
+    required: ['category'],
+  };
+
+  it('callStep path: the provider receives output_schema as its schema argument', async () => {
+    const def: WorkflowDefinition = {
+      id: 'output-only-callstep-wf',
+      name: 'Output Only',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        classify: { description: 'Classify', execution: 'agent', output_schema: outputSchema },
+      },
+    };
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({ category: 'billing' });
+    })();
+
+    const result = await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+      },
+      { definition: def, params: {} },
+    );
+
+    expect(result).toBe('completed');
+    expect(provider.callStep).toHaveBeenCalledTimes(1);
+    // Second positional arg is the schema — today (pre-Part-1) this would be `undefined`.
+    expect(provider.callStep.mock.calls[0]?.[1]).toEqual(outputSchema);
+  });
+
+  it('callStepWithTools path: the provider receives output_schema in options.inputSchema', async () => {
+    const def: WorkflowDefinition = {
+      id: 'output-only-tools-wf',
+      name: 'Output Only (tools)',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      mcp_servers: [{ id: 'github', command: 'npx', args: ['-y', 'mcp-github'] }],
+      steps: {
+        classify: {
+          description: 'Classify',
+          execution: 'agent',
+          tools: ['github:get_pull_request'],
+          // input_schema is required alongside `tools` (loader constraint) — output_schema is the
+          // ENGINE-validated schema and must take precedence over it once routed (Part 1).
+          input_schema: { type: 'object', properties: { note: { type: 'string' } } },
+          output_schema: outputSchema,
+        },
+      },
+    };
+    const provider = new (class extends ToolCapableLlmProvider {
+      callStepWithTools = vi
+        .fn()
+        .mockResolvedValue({ output: { category: 'billing' }, toolCalls: [] });
+    })();
+    const mockClient = makeMockMcpClient();
+
+    const result = await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+        mcpClientFactory: () => mockClient,
+      },
+      { definition: def, params: {} },
+    );
+
+    expect(result).toBe('completed');
+    expect(provider.callStepWithTools).toHaveBeenCalledTimes(1);
+    const optsArg = provider.callStepWithTools.mock.calls[0]?.[3] as { inputSchema?: unknown };
+    // output_schema wins over input_schema — the effective schema fed to the provider.
+    expect(optsArg.inputSchema).toEqual(outputSchema);
+  });
+});

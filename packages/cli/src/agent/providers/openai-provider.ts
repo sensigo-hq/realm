@@ -12,7 +12,7 @@ import {
   sanitizeError,
   serializeToolResult,
   parseNamespacedId,
-  tryParseJson,
+  extractJsonObject,
   validateSchema,
   rejectAfter,
   buildSystemPrompt,
@@ -88,25 +88,21 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     };
 
     const content = await makeRequest(messages);
-    try {
-      return JSON.parse(content) as Record<string, unknown>;
-    } catch {
-      // Retry once with an explicit reminder to return JSON.
-      const retryMessages: Message[] = [
-        ...messages,
-        { role: 'assistant', content },
-        {
-          role: 'user',
-          content: 'Your previous response was not valid JSON. Respond with a JSON object only.',
-        },
-      ];
-      const retry = await makeRequest(retryMessages);
-      try {
-        return JSON.parse(retry) as Record<string, unknown>;
-      } catch {
-        throw new Error(`OpenAI returned non-JSON content after retry: ${retry.slice(0, 200)}`);
-      }
-    }
+    const parsed = extractJsonObject(content);
+    if (parsed !== null) return parsed;
+    // Retry once with an explicit reminder to return JSON.
+    const retryMessages: Message[] = [
+      ...messages,
+      { role: 'assistant', content },
+      {
+        role: 'user',
+        content: 'Your previous response was not valid JSON. Respond with a JSON object only.',
+      },
+    ];
+    const retry = await makeRequest(retryMessages);
+    const retryParsed = extractJsonObject(retry);
+    if (retryParsed !== null) return retryParsed;
+    throw new Error(`OpenAI returned non-JSON content after retry: ${retry.slice(0, 200)}`);
   }
 
   /**
@@ -210,7 +206,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         buildFinalCallOpts(),
       );
       const text: string = (final.choices[0].message.content as string | null) ?? '';
-      const parsed = tryParseJson(text);
+      const parsed = extractJsonObject(text);
       if (parsed && validateSchema(parsed, options.inputSchema)) {
         return { output: parsed, toolCalls: tool_call_records };
       }
@@ -308,7 +304,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       } else {
         // No tool calls — attempt to parse the final answer.
         const text: string = (message.content as string | null) ?? '';
-        const parsed = tryParseJson(text);
+        const parsed = extractJsonObject(text);
         if (parsed && validateSchema(parsed, options.inputSchema)) {
           return { output: parsed, toolCalls: tool_call_records };
         }
