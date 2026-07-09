@@ -306,10 +306,15 @@ export class GorgiasAdapter implements ServiceAdapter {
 
     if (operation === 'get_messages') {
       const ticketId = params['ticket_id'] !== undefined ? this.validateTicketId(params) : null;
-      const userLimit =
-        typeof params['limit'] === 'number' && params['limit'] > 0 ? params['limit'] : 30;
-      const effectiveLimit = Math.min(userLimit, 200);
       const PAGE_SIZE = 100;
+      // A single ticket's thread is bounded; default to the whole thread. The ceiling is a guard
+      // against a pathological thread, NOT a normal-operation cap (CS threads are far smaller).
+      const PER_TICKET_CEILING = 500;
+      const GLOBAL_SCAN_DEFAULT = 30; // ticket_id omitted → unbounded corpus; keep a modest default
+      const explicitLimit =
+        typeof params['limit'] === 'number' && params['limit'] > 0 ? params['limit'] : undefined;
+      const defaultLimit = ticketId !== null ? PER_TICKET_CEILING : GLOBAL_SCAN_DEFAULT;
+      const effectiveLimit = Math.min(explicitLimit ?? defaultLimit, PER_TICKET_CEILING);
 
       const orderBy = typeof params['order_by'] === 'string' ? params['order_by'] : undefined;
       const stableParts: string[] = [`limit=${PAGE_SIZE}`];
@@ -317,6 +322,11 @@ export class GorgiasAdapter implements ServiceAdapter {
 
       const accumulated: GorgiasMessage[] = [];
       let cursor: string | undefined = undefined;
+      // INVARIANT: truncated === true iff at least one message the API would have returned for
+      // this request was NOT included in `messages` — i.e. we stopped because of effectiveLimit,
+      // never merely because the API ran out. (A1 fix: the prior version checked next_cursor===null
+      // FIRST and unconditionally set truncated: false there, so a single over-limit page with no
+      // next page silently dropped the surplus while reporting success.)
       let truncated = false;
 
       for (;;) {
@@ -339,18 +349,17 @@ export class GorgiasAdapter implements ServiceAdapter {
         for (const message of json.data) {
           if (accumulated.length < effectiveLimit) {
             accumulated.push(message);
+          } else {
+            truncated = true; // a message we had no room for → the result is incomplete
           }
         }
 
         const nextCursor = json.meta.next_cursor ?? null;
-        if (nextCursor === null) {
-          truncated = false;
-          break;
-        }
         if (accumulated.length >= effectiveLimit) {
-          truncated = true;
+          if (nextCursor !== null) truncated = true; // more pages remain past the limit
           break;
         }
+        if (nextCursor === null) break; // API exhausted with room to spare — nothing dropped
         cursor = nextCursor;
       }
 

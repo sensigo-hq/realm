@@ -389,18 +389,68 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     expect(data.truncated).toBe(false);
   });
 
-  it('hard cap of 200 enforced: truncated: true, messages.length === 200', async () => {
-    // Page 1: 100 messages, with cursor
+  // ---------------------------------------------------------------------
+  // A1 regression (MA-probe made permanent): the loop used to check next_cursor === null
+  // FIRST and unconditionally set truncated: false there, so a single over-limit page with no
+  // next page silently dropped the surplus while reporting success. Mutation check: restoring
+  // that check-order must redden the second test below.
+  // ---------------------------------------------------------------------
+  it('single page of 45 messages, no limit (per-ticket default): returns all 45, truncated: false', async () => {
+    const page = Array.from({ length: 45 }, (_, i) => makeMsg(i + 1));
+    respond(200, { data: page, meta: { next_cursor: null } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages).toHaveLength(45);
+    expect(data.truncated).toBe(false);
+  });
+
+  it('single page of 45 messages, explicit limit: 30, next_cursor: null: returns 30, truncated: true (honest — dropped within the page)', async () => {
+    const page = Array.from({ length: 45 }, (_, i) => makeMsg(i + 1));
+    respond(200, { data: page, meta: { next_cursor: null } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10, limit: 30 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages).toHaveLength(30);
+    expect(data.truncated).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------
+  // A2: per-ticket default is now the full thread (was capped at 30), with a 500-message
+  // safety ceiling guarding a pathological thread (not a normal-operation cap).
+  // ---------------------------------------------------------------------
+  it('multi-page thread (100+100+50), no limit: returns the full 250-message thread, truncated: false', async () => {
     const page1 = Array.from({ length: 100 }, (_, i) => makeMsg(i + 1));
+    const page2 = Array.from({ length: 100 }, (_, i) => makeMsg(i + 101));
+    const page3 = Array.from({ length: 50 }, (_, i) => makeMsg(i + 201));
     respond(200, { data: page1, meta: { next_cursor: 'cursor-p2' } });
-    // Page 2: 101 messages, with cursor (so more exist)
-    const page2 = Array.from({ length: 101 }, (_, i) => makeMsg(i + 101));
     respond(200, { data: page2, meta: { next_cursor: 'cursor-p3' } });
+    respond(200, { data: page3, meta: { next_cursor: null } });
 
     const adapter = makeAdapter();
-    const result = await adapter.fetch('get_messages', { ticket_id: 10, limit: 201 }, {});
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
     const data = result.data as { messages: unknown[]; truncated: boolean };
-    expect(data.messages).toHaveLength(200);
+    expect(data.messages).toHaveLength(250);
+    expect(data.truncated).toBe(false);
+  });
+
+  // Replaces the old "hard cap of 200" test — A2 raised the per-ticket ceiling to 500.
+  it('ceiling of 500 enforced for a per-ticket thread exceeding it: truncated: true, messages.length === 500', async () => {
+    // 5 pages of 100 (500 total); the 5th page's own cursor proves more exist past the ceiling —
+    // a correct implementation breaks immediately on reaching the ceiling and never fetches a 6th.
+    for (let page = 0; page < 5; page++) {
+      const isLast = page === 4;
+      const messages = Array.from({ length: 100 }, (_, i) => makeMsg(page * 100 + i + 1));
+      respond(200, {
+        data: messages,
+        meta: { next_cursor: isLast ? 'cursor-p6' : `cursor-p${page + 2}` },
+      });
+    }
+
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages).toHaveLength(500);
     expect(data.truncated).toBe(true);
   });
 
