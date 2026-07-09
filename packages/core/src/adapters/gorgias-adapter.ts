@@ -307,14 +307,15 @@ export class GorgiasAdapter implements ServiceAdapter {
     if (operation === 'get_messages') {
       const ticketId = params['ticket_id'] !== undefined ? this.validateTicketId(params) : null;
       const PAGE_SIZE = 100;
-      // A single ticket's thread is bounded; default to the whole thread. The ceiling is a guard
-      // against a pathological thread, NOT a normal-operation cap (CS threads are far smaller).
-      const PER_TICKET_CEILING = 500;
+      // A no-limit per-ticket fetch defaults to the WHOLE thread, guarded by PER_TICKET_DEFAULT against
+      // a pathological thread. An explicit caller `limit` is AUTHORITATIVE and honored as-is (the caller
+      // owns the size/cost tradeoff) — the guard applies ONLY when no limit is given.
+      const PER_TICKET_DEFAULT = 500; // no-limit default for a per-ticket fetch (safety guard, not a cap)
       const GLOBAL_SCAN_DEFAULT = 30; // ticket_id omitted → unbounded corpus; keep a modest default
       const explicitLimit =
         typeof params['limit'] === 'number' && params['limit'] > 0 ? params['limit'] : undefined;
-      const defaultLimit = ticketId !== null ? PER_TICKET_CEILING : GLOBAL_SCAN_DEFAULT;
-      const effectiveLimit = Math.min(explicitLimit ?? defaultLimit, PER_TICKET_CEILING);
+      const effectiveLimit =
+        explicitLimit ?? (ticketId !== null ? PER_TICKET_DEFAULT : GLOBAL_SCAN_DEFAULT);
 
       const orderBy = typeof params['order_by'] === 'string' ? params['order_by'] : undefined;
       const stableParts: string[] = [`limit=${PAGE_SIZE}`];

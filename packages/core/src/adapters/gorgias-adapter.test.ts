@@ -451,7 +451,7 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
   });
 
   // Replaces the old "hard cap of 200" test — A2 raised the per-ticket ceiling to 500.
-  it('ceiling of 500 enforced for a per-ticket thread exceeding it: truncated: true, messages.length === 500', async () => {
+  it('no-limit per-ticket fetch is guarded at the 500 default (truncated: true)', async () => {
     // 5 pages of 100 (500 total); the 5th page's own cursor proves more exist past the ceiling —
     // a correct implementation breaks immediately on reaching the ceiling and never fetches a 6th.
     for (let page = 0; page < 5; page++) {
@@ -468,6 +468,25 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     const data = result.data as { messages: unknown[]; truncated: boolean };
     expect(data.messages).toHaveLength(500);
     expect(data.truncated).toBe(true);
+  });
+
+  // Correction: the 500 guard is a no-limit DEFAULT, not an absolute cap — an explicit caller
+  // `limit` is authoritative and honored as-is, even above 500.
+  it('explicit limit above the default is honored, not clamped: limit 600 → 600 messages', async () => {
+    // 6 pages of 100 (600 total), last page next_cursor null.
+    for (let page = 0; page < 6; page++) {
+      const isLast = page === 5;
+      const messages = Array.from({ length: 100 }, (_, i) => makeMsg(page * 100 + i + 1));
+      respond(200, {
+        data: messages,
+        meta: { next_cursor: isLast ? null : `cursor-p${page + 2}` },
+      });
+    }
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10, limit: 600 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages).toHaveLength(600); // NOT clamped to 500
+    expect(data.truncated).toBe(false); // fetched the whole thread the caller asked for
   });
 
   it('body_text and body_html are returned as-is', async () => {
