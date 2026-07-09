@@ -33,7 +33,11 @@ import {
 import { normalizeTrace } from './trace-normalizer.js';
 import type { NormalizeTraceResult } from './trace-normalizer.js';
 import { TERMINAL_PHASES, isTerminalPhase, DRAIN_CEILING_SECONDS } from './lifecycle.js';
-import { omitClaim } from './claim-liveness.js';
+import {
+  omitClaim,
+  shouldEnforceTimeout,
+  DEFAULT_EXECUTION_TIMEOUT_SECONDS,
+} from './claim-liveness.js';
 import {
   checkPreconditions,
   evaluateAllPreconditions,
@@ -999,8 +1003,14 @@ export async function executeStep(
   // Step 4: Dispatch with retry and timeout.
   const retryConfig = stepDef?.retry;
   const maxAttempts = retryConfig?.max_attempts ?? 1;
-  const timeoutMs =
-    stepDef?.timeout_seconds !== undefined ? stepDef.timeout_seconds * 1000 : undefined;
+  // A3: every `execution: 'auto'` step is bounded — authored timeout_seconds if declared, else the
+  // generous DEFAULT_EXECUTION_TIMEOUT_SECONDS default. Resolved ONCE here (before the retry loop
+  // below), not per-attempt. Agent/guard steps (shouldEnforceTimeout false) are untouched: agent
+  // dispatch stays the instant-return no-op it always was, never wrapped in withTimeout.
+  const enforceTimeout = stepDef !== undefined && shouldEnforceTimeout(stepDef);
+  const timeoutMs = enforceTimeout
+    ? (stepDef!.timeout_seconds ?? DEFAULT_EXECUTION_TIMEOUT_SECONDS) * 1000
+    : undefined;
 
   // Create a stable rate-limiter registry for all retry attempts of this step.
   // Shared state ensures that a pause() triggered on attempt N is still in effect
