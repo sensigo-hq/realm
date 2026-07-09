@@ -78,7 +78,7 @@ interface GorgiasMessage {
  * Supported operations:
  *   fetch('get_ticket',       { ticket_id })                         — GET  /tickets/{id}
  *   fetch('list_tickets',     { order_by?, cursor?, limit?, ... })   — GET  /tickets
- *   fetch('get_messages',     { ticket_id?, limit?, order_by? })     — GET  /messages
+ *   fetch('get_messages',     { ticket_id?, limit?, order_by? })     — GET /tickets/{id}/messages (per-ticket) | GET /messages (global scan when ticket_id omitted)
  *   fetch('get_customer',     { customer_id })                       — GET  /customers/{id}
  *   fetch('list_customers',   { order_by?, cursor?, limit?, ... })   — GET  /customers
  *   create('create_message',  { ticket_id, ...messageFields })       — POST /tickets/{id}/messages
@@ -313,7 +313,6 @@ export class GorgiasAdapter implements ServiceAdapter {
 
       const orderBy = typeof params['order_by'] === 'string' ? params['order_by'] : undefined;
       const stableParts: string[] = [`limit=${PAGE_SIZE}`];
-      if (ticketId !== null) stableParts.push(`ticket_id=${ticketId}`);
       if (orderBy !== undefined) stableParts.push(`order_by=${encodeURIComponent(orderBy)}`);
 
       const accumulated: GorgiasMessage[] = [];
@@ -324,7 +323,12 @@ export class GorgiasAdapter implements ServiceAdapter {
         this.checkAborted(signal);
 
         const urlParts = cursor !== undefined ? [...stableParts, `cursor=${cursor}`] : stableParts;
-        const url = `${this.baseUrl}/messages?${urlParts.join('&')}`;
+        // Per-ticket endpoint when a ticket_id is supplied — the flat /messages?ticket_id= filter
+        // is inconsistent (returns 0, 1, or all messages for the same request; live evidence:
+        // ticket 71355453 → 0 via the flat filter vs 4 via the per-ticket path, same moment).
+        // Retained for the global-scan case (ticketId === null), where there is no id to path on.
+        const messagesPath = ticketId !== null ? `/tickets/${ticketId}/messages` : `/messages`;
+        const url = `${this.baseUrl}${messagesPath}?${urlParts.join('&')}`;
 
         const response = await this.executeRequest('GET', url, 'get_messages', undefined, signal);
         const json = response.data as {

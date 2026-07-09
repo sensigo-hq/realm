@@ -79,6 +79,26 @@ function respondText(status: number, text: string): void {
   });
 }
 
+/**
+ * Registers a handler that captures the request's method + URL (path + query string) and
+ * responds with `body` (default: a harmless empty page, satisfying get_messages' pagination
+ * termination and passing through as raw JSON for every other operation). The returned object is
+ * populated once the request lands — read its fields AFTER awaiting the adapter call.
+ */
+function captureRequest(body: unknown = { data: [], meta: { next_cursor: null } }): {
+  method: string;
+  url: string;
+} {
+  const captured = { method: '', url: '' };
+  handlers.push((req, res) => {
+    captured.method = req.method ?? '';
+    captured.url = req.url ?? '';
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+  });
+  return captured;
+}
+
 // ---------------------------------------------------------------------------
 // Adapter factory — points at the mock server
 // ---------------------------------------------------------------------------
@@ -491,6 +511,33 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     expect(capturedUrl).toContain('order_by=created_datetime%3Adesc');
   });
 
+  // ---------------------------------------------------------------------
+  // Bug fix regression: get_messages must use the per-ticket endpoint, not the flat
+  // /messages?ticket_id= filter (inconsistent on Gorgias's side — see gorgias-get-messages-
+  // per-ticket-endpoint.md). Mutation check: reverting the conditional URL-path change back to
+  // the flat `/messages?...` must redden BOTH of the next two tests.
+  // ---------------------------------------------------------------------
+  it('per-ticket path: fetch({ ticket_id: 10 }) requests GET /tickets/10/messages, not the flat ticket_id filter', async () => {
+    const captured = captureRequest();
+    const adapter = makeAdapter();
+    await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    expect(captured.url.split('?')[0]).toBe('/tickets/10/messages');
+    expect(captured.url).not.toContain('ticket_id=');
+  });
+
+  it('acceptance case: ticket 71355453 returns the complete 4-message thread via the per-ticket endpoint', async () => {
+    const captured = captureRequest({
+      data: [makeMsg(1), makeMsg(2), makeMsg(3), makeMsg(4)],
+      meta: { next_cursor: null },
+    });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 71355453 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages.length).toBe(4);
+    expect(data.truncated).toBe(false);
+    expect(captured.url.split('?')[0]).toBe('/tickets/71355453/messages');
+  });
+
   it('omits ticket_id from URL when not provided', async () => {
     let capturedUrl = '';
     handlers.push((req, res) => {
@@ -502,6 +549,7 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     await adapter.fetch('get_messages', {}, {});
     expect(capturedUrl).not.toContain('ticket_id=');
     expect(capturedUrl).toContain('limit=');
+    expect(capturedUrl.split('?')[0]).toBe('/messages');
   });
 
   it('returns messages when ticket_id is not provided', async () => {
@@ -940,5 +988,99 @@ describe("GorgiasAdapter fetch('unknown_operation')", () => {
       code: 'ADAPTER_OP_UNSUPPORTED',
     });
     await expect(adapter.fetch('unknown_op', {}, {})).rejects.toBeInstanceOf(WorkflowError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// URL contract — every operation asserts method + path.
+//
+// Anti-recurrence: the get_messages bug this file's earlier tests catch shipped because its
+// tests asserted the HTTP *method* but never the URL *path* — method-was-asserted, path-was-not.
+// This matrix is the enumerable enforcement point: a new Gorgias operation MUST be added here
+// with its method + path, or it has no path coverage.
+// ---------------------------------------------------------------------------
+
+type GorgiasDispatch = 'fetch' | 'create' | 'update';
+
+interface UrlContractRow {
+  dispatch: GorgiasDispatch;
+  operation: string;
+  args: Record<string, unknown>;
+  method: string;
+  /** Expected URL path — the portion before `?`. */
+  path: string;
+}
+
+const URL_CONTRACT_MATRIX: UrlContractRow[] = [
+  {
+    dispatch: 'fetch',
+    operation: 'get_ticket',
+    args: { ticket_id: 42 },
+    method: 'GET',
+    path: '/tickets/42',
+  },
+  {
+    dispatch: 'fetch',
+    operation: 'get_messages',
+    args: { ticket_id: 10 },
+    method: 'GET',
+    path: '/tickets/10/messages',
+  },
+  { dispatch: 'fetch', operation: 'get_messages', args: {}, method: 'GET', path: '/messages' },
+  { dispatch: 'fetch', operation: 'list_tickets', args: {}, method: 'GET', path: '/tickets' },
+  {
+    dispatch: 'fetch',
+    operation: 'get_customer',
+    args: { customer_id: 7 },
+    method: 'GET',
+    path: '/customers/7',
+  },
+  { dispatch: 'fetch', operation: 'list_customers', args: {}, method: 'GET', path: '/customers' },
+  {
+    dispatch: 'create',
+    operation: 'create_message',
+    args: { ticket_id: 10, body_text: 'x' },
+    method: 'POST',
+    path: '/tickets/10/messages',
+  },
+  {
+    dispatch: 'create',
+    operation: 'create_ticket',
+    args: { subject: 'x' },
+    method: 'POST',
+    path: '/tickets',
+  },
+  {
+    dispatch: 'create',
+    operation: 'create_customer',
+    args: { email: 'a@b.c' },
+    method: 'POST',
+    path: '/customers',
+  },
+  {
+    dispatch: 'update',
+    operation: 'update_ticket',
+    args: { ticket_id: 10, status: 'closed' },
+    method: 'PUT',
+    path: '/tickets/10',
+  },
+  {
+    dispatch: 'update',
+    operation: 'update_customer',
+    args: { customer_id: 7, name: 'X' },
+    method: 'PUT',
+    path: '/customers/7',
+  },
+];
+
+describe('URL contract — every operation asserts method + path', () => {
+  it('every operation in the matrix hits its documented HTTP method + URL path', async () => {
+    const adapter = makeAdapter();
+    for (const row of URL_CONTRACT_MATRIX) {
+      const captured = captureRequest();
+      await adapter[row.dispatch](row.operation, row.args, {});
+      expect(captured.method).toBe(row.method);
+      expect(captured.url.split('?')[0]).toBe(row.path);
+    }
   });
 });
