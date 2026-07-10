@@ -1031,7 +1031,7 @@ describe("GorgiasAdapter create('create_ticket')", () => {
     const adapter = makeAdapter();
     await expect(
       adapter.create('create_ticket', { messages: [{ channel: 'email', from_agent: false }] }, {}),
-    ).rejects.toMatchObject({ code: 'SERVICE_HTTP_4XX', retryable: false });
+    ).rejects.toMatchObject({ code: 'SERVICE_UNEXPECTED_REDIRECT', retryable: false });
   });
 
   it('a normal 201 write still succeeds unchanged (redirect: manual does not affect non-redirect responses)', async () => {

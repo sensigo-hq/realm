@@ -153,9 +153,9 @@ export class GorgiasAdapter implements ServiceAdapter {
             body: JSON.stringify(body),
             signal: signal ?? null,
             // A7: a redirect on a write would silently downgrade POST/PUT → GET (dropping the
-            // body). 'manual' surfaces the redirect as an opaque response instead of following
-            // it. GET keeps the default 'follow' — the get_messages per-ticket endpoint
-            // legitimately 301s and must keep working unchanged.
+            // body). 'manual' makes Node's fetch return the real 3xx status without following
+            // it (see the check below). GET keeps the default 'follow' — the get_messages
+            // per-ticket endpoint legitimately 301s and must keep working unchanged.
             redirect: 'manual',
           };
 
@@ -181,15 +181,15 @@ export class GorgiasAdapter implements ServiceAdapter {
     }
 
     // A7: surface a redirect on a write rather than silently downgrading POST/PUT → GET (which
-    // would drop the request body). GET is unaffected (redirect stays 'follow' above).
-    if (
-      method !== 'GET' &&
-      (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400))
-    ) {
+    // would drop the request body). GET is unaffected (redirect stays 'follow' above). Node's
+    // redirect: 'manual' returns the real 3xx status directly without following it — no
+    // opaqueredirect check needed (that response type is a browser/CORS-only concept and never
+    // occurs for a plain server-side fetch).
+    if (method !== 'GET' && response.status >= 300 && response.status < 400) {
       throw new WorkflowError(
         `GorgiasAdapter: unexpected redirect (HTTP ${response.status}) on ${method} ${operation} — refusing to silently downgrade the request`,
         {
-          code: 'SERVICE_HTTP_4XX',
+          code: 'SERVICE_UNEXPECTED_REDIRECT',
           category: 'SERVICE',
           agentAction: 'stop',
           retryable: false,
