@@ -273,6 +273,45 @@ describe('JsonFileStore.save()', () => {
     });
   });
 
+  it('issue #131 AC#4: two concurrent save() calls on the same absent id cannot interleave to a partial/duplicate write', async () => {
+    // Two racing imports of the same run id, DIFFERING versions (a genuine divergence) — the
+    // id does not exist on disk yet, so both calls race the create-if-absent path. Without the
+    // #131 lock, both could pass existsSync() seeing "absent" and both write, silently masking
+    // the divergence (whichever write lands last wins with no error). With the lock, the two
+    // read-check-write critical sections are fully serialized: exactly one call observes "absent"
+    // and writes; the other, now serialized behind it, observes the just-written file under the
+    // SAME lock and correctly throws STATE_RUN_DIVERGED — never both succeeding, never a torn file.
+    const recordA = makeRunRecord({
+      id: 'concurrent-save-race',
+      workflow_id: 'wf-race',
+      version: 1,
+      params: { source: 'A' },
+    });
+    const recordB = makeRunRecord({
+      id: 'concurrent-save-race',
+      workflow_id: 'wf-race',
+      version: 2,
+      params: { source: 'B' },
+    });
+
+    const results = await Promise.allSettled([store.save(recordA), store.save(recordB)]);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+      code: 'STATE_RUN_DIVERGED',
+    });
+
+    // The on-disk file is a complete, valid record matching EXACTLY one of the two inputs —
+    // never a torn/mixed write.
+    const finalRun = await store.get('concurrent-save-race');
+    expect([1, 2]).toContain(finalRun.version);
+    const winner = finalRun.version === 1 ? recordA : recordB;
+    expect(finalRun.params).toEqual(winner.params);
+  });
+
   it('cleanup', async () => {
     await rm(dir, { recursive: true, force: true });
   });
@@ -1030,28 +1069,35 @@ describe('JsonFileStore — atomic writes (torn-read safety)', () => {
   }, 20_000); // per-test: concurrent list() over a padded corpus legitimately exceeds the 5s default
 
   it('T3 — structural guard: no raw writeFile of a run/pointer file outside atomicWriteFile', async () => {
-    // Anti-recurrence (#123-style): every run/pointer write MUST route through atomicWriteFile.
-    // The only raw writeFile( calls allowed are the two INSIDE the helper (win32 passthrough + the
-    // temp write). A future dev adding a raw writeFile of a '.json' run/pointer file — reintroducing
-    // the torn read — makes this test fail loudly.
+    // Anti-recurrence (#123-style): every run/pointer write MUST route through the shared
+    // atomicWriteFile helper (issue #130 extracted it to atomic-write.ts, so this file now only
+    // IMPORTS it — no local definition). A future dev adding a raw writeFile of a '.json'
+    // run/pointer file — reintroducing the torn read — makes this test fail loudly.
     const src = await readFile(new URL('./json-file-store.ts', import.meta.url), 'utf8');
 
     expect(src).not.toMatch(/writeFileSync\(/); // no sync writer sneaks in either
+    expect(src).not.toMatch(/\bwriteFile\(/); // no raw async writer either — the helper moved out
+    expect(src).toContain("import { atomicWriteFile } from './atomic-write.js';");
+    expect(src).not.toContain('async function atomicWriteFile('); // no local re-definition
 
-    const helperStart = src.indexOf('async function atomicWriteFile(');
-    const classStart = src.indexOf('export class JsonFileStore');
-    expect(helperStart).toBeGreaterThan(-1);
-    expect(classStart).toBeGreaterThan(helperStart); // helper is module-scope, before the class
-
-    const writeFileIdx = [...src.matchAll(/\bwriteFile\(/g)].map((m) => m.index ?? -1);
-    expect(writeFileIdx).toHaveLength(2); // exactly two — both inside the helper
-    for (const idx of writeFileIdx) {
-      expect(idx).toBeGreaterThan(helperStart);
-      expect(idx).toBeLessThan(classStart); // → inside the helper, never in a class method
-    }
-
-    // 6 occurrences of atomicWriteFile( = 1 definition + 5 call-sites (the 5 write paths).
+    // 5 occurrences of atomicWriteFile( = the 5 write paths (writePointer, writeFreshRun,
+    // update, claimStep, save). The import statement itself has no trailing '(' so it doesn't
+    // inflate this count.
     const atomicIdx = [...src.matchAll(/\batomicWriteFile\(/g)];
-    expect(atomicIdx).toHaveLength(6);
+    expect(atomicIdx).toHaveLength(5);
+  });
+
+  it('T3b — structural guard: the atomicWriteFile primitive itself has exactly one definition and two raw writeFile( calls', async () => {
+    // Sanity-checks the shared primitive's own internal shape (win32 passthrough + the temp
+    // write) hasn't drifted since the #130 extraction.
+    const src = await readFile(new URL('./atomic-write.ts', import.meta.url), 'utf8');
+
+    expect(src).not.toMatch(/writeFileSync\(/);
+
+    const defIdx = [...src.matchAll(/export async function atomicWriteFile\(/g)];
+    expect(defIdx).toHaveLength(1);
+
+    const writeFileIdx = [...src.matchAll(/\bwriteFile\(/g)];
+    expect(writeFileIdx).toHaveLength(2); // win32 passthrough + the temp write
   });
 });

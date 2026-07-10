@@ -1,6 +1,6 @@
 // Local file-backed run store. Stores each run as a JSON file in ~/.realm/runs/.
 // Uses proper-lockfile to prevent concurrent writes.
-import { mkdir, readFile, writeFile, readdir, rename, unlink } from 'node:fs/promises';
+import { mkdir, readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -15,57 +15,12 @@ import { findEligibleSteps, deriveRunPhase } from '../engine/eligibility.js';
 import { computeClaimDeadline } from '../engine/claim-liveness.js';
 import { hashParams } from './params-hash.js';
 import { decideIdempotencyPolicy } from './idempotency-policy.js';
+import { atomicWriteFile } from './atomic-write.js';
 
 const DEFAULT_RUNS_DIR = join(homedir(), '.realm', 'runs');
 
 /** Bounded per-key lock retry policy — used for the resolve-or-claim critical section. */
 const KEY_LOCK_RETRIES = { retries: 10, minTimeout: 50 } as const;
-
-let atomicWriteCounter = 0;
-
-/**
- * Torn-read-safe write for JsonFileStore run and key-pointer files.
- *
- * POSIX (Linux/macOS): writes a unique sibling temp then rename(2)s it over the
- * target. rename-over-existing is atomic on POSIX within one filesystem, so any
- * concurrent unlocked reader (get/list/readPointer) sees the complete old file
- * XOR the complete new file — never a truncated buffer. The temp is a path
- * sibling (`${path}.<pid>.<counter>.tmp`), so it is guaranteed same-directory /
- * same-filesystem (rename never EXDEV) and is excluded from list()'s `.json`
- * scan (it ends in `.tmp`).
- *
- * Windows (win32): rename-over-an-open-file throws EPERM/EBUSY — exactly the
- * concurrent-reader case this store lives in — so on win32 we fall back to the
- * pre-existing plain writeFile (status quo: racy but non-throwing). Real Windows
- * atomicity is deferred to a follow-up (write-file-atomic in its own PR).
- *
- * fsync is intentionally omitted: the bug is a live-process page-cache
- * truncation read, which rename fixes by construction; fsync would only add
- * power-loss durability, a contract this store does not hold (durable tier =
- * realm-cloud/Postgres). Add fsync(temp)+fsync(dir) here if durability ever
- * becomes a requirement.
- *
- * INVARIANT: every `.json` file written into the runs/keys directories MUST go
- * through this helper. A raw writeFile of a run/pointer file reintroduces the
- * torn read in list()/get()/readPointer. (Enforced by a structural test.)
- */
-async function atomicWriteFile(path: string, data: string): Promise<void> {
-  if (process.platform === 'win32') {
-    await writeFile(path, data, 'utf8');
-    return;
-  }
-  // pid separates processes; atomicWriteCounter separates concurrent in-process
-  // writers (counter++ is atomic in the single-threaded event loop — no await
-  // between read and increment). Sufficient for uniqueness; no randomBytes.
-  const tmp = `${path}.${process.pid}.${atomicWriteCounter++}.tmp`;
-  try {
-    await writeFile(tmp, data, 'utf8');
-    await rename(tmp, path);
-  } catch (err) {
-    await unlink(tmp).catch(() => {}); // best-effort cleanup of our own temp only
-    throw err;
-  }
-}
 
 /**
  * A pointer file: the authoritative, deterministic index entry for one idempotency key.
@@ -466,27 +421,41 @@ export class JsonFileStore implements RunStore {
   async save(record: RunRecord): Promise<void> {
     await this.ensureDir();
     const path = this.filePath(record.id);
-    if (existsSync(path)) {
-      const raw = await readFile(path, 'utf8');
-      const stored = JSON.parse(raw) as RunRecord;
-      if (stored.version === record.version) return;
-      throw new WorkflowError(
-        `Run '${record.id}' exists locally with a different version (local: ${stored.version}, incoming: ${record.version}). Manual resolution required.`,
-        {
-          code: 'STATE_RUN_DIVERGED',
-          category: 'STATE',
-          agentAction: 'report_to_user',
-          retryable: false,
-          details: {
-            runId: record.id,
-            localVersion: stored.version,
-            incomingVersion: record.version,
+
+    // #131: the read-check-write critical section now holds the same per-path lock
+    // update()/claimStep() use, closing the one run-writer that previously raced unlocked.
+    // realpath: false (like create()'s key lock) — save()'s whole point is create-if-absent,
+    // so the target file legitimately may not exist yet; the default realpath resolution
+    // would throw ENOENT locking a path with nothing there.
+    const release = await lockfile.lock(path, {
+      realpath: false,
+      retries: { retries: 3, minTimeout: 50 },
+    });
+    try {
+      if (existsSync(path)) {
+        const raw = await readFile(path, 'utf8');
+        const stored = JSON.parse(raw) as RunRecord;
+        if (stored.version === record.version) return;
+        throw new WorkflowError(
+          `Run '${record.id}' exists locally with a different version (local: ${stored.version}, incoming: ${record.version}). Manual resolution required.`,
+          {
+            code: 'STATE_RUN_DIVERGED',
+            category: 'STATE',
+            agentAction: 'report_to_user',
+            retryable: false,
+            details: {
+              runId: record.id,
+              localVersion: stored.version,
+              incomingVersion: record.version,
+            },
           },
-        },
-      );
+        );
+      }
+      // Run file FIRST (consistent with create()), then register the key pointer.
+      await atomicWriteFile(path, JSON.stringify(record, null, 2));
+    } finally {
+      await release();
     }
-    // Run file FIRST (consistent with create()), then register the key pointer.
-    await atomicWriteFile(path, JSON.stringify(record, null, 2));
     await this.registerImportedKey(record);
   }
 

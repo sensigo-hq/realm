@@ -99,6 +99,37 @@ The engine pauses and returns `next_actions` containing this step. The AI agent 
 
 The engine executes this step immediately without returning to the caller. If the step declares `uses_service`, the engine calls the registered adapter. If it declares `handler`, the engine calls the registered `StepHandler`. Auto steps chain automatically: after any step completes, if the next step is `auto`, the engine runs it immediately and repeats until it reaches an agent step, a human gate, or a terminal state.
 
+#### The bare `auto` step
+
+An `execution: auto` step may declare **none** of `uses_service`, `handler`, or a human `trust` gate. This is valid — not a loader error — and is an intentional pattern for a step whose role is purely structural: a place in the DAG, typically the run's last step, that requires no adapter/handler computation and no human review.
+
+**What it is.** With none of `uses_service` / `handler` / `trust` set, the engine has nothing to compute for this step: no adapter is called, no handler runs, no gate opens. It is still sequenced by `depends_on` / `trigger_rule` / `when` like any other step, and it still produces an evidence entry and moves to `completed_steps` when it settles.
+
+**What its output actually is.** Whatever value is already in flight on the underlying `execute_step` / auto-chain call becomes this step's recorded output — an empty object if it's the first thing a fresh call reaches, or, when it is auto-chained immediately after another step within the same call, **a copy of that other step's own submitted output** (one dispatcher serves an entire auto-chain hop; the engine does not solicit separate input per bare step). **Treat a bare `auto` step's own output as inconsequential — never reference it (`context.resources.<step>.*`) from a downstream step.** Its value is a byproduct of chaining, not an authored result; what matters is that the step — and with it, the run — completed.
+
+**When to use it.** A terminal "record/checkpoint" step: the last node of the DAG, whose completion is what marks the run done, not whatever data lands in its evidence. Give it a correct `depends_on` naming its real predecessor(s) so it cannot become eligible — and therefore run — before the actual work finishes.
+
+```yaml
+steps:
+  do_the_work:
+    description: Perform the real work
+    execution: agent
+    depends_on: []
+
+  finalize:
+    description: Terminal checkpoint — no output of its own
+    execution: auto
+    depends_on: [do_the_work]
+```
+
+**How it differs:**
+
+- From a **handler/adapter** step (`handler` / `uses_service` set): those have the engine compute a real, meaningful output.
+- From a **gate** (`trust: human_confirmed` / `human_reviewed`): a gate pauses the run for an explicit human decision; a bare step never pauses — it settles the instant it's reached.
+- From `execution: agent`: an agent step is surfaced in `next_actions` and requires an explicit `execute_step` call carrying agent-authored params; a bare `auto` step is never surfaced in `next_actions` and settles automatically as part of the auto-chain.
+
+This is intentional, not an authoring error.
+
 ### `execution: guard`
 
 The engine evaluates one or more boolean expressions declared in `abort_unless` against the run's current evidence. The evaluation happens inline, as part of the auto-chain — the guard is never returned to the agent as a step to execute.
