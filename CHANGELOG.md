@@ -6,6 +6,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **`GorgiasAdapter` list results now include `has_more`.** `list_tickets`/`list_customers` responses carry a derived `has_more` boolean (from `meta.next_cursor`) alongside the raw `data`/`meta`, so callers can detect further pages without hand-parsing the cursor.
+
+### Changed
+
+- **`GorgiasAdapter` list ops reject a non-scalar filter param.** Passing an array/object as a `list_tickets`/`list_customers` query param was silently dropped (a silently-lost filter → over-broad results); it now throws `ADAPTER_VALIDATION_FAILED`. `null`/`undefined` still omit the param.
+
+### Fixed
+
+- **`GorgiasAdapter` surfaces a redirect on a write.** A 301/302 on a `POST`/`PUT` could silently downgrade the method to GET; write ops now refuse an unexpected redirect loudly. GET ops still follow redirects (unchanged).
+
 ## [0.16.0] — 2026-07-10
 
 ### Added
