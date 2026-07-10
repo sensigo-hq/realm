@@ -17,6 +17,8 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - **`GorgiasAdapter` surfaces a redirect on a write.** A 301/302 on a `POST`/`PUT` could silently downgrade the method to GET; write ops now refuse an unexpected redirect loudly. GET ops still follow redirects (unchanged).
+- **Atomic writes now cover the workflow registry (issue #130).** `registrar` (`register()`) and the `migrate` command wrote the registry with non-atomic `writeFileSync` (truncate-then-write), so a concurrent unlocked reader (`get`/`list`/`loadWorkflow`) could tear-read a half-written registry file — the same class as the v0.16.0 run-store fix, for `~/.realm/workflows/`. Both now write via the shared `atomicWriteFile` (unique temp + POSIX `rename`; win32 passthrough), extracted to `store/atomic-write.ts` and covered by a structural anti-recurrence guard.
+- **`JsonFileStore.save()` now holds the file-path lock (issue #131).** `save()` was the only run writer not acquiring the `proper-lockfile` per-path lock that `update()`/`claimStep()` hold; its create-if-absent contract made a lost-update unreachable today, but the asymmetry was a latent trap. Its read-check-write is now serialized under the same lock. No behaviour change to `save()`'s create-if-absent / version-conflict semantics.
 
 ## [0.16.0] — 2026-07-10
 
