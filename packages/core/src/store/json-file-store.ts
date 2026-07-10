@@ -421,27 +421,41 @@ export class JsonFileStore implements RunStore {
   async save(record: RunRecord): Promise<void> {
     await this.ensureDir();
     const path = this.filePath(record.id);
-    if (existsSync(path)) {
-      const raw = await readFile(path, 'utf8');
-      const stored = JSON.parse(raw) as RunRecord;
-      if (stored.version === record.version) return;
-      throw new WorkflowError(
-        `Run '${record.id}' exists locally with a different version (local: ${stored.version}, incoming: ${record.version}). Manual resolution required.`,
-        {
-          code: 'STATE_RUN_DIVERGED',
-          category: 'STATE',
-          agentAction: 'report_to_user',
-          retryable: false,
-          details: {
-            runId: record.id,
-            localVersion: stored.version,
-            incomingVersion: record.version,
+
+    // #131: the read-check-write critical section now holds the same per-path lock
+    // update()/claimStep() use, closing the one run-writer that previously raced unlocked.
+    // realpath: false (like create()'s key lock) — save()'s whole point is create-if-absent,
+    // so the target file legitimately may not exist yet; the default realpath resolution
+    // would throw ENOENT locking a path with nothing there.
+    const release = await lockfile.lock(path, {
+      realpath: false,
+      retries: { retries: 3, minTimeout: 50 },
+    });
+    try {
+      if (existsSync(path)) {
+        const raw = await readFile(path, 'utf8');
+        const stored = JSON.parse(raw) as RunRecord;
+        if (stored.version === record.version) return;
+        throw new WorkflowError(
+          `Run '${record.id}' exists locally with a different version (local: ${stored.version}, incoming: ${record.version}). Manual resolution required.`,
+          {
+            code: 'STATE_RUN_DIVERGED',
+            category: 'STATE',
+            agentAction: 'report_to_user',
+            retryable: false,
+            details: {
+              runId: record.id,
+              localVersion: stored.version,
+              incomingVersion: record.version,
+            },
           },
-        },
-      );
+        );
+      }
+      // Run file FIRST (consistent with create()), then register the key pointer.
+      await atomicWriteFile(path, JSON.stringify(record, null, 2));
+    } finally {
+      await release();
     }
-    // Run file FIRST (consistent with create()), then register the key pointer.
-    await atomicWriteFile(path, JSON.stringify(record, null, 2));
     await this.registerImportedKey(record);
   }
 

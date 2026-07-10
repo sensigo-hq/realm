@@ -273,6 +273,45 @@ describe('JsonFileStore.save()', () => {
     });
   });
 
+  it('issue #131 AC#4: two concurrent save() calls on the same absent id cannot interleave to a partial/duplicate write', async () => {
+    // Two racing imports of the same run id, DIFFERING versions (a genuine divergence) — the
+    // id does not exist on disk yet, so both calls race the create-if-absent path. Without the
+    // #131 lock, both could pass existsSync() seeing "absent" and both write, silently masking
+    // the divergence (whichever write lands last wins with no error). With the lock, the two
+    // read-check-write critical sections are fully serialized: exactly one call observes "absent"
+    // and writes; the other, now serialized behind it, observes the just-written file under the
+    // SAME lock and correctly throws STATE_RUN_DIVERGED — never both succeeding, never a torn file.
+    const recordA = makeRunRecord({
+      id: 'concurrent-save-race',
+      workflow_id: 'wf-race',
+      version: 1,
+      params: { source: 'A' },
+    });
+    const recordB = makeRunRecord({
+      id: 'concurrent-save-race',
+      workflow_id: 'wf-race',
+      version: 2,
+      params: { source: 'B' },
+    });
+
+    const results = await Promise.allSettled([store.save(recordA), store.save(recordB)]);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+      code: 'STATE_RUN_DIVERGED',
+    });
+
+    // The on-disk file is a complete, valid record matching EXACTLY one of the two inputs —
+    // never a torn/mixed write.
+    const finalRun = await store.get('concurrent-save-race');
+    expect([1, 2]).toContain(finalRun.version);
+    const winner = finalRun.version === 1 ? recordA : recordB;
+    expect(finalRun.params).toEqual(winner.params);
+  });
+
   it('cleanup', async () => {
     await rm(dir, { recursive: true, force: true });
   });
