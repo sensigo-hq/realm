@@ -87,9 +87,10 @@ interface GorgiasMessage {
  *   update('update_ticket',   { ticket_id, ...ticketFields })        — PUT  /tickets/{id}
  *   update('update_customer', { customer_id, ...customerFields })    — PUT  /customers/{id}
  *
- * list_tickets and list_customers return a single page; pass cursor from response meta
- * to retrieve subsequent pages. Scalar params (string | number | boolean) are forwarded
- * as query params. Non-scalar values (arrays, objects) are silently skipped.
+ * list_tickets and list_customers return a single page — data.data/data.meta passthrough plus
+ * an additive data.has_more (derived from meta.next_cursor; no auto-pagination); pass cursor
+ * from response meta to retrieve subsequent pages. Scalar params (string | number | boolean) are
+ * forwarded as query params. Non-scalar values (arrays, objects) are silently skipped.
  */
 export class GorgiasAdapter implements ServiceAdapter {
   readonly id: string;
@@ -376,13 +377,23 @@ export class GorgiasAdapter implements ServiceAdapter {
         }
       }
       const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
-      return this.executeRequest(
+      const res = await this.executeRequest(
         'GET',
         `${this.baseUrl}/tickets${queryString}`,
         'list_tickets',
         undefined,
         signal,
       );
+      // A5: additive has_more convenience signal derived from meta.next_cursor — data.data and
+      // data.meta are preserved untouched; no auto-pagination.
+      const meta = (res.data as { meta?: { next_cursor?: string | null } }).meta;
+      return {
+        ...res,
+        data: {
+          ...(res.data as Record<string, unknown>),
+          has_more: (meta?.next_cursor ?? null) !== null,
+        },
+      };
     }
 
     if (operation === 'get_customer') {
@@ -406,13 +417,23 @@ export class GorgiasAdapter implements ServiceAdapter {
         }
       }
       const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
-      return this.executeRequest(
+      const res = await this.executeRequest(
         'GET',
         `${this.baseUrl}/customers${queryString}`,
         'list_customers',
         undefined,
         signal,
       );
+      // A5: additive has_more convenience signal derived from meta.next_cursor — data.data and
+      // data.meta are preserved untouched; no auto-pagination.
+      const meta = (res.data as { meta?: { next_cursor?: string | null } }).meta;
+      return {
+        ...res,
+        data: {
+          ...(res.data as Record<string, unknown>),
+          has_more: (meta?.next_cursor ?? null) !== null,
+        },
+      };
     }
 
     throw new WorkflowError(`GorgiasAdapter: unsupported fetch operation '${operation}'`, {

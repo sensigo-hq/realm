@@ -343,6 +343,27 @@ describe("GorgiasAdapter fetch('list_tickets')", () => {
     expect(lastRequestMethod).toBe('GET');
     expect(capturedUrl).toBe('/tickets');
   });
+
+  it('has_more is true when meta.next_cursor is present (issue A5)', async () => {
+    respond(200, { data: [{ id: 1, status: 'open' }], meta: { next_cursor: 'abc123' } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('list_tickets', {}, {});
+    const data = result.data as { data: unknown[]; meta: unknown; has_more: boolean };
+    expect(data.has_more).toBe(true);
+    // data.data and data.meta are preserved untouched (additive field only).
+    expect(data.data).toEqual([{ id: 1, status: 'open' }]);
+    expect(data.meta).toEqual({ next_cursor: 'abc123' });
+  });
+
+  it('has_more is false when meta.next_cursor is null (issue A5)', async () => {
+    respond(200, { data: [{ id: 1, status: 'open' }], meta: { next_cursor: null } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('list_tickets', {}, {});
+    const data = result.data as { data: unknown[]; meta: unknown; has_more: boolean };
+    expect(data.has_more).toBe(false);
+    expect(data.data).toEqual([{ id: 1, status: 'open' }]);
+    expect(data.meta).toEqual({ next_cursor: null });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -777,6 +798,27 @@ describe("GorgiasAdapter fetch('list_customers')", () => {
     const adapter = makeAdapter();
     await adapter.fetch('list_customers', {}, {});
     expect(capturedUrl).toBe('/customers');
+  });
+
+  it('has_more is true when meta.next_cursor is present (issue A5)', async () => {
+    respond(200, { data: [{ id: 1, email: 'a@example.com' }], meta: { next_cursor: 'xyz789' } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('list_customers', {}, {});
+    const data = result.data as { data: unknown[]; meta: unknown; has_more: boolean };
+    expect(data.has_more).toBe(true);
+    // data.data and data.meta are preserved untouched (additive field only).
+    expect(data.data).toEqual([{ id: 1, email: 'a@example.com' }]);
+    expect(data.meta).toEqual({ next_cursor: 'xyz789' });
+  });
+
+  it('has_more is false when meta.next_cursor is null (issue A5)', async () => {
+    respond(200, { data: [{ id: 1, email: 'a@example.com' }], meta: { next_cursor: null } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('list_customers', {}, {});
+    const data = result.data as { data: unknown[]; meta: unknown; has_more: boolean };
+    expect(data.has_more).toBe(false);
+    expect(data.data).toEqual([{ id: 1, email: 'a@example.com' }]);
+    expect(data.meta).toEqual({ next_cursor: null });
   });
 });
 
