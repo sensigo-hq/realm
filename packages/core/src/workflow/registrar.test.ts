@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonWorkflowStore } from './registrar.js';
@@ -88,5 +88,19 @@ describe('JsonWorkflowStore', () => {
     await expect(store.get('wf-old')).rejects.toMatchObject({
       code: 'STATE_LEGACY_FORMAT',
     });
+  });
+
+  it('T3 — structural guard: no raw writeFileSync of a registry file outside atomicWriteFile (issue #130)', async () => {
+    // Anti-recurrence, same class as json-file-store.ts's T3: register() must route through the
+    // shared atomicWriteFile helper, not a raw sync writer — a raw writeFileSync reintroduces a
+    // torn read for a concurrent unlocked reader (get()/list()).
+    const src = await readFile(new URL('./registrar.ts', import.meta.url), 'utf8');
+
+    expect(src).not.toMatch(/writeFileSync\(/);
+    expect(src).not.toMatch(/\bwriteFile\(/);
+    expect(src).toContain("import { atomicWriteFile } from '../store/atomic-write.js';");
+
+    const atomicIdx = [...src.matchAll(/\batomicWriteFile\(/g)];
+    expect(atomicIdx).toHaveLength(1); // the one write path: register()
   });
 });

@@ -1,10 +1,11 @@
 // JsonWorkflowStore — persists registered WorkflowDefinition objects to ~/.realm/workflows/.
-import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
+import { readFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
+import { atomicWriteFile } from '../store/atomic-write.js';
 
 export interface WorkflowRegistrar {
   /** Persist a WorkflowDefinition under its id, overwriting any previous registration. */
@@ -27,10 +28,9 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
   }
 
   async register(definition: WorkflowDefinition): Promise<void> {
-    writeFileSync(
+    await atomicWriteFile(
       join(this.dir, `${definition.id}.json`),
       JSON.stringify(definition, null, 2),
-      'utf8',
     );
   }
 
