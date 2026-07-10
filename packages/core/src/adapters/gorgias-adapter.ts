@@ -90,7 +90,8 @@ interface GorgiasMessage {
  * list_tickets and list_customers return a single page — data.data/data.meta passthrough plus
  * an additive data.has_more (derived from meta.next_cursor; no auto-pagination); pass cursor
  * from response meta to retrieve subsequent pages. Scalar params (string | number | boolean) are
- * forwarded as query params. Non-scalar values (arrays, objects) are silently skipped.
+ * forwarded as query params; null/undefined are omitted ("not set"). A non-scalar value (array,
+ * object) throws ADAPTER_VALIDATION_FAILED — a dropped filter would silently over-broaden results.
  */
 export class GorgiasAdapter implements ServiceAdapter {
   readonly id: string;
@@ -371,9 +372,24 @@ export class GorgiasAdapter implements ServiceAdapter {
     if (operation === 'list_tickets') {
       this.checkAborted(signal);
       const queryParts: string[] = [];
+      // A6: fail loud on a non-scalar param instead of silently dropping it — a dropped filter
+      // yields silently-wrong (over-broad) results. null/undefined mean "not set" and still omit;
+      // core stays I/O-free, so a console.warn is not an option here.
       for (const [key, value] of Object.entries(params)) {
+        if (value === undefined || value === null) continue;
         if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
           queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+        } else {
+          throw new WorkflowError(
+            `GorgiasAdapter: list param '${key}' must be a scalar (string, number, or boolean); got ${Array.isArray(value) ? 'array' : typeof value}`,
+            {
+              code: 'ADAPTER_VALIDATION_FAILED',
+              category: 'ENGINE',
+              agentAction: 'provide_input',
+              retryable: false,
+              details: { key, type: Array.isArray(value) ? 'array' : typeof value },
+            },
+          );
         }
       }
       const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
@@ -411,9 +427,24 @@ export class GorgiasAdapter implements ServiceAdapter {
     if (operation === 'list_customers') {
       this.checkAborted(signal);
       const queryParts: string[] = [];
+      // A6: fail loud on a non-scalar param instead of silently dropping it — a dropped filter
+      // yields silently-wrong (over-broad) results. null/undefined mean "not set" and still omit;
+      // core stays I/O-free, so a console.warn is not an option here.
       for (const [key, value] of Object.entries(params)) {
+        if (value === undefined || value === null) continue;
         if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
           queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+        } else {
+          throw new WorkflowError(
+            `GorgiasAdapter: list param '${key}' must be a scalar (string, number, or boolean); got ${Array.isArray(value) ? 'array' : typeof value}`,
+            {
+              code: 'ADAPTER_VALIDATION_FAILED',
+              category: 'ENGINE',
+              agentAction: 'provide_input',
+              retryable: false,
+              details: { key, type: Array.isArray(value) ? 'array' : typeof value },
+            },
+          );
         }
       }
       const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';

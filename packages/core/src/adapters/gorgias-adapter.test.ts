@@ -331,6 +331,30 @@ describe("GorgiasAdapter fetch('list_tickets')", () => {
     expect(capturedUrl).toContain('limit=10');
   });
 
+  it('rejects a non-scalar param (array) with ADAPTER_VALIDATION_FAILED (issue A6)', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('list_tickets', { limit: 10, tags: ['vip', 'new'] }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+    await expect(
+      adapter.fetch('list_tickets', { limit: 10, tags: ['vip', 'new'] }, {}),
+    ).rejects.toBeInstanceOf(WorkflowError);
+  });
+
+  it('null/undefined params are still omitted (not thrown) alongside scalar params', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: [], meta: { next_cursor: null } }));
+    });
+    const adapter = makeAdapter();
+    await adapter.fetch('list_tickets', { limit: 10, order_by: undefined, cursor: null }, {});
+    expect(capturedUrl).toContain('limit=10');
+    expect(capturedUrl).not.toContain('order_by=');
+    expect(capturedUrl).not.toContain('cursor=');
+  });
+
   it('no params: URL path has no query string', async () => {
     let capturedUrl = '';
     handlers.push((req, res) => {
@@ -770,7 +794,24 @@ describe("GorgiasAdapter fetch('list_customers')", () => {
     expect(capturedUrl).toContain('limit=5');
   });
 
-  it('skips non-scalar params (arrays, objects) from query string', async () => {
+  it('rejects a non-scalar param (array) with ADAPTER_VALIDATION_FAILED (issue A6)', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('list_customers', { limit: 10, tags: ['vip', 'new'] }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+    await expect(
+      adapter.fetch('list_customers', { limit: 10, tags: ['vip', 'new'] }, {}),
+    ).rejects.toBeInstanceOf(WorkflowError);
+  });
+
+  it('rejects a non-scalar param (object) with ADAPTER_VALIDATION_FAILED (issue A6)', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('list_customers', { limit: 10, nested: { key: 'val' } }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+  });
+
+  it('null/undefined params are still omitted (not thrown) alongside scalar params', async () => {
     let capturedUrl = '';
     handlers.push((req, res) => {
       capturedUrl = req.url ?? '';
@@ -778,14 +819,10 @@ describe("GorgiasAdapter fetch('list_customers')", () => {
       res.end(JSON.stringify({ data: [], meta: { next_cursor: null } }));
     });
     const adapter = makeAdapter();
-    await adapter.fetch(
-      'list_customers',
-      { limit: 10, tags: ['vip', 'new'], nested: { key: 'val' } },
-      {},
-    );
+    await adapter.fetch('list_customers', { limit: 10, email: undefined, tags: null }, {});
     expect(capturedUrl).toContain('limit=10');
+    expect(capturedUrl).not.toContain('email=');
     expect(capturedUrl).not.toContain('tags=');
-    expect(capturedUrl).not.toContain('nested=');
   });
 
   it('no params: URL path has no query string', async () => {
