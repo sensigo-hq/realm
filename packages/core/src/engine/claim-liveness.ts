@@ -11,6 +11,7 @@
 // deliberate per-step act (`reclaimStep` / `realm run reclaim`), never a background sweep.
 import type { RunRecord, ClaimRecord } from '../types/run-record.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
+import { computeBackoff } from './backoff.js';
 
 /**
  * Default execution timeout (issue A3) enforced on every `execution: 'auto'` step that declares no
@@ -60,6 +61,18 @@ export const RECLAIM_FLOOR_SECONDS = 900; // 15 min
  * past the seal). Every other claim returns `null` (→ `claim_unknown_age`): agent steps have no
  * reliable wall-clock bound (the dispatcher returns instantly; `timeout_seconds` is advisory), and
  * any step in a finalizer-bearing workflow may hold its claim through the terminal drain.
+ *
+ * The horizon is the WORST-CASE wall-clock across every retry attempt (issue #101 follow-up —
+ * Design Reviewer finding #4 from the A3 debate): a single-attempt bound understates a retrying
+ * step's real claim span (`max_attempts × per-attempt-timeout + the declared backoffs between
+ * attempts`), so a legitimately-retrying step could be labeled `claim_stale` — and, if
+ * `idempotent`, become eligible for a premature `realm run reclaim --all --force` re-drive —
+ * while still on an early attempt. For `n = 1` (no `retry:`, or `max_attempts: 1`) this reduces
+ * EXACTLY to the prior single-attempt formula `max(RECLAIM_FLOOR, perAttemptSec + MARGIN)`, so
+ * non-retry steps' horizons are byte-unchanged. This uses the DECLARED backoff schedule only — a
+ * runtime `retry_after` (rate-limit 429 override, applied in execution-loop.ts) is not knowable at
+ * claim time; the horizon stays a best-effort, floored, advisory bound (Phase 1 gates no action on
+ * this label) and does not attempt to model `retry_after`.
  */
 export function computeClaimDeadline(
   definition: WorkflowDefinition,
@@ -70,10 +83,16 @@ export function computeClaimDeadline(
   if (step === undefined) return null;
   const hasFinalizers = Object.values(definition.steps).some((s) => s.execution === 'finalizer');
   if (step.execution !== 'auto' || hasFinalizers) return null;
-  const horizonSeconds = Math.max(
-    RECLAIM_FLOOR_SECONDS,
-    (step.timeout_seconds ?? DEFAULT_EXECUTION_TIMEOUT_SECONDS) + RECLAIM_MARGIN_SECONDS,
-  );
+  const n = step.retry?.max_attempts ?? 1;
+  const perAttemptSec = step.timeout_seconds ?? DEFAULT_EXECUTION_TIMEOUT_SECONDS;
+  // Backoffs occur BETWEEN attempts: n-1 of them, for attemptNum 1..n-1 (matches the retry loop's
+  // schedule in execution-loop.ts). computeBackoff returns ms; the horizon is seconds.
+  let backoffSec = 0;
+  if (step.retry !== undefined) {
+    for (let a = 1; a < n; a++) backoffSec += computeBackoff(step.retry, a) / 1000;
+  }
+  const worstCaseSec = n * perAttemptSec + backoffSec;
+  const horizonSeconds = Math.max(RECLAIM_FLOOR_SECONDS, worstCaseSec + RECLAIM_MARGIN_SECONDS);
   return new Date(now.getTime() + horizonSeconds * 1000).toISOString();
 }
 
