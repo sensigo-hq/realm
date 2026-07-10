@@ -6,6 +6,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-07-10
+
 ### Added
 
 - **Runner-liveness reclaim recovery — Phase 1 (issue #101).** Closes the _after-claim wedge_: a step pinned in `in_progress_steps` because its runner died after `claimStep` but before settling (the v0.15.0 finalizer crash-wedge is an instance). Every wedge is now **always detectable** and **recoverable by a deliberate per-step act** — no new run phase, no daemon, no background sweep.
