@@ -87,9 +87,11 @@ interface GorgiasMessage {
  *   update('update_ticket',   { ticket_id, ...ticketFields })        — PUT  /tickets/{id}
  *   update('update_customer', { customer_id, ...customerFields })    — PUT  /customers/{id}
  *
- * list_tickets and list_customers return a single page; pass cursor from response meta
- * to retrieve subsequent pages. Scalar params (string | number | boolean) are forwarded
- * as query params. Non-scalar values (arrays, objects) are silently skipped.
+ * list_tickets and list_customers return a single page — data.data/data.meta passthrough plus
+ * an additive data.has_more (derived from meta.next_cursor; no auto-pagination); pass cursor
+ * from response meta to retrieve subsequent pages. Scalar params (string | number | boolean) are
+ * forwarded as query params; null/undefined are omitted ("not set"). A non-scalar value (array,
+ * object) throws ADAPTER_VALIDATION_FAILED — a dropped filter would silently over-broaden results.
  */
 export class GorgiasAdapter implements ServiceAdapter {
   readonly id: string;
@@ -150,6 +152,11 @@ export class GorgiasAdapter implements ServiceAdapter {
             headers: this.buildHeaders(),
             body: JSON.stringify(body),
             signal: signal ?? null,
+            // A7: a redirect on a write would silently downgrade POST/PUT → GET (dropping the
+            // body). 'manual' makes Node's fetch return the real 3xx status without following
+            // it (see the check below). GET keeps the default 'follow' — the get_messages
+            // per-ticket endpoint legitimately 301s and must keep working unchanged.
+            redirect: 'manual',
           };
 
     let response: Response;
@@ -171,6 +178,24 @@ export class GorgiasAdapter implements ServiceAdapter {
         agentAction: 'wait_for_human',
         retryable: true,
       });
+    }
+
+    // A7: surface a redirect on a write rather than silently downgrading POST/PUT → GET (which
+    // would drop the request body). GET is unaffected (redirect stays 'follow' above). Node's
+    // redirect: 'manual' returns the real 3xx status directly without following it — no
+    // opaqueredirect check needed (that response type is a browser/CORS-only concept and never
+    // occurs for a plain server-side fetch).
+    if (method !== 'GET' && response.status >= 300 && response.status < 400) {
+      throw new WorkflowError(
+        `GorgiasAdapter: unexpected redirect (HTTP ${response.status}) on ${method} ${operation} — refusing to silently downgrade the request`,
+        {
+          code: 'SERVICE_UNEXPECTED_REDIRECT',
+          category: 'SERVICE',
+          agentAction: 'stop',
+          retryable: false,
+          details: { status: response.status, operation, method },
+        },
+      );
     }
 
     if (!response.ok) {
@@ -370,19 +395,44 @@ export class GorgiasAdapter implements ServiceAdapter {
     if (operation === 'list_tickets') {
       this.checkAborted(signal);
       const queryParts: string[] = [];
+      // A6: fail loud on a non-scalar param instead of silently dropping it — a dropped filter
+      // yields silently-wrong (over-broad) results. null/undefined mean "not set" and still omit;
+      // core stays I/O-free, so a console.warn is not an option here.
       for (const [key, value] of Object.entries(params)) {
+        if (value === undefined || value === null) continue;
         if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
           queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+        } else {
+          throw new WorkflowError(
+            `GorgiasAdapter: list param '${key}' must be a scalar (string, number, or boolean); got ${Array.isArray(value) ? 'array' : typeof value}`,
+            {
+              code: 'ADAPTER_VALIDATION_FAILED',
+              category: 'ENGINE',
+              agentAction: 'provide_input',
+              retryable: false,
+              details: { key, type: Array.isArray(value) ? 'array' : typeof value },
+            },
+          );
         }
       }
       const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
-      return this.executeRequest(
+      const res = await this.executeRequest(
         'GET',
         `${this.baseUrl}/tickets${queryString}`,
         'list_tickets',
         undefined,
         signal,
       );
+      // A5: additive has_more convenience signal derived from meta.next_cursor — data.data and
+      // data.meta are preserved untouched; no auto-pagination.
+      const meta = (res.data as { meta?: { next_cursor?: string | null } }).meta;
+      return {
+        ...res,
+        data: {
+          ...(res.data as Record<string, unknown>),
+          has_more: (meta?.next_cursor ?? null) !== null,
+        },
+      };
     }
 
     if (operation === 'get_customer') {
@@ -400,19 +450,44 @@ export class GorgiasAdapter implements ServiceAdapter {
     if (operation === 'list_customers') {
       this.checkAborted(signal);
       const queryParts: string[] = [];
+      // A6: fail loud on a non-scalar param instead of silently dropping it — a dropped filter
+      // yields silently-wrong (over-broad) results. null/undefined mean "not set" and still omit;
+      // core stays I/O-free, so a console.warn is not an option here.
       for (const [key, value] of Object.entries(params)) {
+        if (value === undefined || value === null) continue;
         if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
           queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+        } else {
+          throw new WorkflowError(
+            `GorgiasAdapter: list param '${key}' must be a scalar (string, number, or boolean); got ${Array.isArray(value) ? 'array' : typeof value}`,
+            {
+              code: 'ADAPTER_VALIDATION_FAILED',
+              category: 'ENGINE',
+              agentAction: 'provide_input',
+              retryable: false,
+              details: { key, type: Array.isArray(value) ? 'array' : typeof value },
+            },
+          );
         }
       }
       const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
-      return this.executeRequest(
+      const res = await this.executeRequest(
         'GET',
         `${this.baseUrl}/customers${queryString}`,
         'list_customers',
         undefined,
         signal,
       );
+      // A5: additive has_more convenience signal derived from meta.next_cursor — data.data and
+      // data.meta are preserved untouched; no auto-pagination.
+      const meta = (res.data as { meta?: { next_cursor?: string | null } }).meta;
+      return {
+        ...res,
+        data: {
+          ...(res.data as Record<string, unknown>),
+          has_more: (meta?.next_cursor ?? null) !== null,
+        },
+      };
     }
 
     throw new WorkflowError(`GorgiasAdapter: unsupported fetch operation '${operation}'`, {

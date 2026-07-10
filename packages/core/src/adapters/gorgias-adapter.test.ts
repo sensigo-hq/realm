@@ -331,6 +331,30 @@ describe("GorgiasAdapter fetch('list_tickets')", () => {
     expect(capturedUrl).toContain('limit=10');
   });
 
+  it('rejects a non-scalar param (array) with ADAPTER_VALIDATION_FAILED (issue A6)', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('list_tickets', { limit: 10, tags: ['vip', 'new'] }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+    await expect(
+      adapter.fetch('list_tickets', { limit: 10, tags: ['vip', 'new'] }, {}),
+    ).rejects.toBeInstanceOf(WorkflowError);
+  });
+
+  it('null/undefined params are still omitted (not thrown) alongside scalar params', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: [], meta: { next_cursor: null } }));
+    });
+    const adapter = makeAdapter();
+    await adapter.fetch('list_tickets', { limit: 10, order_by: undefined, cursor: null }, {});
+    expect(capturedUrl).toContain('limit=10');
+    expect(capturedUrl).not.toContain('order_by=');
+    expect(capturedUrl).not.toContain('cursor=');
+  });
+
   it('no params: URL path has no query string', async () => {
     let capturedUrl = '';
     handlers.push((req, res) => {
@@ -342,6 +366,27 @@ describe("GorgiasAdapter fetch('list_tickets')", () => {
     await adapter.fetch('list_tickets', {}, {});
     expect(lastRequestMethod).toBe('GET');
     expect(capturedUrl).toBe('/tickets');
+  });
+
+  it('has_more is true when meta.next_cursor is present (issue A5)', async () => {
+    respond(200, { data: [{ id: 1, status: 'open' }], meta: { next_cursor: 'abc123' } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('list_tickets', {}, {});
+    const data = result.data as { data: unknown[]; meta: unknown; has_more: boolean };
+    expect(data.has_more).toBe(true);
+    // data.data and data.meta are preserved untouched (additive field only).
+    expect(data.data).toEqual([{ id: 1, status: 'open' }]);
+    expect(data.meta).toEqual({ next_cursor: 'abc123' });
+  });
+
+  it('has_more is false when meta.next_cursor is null (issue A5)', async () => {
+    respond(200, { data: [{ id: 1, status: 'open' }], meta: { next_cursor: null } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('list_tickets', {}, {});
+    const data = result.data as { data: unknown[]; meta: unknown; has_more: boolean };
+    expect(data.has_more).toBe(false);
+    expect(data.data).toEqual([{ id: 1, status: 'open' }]);
+    expect(data.meta).toEqual({ next_cursor: null });
   });
 });
 
@@ -685,6 +730,26 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     expect(data.messages).toHaveLength(0);
     expect(data.truncated).toBe(false);
   });
+
+  it('GET still follows a redirect (issue A7 — GET keeps the default follow, unchanged)', async () => {
+    // First response: a real 301 pointing back at this same mock server. Since GET's
+    // fetchOptions still use the default redirect: 'follow' (unlike POST/PUT), the underlying
+    // fetch() transparently issues the follow-up GET itself — the adapter only sees the final
+    // response. Two handlers are queued: one for the 301, one for the followed request.
+    handlers.push((_req, res) => {
+      res.writeHead(301, {
+        'Content-Type': 'application/json',
+        Location: `http://127.0.0.1:${port}/tickets/10/messages?redirected=true`,
+      });
+      res.end(JSON.stringify({ moved: true }));
+    });
+    respond(200, { data: [makeMsg(1)], meta: { next_cursor: null } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages).toHaveLength(1);
+    expect(data.truncated).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -749,7 +814,24 @@ describe("GorgiasAdapter fetch('list_customers')", () => {
     expect(capturedUrl).toContain('limit=5');
   });
 
-  it('skips non-scalar params (arrays, objects) from query string', async () => {
+  it('rejects a non-scalar param (array) with ADAPTER_VALIDATION_FAILED (issue A6)', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('list_customers', { limit: 10, tags: ['vip', 'new'] }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+    await expect(
+      adapter.fetch('list_customers', { limit: 10, tags: ['vip', 'new'] }, {}),
+    ).rejects.toBeInstanceOf(WorkflowError);
+  });
+
+  it('rejects a non-scalar param (object) with ADAPTER_VALIDATION_FAILED (issue A6)', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('list_customers', { limit: 10, nested: { key: 'val' } }, {}),
+    ).rejects.toMatchObject({ code: 'ADAPTER_VALIDATION_FAILED' });
+  });
+
+  it('null/undefined params are still omitted (not thrown) alongside scalar params', async () => {
     let capturedUrl = '';
     handlers.push((req, res) => {
       capturedUrl = req.url ?? '';
@@ -757,14 +839,10 @@ describe("GorgiasAdapter fetch('list_customers')", () => {
       res.end(JSON.stringify({ data: [], meta: { next_cursor: null } }));
     });
     const adapter = makeAdapter();
-    await adapter.fetch(
-      'list_customers',
-      { limit: 10, tags: ['vip', 'new'], nested: { key: 'val' } },
-      {},
-    );
+    await adapter.fetch('list_customers', { limit: 10, email: undefined, tags: null }, {});
     expect(capturedUrl).toContain('limit=10');
+    expect(capturedUrl).not.toContain('email=');
     expect(capturedUrl).not.toContain('tags=');
-    expect(capturedUrl).not.toContain('nested=');
   });
 
   it('no params: URL path has no query string', async () => {
@@ -777,6 +855,27 @@ describe("GorgiasAdapter fetch('list_customers')", () => {
     const adapter = makeAdapter();
     await adapter.fetch('list_customers', {}, {});
     expect(capturedUrl).toBe('/customers');
+  });
+
+  it('has_more is true when meta.next_cursor is present (issue A5)', async () => {
+    respond(200, { data: [{ id: 1, email: 'a@example.com' }], meta: { next_cursor: 'xyz789' } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('list_customers', {}, {});
+    const data = result.data as { data: unknown[]; meta: unknown; has_more: boolean };
+    expect(data.has_more).toBe(true);
+    // data.data and data.meta are preserved untouched (additive field only).
+    expect(data.data).toEqual([{ id: 1, email: 'a@example.com' }]);
+    expect(data.meta).toEqual({ next_cursor: 'xyz789' });
+  });
+
+  it('has_more is false when meta.next_cursor is null (issue A5)', async () => {
+    respond(200, { data: [{ id: 1, email: 'a@example.com' }], meta: { next_cursor: null } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('list_customers', {}, {});
+    const data = result.data as { data: unknown[]; meta: unknown; has_more: boolean };
+    expect(data.has_more).toBe(false);
+    expect(data.data).toEqual([{ id: 1, email: 'a@example.com' }]);
+    expect(data.meta).toEqual({ next_cursor: null });
   });
 });
 
@@ -925,6 +1024,27 @@ describe("GorgiasAdapter create('create_ticket')", () => {
       subject: 'Help needed',
       status: 'open',
     });
+  });
+
+  it('a 301 on POST throws a non-retryable redirect error instead of following (issue A7)', async () => {
+    respond(301, { moved: true }, { Location: 'https://test.gorgias.com/api/tickets/123' });
+    const adapter = makeAdapter();
+    await expect(
+      adapter.create('create_ticket', { messages: [{ channel: 'email', from_agent: false }] }, {}),
+    ).rejects.toMatchObject({ code: 'SERVICE_UNEXPECTED_REDIRECT', retryable: false });
+  });
+
+  it('a normal 201 write still succeeds unchanged (redirect: manual does not affect non-redirect responses)', async () => {
+    respond(201, { id: 100, status: 'open', channel: 'email' });
+    const adapter = makeAdapter();
+    const result = await adapter.create(
+      'create_ticket',
+      { messages: [{ channel: 'email', from_agent: false }] },
+      {},
+    );
+    expect(result.status).toBe(201);
+    const data = result.data as Record<string, unknown>;
+    expect(data['id']).toBe(100);
   });
 });
 

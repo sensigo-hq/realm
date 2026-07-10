@@ -23,6 +23,8 @@ export type ErrorCode =
   | 'SERVICE_AUTH_FAILED'
   | 'SERVICE_NOT_FOUND'
   | 'SERVICE_RESPONSE_INVALID'
+  // a 3xx redirect where a direct response was required (e.g. on a write) — non-retryable
+  | 'SERVICE_UNEXPECTED_REDIRECT'
   // STATE
   | 'STATE_BLOCKED'
   | 'STATE_PRECONDITION_FAILED'
