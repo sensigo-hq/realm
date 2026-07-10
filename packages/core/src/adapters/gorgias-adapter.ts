@@ -152,6 +152,11 @@ export class GorgiasAdapter implements ServiceAdapter {
             headers: this.buildHeaders(),
             body: JSON.stringify(body),
             signal: signal ?? null,
+            // A7: a redirect on a write would silently downgrade POST/PUT → GET (dropping the
+            // body). 'manual' surfaces the redirect as an opaque response instead of following
+            // it. GET keeps the default 'follow' — the get_messages per-ticket endpoint
+            // legitimately 301s and must keep working unchanged.
+            redirect: 'manual',
           };
 
     let response: Response;
@@ -173,6 +178,24 @@ export class GorgiasAdapter implements ServiceAdapter {
         agentAction: 'wait_for_human',
         retryable: true,
       });
+    }
+
+    // A7: surface a redirect on a write rather than silently downgrading POST/PUT → GET (which
+    // would drop the request body). GET is unaffected (redirect stays 'follow' above).
+    if (
+      method !== 'GET' &&
+      (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400))
+    ) {
+      throw new WorkflowError(
+        `GorgiasAdapter: unexpected redirect (HTTP ${response.status}) on ${method} ${operation} — refusing to silently downgrade the request`,
+        {
+          code: 'SERVICE_HTTP_4XX',
+          category: 'SERVICE',
+          agentAction: 'stop',
+          retryable: false,
+          details: { status: response.status, operation, method },
+        },
+      );
     }
 
     if (!response.ok) {

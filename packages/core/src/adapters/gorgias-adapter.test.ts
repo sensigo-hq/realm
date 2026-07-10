@@ -730,6 +730,26 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     expect(data.messages).toHaveLength(0);
     expect(data.truncated).toBe(false);
   });
+
+  it('GET still follows a redirect (issue A7 — GET keeps the default follow, unchanged)', async () => {
+    // First response: a real 301 pointing back at this same mock server. Since GET's
+    // fetchOptions still use the default redirect: 'follow' (unlike POST/PUT), the underlying
+    // fetch() transparently issues the follow-up GET itself — the adapter only sees the final
+    // response. Two handlers are queued: one for the 301, one for the followed request.
+    handlers.push((_req, res) => {
+      res.writeHead(301, {
+        'Content-Type': 'application/json',
+        Location: `http://127.0.0.1:${port}/tickets/10/messages?redirected=true`,
+      });
+      res.end(JSON.stringify({ moved: true }));
+    });
+    respond(200, { data: [makeMsg(1)], meta: { next_cursor: null } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages).toHaveLength(1);
+    expect(data.truncated).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1004,6 +1024,27 @@ describe("GorgiasAdapter create('create_ticket')", () => {
       subject: 'Help needed',
       status: 'open',
     });
+  });
+
+  it('a 301 on POST throws a non-retryable redirect error instead of following (issue A7)', async () => {
+    respond(301, { moved: true }, { Location: 'https://test.gorgias.com/api/tickets/123' });
+    const adapter = makeAdapter();
+    await expect(
+      adapter.create('create_ticket', { messages: [{ channel: 'email', from_agent: false }] }, {}),
+    ).rejects.toMatchObject({ code: 'SERVICE_HTTP_4XX', retryable: false });
+  });
+
+  it('a normal 201 write still succeeds unchanged (redirect: manual does not affect non-redirect responses)', async () => {
+    respond(201, { id: 100, status: 'open', channel: 'email' });
+    const adapter = makeAdapter();
+    const result = await adapter.create(
+      'create_ticket',
+      { messages: [{ channel: 'email', from_agent: false }] },
+      {},
+    );
+    expect(result.status).toBe(201);
+    const data = result.data as Record<string, unknown>;
+    expect(data['id']).toBe(100);
   });
 });
 
