@@ -191,7 +191,7 @@ describe('NotionAdapter get_page', () => {
     });
   });
 
-  it('HTTP 429 → SERVICE_RATE_LIMITED, agentAction: wait_for_human', async () => {
+  it('HTTP 429 → SERVICE_RATE_LIMITED, agentAction: wait_and_proceed', async () => {
     respond(429, { message: 'Rate limited' });
     const adapter = makeAdapter();
     const err = await adapter
@@ -199,17 +199,18 @@ describe('NotionAdapter get_page', () => {
       .catch((e: unknown) => e as WorkflowError);
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
-    expect(err.agentAction).toBe('wait_for_human');
+    expect(err.agentAction).toBe('wait_and_proceed');
   });
 
-  it('HTTP 429 with Retry-After header → retryAfterSeconds in details', async () => {
+  it('HTTP 429 with Retry-After header → retry_after (top-level)', async () => {
     respond(429, { message: 'Rate limited' }, { 'Retry-After': '60' });
     const adapter = makeAdapter();
     const err = await adapter
       .fetch('get_page', { page_id: 'p1' }, {})
       .catch((e: unknown) => e as WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
-    expect(err.details['retryAfterSeconds']).toBe(60);
+    expect(err.retry_after).toBe(60);
+    expect(err.details['retryAfterSeconds']).toBeUndefined();
   });
 
   it('HTTP 503 → SERVICE_HTTP_5XX, agentAction: wait_for_human', async () => {
@@ -904,12 +905,12 @@ describe('NotionAdapter delete_block', () => {
     });
   });
 
-  it('HTTP 429 → SERVICE_RATE_LIMITED, agentAction: wait_for_human', async () => {
+  it('HTTP 429 → SERVICE_RATE_LIMITED, agentAction: wait_and_proceed', async () => {
     respond(429, { message: 'Rate limited' });
     const adapter = makeAdapter();
     await expect(adapter.delete!('delete_block', { block_id: 'b1' }, {})).rejects.toMatchObject({
       code: 'SERVICE_RATE_LIMITED',
-      agentAction: 'wait_for_human',
+      agentAction: 'wait_and_proceed',
     });
   });
 });

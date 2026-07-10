@@ -38,6 +38,9 @@ export interface NotionAdapterConfig {
  */
 export class NotionAdapter implements ServiceAdapter {
   readonly id: string;
+  // Notion normally returns a Retry-After header on 429; this is the tier-3 fallback
+  // (used only when no header and no YAML fallback_retry_seconds is configured).
+  readonly defaultRetryAfterSeconds = 30;
   private readonly apiKey: string;
   private readonly baseUrl: string;
 
@@ -193,16 +196,14 @@ export class NotionAdapter implements ServiceAdapter {
     }
 
     if (status === 429) {
-      const retryAfterSeconds = parseRetryAfterHeader(response.headers.get('Retry-After'));
+      const retryAfterFromHeader = parseRetryAfterHeader(response.headers.get('Retry-After'));
       throw new WorkflowError('Rate limited by Notion API', {
         code: 'SERVICE_RATE_LIMITED',
         category: 'SERVICE',
-        agentAction: 'wait_for_human',
+        agentAction: 'wait_and_proceed',
         retryable: true,
-        details: {
-          ...baseDetails,
-          ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
-        },
+        ...(retryAfterFromHeader !== undefined ? { retry_after: retryAfterFromHeader } : {}),
+        details: baseDetails,
       });
     }
 
