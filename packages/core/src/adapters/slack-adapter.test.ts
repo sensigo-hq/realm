@@ -84,4 +84,15 @@ describe('SlackAdapter', () => {
       code: 'ADAPTER_REQUEST_FAILED',
     });
   });
+
+  it('AbortError from fetch throws STEP_ABORTED (issue A3 — standardized abort mapping, matching every other network adapter)', async () => {
+    mockFetch.mockRejectedValue(new DOMException('The operation was aborted', 'AbortError'));
+    const adapter = new SlackAdapter('slack', { webhook_url: WEBHOOK_URL });
+    await expect(adapter.create('post_message', { text: 'hi' }, {})).rejects.toMatchObject({
+      code: 'STEP_ABORTED',
+    });
+    await expect(adapter.create('post_message', { text: 'hi' }, {})).rejects.toBeInstanceOf(
+      WorkflowError,
+    );
+  });
 });

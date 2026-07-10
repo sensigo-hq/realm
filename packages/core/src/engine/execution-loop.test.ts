@@ -498,7 +498,7 @@ describe('executeStep', () => {
         'fetch_data',
         { doc_id: 'abc' },
         expect.objectContaining({ adapter: 'mock_adapter' }),
-        undefined,
+        expect.any(AbortSignal),
       );
     });
 
@@ -836,7 +836,7 @@ describe('executeStep', () => {
         'fetch_data',
         expect.anything(),
         expect.anything(),
-        undefined,
+        expect.any(AbortSignal),
       );
     });
 
@@ -873,7 +873,7 @@ describe('executeStep', () => {
         'fetch_document_v2',
         expect.anything(),
         expect.anything(),
-        undefined,
+        expect.any(AbortSignal),
       );
     });
 
@@ -915,7 +915,7 @@ describe('executeStep', () => {
           table: 'Tickets',
           view: 'Grid view',
         }),
-        undefined,
+        expect.any(AbortSignal),
       );
     });
 
@@ -999,7 +999,7 @@ describe('executeStep', () => {
           run_id: run.id,
           run_params: { source: 'doc-1' },
         }),
-        undefined,
+        expect.any(AbortSignal),
       );
     });
 
@@ -4140,7 +4140,7 @@ describe('input_map on handler steps', () => {
     expect(handler.execute).toHaveBeenCalledWith(
       { params: { table: 'CS_Macros' } },
       expect.anything(),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 
@@ -4183,7 +4183,7 @@ describe('input_map on handler steps', () => {
     expect(handler.execute).toHaveBeenCalledWith(
       { params: { id: 'TKT-42' } },
       expect.anything(),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 
@@ -4262,7 +4262,11 @@ describe('input_map on handler steps', () => {
       registry,
     });
 
-    expect(handler.execute).toHaveBeenCalledWith({ params: {} }, expect.anything(), undefined);
+    expect(handler.execute).toHaveBeenCalledWith(
+      { params: {} },
+      expect.anything(),
+      expect.any(AbortSignal),
+    );
   });
 });
 
@@ -4438,7 +4442,7 @@ describe('_debug stripping on direct auto-step invocation', () => {
     expect(handler.execute).toHaveBeenCalledWith(
       { params: { foo: 1 } },
       expect.anything(),
-      undefined,
+      expect.any(AbortSignal),
     );
 
     const snap = (await store.get(run.id)).evidence.find((e) => e.step_id === 'process');
@@ -4490,7 +4494,7 @@ describe('_debug stripping on direct auto-step invocation', () => {
       'fetch_data',
       { id: 'x' },
       expect.objectContaining({ adapter: 'strip_adapter' }),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 

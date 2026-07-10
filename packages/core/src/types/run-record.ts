@@ -113,6 +113,14 @@ export interface EvidenceSnapshot {
    * Absent when no trace was submitted.
    */
   trace_summary?: TraceNormalizationSummary;
+  /**
+   * The timeout (in seconds) actually enforced on this step's dispatch (issue A3): the
+   * authored timeout_seconds if declared, else DEFAULT_EXECUTION_TIMEOUT_SECONDS. Present ONLY
+   * when shouldEnforceTimeout(step) was true (execution: auto) — additive-optional, so absent
+   * on every pre-existing snapshot and on agent/guard/finalizer steps, which are never bounded
+   * by withTimeout.
+   */
+  effective_timeout_seconds?: number;
 }
 
 export interface PendingGate {

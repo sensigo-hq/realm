@@ -59,7 +59,7 @@ describe('input_map', () => {
       'fetch',
       { doc_id: 'xyz' },
       expect.any(Object),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 
@@ -118,7 +118,7 @@ describe('input_map', () => {
       'call-api',
       { repo: 'acme/api' },
       expect.any(Object),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 
@@ -183,7 +183,12 @@ describe('input_map', () => {
       registry,
     });
 
-    expect(fetchSpy).toHaveBeenCalledWith('step2', { number: 42 }, expect.any(Object), undefined);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'step2',
+      { number: 42 },
+      expect.any(Object),
+      expect.any(AbortSignal),
+    );
   });
 
   it('unresolvable path produces undefined key in adapter params', async () => {
@@ -221,7 +226,12 @@ describe('input_map', () => {
       registry,
     });
 
-    expect(fetchSpy).toHaveBeenCalledWith('fetch', { x: undefined }, expect.any(Object), undefined);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'fetch',
+      { x: undefined },
+      expect.any(Object),
+      expect.any(AbortSignal),
+    );
   });
 
   it('input_map step records resolved_params in evidence snapshot', async () => {
@@ -349,7 +359,7 @@ describe('input_map', () => {
       'upsert',
       { fields: { name: 'Alice', email: 'alice@example.com' } },
       expect.any(Object),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 
@@ -397,7 +407,7 @@ describe('input_map', () => {
       'call',
       { table_id: 'tbl_abc', fields: { status: 'open' } },
       expect.any(Object),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 
@@ -482,7 +492,7 @@ describe('input_map', () => {
       'insert',
       { table: 'CS_Macros' },
       expect.any(Object),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 
@@ -525,7 +535,7 @@ describe('input_map', () => {
       'query',
       { include_archived: false },
       expect.any(Object),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 
@@ -568,7 +578,7 @@ describe('input_map', () => {
       'list',
       { max_results: 100 },
       expect.any(Object),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 
@@ -607,7 +617,12 @@ describe('input_map', () => {
       registry,
     });
 
-    expect(fetchSpy).toHaveBeenCalledWith('clear', { owner: null }, expect.any(Object), undefined);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'clear',
+      { owner: null },
+      expect.any(Object),
+      expect.any(AbortSignal),
+    );
   });
 
   it('input_map — mixed path leaf and literal leaf produces correct merged object', async () => {
@@ -652,7 +667,7 @@ describe('input_map', () => {
       'upsert2',
       { table: 'CS_Macros', record_id: 'rec123' },
       expect.any(Object),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 
@@ -700,7 +715,7 @@ describe('input_map', () => {
       'nested',
       { config: { table: 'CS_Macros', id: 'rec456' } },
       expect.any(Object),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 
@@ -745,7 +760,7 @@ describe('input_map', () => {
       'query',
       { tags: ['a', 'b'] },
       expect.any(Object),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 
@@ -790,7 +805,7 @@ describe('input_map', () => {
       'query',
       { filter: { tier: 'gold', ids: [1, 2], x: 'run.params.y' } },
       expect.any(Object),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 
@@ -836,7 +851,7 @@ describe('input_map', () => {
       'query',
       { id: 'rec789', options: { recursive: true, exclude: ['tmp'] } },
       expect.any(Object),
-      undefined,
+      expect.any(AbortSignal),
     );
   });
 });

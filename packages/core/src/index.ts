@@ -57,8 +57,10 @@ export {
   classifyInProgressClaims,
   omitClaim,
   DEFAULT_STEP_TIMEOUT_SECONDS,
+  DEFAULT_EXECUTION_TIMEOUT_SECONDS,
   RECLAIM_MARGIN_SECONDS,
   RECLAIM_FLOOR_SECONDS,
+  shouldEnforceTimeout,
 } from './engine/claim-liveness.js';
 export type { ClaimState, InProgressClaimInfo } from './engine/claim-liveness.js';
 export { reclaimStep } from './engine/reclaim-step.js';

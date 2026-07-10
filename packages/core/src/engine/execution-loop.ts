@@ -33,7 +33,11 @@ import {
 import { normalizeTrace } from './trace-normalizer.js';
 import type { NormalizeTraceResult } from './trace-normalizer.js';
 import { TERMINAL_PHASES, isTerminalPhase, DRAIN_CEILING_SECONDS } from './lifecycle.js';
-import { omitClaim } from './claim-liveness.js';
+import {
+  omitClaim,
+  shouldEnforceTimeout,
+  DEFAULT_EXECUTION_TIMEOUT_SECONDS,
+} from './claim-liveness.js';
 import {
   checkPreconditions,
   evaluateAllPreconditions,
@@ -999,8 +1003,18 @@ export async function executeStep(
   // Step 4: Dispatch with retry and timeout.
   const retryConfig = stepDef?.retry;
   const maxAttempts = retryConfig?.max_attempts ?? 1;
+  // A3: every `execution: 'auto'` step is bounded — authored timeout_seconds if declared, else the
+  // generous DEFAULT_EXECUTION_TIMEOUT_SECONDS default. Resolved ONCE here (before the retry loop
+  // below), not per-attempt. Agent/guard steps (shouldEnforceTimeout false) are untouched: agent
+  // dispatch stays the instant-return no-op it always was, never wrapped in withTimeout.
+  // effectiveTimeoutSeconds is the single source of truth; timeoutMs is derived from it so the
+  // two can never diverge. It is also surfaced onto the evidence snapshot below.
+  const enforceTimeout = stepDef !== undefined && shouldEnforceTimeout(stepDef);
+  const effectiveTimeoutSeconds = enforceTimeout
+    ? (stepDef!.timeout_seconds ?? DEFAULT_EXECUTION_TIMEOUT_SECONDS)
+    : undefined;
   const timeoutMs =
-    stepDef?.timeout_seconds !== undefined ? stepDef.timeout_seconds * 1000 : undefined;
+    effectiveTimeoutSeconds !== undefined ? effectiveTimeoutSeconds * 1000 : undefined;
 
   // Create a stable rate-limiter registry for all retry attempts of this step.
   // Shared state ensures that a pause() triggered on attempt N is still in effect
@@ -1181,6 +1195,7 @@ export async function executeStep(
       ...(options.stepMeta?.toolCalls !== undefined
         ? { toolCalls: options.stepMeta.toolCalls }
         : {}),
+      ...(effectiveTimeoutSeconds !== undefined ? { effectiveTimeoutSeconds } : {}),
       // Gate trace to agent steps only — drop silently for auto/adapter/handler steps.
       // When pre-normalized (WAL merge + schema validation ran), pass the pre-normalized
       // result to avoid double normalization. Also handle WAL-only case (options.trace may

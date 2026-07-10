@@ -12,6 +12,7 @@ import type { StepDispatcher } from './execution-loop.js';
 import { MockAdapter } from '../adapters/mock-adapter.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
+import { DEFAULT_EXECUTION_TIMEOUT_SECONDS } from './claim-liveness.js';
 
 // Workflow with a single step that times out at 0.05s and allows 2 retry attempts.
 const timeoutDef: WorkflowDefinition = {
@@ -50,6 +51,65 @@ const retryDef: WorkflowDefinition = {
       description: 'Retries',
       execution: 'auto',
       depends_on: [],
+      retry: { max_attempts: 3, backoff: 'fixed', base_delay_ms: 10 },
+    },
+  },
+};
+
+// Issue A3, load-bearing regression (Design Reviewer's blocking-fix): an auto step in a
+// FINALIZER-BEARING workflow must still be bounded by its timeout_seconds. Enforcement
+// (shouldEnforceTimeout) is deliberately NOT conjoined with `!hasFinalizers` — that conjunct is
+// correct only for the claim-liveness DETECTION horizon (computeClaimDeadline), never for
+// enforcement. Under a wrong `execution === 'auto' && !hasFinalizers` predicate, this step would
+// never be wrapped in withTimeout and would hang forever.
+const timeoutInFinalizerWorkflowDef: WorkflowDefinition = {
+  id: 'timeout-finalizer-wf',
+  name: 'Timeout In Finalizer Workflow',
+  version: 1,
+  steps: {
+    'step-one': {
+      description: 'Times out',
+      execution: 'auto',
+      depends_on: [],
+      timeout_seconds: 0.05,
+    },
+    cleanup: {
+      description: 'Cleanup finalizer',
+      execution: 'finalizer',
+      on_outcome: 'always',
+      handler: 'do_cleanup',
+    },
+  },
+};
+
+// Issue A3: an auto step with an explicit, generous timeout_seconds that never fires — used to
+// confirm the DECLARED value (not the default) is the one surfaced onto the evidence snapshot.
+const explicitTimeoutDef: WorkflowDefinition = {
+  id: 'explicit-timeout-wf',
+  name: 'Explicit Timeout Workflow',
+  version: 1,
+  steps: {
+    'step-one': {
+      description: 'Succeeds well within its declared timeout',
+      execution: 'auto',
+      depends_on: [],
+      timeout_seconds: 5,
+    },
+  },
+};
+
+// Issue A3: a step declaring BOTH timeout_seconds and retry — a timeout must consume no retry
+// attempt and fail the step terminally (STEP_TIMEOUT stays retryable: false).
+const timeoutWithRetryDef: WorkflowDefinition = {
+  id: 'timeout-retry-wf',
+  name: 'Timeout With Retry Workflow',
+  version: 1,
+  steps: {
+    'step-one': {
+      description: 'Times out, has retry',
+      execution: 'auto',
+      depends_on: [],
+      timeout_seconds: 0.05,
       retry: { max_attempts: 3, backoff: 'fixed', base_delay_ms: 10 },
     },
   },
@@ -360,6 +420,111 @@ describe('reliability', () => {
     expect(envelope.errors[0]).toContain('timed out');
     expect(capturedSignal).toBeDefined();
     expect(capturedSignal?.aborted).toBe(true);
+  });
+
+  it('LOAD-BEARING (A3 blocking-fix): auto step in a finalizer-bearing workflow still times out', async () => {
+    const store = new JsonFileStore(dir);
+    const { run: run } = await store.create({
+      workflowId: 'timeout-finalizer-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // Dispatcher takes 200ms; step timeout is 50ms — timeout fires first, exactly as the
+    // finalizer-free `timeoutDef` test above. A wrong `execution === 'auto' && !hasFinalizers`
+    // predicate would have left this step's timeoutMs undefined (never wrapped in withTimeout),
+    // so the dispatcher would have been awaited directly and this test would hang/time out at the
+    // suite level instead of asserting a clean STEP_TIMEOUT.
+    const slowDispatcher: StepDispatcher = () =>
+      new Promise((resolve) => setTimeout(() => resolve({}), 200));
+
+    const envelope = await executeStep(store, timeoutInFinalizerWorkflowDef, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: slowDispatcher,
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.errors[0]).toContain('timed out');
+
+    const updated = await store.get(run.id);
+    // Non-terminal: the finalizer-bearing run is not yet sealed at the domain-step failure alone
+    // (see finalizer.test.ts for the drain itself) — the point here is solely that the TIMEOUT fired.
+    expect(updated.failed_steps).toContain('step-one');
+  });
+
+  it('a timeout on a step WITH a retry: block still fails terminally — consumes no retry attempt', async () => {
+    const store = new JsonFileStore(dir);
+    const { run: run } = await store.create({
+      workflowId: 'timeout-retry-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    let calls = 0;
+    const slowDispatcher: StepDispatcher = () => {
+      calls++;
+      return new Promise((resolve) => setTimeout(() => resolve({}), 200));
+    };
+
+    const envelope = await executeStep(store, timeoutWithRetryDef, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: slowDispatcher,
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.errors[0]).toContain('timed out');
+    expect(envelope.errors[0]).not.toContain('failed after'); // not wrapped as STEP_RETRY_EXHAUSTED
+    expect(calls).toBe(1); // a timeout consumes no retry attempt — never called a 2nd time
+
+    const updated = await store.get(run.id);
+    expect(updated.run_phase).toBe('failed');
+    expect(updated.terminal_state).toBe(true);
+  });
+
+  it('issue A3: evidence surfaces effective_timeout_seconds — the default when undeclared', async () => {
+    const store = new JsonFileStore(dir);
+    const { run: run } = await store.create({
+      workflowId: 'no-timeout-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const fastDispatcher: StepDispatcher = async () => ({ done: true });
+
+    const envelope = await executeStep(store, noTimeoutDef, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: fastDispatcher,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.evidence[0]?.effective_timeout_seconds).toBe(DEFAULT_EXECUTION_TIMEOUT_SECONDS);
+  });
+
+  it('issue A3: evidence surfaces effective_timeout_seconds — the declared value when present', async () => {
+    const store = new JsonFileStore(dir);
+    const { run: run } = await store.create({
+      workflowId: 'explicit-timeout-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    const fastDispatcher: StepDispatcher = async () => ({ done: true });
+
+    const envelope = await executeStep(store, explicitTimeoutDef, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: fastDispatcher,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.evidence[0]?.effective_timeout_seconds).toBe(5);
   });
 
   it('MockAdapter rejects with STEP_ABORTED when signal is already aborted', async () => {

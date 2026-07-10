@@ -7,7 +7,8 @@ import {
   omitClaim,
   RECLAIM_FLOOR_SECONDS,
   RECLAIM_MARGIN_SECONDS,
-  DEFAULT_STEP_TIMEOUT_SECONDS,
+  DEFAULT_EXECUTION_TIMEOUT_SECONDS,
+  shouldEnforceTimeout,
 } from './claim-liveness.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -39,13 +40,14 @@ describe('computeClaimDeadline', () => {
     );
   });
 
-  it('auto step with no timeout_seconds → uses the default step timeout (still floored)', () => {
+  it('auto step with no timeout_seconds → uses the default execution timeout (3600s dominates the floor)', () => {
     const def = wf({ work: { description: 'w', execution: 'auto', depends_on: [] } });
     const deadline = computeClaimDeadline(def, 'work', NOW);
-    // max(900, 300+60) = 900.
+    // max(900, 3600+60) = 3660 — detection now tracks the real A3 enforcement bound.
     const expected =
       NOW.getTime() +
-      Math.max(RECLAIM_FLOOR_SECONDS, DEFAULT_STEP_TIMEOUT_SECONDS + RECLAIM_MARGIN_SECONDS) * 1000;
+      Math.max(RECLAIM_FLOOR_SECONDS, DEFAULT_EXECUTION_TIMEOUT_SECONDS + RECLAIM_MARGIN_SECONDS) *
+        1000;
     expect(new Date(deadline!).getTime()).toBe(expected);
   });
 
@@ -116,5 +118,26 @@ describe('omitClaim', () => {
   it('returns {} when the last claim is removed, and tolerates undefined', () => {
     expect(omitClaim({ a: { deadline: null } }, 'a')).toEqual({});
     expect(omitClaim(undefined, 'a')).toEqual({});
+  });
+});
+
+describe('shouldEnforceTimeout (issue A3 — enforcement predicate)', () => {
+  it('true for execution: auto', () => {
+    expect(shouldEnforceTimeout({ description: 'w', execution: 'auto' })).toBe(true);
+  });
+  it('false for execution: agent', () => {
+    expect(shouldEnforceTimeout({ description: 'w', execution: 'agent' })).toBe(false);
+  });
+  it('false for execution: guard', () => {
+    expect(shouldEnforceTimeout({ description: 'w', execution: 'guard' })).toBe(false);
+  });
+  it('false for execution: finalizer', () => {
+    expect(shouldEnforceTimeout({ description: 'w', execution: 'finalizer' })).toBe(false);
+  });
+  it('takes a single step, not a definition — hasFinalizers cannot be conjoined by construction (the blocking-fix)', () => {
+    // shouldEnforceTimeout's signature has no `definition`/`hasFinalizers` parameter to read, unlike
+    // computeClaimDeadline above. An auto step must stay enforced regardless of any finalizer
+    // elsewhere in its workflow — this is the Design Reviewer's blocking-fix, documented as a test.
+    expect(shouldEnforceTimeout({ description: 'w', execution: 'auto' })).toBe(true);
   });
 });

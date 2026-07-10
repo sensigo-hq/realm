@@ -69,6 +69,17 @@ export class SlackAdapter implements ServiceAdapter {
         signal: signal ?? null,
       });
     } catch (err) {
+      // AbortError means the engine cancelled this request (e.g. step timeout) — standardized
+      // to STEP_ABORTED to match every other network adapter (airtable/github/gorgias/http/
+      // notion/parcelpanel/shopify). Any other fetch failure keeps the existing mapping.
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new WorkflowError('Adapter request aborted', {
+          code: 'STEP_ABORTED',
+          category: 'ENGINE',
+          agentAction: 'report_to_user',
+          retryable: false,
+        });
+      }
       const message = err instanceof Error ? err.message : String(err);
       throw new WorkflowError(`Slack webhook request failed: ${message}`, {
         code: 'ADAPTER_REQUEST_FAILED',

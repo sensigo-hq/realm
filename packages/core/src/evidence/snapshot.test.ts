@@ -77,4 +77,14 @@ describe('captureEvidence', () => {
     const ev = captureEvidence(base);
     expect(Object.prototype.hasOwnProperty.call(ev, 'resolved_params')).toBe(false);
   });
+
+  it('includes effective_timeout_seconds when provided (issue A3)', () => {
+    const ev = captureEvidence({ ...base, effectiveTimeoutSeconds: 3600 });
+    expect(ev.effective_timeout_seconds).toBe(3600);
+  });
+
+  it('omits effective_timeout_seconds entirely when not provided', () => {
+    const ev = captureEvidence(base);
+    expect(Object.prototype.hasOwnProperty.call(ev, 'effective_timeout_seconds')).toBe(false);
+  });
 });

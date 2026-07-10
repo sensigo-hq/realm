@@ -36,6 +36,27 @@ describe('FileSystemAdapter', () => {
     expect(data['size_bytes']).toBe(Buffer.byteLength(fileContent, 'utf8'));
   });
 
+  it('fetch read with an unaborted signal still returns content unchanged', async () => {
+    const adapter = new FileSystemAdapter('fs');
+    const controller = new AbortController();
+    const result = await adapter.fetch('read', { path: tmpFilePath }, {}, controller.signal);
+    expect(result.status).toBe(200);
+    const data = result.data as Record<string, unknown>;
+    expect(data['content']).toBe(fileContent);
+    expect(data['line_count']).toBe(4);
+    expect(data['size_bytes']).toBe(Buffer.byteLength(fileContent, 'utf8'));
+  });
+
+  it('fetch read with an already-aborted signal throws STEP_ABORTED (issue A3 — abort-mapping consistency)', async () => {
+    const adapter = new FileSystemAdapter('fs');
+    await expect(
+      adapter.fetch('read', { path: tmpFilePath }, {}, AbortSignal.abort()),
+    ).rejects.toMatchObject({ code: 'STEP_ABORTED' });
+    await expect(
+      adapter.fetch('read', { path: tmpFilePath }, {}, AbortSignal.abort()),
+    ).rejects.toBeInstanceOf(WorkflowError);
+  });
+
   it('fetch read with empty path throws VALIDATION_EMPTY_VALUE', async () => {
     const adapter = new FileSystemAdapter('fs');
     await expect(adapter.fetch('read', { path: '' }, {})).rejects.toMatchObject({
