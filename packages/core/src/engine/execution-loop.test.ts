@@ -1180,6 +1180,54 @@ describe('executeStep', () => {
       expect(updatedRun.failed_steps).not.toContain('check');
     });
 
+    it('a handler abort records a handler_abort skip_details entry, plus a cascade detail for the downstream step (issue #111)', async () => {
+      const twoStepHandlerDef: WorkflowDefinition = {
+        id: 'two-step-handler-wf',
+        name: 'Two Step Handler Workflow',
+        version: 1,
+        steps: {
+          check: {
+            description: 'Guard-like check',
+            execution: 'auto',
+            depends_on: [],
+            handler: 'my_handler',
+          },
+          process: {
+            description: 'Downstream processing',
+            execution: 'agent',
+            depends_on: ['check'],
+          },
+        },
+      };
+
+      const handler: StepHandler = {
+        id: 'my_handler',
+        execute: vi.fn().mockResolvedValue({ abort: { message: 'Condition not met' } }),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'my_handler', handler);
+
+      const { run: run } = await store.create({
+        workflowId: 'two-step-handler-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      await executeStep(store, twoStepHandlerDef, {
+        runId: run.id,
+        command: 'check',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      const updatedRun = await store.get(run.id);
+      expect(updatedRun.skip_details?.['check']).toEqual({ kind: 'handler_abort' });
+      // The merge is load-bearing — the cascade detail for 'process' (skipped because its
+      // all_success dep 'check' never completed) must survive alongside 'check''s own tag.
+      expect(updatedRun.skip_details?.['process']?.kind).toBe('trigger_rule_unsatisfiable');
+    });
+
     it('abort evidence entry has status skipped and records the abort message', async () => {
       const handler: StepHandler = {
         id: 'my_handler',
@@ -3699,6 +3747,27 @@ describe('guard step execution', () => {
     expect(savedRun.skipped_steps).toContain('step_c');
   });
 
+  it('a guard abort records a guard_abort skip_details entry, plus a cascade detail for the downstream step (issue #111)', async () => {
+    const { run: run } = await store.create({
+      workflowId: 'guard-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    await executeChain(store, guardWorkflow, {
+      runId: run.id,
+      command: 'step_a',
+      input: {},
+      dispatcher: async () => ({ status: 'closed' }),
+    });
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.skip_details?.['guard_b']).toEqual({ kind: 'guard_abort' });
+    // The merge is load-bearing — the cascade detail for 'step_c' (skipped because its
+    // all_success dep 'guard_b' never completed) must survive alongside 'guard_b''s own tag.
+    expect(savedRun.skip_details?.['step_c']?.kind).toBe('trigger_rule_unsatisfiable');
+  });
+
   it('guard resolution error — run_phase becomes failed, guard in failed_steps', async () => {
     const { run: run } = await store.create({
       workflowId: 'guard-wf',
@@ -4085,6 +4154,8 @@ describe('when: run.params integration', () => {
     expect(savedRun.skipped_steps).toContain('post_action');
     expect(savedRun.terminal_state).toBe(true);
     expect(postHandler.execute).not.toHaveBeenCalled();
+    // issue #111: the regular (non-abort) complete path writes skip_details too.
+    expect(savedRun.skip_details?.['post_action']?.kind).toBe('when_false');
   });
 });
 

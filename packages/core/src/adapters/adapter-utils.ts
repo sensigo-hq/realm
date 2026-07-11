@@ -1,3 +1,5 @@
+import { scrubEmail, capText } from '../utils/redaction.js';
+
 /**
  * Bounds and redacts an adapter error body before it is attached to a WorkflowError's
  * `details` (which surfaces in the user-facing envelope as error_details). Caps length and
@@ -14,8 +16,7 @@ export function redactErrorBody(body: unknown): string {
       text = String(body);
     }
   }
-  const capped = text.length > 500 ? `${text.slice(0, 500)}…[truncated]` : text;
-  return capped.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[REDACTED_EMAIL]');
+  return scrubEmail(capText(text));
 }
 
 /**

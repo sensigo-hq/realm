@@ -1,7 +1,7 @@
 // Unit tests for findEligibleSteps, triggerRuleSatisfied, evaluateWhenCondition,
 // and deriveRunPhase — the DAG eligibility predicates.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -13,6 +13,7 @@ import {
   deriveRunPhase,
   propagateSkips,
   isWorkflowComplete,
+  buildEvidenceByStep,
 } from './eligibility.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
@@ -597,13 +598,17 @@ describe('findEligibleSteps — skip propagation', () => {
 // ---------------------------------------------------------------------------
 
 describe('propagateSkips', () => {
+  // NOTE (issue #111): propagateSkips' return shape changed from string[] to
+  // { skipped, details } — every assertion below reads `.skipped` now. This is a stale-not-
+  // regression update to the RETURN-SHAPE ONLY; the underlying skip-computation behavior these
+  // tests pin is unchanged (confirmed: every test below still passes with the same semantics).
   it('marks a downstream all_success step as skipped when its dep fails', () => {
     const definition = makeWorkflow({
       a: { depends_on: [] },
       b: { depends_on: ['a'], trigger_rule: 'all_success' },
     });
     const run = makeRun({ failed_steps: ['a'] });
-    expect(propagateSkips(run, definition)).toContain('b');
+    expect(propagateSkips(run, definition).skipped).toContain('b');
   });
 
   it('marks a downstream none_failed step as skipped when its dep fails', () => {
@@ -612,7 +617,7 @@ describe('propagateSkips', () => {
       b: { depends_on: ['a'], trigger_rule: 'none_failed' },
     });
     const run = makeRun({ failed_steps: ['a'] });
-    expect(propagateSkips(run, definition)).toContain('b');
+    expect(propagateSkips(run, definition).skipped).toContain('b');
   });
 
   it('marks a downstream all_failed step as skipped when its dep completes', () => {
@@ -621,7 +626,7 @@ describe('propagateSkips', () => {
       b: { depends_on: ['a'], trigger_rule: 'all_failed' },
     });
     const run = makeRun({ completed_steps: ['a'] });
-    expect(propagateSkips(run, definition)).toContain('b');
+    expect(propagateSkips(run, definition).skipped).toContain('b');
   });
 
   it('marks a downstream one_failed step as skipped when all deps complete', () => {
@@ -631,7 +636,7 @@ describe('propagateSkips', () => {
       c: { depends_on: ['a', 'b'], trigger_rule: 'one_failed' },
     });
     const run = makeRun({ completed_steps: ['a', 'b'] });
-    expect(propagateSkips(run, definition)).toContain('c');
+    expect(propagateSkips(run, definition).skipped).toContain('c');
   });
 
   it('marks a downstream one_success step as skipped when all deps fail', () => {
@@ -641,7 +646,7 @@ describe('propagateSkips', () => {
       c: { depends_on: ['a', 'b'], trigger_rule: 'one_success' },
     });
     const run = makeRun({ failed_steps: ['a', 'b'] });
-    expect(propagateSkips(run, definition)).toContain('c');
+    expect(propagateSkips(run, definition).skipped).toContain('c');
   });
 
   it('does not skip an all_done step — all_done is always eventually satisfiable', () => {
@@ -650,7 +655,7 @@ describe('propagateSkips', () => {
       b: { depends_on: ['a'], trigger_rule: 'all_done' },
     });
     const run = makeRun({ failed_steps: ['a'] });
-    expect(propagateSkips(run, definition)).not.toContain('b');
+    expect(propagateSkips(run, definition).skipped).not.toContain('b');
   });
 
   it('cascades: skipping B causes C (all_success on [B]) to also be skipped', () => {
@@ -660,7 +665,7 @@ describe('propagateSkips', () => {
       c: { depends_on: ['b'], trigger_rule: 'all_success' },
     });
     const run = makeRun({ failed_steps: ['a'] });
-    const result = propagateSkips(run, definition);
+    const result = propagateSkips(run, definition).skipped;
     expect(result).toContain('b');
     expect(result).toContain('c');
   });
@@ -671,7 +676,7 @@ describe('propagateSkips', () => {
       b: { depends_on: ['a'], trigger_rule: 'all_success' },
     });
     const run = makeRun({ failed_steps: ['a'], skipped_steps: ['b'] });
-    const result = propagateSkips(run, definition);
+    const result = propagateSkips(run, definition).skipped;
     expect(result.filter((s) => s === 'b')).toHaveLength(1);
   });
 
@@ -681,7 +686,7 @@ describe('propagateSkips', () => {
       b: { depends_on: [] },
     });
     const run = makeRun({ completed_steps: ['a'], failed_steps: ['b'] });
-    const result = propagateSkips(run, definition);
+    const result = propagateSkips(run, definition).skipped;
     expect(result).not.toContain('a');
     expect(result).not.toContain('b');
   });
@@ -694,7 +699,7 @@ describe('propagateSkips', () => {
     });
     // a completed, b is still pending and might yet fail
     const run = makeRun({ completed_steps: ['a'] });
-    expect(propagateSkips(run, definition)).not.toContain('c');
+    expect(propagateSkips(run, definition).skipped).not.toContain('c');
   });
 
   it('preserves existing skipped_steps in the returned array', () => {
@@ -704,7 +709,7 @@ describe('propagateSkips', () => {
       c: { depends_on: [] },
     });
     const run = makeRun({ failed_steps: ['a'], skipped_steps: ['c'] });
-    const result = propagateSkips(run, definition);
+    const result = propagateSkips(run, definition).skipped;
     expect(result).toContain('b');
     expect(result).toContain('c');
   });
@@ -717,7 +722,7 @@ describe('propagateSkips', () => {
     });
     // a completed — one_success is already satisfiable
     const run = makeRun({ completed_steps: ['a'], failed_steps: ['b'] });
-    expect(propagateSkips(run, definition)).not.toContain('c');
+    expect(propagateSkips(run, definition).skipped).not.toContain('c');
   });
 
   it('skips a routing step when its dep completes and the when-condition is false', () => {
@@ -743,7 +748,7 @@ describe('propagateSkips', () => {
         },
       ],
     });
-    expect(propagateSkips(run, definition)).toContain('route_billing');
+    expect(propagateSkips(run, definition).skipped).toContain('route_billing');
   });
 
   it('does not skip a routing step when the when-condition is true', () => {
@@ -769,7 +774,7 @@ describe('propagateSkips', () => {
         },
       ],
     });
-    expect(propagateSkips(run, definition)).not.toContain('route_billing');
+    expect(propagateSkips(run, definition).skipped).not.toContain('route_billing');
   });
 
   it('does not skip a routing step when its dep is still in-progress', () => {
@@ -782,7 +787,7 @@ describe('propagateSkips', () => {
     });
     // classify is in-progress — deps are not settled, condition cannot be evaluated yet
     const run = makeRun({ in_progress_steps: ['classify'] });
-    expect(propagateSkips(run, definition)).not.toContain('route_billing');
+    expect(propagateSkips(run, definition).skipped).not.toContain('route_billing');
   });
 
   it('cascade: skipping a when-condition step causes its downstream all_success step to also skip', () => {
@@ -812,9 +817,425 @@ describe('propagateSkips', () => {
         },
       ],
     });
-    const result = propagateSkips(run, definition);
+    const result = propagateSkips(run, definition).skipped;
     expect(result).toContain('route_billing');
     expect(result).toContain('notify_billing');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// propagateSkips — trigger_rule_unsatisfiable witness (issue #111)
+// canTriggerRuleEverBeSatisfied is module-private; its witness is exercised through
+// propagateSkips' returned `details[stepName].blocking_deps`, its only caller.
+// ---------------------------------------------------------------------------
+
+describe('propagateSkips — trigger_rule_unsatisfiable witness (issue #111)', () => {
+  it('all_success: blocking_deps names exactly the failed-or-skipped deps, not the completed one', () => {
+    const definition = makeWorkflow({
+      a: { depends_on: [] },
+      b: { depends_on: [] },
+      c: { depends_on: [] },
+      d: { depends_on: ['a', 'b', 'c'], trigger_rule: 'all_success' },
+    });
+    const run = makeRun({ failed_steps: ['a'], skipped_steps: ['b'], completed_steps: ['c'] });
+    const { details } = propagateSkips(run, definition);
+    const detail = details['d'];
+    if (detail?.kind !== 'trigger_rule_unsatisfiable')
+      throw new Error('expected trigger_rule_unsatisfiable');
+    expect(detail.rule).toBe('all_success');
+    expect(detail.blocking_deps).toEqual(
+      expect.arrayContaining([
+        { dep: 'a', state: 'failed' },
+        { dep: 'b', state: 'skipped' },
+      ]),
+    );
+    expect(detail.blocking_deps).toHaveLength(2);
+  });
+
+  it('all_failed: blocking_deps names the completed-or-skipped deps', () => {
+    const definition = makeWorkflow({
+      a: { depends_on: [] },
+      b: { depends_on: [] },
+      c: { depends_on: ['a', 'b'], trigger_rule: 'all_failed' },
+    });
+    const run = makeRun({ completed_steps: ['a'], skipped_steps: ['b'] });
+    const { details } = propagateSkips(run, definition);
+    const detail = details['c'];
+    if (detail?.kind !== 'trigger_rule_unsatisfiable')
+      throw new Error('expected trigger_rule_unsatisfiable');
+    expect(detail.rule).toBe('all_failed');
+    expect(detail.blocking_deps).toEqual(
+      expect.arrayContaining([
+        { dep: 'a', state: 'completed' },
+        { dep: 'b', state: 'skipped' },
+      ]),
+    );
+    expect(detail.blocking_deps).toHaveLength(2);
+  });
+
+  it('all_done: never unsatisfiable — no skip_details entry is ever created for it', () => {
+    const definition = makeWorkflow({
+      a: { depends_on: [] },
+      b: { depends_on: ['a'], trigger_rule: 'all_done' },
+    });
+    const run = makeRun({ failed_steps: ['a'] });
+    const { details } = propagateSkips(run, definition);
+    expect(details['b']).toBeUndefined();
+  });
+
+  it('one_failed: unsatisfiable witness names ALL deps (collective exhaustion), never a subset', () => {
+    const definition = makeWorkflow({
+      a: { depends_on: [] },
+      b: { depends_on: [] },
+      c: { depends_on: ['a', 'b'], trigger_rule: 'one_failed' },
+    });
+    const run = makeRun({ completed_steps: ['a'], skipped_steps: ['b'] });
+    const { details } = propagateSkips(run, definition);
+    const detail = details['c'];
+    if (detail?.kind !== 'trigger_rule_unsatisfiable')
+      throw new Error('expected trigger_rule_unsatisfiable');
+    expect(detail.rule).toBe('one_failed');
+    expect(detail.blocking_deps).toEqual(
+      expect.arrayContaining([
+        { dep: 'a', state: 'completed' },
+        { dep: 'b', state: 'skipped' },
+      ]),
+    );
+    expect(detail.blocking_deps).toHaveLength(2); // ALL deps, not a subset
+  });
+
+  it('one_success: unsatisfiable witness names ALL deps (collective exhaustion), never a subset', () => {
+    const definition = makeWorkflow({
+      a: { depends_on: [] },
+      b: { depends_on: [] },
+      c: { depends_on: ['a', 'b'], trigger_rule: 'one_success' },
+    });
+    const run = makeRun({ failed_steps: ['a'], skipped_steps: ['b'] });
+    const { details } = propagateSkips(run, definition);
+    const detail = details['c'];
+    if (detail?.kind !== 'trigger_rule_unsatisfiable')
+      throw new Error('expected trigger_rule_unsatisfiable');
+    expect(detail.rule).toBe('one_success');
+    expect(detail.blocking_deps).toEqual(
+      expect.arrayContaining([
+        { dep: 'a', state: 'failed' },
+        { dep: 'b', state: 'skipped' },
+      ]),
+    );
+    expect(detail.blocking_deps).toHaveLength(2);
+  });
+
+  it('none_failed: blocking_deps names only the failed dep, not an unsettled one', () => {
+    const definition = makeWorkflow({
+      a: { depends_on: [] },
+      b: { depends_on: [] },
+      c: { depends_on: ['a', 'b'], trigger_rule: 'none_failed' },
+    });
+    // a failed (blocks it); b is still unsettled — none_failed only cares about failures.
+    const run = makeRun({ failed_steps: ['a'] });
+    const { details } = propagateSkips(run, definition);
+    const detail = details['c'];
+    if (detail?.kind !== 'trigger_rule_unsatisfiable')
+      throw new Error('expected trigger_rule_unsatisfiable');
+    expect(detail.rule).toBe('none_failed');
+    expect(detail.blocking_deps).toEqual([{ dep: 'a', state: 'failed' }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// propagateSkips — when_false trace (issue #111)
+// traceWhenCondition is module-private; exercised through propagateSkips' returned
+// `details[stepName].leaves`, its only call site.
+// ---------------------------------------------------------------------------
+
+describe('propagateSkips — when_false trace (issue #111)', () => {
+  const classifyEvidence = (output: Record<string, unknown>) => [
+    {
+      step_id: 'classify',
+      started_at: '',
+      completed_at: '',
+      duration_ms: 0,
+      input_summary: {},
+      output_summary: output,
+      status: 'success' as const,
+      evidence_hash: 'abc',
+    },
+  ];
+
+  it('multi-leaf AND: records EVERY leaf, not just the first false one (false leaf is in the MIDDLE, proving no short-circuit)', () => {
+    const definition = makeWorkflow({
+      classify: { depends_on: [] },
+      route: {
+        depends_on: ['classify'],
+        when: [
+          'classify.category == billing',
+          'classify.priority == high', // the false leaf — NOT the last one
+          'classify.region == us',
+        ],
+      },
+    });
+    const run = makeRun({
+      completed_steps: ['classify'],
+      evidence: classifyEvidence({ category: 'billing', priority: 'low', region: 'us' }),
+    });
+    const { details } = propagateSkips(run, definition);
+    const detail = details['route'];
+    if (detail?.kind !== 'when_false') throw new Error('expected when_false');
+    // A short-circuit-at-first-false implementation would stop after leaf[1] and never
+    // record leaf[2] — asserting length 3 (and leaf[2]'s content) is what catches that.
+    expect(detail.leaves).toHaveLength(3);
+    expect(detail.leaves[0]).toEqual({
+      leaf: 'classify.category == billing',
+      lhs_present: true,
+      resolved_value: 'billing',
+      passed: true,
+    });
+    expect(detail.leaves[1]).toEqual({
+      leaf: 'classify.priority == high',
+      lhs_present: true,
+      resolved_value: 'low',
+      passed: false,
+    });
+    expect(detail.leaves[2]).toEqual({
+      leaf: 'classify.region == us',
+      lhs_present: true,
+      resolved_value: 'us',
+      passed: true,
+    });
+  });
+
+  it('a field-name typo (path miss) records lhs_present:false with resolved_value OMITTED, not undefined', () => {
+    const definition = makeWorkflow({
+      classify: { depends_on: [] },
+      route: { depends_on: ['classify'], when: 'classify.tcuont >= 0.8' }, // typo'd field
+    });
+    const run = makeRun({
+      completed_steps: ['classify'],
+      evidence: classifyEvidence({ count: 0.9 }),
+    });
+    const { details } = propagateSkips(run, definition);
+    const detail = details['route'];
+    if (detail?.kind !== 'when_false') throw new Error('expected when_false');
+    expect(detail.leaves).toHaveLength(1);
+    const leaf = detail.leaves[0]!;
+    expect(leaf.lhs_present).toBe(false);
+    expect(leaf.passed).toBe(false);
+    expect('resolved_value' in leaf).toBe(false);
+    // The absence must survive a JSON round-trip — this is the durable typo signal.
+    expect(JSON.parse(JSON.stringify(leaf))).not.toHaveProperty('resolved_value');
+  });
+
+  it('a present scalar LHS records lhs_present:true with the resolved value', () => {
+    const definition = makeWorkflow({
+      classify: { depends_on: [] },
+      route: { depends_on: ['classify'], when: 'classify.category == billing' },
+    });
+    const run = makeRun({
+      completed_steps: ['classify'],
+      evidence: classifyEvidence({ category: 'bug' }),
+    });
+    const { details } = propagateSkips(run, definition);
+    const detail = details['route'];
+    if (detail?.kind !== 'when_false') throw new Error('expected when_false');
+    expect(detail.leaves[0]).toEqual({
+      leaf: 'classify.category == billing',
+      lhs_present: true,
+      resolved_value: 'bug',
+      passed: false,
+    });
+  });
+
+  it('a compound leaf reaching runtime (kind: invalid) records lhs_present:false, passed:false, no resolved_value', () => {
+    // Bypasses load-time rejection (makeWorkflow builds a raw definition, no yaml-loader pass).
+    const definition = makeWorkflow({
+      a: { depends_on: [] },
+      b: { depends_on: ['a'], when: 'a.x == 1 and a.y == 2' },
+    });
+    const run = makeRun({
+      completed_steps: ['a'],
+      evidence: [
+        {
+          step_id: 'a',
+          started_at: '',
+          completed_at: '',
+          duration_ms: 0,
+          input_summary: {},
+          output_summary: { x: 1, y: 2 },
+          status: 'success',
+          evidence_hash: 'x',
+        },
+      ],
+    });
+    const { details } = propagateSkips(run, definition);
+    const detail = details['b'];
+    if (detail?.kind !== 'when_false') throw new Error('expected when_false');
+    expect(detail.leaves[0]).toMatchObject({ lhs_present: false, passed: false });
+    expect('resolved_value' in detail.leaves[0]!).toBe(false);
+  });
+
+  it("every leaf's traced passed equals evaluateWhenCondition's own verdict for the same leaf", () => {
+    const definition = makeWorkflow({
+      classify: { depends_on: [] },
+      route: {
+        depends_on: ['classify'],
+        when: ['classify.category == billing', 'classify.amount > 100'],
+      },
+    });
+    const run = makeRun({
+      completed_steps: ['classify'],
+      evidence: classifyEvidence({ category: 'billing', amount: 50 }),
+    });
+    const { details } = propagateSkips(run, definition);
+    const detail = details['route'];
+    if (detail?.kind !== 'when_false') throw new Error('expected when_false');
+    const evidenceByStep = buildEvidenceByStep(run);
+    for (const leaf of detail.leaves) {
+      expect(leaf.passed).toBe(evaluateWhenCondition(leaf.leaf, evidenceByStep, run.params));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// propagateSkips — skip_details behavioral (issue #111)
+// ---------------------------------------------------------------------------
+
+describe('propagateSkips — skip_details behavioral (issue #111)', () => {
+  it('Object.keys(details) is always a subset of the returned skipped array', () => {
+    const definition = makeWorkflow({
+      classify: { depends_on: [] },
+      a: { depends_on: [] },
+      b: { depends_on: ['a'], trigger_rule: 'all_success' },
+      route: { depends_on: ['classify'], when: 'classify.category == billing' },
+    });
+    const run = makeRun({
+      failed_steps: ['a'],
+      completed_steps: ['classify'],
+      evidence: [
+        {
+          step_id: 'classify',
+          started_at: '',
+          completed_at: '',
+          duration_ms: 0,
+          input_summary: {},
+          output_summary: { category: 'bug' },
+          status: 'success',
+          evidence_hash: 'abc',
+        },
+      ],
+    });
+    const { skipped, details } = propagateSkips(run, definition);
+    for (const key of Object.keys(details)) {
+      expect(skipped).toContain(key);
+    }
+  });
+
+  it('carries forward run.skip_details across successive calls (does not drop prior detail)', () => {
+    const definition = makeWorkflow({
+      a: { depends_on: [] },
+      b: { depends_on: ['a'], trigger_rule: 'all_success' },
+      c: { depends_on: [] },
+      d: { depends_on: ['c'], trigger_rule: 'all_success' },
+    });
+    const run1 = makeRun({ failed_steps: ['a'] });
+    const first = propagateSkips(run1, definition);
+    expect(first.details['b']?.kind).toBe('trigger_rule_unsatisfiable');
+
+    // A second call, seeded with the FIRST call's skipped_steps/skip_details (mirroring how a
+    // caller persists-then-recomputes), now also failing c.
+    const run2 = makeRun({
+      failed_steps: ['a', 'c'],
+      skipped_steps: first.skipped,
+      skip_details: first.details,
+    });
+    const second = propagateSkips(run2, definition);
+    expect(second.details['b']).toEqual(first.details['b']); // carried forward, unchanged
+    expect(second.details['d']?.kind).toBe('trigger_rule_unsatisfiable'); // newly added
+  });
+
+  it('produces a trigger_rule_unsatisfiable detail with the documented shape', () => {
+    const definition = makeWorkflow({
+      a: { depends_on: [] },
+      b: { depends_on: ['a'], trigger_rule: 'all_success' },
+    });
+    const run = makeRun({ failed_steps: ['a'] });
+    const { details } = propagateSkips(run, definition);
+    expect(details['b']).toEqual({
+      kind: 'trigger_rule_unsatisfiable',
+      rule: 'all_success',
+      blocking_deps: [{ dep: 'a', state: 'failed' }],
+    });
+  });
+
+  it('produces a when_false detail with the documented shape', () => {
+    const definition = makeWorkflow({
+      classify: { depends_on: [] },
+      route: { depends_on: ['classify'], when: 'classify.category == billing' },
+    });
+    const run = makeRun({
+      completed_steps: ['classify'],
+      evidence: [
+        {
+          step_id: 'classify',
+          started_at: '',
+          completed_at: '',
+          duration_ms: 0,
+          input_summary: {},
+          output_summary: { category: 'bug' },
+          status: 'success',
+          evidence_hash: 'abc',
+        },
+      ],
+    });
+    const { details } = propagateSkips(run, definition);
+    expect(details['route']).toEqual({
+      kind: 'when_false',
+      expression: 'classify.category == billing',
+      leaves: [
+        {
+          leaf: 'classify.category == billing',
+          lhs_present: true,
+          resolved_value: 'bug',
+          passed: false,
+        },
+      ],
+    });
+  });
+
+  it('5-path completeness (1/5): a freshly-created run (no skips yet) yields empty skipped/details — no detail for a step that never skipped', () => {
+    const definition = makeWorkflow({ a: { depends_on: [] } });
+    const run = makeRun(); // default: skipped_steps: [], no skip_details key at all
+    const { skipped, details } = propagateSkips(run, definition);
+    expect(skipped).toEqual([]);
+    expect(details).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Structural anti-recurrence guard (issue #111, S2) — models the atomicWriteFile grep-guard
+// from #132/#130: the set of source sites that GROW a persisted skipped_steps must equal the
+// sanctioned whitelist (2 abort direct-pushes in execution-loop.ts + propagateSkips' own 2
+// branches in eligibility.ts). A new grow-site outside this whitelist reddens this test.
+// ---------------------------------------------------------------------------
+
+describe('structural guard — skipped_steps grow-sites (issue #111)', () => {
+  it('eligibility.ts: exactly 2 skipped.push( grow-sites, both inside propagateSkips', async () => {
+    const src = await readFile(new URL('./eligibility.ts', import.meta.url), 'utf8');
+    const growSites = [...src.matchAll(/\bskipped\.push\(/g)];
+    expect(growSites).toHaveLength(2);
+    // The excluded, non-grow sites must remain present (seed + scratch, never appends):
+    expect(src).toContain('const skipped = [...run.skipped_steps];');
+    expect(src).toContain('const tempRun: RunRecord = { ...run, skipped_steps: skipped };');
+  });
+
+  it('execution-loop.ts: exactly 2 skipped_steps spread-append grow-sites — the handler-abort and guard-abort direct pushes', async () => {
+    const src = await readFile(new URL('./execution-loop.ts', import.meta.url), 'utf8');
+    const growSites = [...src.matchAll(/\[\.\.\.[\w.]+\.skipped_steps,\s*[^\]]+\]/g)];
+    expect(growSites).toHaveLength(2);
+    expect(src).toContain('skipped_steps: [...pendingRun.skipped_steps, options.command],');
+    expect(src).toContain('skipped_steps: [...run.skipped_steps, stepName],');
+    // No raw .push( on a skipped_steps-shaped array anywhere in this file — every mutation goes
+    // through the sanctioned spread-append above or through propagateSkips.
+    expect(src).not.toMatch(/skipped_steps\.push\(/);
   });
 });
 
@@ -1023,7 +1444,7 @@ describe('finalizer steps — held out of the DAG', () => {
       cleanup: { execution: 'finalizer', on_outcome: 'always', handler: 'do_cleanup' },
     });
     const run = makeRun({ failed_steps: ['a'] });
-    const skipped = propagateSkips(run, workflow);
+    const skipped = propagateSkips(run, workflow).skipped;
     expect(skipped).toContain('b');
     expect(skipped).not.toContain('cleanup');
   });

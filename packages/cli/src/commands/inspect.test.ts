@@ -638,3 +638,58 @@ describe('--check-drift manifest hash (v0.14 hardening)', () => {
     }
   });
 });
+
+describe('inspectRun — skip_details surfacing (issue #111)', () => {
+  it('renders a when_false reason inline for a skipped step', async () => {
+    const run = makeRun([], {
+      skipped_steps: ['route_billing'],
+      skip_details: {
+        route_billing: {
+          kind: 'when_false',
+          expression: 'classify.category == billing',
+          leaves: [
+            {
+              leaf: 'classify.category == billing',
+              lhs_present: true,
+              resolved_value: 'bug',
+              passed: false,
+            },
+          ],
+        },
+      },
+    });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).toContain('Skipped: route_billing');
+    expect(result).toContain(
+      'route_billing: when_false: classify.category == billing [lhs → "bug"]',
+    );
+  });
+
+  it('renders a trigger_rule_unsatisfiable reason inline for a skipped step', async () => {
+    const run = makeRun([], {
+      skipped_steps: ['b'],
+      skip_details: {
+        b: {
+          kind: 'trigger_rule_unsatisfiable',
+          rule: 'all_success',
+          blocking_deps: [{ dep: 'a', state: 'failed' }],
+        },
+      },
+    });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).toContain('b: trigger_rule_unsatisfiable: all_success, dep a failed');
+  });
+
+  it('renders "skipped (reason unavailable)" for a skipped step with no detail (legacy run)', async () => {
+    const run = makeRun([], { skipped_steps: ['legacy_step'] }); // no skip_details at all
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).toContain('legacy_step: skipped (reason unavailable)');
+  });
+
+  it('renders nothing extra when there are no skipped steps', async () => {
+    const run = makeRun([]);
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).toContain('Skipped: (none)');
+    expect(result).not.toContain('reason unavailable');
+  });
+});

@@ -13,6 +13,7 @@ import {
   type RunPhase,
   type NextAction,
   type ClaimState,
+  type SkipDetail,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 
@@ -102,6 +103,12 @@ export interface RunStateSummary {
     requirement: { kind: 'handler' | 'adapter'; name: string };
     code: string;
   }>;
+  /**
+   * Reason detail for each skipped step (issue #111) — present only when non-empty. Additive:
+   * `skipped_steps` above stays the authoritative set; a skipped step may still lack an entry
+   * here (a legacy run, or a skip family not yet carrying a detail).
+   */
+  skip_details?: Record<string, SkipDetail>;
 }
 
 /**
@@ -210,6 +217,9 @@ export async function handleGetRunState(
             code: b.code,
           })),
         }
+      : {}),
+    ...(run.skip_details !== undefined && Object.keys(run.skip_details).length > 0
+      ? { skip_details: run.skip_details }
       : {}),
   };
 }

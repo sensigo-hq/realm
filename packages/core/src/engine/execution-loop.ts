@@ -1091,9 +1091,16 @@ export async function executeStep(
           evidence: [...pendingRun.evidence, abortEvidence],
           skipped_steps: [...pendingRun.skipped_steps, options.command],
         };
+        // #111: merge is load-bearing — it preserves any cascade details propagateSkips derives
+        // for OTHER now-unreachable steps alongside this step's own handler_abort tag.
+        const handlerAbortPropagated = propagateSkips(withHandlerSkipped, definition);
         const withAllSkipped: RunRecord = {
           ...withHandlerSkipped,
-          skipped_steps: propagateSkips(withHandlerSkipped, definition),
+          skipped_steps: handlerAbortPropagated.skipped,
+          skip_details: {
+            ...handlerAbortPropagated.details,
+            [options.command]: { kind: 'handler_abort' },
+          },
         };
         const abortDraft: RunRecord = {
           ...withAllSkipped,
@@ -1343,9 +1350,11 @@ export async function executeStep(
       failed_steps: [...pendingRun.failed_steps, options.command],
     };
     // Propagate skips: mark steps whose trigger_rule can never be satisfied after this failure.
+    const failPropagated = propagateSkips(afterFail, definition);
     const withSkippedFail: RunRecord = {
       ...afterFail,
-      skipped_steps: propagateSkips(afterFail, definition),
+      skipped_steps: failPropagated.skipped,
+      skip_details: failPropagated.details,
     };
     // A run is terminal when all steps are settled OR when no step will ever become
     // eligible again (safety net for when-condition edge cases not covered by propagateSkips).
@@ -1619,9 +1628,11 @@ export async function executeStep(
   };
   // Propagate skips: completing this step may make some downstream steps permanently ineligible
   // (e.g. all_failed steps whose dep just succeeded, one_failed steps whose last unfailed dep just completed).
+  const completePropagated = propagateSkips(afterComplete, definition);
   const withSkippedComplete: RunRecord = {
     ...afterComplete,
-    skipped_steps: propagateSkips(afterComplete, definition),
+    skipped_steps: completePropagated.skipped,
+    skip_details: completePropagated.details,
   };
   // A run is terminal when all steps are settled OR when no step will ever become
   // eligible again (safety net for when-condition routing not fully covered by propagateSkips).
@@ -1817,9 +1828,11 @@ export async function submitHumanResponse(
   };
   // Propagate skips in case resolving the gate completes a dep that makes
   // some downstream trigger_rules permanently unsatisfiable.
+  const gatePropagated = propagateSkips(afterGate, definition);
   const withSkippedGate: RunRecord = {
     ...afterGate,
-    skipped_steps: propagateSkips(afterGate, definition),
+    skipped_steps: gatePropagated.skipped,
+    skip_details: gatePropagated.details,
   };
   // A run is terminal when all steps are settled OR when no step will ever become
   // eligible again (safety net for when-condition routing not fully covered by propagateSkips).
@@ -1935,9 +1948,11 @@ async function executeGuardStep(
       evidence: [...run.evidence, evidenceEntry],
       failed_steps: [...run.failed_steps, stepName],
     };
+    const resolutionErrorPropagated = propagateSkips(withFailed, definition);
     const withSkipped: RunRecord = {
       ...withFailed,
-      skipped_steps: propagateSkips(withFailed, definition),
+      skipped_steps: resolutionErrorPropagated.skipped,
+      skip_details: resolutionErrorPropagated.details,
     };
     return {
       ...withSkipped,
@@ -1961,9 +1976,11 @@ async function executeGuardStep(
       evidence: [...run.evidence, evidenceEntry],
       completed_steps: [...run.completed_steps, stepName],
     };
+    const guardPassPropagated = propagateSkips(withCompleted, definition);
     const withSkipped: RunRecord = {
       ...withCompleted,
-      skipped_steps: propagateSkips(withCompleted, definition),
+      skipped_steps: guardPassPropagated.skipped,
+      skip_details: guardPassPropagated.details,
     };
     const isComplete =
       isWorkflowComplete(withSkipped, definition) ||
@@ -1997,10 +2014,14 @@ async function executeGuardStep(
     // Guard that aborted goes into skipped_steps (not completed or failed).
     skipped_steps: [...run.skipped_steps, stepName],
   };
-  // Propagate skips for any downstream steps that can no longer fire.
+  // Propagate skips for any downstream steps that can no longer fire. The merge below is
+  // load-bearing (issue #111) — it preserves any cascade details for OTHER now-unreachable
+  // steps alongside this guard's own guard_abort tag.
+  const guardAbortPropagated = propagateSkips(withGuardSkipped, definition);
   const withAllSkipped: RunRecord = {
     ...withGuardSkipped,
-    skipped_steps: propagateSkips(withGuardSkipped, definition),
+    skipped_steps: guardAbortPropagated.skipped,
+    skip_details: { ...guardAbortPropagated.details, [stepName]: { kind: 'guard_abort' } },
   };
   return {
     ...withAllSkipped,

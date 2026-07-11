@@ -147,4 +147,38 @@ describe('resumeRun', () => {
     // The re-enabled step is now eligible (proving the run is genuinely runnable again).
     expect(findEligibleSteps(redriveWorkflow, resumed)).toContain('step-a');
   });
+
+  it('clean-slate recompute (issue #111): a stale skip_details entry does not survive resume for a step that is now re-eligible', async () => {
+    await workflowStore.register(redriveWorkflow);
+    const { run: run } = await runStore.create({
+      workflowId: 'resume-redrive-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    // step-a failed → step-b was skipped (all_success unsatisfiable) with a recorded reason →
+    // run terminal failed. This mirrors the real shape execution-loop.ts would have written.
+    await runStore.update({
+      ...run,
+      run_phase: 'failed',
+      failed_steps: ['step-a'],
+      skipped_steps: ['step-b'],
+      skip_details: {
+        'step-b': {
+          kind: 'trigger_rule_unsatisfiable',
+          rule: 'all_success',
+          blocking_deps: [{ dep: 'step-a', state: 'failed' }],
+        },
+      },
+      terminal_state: true,
+      terminal_reason: 'step-a failed',
+    });
+
+    await resumeRun(run.id, 'step-a', runStore, workflowStore);
+
+    const resumed = await runStore.get(run.id);
+    // step-b is re-eligible again — its stale detail must not survive (would otherwise violate
+    // Object.keys(skip_details) ⊆ skipped_steps AND show a misleading reason for a live step).
+    expect(resumed.skip_details?.['step-b']).toBeUndefined();
+    expect(resumed.skipped_steps).not.toContain('step-b');
+  });
 });
