@@ -1,6 +1,7 @@
 // Precondition evaluator — evaluates step precondition expressions against
 // the run's collected evidence map before allowing a step to execute.
 import { splitComparison } from './comparison-expr.js';
+import { boundResolvedValue } from '../utils/redaction.js';
 
 /**
  * Resolves a dot-separated path into a nested object.
@@ -108,7 +109,7 @@ export function checkPreconditions(
       const split = splitComparison(expression);
       const resolvedValue: unknown =
         split.kind === 'comparison' ? resolvePath(evidenceByStep, split.lhsPath) : undefined;
-      return { expression, passed: false, resolved_value: resolvedValue };
+      return { expression, passed: false, resolved_value: boundResolvedValue(resolvedValue) };
     }
   }
   return null;
@@ -128,7 +129,7 @@ export function evaluateAllPreconditions(
     const split = splitComparison(expression);
     const resolvedValue: unknown =
       split.kind === 'comparison' ? resolvePath(evidenceByStep, split.lhsPath) : undefined;
-    return { expression, passed, resolved_value: resolvedValue };
+    return { expression, passed, resolved_value: boundResolvedValue(resolvedValue) };
   });
 }
 
@@ -195,14 +196,18 @@ export function evaluateGuardConditions(
       }
 
       const passed = compare(lhsValue, op, rhsValue);
-      results.push({ condition, resolved_value: lhsValue, passed });
+      results.push({ condition, resolved_value: boundResolvedValue(lhsValue), passed });
     } else if (split.kind === 'path') {
       // Bare path — truthy/falsy check.
       const value = resolvePath(root, split.path);
       if (value === undefined) {
         return { kind: 'resolution_error', condition, unresolvable_path: split.path };
       }
-      results.push({ condition, resolved_value: value, passed: Boolean(value) });
+      results.push({
+        condition,
+        resolved_value: boundResolvedValue(value),
+        passed: Boolean(value),
+      });
     } else {
       // Compound/malformed leaf is rejected at load; if one reaches runtime, treat as unresolvable.
       return { kind: 'resolution_error', condition, unresolvable_path: condition };
