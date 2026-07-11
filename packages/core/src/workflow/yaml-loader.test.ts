@@ -2178,3 +2178,228 @@ ${abortBlock}
     expect(() => loadWorkflowFromString(guardWf(block))).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Reject depends_on cycles (issue #153) — detection-only, load-time DAG cycle check.
+// detectDependencyCycles is module-private (the codebase's established pattern for a
+// single-caller pure helper — see eligibility.ts's canTriggerRuleEverBeSatisfied); its
+// behavior is exercised entirely through the two public load entry points.
+// ---------------------------------------------------------------------------
+
+describe('dependency cycle detection (issue #153)', () => {
+  function expectThrowsWithMessage(yaml: string, ...substrings: string[]): void {
+    expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(yaml);
+      throw new Error('expected loadWorkflowFromString to throw');
+    } catch (err) {
+      for (const s of substrings) {
+        expect((err as WorkflowError).message).toContain(s);
+      }
+    }
+  }
+
+  it('direct cycle a<->b throws, naming both steps', () => {
+    const yaml = `
+id: cycle-direct
+name: Direct Cycle
+version: 1
+steps:
+  a:
+    description: Step A
+    execution: agent
+    depends_on: [b]
+  b:
+    description: Step B
+    execution: agent
+    depends_on: [a]
+`;
+    expectThrowsWithMessage(yaml, 'dependency cycle', 'a', 'b');
+  });
+
+  it('transitive cycle a->b->c->a throws, naming all three steps', () => {
+    const yaml = `
+id: cycle-transitive
+name: Transitive Cycle
+version: 1
+steps:
+  a:
+    description: Step A
+    execution: agent
+    depends_on: [b]
+  b:
+    description: Step B
+    execution: agent
+    depends_on: [c]
+  c:
+    description: Step C
+    execution: agent
+    depends_on: [a]
+`;
+    expectThrowsWithMessage(yaml, 'dependency cycle', 'a', 'b', 'c');
+  });
+
+  it('self-dependency still yields exactly the existing "cannot depend on itself" error — no double-report', () => {
+    const yaml = `
+id: self-dep
+name: Self Dep
+version: 1
+steps:
+  a:
+    description: Step A
+    execution: agent
+    depends_on: [a]
+`;
+    expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(yaml);
+      throw new Error('expected loadWorkflowFromString to throw');
+    } catch (err) {
+      const message = (err as WorkflowError).message;
+      expect(message).toContain('a step cannot depend on itself');
+      // The self-edge is excluded from the cycle graph — must not ALSO report a cycle.
+      expect(message).not.toContain('dependency cycle');
+      // Exactly one error total for this workflow (the self-dep message, nothing else).
+      expect(message.split(';').map((s) => s.trim())).toHaveLength(1);
+    }
+  });
+
+  it('acyclic diamond (a depends on b and c, both depend on d) loads clean', () => {
+    const yaml = `
+id: diamond
+name: Diamond
+version: 1
+steps:
+  d:
+    description: Step D
+    execution: agent
+  b:
+    description: Step B
+    execution: agent
+    depends_on: [d]
+  c:
+    description: Step C
+    execution: agent
+    depends_on: [d]
+  a:
+    description: Step A
+    execution: agent
+    depends_on: [b, c]
+`;
+    expect(() => loadWorkflowFromString(yaml)).not.toThrow();
+  });
+
+  it('acyclic domain DAG plus a finalizer step loads clean (finalizer correctly excluded from the graph)', () => {
+    const yaml = `
+id: with-finalizer
+name: With Finalizer
+version: 1
+steps:
+  a:
+    description: Step A
+    execution: agent
+  b:
+    description: Step B
+    execution: agent
+    depends_on: [a]
+  cleanup:
+    description: Cleanup
+    execution: finalizer
+    on_outcome: always
+    handler: do_cleanup
+`;
+    expect(() => loadWorkflowFromString(yaml)).not.toThrow();
+  });
+
+  it('a cycle plus an unrelated error in the same workflow both surface (accumulation, no early-return)', () => {
+    const yaml = `
+id: cycle-plus-error
+name: Cycle Plus Error
+version: 1
+steps:
+  a:
+    description: Step A
+    execution: agent
+    depends_on: [b]
+    service_method: invalid_value
+  b:
+    description: Step B
+    execution: agent
+    depends_on: [a]
+`;
+    expectThrowsWithMessage(yaml, 'dependency cycle', 'invalid service_method');
+  });
+
+  it('disjoint multiple cycles in the same workflow are each reported once', () => {
+    const yaml = `
+id: multi-cycle
+name: Multi Cycle
+version: 1
+steps:
+  a:
+    description: Step A
+    execution: agent
+    depends_on: [b]
+  b:
+    description: Step B
+    execution: agent
+    depends_on: [a]
+  x:
+    description: Step X
+    execution: agent
+    depends_on: [y]
+  y:
+    description: Step Y
+    execution: agent
+    depends_on: [x]
+`;
+    expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(yaml);
+      throw new Error('expected loadWorkflowFromString to throw');
+    } catch (err) {
+      const message = (err as WorkflowError).message;
+      const cycleMentions = message.match(/dependency cycle/g) ?? [];
+      expect(cycleMentions).toHaveLength(2); // one per disjoint cycle, not deduped into one
+      expect(message).toContain('a');
+      expect(message).toContain('b');
+      expect(message).toContain('x');
+      expect(message).toContain('y');
+    }
+  });
+
+  it('rejects a cycle via BOTH load entry points (loadWorkflowFromString and loadWorkflowFromFile)', () => {
+    const yaml = `
+id: cycle-both-entries
+name: Cycle Both Entries
+version: 1
+steps:
+  a:
+    description: Step A
+    execution: agent
+    depends_on: [b]
+  b:
+    description: Step B
+    execution: agent
+    depends_on: [a]
+`;
+    // Extension-free path.
+    expectThrowsWithMessage(yaml, 'dependency cycle');
+
+    // File path.
+    const tmpDir = mkdtempSync(join(tmpdir(), 'realm-cycle-test-'));
+    try {
+      const filePath = join(tmpDir, 'workflow.yaml');
+      writeFileSync(filePath, yaml);
+      expect(() => loadWorkflowFromFile(filePath)).toThrow(WorkflowError);
+      try {
+        loadWorkflowFromFile(filePath);
+        throw new Error('expected loadWorkflowFromFile to throw');
+      } catch (err) {
+        expect((err as WorkflowError).message).toContain('dependency cycle');
+      }
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});

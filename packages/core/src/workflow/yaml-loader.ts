@@ -358,6 +358,72 @@ export function loadWorkflowFromString(
 }
 
 /**
+ * Detects cycles in a directed graph (issue #153), given as an adjacency map of
+ * stepName -> its outgoing dependency edges (already filtered to valid DAG edges only — see
+ * the call site). Depth-first search with three-state coloring (white = unvisited, gray = on the
+ * current DFS path, black = fully explored) plus an explicit path stack: a back-edge to a GRAY
+ * node closes a cycle, and the stack from that node's position onward IS the cycle, in order.
+ *
+ * Start nodes are iterated in `edges`' insertion (Map) order for deterministic output. Each
+ * distinct cycle is reported once — deduped by a rotation-normalized key, since a duplicate
+ * `depends_on` entry (the same dep listed twice) can otherwise cause the identical back-edge to
+ * fire twice from the same DFS position.
+ *
+ * Pure and module-private — unit-tested directly (see yaml-loader.test.ts).
+ */
+function detectDependencyCycles(edges: Map<string, string[]>): string[][] {
+  const WHITE = 0;
+  const GRAY = 1;
+  const BLACK = 2;
+  const color = new Map<string, number>();
+  for (const node of edges.keys()) color.set(node, WHITE);
+
+  const cycles: string[][] = [];
+  const seenCycleKeys = new Set<string>();
+  const stack: string[] = [];
+
+  const normalizeCycleKey = (cyclePath: string[]): string => {
+    // cyclePath is e.g. ['a', 'b', 'c', 'a'] (first === last, the closing repeat). Normalize by
+    // rotation over the distinct nodes so a→b→c→a and b→c→a→b dedupe to the same key.
+    const nodes = cyclePath.slice(0, -1);
+    let best = nodes;
+    for (let i = 1; i < nodes.length; i++) {
+      const rotated = [...nodes.slice(i), ...nodes.slice(0, i)];
+      if (rotated.join('\0') < best.join('\0')) best = rotated;
+    }
+    return best.join('\0');
+  };
+
+  const dfs = (node: string): void => {
+    color.set(node, GRAY);
+    stack.push(node);
+    for (const dep of edges.get(node) ?? []) {
+      const depColor = color.get(dep);
+      if (depColor === GRAY) {
+        const idx = stack.indexOf(dep);
+        const cyclePath = [...stack.slice(idx), dep];
+        const key = normalizeCycleKey(cyclePath);
+        if (!seenCycleKeys.has(key)) {
+          seenCycleKeys.add(key);
+          cycles.push(cyclePath);
+        }
+      } else if (depColor === WHITE) {
+        dfs(dep);
+      }
+      // BLACK: already fully explored via another path — no cycle through this edge.
+    }
+    stack.pop();
+    color.set(node, BLACK);
+  };
+
+  for (const node of edges.keys()) {
+    if (color.get(node) === WHITE) dfs(node);
+  }
+
+  return cycles;
+}
+
+/**
  * Shared YAML → WorkflowDefinition parser. `allowExtensions` distinguishes file-based loading
  * (extensions permitted — a directory context exists) from string-based loading (hard error,
  * fired before any other processing).
@@ -964,6 +1030,36 @@ function parseWorkflowString(
       `Workflow has only finalizer steps — at least one non-finalizer step is required ` +
         `(finalizers run at the terminal transition of the DAG's domain steps).`,
     );
+  }
+
+  // Reject depends_on cycles (issue #153): a transitive cycle among otherwise-valid edges is
+  // loadable today (the per-step check above only validates one hop at a time), and at runtime
+  // the cyclic steps are mutually ineligible forever — the run silently seals `completed` with
+  // the stranded steps in NO step set and zero evidence. Build the graph over VALID edges only
+  // (dep exists, isn't self, isn't a finalizer) — the self/unknown/finalizer-dep cases are
+  // already reported by the per-step check above; a real cycle runs entirely through valid
+  // edges, so excluding the already-errored ones here avoids double-reporting them.
+  const dependencyEdges = new Map<string, string[]>();
+  for (const stepName of Object.keys(stepsRaw)) {
+    dependencyEdges.set(stepName, []);
+  }
+  for (const [stepName, stepRaw] of Object.entries(stepsRaw)) {
+    if (typeof stepRaw !== 'object' || stepRaw === null || Array.isArray(stepRaw)) continue;
+    const dependsOn = (stepRaw as Record<string, unknown>)['depends_on'];
+    if (!Array.isArray(dependsOn)) continue;
+    for (const dep of dependsOn) {
+      if (
+        typeof dep === 'string' &&
+        dep !== stepName &&
+        dep in stepsRaw &&
+        (stepsRaw[dep] as Record<string, unknown>)['execution'] !== 'finalizer'
+      ) {
+        dependencyEdges.get(stepName)!.push(dep);
+      }
+    }
+  }
+  for (const cycle of detectDependencyCycles(dependencyEdges)) {
+    errors.push(`Workflow has a dependency cycle: ${cycle.join(' → ')}`);
   }
 
   // Validate mcp_servers: ids must be unique (workflow-level check).
