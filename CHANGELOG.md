@@ -13,6 +13,7 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - **`depends_on` cycles are now rejected at load time (issue #153).** A transitive `depends_on` cycle (`a → b → a`, or longer) previously loaded successfully — the loader validated dependencies only one hop at a time, with no graph traversal. At runtime the cyclic steps were mutually ineligible forever, and once the acyclic steps finished, the run silently sealed `completed` with the stranded steps in no step set and zero evidence — a silent-wrong-completion bug. `realm workflow validate` (and every workflow-loading command) now fails loud with a clear error naming the participating steps, before a run is ever created. Detection-only — no runtime, eligibility, or seal behavior changed.
+- **Precondition and guard `resolved_value`s are now bounded and scrubbed like every other durable evidence value (issue #154).** `precondition_trace[].resolved_value` and guard `abort_unless` results (surfaced in `aborted_at.conditions` and a passing guard's recorded evidence) previously stored the raw comparison operand verbatim — a large or PII-bearing value landed unbounded in the durable, inspectable run record. Both now route through the same `boundResolvedValue` helper #111 introduced for the `when`-skip trace: oversized strings/objects are capped at 500 characters, emails are scrubbed to `[REDACTED_EMAIL]`, and scalars (numbers, booleans, `null`) pass through byte-unchanged. Consistency hardening only — no verdict, resolution-error, or pass/abort behavior changed.
 
 ## [0.17.0] — 2026-07-11
 

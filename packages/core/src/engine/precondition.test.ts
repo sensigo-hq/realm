@@ -9,7 +9,7 @@ import {
   evaluateAllPreconditions,
   evaluateGuardConditions,
 } from './precondition.js';
-import { executeStep } from './execution-loop.js';
+import { executeStep, executeChain } from './execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
@@ -48,6 +48,27 @@ describe('checkPreconditions', () => {
     expect(result).not.toBeNull();
     expect(result!.expression).toBe('step_a.count > 0');
     expect(result!.passed).toBe(false);
+  });
+
+  // issue #154: the first-failure resolved_value (feeding the blocked-step suggestion string
+  // in execution-loop.ts) is now bounded/scrubbed too.
+  it('scrubs an email-bearing LHS in the first-failure result', () => {
+    const evidence = { step_a: { text: 'contact jane.doe@example.com' } };
+    const result = checkPreconditions(["step_a.text == 'irrelevant'"], evidence);
+    expect(result!.resolved_value).toBe('contact [REDACTED_EMAIL]');
+  });
+
+  it('caps an oversized LHS in the first-failure result', () => {
+    const long = 'x'.repeat(600);
+    const evidence = { step_a: { text: long } };
+    const result = checkPreconditions(["step_a.text == 'irrelevant'"], evidence);
+    expect(result!.resolved_value).toBe(`${'x'.repeat(500)}…[truncated]`);
+  });
+
+  it('leaves a scalar first-failure resolved_value byte-unchanged', () => {
+    const evidence = { step_a: { count: 0 } };
+    const result = checkPreconditions(['step_a.count > 5'], evidence);
+    expect(result!.resolved_value).toBe(0);
   });
 });
 
@@ -104,6 +125,55 @@ describe('executeStep blocks when precondition fails', () => {
     expect(envelope.blocked_reason?.suggestion).toContain('Precondition failed');
     expect(envelope.blocked_reason?.suggestion).toContain('step-a.result.count > 0');
   });
+
+  // issue #154: the suggestion string (execution-loop.ts, String(failed.resolved_value)) now
+  // reflects the bounded/scrubbed value end-to-end, since checkPreconditions produces it already
+  // bounded — no change needed in execution-loop.ts itself.
+  it('suggestion reflects a scrubbed email when the precondition LHS is email-bearing', async () => {
+    const preconditionDef: WorkflowDefinition = {
+      id: 'precond-email-wf',
+      name: 'Precondition Email Workflow',
+      version: 1,
+      steps: {
+        'step-a': {
+          description: 'Produces some output',
+          execution: 'auto',
+          depends_on: [],
+        },
+        'step-b': {
+          description: 'Requires step-a text to equal a literal it will not match',
+          execution: 'auto',
+          depends_on: ['step-a'],
+          preconditions: ["step-a.result.text == 'never-matches'"],
+        },
+      },
+    };
+
+    const store = new JsonFileStore(dir);
+    const { run: run } = await store.create({
+      workflowId: 'precond-email-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    await executeStep(store, preconditionDef, {
+      runId: run.id,
+      command: 'step-a',
+      input: {},
+      dispatcher: async () => ({ result: { text: 'contact jane.doe@example.com' } }),
+    });
+
+    const envelope = await executeStep(store, preconditionDef, {
+      runId: run.id,
+      command: 'step-b',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+
+    expect(envelope.status).toBe('blocked');
+    expect(envelope.blocked_reason?.suggestion).toContain('[REDACTED_EMAIL]');
+    expect(envelope.blocked_reason?.suggestion).not.toContain('jane.doe@example.com');
+  });
 });
 
 describe('evaluateAllPreconditions', () => {
@@ -123,6 +193,41 @@ describe('evaluateAllPreconditions', () => {
     expect(results[0]!.passed).toBe(false);
     expect(results[1]!.expression).toBe('step_a.count >= 0');
     expect(results[1]!.passed).toBe(true);
+  });
+
+  // issue #154: precondition_trace's resolved_value is now bounded/scrubbed via
+  // boundResolvedValue — the same helper #111 introduced for the when-skip trace.
+  it('caps an oversized string LHS with the truncation marker', () => {
+    const long = 'x'.repeat(600);
+    const evidence = { step_a: { text: long } };
+    const results = evaluateAllPreconditions(["step_a.text == 'irrelevant'"], evidence);
+    expect(results[0]!.resolved_value).toBe(`${'x'.repeat(500)}…[truncated]`);
+  });
+
+  it('scrubs an email-bearing string LHS', () => {
+    const evidence = { step_a: { text: 'contact jane.doe@example.com for help' } };
+    const results = evaluateAllPreconditions(["step_a.text == 'irrelevant'"], evidence);
+    expect(results[0]!.resolved_value).toBe('contact [REDACTED_EMAIL] for help');
+  });
+
+  it('JSON-stringifies and caps an object LHS', () => {
+    const evidence = { step_a: { obj: { email: 'jane.doe@example.com', ok: true } } };
+    const results = evaluateAllPreconditions(["step_a.obj == 'irrelevant'"], evidence);
+    const value = results[0]!.resolved_value as string;
+    expect(value).toContain('[REDACTED_EMAIL]');
+    expect(value).not.toContain('jane.doe@example.com');
+    expect(value).toContain('"ok":true');
+  });
+
+  it('leaves a scalar LHS byte-unchanged (type-faithful)', () => {
+    const evidence = { step_a: { count: 5, flag: true, short: 'ok' } };
+    expect(evaluateAllPreconditions(['step_a.count > 0'], evidence)[0]!.resolved_value).toBe(5);
+    expect(evaluateAllPreconditions(['step_a.flag == true'], evidence)[0]!.resolved_value).toBe(
+      true,
+    );
+    expect(evaluateAllPreconditions(["step_a.short == 'ok'"], evidence)[0]!.resolved_value).toBe(
+      'ok',
+    );
   });
 });
 
@@ -219,5 +324,112 @@ describe('evaluateGuardConditions', () => {
     if (result.kind === 'abort') {
       expect(result.conditions[0]!.resolved_value).toBe(0);
     }
+  });
+
+  // issue #154: GuardConditionResult.resolved_value is now bounded/scrubbed at the SAME two
+  // production sites (comparison-leaf L198, bare-path L205) regardless of outcome — the abort
+  // path and the pass path both flow through evaluateGuardConditions, so bounding here covers
+  // aborted_at.conditions AND the passing guard's recorded evidence uniformly.
+  it('abort path: scrubs an email-bearing LHS on a false comparison condition', () => {
+    const evidenceByStep = { step_a: { text: 'contact jane.doe@example.com' } };
+    const result = evaluateGuardConditions(["step_a.text == 'never-matches'"], evidenceByStep);
+    expect(result.kind).toBe('abort');
+    if (result.kind === 'abort') {
+      expect(result.conditions[0]!.resolved_value).toBe('contact [REDACTED_EMAIL]');
+    }
+  });
+
+  it('abort path: caps an oversized LHS on a false comparison condition', () => {
+    const long = 'x'.repeat(600);
+    const evidenceByStep = { step_a: { text: long } };
+    const result = evaluateGuardConditions(["step_a.text == 'never-matches'"], evidenceByStep);
+    expect(result.kind).toBe('abort');
+    if (result.kind === 'abort') {
+      expect(result.conditions[0]!.resolved_value).toBe(`${'x'.repeat(500)}…[truncated]`);
+    }
+  });
+
+  it('pass path: scrubs an email-bearing LHS on a bare-path truthy condition that passes', () => {
+    const evidenceByStep = { step_a: { text: 'contact jane.doe@example.com' } };
+    const result = evaluateGuardConditions(['step_a.text'], evidenceByStep);
+    expect(result.kind).toBe('pass');
+    if (result.kind === 'pass') {
+      expect(result.conditions[0]!.resolved_value).toBe('contact [REDACTED_EMAIL]');
+    }
+  });
+
+  it('pass path: caps an oversized LHS on a passing comparison condition', () => {
+    const long = 'x'.repeat(600);
+    const evidenceByStep = { step_a: { text: long } };
+    const result = evaluateGuardConditions([`step_a.text == '${long}'`], evidenceByStep);
+    expect(result.kind).toBe('pass');
+    if (result.kind === 'pass') {
+      expect(result.conditions[0]!.resolved_value).toBe(`${'x'.repeat(500)}…[truncated]`);
+    }
+  });
+
+  it('leaves a scalar guard-condition resolved_value byte-unchanged (pass and abort)', () => {
+    const passResult = evaluateGuardConditions(['step_a.count >= 10'], { step_a: { count: 10 } });
+    expect(passResult.kind).toBe('pass');
+    if (passResult.kind === 'pass') {
+      expect(passResult.conditions[0]!.resolved_value).toBe(10);
+    }
+
+    const abortResult = evaluateGuardConditions(['step_a.count > 5'], { step_a: { count: 0 } });
+    expect(abortResult.kind).toBe('abort');
+    if (abortResult.kind === 'abort') {
+      expect(abortResult.conditions[0]!.resolved_value).toBe(0);
+    }
+  });
+});
+
+// issue #154 — full end-to-end proof: a real guard-triggered abort stores the bounded/scrubbed
+// value in the durable RunRecord's aborted_at.conditions (not just in the pure evaluator's return).
+describe('guard abort — aborted_at.conditions is bounded end-to-end (issue #154)', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-guard-bound-'));
+  });
+
+  it('a guard condition with an email-bearing LHS stores the scrubbed value in aborted_at.conditions', async () => {
+    const guardDef: WorkflowDefinition = {
+      id: 'guard-bound-wf',
+      name: 'Guard Bound Workflow',
+      version: 1,
+      steps: {
+        'step-a': {
+          description: 'Agent step',
+          execution: 'agent',
+          depends_on: [],
+        },
+        'guard-b': {
+          description: 'Guard step',
+          execution: 'guard',
+          depends_on: ['step-a'],
+          abort_unless: ["step-a.text == 'never-matches'"],
+        },
+      },
+    };
+
+    const store = new JsonFileStore(dir);
+    const { run: run } = await store.create({
+      workflowId: 'guard-bound-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    await executeChain(store, guardDef, {
+      runId: run.id,
+      command: 'step-a',
+      input: {},
+      dispatcher: async () => ({ text: 'contact jane.doe@example.com' }),
+    });
+
+    const savedRun = await store.get(run.id);
+    expect(savedRun.run_phase).toBe('aborted');
+    const conditions = savedRun.aborted_at?.conditions;
+    expect(conditions).toHaveLength(1);
+    expect(conditions![0]!.resolved_value).toBe('contact [REDACTED_EMAIL]');
   });
 });
