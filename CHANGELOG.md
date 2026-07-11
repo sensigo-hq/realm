@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Operator run-purge — `realm run purge` (issue #107).** Realm had no run-deletion primitive: `cleanup`/`abandon` only mark a run terminal, so a terminal run's on-disk artifacts (`<id>.json`, its idempotency-key pointer, `<id>.attempts.jsonl`, orphaned `trace-buffer-<id>-*.jsonl` WAL files) accumulated forever. `realm run purge [<id>] [--older-than <dur>] [--workflow <id>] [--force]` is a new, **CLI-only** (never an MCP tool), **dry-run-by-default**, **terminal-only** deletion of a run and every co-located artifact. Never deletes a non-terminal or `gate_waiting` run, and never a terminal run carrying a non-stale (future-deadline) claim — load-bearing for `abandoned` runs, which do not clear `claims`. Batch mode reports continue-on-error as `{ purged, already_purged, failed }` (a concurrent double-purge is `already_purged`, never `failed`) plus a resumable-run count, since purging a `failed`/`abandoned` run destroys its `realm resume` path permanently. Backed by a new `PerRunArtifactStore` marker interface (`deleteAllForRun(runId, dirEntries?)`) that `JsonFileStore`, `FailedAttemptStore`, and `JsonTraceBufferStore` each implement for their own artifacts only — the `RunStore` interface itself is unchanged; a Postgres store will implement the marker orthogonally. Age-only in v1 (size/count retention selectors are a deferred fast-follow). See [docs/reference/operating-runs.md](docs/reference/operating-runs.md#purging-runs-permanent-deletion).
+- **`JsonTraceBufferStore` is now exported from `@sensigo/realm-mcp`** (public-API widening, issue #107) — needed by the `realm run purge` CLI command to construct the trace-buffer artifact store directly.
+
 ## [0.18.0] — 2026-07-11
 
 ### Added

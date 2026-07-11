@@ -7,6 +7,7 @@ import {
   type TraceBufferStore,
   type BufferedEntry,
   type AppendResult,
+  type PerRunArtifactStore,
   normalizeEntryForBuffer,
   BUFFER_LIMIT_COUNT,
   BUFFER_LIMIT_BYTES,
@@ -26,7 +27,7 @@ interface WalLine {
  * File-based TraceBufferStore that persists WAL entries to JSONL files on disk.
  * WAL file path: <runsDir>/trace-buffer-<runId>-<base64url(stepId)>.jsonl
  */
-export class JsonTraceBufferStore implements TraceBufferStore {
+export class JsonTraceBufferStore implements TraceBufferStore, PerRunArtifactStore {
   private readonly runsDir: string;
 
   constructor(runsDir: string) {
@@ -149,13 +150,25 @@ export class JsonTraceBufferStore implements TraceBufferStore {
     await unlink(walPath).catch(() => {});
   }
 
-  async deleteAllForRun(runId: string): Promise<void> {
+  /**
+   * Deletes every orphaned WAL file for `runId` (issue #107).
+   *
+   * @param dirEntries Optional pre-scanned `readdir(runsDir)` listing supplied by a batch purge —
+   *   when present, this method filters it in-memory instead of re-scanning the directory itself
+   *   (O(N runs × readdir) → O(readdir) for a batch of N). Falls back to its own `readdir` when
+   *   omitted, exactly as before.
+   */
+  async deleteAllForRun(runId: string, dirEntries?: readonly string[]): Promise<void> {
     const prefix = `trace-buffer-${runId}-`;
-    let files: string[];
-    try {
-      files = await readdir(this.runsDir);
-    } catch {
-      return;
+    let files: readonly string[];
+    if (dirEntries !== undefined) {
+      files = dirEntries;
+    } else {
+      try {
+        files = await readdir(this.runsDir);
+      } catch {
+        return;
+      }
     }
     await Promise.all(
       files

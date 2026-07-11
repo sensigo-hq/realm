@@ -127,4 +127,41 @@ describe('FailedAttemptStore', () => {
     const badStore = new FailedAttemptStore(join(dir, 'does', 'not', 'exist'));
     await expect(badStore.append(RUN_ID, line())).resolves.toBeUndefined();
   });
+
+  describe('deleteAllForRun (issue #107)', () => {
+    it('deletes the sidecar for a run that has one', async () => {
+      await store.append(RUN_ID, line());
+      const sidecar = join(dir, `${RUN_ID}.attempts.jsonl`);
+      expect(existsSync(sidecar)).toBe(true);
+
+      await store.deleteAllForRun(RUN_ID);
+
+      expect(existsSync(sidecar)).toBe(false);
+    });
+
+    it('is idempotent: a run with no sidecar (never failed, or already deleted) is a no-op', async () => {
+      await expect(store.deleteAllForRun('never-recorded-any-attempts')).resolves.toBeUndefined();
+      // and a second call after an actual deletion:
+      await store.append(RUN_ID, line());
+      await store.deleteAllForRun(RUN_ID);
+      await expect(store.deleteAllForRun(RUN_ID)).resolves.toBeUndefined();
+    });
+
+    it('ignores dirEntries (exact-path store — the batch hint is for glob-based stores only)', async () => {
+      await store.append(RUN_ID, line());
+      await store.deleteAllForRun(RUN_ID, ['completely-unrelated.json']);
+      expect(existsSync(join(dir, `${RUN_ID}.attempts.jsonl`))).toBe(false);
+    });
+
+    it('does not affect a different run’s sidecar', async () => {
+      const OTHER = '99999999-8888-4777-8666-555555555555';
+      await store.append(RUN_ID, line());
+      await store.append(OTHER, line());
+
+      await store.deleteAllForRun(RUN_ID);
+
+      expect(existsSync(join(dir, `${RUN_ID}.attempts.jsonl`))).toBe(false);
+      expect(existsSync(join(dir, `${OTHER}.attempts.jsonl`))).toBe(true);
+    });
+  });
 });

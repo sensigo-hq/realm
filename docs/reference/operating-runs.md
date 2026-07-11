@@ -13,6 +13,7 @@ is the source of truth. Recovery is therefore about the **record**, not about ki
 | Stuck but recoverable | A run is terminal `failed` because one step errored, but the work can be retried                     | `realm resume <run-id> --from <step>` — re-enables the failed step and resets the run to `running`, then drive with `realm agent --run-id <run-id>`. |
 | Stuck and dead        | A run is `running` with no claimed step (`in_progress_steps: []`) and no agent is coming back for it | `realm run abandon <run-id> [--reason …]` (or the `abandon_run` MCP tool), then re-run (see [Recovery loop](#recovery-loop)).                        |
 | Bulk idle             | Many old non-terminal runs left parked                                                               | `realm run cleanup --older-than 30d` — abandons idle non-terminal runs (skips `gate_waiting`).                                                       |
+| Disk cleanup          | Old terminal runs (and their artifacts) should be permanently removed                                | `realm run purge --older-than 30d [--force]` — see [Purging runs](#purging-runs-permanent-deletion). **Irreversible.**                               |
 | Fleet visibility      | "Which runs are stuck right now?"                                                                    | `realm run list --stuck` (running ∧ no claimed step, with idle age) and `get_run_state` → `next_actions_status`.                                     |
 | Awaiting a human      | A run is `gate_waiting`                                                                              | Resolve it via `submit_human_response` (the `respond` MCP tool / `realm run respond`). **Do NOT abandon a gated run** — abandon refuses it.          |
 
@@ -63,6 +64,55 @@ abandoned run instead of starting fresh. To actually re-run, either:
 - start with a **new idempotency key**.
 
 See the idempotency re-encounter policy in [mcp-protocol.md](mcp-protocol.md#idempotency-re-encounter-policy).
+
+---
+
+## Purging runs (permanent deletion)
+
+`realm run cleanup` and `realm run abandon` only **mark** a run terminal — the record, the
+idempotency-key pointer, the failed-attempt sidecar, and any orphaned trace-buffer WAL files all stay
+on disk forever. Realm is daemonless and evidence-first by design: nothing runs in the background to
+reclaim disk, and nothing is ever deleted implicitly. `realm run purge` is the one place that changes —
+an **operator-invoked, irreversible** deletion of a terminal run and everything co-located with it.
+
+```bash
+realm run purge <run-id>                                   # dry-run: reports what WOULD be deleted
+realm run purge <run-id> --force                            # actually deletes it
+realm run purge --older-than 30d [--workflow <id>]          # dry-run over a batch
+realm run purge --older-than 30d --force                    # actually deletes the batch
+```
+
+### Abandon vs. purge — they are not the same axis
+
+|                    | `cleanup` / `abandon`                          | `purge`                                                    |
+| ------------------ | ---------------------------------------------- | ---------------------------------------------------------- |
+| What it does       | Marks a run terminal (`abandoned`)             | Deletes the run and all its artifacts from disk            |
+| Reversible?        | Yes — the record still exists; resume/rerun it | **No** — this is the first irreversible primitive in Realm |
+| Targets            | Non-terminal, non-`gate_waiting` runs          | **Terminal-only** runs, with no future-deadline claim      |
+| Exposed to agents? | Yes (`abandon_run` MCP tool)                   | **No** — CLI-only, deliberately never an MCP tool          |
+
+Purge will **never** touch a run that is not terminal, a run that is `gate_waiting`, or a terminal run
+that still carries a non-stale (future-deadline) claim on a step — the last case matters specifically
+for `abandoned` runs, since abandoning does **not** clear `in_progress_steps`/`claims`. There is no
+override flag for either check; unlike `reclaim`, purge has no per-run "act anyway" escape hatch.
+
+Like `reclaim --all`, purge is **dry-run by default** — even naming a single `<run-id>` only reports
+what would happen until you add `--force`. The report always includes an explicit count of how many
+of the selected runs are **resumable** (phase ∈ `failed`/`abandoned`) via `realm resume` — because
+purging one destroys that path permanently. Batch mode's continue-on-error report distinguishes a
+run that a concurrent purge already removed (`already_purged` — benign) from a genuine deletion
+failure (`failed`).
+
+### Retention model
+
+There is no background retention policy and no cron. `--older-than` is an **age-only** selector in
+this version — size- or count-based retention (e.g. "keep the last N" or "cap total disk usage") is a
+deferred fast-follow, not yet implemented. Retention is entirely operator-managed: you decide when
+and what to purge, and the command tells you exactly what it did.
+
+Purge does **not** sweep orphaned `.tmp`/`.lock` crash-residue files — a live-held lockfile could be
+corrupted by an unconditional sweep, so that cleanup has its own dedicated safety design and ships
+separately.
 
 ---
 
@@ -122,8 +172,9 @@ stderr is ephemeral, so the same record is also appended to a **durable, co-loca
   run record, so a `<id>.attempts.json` sibling would corrupt `list()` / `cleanup` / `reconcile`.
   `.jsonl` is invisible to that filter (like `trace-buffer-*.jsonl` and the `keys/` subdir). The path
   is derived only from the server-generated UUID run id.
-- **Operator-managed retention** — the sidecar lives in `runsDir` next to the run files and is removed
-  when you clear the dir. Realm has no run-GC by design; there is no cleanup hook.
+- **Operator-managed retention** — the sidecar lives in `runsDir` next to the run files. Realm has no
+  _background_ run-GC by design, but an operator can explicitly delete it (and the run it belongs to)
+  via `realm run purge` — see [Purging runs](#purging-runs-permanent-deletion) below.
 - **Append-and-stop cap** — each sidecar is bounded at ~256 KB (~80+ records). Once at the ceiling,
   later attempts are **dropped** (it keeps the **first N**, not a ring buffer), and reads report a
   `capped` flag. The append is lock-free (each line is ≤ PIPE_BUF, so a single `O_APPEND` write is

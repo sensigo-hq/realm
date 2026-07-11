@@ -12,9 +12,10 @@
 //   - The path is derived ONLY from the server-generated UUIDv4 runId (`[0-9a-f-]`), never from
 //     caller-supplied input — a path-safety invariant.
 import { existsSync } from 'node:fs';
-import { appendFile, readFile, stat } from 'node:fs/promises';
+import { appendFile, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FailedAttemptRecord } from '../observability/failed-attempt-record.js';
+import type { PerRunArtifactStore } from './per-run-artifact-store.js';
 
 /**
  * Append-and-stop byte ceiling per sidecar (~80+ full ≤3072B records — ample forensics). Approximate
@@ -35,7 +36,7 @@ export interface FailedAttemptReadResult {
  * atomic and interleave-safe across concurrent processes (the size bound is what buys lock-freedom —
  * the deliberate difference from the WAL store).
  */
-export class FailedAttemptStore {
+export class FailedAttemptStore implements PerRunArtifactStore {
   private readonly runsDir: string;
 
   constructor(runsDir: string) {
@@ -104,5 +105,15 @@ export class FailedAttemptStore {
       }
     }
     return { records, capped };
+  }
+
+  /**
+   * Deletes the `.attempts.jsonl` sidecar for `runId` (issue #107). Exact-path — ignores
+   * `dirEntries` (the path is derived directly from the runId, no directory listing needed).
+   * Idempotent: a missing sidecar (no failed attempts were ever recorded, or a concurrent purge /
+   * double-invocation already removed it) is a no-op, never an error.
+   */
+  async deleteAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<void> {
+    await unlink(this.sidecarPath(runId)).catch(() => {});
   }
 }

@@ -7,6 +7,7 @@ export * from './types/workflow-definition.js';
 export * from './store/store-interface.js';
 export { JsonFileStore } from './store/json-file-store.js';
 export type { ReconcileSummary } from './store/json-file-store.js';
+export type { PerRunArtifactStore } from './store/per-run-artifact-store.js';
 export { atomicWriteFile } from './store/atomic-write.js';
 export { hashParams, canonicalJson } from './store/params-hash.js';
 export { decideIdempotencyPolicy } from './store/idempotency-policy.js';

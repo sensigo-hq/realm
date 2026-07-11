@@ -8,6 +8,7 @@ import { resumeCommand } from './commands/resume.js';
 import { abandonCommand } from './commands/abandon.js';
 import { reclaimCommand } from './commands/reclaim.js';
 import { cleanupCommand } from './commands/cleanup.js';
+import { purgeCommand } from './commands/purge.js';
 import { reconcileCommand } from './commands/reconcile.js';
 import { attemptsCommand } from './commands/attempts.js';
 import { respondCommand } from './commands/respond.js';
@@ -47,6 +48,7 @@ export const runCommands = [
   reclaimCommand,
   respondCommand,
   cleanupCommand,
+  purgeCommand,
   reconcileCommand,
   attemptsCommand,
 ];

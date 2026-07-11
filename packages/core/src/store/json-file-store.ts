@@ -1,6 +1,6 @@
 // Local file-backed run store. Stores each run as a JSON file in ~/.realm/runs/.
 // Uses proper-lockfile to prevent concurrent writes.
-import { mkdir, readFile, readdir } from 'node:fs/promises';
+import { mkdir, readFile, readdir, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -11,6 +11,7 @@ import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunStore, CreateRunOptions } from './store-interface.js';
+import type { PerRunArtifactStore } from './per-run-artifact-store.js';
 import { findEligibleSteps, deriveRunPhase } from '../engine/eligibility.js';
 import { computeClaimDeadline } from '../engine/claim-liveness.js';
 import { hashParams } from './params-hash.js';
@@ -86,7 +87,7 @@ function pickCanonical(runs: RunRecord[]): { canonical: RunRecord; extraLive: Ru
   return { canonical: sorted[0]!, extraLive: [] };
 }
 
-export class JsonFileStore implements RunStore {
+export class JsonFileStore implements RunStore, PerRunArtifactStore {
   private readonly runsDir: string;
 
   /** This store round-trips the per-claim `claims` liveness clock (issue #101). */
@@ -258,18 +259,33 @@ export class JsonFileStore implements RunStore {
     return { run, created: true };
   }
 
+  /** Shared STATE_RUN_NOT_FOUND — used both by the pre-check and the ENOENT-hardening catch (issue #107). */
+  private runNotFoundError(runId: string): WorkflowError {
+    return new WorkflowError(`Run not found: ${runId}`, {
+      code: 'STATE_RUN_NOT_FOUND',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: { runId },
+    });
+  }
+
   async get(runId: string): Promise<RunRecord> {
     const path = this.filePath(runId);
     if (!existsSync(path)) {
-      throw new WorkflowError(`Run not found: ${runId}`, {
-        code: 'STATE_RUN_NOT_FOUND',
-        category: 'STATE',
-        agentAction: 'report_to_user',
-        retryable: false,
-        details: { runId },
-      });
+      throw this.runNotFoundError(runId);
     }
-    const raw = await readFile(path, 'utf8');
+    // issue #107: closes the TOCTOU window between the existsSync check above and this read — a
+    // concurrent purge (or any other deletion) can remove the file in between. ENOENT here maps to
+    // the SAME STATE_RUN_NOT_FOUND the pre-check promises; anything else rethrows (#132's torn-read
+    // loudness is preserved — this only silences the one specific, expected race).
+    let raw: string;
+    try {
+      raw = await readFile(path, 'utf8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw this.runNotFoundError(runId);
+      throw err;
+    }
     const parsed = JSON.parse(raw) as Record<string, unknown>;
 
     // Legacy format detection: runs written before Phase 35 have `state` but no `completed_steps`.
@@ -295,18 +311,28 @@ export class JsonFileStore implements RunStore {
     const path = this.filePath(record.id);
 
     if (!existsSync(path)) {
-      throw new WorkflowError(`Run not found: ${record.id}`, {
-        code: 'STATE_RUN_NOT_FOUND',
-        category: 'STATE',
-        agentAction: 'report_to_user',
-        retryable: false,
-        details: { runId: record.id },
-      });
+      throw this.runNotFoundError(record.id);
     }
 
-    const release = await lockfile.lock(path, { retries: { retries: 3, minTimeout: 50 } });
+    // issue #107: defensive ENOENT mapping, symmetric with get()'s TOCTOU close — a concurrent
+    // purge (terminal-only, so this only matters for an abandon-then-purge overlap) can remove
+    // the file between the existsSync check above and the lock/read below.
+    let release: () => Promise<void>;
     try {
-      const raw = await readFile(path, 'utf8');
+      release = await lockfile.lock(path, { retries: { retries: 3, minTimeout: 50 } });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw this.runNotFoundError(record.id);
+      throw err;
+    }
+    try {
+      let raw: string;
+      try {
+        raw = await readFile(path, 'utf8');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT')
+          throw this.runNotFoundError(record.id);
+        throw err;
+      }
       const stored = JSON.parse(raw) as RunRecord;
 
       if (stored.version !== record.version) {
@@ -332,6 +358,9 @@ export class JsonFileStore implements RunStore {
     }
   }
 
+  // issue #107: no ENOENT-hardening needed here — purge is terminal-only, and claimStep only ever
+  // targets a run that findEligibleSteps has just proven has a non-terminal eligible step, so it
+  // can never race a purge (which requires terminal_state). Left as a plain existsSync check.
   async claimStep(
     runId: string,
     stepName: string,
@@ -418,6 +447,9 @@ export class JsonFileStore implements RunStore {
    * When the record carries an idempotency_key, the key pointer is registered/repointed
    * (closing the import back door): a conflict with a different *live* owner throws.
    */
+  // issue #107: no ENOENT-hardening needed here — save() is create-if-absent (the existsSync
+  // branch below is an optional divergence check, not a not-found guard), so it never depends on
+  // the target already existing and can never race a purge unlinking it out from under this call.
   async save(record: RunRecord): Promise<void> {
     await this.ensureDir();
     const path = this.filePath(record.id);
@@ -569,16 +601,63 @@ export class JsonFileStore implements RunStore {
     // the torn read here.
     const jsonFiles: string[] = entries.filter((f: string) => f.endsWith('.json'));
 
-    const records: RunRecord[] = await Promise.all(
+    // issue #107: a concurrent purge can unlink a run file between the readdir above and the
+    // per-file readFile below. Skip a vanished file rather than fail the whole list() — ENOENT
+    // here means "no longer exists," not "corrupt" or "torn" (#132's torn-read loudness is
+    // preserved: any OTHER error still rethrows and fails the call).
+    const maybeRecords: Array<RunRecord | undefined> = await Promise.all(
       jsonFiles.map(async (file: string) => {
-        const raw = await readFile(join(this.runsDir, file), 'utf8');
+        let raw: string;
+        try {
+          raw = await readFile(join(this.runsDir, file), 'utf8');
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+          throw err;
+        }
         return JSON.parse(raw) as RunRecord;
       }),
     );
+    const records: RunRecord[] = maybeRecords.filter((r): r is RunRecord => r !== undefined);
 
     if (workflowId !== undefined) {
       return records.filter((r: RunRecord) => r.workflow_id === workflowId);
     }
     return records;
+  }
+
+  /**
+   * Deletes every artifact this store owns for `runId` (issue #107): the idempotency-key
+   * pointer (conditionally) and the run file itself. Exact-path — ignores `dirEntries` (this
+   * store never needs a directory listing to locate its own artifacts).
+   *
+   * Idempotent: if the run file is already gone (a concurrent purge, or a double-invocation),
+   * this is a no-op, not an error.
+   */
+  async deleteAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<void> {
+    let record: RunRecord;
+    try {
+      record = await this.get(runId);
+    } catch (err) {
+      if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') return; // already gone
+      throw err;
+    }
+
+    // Conditional pointer delete: only when this run actually owns an idempotency key. A
+    // `rerun`/supersede may have repointed the key to a NEWER run since this run was minted —
+    // deleting the pointer unconditionally would destroy the successor's LIVE pointer out from
+    // under it. Only unlink when the pointer still points back at THIS run; reconcileKeys()
+    // self-heals a dangling pointer regardless, so skipping a repointed one here is always safe.
+    if (record.idempotency_key !== undefined) {
+      const keyPath = this.keyPath(record.workflow_id, record.idempotency_key);
+      const pointer = await this.readPointer(keyPath);
+      if (pointer !== undefined && pointer.run_id === runId) {
+        await unlink(keyPath).catch(() => {});
+      }
+    }
+
+    // The run file LAST — it is the crash re-enumeration anchor: a crash mid-purge leaves this
+    // file in place, so the run is found again on the next purge/list pass and retried
+    // idempotently (the pointer, if any, is already gone by then).
+    await unlink(this.filePath(runId)).catch(() => {});
   }
 }
