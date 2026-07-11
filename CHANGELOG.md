@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`when`-driven and cascade step skips are now observable (issue #111).** Runs record a `skip_details` map explaining every skipped step — a false `when` (with the expression, each leaf, and its resolved value, so a field-name typo that silently resolved to `undefined` is now visible), an unsatisfiable `trigger_rule` (the rule + the blocking deps), or a handler/guard abort. Surfaced via `get_run_state` and `realm inspect`. Additive and back-compatible: `skipped_steps` is unchanged, legacy runs read fine, and a false `when` still completes the run (observability, not a new failure).
+
 ## [0.17.0] — 2026-07-11
 
 ### Added

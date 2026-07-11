@@ -13,8 +13,37 @@ import type {
   EvidenceSnapshot,
   StepDiagnostics,
   ExtensionIdentityEntry,
+  SkipDetail,
 } from '@sensigo/realm';
 import { recomputeIdentity } from '../extensions/extension-identity.js';
+
+/**
+ * Renders one skipped step's reason inline (issue #111) — kind plus the salient detail.
+ * A step lacking a detail (legacy run, or a skip family not yet carrying one) is the caller's
+ * responsibility to fall back on; `skipped_steps` stays authoritative regardless.
+ */
+function formatSkipDetail(detail: SkipDetail): string {
+  switch (detail.kind) {
+    case 'when_false': {
+      const falsy = detail.leaves.find((l) => !l.passed);
+      const valueDisplay =
+        falsy === undefined || !falsy.lhs_present
+          ? 'undefined'
+          : JSON.stringify(falsy.resolved_value);
+      const leafTag = detail.leaves.length > 1 && falsy !== undefined ? ` '${falsy.leaf}'` : '';
+      return `when_false: ${detail.expression} [lhs${leafTag} → ${valueDisplay}]`;
+    }
+    case 'trigger_rule_unsatisfiable': {
+      const label = detail.blocking_deps.length === 1 ? 'dep' : 'deps';
+      const depsText = detail.blocking_deps.map((b) => `${b.dep} ${b.state}`).join(', ');
+      return `trigger_rule_unsatisfiable: ${detail.rule}, ${label} ${depsText}`;
+    }
+    case 'handler_abort':
+      return 'handler_abort';
+    case 'guard_abort':
+      return 'guard_abort';
+  }
+}
 
 /**
  * Renders the run's extension-code identity history (drift evidence, issue #119) plus,
@@ -207,6 +236,12 @@ export async function inspectRun(
   lines.push(`In Progress: ${run.in_progress_steps.join(', ') || '(none)'}`);
   lines.push(`Failed: ${run.failed_steps.join(', ') || '(none)'}`);
   lines.push(`Skipped: ${run.skipped_steps.join(', ') || '(none)'}`);
+  for (const stepName of run.skipped_steps) {
+    const detail = run.skip_details?.[stepName];
+    lines.push(
+      `  ${stepName}: ${detail !== undefined ? formatSkipDetail(detail) : 'skipped (reason unavailable)'}`,
+    );
+  }
   lines.push(`Created: ${run.created_at}`);
   lines.push(`Updated: ${run.updated_at}`);
 

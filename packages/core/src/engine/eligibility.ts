@@ -6,10 +6,11 @@ import type {
   StepDefinition,
   TriggerRule,
 } from '../types/workflow-definition.js';
-import type { RunRecord } from '../types/run-record.js';
+import type { RunRecord, SkipDetail } from '../types/run-record.js';
 import type { RunPhase } from '../types/run-record.js';
 import { resolvePath } from './render-template.js';
 import { splitComparison, type ComparisonOp } from './comparison-expr.js';
+import { boundResolvedValue } from '../utils/redaction.js';
 
 /**
  * Derives the run_phase from the run record fields.
@@ -128,6 +129,23 @@ function compareNumeric(op: ComparisonOp, lhs: unknown, rhs: unknown): boolean {
 }
 
 /**
+ * Builds the root object `when`-condition paths resolve against: step outputs directly
+ * (`"step_id.field"`), plus `run.params.field` for run start params. Extracted (issue #111) so
+ * both {@link evaluateWhenCondition} and the traced evaluator ({@link traceWhenCondition}) resolve
+ * against the exact same shape — a pure extraction, byte-identical to the previous inline object.
+ *
+ * Scoped to the when-root ONLY — do NOT reuse this for the input_map root (`execution-loop.ts`)
+ * or the template root (`render-template.ts`); those are a different nested `context.resources`
+ * shape and unifying them would corrupt path resolution.
+ */
+function buildWhenRoot(
+  evidenceByStep: Record<string, Record<string, unknown>>,
+  runParams: Record<string, unknown>,
+): Record<string, unknown> {
+  return { ...evidenceByStep, run: { params: runParams } };
+}
+
+/**
  * Evaluates a single `when`-condition LEAF against prior step evidence (per-leaf; the array-AND
  * folding lives in {@link evaluateWhen}). Splitting is quote-aware via the shared splitter, so the
  * leaf is split the same way at load and at runtime (no validate/eval divergence).
@@ -145,9 +163,7 @@ export function evaluateWhenCondition(
   evidenceByStep: Record<string, Record<string, unknown>>,
   runParams: Record<string, unknown> = {},
 ): boolean {
-  // when-condition paths are relative to step outputs: "step_id.field" resolves directly against
-  // evidenceByStep; "run.params.field" resolves against run start params.
-  const root: Record<string, unknown> = { ...evidenceByStep, run: { params: runParams } };
+  const root = buildWhenRoot(evidenceByStep, runParams);
 
   const split = splitComparison(expr);
 
@@ -207,6 +223,56 @@ export function evaluateWhen(
 ): boolean {
   const leaves = Array.isArray(clause) ? clause : [clause];
   return leaves.every((leaf) => evaluateWhenCondition(leaf, evidenceByStep, runParams));
+}
+
+/**
+ * Traced `when`-evaluator (issue #111) — used ONLY at propagateSkips' when-branch, built once at
+ * the moment a step is pushed to `skipped_steps`. Unlike {@link evaluateWhen} (which short-circuits
+ * via `.every` at the first false leaf), this iterates EVERY leaf and records its resolved LHS —
+ * the signal that catches a field-name typo (a mistyped `when` leaf resolves to `undefined` → false
+ * → the step silently skips; recording `lhs_present: false` makes that visible).
+ *
+ * Each leaf's `passed` REUSES {@link evaluateWhenCondition} — never re-implemented — so the trace
+ * can never drift from the actual verdict that caused the skip. By construction,
+ * `evaluateWhen(clause, ...) === trace.every((l) => l.passed)` for the same inputs.
+ */
+function traceWhenCondition(
+  clause: string | string[],
+  evidenceByStep: Record<string, Record<string, unknown>>,
+  runParams: Record<string, unknown>,
+): Array<{ leaf: string; lhs_present: boolean; resolved_value?: unknown; passed: boolean }> {
+  const leaves = Array.isArray(clause) ? clause : [clause];
+  const root = buildWhenRoot(evidenceByStep, runParams);
+
+  return leaves.map((leaf) => {
+    // Reuse the real evaluator for `passed` — the trace must never compute a second, divergent
+    // boolean path.
+    const passed = evaluateWhenCondition(leaf, evidenceByStep, runParams);
+
+    const split = splitComparison(leaf);
+    // A compound/malformed leaf reaching runtime (load-time validation normally rejects it):
+    // no LHS to resolve. `passed` is already false here (evaluateWhenCondition returns false for
+    // `kind: 'invalid'`), consistent with the reused-verdict rule above.
+    if (split.kind === 'invalid') {
+      return { leaf, lhs_present: false, passed };
+    }
+
+    const lhsPath = split.kind === 'path' ? split.path : split.lhsPath;
+    let value: unknown;
+    try {
+      value = resolvePath(lhsPath, root);
+    } catch {
+      return { leaf, lhs_present: false, passed };
+    }
+
+    // A path miss (commonly a field-name typo) resolves to undefined — omit resolved_value
+    // entirely (not `undefined`) so its ABSENCE is the JSON-durable typo signal.
+    if (value === undefined) {
+      return { leaf, lhs_present: false, passed };
+    }
+
+    return { leaf, lhs_present: true, resolved_value: boundResolvedValue(value), passed };
+  });
 }
 
 /**
@@ -342,55 +408,123 @@ export function isWorkflowComplete(run: RunRecord, definition: WorkflowDefinitio
   );
 }
 
+/** A dep's settled state, as witnessed by {@link canTriggerRuleEverBeSatisfied}. */
+type DepState = 'completed' | 'failed' | 'skipped';
+
+/** The result of {@link canTriggerRuleEverBeSatisfied}: a verdict plus, when unsatisfiable, a witness. */
+interface SatisfiabilityResult {
+  satisfiable: boolean;
+  /** The deps whose settled state makes the rule provably unsatisfiable. Only present when unsatisfiable. */
+  blocking_deps?: Array<{ dep: string; state: DepState }>;
+}
+
 /**
- * Returns false if a step's trigger_rule can provably never be satisfied given the
- * current settled state. Called by propagateSkips to determine which steps to skip.
+ * Returns false (plus a witness — issue #111) if a step's trigger_rule can provably never be
+ * satisfied given the current settled state. Called by propagateSkips to determine which steps
+ * to skip. Verdict and witness are computed together at the SAME membership tests, per rule arm,
+ * so they cannot drift from each other.
  *
  * "Settled" means the step is in completed_steps, failed_steps, or skipped_steps.
  * In-progress and unsettled steps are treated as potentially resolving either way.
+ *
+ * Only caller: propagateSkips.
  */
-function canTriggerRuleEverBeSatisfied(step: StepDefinition, run: RunRecord): boolean {
+function canTriggerRuleEverBeSatisfied(step: StepDefinition, run: RunRecord): SatisfiabilityResult {
   const deps = step.depends_on ?? [];
-  if (deps.length === 0) return true;
+  if (deps.length === 0) return { satisfiable: true };
 
   const rule: TriggerRule = step.trigger_rule ?? 'all_success';
 
   switch (rule) {
-    case 'all_success':
+    case 'all_success': {
       // Needs every dep to succeed — impossible if any dep already failed or is skipped.
-      return deps.every((d) => !run.failed_steps.includes(d) && !run.skipped_steps.includes(d));
+      const blocking_deps = deps
+        .filter((d) => run.failed_steps.includes(d) || run.skipped_steps.includes(d))
+        .map((d) => ({
+          dep: d,
+          state: (run.failed_steps.includes(d) ? 'failed' : 'skipped') as DepState,
+        }));
+      return blocking_deps.length === 0
+        ? { satisfiable: true }
+        : { satisfiable: false, blocking_deps };
+    }
 
-    case 'all_failed':
+    case 'all_failed': {
       // Needs every dep to fail — impossible if any dep already completed or is skipped.
-      return deps.every((d) => !run.completed_steps.includes(d) && !run.skipped_steps.includes(d));
+      const blocking_deps = deps
+        .filter((d) => run.completed_steps.includes(d) || run.skipped_steps.includes(d))
+        .map((d) => ({
+          dep: d,
+          state: (run.completed_steps.includes(d) ? 'completed' : 'skipped') as DepState,
+        }));
+      return blocking_deps.length === 0
+        ? { satisfiable: true }
+        : { satisfiable: false, blocking_deps };
+    }
 
     case 'all_done':
       // Always eventually satisfiable — all deps will settle (complete, fail, or be skipped)
       // and all_done treats skipped as settled, so this can always fire.
-      return true;
+      return { satisfiable: true };
 
-    case 'one_failed':
+    case 'one_failed': {
       // Needs at least one dep to fail — impossible if all deps are completed or skipped
       // (none can ever fail). A dep that is still unsettled might yet fail.
-      return deps.some(
+      const satisfiable = deps.some(
         (d) =>
           run.failed_steps.includes(d) || // already satisfied
           (!run.completed_steps.includes(d) && !run.skipped_steps.includes(d)), // might still fail
       );
+      if (satisfiable) return { satisfiable: true };
+      // Unsatisfiable here means EVERY dep is provably completed or skipped (none failed, none
+      // unsettled) — collective exhaustion, so the witness names ALL deps; a subset would
+      // misattribute cause.
+      return {
+        satisfiable: false,
+        blocking_deps: deps.map((d) => ({
+          dep: d,
+          state: (run.completed_steps.includes(d) ? 'completed' : 'skipped') as DepState,
+        })),
+      };
+    }
 
-    case 'one_success':
+    case 'one_success': {
       // Needs at least one dep to succeed — impossible if all deps are failed or skipped
       // (none can ever succeed). A dep that is still unsettled might yet succeed.
-      return deps.some(
+      const satisfiable = deps.some(
         (d) =>
           run.completed_steps.includes(d) || // already satisfied
           (!run.failed_steps.includes(d) && !run.skipped_steps.includes(d)), // might still succeed
       );
+      if (satisfiable) return { satisfiable: true };
+      // Unsatisfiable here means EVERY dep is provably failed or skipped — collective exhaustion,
+      // same rationale as one_failed above.
+      return {
+        satisfiable: false,
+        blocking_deps: deps.map((d) => ({
+          dep: d,
+          state: (run.failed_steps.includes(d) ? 'failed' : 'skipped') as DepState,
+        })),
+      };
+    }
 
-    case 'none_failed':
+    case 'none_failed': {
       // Needs no dep to fail — impossible if any dep already failed.
-      return deps.every((d) => !run.failed_steps.includes(d));
+      const blocking_deps = deps
+        .filter((d) => run.failed_steps.includes(d))
+        .map((d) => ({ dep: d, state: 'failed' as DepState }));
+      return blocking_deps.length === 0
+        ? { satisfiable: true }
+        : { satisfiable: false, blocking_deps };
+    }
   }
+}
+
+/** Return shape of {@link propagateSkips} — the skip set plus a reason for each newly-added entry. */
+export interface PropagateSkipsResult {
+  skipped: string[];
+  /** Reason detail per skipped step (issue #111). Carries forward `run.skip_details`; grows only. */
+  details: Record<string, SkipDetail>;
 }
 
 /**
@@ -398,11 +532,18 @@ function canTriggerRuleEverBeSatisfied(step: StepDefinition, run: RunRecord): bo
  * may have trigger_rules that can never be satisfied. This function marks those steps
  * as skipped and iterates until no new skips can be derived (fixed-point).
  *
- * Returns the updated skipped_steps array, which may be larger than run.skipped_steps.
- * Does not mutate the run record — callers apply the result before writing.
+ * Returns the updated skipped_steps array (which may be larger than run.skipped_steps) plus a
+ * `details` map explaining why each step was added (issue #111) — `details` seeds from
+ * `run.skip_details` (mirroring how `skipped` seeds from `run.skipped_steps`) and grows only for
+ * steps this call itself adds; already-settled steps are skipped via the continue above and never
+ * touch `details`. Does not mutate the run record — callers apply the result before writing.
  */
-export function propagateSkips(run: RunRecord, definition: WorkflowDefinition): string[] {
+export function propagateSkips(
+  run: RunRecord,
+  definition: WorkflowDefinition,
+): PropagateSkipsResult {
   const skipped = [...run.skipped_steps];
+  const details: Record<string, SkipDetail> = { ...run.skip_details };
   let changed = true;
 
   while (changed) {
@@ -425,8 +566,14 @@ export function propagateSkips(run: RunRecord, definition: WorkflowDefinition): 
 
       // Use the growing skipped set so cascading skips are detected in one pass.
       const tempRun: RunRecord = { ...run, skipped_steps: skipped };
-      if (!canTriggerRuleEverBeSatisfied(step, tempRun)) {
+      const satisfiability = canTriggerRuleEverBeSatisfied(step, tempRun);
+      if (!satisfiability.satisfiable) {
         skipped.push(stepName);
+        details[stepName] = {
+          kind: 'trigger_rule_unsatisfiable',
+          rule: step.trigger_rule ?? 'all_success',
+          blocking_deps: satisfiability.blocking_deps ?? [],
+        };
         changed = true;
         continue;
       }
@@ -443,11 +590,19 @@ export function propagateSkips(run: RunRecord, definition: WorkflowDefinition): 
         );
         if (allDepsSettled && !evaluateWhen(step.when, buildEvidenceByStep(run), run.params)) {
           skipped.push(stepName);
+          // Build the trace once, at the moment the step is pushed to skipped — not per
+          // fixed-point iteration.
+          const evidenceByStep = buildEvidenceByStep(run);
+          details[stepName] = {
+            kind: 'when_false',
+            expression: Array.isArray(step.when) ? step.when.join(' && ') : step.when,
+            leaves: traceWhenCondition(step.when, evidenceByStep, run.params),
+          };
           changed = true;
         }
       }
     }
   }
 
-  return skipped;
+  return { skipped, details };
 }

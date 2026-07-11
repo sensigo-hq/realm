@@ -1,6 +1,7 @@
 // Types for an active or historical workflow run record stored on disk.
 import type { ToolCallRecord } from './mcp-types.js';
 import type { ExtensionIdentityEntry } from './extension-identity.js';
+import type { TriggerRule } from './workflow-definition.js';
 
 /**
  * A single trace entry submitted by the agent. Submitted as-is; the engine
@@ -209,6 +210,35 @@ export interface CapabilityBlock {
   at: string;
 }
 
+/**
+ * Reason a step landed in `skipped_steps` (issue #111), keyed by step name in
+ * {@link RunRecord.skip_details}. Additive-optional, definition-free surfacing metadata —
+ * `skipped_steps` stays the authoritative set; this only explains *why*.
+ */
+export type SkipDetail =
+  | {
+      kind: 'when_false';
+      /** The step's `when` clause, verbatim (a single leaf or the joined array). */
+      expression: string;
+      /** Every leaf's evaluation, in declaration order — not just the first false one. */
+      leaves: Array<{
+        leaf: string;
+        /** False when the LHS path resolved to `undefined` (a miss — commonly a field-name typo). */
+        lhs_present: boolean;
+        /** Omitted (not `undefined`) when `lhs_present` is false, so absence survives a JSON round-trip. */
+        resolved_value?: unknown;
+        passed: boolean;
+      }>;
+    }
+  | {
+      kind: 'trigger_rule_unsatisfiable';
+      rule: TriggerRule;
+      /** The deps whose settled state makes the rule provably unsatisfiable. */
+      blocking_deps: Array<{ dep: string; state: 'completed' | 'failed' | 'skipped' }>;
+    }
+  | { kind: 'handler_abort' }
+  | { kind: 'guard_abort' };
+
 export interface RunRecord {
   id: string;
   workflow_id: string;
@@ -231,6 +261,15 @@ export interface RunRecord {
   failed_steps: string[];
   /** Steps whose trigger_rule can no longer be satisfied; recorded for auditability. */
   skipped_steps: string[];
+
+  /**
+   * Reason detail for each skipped step (issue #111), keyed by step name. Additive-optional
+   * (the `claims`/`capability_blocks` precedent): absent on legacy records. `skipped_steps`
+   * stays authoritative — `Object.keys(skip_details) ⊆ skipped_steps` always, but a skipped step
+   * MAY lack a detail entry (surfacing renders "reason unavailable" for those). Never gate DAG
+   * logic on this field.
+   */
+  skip_details?: Record<string, SkipDetail>;
 
   /**
    * Per-claim liveness clock (issue #101), keyed by step name. Written ATOMICALLY in

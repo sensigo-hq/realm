@@ -266,7 +266,14 @@ async function runSingleFixture(
           // failed_steps. Re-derive from scratch so steps that were only skipped
           // because of this failure become eligible again on the retry.
           const tempRun = { ...rest, failed_steps: newFailedSteps, skipped_steps: [] as string[] };
-          const newSkippedSteps = propagateSkips(tempRun, definition);
+          // #111: propagateSkips' return shape changed from string[] to { skipped, details } —
+          // this caller is outside the issue #111 prompt's stated damage rails (packages/testing
+          // is not in the touch-only file list) but was found to be a real 9th call site during
+          // implementation (grep found it; the prompt's anchors counted only 8: the 7 in
+          // execution-loop.ts + resume.ts). Left as a same-behavior destructure — no skip_details
+          // handling added here, since nothing in packages/testing reads that field. Flagged in
+          // the implementation report as a discovered anchor discrepancy.
+          const { skipped: newSkippedSteps } = propagateSkips(tempRun, definition);
           await store.update({
             ...rest,
             failed_steps: newFailedSteps,

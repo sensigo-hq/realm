@@ -327,3 +327,51 @@ describe('get_run_state — gate_waiting + fan-out wedge (issue #101 gate/fan-ou
     expect(state.stuck_claims).toBeUndefined();
   });
 });
+
+describe('get_run_state — skip_details surfacing (issue #111)', () => {
+  let runStore: JsonFileStore;
+  let workflowStore: JsonWorkflowStore;
+
+  beforeEach(async () => {
+    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'skip-details-run-')));
+    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'skip-details-wf-')));
+    await workflowStore.register(agentFirst);
+  });
+
+  it('present when non-empty — a run with a recorded skip reason surfaces skip_details', async () => {
+    const { run } = await runStore.create({
+      workflowId: 'agentflow',
+      workflowVersion: 1,
+      params: {},
+    });
+    await runStore.update({
+      ...run,
+      skipped_steps: ['review'],
+      skip_details: { review: { kind: 'handler_abort' } },
+    });
+    const state = await handleGetRunState({ run_id: run.id }, { runStore, workflowStore });
+    expect(state.skip_details).toEqual({ review: { kind: 'handler_abort' } });
+  });
+
+  it('omitted when empty — a run with no skips has no skip_details key at all', async () => {
+    const { run } = await runStore.create({
+      workflowId: 'agentflow',
+      workflowVersion: 1,
+      params: {},
+    });
+    const state = await handleGetRunState({ run_id: run.id }, { runStore, workflowStore });
+    expect(state.skip_details).toBeUndefined();
+  });
+
+  it('omitted when skipped_steps is non-empty but skip_details is absent (legacy run)', async () => {
+    const { run } = await runStore.create({
+      workflowId: 'agentflow',
+      workflowVersion: 1,
+      params: {},
+    });
+    // A legacy record: skipped_steps populated, but skip_details never written.
+    await runStore.update({ ...run, skipped_steps: ['review'] });
+    const state = await handleGetRunState({ run_id: run.id }, { runStore, workflowStore });
+    expect(state.skip_details).toBeUndefined();
+  });
+});
