@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Orphaned atomic-write temp sweep — `realm run gc` (issue #160, Phase 1).** The shared atomic-write primitive (`atomicWriteFile`, used for run records and idempotency-key pointers) writes a unique `.tmp` sibling then renames it over the target; a process dying mid-write orphans that temp permanently — and, for a key-pointer temp (`keys/<hash>.json.<pid>.*.tmp`), it isn't runId-keyed at all, so `realm run purge` can never reach it. `realm run gc --older-than <dur> [--force]` is a new, **CLI-only**, **dry-run-by-default** sweep that reaps them: top-level `runsDir/*.tmp` plus one level into `runsDir/keys/*.tmp`. `--older-than` has **no default** (omitting it is an error) and a **1-hour floor** enforced inside the pure `sweepOrphans` function itself, so no caller can reach a delete below it. Per-candidate handling is `lstat`-typed and conservative: a symlink is never unlinked or followed; a `*.tmp` that turns out to be a directory (or other non-regular entry) is reported as a loud failure, never silently swallowed; a benign vanish (ENOENT, e.g. a concurrent sweep) is bucketed `already_gone`, never `failed`; a future mtime is skipped. Reaping a `.tmp` is unconditionally safe by construction — an interrupted `rename` on an unlinked temp only ever produces a spurious write error, never a torn target file. The report always names the residue classes `gc` deliberately does **not** reap — orphaned `.lock` dirs (deferred, issue #164) and run-less `trace-buffer-*.jsonl` WAL files (issue #163) — so their presence isn't mistaken for a bug. A documented no-op on Windows (`atomicWriteFile` never produces a temp there). `cleanup`/`purge`/`gc` are now the three hygiene verbs under `realm run`. See [docs/reference/operating-runs.md](docs/reference/operating-runs.md#garbage-collection-orphaned-atomic-write-temps).
+
 ## [0.19.0] — 2026-07-12
 
 ### Added

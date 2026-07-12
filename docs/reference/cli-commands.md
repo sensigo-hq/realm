@@ -539,6 +539,31 @@ purging one destroys that path permanently.
 
 ---
 
+### `realm run gc`
+
+Sweeps orphaned atomic-write `.tmp` files — crash residue from a process that died between writing a
+temp and renaming it over the target (a run record or an idempotency-key pointer). Unlike `purge`,
+which acts by runId, `gc` cleans up files that belong to no specific run at all. See
+[Garbage collection](operating-runs.md#garbage-collection-orphaned-atomic-write-temps) for the full
+picture, including what it deliberately does NOT reap.
+
+```bash
+realm run gc --older-than 1h            # dry-run: report what WOULD be reaped
+realm run gc --older-than 1h --force    # actually delete it
+```
+
+`--older-than` is **required** (no default — omitting it is an error, not "reap everything") and has a
+**1-hour floor**: a smaller value is rejected outright, even with `--force`. Accepts the same duration
+format as `cleanup`/`purge`: `Nd` (days), `Nh` (hours), `Nm` (minutes). Dry-run by default; `--force` to
+actually delete.
+
+Reaps top-level `*.tmp` files in `runsDir` and one level into `runsDir/keys/*.tmp`. Does **not** reap
+orphaned `.lock` directories (deferred — issue #164) or run-less `trace-buffer-*.jsonl` WAL files
+(issue #163) — the report always names both so you don't mistake their presence for a bug. A no-op on
+Windows (no temp files are ever produced there).
+
+---
+
 ### `realm run attempts <run-id>`
 
 Shows failed agent-step validation attempts recorded for a run (the durable `<id>.attempts.jsonl`
