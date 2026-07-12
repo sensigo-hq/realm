@@ -14,6 +14,7 @@ is the source of truth. Recovery is therefore about the **record**, not about ki
 | Stuck and dead        | A run is `running` with no claimed step (`in_progress_steps: []`) and no agent is coming back for it | `realm run abandon <run-id> [--reason …]` (or the `abandon_run` MCP tool), then re-run (see [Recovery loop](#recovery-loop)).                        |
 | Bulk idle             | Many old non-terminal runs left parked                                                               | `realm run cleanup --older-than 30d` — abandons idle non-terminal runs (skips `gate_waiting`).                                                       |
 | Disk cleanup          | Old terminal runs (and their artifacts) should be permanently removed                                | `realm run purge --older-than 30d [--force]` — see [Purging runs](#purging-runs-permanent-deletion). **Irreversible.**                               |
+| Crash residue         | `runsDir` has leftover `*.tmp` files from a process that died mid-write                              | `realm run gc --older-than 1h [--force]` — see [Garbage collection](#garbage-collection-orphaned-atomic-write-temps). **Irreversible.**              |
 | Fleet visibility      | "Which runs are stuck right now?"                                                                    | `realm run list --stuck` (running ∧ no claimed step, with idle age) and `get_run_state` → `next_actions_status`.                                     |
 | Awaiting a human      | A run is `gate_waiting`                                                                              | Resolve it via `submit_human_response` (the `respond` MCP tool / `realm run respond`). **Do NOT abandon a gated run** — abandon refuses it.          |
 
@@ -120,9 +121,54 @@ this version — size- or count-based retention (e.g. "keep the last N" or "cap 
 deferred fast-follow, not yet implemented. Retention is entirely operator-managed: you decide when
 and what to purge, and the command tells you exactly what it did.
 
-Purge does **not** sweep orphaned `.tmp`/`.lock` crash-residue files — a live-held lockfile could be
-corrupted by an unconditional sweep, so that cleanup has its own dedicated safety design and ships
-separately.
+Purge does **not** sweep orphaned `.tmp`/`.lock` crash-residue files — see
+[Garbage collection](#garbage-collection-orphaned-atomic-write-temps) below for the `.tmp` half
+(`realm run gc`); `.lock` reaping is a separate, deferred safety design (a live-held lockfile could be
+corrupted by an unconditional sweep) and orphaned WAL cleanup is its own separate follow-up too.
+
+---
+
+## Garbage collection (orphaned atomic-write temps)
+
+Every store write that must be torn-read-safe against a concurrent unlocked reader (run records, the
+idempotency-key pointer index) goes through a shared **atomic-write** primitive: it writes a unique
+sibling temp file (`${path}.<pid>.<counter>.tmp`) and POSIX-`rename`s it over the target. If the
+process dies between the write and the rename, that temp is orphaned — forever, since nothing
+automatically reclaims it. `realm run purge` (above) cannot help: it acts **by runId**, and a
+key-pointer temp (`keys/<hash>.json.<pid>.*.tmp`) isn't runId-keyed at all. `realm run gc` is the
+operator-invoked sweep for exactly this residue.
+
+```bash
+realm run gc --older-than 1h            # dry-run: report what WOULD be reaped
+realm run gc --older-than 1h --force    # actually delete it
+realm run gc --older-than 24h --force   # a more conservative age, for a cron-style sweep
+```
+
+Together, `cleanup` / `purge` / `gc` are the three **hygiene verbs** under `realm run`: `cleanup` marks
+idle runs abandoned, `purge` permanently deletes a terminal run's own artifacts, and `gc` reaps
+crash-residue temp files that belong to no specific run at all.
+
+**What it reaps:** `.tmp` files at the top level of `runsDir` (orphaned run-record writes) and one
+level into `runsDir/keys/` (orphaned key-pointer writes) — `keys/` is the only subdirectory any store
+ever creates there, so the sweep does not recurse further.
+
+**What it does NOT reap** (and says so in its own report, every time, so you don't mistake either for
+a bug):
+
+- Orphaned `.lock` directories — `proper-lockfile` self-heals a lock on a live path; only a lock
+  belonging to an already-purged target can linger, which is low-value enough to defer (issue #164).
+- Run-less `trace-buffer-*.jsonl` WAL files with no owning run at all — a separate follow-up (issue
+  #163).
+
+**Safety:** reaping a `.tmp` is unconditionally safe — if the sweep unlinks a temp mid-`rename`, the
+pending `rename` gets `ENOENT`, and `atomicWriteFile`'s own cleanup best-effort-unlinks its temp and
+rethrows; the **target** file is never touched (worst case is a spurious write error, never a torn
+file). On top of that, `gc` enforces a **1-hour floor** on `--older-than` — there is no default, and a
+value below the floor is rejected outright, even with `--force` — so an in-flight write's temp is
+never even a candidate. Like `purge`, `gc` is **dry-run by default**; `--force` is required to delete.
+
+**Windows note:** `atomicWriteFile` falls back to a plain `writeFile` (no temp) on `win32`, so `gc` is
+a documented no-op there — there is nothing for it to find.
 
 ---
 
