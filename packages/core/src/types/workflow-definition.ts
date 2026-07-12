@@ -307,6 +307,62 @@ export interface StepDefinition {
   tool_timeout?: number;
 }
 
+/**
+ * Every key StepDefinition declares (it has no runtime-only fields — everything on a step is
+ * authored in YAML). Used by the YAML loader (issue #144) to warn when a step declares a key
+ * that isn't recognized — a misspelled field or a leftover from a removed feature (e.g. the old
+ * `allowed_from_states`/`produces_state` scalar state-machine fields) is otherwise silently
+ * dropped with no signal to the author.
+ */
+export const KNOWN_STEP_KEYS = [
+  'description',
+  'execution',
+  'depends_on',
+  'trigger_rule',
+  'when',
+  'abort_unless',
+  'abort_message',
+  'on_outcome',
+  'idempotent',
+  'uses_service',
+  'service_method',
+  'operation',
+  'input_map',
+  'handler',
+  'config',
+  'input_schema',
+  'output_schema',
+  'trace_schema',
+  'trace_validation_mode',
+  'preconditions',
+  'trust',
+  'timeout_seconds',
+  'retry',
+  'instructions',
+  'prompt',
+  'display',
+  'use_template',
+  'gate',
+  'agent_profile',
+  'tools',
+  'max_tool_calls',
+  'max_fan_out',
+  'tool_timeout',
+] as const;
+
+// Compile-time drift guard: KNOWN_STEP_KEYS must be an exact partition of StepDefinition's keys.
+// Types are erased at runtime, so this is the only mechanism that can catch drift — if someone
+// adds/removes a StepDefinition field without updating KNOWN_STEP_KEYS, tsc fails the build
+// (the assignment below only type-checks when both Exclude<> results are `never`).
+type _StepKeysMissing = Exclude<keyof StepDefinition, (typeof KNOWN_STEP_KEYS)[number]>;
+type _StepKeysExtra = Exclude<(typeof KNOWN_STEP_KEYS)[number], keyof StepDefinition>;
+const _stepKeysMissingCheck: _StepKeysMissing extends never
+  ? true
+  : ['KNOWN_STEP_KEYS is missing a StepDefinition key', _StepKeysMissing] = true;
+const _stepKeysExtraCheck: _StepKeysExtra extends never
+  ? true
+  : ['KNOWN_STEP_KEYS has a key StepDefinition does not declare', _StepKeysExtra] = true;
+
 export interface WorkflowDefinition {
   id: string;
   name: string;
@@ -393,12 +449,82 @@ export interface WorkflowDefinition {
    */
   agent?: string;
   /**
-   * Optional automated trigger for this workflow.
+   * Optional automated trigger for this workflow, authored in workflow YAML.
    * When set, 'realm listen' routes incoming webhook requests to this workflow.
-   * Runtime-only field on the listening process — not enforced by the engine itself.
+   * Validated by the loader at registration time (see normalizeTriggerFilter /
+   * validateTriggerStructure) — this is an authorable field, not runtime-only.
    */
   trigger?: TriggerDefinition;
 }
+
+/**
+ * Every WorkflowDefinition key an author may declare in workflow YAML. Paired with
+ * RUNTIME_ONLY_WORKFLOW_KEYS below, this is a complete partition of WorkflowDefinition's keys —
+ * used by the YAML loader (issue #144) to warn on an unknown top-level key (misspelling, or a
+ * leftover from a removed feature such as `initial_state`).
+ */
+export const KNOWN_WORKFLOW_KEYS = [
+  'id',
+  'name',
+  'version',
+  'params_schema',
+  'protocol',
+  'services',
+  'mcp_servers',
+  'templates',
+  'steps',
+  'profiles_dir',
+  'extensions',
+  'workflow_context',
+  'context_wrapper',
+  'trigger',
+] as const;
+
+/**
+ * WorkflowDefinition keys stamped by the loader/engine at load or registration time — never
+ * authored in workflow YAML. The yaml-loader's unknown-key check treats KNOWN_WORKFLOW_KEYS
+ * ALONE as the authorable allow-list (this list is deliberately excluded from it), so hand-
+ * authoring one of these in YAML (e.g. `schema_version:` or `model:`) still warns — it is itself
+ * a mistake worth surfacing, since the loader silently overwrites/ignores any authored value.
+ * This list's own role is completing the compile-time partition below: every WorkflowDefinition
+ * key is either authorable (KNOWN_WORKFLOW_KEYS) or stamped (this list) — never both, never
+ * neither.
+ */
+export const RUNTIME_ONLY_WORKFLOW_KEYS = [
+  'source_dir',
+  'trust_root',
+  'resolved_profiles',
+  'schema_version',
+  'origin',
+  'model',
+  'agent',
+] as const;
+
+// Compile-time drift guard: KNOWN_WORKFLOW_KEYS + RUNTIME_ONLY_WORKFLOW_KEYS together must be an
+// exact, non-overlapping partition of WorkflowDefinition's keys. See the StepDefinition guard
+// above for why this has to be a type-level check rather than a runtime one.
+type _WorkflowKeysAll =
+  | (typeof KNOWN_WORKFLOW_KEYS)[number]
+  | (typeof RUNTIME_ONLY_WORKFLOW_KEYS)[number];
+type _WorkflowKeysMissing = Exclude<keyof WorkflowDefinition, _WorkflowKeysAll>;
+type _WorkflowKeysExtra = Exclude<_WorkflowKeysAll, keyof WorkflowDefinition>;
+type _WorkflowKeysOverlap = (typeof KNOWN_WORKFLOW_KEYS)[number] &
+  (typeof RUNTIME_ONLY_WORKFLOW_KEYS)[number];
+const _workflowKeysMissingCheck: _WorkflowKeysMissing extends never
+  ? true
+  : [
+      'KNOWN_WORKFLOW_KEYS + RUNTIME_ONLY_WORKFLOW_KEYS is missing a WorkflowDefinition key',
+      _WorkflowKeysMissing,
+    ] = true;
+const _workflowKeysExtraCheck: _WorkflowKeysExtra extends never
+  ? true
+  : [
+      'KNOWN_WORKFLOW_KEYS + RUNTIME_ONLY_WORKFLOW_KEYS has a key WorkflowDefinition does not declare',
+      _WorkflowKeysExtra,
+    ] = true;
+const _workflowKeysOverlapCheck: _WorkflowKeysOverlap extends never
+  ? true
+  : ['KNOWN_WORKFLOW_KEYS and RUNTIME_ONLY_WORKFLOW_KEYS overlap', _WorkflowKeysOverlap] = true;
 
 /** A single named entry in the workflow_context section. */
 export interface WorkflowContextEntry {

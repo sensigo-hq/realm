@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **`realm init` scaffold now sequences its two steps with `depends_on` (issue #144).** The generated `workflow.yaml` previously set `finalize`'s `execution: auto` with no `depends_on`, so it was eligible from run start and ran concurrently with `step_one` instead of after it — the scaffold's own steps didn't actually demonstrate sequencing. `finalize` is renamed to `step_two` and declares `depends_on: [step_one]`; the scaffold also drops the vestigial `initial_state`/`allowed_from_states`/`produces_state` fields (leftovers of an early scalar state-machine model removed when the DAG execution model — `depends_on` + the four step-sets — replaced it) and gains a comment blessing `depends_on` as the one sequencing model.
+
+### Fixed
+
+- **The YAML loader now warns on an unknown workflow or step key instead of silently dropping it (issue #144).** Previously any misspelled or vestigial field (e.g. a leftover `allowed_from_states`) was accepted and ignored with no signal to the author. Two new allow-lists (`KNOWN_WORKFLOW_KEYS`, `KNOWN_STEP_KEYS`) plus a compile-time drift guard against `WorkflowDefinition`/`StepDefinition` back this — a key not on the applicable list now prints `⚠ workflow '<id>': unknown key '<key>' — ignored (...)` or `⚠ step '<name>': unknown key '<key>' — ignored (...)` via the existing load-warning `console.warn` channel. Hand-authoring a runtime-only field (`schema_version`, `model`, etc.) also warns, since the loader silently overwrites it regardless. Non-breaking: still a warning, not a rejection — a hard-reject at the next major version is tracked separately (issue #170), as is a structured warnings channel / `--strict` (issue #169).
+
+---
+
 ## [0.21.0] — 2026-07-12
 
 ### Added

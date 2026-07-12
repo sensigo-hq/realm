@@ -37,12 +37,12 @@ describe('resolveObject', () => {
 
   it('recurses into nested objects', () => {
     const result = resolveObject(
-      { description: '{{ label }} step', nested: { produces_state: '{{ label }}_done' } },
+      { description: '{{ label }} step', nested: { message: '{{ label }}_done' } },
       { label: 'audit' },
     );
     expect(result).toEqual({
       description: 'audit step',
-      nested: { produces_state: 'audit_done' },
+      nested: { message: 'audit_done' },
     });
   });
 
@@ -71,20 +71,20 @@ const THREE_STEP_TEMPLATE: TemplateDefinition = {
       execution: 'auto',
       uses_service: '{{ service_name }}',
       operation: 'read',
-      allowed_from_states: ['{{ prefix }}_ready'],
-      produces_state: '{{ prefix }}_extracted',
+      instructions: '{{ prefix }}_ready',
+      display: '{{ prefix }}_extracted',
     } as StepDefinition,
     review: {
       description: '{{ agent_description }}',
       execution: 'agent',
-      allowed_from_states: ['{{ prefix }}_extracted'],
-      produces_state: '{{ prefix }}_reviewed',
+      instructions: '{{ prefix }}_extracted',
+      display: '{{ prefix }}_reviewed',
     } as StepDefinition,
     record: {
       description: 'Record the result',
       execution: 'auto',
-      allowed_from_states: ['{{ prefix }}_reviewed'],
-      produces_state: '{{ prefix }}_done',
+      instructions: '{{ prefix }}_reviewed',
+      display: '{{ prefix }}_done',
     } as StepDefinition,
   },
 };
@@ -109,14 +109,14 @@ describe('expandTemplateInstantiation', () => {
     expect(id0).toBe('invoice_extract');
     expect(step0.description).toBe('Extract from invoices');
     expect(step0.uses_service).toBe('invoices');
-    expect(step0.allowed_from_states).toEqual(['invoice_ready']);
-    expect(step0.produces_state).toBe('invoice_extracted');
+    expect(step0.instructions).toBe('invoice_ready');
+    expect(step0.display).toBe('invoice_extracted');
 
     expect(id1).toBe('invoice_review');
     expect(step1.description).toBe('Review the invoice.');
 
     expect(id2).toBe('invoice_record');
-    expect(step2.produces_state).toBe('invoice_done');
+    expect(step2.display).toBe('invoice_done');
   });
 
   it('uses default param value when caller does not supply it', () => {
@@ -195,8 +195,6 @@ describe('resolveTemplates', () => {
       fetch: {
         description: 'Fetch from {{ svc }}',
         execution: 'auto',
-        allowed_from_states: ['{{ prefix }}_created'],
-        produces_state: '{{ prefix }}_fetched',
       } as StepDefinition,
     },
   };
@@ -220,8 +218,6 @@ describe('resolveTemplates', () => {
       setup: {
         description: 'Setup step',
         execution: 'auto',
-        allowed_from_states: ['created'],
-        produces_state: 'ready',
       },
       invoice_block: { use_template: 'simple', prefix: 'inv', params: { svc: 'invoices' } },
     };

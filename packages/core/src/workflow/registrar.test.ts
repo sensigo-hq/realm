@@ -13,13 +13,10 @@ function makeDefinition(id: string, version = 1): WorkflowDefinition {
     name: `Workflow ${id}`,
     version,
     schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-    initial_state: 'created',
     steps: {
       'step-one': {
         description: 'Only step',
         execution: 'auto',
-        allowed_from_states: ['created'],
-        produces_state: 'completed',
       },
     },
   };

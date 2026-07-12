@@ -40,7 +40,6 @@ describe('generateProtocol', () => {
       id: 'test-wf',
       name: 'Test',
       version: 1,
-      initial_state: 'created',
       protocol: { quick_start: 'Custom start' },
       steps: {},
     };
@@ -53,7 +52,6 @@ describe('generateProtocol', () => {
       id: 'test-wf',
       name: 'Test',
       version: 1,
-      initial_state: 'created',
       protocol: { rules: ['Rule A'] },
       steps: {},
     };
@@ -66,14 +64,11 @@ describe('generateProtocol', () => {
       id: 'test-wf',
       name: 'Test',
       version: 1,
-      initial_state: 'created',
       steps: {
         'gate-step': {
           description: 'A gate step',
           execution: 'auto',
           trust: 'human_confirmed',
-          allowed_from_states: ['created'],
-          produces_state: 'done',
         },
       },
     };
@@ -89,13 +84,10 @@ describe('generateProtocol', () => {
       id: 'test-wf',
       name: 'Test',
       version: 1,
-      initial_state: 'created',
       steps: {
         'profiled-step': {
           description: 'A profiled agent step',
           execution: 'agent',
-          allowed_from_states: ['created'],
-          produces_state: 'done',
           agent_profile: 'my-profile',
         },
       },
@@ -113,13 +105,10 @@ describe('generateProtocol', () => {
       id: 'test-wf',
       name: 'Test',
       version: 1,
-      initial_state: 'created',
       steps: {
         'profiled-step': {
           description: 'A profiled agent step',
           execution: 'agent',
-          allowed_from_states: ['created'],
-          produces_state: 'done',
           agent_profile: 'my-profile',
         },
       },

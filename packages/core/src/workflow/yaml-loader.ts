@@ -9,6 +9,7 @@ import type {
   TemplateDefinition,
   TriggerRule,
 } from '../types/workflow-definition.js';
+import { KNOWN_STEP_KEYS, KNOWN_WORKFLOW_KEYS } from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { resolveTemplates } from './template-resolver.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
@@ -464,6 +465,24 @@ function parseWorkflowString(
 
   const doc = raw as Record<string, unknown>;
 
+  // WARN (do not reject) on a key that isn't authorable — checked against KNOWN_WORKFLOW_KEYS
+  // ONLY (not RUNTIME_ONLY_WORKFLOW_KEYS), and BEFORE any loader-stamped field is added below.
+  // Deliberately excluding runtime-only keys from "known" here means hand-authoring one (e.g.
+  // `schema_version:` or `model:` in YAML) warns too — those fields are stamped by the loader
+  // and any authored value is silently overwritten/ignored, which is exactly the kind of mistake
+  // this check exists to surface (issue #144). Non-breaking by design: siblings #170
+  // (hard-reject) and #169 (structured warnings channel) are deliberately out of scope here.
+  {
+    const workflowId = typeof doc['id'] === 'string' ? doc['id'] : '<unknown>';
+    for (const key of Object.keys(doc)) {
+      if (!(KNOWN_WORKFLOW_KEYS as readonly string[]).includes(key)) {
+        console.warn(
+          `⚠ workflow '${workflowId}': unknown key '${key}' — ignored (not a recognized workflow field).`,
+        );
+      }
+    }
+  }
+
   // Project extensions: hard error for string-based loading (fires before any other
   // processing); shape validation (string | string[], relative-only) for file-based loading.
   if ('extensions' in doc && doc['extensions'] !== undefined) {
@@ -533,6 +552,17 @@ function parseWorkflowString(
       continue;
     }
     const step = stepRaw as Record<string, unknown>;
+
+    // WARN (do not reject) on an unknown step key — runs after template resolution above, so a
+    // template-expanded step's keys are checked too. Same non-breaking posture as the
+    // workflow-level check (issue #144); #170/#169 remain deliberately out of scope.
+    for (const key of Object.keys(step)) {
+      if (!(KNOWN_STEP_KEYS as readonly string[]).includes(key)) {
+        console.warn(
+          `⚠ step '${stepName}': unknown key '${key}' — ignored (not a recognized step field).`,
+        );
+      }
+    }
 
     if (stepName === 'run' || stepName === 'context') {
       errors.push(`Step name '${stepName}' is reserved and cannot be used as a step identifier`);
