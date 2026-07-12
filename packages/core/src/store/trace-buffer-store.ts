@@ -30,8 +30,14 @@ export interface TraceBufferStore {
   /** Deletes the buffer for (runId, stepId). No-op if absent. */
   delete(runId: string, stepId: string): Promise<void>;
 
-  /** Deletes all buffers for a run. Called when the run is deleted. */
-  deleteAllForRun(runId: string): Promise<void>;
+  /**
+   * Deletes all buffers for a run. Called when the run is deleted.
+   *
+   * @param dirEntries Optional pre-scanned directory listing (issue #107 batch purge). Ignored by
+   *   this in-memory implementation; a filesystem-backed implementation may use it to avoid a
+   *   per-run `readdir`.
+   */
+  deleteAllForRun(runId: string, dirEntries?: readonly string[]): Promise<void>;
 }
 
 /** An AgentTraceEntry extended with engine-assigned ordering timestamp (milliseconds). */
@@ -153,7 +159,7 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
     this.buffers.delete(this.key(runId, stepId));
   }
 
-  async deleteAllForRun(runId: string): Promise<void> {
+  async deleteAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<void> {
     for (const key of [...this.buffers.keys()]) {
       if (key.startsWith(`${runId}:`)) {
         this.buffers.delete(key);

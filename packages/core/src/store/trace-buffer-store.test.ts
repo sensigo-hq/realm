@@ -107,6 +107,14 @@ describe('InMemoryTraceBufferStore', () => {
     expect(await store.read('run-2', 'step-a')).toHaveLength(1);
   });
 
+  it('deleteAllForRun ignores the optional dirEntries hint (issue #107 — in-memory has no directory)', async () => {
+    await store.append('run-1', 'step-a', [{ event: 'a' }]);
+
+    await store.deleteAllForRun('run-1', ['some-unrelated-file.jsonl']);
+
+    expect(await store.read('run-1', 'step-a')).toEqual([]);
+  });
+
   it('empty entries array to append returns current state without modifying buffer', async () => {
     await store.append('run-1', 'step-1', [{ event: 'existing' }]);
     const result = await store.append('run-1', 'step-1', []);

@@ -1,29 +1,8 @@
 // cleanup command — marks idle non-terminal runs as abandoned.
 import { Command } from 'commander';
 import type { RunStore, RunRecord } from '@sensigo/realm';
-import { WorkflowError, WAITING_PHASES } from '@sensigo/realm';
-
-/**
- * Parses a duration string such as "30d", "6h", or "10m" into milliseconds.
- */
-function parseDuration(s: string): number {
-  const match = /^(\d+)(d|h|m)$/.exec(s);
-  if (match === null) {
-    throw new WorkflowError(
-      `Invalid duration '${s}'. Use format: <number>(d|h|m), e.g. 30d, 6h, 10m`,
-      {
-        code: 'VALIDATION_INPUT_SCHEMA',
-        category: 'VALIDATION',
-        agentAction: 'provide_input',
-        retryable: false,
-      },
-    );
-  }
-  const value = parseInt(match[1]!, 10);
-  const unit = match[2]!;
-  const multipliers: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000 };
-  return value * multipliers[unit]!;
-}
+import { WAITING_PHASES } from '@sensigo/realm';
+import { parseDuration } from '../lib/parse-duration.js';
 
 /**
  * List all non-terminal runs idle for longer than `olderThan` and mark them abandoned.

@@ -1101,3 +1101,205 @@ describe('JsonFileStore — atomic writes (torn-read safety)', () => {
     expect(writeFileIdx).toHaveLength(2); // win32 passthrough + the temp write
   });
 });
+
+describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
+  it('deletes the run file for a plain (no idempotency key) run', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      expect(existsSync(join(dir, `${run.id}.json`))).toBe(true);
+
+      await store.deleteAllForRun(run.id);
+
+      expect(existsSync(join(dir, `${run.id}.json`))).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('deletes the owned idempotency pointer alongside the run file', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+        idempotencyKey: 'k1',
+      });
+      const ptrPath = keyPointerPath(dir, 'wf-1', 'k1');
+      expect(existsSync(ptrPath)).toBe(true);
+
+      await store.deleteAllForRun(run.id);
+
+      expect(existsSync(join(dir, `${run.id}.json`))).toBe(false);
+      expect(existsSync(ptrPath)).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does NOT delete a pointer that a rerun/supersede has repointed to a newer run (mutation-probe #2 target)', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run: oldRun } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+        idempotencyKey: 'k1',
+      });
+      await store.update({
+        ...oldRun,
+        run_phase: 'completed',
+        terminal_state: true,
+        terminal_reason: 'Workflow completed.',
+      });
+      const { run: newRun } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+        idempotencyKey: 'k1',
+        onTerminalMatch: 'rerun',
+      });
+      const ptrPath = keyPointerPath(dir, 'wf-1', 'k1');
+      expect(JSON.parse(await readFile(ptrPath, 'utf8')).run_id).toBe(newRun.id);
+
+      // Purge the OLD (superseded) run. Its stored record still carries idempotency_key: 'k1',
+      // but the pointer has since moved on to newRun — deleteAllForRun must not touch it.
+      await store.deleteAllForRun(oldRun.id);
+
+      expect(existsSync(join(dir, `${oldRun.id}.json`))).toBe(false); // old run file gone
+      expect(existsSync(ptrPath)).toBe(true); // pointer untouched
+      expect(JSON.parse(await readFile(ptrPath, 'utf8')).run_id).toBe(newRun.id); // still the successor
+      expect((await store.get(newRun.id)).id).toBe(newRun.id); // successor completely unaffected
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is idempotent: a second call, or a call on an already-gone run, is a no-op (never throws)', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+
+      await store.deleteAllForRun(run.id);
+
+      await expect(store.deleteAllForRun(run.id)).resolves.toBeUndefined();
+      await expect(store.deleteAllForRun('never-existed-at-all')).resolves.toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores dirEntries (exact-path store — the batch hint is for glob-based stores only)', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+
+      // A dirEntries hint that does NOT mention the run file at all — deleteAllForRun must still
+      // find and delete it via its own exact path, proving the hint really is ignored.
+      await store.deleteAllForRun(run.id, ['completely-unrelated.json']);
+
+      expect(existsSync(join(dir, `${run.id}.json`))).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('JsonFileStore ENOENT hardening (issue #107)', () => {
+  it('get() throws STATE_RUN_NOT_FOUND for a run that never existed', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      await expect(store.get('never-existed')).rejects.toMatchObject({
+        code: 'STATE_RUN_NOT_FOUND',
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('update() throws STATE_RUN_NOT_FOUND for a run that never existed', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      await expect(
+        store.update(makeRunRecord({ id: 'never-existed', workflow_id: 'wf-1', version: 0 })),
+      ).rejects.toMatchObject({ code: 'STATE_RUN_NOT_FOUND' });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('list() tolerates a run file vanishing concurrently with the read (skips it, never throws a raw ENOENT)', async () => {
+    // The concurrency-hammer style used elsewhere in this file (T1/T2) for exactly this class of
+    // hard-to-deterministically-trigger race: real concurrent list() reads racing real concurrent
+    // deleteAllForRun deletes, over enough volume to exercise the ENOENT-during-readFile window
+    // many times. Any raw (non-STATE_RUN_NOT_FOUND-shaped) error means #132's torn-read loudness
+    // regressed into a crash on a benign concurrent purge instead of a skip.
+    const { store, dir } = await makeTmpStore();
+    try {
+      const ids: string[] = [];
+      for (let i = 0; i < 40; i++) {
+        const { run } = await store.create({
+          workflowId: 'wf-1',
+          workflowVersion: 1,
+          params: { i },
+        });
+        ids.push(run.id);
+      }
+
+      const readErrors: unknown[] = [];
+      let done = false;
+      const reader = async (): Promise<void> => {
+        while (!done) {
+          try {
+            await store.list();
+          } catch (err) {
+            readErrors.push(err);
+          }
+        }
+      };
+      const readers = Array.from({ length: 8 }, () => reader());
+
+      for (const id of ids) {
+        await store.deleteAllForRun(id);
+      }
+      done = true;
+      await Promise.all(readers);
+
+      expect(readErrors).toEqual([]); // zero crashes — every vanished file was skipped, not thrown
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('list() drops a run file whose content vanishes mid-scan without affecting the rest', async () => {
+    // A more targeted (non-racy) companion to the volume test above: seed several runs, delete one
+    // right before list() is invoked so its readdir()-observed presence is a coin flip depending on
+    // ordering — either way, list() must return every OTHER run's record intact.
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run: keep1 } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
+      const { run: victim } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
+      const { run: keep2 } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const [, all] = await Promise.all([store.deleteAllForRun(victim.id), store.list()]);
+      const ids = all.map((r) => r.id);
+      expect(ids).toContain(keep1.id);
+      expect(ids).toContain(keep2.id);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
