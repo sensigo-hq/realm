@@ -96,63 +96,96 @@ const ONE_DAY_AGO = new Date(Date.now() - 2 * 86_400_000).toISOString();
 const FAR_FUTURE = new Date(Date.now() + 3_600_000).toISOString();
 const PAST = new Date(Date.now() - 3_600_000).toISOString();
 
-describe('isPurgeEligible (the purge selection predicate)', () => {
-  it('rejects a non-terminal (running) run', () => {
-    const run = makeRun({ run_phase: 'running', terminal_state: false });
-    const v = isPurgeEligible(run);
-    expect(v.eligible).toBe(false);
-    if (!v.eligible) expect(v.reason).toMatch(/not terminal/);
-  });
-
-  it('rejects a gate_waiting run', () => {
-    const run = makeRun({ run_phase: 'gate_waiting', terminal_state: false });
-    const v = isPurgeEligible(run);
-    expect(v.eligible).toBe(false);
-    if (!v.eligible) expect(v.reason).toMatch(/not terminal/);
-  });
-
-  it.each(['completed', 'failed', 'abandoned', 'aborted'] as const)(
-    'accepts a plain terminal run (phase: %s) with no in-progress claims',
-    (phase) => {
-      const run = makeRun({ run_phase: phase, terminal_state: true });
-      expect(isPurgeEligible(run)).toEqual({ eligible: true });
+describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #107 correction)', () => {
+  it.each([true, false])(
+    'rejects a non-terminal (running) run regardless of explicit mode (explicit=%s)',
+    (explicit) => {
+      const run = makeRun({ run_phase: 'running', terminal_state: false });
+      const v = isPurgeEligible(run, { explicit });
+      expect(v.eligible).toBe(false);
+      if (!v.eligible) expect(v.reason).toMatch(/not terminal/);
     },
   );
 
-  it('rejects a terminal run carrying a future-deadline ("healthy") claim — abandon does not clear claims', () => {
+  it.each([true, false])(
+    'rejects a gate_waiting run regardless of explicit mode (explicit=%s)',
+    (explicit) => {
+      const run = makeRun({ run_phase: 'gate_waiting', terminal_state: false });
+      const v = isPurgeEligible(run, { explicit });
+      expect(v.eligible).toBe(false);
+      if (!v.eligible) expect(v.reason).toMatch(/not terminal/);
+    },
+  );
+
+  it.each(['completed', 'failed', 'abandoned', 'aborted'] as const)(
+    'accepts a plain terminal run (phase: %s) with no in-progress claims, in BOTH modes',
+    (phase) => {
+      const run = makeRun({ run_phase: phase, terminal_state: true });
+      expect(isPurgeEligible(run, { explicit: true })).toEqual({ eligible: true });
+      expect(isPurgeEligible(run, { explicit: false })).toEqual({ eligible: true });
+    },
+  );
+
+  describe('healthy (future-deadline) claim — the one hard refuse; no override in EITHER mode', () => {
     const run = makeRun({
       run_phase: 'abandoned',
       terminal_state: true,
       in_progress_steps: ['charge'],
       claims: { charge: { deadline: FAR_FUTURE } },
     });
-    const v = isPurgeEligible(run);
-    expect(v.eligible).toBe(false);
-    if (!v.eligible) {
-      expect(v.reason).toMatch(/future-deadline/);
-      expect(v.reason).toMatch(/charge/);
-    }
+
+    it.each([true, false])(
+      'refuses when explicit=%s — abandon does not clear claims, and there is no override for a provably-live claim',
+      (explicit) => {
+        const v = isPurgeEligible(run, { explicit });
+        expect(v.eligible).toBe(false);
+        if (!v.eligible) {
+          expect(v.reason).toMatch(/future-deadline/);
+          expect(v.reason).toMatch(/charge/);
+          expect(v.reason).toMatch(/live runner may still be working it/);
+        }
+      },
+    );
   });
 
-  it('accepts a terminal run whose in-progress claim is past-deadline (claim_stale) — only a future deadline blocks', () => {
-    const run = makeRun({
-      run_phase: 'abandoned',
-      terminal_state: true,
-      in_progress_steps: ['charge'],
-      claims: { charge: { deadline: PAST } },
-    });
-    expect(isPurgeEligible(run)).toEqual({ eligible: true });
-  });
-
-  it('accepts a terminal run whose in-progress claim has no deadline (claim_unknown_age) — indeterminate, not "future"', () => {
+  describe('claim_unknown_age (indeterminate, null-deadline) claim — batch-conservative, single-id override', () => {
     const run = makeRun({
       run_phase: 'abandoned',
       terminal_state: true,
       in_progress_steps: ['charge'],
       claims: { charge: { deadline: null } },
     });
-    expect(isPurgeEligible(run)).toEqual({ eligible: true });
+
+    it('refuses in BATCH mode (explicit: false) — with an actionable reason: names the step, states the indeterminacy, and points at the override verbatim', () => {
+      const v = isPurgeEligible(run, { explicit: false });
+      expect(v.eligible).toBe(false);
+      if (!v.eligible) {
+        expect(v.reason).toMatch(/indeterminate-age claim/);
+        expect(v.reason).toMatch(/charge/);
+        expect(v.reason).toMatch(/no deadline recorded/);
+        expect(v.reason).toContain('skipped in batch');
+        expect(v.reason).toContain(`realm run purge ${run.id} --force`);
+      }
+    });
+
+    it('is ELIGIBLE in single-id mode (explicit: true) — the explicit override — and reports which step was overridden', () => {
+      const v = isPurgeEligible(run, { explicit: true });
+      expect(v).toEqual({ eligible: true, overriddenClaimStep: 'charge' });
+    });
   });
+
+  it.each([true, false])(
+    'accepts a terminal run whose in-progress claim is past-deadline (claim_stale) in BOTH modes — only healthy/unknown-age ever block (explicit=%s)',
+    (explicit) => {
+      const run = makeRun({
+        run_phase: 'abandoned',
+        terminal_state: true,
+        in_progress_steps: ['charge'],
+        claims: { charge: { deadline: PAST } },
+      });
+      expect(isPurgeEligible(run, { explicit })).toEqual({ eligible: true });
+    },
+  );
 });
 
 describe('purgeRuns — single-run mode', () => {
@@ -228,7 +261,7 @@ describe('purgeRuns — single-run mode', () => {
     }
   });
 
-  it('refuses (selects nothing) a terminal run carrying a future-deadline claim — skip+warn, never deleted', async () => {
+  it('refuses (selects nothing) a terminal run carrying a future-deadline (healthy) claim, even single-id + --force — the override does NOT apply to a provably-live claim', async () => {
     const { dir, runStore, artifactStores } = await makeStores();
     try {
       const run = makeRun({
@@ -245,6 +278,35 @@ describe('purgeRuns — single-run mode', () => {
       expect(result.purged).toEqual([]);
       expect(result.skipped[0]?.reason).toMatch(/future-deadline/);
       expect(existsSync(join(dir, `${run.id}.json`))).toBe(true); // NEVER deleted, even with dryRun:false
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('single-id: a terminal run with a claim_unknown_age claim IS selected via the explicit override — dry-run reports it (with overriddenClaimStep), --force purges it', async () => {
+    const { dir, runStore, artifactStores } = await makeStores();
+    try {
+      const run = makeRun({
+        run_phase: 'abandoned',
+        terminal_state: true,
+        in_progress_steps: ['charge'],
+        claims: { charge: { deadline: null } },
+      });
+      await injectRun(dir, run);
+
+      const dryResult = await purgeRuns({ runId: run.id, dryRun: true }, runStore, artifactStores);
+      expect(dryResult.selected).toHaveLength(1);
+      expect(dryResult.selected[0]?.overriddenClaimStep).toBe('charge');
+      expect(dryResult.skipped).toEqual([]); // NOT a skip — explicit mode accepted it
+      expect(existsSync(join(dir, `${run.id}.json`))).toBe(true); // dry-run: untouched
+
+      const forceResult = await purgeRuns(
+        { runId: run.id, dryRun: false },
+        runStore,
+        artifactStores,
+      );
+      expect(forceResult.purged).toEqual([run.id]);
+      expect(existsSync(join(dir, `${run.id}.json`))).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -384,6 +446,41 @@ describe('purgeRuns — batch mode (--older-than)', () => {
       expect(result.skipped).toEqual([
         { runId: 'blocked', reason: expect.stringMatching(/future-deadline/) },
       ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('batch: a terminal run with a claim_unknown_age claim is skipped+warned (never selected/purged), while a sibling with claim_stale/no-claim in the same batch IS purged — the batch does not abort on the skip', async () => {
+    const { dir, runStore, artifactStores } = await makeStores();
+    try {
+      const indeterminate = makeRun({
+        id: 'indeterminate',
+        run_phase: 'abandoned',
+        terminal_state: true,
+        updated_at: ONE_DAY_AGO,
+        in_progress_steps: ['charge'],
+        claims: { charge: { deadline: null } },
+      });
+      const stale = makeRun({
+        id: 'stale',
+        run_phase: 'abandoned',
+        terminal_state: true,
+        updated_at: ONE_DAY_AGO,
+        in_progress_steps: ['charge'],
+        claims: { charge: { deadline: PAST } },
+      });
+      await injectRun(dir, indeterminate);
+      await injectRun(dir, stale);
+
+      const result = await purgeRuns({ olderThan: '1d', dryRun: false }, runStore, artifactStores);
+
+      expect(result.purged).toEqual(['stale']);
+      expect(result.skipped).toEqual([
+        { runId: 'indeterminate', reason: expect.stringMatching(/indeterminate-age claim/) },
+      ]);
+      expect(existsSync(join(dir, 'indeterminate.json'))).toBe(true); // never touched — batch never overrides
+      expect(existsSync(join(dir, 'stale.json'))).toBe(false); // purged normally
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -7,9 +7,14 @@
 // delete (a single <id> ALSO requires `--force` — naming a run is selection, not consent).
 //
 // Non-negotiable invariants (do not weaken): terminal-only (never a non-terminal or `gate_waiting`
-// run); never a run carrying a non-stale (future-deadline / `healthy`) claim — load-bearing for
-// `abandoned` runs, which do not clear `claims` (see cleanup.ts). There is no override flag for
-// either check — unlike `reclaim`, purge has no per-run "I know what I'm doing" escape hatch.
+// run). Claim posture (issue #107 correction) is mode-aware: a `healthy` (future-deadline) claim is
+// NEVER purged, in either mode — there is no override, because a live runner is provably still
+// working it. A `claim_unknown_age` (null-deadline) claim — load-bearing for `abandoned` runs, which
+// do not clear `claims` (see cleanup.ts) — is skipped+warned in BATCH mode (a cron sweep cannot prove
+// the runner is dead and must not guess), but IS purgeable via an explicit single-id
+// `realm run purge <id> --force` — the operator named this exact run, a deliberate judgment call
+// `reclaim`'s own batch mode also refuses to make automatically. A `claim_stale` (past-deadline)
+// claim, or no in-progress claim at all, is purgeable in both modes.
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Command } from 'commander';
@@ -22,27 +27,64 @@ import {
 } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 
-export type PurgeEligibility = { eligible: true } | { eligible: false; reason: string };
+export type PurgeEligibility =
+  | { eligible: true; overriddenClaimStep?: string | undefined }
+  | { eligible: false; reason: string };
 
 /**
- * The safety-critical selection predicate (mirrors `isAutoReclaimable` in reclaim.ts): a run may be
- * purged IFF it is terminal AND carries no future-deadline ("healthy") in-progress claim. Unlike
- * `reclaim`'s `--force`, there is no override — this predicate is consulted unconditionally by both
- * single-run and batch purge, and a run it rejects can never enter `selected`.
+ * The safety-critical selection predicate (mirrors `isAutoReclaimable` in reclaim.ts) — mode-aware
+ * (issue #107 correction): the caller MUST state whether this is an explicit single-id purge
+ * (`explicit: true` — the operator named this exact run) or a batch/cron sweep (`explicit: false`).
+ * There is no default; a future call site is forced to pick a mode rather than silently inheriting
+ * the more permissive one.
+ *
+ * Worst-claim-wins ordering across every in-progress claim on the run:
+ *  1. `healthy` (future deadline) → REFUSE in both modes. No override — the runner is provably
+ *     still alive; this is the one hard line purge will never cross.
+ *  2. `claim_unknown_age` (no deadline — agent step / finalizer-bearing / pre-#101 run) → refuse in
+ *     batch (a cron sweep cannot prove the runner is dead and must not guess — mirrors
+ *     `reclaim.isAutoReclaimable`'s own refusal of this exact state), but ELIGIBLE when explicit —
+ *     the operator named this run directly, which is deliberate judgment a batch sweep can't make.
+ *  3. `claim_stale` (past deadline) or no in-progress claim at all → eligible in both modes.
+ *
+ * A run this predicate rejects can never enter `selected`; an explicit-mode acceptance of case 2
+ * carries `overriddenClaimStep` so the report can surface that the override fired.
  */
-export function isPurgeEligible(run: RunRecord, now: Date = new Date()): PurgeEligibility {
+export function isPurgeEligible(
+  run: RunRecord,
+  opts: { explicit: boolean; now?: Date },
+): PurgeEligibility {
   if (!TERMINAL_PHASES.has(run.run_phase)) {
     return { eligible: false, reason: `not terminal (phase: '${run.run_phase}')` };
   }
-  const futureClaim = classifyInProgressClaims(run, now).find((c) => c.state === 'healthy');
-  if (futureClaim !== undefined) {
+
+  const now = opts.now ?? new Date();
+  const claims = classifyInProgressClaims(run, now);
+
+  const healthyClaim = claims.find((c) => c.state === 'healthy');
+  if (healthyClaim !== undefined) {
     return {
       eligible: false,
       reason:
-        `run carries a future-deadline claim on step '${futureClaim.step}' ` +
-        `(deadline: ${futureClaim.deadline}) — a live runner may still be working it`,
+        `run carries a future-deadline claim on step '${healthyClaim.step}' ` +
+        `(deadline: ${healthyClaim.deadline}) — a live runner may still be working it`,
     };
   }
+
+  const unknownAgeClaim = claims.find((c) => c.state === 'claim_unknown_age');
+  if (unknownAgeClaim !== undefined) {
+    if (!opts.explicit) {
+      return {
+        eligible: false,
+        reason:
+          `run carries an indeterminate-age claim on step '${unknownAgeClaim.step}' ` +
+          `(no deadline recorded — a runner may or may not still be working it); skipped in batch; ` +
+          `run 'realm run purge ${run.id} --force' to purge it explicitly.`,
+      };
+    }
+    return { eligible: true, overriddenClaimStep: unknownAgeClaim.step };
+  }
+
   return { eligible: true };
 }
 
@@ -79,6 +121,12 @@ export interface PurgeCandidate {
   run: RunRecord;
   bytes: number;
   resumable: boolean;
+  /**
+   * Set (to the step name) when this run was selected ONLY because an explicit single-id purge
+   * accepted a `claim_unknown_age` (indeterminate-age) claim that batch mode would have skipped
+   * (issue #107 correction). Always undefined for a batch-mode selection.
+   */
+  overriddenClaimStep?: string | undefined;
 }
 
 export interface PurgeRunsResult {
@@ -122,14 +170,16 @@ export async function purgeRuns(
   const now = new Date();
   const runsDir = runStore.runsDirPath;
 
-  const candidates: RunRecord[] = [];
+  const candidates: Array<{ run: RunRecord; overriddenClaimStep?: string | undefined }> = [];
   const skipped: Array<{ runId: string; reason: string }> = [];
 
   if (options.runId !== undefined) {
     const run = await runStore.get(options.runId);
-    const verdict = isPurgeEligible(run, now);
+    // explicit: true — the operator named this exact run, so a claim_unknown_age claim is an
+    // eligible override, never a healthy one (issue #107 correction).
+    const verdict = isPurgeEligible(run, { explicit: true, now });
     if (verdict.eligible) {
-      candidates.push(run);
+      candidates.push({ run, overriddenClaimStep: verdict.overriddenClaimStep });
     } else {
       skipped.push({ runId: run.id, reason: verdict.reason });
     }
@@ -137,10 +187,13 @@ export async function purgeRuns(
     const thresholdMs = options.olderThan !== undefined ? parseDuration(options.olderThan) : 0;
     const all = await runStore.list(options.workflow);
     for (const run of all) {
-      const verdict = isPurgeEligible(run, now);
+      // explicit: false — a batch/cron sweep cannot prove an indeterminate-age claim's runner is
+      // dead, so claim_unknown_age is refused here (skipped+warned below), not overridden.
+      const verdict = isPurgeEligible(run, { explicit: false, now });
       if (!verdict.eligible) {
-        // Only a terminal-but-blocked run (the future-claim case) is a noteworthy skip+warn — a
-        // plain non-terminal run isn't a purge candidate in the first place and needn't be noisy.
+        // Only a terminal-but-blocked run (a future or indeterminate-age claim) is a noteworthy
+        // skip+warn — a plain non-terminal run isn't a purge candidate in the first place and
+        // needn't be noisy.
         if (TERMINAL_PHASES.has(run.run_phase)) {
           skipped.push({ runId: run.id, reason: verdict.reason });
         }
@@ -148,7 +201,7 @@ export async function purgeRuns(
       }
       const idleMs = now.getTime() - new Date(run.updated_at).getTime();
       if (idleMs < thresholdMs) continue;
-      candidates.push(run);
+      candidates.push({ run, overriddenClaimStep: verdict.overriddenClaimStep });
     }
   }
 
@@ -162,9 +215,14 @@ export async function purgeRuns(
   }
 
   const selected: PurgeCandidate[] = [];
-  for (const run of candidates) {
+  for (const { run, overriddenClaimStep } of candidates) {
     const bytes = await statMatchedBytes(runsDir, run.id, dirEntries);
-    selected.push({ run, bytes, resumable: RESUMABLE_PHASES.has(run.run_phase) });
+    selected.push({
+      run,
+      bytes,
+      resumable: RESUMABLE_PHASES.has(run.run_phase),
+      overriddenClaimStep,
+    });
   }
 
   const result: PurgeRunsResult = { selected, skipped, purged: [], already_purged: [], failed: [] };
@@ -201,6 +259,21 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * The override-transparency phrase (issue #107 correction): every candidate purged only because an
+ * explicit single-id override accepted its indeterminate-age claim must say so, in both dry-run and
+ * force output — this can only ever be non-empty for a single-id selection (batch always calls
+ * `isPurgeEligible` with `explicit: false`, so a `claim_unknown_age` run there lands in `skipped`,
+ * never `selected` — see `purgeRuns`).
+ */
+function overriddenClaimPhrase(step: string, dryRun: boolean): string {
+  const verb = dryRun ? 'would purge' : 'purged';
+  return (
+    `${verb} despite an indeterminate-age claim on step '${step}' (no deadline recorded — a runner ` +
+    `may or may not still be working it; explicit single-run override proceeds anyway)`
+  );
+}
+
 /** Prints the dry-run / force report shared by both single-run and batch mode. */
 function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void {
   for (const s of result.skipped) {
@@ -224,7 +297,11 @@ function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void {
       `${result.selected.length} run(s) WOULD be purged (${formatBytes(totalBytes)} to free):`,
     );
     for (const c of result.selected) {
-      console.log(`  • ${c.run.id}  (${c.run.run_phase}, ${formatBytes(c.bytes)})`);
+      const override =
+        c.overriddenClaimStep !== undefined
+          ? ` — ${overriddenClaimPhrase(c.overriddenClaimStep, true)}`
+          : '';
+      console.log(`  • ${c.run.id}  (${c.run.run_phase}, ${formatBytes(c.bytes)})${override}`);
     }
     console.log(`\n${resumableLine}\nRe-run with --force to actually delete.`);
     return;
@@ -234,6 +311,11 @@ function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void {
     `Purged ${result.purged.length}/${result.selected.length} run(s) (${formatBytes(totalBytes)} freed). ` +
       `${result.already_purged.length} already gone, ${result.failed.length} failed.`,
   );
+  for (const c of result.selected) {
+    if (c.overriddenClaimStep !== undefined) {
+      console.log(`  ⚠ ${c.run.id}: ${overriddenClaimPhrase(c.overriddenClaimStep, false)}`);
+    }
+  }
   for (const f of result.failed) {
     console.error(`  ✗ ${f.runId}: ${f.error}`);
   }

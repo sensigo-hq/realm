@@ -88,13 +88,23 @@ realm run purge --older-than 30d --force                    # actually deletes t
 | ------------------ | ---------------------------------------------- | ---------------------------------------------------------- |
 | What it does       | Marks a run terminal (`abandoned`)             | Deletes the run and all its artifacts from disk            |
 | Reversible?        | Yes — the record still exists; resume/rerun it | **No** — this is the first irreversible primitive in Realm |
-| Targets            | Non-terminal, non-`gate_waiting` runs          | **Terminal-only** runs, with no future-deadline claim      |
+| Targets            | Non-terminal, non-`gate_waiting` runs          | **Terminal-only** runs, claim-state permitting (see below) |
 | Exposed to agents? | Yes (`abandon_run` MCP tool)                   | **No** — CLI-only, deliberately never an MCP tool          |
 
-Purge will **never** touch a run that is not terminal, a run that is `gate_waiting`, or a terminal run
-that still carries a non-stale (future-deadline) claim on a step — the last case matters specifically
-for `abandoned` runs, since abandoning does **not** clear `in_progress_steps`/`claims`. There is no
-override flag for either check; unlike `reclaim`, purge has no per-run "act anyway" escape hatch.
+Purge will **never** touch a run that is not terminal or a run that is `gate_waiting`. Beyond that, its
+claim-state check is **mode-aware** — the same run can be refused in a batch sweep yet purgeable when
+you name it directly:
+
+- A run carrying a **future-deadline (`healthy`)** claim on a step is **never purged, in either mode** —
+  a runner is provably still working it, and there is no override. This matters specifically for
+  `abandoned` runs, since abandoning does **not** clear `in_progress_steps`/`claims`.
+- A run carrying an **indeterminate-age (`claim_unknown_age` — no deadline recorded)** claim is
+  **skipped with a warning in batch mode** — a cron sweep cannot prove the runner is dead, so it
+  refuses to guess — but **is** purgeable via an explicit single-run `realm run purge <id> --force`.
+  Naming the exact run is a deliberate operator judgment call that a batch sweep won't make
+  automatically (mirrors why `reclaim`'s own `--all` auto-reclaim refuses this same claim state).
+- A run with a **past-deadline (`claim_stale`)** claim, or no in-progress claim at all, is purgeable in
+  both modes.
 
 Like `reclaim --all`, purge is **dry-run by default** — even naming a single `<run-id>` only reports
 what would happen until you add `--force`. The report always includes an explicit count of how many

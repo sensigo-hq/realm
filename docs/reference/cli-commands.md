@@ -501,6 +501,44 @@ realm run cleanup --dry-run          # preview without making changes
 
 ---
 
+### `realm run purge [<run-id>]`
+
+Permanently deletes a terminal run and every co-located on-disk artifact — the run file, its
+idempotency-key pointer, the `<id>.attempts.jsonl` sidecar, and any orphaned `trace-buffer-*.jsonl` WAL
+files. **Irreversible.** Unlike `cleanup`/`abandon`, this does not just mark a run terminal — it
+removes it from disk entirely. See
+[Operating & recovering runs](operating-runs.md#purging-runs-permanent-deletion) for the full
+abandon-vs-purge distinction.
+
+```bash
+realm run purge abc123                                            # dry-run: report what WOULD be deleted
+realm run purge abc123 --force                                    # actually delete it
+realm run purge --older-than 30d                                  # dry-run over a batch of eligible runs
+realm run purge --older-than 30d --force                          # actually delete the batch
+realm run purge --older-than 30d --workflow my-workflow --force   # restrict the batch to one workflow
+```
+
+Dry-run by default — even naming a single `<run-id>` only reports what would happen until you add
+`--force` (naming a run is selection, not consent). `--older-than` accepts the same duration format as
+`cleanup`: `Nd` (days), `Nh` (hours), `Nm` (minutes). `--workflow <id>` restricts a batch to one
+workflow (only valid alongside `--older-than`).
+
+**Safety posture:**
+
+- **Terminal-only** — never touches a non-terminal or `gate_waiting` run.
+- A run with a **future-deadline (`healthy`)** in-progress claim is **never purged, in either mode** —
+  a runner is provably still working it, and there is no override.
+- A run with an **indeterminate-age (`claim_unknown_age`, no deadline recorded)** claim is **skipped
+  with a warning in batch mode** (a cron sweep cannot prove the runner is dead), but **is** purgeable
+  via an explicit single-run `realm run purge <id> --force` — the operator naming the exact run is a
+  deliberate judgment call a batch sweep won't make automatically.
+
+Batch mode reports continue-on-error as purged / already-purged (a concurrent purge beat you to it —
+not a failure) / failed, plus how many of the selected runs were resumable via `realm run resume` —
+purging one destroys that path permanently.
+
+---
+
 ### `realm run attempts <run-id>`
 
 Shows failed agent-step validation attempts recorded for a run (the durable `<id>.attempts.jsonl`
