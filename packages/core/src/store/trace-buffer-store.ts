@@ -38,6 +38,15 @@ export interface TraceBufferStore {
    *   per-run `readdir`.
    */
   deleteAllForRun(runId: string, dirEntries?: readonly string[]): Promise<void>;
+
+  /**
+   * Reads every buffered/WAL entry for a run, across ALL steps, keyed by stepId — the read-only
+   * counterpart to `deleteAllForRun` (issue #159, `realm run export`'s evidence assembly). Each
+   * value is that step's buffer/WAL contents in this store's own natural per-line/per-entry shape
+   * (implementations differ here — see each implementer's own doc). `{}` if the run has none.
+   * Never mutates; never throws on a missing run (an absent run/store location is just `{}`).
+   */
+  readAllForRun(runId: string): Promise<Record<string, unknown[]>>;
 }
 
 /** An AgentTraceEntry extended with engine-assigned ordering timestamp (milliseconds). */
@@ -165,5 +174,18 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
         this.buffers.delete(key);
       }
     }
+  }
+
+  /** Returns each in-memory buffer for the run, keyed by stepId, as its stored `BufferedEntry[]`
+   *  (already-flattened individual entries — this store's own natural shape; see `append`). */
+  async readAllForRun(runId: string): Promise<Record<string, unknown[]>> {
+    const result: Record<string, unknown[]> = {};
+    const prefix = `${runId}:`;
+    for (const [key, entries] of this.buffers.entries()) {
+      if (key.startsWith(prefix)) {
+        result[key.slice(prefix.length)] = entries;
+      }
+    }
+    return result;
   }
 }

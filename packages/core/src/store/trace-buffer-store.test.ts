@@ -115,6 +115,33 @@ describe('InMemoryTraceBufferStore', () => {
     expect(await store.read('run-1', 'step-a')).toEqual([]);
   });
 
+  describe('readAllForRun (issue #159 — export evidence assembly)', () => {
+    it('returns every step buffer for the run, keyed by stepId, leaving other runs out', async () => {
+      await store.append('run-1', 'step-a', [{ event: 'a1' }, { event: 'a2' }]);
+      await store.append('run-1', 'step-b', [{ event: 'b1' }]);
+      await store.append('run-2', 'step-a', [{ event: 'other-run' }]);
+
+      const all = await store.readAllForRun('run-1');
+
+      expect(Object.keys(all).sort()).toEqual(['step-a', 'step-b']);
+      expect(all['step-a']).toHaveLength(2);
+      expect(all['step-b']).toHaveLength(1);
+    });
+
+    it('returns {} for a run with no buffers at all', async () => {
+      const all = await store.readAllForRun('never-appended-to');
+      expect(all).toEqual({});
+    });
+
+    it('is read-only: calling it does not remove or alter the buffers', async () => {
+      await store.append('run-1', 'step-a', [{ event: 'a' }]);
+
+      await store.readAllForRun('run-1');
+
+      expect(await store.read('run-1', 'step-a')).toHaveLength(1);
+    });
+  });
+
   it('empty entries array to append returns current state without modifying buffer', async () => {
     await store.append('run-1', 'step-1', [{ event: 'existing' }]);
     const result = await store.append('run-1', 'step-1', []);

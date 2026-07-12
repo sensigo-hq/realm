@@ -2,11 +2,16 @@
 // #107). append/read/delete are exercised indirectly elsewhere (execution-loop finalization); this
 // file did not previously have dedicated coverage, so a handful of sanity tests are included too.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, readdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, writeFile, appendFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
+
+/** Recomputes the exact on-disk WAL filename `walPath` uses — test-side only. */
+function walFileName(runId: string, stepId: string): string {
+  return `trace-buffer-${runId}-${Buffer.from(stepId).toString('base64url')}.jsonl`;
+}
 
 describe('JsonTraceBufferStore', () => {
   let dir: string;
@@ -99,6 +104,77 @@ describe('JsonTraceBufferStore', () => {
       expect((await readdir(dir)).filter((f) => f.startsWith('trace-buffer-run-1-'))).toHaveLength(
         0,
       );
+    });
+  });
+
+  describe('readAllForRun (issue #159 — export evidence assembly)', () => {
+    it('returns every step WAL for the run, keyed by DECODED stepId, across multiple steps', async () => {
+      await store.append('run-1', 'step-a', [{ event: 'a1' }]);
+      await store.append('run-1', 'step-a', [{ event: 'a2' }]); // second append → second line
+      await store.append('run-1', 'step-b', [{ event: 'b1' }]);
+      await store.append('run-2', 'step-a', [{ event: 'other-run' }]); // must NOT appear
+
+      const all = await store.readAllForRun('run-1');
+
+      expect(Object.keys(all).sort()).toEqual(['step-a', 'step-b']);
+      expect(all['step-a']).toHaveLength(2); // two appends → two WAL lines
+      expect(all['step-b']).toHaveLength(1);
+      // each element is the raw parsed WAL line shape ({ts, entries}), matching what's on disk.
+      const firstLine = (all['step-a'] as Array<{ ts: number; entries: unknown[] }>)[0]!;
+      expect(typeof firstLine.ts).toBe('number');
+      expect(firstLine.entries).toEqual([{ event: 'a1' }]);
+    });
+
+    it('returns {} for a run with no WAL files at all', async () => {
+      const all = await store.readAllForRun('never-had-any-wal');
+      expect(all).toEqual({});
+    });
+
+    it('returns {} (no crash) when runsDir itself is missing', async () => {
+      const missingDirStore = new JsonTraceBufferStore(join(dir, 'does', 'not', 'exist'));
+      const all = await missingDirStore.readAllForRun('run-1');
+      expect(all).toEqual({});
+    });
+
+    it('is torn-line-safe: a corrupt/partial line is skipped, sibling good lines in the SAME file survive', async () => {
+      // Two good appends (two valid JSONL lines), then a manually-injected torn line appended
+      // directly to the file (simulating a crash mid-append) — readWal's own all-or-nothing catch
+      // would discard the whole file for this; readAllForRun must not.
+      await store.append('run-1', 'step-a', [{ event: 'a1' }]);
+      await store.append('run-1', 'step-a', [{ event: 'a2' }]);
+      const path = join(dir, walFileName('run-1', 'step-a'));
+      await appendFile(path, '{ this is not valid json\n', 'utf8');
+      await appendFile(path, '\n', 'utf8'); // a blank line too — also must be skipped, not crash
+
+      const all = await store.readAllForRun('run-1');
+
+      expect(all['step-a']).toHaveLength(2); // only the two well-formed lines
+    });
+
+    it('skips a file with an undecodable stepId segment rather than throwing (defensive — never happens via normal writes)', async () => {
+      await store.append('run-1', 'step-a', [{ event: 'a1' }]);
+      // A malformed filename that still matches the runId prefix/suffix glob but whose "stepId"
+      // segment is not valid base64url content in the way we round-trip it.
+      await writeFile(
+        join(dir, 'trace-buffer-run-1-%%%not-base64%%%.jsonl'),
+        '{"ts":1,"entries":[]}\n',
+      );
+
+      const all = await store.readAllForRun('run-1');
+
+      // The well-formed step's WAL is still returned; the malformed one is simply absent.
+      expect(all['step-a']).toHaveLength(1);
+    });
+
+    it('is read-only: calling it never deletes or modifies any WAL file', async () => {
+      await store.append('run-1', 'step-a', [{ event: 'a' }]);
+      const before = await readdir(dir);
+
+      await store.readAllForRun('run-1');
+
+      const after = await readdir(dir);
+      expect(after.sort()).toEqual(before.sort());
+      expect(await store.read('run-1', 'step-a')).toHaveLength(1);
     });
   });
 });
