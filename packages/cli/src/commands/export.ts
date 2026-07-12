@@ -31,6 +31,9 @@ export interface ExportBundle {
   run: RunRecord;
   /** Parsed failed-attempt records; `[]` if none were ever recorded for this run. */
   attempts: FailedAttemptRecord[];
+  /** True if the run hit the failed-attempt sidecar's 256KB ceiling — later attempts were dropped
+   *  at write time (append-and-stop), so `attempts` is NOT exhaustive. */
+  attempts_capped: boolean;
   /** `{ <stepId>: [...] }` — every buffered/WAL entry for the run, across all steps; `{}` if none. */
   wal: Record<string, unknown[]>;
 }
@@ -49,7 +52,9 @@ export interface ExportRunResult {
 
 export interface ExportStores {
   runStore: Pick<RunStore, 'get'>;
-  failedAttemptStore: { read(runId: string): Promise<{ records: FailedAttemptRecord[] }> };
+  failedAttemptStore: {
+    read(runId: string): Promise<{ records: FailedAttemptRecord[]; capped: boolean }>;
+  };
   traceBufferStore: Pick<TraceBufferStore, 'readAllForRun'>;
 }
 
@@ -64,7 +69,7 @@ export async function buildExportBundle(
   now: Date = new Date(),
 ): Promise<ExportRunResult> {
   const run = await stores.runStore.get(runId);
-  const { records: attempts } = await stores.failedAttemptStore.read(runId);
+  const { records: attempts, capped: attemptsCapped } = await stores.failedAttemptStore.read(runId);
   const wal = await stores.traceBufferStore.readAllForRun(runId);
 
   const bundle: ExportBundle = {
@@ -72,6 +77,7 @@ export async function buildExportBundle(
     exported_at: now.toISOString(),
     run,
     attempts,
+    attempts_capped: attemptsCapped,
     wal,
   };
 
@@ -170,6 +176,11 @@ export const exportCommand = new Command('export')
 
       if (warning !== undefined) {
         console.warn(`⚠ ${warning}`);
+      }
+      if (bundle.attempts_capped) {
+        console.warn(
+          '⚠ failed-attempt log was truncated at its size ceiling — the exported attempts list is not exhaustive.',
+        );
       }
 
       const target = resolveExportPath({ runId, out: opts.out, runsDir });

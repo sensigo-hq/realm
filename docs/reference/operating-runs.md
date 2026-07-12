@@ -198,6 +198,7 @@ realm run export abc123 --out bug-1234.json # writes exactly that file
   "attempts": [
     /* parsed failed-attempt records — [] if none */
   ],
+  "attempts_capped": false /* true = the sidecar hit its 256KB ceiling — attempts is a PREFIX, not exhaustive */,
   "wal": {
     /* { "<stepId>": [...] } — every buffered/WAL trace for the run — {} if none */
   },
@@ -206,7 +207,11 @@ realm run export abc123 --out bug-1234.json # writes exactly that file
 
 The run record is the bulk of the evidence; `attempts`/`wal` are usually empty for a cleanly-completed
 run (the WAL is deleted per-step on the happy path) and non-empty exactly for crash/abandon/stuck
-runs — the case export matters most for.
+runs — the case export matters most for. `attempts_capped` mirrors `realm run attempts --json`'s own
+`capped` flag: if the failed-attempt sidecar reached its append-and-stop ceiling, later attempts were
+dropped at write time, so `attempts` is a prefix of what actually happened, not the whole story — the
+CLI also prints a warning at export time when this is true, so you don't have to notice it only by
+inspecting the JSON later.
 
 **Works on any run, not just terminal ones.** Unlike `purge`, export has no terminal-only gate:
 handing off a _stuck_ (non-terminal) run for debugging is its highest-value use case, and read-only

@@ -108,7 +108,7 @@ describe('buildExportBundle', () => {
     }
   });
 
-  it('clean run (no attempts, no WAL): attempts: [], wal: {} — not an error', async () => {
+  it('clean run (no attempts, no WAL): attempts: [], attempts_capped: false, wal: {} — not an error', async () => {
     const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'completed', terminal_state: true });
@@ -121,10 +121,96 @@ describe('buildExportBundle', () => {
       });
 
       expect(bundle.attempts).toEqual([]);
+      expect(bundle.attempts_capped).toBe(false);
       expect(bundle.wal).toEqual({});
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  describe('attempts_capped (correction — the truncation signal)', () => {
+    it('a capped failed-attempt sidecar sets bundle.attempts_capped = true', async () => {
+      const { dir, runStore, traceBufferStore } = await makeStores();
+      try {
+        const run = makeRun({ run_phase: 'completed', terminal_state: true });
+        await injectRun(dir, run);
+
+        // A stub failedAttemptStore — no real 256KB file needed, per the correction prompt: the
+        // store is already injected via ExportStores, so exercising the pass-through only needs a
+        // fake read() reporting capped: true.
+        const cappedRecord = buildFailedAttemptRecord({
+          run_id: run.id,
+          workflow_id: 'wf-1',
+          step_id: 'classify',
+          ts: '2026-06-27T00:00:00.000Z',
+          error_code: 'VALIDATION_OUTPUT_SCHEMA',
+          ajv_errors: [],
+          params: {},
+          trace_entry_count: 0,
+        });
+        const stubFailedAttemptStore = {
+          read: async () => ({ records: [cappedRecord], capped: true }),
+        };
+
+        const { bundle } = await buildExportBundle(run.id, {
+          runStore,
+          failedAttemptStore: stubFailedAttemptStore,
+          traceBufferStore,
+        });
+
+        expect(bundle.attempts_capped).toBe(true);
+        expect(bundle.attempts).toEqual([cappedRecord]); // attempts array shape is unchanged
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('a non-capped sidecar sets bundle.attempts_capped = false (explicit, not just absence)', async () => {
+      const { dir, runStore, traceBufferStore } = await makeStores();
+      try {
+        const run = makeRun({ run_phase: 'completed', terminal_state: true });
+        await injectRun(dir, run);
+
+        const stubFailedAttemptStore = {
+          read: async () => ({ records: [], capped: false }),
+        };
+
+        const { bundle } = await buildExportBundle(run.id, {
+          runStore,
+          failedAttemptStore: stubFailedAttemptStore,
+          traceBufferStore,
+        });
+
+        expect(bundle.attempts_capped).toBe(false);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('attempts_capped serializes into the JSON bundle, sitting alongside attempts', async () => {
+      const { dir, runStore, traceBufferStore } = await makeStores();
+      try {
+        const run = makeRun({ run_phase: 'completed', terminal_state: true });
+        await injectRun(dir, run);
+
+        const stubFailedAttemptStore = { read: async () => ({ records: [], capped: true }) };
+
+        const { bundle } = await buildExportBundle(run.id, {
+          runStore,
+          failedAttemptStore: stubFailedAttemptStore,
+          traceBufferStore,
+        });
+
+        const parsed = JSON.parse(JSON.stringify(bundle)) as Record<string, unknown>;
+        expect(parsed['attempts_capped']).toBe(true);
+        expect(Object.keys(parsed)).toContain('attempts');
+        // sits adjacent to attempts in key order (schema placement, not just presence)
+        const keys = Object.keys(parsed);
+        expect(keys.indexOf('attempts_capped')).toBe(keys.indexOf('attempts') + 1);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   it('non-terminal run: emits the best-effort warning signal AND still produces the bundle', async () => {
