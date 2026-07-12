@@ -176,4 +176,65 @@ export class JsonTraceBufferStore implements TraceBufferStore, PerRunArtifactSto
         .map((f) => unlink(join(this.runsDir, f)).catch(() => {})),
     );
   }
+
+  /**
+   * Reads every WAL file for `runId` across all steps — the read-only counterpart to
+   * `deleteAllForRun`, for `realm run export`'s evidence assembly (issue #159). Mirrors
+   * `deleteAllForRun`'s exact glob (`trace-buffer-<runId>-*.jsonl`) and reverses `walPath`'s
+   * base64url stepId encoding to recover the original step name.
+   *
+   * Parses each file torn-line-safe: blank and unparseable lines are skipped INDIVIDUALLY (the
+   * same per-line discipline `FailedAttemptStore.read()` uses), rather than discarding an entire
+   * file on one bad line the way `readWal`'s all-or-nothing catch does — a crash/abandon run's WAL
+   * is exactly the case export exists for, and it's also the case most likely to have a torn last
+   * line, so losing every earlier line to one partial write would defeat the purpose.
+   *
+   * Each value is the array of parsed WAL lines (`{ts, entries}`-shaped, matching what's actually
+   * on disk) for that step, in file order. A missing `runsDir`, or no WAL for this run at all,
+   * yields `{}` — never a throw.
+   */
+  async readAllForRun(runId: string): Promise<Record<string, unknown[]>> {
+    const prefix = `trace-buffer-${runId}-`;
+    let files: string[];
+    try {
+      files = await readdir(this.runsDir);
+    } catch {
+      return {};
+    }
+
+    const result: Record<string, unknown[]> = {};
+    const matching = files.filter((f) => f.startsWith(prefix) && f.endsWith('.jsonl'));
+
+    for (const file of matching) {
+      const encoded = file.slice(prefix.length, file.length - '.jsonl'.length);
+      let stepId: string;
+      try {
+        stepId = Buffer.from(encoded, 'base64url').toString('utf8');
+      } catch {
+        continue; // malformed filename — skip this one file, not the whole export
+      }
+
+      let content: string;
+      try {
+        content = await readFile(join(this.runsDir, file), 'utf8');
+      } catch {
+        continue; // vanished or unreadable between readdir and this read — skip, not a throw
+      }
+
+      const lines: unknown[] = [];
+      for (const raw of content.split('\n')) {
+        const trimmed = raw.trim();
+        if (trimmed.length === 0) continue;
+        try {
+          lines.push(JSON.parse(trimmed));
+        } catch {
+          // torn/partial line (e.g. a crash mid-append) — skip it, keep the rest
+        }
+      }
+
+      result[stepId] = lines;
+    }
+
+    return result;
+  }
 }

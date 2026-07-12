@@ -10,6 +10,7 @@ import { reclaimCommand } from './commands/reclaim.js';
 import { cleanupCommand } from './commands/cleanup.js';
 import { purgeCommand } from './commands/purge.js';
 import { gcCommand } from './commands/gc.js';
+import { exportCommand } from './commands/export.js';
 import { reconcileCommand } from './commands/reconcile.js';
 import { attemptsCommand } from './commands/attempts.js';
 import { respondCommand } from './commands/respond.js';
@@ -51,6 +52,7 @@ export const runCommands = [
   cleanupCommand,
   purgeCommand,
   gcCommand,
+  exportCommand,
   reconcileCommand,
   attemptsCommand,
 ];

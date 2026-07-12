@@ -8,15 +8,16 @@ is the source of truth. Recovery is therefore about the **record**, not about ki
 
 ## Decision table
 
-| Situation             | Symptom                                                                                              | Action                                                                                                                                               |
-| --------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Stuck but recoverable | A run is terminal `failed` because one step errored, but the work can be retried                     | `realm resume <run-id> --from <step>` — re-enables the failed step and resets the run to `running`, then drive with `realm agent --run-id <run-id>`. |
-| Stuck and dead        | A run is `running` with no claimed step (`in_progress_steps: []`) and no agent is coming back for it | `realm run abandon <run-id> [--reason …]` (or the `abandon_run` MCP tool), then re-run (see [Recovery loop](#recovery-loop)).                        |
-| Bulk idle             | Many old non-terminal runs left parked                                                               | `realm run cleanup --older-than 30d` — abandons idle non-terminal runs (skips `gate_waiting`).                                                       |
-| Disk cleanup          | Old terminal runs (and their artifacts) should be permanently removed                                | `realm run purge --older-than 30d [--force]` — see [Purging runs](#purging-runs-permanent-deletion). **Irreversible.**                               |
-| Crash residue         | `runsDir` has leftover `*.tmp` files from a process that died mid-write                              | `realm run gc --older-than 1h [--force]` — see [Garbage collection](#garbage-collection-orphaned-atomic-write-temps). **Irreversible.**              |
-| Fleet visibility      | "Which runs are stuck right now?"                                                                    | `realm run list --stuck` (running ∧ no claimed step, with idle age) and `get_run_state` → `next_actions_status`.                                     |
-| Awaiting a human      | A run is `gate_waiting`                                                                              | Resolve it via `submit_human_response` (the `respond` MCP tool / `realm run respond`). **Do NOT abandon a gated run** — abandon refuses it.          |
+| Situation               | Symptom                                                                                              | Action                                                                                                                                               |
+| ----------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stuck but recoverable   | A run is terminal `failed` because one step errored, but the work can be retried                     | `realm resume <run-id> --from <step>` — re-enables the failed step and resets the run to `running`, then drive with `realm agent --run-id <run-id>`. |
+| Stuck and dead          | A run is `running` with no claimed step (`in_progress_steps: []`) and no agent is coming back for it | `realm run abandon <run-id> [--reason …]` (or the `abandon_run` MCP tool), then re-run (see [Recovery loop](#recovery-loop)).                        |
+| Bulk idle               | Many old non-terminal runs left parked                                                               | `realm run cleanup --older-than 30d` — abandons idle non-terminal runs (skips `gate_waiting`).                                                       |
+| Disk cleanup            | Old terminal runs (and their artifacts) should be permanently removed                                | `realm run purge --older-than 30d [--force]` — see [Purging runs](#purging-runs-permanent-deletion). **Irreversible.**                               |
+| Crash residue           | `runsDir` has leftover `*.tmp` files from a process that died mid-write                              | `realm run gc --older-than 1h [--force]` — see [Garbage collection](#garbage-collection-orphaned-atomic-write-temps). **Irreversible.**              |
+| Preserve before purging | You want a portable evidence snapshot of a run before (or instead of) deleting it                    | `realm run export <run-id> [--out <path>]` — see [Exporting a run's evidence](#exporting-a-runs-evidence). Read-only, works on any run.              |
+| Fleet visibility        | "Which runs are stuck right now?"                                                                    | `realm run list --stuck` (running ∧ no claimed step, with idle age) and `get_run_state` → `next_actions_status`.                                     |
+| Awaiting a human        | A run is `gate_waiting`                                                                              | Resolve it via `submit_human_response` (the `respond` MCP tool / `realm run respond`). **Do NOT abandon a gated run** — abandon refuses it.          |
 
 ### `next_actions_status` (from `get_run_state`)
 
@@ -169,6 +170,62 @@ never even a candidate. Like `purge`, `gc` is **dry-run by default**; `--force` 
 
 **Windows note:** `atomicWriteFile` falls back to a plain `writeFile` (no temp) on `win32`, so `gc` is
 a documented no-op there — there is nothing for it to find.
+
+---
+
+## Exporting a run's evidence
+
+`realm run export <run-id> [--out <path>]` is the **read-only, evidence-preserving companion** to
+`realm run purge`: it archives a run's evidence — its record, its failed-attempt sidecar, and any
+orphaned/in-flight WAL traces — into a single, self-contained, human-readable JSON file you can
+`cat`/`grep`/`git add`/attach to a bug report, or simply keep before purging everything else.
+
+```bash
+realm run export abc123                    # writes ./abc123.realm.json
+realm run export abc123 --out ~/evidence/   # writes ~/evidence/abc123.realm.json
+realm run export abc123 --out bug-1234.json # writes exactly that file
+```
+
+**The bundle:**
+
+```jsonc
+{
+  "realm_export_version": 1,
+  "exported_at": "<ISO-8601, stamped at export time>",
+  "run": {
+    /* the full RunRecord — steps, evidence, skip_details, claims, etc. */
+  },
+  "attempts": [
+    /* parsed failed-attempt records — [] if none */
+  ],
+  "wal": {
+    /* { "<stepId>": [...] } — every buffered/WAL trace for the run — {} if none */
+  },
+}
+```
+
+The run record is the bulk of the evidence; `attempts`/`wal` are usually empty for a cleanly-completed
+run (the WAL is deleted per-step on the happy path) and non-empty exactly for crash/abandon/stuck
+runs — the case export matters most for.
+
+**Works on any run, not just terminal ones.** Unlike `purge`, export has no terminal-only gate:
+handing off a _stuck_ (non-terminal) run for debugging is its highest-value use case, and read-only
+means there's no safety reason to restrict it. Exporting a non-terminal run prints a best-effort
+warning to stderr (its artifacts are read at slightly different instants and may be mid-flight) but
+still produces the bundle; a terminal run gets no warning, since nothing changes post-seal.
+
+**What's deliberately excluded:** the idempotency-key pointer (`keys/<hash>.json`). That file is a
+rebuildable hash→run _index_ (`reconcile` regenerates it), not run evidence — and the key it maps is
+already on the run record itself (`run.idempotency_key`). The bundle carries evidence, not the index.
+
+**Read-only and lock-free by construction:** export only ever calls each store's existing public read
+methods (`get`, `read`, `readAllForRun`) — never a write, an `unlink`, or a `lockfile.lock`. It never
+writes into `runsDir` itself (an export file ending in `.json` there would be misread by `list()`'s
+`.json`-suffix filter), and it refuses to overwrite an existing file at its resolved `--out` target —
+you always get an explicit error naming the path rather than a silent clobber.
+
+**`--out` resolution:** no `--out` → `./<run-id>.realm.json` in the current directory; `--out` naming
+an existing directory → `<dir>/<run-id>.realm.json`; anything else is used as the literal file path.
 
 ---
 

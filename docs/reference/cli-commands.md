@@ -564,6 +564,29 @@ Windows (no temp files are ever produced there).
 
 ---
 
+### `realm run export <run-id>`
+
+Archives a run's evidence — its record, its failed-attempt sidecar, and any orphaned/in-flight WAL
+traces — into one self-contained, human-readable JSON file. The **read-only, evidence-preserving**
+companion to `purge`: keep this before (or instead of) permanently deleting the rest. See
+[Exporting a run's evidence](operating-runs.md#exporting-a-runs-evidence) for the full bundle shape.
+
+```bash
+realm run export abc123                     # writes ./abc123.realm.json
+realm run export abc123 --out ~/evidence/    # writes ~/evidence/abc123.realm.json
+realm run export abc123 --out bug-1234.json  # writes exactly that file
+```
+
+Works on **any** run, not just terminal ones — exporting a non-terminal run prints a best-effort
+snapshot warning (its artifacts are read at slightly different instants and may be mid-flight) but
+still produces the bundle; a terminal run needs no warning. Read-only and lock-free: never writes
+into `runsDir`, never deletes anything, and refuses to overwrite an existing file at the resolved
+`--out` target (error + non-zero exit, naming the path — pick a different `--out`). Excludes the
+idempotency-key pointer file by design — it's a rebuildable index, not evidence, and the key itself
+is already on the run record.
+
+---
+
 ### `realm run attempts <run-id>`
 
 Shows failed agent-step validation attempts recorded for a run (the durable `<id>.attempts.jsonl`
