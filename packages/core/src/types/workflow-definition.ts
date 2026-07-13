@@ -366,6 +366,10 @@ const _stepKeysExtraCheck: _StepKeysExtra extends never
 export interface WorkflowDefinition {
   id: string;
   name: string;
+  /** Optional human-readable statement of what this workflow does / when to use it. Declarative
+   *  purpose — distinct from protocol.quick_start (how to begin). Surfaced in the agent protocol
+   *  and CLI. */
+  description?: string;
   version: number;
   /** JSON Schema describing the params accepted by start_run. */
   params_schema?: JsonSchema;
@@ -466,6 +470,7 @@ export interface WorkflowDefinition {
 export const KNOWN_WORKFLOW_KEYS = [
   'id',
   'name',
+  'description',
   'version',
   'params_schema',
   'protocol',

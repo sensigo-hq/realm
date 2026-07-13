@@ -226,6 +226,59 @@ describe('handleCreateWorkflow', () => {
     expect(def.model).toBeUndefined();
     expect(def.agent).toBeUndefined();
   });
+
+  it('metadata.description round-trips into definition.description (issue #144 correction)', async () => {
+    const result = await handleCreateWorkflow(
+      {
+        steps: [{ id: 'step-a', description: 'Do something' }],
+        metadata: { description: 'What this workflow is for.' },
+      },
+      stores,
+    );
+    expect(result.status).toBe('ok');
+    const def = await stores.workflowStore.get(result.data['workflow_id'] as string);
+    expect(def.description).toBe('What this workflow is for.');
+  });
+
+  it('metadata.description omitted leaves definition.description absent — no synthesized default', async () => {
+    const result = await handleCreateWorkflow(
+      { steps: [{ id: 'step-a', description: 'Do something' }] },
+      stores,
+    );
+    expect(result.status).toBe('ok');
+    const def = await stores.workflowStore.get(result.data['workflow_id'] as string);
+    expect(def.description).toBeUndefined();
+  });
+
+  it('metadata.description of empty/whitespace is treated as omitted, not set to an empty string', async () => {
+    const result = await handleCreateWorkflow(
+      {
+        steps: [{ id: 'step-a', description: 'Do something' }],
+        metadata: { description: '   ' },
+      },
+      stores,
+    );
+    expect(result.status).toBe('ok');
+    const def = await stores.workflowStore.get(result.data['workflow_id'] as string);
+    expect(def.description).toBeUndefined();
+  });
+
+  it('metadata.description and metadata.task_description map independently (description ≠ quick_start)', async () => {
+    const result = await handleCreateWorkflow(
+      {
+        steps: [{ id: 'step-a', description: 'Do something' }],
+        metadata: {
+          description: 'Declarative purpose.',
+          task_description: 'Imperative how-to-begin.',
+        },
+      },
+      stores,
+    );
+    expect(result.status).toBe('ok');
+    const def = await stores.workflowStore.get(result.data['workflow_id'] as string);
+    expect(def.description).toBe('Declarative purpose.');
+    expect(def.protocol?.quick_start).toBe('Imperative how-to-begin.');
+  });
 });
 
 describe('end-to-end — create_workflow + execute_step walk to completion', () => {

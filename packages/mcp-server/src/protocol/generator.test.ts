@@ -153,4 +153,27 @@ describe('generateProtocol', () => {
     const work = protocol.steps.find((s) => s.id === 'work')!;
     expect(work.agent_involvement).toContain('YOU execute');
   });
+
+  it('workflow with a description surfaces it on the protocol (issue #144 correction)', () => {
+    const definition: WorkflowDefinition = {
+      id: 'test-wf',
+      name: 'Test',
+      description: 'What this workflow is for.',
+      version: 1,
+      steps: {},
+    };
+    const protocol = generateProtocol(definition);
+    expect(protocol.description).toBe('What this workflow is for.');
+  });
+
+  it('workflow with no description omits it from the protocol — no synthesized default', () => {
+    const definition: WorkflowDefinition = {
+      id: 'test-wf',
+      name: 'Test',
+      version: 1,
+      steps: {},
+    };
+    const protocol = generateProtocol(definition);
+    expect(protocol.description).toBeUndefined();
+  });
 });

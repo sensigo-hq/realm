@@ -35,6 +35,7 @@ steps:
   extract_fields:
     description: Extract field candidates from the document text
     execution: agent
+    depends_on: [fetch_document]
     instructions: "Extract field candidates from the document text. Submit them as 'candidates' — an array of objects with field_id, value, and verbatim_quote."
     input_schema:
       type: object
@@ -47,10 +48,12 @@ steps:
     description: Validate extracted quote citations against source document
     execution: auto
     handler: validate_verbatim_quotes
+    depends_on: [extract_fields]
     instructions: 'Engine validates your citations automatically. No action needed.'
 
   finalize:
     description: Human reviews and approves validated fields
     execution: auto
     trust: human_confirmed
+    depends_on: [validate_candidates]
     instructions: 'Show the validation results to the user and ask for their approval or rejection.'

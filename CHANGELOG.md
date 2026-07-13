@@ -6,6 +6,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **Workflow-level `description` is now a first-class field (issue #144 correction).** `#09-webhook-pr-review`'s example workflow already carried a top-level `description:` that `WorkflowDefinition` silently ignored — exactly the latent no-op the #144 unknown-key warning exists to expose. `description` is a clean, declarative complement to `protocol.quick_start` (what this workflow is for / when to use it, vs. imperative how-to-begin) — the two are never blurred, and there is **no synthesized default**: present → surfaced, absent → omitted, never fabricated. It's authorable in workflow YAML, drives the agent protocol (`get_workflow_protocol`), is settable via `create_workflow`'s `metadata.description`, and is echoed by `realm workflow validate`/`register`.
+
 ### Changed
 
 - **`realm init` scaffold now sequences its two steps with `depends_on` (issue #144).** The generated `workflow.yaml` previously set `finalize`'s `execution: auto` with no `depends_on`, so it was eligible from run start and ran concurrently with `step_one` instead of after it — the scaffold's own steps didn't actually demonstrate sequencing. `finalize` is renamed to `step_two` and declares `depends_on: [step_one]`; the scaffold also drops the vestigial `initial_state`/`allowed_from_states`/`produces_state` fields (leftovers of an early scalar state-machine model removed when the DAG execution model — `depends_on` + the four step-sets — replaced it) and gains a comment blessing `depends_on` as the one sequencing model.
