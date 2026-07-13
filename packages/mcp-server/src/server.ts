@@ -68,7 +68,7 @@ export { createDefaultRegistry };
 export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer {
   const server = new McpServer({
     name: 'realm',
-    version: '0.21.0',
+    version: '0.22.0',
   });
 
   // When no registry is provided, use the default registry that pre-registers built-in
