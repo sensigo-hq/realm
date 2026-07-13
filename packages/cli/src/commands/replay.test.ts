@@ -36,31 +36,22 @@ const definition: WorkflowDefinition = {
   id: 'test-workflow',
   name: 'Test Workflow',
   version: 1,
-  initial_state: 'created',
   steps: {
     fetch_doc: {
       description: 'Fetch document',
       execution: 'auto',
-      allowed_from_states: ['created'],
-      produces_state: 'doc_ready',
     },
     extract: {
       description: 'Extract fields',
       execution: 'agent',
-      allowed_from_states: ['doc_ready'],
-      produces_state: 'extracted',
     },
     validate: {
       description: 'Validate',
       execution: 'auto',
-      allowed_from_states: ['extracted'],
-      produces_state: 'validated',
     },
     write: {
       description: 'Write results',
       execution: 'auto',
-      allowed_from_states: ['validated'],
-      produces_state: 'completed',
       preconditions: ['validate.accepted_count > 0'],
     },
   },
@@ -148,8 +139,6 @@ describe('replayRun', () => {
         write: {
           description: 'Write results',
           execution: 'auto',
-          allowed_from_states: ['validated'],
-          produces_state: 'completed',
           preconditions: ['validate.result.accepted_count > 0'],
         },
       },
@@ -173,8 +162,6 @@ describe('replayRun', () => {
         write: {
           description: 'Write results',
           execution: 'auto',
-          allowed_from_states: ['validated'],
-          produces_state: 'completed',
           preconditions: ['validate.result.accepted_count > 0'],
         },
       },

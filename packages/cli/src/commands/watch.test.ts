@@ -15,26 +15,20 @@ const VALID_YAML = `
 id: watch-test
 name: Watch Test
 version: 1
-initial_state: created
 steps:
   step-one:
     description: First step
     execution: agent
-    allowed_from_states: [created]
-    produces_state: completed
 `;
 
 const INVALID_YAML = `
 id: watch-test
 name: Watch Test
 version: 1
-initial_state: created
 steps:
   step-one:
     description: First step
     execution: invalid_execution_type
-    allowed_from_states: [created]
-    produces_state: completed
 `;
 
 /** Creates a temp file with the given content and returns its path. */

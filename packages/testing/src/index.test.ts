@@ -697,26 +697,19 @@ const DISPATCHER_DEFINITION: WorkflowDefinition = {
   id: 'dispatcher-test',
   name: 'Dispatcher Test',
   version: 1,
-  initial_state: 'created',
   steps: {
     'agent-step': {
       description: 'An agent step',
       execution: 'agent',
-      allowed_from_states: ['created'],
-      produces_state: 'agent_done',
     },
     'handler-step': {
       description: 'A handler step',
       execution: 'auto',
-      allowed_from_states: ['agent_done'],
-      produces_state: 'completed',
       handler: 'my-handler',
     },
     'no-handler-step': {
       description: 'Step with no handler or service',
       execution: 'auto',
-      allowed_from_states: ['agent_done'],
-      produces_state: 'completed',
     },
   },
 };
@@ -811,23 +804,16 @@ const THREE_STEP_WORKFLOW = `
 id: three-step-wf
 name: Three Step Workflow
 version: 1
-initial_state: created
 steps:
   auto-start:
     description: Auto step at start
     execution: auto
-    allowed_from_states: [created]
-    produces_state: started
   agent-step:
     description: Agent step
     execution: agent
-    allowed_from_states: [started]
-    produces_state: agent_done
   auto-finish:
     description: Auto step at end
     execution: auto
-    allowed_from_states: [agent_done]
-    produces_state: completed
 `;
 
 const HAPPY_FIXTURE = `

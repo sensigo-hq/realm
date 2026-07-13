@@ -27,6 +27,9 @@ export interface ProtocolStep {
 export interface WorkflowProtocol {
   workflow_id: string;
   name: string;
+  /** Declarative statement of what this workflow is for / when to use it. Present only when
+   *  the workflow declares one — no synthesized default (distinct from quick_start below). */
+  description?: string;
   params_schema?: JsonSchema;
   steps: ProtocolStep[];
   /** e.g. "2 of 4 steps require agent action. 2 are handled automatically." */
@@ -157,6 +160,10 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
 
   if (definition.params_schema !== undefined) {
     protocol.params_schema = definition.params_schema;
+  }
+
+  if (definition.description !== undefined) {
+    protocol.description = definition.description;
   }
 
   return protocol;

@@ -22,16 +22,14 @@ export async function initWorkflow(name: string, targetDir: string): Promise<voi
 id: ${name}
 name: "${name}"
 version: 1
-initial_state: created
 
 # extensions: ./registry.js  — project extension modules (see docs/reference/project-extensions.md)
 
+# Steps are sequenced by 'depends_on' (the DAG) — the only sequencing model.
 steps:
   step_one:
     description: "First step \u2014 replace with your own"
     execution: agent
-    allowed_from_states: [created]
-    produces_state: step_one_done
     input_schema:
       type: object
       required: [result]
@@ -39,11 +37,10 @@ steps:
         result:
           type: string
 
-  finalize:
-    description: "Final step"
+  step_two:
+    description: "Second step"
     execution: auto
-    allowed_from_states: [step_one_done]
-    produces_state: completed
+    depends_on: [step_one]
 `;
 
   const schemaJson = JSON.stringify(

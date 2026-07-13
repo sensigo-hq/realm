@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   loadWorkflowFromString,
   loadWorkflowFromFile,
@@ -84,14 +84,11 @@ describe('loadWorkflowFromString', () => {
 id: cfg-test
 name: Config Test
 version: 1
-initial_state: idle
 steps:
   validate:
     description: "Validate something."
     execution: auto
     handler: my_handler
-    allowed_from_states: [idle]
-    produces_state: completed
     config:
       source_step: fetch_doc
       threshold: 3
@@ -108,7 +105,6 @@ steps:
 id: tpl-wf
 name: Template Workflow
 version: 1
-initial_state: created
 templates:
   simple_pair:
     params:
@@ -118,19 +114,13 @@ templates:
       fetch:
         description: Fetch from {{ svc }}
         execution: auto
-        allowed_from_states: ['{{ prefix }}_created']
-        produces_state: '{{ prefix }}_fetched'
       review:
         description: Review the result
         execution: agent
-        allowed_from_states: ['{{ prefix }}_fetched']
-        produces_state: '{{ prefix }}_done'
 steps:
   init:
     description: Initialise
     execution: auto
-    allowed_from_states: [created]
-    produces_state: doc_created
   setup:
     use_template: simple_pair
     prefix: doc
@@ -143,8 +133,6 @@ steps:
     expect(keys).toContain('doc_review');
     expect(keys).not.toContain('setup');
     expect(def.steps['doc_fetch']?.description).toBe('Fetch from documents');
-    expect(def.steps['doc_fetch']?.allowed_from_states).toEqual(['doc_created']);
-    expect(def.steps['doc_review']?.produces_state).toBe('doc_done');
   });
 
   it('throws WorkflowError when a required template param is missing at call site', () => {
@@ -152,7 +140,6 @@ steps:
 id: tpl-missing-param
 name: Missing Param
 version: 1
-initial_state: created
 templates:
   needs_svc:
     params:
@@ -162,8 +149,6 @@ templates:
       fetch:
         description: Fetch from {{ svc }}
         execution: auto
-        allowed_from_states: [created]
-        produces_state: fetched
 steps:
   call:
     use_template: needs_svc
@@ -183,7 +168,6 @@ steps:
 id: tpl-bad-ref
 name: Bad Ref
 version: 1
-initial_state: created
 steps:
   call:
     use_template: does_not_exist
@@ -202,7 +186,6 @@ steps:
 id: two-tpl-wf
 name: Two Template Uses
 version: 1
-initial_state: created
 templates:
   one_step:
     params:
@@ -212,14 +195,10 @@ templates:
       process:
         description: Process {{ label }}
         execution: agent
-        allowed_from_states: ['{{ prefix }}_created']
-        produces_state: '{{ prefix }}_done'
 steps:
   init_alpha:
     description: Init alpha
     execution: auto
-    allowed_from_states: [created]
-    produces_state: alpha_created
   first:
     use_template: one_step
     prefix: alpha
@@ -228,8 +207,6 @@ steps:
   init_beta:
     description: Init beta
     execution: auto
-    allowed_from_states: [alpha_done]
-    produces_state: beta_created
   second:
     use_template: one_step
     prefix: beta
@@ -249,21 +226,16 @@ steps:
 id: mixed-wf
 name: Mixed Workflow
 version: 1
-initial_state: created
 templates:
   one_step:
     steps:
       run:
         description: Run step
         execution: agent
-        allowed_from_states: ['{{ prefix }}_created']
-        produces_state: '{{ prefix }}_done'
 steps:
   prepare:
     description: Prepare
     execution: auto
-    allowed_from_states: [created]
-    produces_state: task_created
   main:
     use_template: one_step
     prefix: task
@@ -546,14 +518,11 @@ describe('loadWorkflowFromString — agent_profile validation', () => {
 id: test-wf
 name: Test
 version: 1
-initial_state: created
 steps:
   bad-step:
     description: Bad
     execution: auto
     agent_profile: some-profile
-    allowed_from_states: [created]
-    produces_state: done
 `;
     expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
     try {
@@ -637,14 +606,11 @@ describe('loadWorkflowFromFile — agent profile resolution', () => {
 id: profile-wf
 name: Profile Workflow
 version: 1
-initial_state: created
 steps:
   agent-step:
     description: Agent step with profile
     execution: agent
     agent_profile: my-profile
-    allowed_from_states: [created]
-    produces_state: done
 `;
 
   beforeEach(() => {
@@ -685,20 +651,15 @@ steps:
 id: shared-profile-wf
 name: Shared Profile Workflow
 version: 1
-initial_state: created
 steps:
   step-a:
     description: First agent step
     execution: agent
     agent_profile: shared-profile
-    allowed_from_states: [created]
-    produces_state: step_a_done
   step-b:
     description: Second agent step
     execution: agent
     agent_profile: shared-profile
-    allowed_from_states: [step_a_done]
-    produces_state: done
 `;
     writeFileSync(join(tmpDir, 'workflow.yaml'), sharedYaml);
     writeFileSync(join(tmpDir, 'profiles', 'shared-profile.md'), 'Shared persona content.');
@@ -718,15 +679,12 @@ steps:
 id: custom-dir-wf
 name: Custom Dir Workflow
 version: 1
-initial_state: created
 profiles_dir: ./custom-profiles
 steps:
   agent-step:
     description: Agent step
     execution: agent
     agent_profile: custom-profile
-    allowed_from_states: [created]
-    produces_state: done
 `;
     writeFileSync(join(tmpDir, 'workflow.yaml'), customDirYaml);
     writeFileSync(join(customProfilesDir, 'custom-profile.md'), 'Custom profile content.');
@@ -2401,5 +2359,89 @@ steps:
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('unknown-key warnings (issue #144)', () => {
+  it('unknown step key warns, is not validated against anything, and the workflow still loads', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const def = loadWorkflowFromString(`
+id: unknown-step-key-wf
+name: Unknown Step Key
+version: 1
+steps:
+  step-one:
+    description: First step
+    execution: auto
+    not_a_real_key: true
+`);
+    expect(def.steps['step-one']?.description).toBe('First step');
+    expect(def.steps['step-one']?.execution).toBe('auto');
+    const out = warn.mock.calls.flat().join('\n');
+    expect(out).toContain(
+      "step 'step-one': unknown key 'not_a_real_key' — ignored (not a recognized step field).",
+    );
+    warn.mockRestore();
+  });
+
+  it('unknown workflow-level key warns and the workflow still loads', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const def = loadWorkflowFromString(`
+id: unknown-wf-key-wf
+name: Unknown Workflow Key
+version: 1
+not_a_real_workflow_key: true
+steps:
+  step-one:
+    description: First step
+    execution: auto
+`);
+    expect(def.id).toBe('unknown-wf-key-wf');
+    const out = warn.mock.calls.flat().join('\n');
+    expect(out).toContain(
+      "workflow 'unknown-wf-key-wf': unknown key 'not_a_real_workflow_key' — ignored (not a recognized workflow field).",
+    );
+    warn.mockRestore();
+  });
+
+  it('hand-authoring a runtime-only key (schema_version) warns — proves the authorable/runtime-only partition', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const def = loadWorkflowFromString(`
+id: runtime-only-key-wf
+name: Runtime Only Key
+version: 1
+schema_version: 999
+model: gpt-4
+steps:
+  step-one:
+    description: First step
+    execution: auto
+`);
+    // The loader's own stamp wins regardless — the authored value never takes effect.
+    expect(def.schema_version).toBe(CURRENT_WORKFLOW_SCHEMA_VERSION);
+    const out = warn.mock.calls.flat().join('\n');
+    expect(out).toContain("workflow 'runtime-only-key-wf': unknown key 'schema_version'");
+    expect(out).toContain("workflow 'runtime-only-key-wf': unknown key 'model'");
+    warn.mockRestore();
+  });
+
+  it('a valid trigger: workflow loads with no unknown-key warning — trigger is authorable', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const def = loadWorkflowFromString(`
+id: trigger-no-warn-wf
+name: Trigger No Warn
+version: 1
+trigger:
+  type: webhook
+  auth:
+    mode: none
+steps:
+  step-one:
+    description: First step
+    execution: auto
+`);
+    expect(def.trigger?.type).toBe('webhook');
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

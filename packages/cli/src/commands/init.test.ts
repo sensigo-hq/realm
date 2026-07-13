@@ -43,7 +43,7 @@ describe('initWorkflow', () => {
     const def = loadWorkflowFromString(yaml);
     expect(def.id).toBe('valid-workflow');
     expect(def.steps).toHaveProperty('step_one');
-    expect(def.steps).toHaveProperty('finalize');
+    expect(def.steps).toHaveProperty('step_two');
   });
 
   it('scaffolds a commented extensions line and a registry.sample.js (nothing active by default)', async () => {

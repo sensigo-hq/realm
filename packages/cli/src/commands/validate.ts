@@ -55,6 +55,9 @@ function printValidationSuccess(definition: WorkflowDefinition): void {
   console.log(
     `Valid: ${definition.id} v${definition.version} (${Object.keys(definition.steps).length} steps)`,
   );
+  if (definition.description !== undefined) {
+    console.log(`  ${definition.description}`);
+  }
 }
 
 /** Pre-scan: does the YAML carry a top-level `extensions` key? (Parse errors → false; the

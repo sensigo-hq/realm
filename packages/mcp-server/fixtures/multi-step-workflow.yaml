@@ -4,7 +4,6 @@
 id: multi-step-demo
 name: Multi-Step Demo
 version: 1
-initial_state: created
 
 params_schema:
   type: object
@@ -31,15 +30,12 @@ steps:
     description: Fetch the target document from Google Docs
     execution: auto
     uses_service: source
-    allowed_from_states: [created]
-    produces_state: document_ready
     instructions: 'Engine handles this automatically. No action needed.'
 
   extract_fields:
     description: Extract field candidates from the document text
     execution: agent
-    allowed_from_states: [document_ready]
-    produces_state: fields_extracted
+    depends_on: [fetch_document]
     instructions: "Extract field candidates from the document text. Submit them as 'candidates' — an array of objects with field_id, value, and verbatim_quote."
     input_schema:
       type: object
@@ -52,14 +48,12 @@ steps:
     description: Validate extracted quote citations against source document
     execution: auto
     handler: validate_verbatim_quotes
-    allowed_from_states: [fields_extracted]
-    produces_state: validated
+    depends_on: [extract_fields]
     instructions: 'Engine validates your citations automatically. No action needed.'
 
   finalize:
     description: Human reviews and approves validated fields
     execution: auto
     trust: human_confirmed
-    allowed_from_states: [validated]
-    produces_state: completed
+    depends_on: [validate_candidates]
     instructions: 'Show the validation results to the user and ask for their approval or rejection.'
