@@ -474,7 +474,7 @@ steps:
 
     // 1. Register with NO .env yet → degrade-with-WARN to sentinel (provisioning flow).
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const definition = await loadWorkflowForRegistration(workflowPath);
+    const { definition } = await loadWorkflowForRegistration(workflowPath);
     expect(definition.trust_root).toBe(root);
     expect(warn.mock.calls.flat().join(' ')).toContain('SENTINEL');
     warn.mockRestore();

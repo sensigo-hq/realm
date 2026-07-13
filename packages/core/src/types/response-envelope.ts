@@ -1,6 +1,7 @@
 // Types for the ResponseEnvelope returned by every step execution.
 import type { EvidenceSnapshot, RunPhase } from './run-record.js';
 import type { AgentAction, ErrorCode } from './workflow-error.js';
+import type { LoaderWarning } from '../workflow/diagnostics.js';
 
 export interface NextAction {
   instruction: {
@@ -62,6 +63,12 @@ export interface ResponseEnvelope {
   /** Audit trail of step executions in this response. For debugging and CLI inspection only. */
   evidence: EvidenceSnapshot[];
   warnings: string[];
+  /**
+   * Structured, code-tagged counterparts to `warnings` above (issue #169) — additive-optional,
+   * non-breaking. Only `create_workflow` populates this today; every other envelope producer
+   * omits it. Lets an agent self-correct on `code`/`key`/`did_you_mean` instead of parsing text.
+   */
+  diagnostics?: LoaderWarning[];
   errors: string[];
   /**
    * The canonical error code from the WorkflowError that produced this envelope.

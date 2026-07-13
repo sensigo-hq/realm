@@ -8,13 +8,14 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Make loadWorkflowFromString throw a PLAIN Error (an "internal bug"); keep everything else
+// Make loadWorkflowFromStringWithDiagnostics throw a PLAIN Error (an "internal bug") — this is
+// the variant validate.ts's from-string branch now calls (issue #169); keep everything else
 // (WorkflowError, findTrustRoot, …) real.
 vi.mock('@sensigo/realm', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@sensigo/realm')>();
   return {
     ...actual,
-    loadWorkflowFromString: () => {
+    loadWorkflowFromStringWithDiagnostics: () => {
       throw new Error('internal bug — not a WorkflowError');
     },
   };

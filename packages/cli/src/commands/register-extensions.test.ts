@@ -41,7 +41,7 @@ function writeWorkflow(content: string): string {
 
 describe('loadWorkflowForRegistration', () => {
   it('extension-free workflows load exactly as before (no loader involvement)', async () => {
-    const definition = await loadWorkflowForRegistration(writeWorkflow(BASE_YAML));
+    const { definition } = await loadWorkflowForRegistration(writeWorkflow(BASE_YAML));
     expect(definition.id).toBe('reg-wf');
     expect(definition.extensions).toBeUndefined();
   });
@@ -52,7 +52,7 @@ describe('loadWorkflowForRegistration', () => {
       `export default { handlers: { h1: { id: 'h1', execute: async () => ({ data: {} }) } } };`,
       'utf8',
     );
-    const definition = await loadWorkflowForRegistration(
+    const { definition } = await loadWorkflowForRegistration(
       writeWorkflow(`${BASE_YAML}extensions: ../../dist/registry.js\n`),
     );
     expect(definition.extensions).toEqual(['../../dist/registry.js']);

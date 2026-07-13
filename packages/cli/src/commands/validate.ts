@@ -10,54 +10,99 @@ import { dirname, join, resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { load } from 'js-yaml';
 import {
-  loadWorkflowFromString,
-  loadWorkflowFromFile,
+  loadWorkflowFromStringWithDiagnostics,
+  loadWorkflowFromFileWithDiagnostics,
   findTrustRoot,
   WorkflowError,
   shouldEnforceTimeout,
   DEFAULT_EXECUTION_TIMEOUT_SECONDS,
+  resolveSeverity,
+  type LoaderWarning,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import {
   loadProjectExtensions,
   checkForOrphanedManifests,
 } from '../extensions/load-project-extensions.js';
+import { printLoaderWarnings, rejectOnErrorSeverity, failsStrict } from '../lib/loader-warnings.js';
 
 /**
  * Advisory (issue A3, never rejects): an auto step declaring `retry:` but no `timeout_seconds`
  * has EVERY attempt bounded by the generous DEFAULT_EXECUTION_TIMEOUT_SECONDS default — a hung
- * attempt can take up to that long before the retry loop even considers the next one. Surfaces
- * one warning per such step so the author can opt into a tighter explicit timeout_seconds.
+ * attempt can take up to that long before the retry loop even considers the next one. Returns one
+ * RETRY_NO_TIMEOUT LoaderWarning per such step (issue #169: folded into the validate accumulator
+ * — printed via printLoaderWarnings alongside every other warning — instead of printed directly,
+ * so `--strict` and the dormant boundary-reject can see it too).
  */
-function warnRetryWithoutExplicitTimeout(definition: WorkflowDefinition): void {
+function findRetryWithoutExplicitTimeout(definition: WorkflowDefinition): LoaderWarning[] {
+  const warnings: LoaderWarning[] = [];
   for (const [stepName, step] of Object.entries(definition.steps)) {
     if (
       shouldEnforceTimeout(step) &&
       step.retry !== undefined &&
       step.timeout_seconds === undefined
     ) {
-      console.warn(
-        `⚠  Step '${stepName}': declares 'retry' but no 'timeout_seconds' — each attempt is ` +
+      warnings.push({
+        code: 'RETRY_NO_TIMEOUT',
+        severity: resolveSeverity('RETRY_NO_TIMEOUT'),
+        scope: 'step',
+        step: stepName,
+        message:
+          `⚠  Step '${stepName}': declares 'retry' but no 'timeout_seconds' — each attempt is ` +
           `bounded by the default execution timeout (${DEFAULT_EXECUTION_TIMEOUT_SECONDS}s). ` +
           `Consider an explicit 'timeout_seconds' if attempts should fail faster.`,
-      );
+      });
     }
   }
+  return warnings;
+}
+
+/** Wraps loadProjectExtensions' sentinel-credential warnings as LoaderWarning (issue #169). */
+function wrapSentinelWarnings(sentinelWarnings: string[] | undefined): LoaderWarning[] {
+  return (sentinelWarnings ?? []).map((message) => ({
+    code: 'EXTENSION_SENTINEL' as const,
+    severity: resolveSeverity('EXTENSION_SENTINEL'),
+    scope: 'workflow' as const,
+    message: `⚠  ${message}`,
+  }));
 }
 
 /**
- * The single success site BOTH validation branches (extension-free and file-based) share: the
- * advisory warning is structurally inseparable from the `Valid:` line it accompanies — a branch
- * cannot drop the advisory without also dropping the `Valid:` print that existing tests assert.
+ * The single success-path printer BOTH validation branches (extension-free and file-based)
+ * share: prints every accumulated warning, then the summary line. Under `--strict`, a non-empty
+ * accumulator turns the summary line into a failing one and returns true (the caller exits 1);
+ * otherwise the summary line — and, when present, the description line existing tests assert on
+ * — print exactly as before and this returns false.
  */
-function printValidationSuccess(definition: WorkflowDefinition): void {
-  warnRetryWithoutExplicitTimeout(definition);
-  console.log(
-    `Valid: ${definition.id} v${definition.version} (${Object.keys(definition.steps).length} steps)`,
-  );
+function printValidationOutcome(
+  definition: WorkflowDefinition,
+  warnings: LoaderWarning[],
+  strict: boolean,
+): boolean {
+  printLoaderWarnings(warnings);
+  const base = `Valid: ${definition.id} v${definition.version} (${Object.keys(definition.steps).length} steps)`;
+  if (strict && failsStrict(warnings)) {
+    console.log(`${base} — ${warnings.length} warning(s); failing due to --strict`);
+    return true;
+  }
+  console.log(base);
   if (definition.description !== undefined) {
     console.log(`  ${definition.description}`);
   }
+  return false;
+}
+
+/**
+ * The dormant issue #170 boundary-reject: inert today (DEFAULT_POLICY has no 'error' entries),
+ * but once #170 flips UNKNOWN_WORKFLOW_KEY/UNKNOWN_STEP_KEY, this refuses those workflows here.
+ */
+function rejectIfPolicyEscalates(warnings: LoaderWarning[]): boolean {
+  if (!rejectOnErrorSeverity(warnings)) return false;
+  printLoaderWarnings(warnings);
+  console.error(
+    `Invalid: ${warnings.length} warning(s) present, and at least one is escalated to an error by policy.`,
+  );
+  return true;
 }
 
 /** Pre-scan: does the YAML carry a top-level `extensions` key? (Parse errors → false; the
@@ -82,12 +127,17 @@ export const validateCommand = new Command('validate')
     '--extensions-module <path>',
     "Extensions module that REPLACES the workflow's declared 'extensions' modules (repair/override)",
   )
+  .option(
+    '--strict',
+    'Exit non-zero if any loader warning is present (unknown keys, retry-without-timeout, sentinel credentials — issue #169)',
+  )
   .description('Validate a workflow YAML file')
-  .action(async (inputPath: string, opts: { extensionsModule?: string }) => {
+  .action(async (inputPath: string, opts: { extensionsModule?: string; strict?: boolean }) => {
     const filePath =
       inputPath.endsWith('.yaml') || inputPath.endsWith('.yml')
         ? inputPath
         : join(inputPath, 'workflow.yaml');
+    const strict = opts.strict === true;
 
     let content: string;
     try {
@@ -108,10 +158,18 @@ export const validateCommand = new Command('validate')
       // WorkflowError, which the catch below renders as `Invalid:` + exit(1). resolve()
       // before dirname so a relative `workflow.yaml` doesn't collapse the walk to '.'.
       try {
-        const definition = loadWorkflowFromString(content);
+        const { definition, warnings: loaderWarnings } =
+          loadWorkflowFromStringWithDiagnostics(content);
         const workflowDir = dirname(resolve(filePath));
         checkForOrphanedManifests(workflowDir, findTrustRoot(workflowDir));
-        printValidationSuccess(definition);
+
+        const accumulated = [...loaderWarnings, ...findRetryWithoutExplicitTimeout(definition)];
+        if (rejectIfPolicyEscalates(accumulated)) {
+          process.exit(1);
+        }
+        if (printValidationOutcome(definition, accumulated, strict)) {
+          process.exit(1);
+        }
       } catch (err) {
         if (err instanceof WorkflowError) {
           console.error(`Invalid: ${err.message}`);
@@ -125,21 +183,36 @@ export const validateCommand = new Command('validate')
     // Extensions declared (or an override supplied): file-based two-pass validation.
     try {
       // Pass 1: structural validation + extension resolution metadata (source_dir/trust_root).
-      const definition = loadWorkflowFromFile(filePath);
+      // The universal, registry-independent structural load — its warnings are what we count.
+      const { definition, warnings: pass1Warnings } = loadWorkflowFromFileWithDiagnostics(filePath);
       const { registry, manifest, sentinelWarnings } = await loadProjectExtensions(definition, {
         ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
         secretMode: 'sentinel',
       });
-      for (const warning of sentinelWarnings ?? []) console.warn(`⚠  ${warning}`);
-      // Pass 2: step config validated against each resolved adapter's config_schema.
-      loadWorkflowFromFile(filePath, registry);
-      printValidationSuccess(definition);
+      // Pass 2: step config validated against each resolved adapter's config_schema. Same
+      // content as pass 1, registry only adds config_schema checks — its warnings are proven
+      // identical to pass 1's, so they are deliberately discarded here (not collected) to avoid
+      // double-counting the same unknown key twice.
+      loadWorkflowFromFileWithDiagnostics(filePath, registry);
+
+      const accumulated = [
+        ...pass1Warnings,
+        ...findRetryWithoutExplicitTimeout(definition),
+        ...wrapSentinelWarnings(sentinelWarnings),
+      ];
+      if (rejectIfPolicyEscalates(accumulated)) {
+        process.exit(1);
+      }
+      const strictFailed = printValidationOutcome(definition, accumulated, strict);
       if (manifest.modules.length > 0) {
         console.log(
           `Extensions: ${manifest.modules.map((m) => m.declared).join(', ')} ` +
             `(adapters: ${manifest.adapters.length}, handlers: ${manifest.handlers.length}, ` +
             `processors: ${manifest.processors.length})`,
         );
+      }
+      if (strictFailed) {
+        process.exit(1);
       }
     } catch (err) {
       console.error(`Invalid: ${err instanceof Error ? err.message : String(err)}`);

@@ -7,13 +7,40 @@ import {
   JsonFileStore,
   WorkflowError,
   resolvePreExecutionAgentAction,
+  findUnknownKeys,
+  renderLoaderWarning,
   type WorkflowDefinition,
   type ResponseEnvelope,
   type JsonSchema,
+  type LoaderWarning,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
 import { handleStartRun, type HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
+
+/**
+ * The step-shape allow-list (issue #169): `Object.keys(stepSchema.shape)` is the single source
+ * of truth for detecting unknown step keys in create_workflow submissions — no hand-maintained
+ * list, no drift from the real accepted fields. Module-scoped (hoisted from its previous home
+ * function-local to `registerCreateWorkflow`) so `handleCreateWorkflow` can reach it.
+ * `.describe()` is the "soft-teach" half of the fix (prevention complementing detection): it
+ * enumerates the valid field set directly in the tool's parameter schema, so an agent learns the
+ * shape upfront instead of only discovering a typo after submitting it.
+ */
+const stepSchema = z
+  .object({
+    id: z.string(),
+    description: z.string(),
+    depends_on: z.array(z.string()).optional(),
+    input_schema: z.record(z.unknown()).optional(),
+    timeout_seconds: z.number().optional(),
+  })
+  .passthrough()
+  .describe(
+    'A single workflow step. Valid fields: id, description, depends_on, input_schema, ' +
+      'timeout_seconds. Any other field is dropped and returned as a warning — do not invent ' +
+      'step fields.',
+  );
 
 export interface CreateWorkflowStep {
   id: string;
@@ -247,6 +274,19 @@ export async function handleCreateWorkflow(
 
   await workflowStore.register(definition);
 
+  // Issue #169: each raw submitted step's extra keys survive stepSchema's .passthrough() — find
+  // them against the SAME allow-list the schema itself declares (Object.keys(stepSchema.shape),
+  // the single source of truth, no hand-maintained list). Distinct code (UNKNOWN_CREATE_WORKFLOW_KEY)
+  // from the loader's UNKNOWN_STEP_KEY — #170 never flips it, so create_workflow stays lenient for
+  // agents forever. The workflow is still created either way; this only ever warns, never rejects.
+  const stepDiagnostics: LoaderWarning[] = args.steps.flatMap((step) =>
+    findUnknownKeys(step as unknown as Record<string, unknown>, Object.keys(stepSchema.shape), {
+      scope: 'step',
+      code: 'UNKNOWN_CREATE_WORKFLOW_KEY',
+      step: step.id,
+    }),
+  );
+
   const result = await handleStartRun(
     { workflow_id: workflowId, params: {} },
     {
@@ -255,21 +295,17 @@ export async function handleCreateWorkflow(
     },
   );
 
-  return { ...result, command: 'create_workflow', data: { workflow_id: workflowId } };
+  return {
+    ...result,
+    command: 'create_workflow',
+    data: { workflow_id: workflowId },
+    warnings: [...result.warnings, ...stepDiagnostics.map(renderLoaderWarning)],
+    diagnostics: [...(result.diagnostics ?? []), ...stepDiagnostics],
+  };
 }
 
 /** Registers the create_workflow MCP tool on the server. */
 export function registerCreateWorkflow(server: McpServer, opts?: HandleRunStores): void {
-  const stepSchema = z
-    .object({
-      id: z.string(),
-      description: z.string(),
-      depends_on: z.array(z.string()).optional(),
-      input_schema: z.record(z.unknown()).optional(),
-      timeout_seconds: z.number().optional(),
-    })
-    .passthrough();
-
   server.tool(
     'create_workflow',
     'Create a dynamic Realm workflow at runtime and immediately start a run. Use this when you have a multi-step task and want to track your own execution plan. Returns next_action pointing at your first step — proceed with execute_step as normal.',

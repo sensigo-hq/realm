@@ -2444,4 +2444,48 @@ steps:
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
+
+  it('a close-typo step key ("dependson") warns with a did_you_mean suggestion (issue #169)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const def = loadWorkflowFromString(`
+id: typo-step-key-wf
+name: Typo Step Key
+version: 1
+steps:
+  step-one:
+    description: First step
+    execution: agent
+  step-two:
+    description: Second step
+    execution: auto
+    dependson: [step-one]
+`);
+    expect(def.steps['step-two']?.description).toBe('Second step');
+    const out = warn.mock.calls.flat().join('\n');
+    expect(out).toContain(
+      "step 'step-two': unknown key 'dependson' — ignored (did you mean 'depends_on'?)",
+    );
+    warn.mockRestore();
+  });
+
+  it('a far/unrelated unknown step key ("produces_state") warns with NO did_you_mean suggestion (issue #169)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const def = loadWorkflowFromString(`
+id: far-key-wf
+name: Far Key
+version: 1
+steps:
+  step-one:
+    description: First step
+    execution: auto
+    produces_state: done
+`);
+    expect(def.steps['step-one']?.description).toBe('First step');
+    const out = warn.mock.calls.flat().join('\n');
+    expect(out).toContain(
+      "step 'step-one': unknown key 'produces_state' — ignored (not a recognized step field).",
+    );
+    expect(out).not.toContain('did you mean');
+    warn.mockRestore();
+  });
 });
