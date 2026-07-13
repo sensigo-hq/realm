@@ -481,6 +481,9 @@ describe('handleBidirectionalGate', () => {
     vi.clearAllMocks();
     vi.unstubAllGlobals(); // restore the repeated stubGlobal('fetch', …)
     vi.restoreAllMocks(); // restore console spies between tests
+    // Belt-and-suspenders (issue #172): the bounded-drain test above uses fake timers. Harmless
+    // when real timers are already active; prevents any fake-timer leak into sibling tests here.
+    vi.useRealTimers();
   });
 
   it('does not start Events server when gateThreadTs is undefined', async () => {
@@ -696,7 +699,15 @@ describe('handleBidirectionalGate', () => {
   });
 
   // Bounded drain: a hung Slack (postSlackReply's fetch never resolves) must NOT stall the run loop.
+  // Deterministic, fake-timer version (issue #172) — the old real-timer/Date.now() version was
+  // flaky under full-suite CPU contention (once observed a negative elapsed time). The source's
+  // drain is setTimeout-driven (slack-gate-notifier.ts:410-417, DRAIN_TIMEOUT_MS = 2000, not
+  // exported — mirrored below since this file may not touch source), so it's fully drivable with
+  // vi.advanceTimersByTimeAsync, same pattern as this file's other fake-timer tests (~line 272).
   it('bounded drain: a never-resolving reply does not hang the gate handler (returns within the bound)', async () => {
+    const DRAIN_TIMEOUT_MS = 2000; // mirrors the source's private (unexported) constant
+
+    vi.useFakeTimers();
     const gate: PendingGate = {
       gate_id: 'g1',
       step_name: 'confirm_review',
@@ -706,10 +717,8 @@ describe('handleBidirectionalGate', () => {
     };
     // fetch (used by postSlackReply's confirmation) never resolves → processCandidate hangs after
     // the store write; the finally's bounded drain must give up after DRAIN_TIMEOUT_MS.
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => new Promise(() => {})),
-    );
+    const mockFetch = vi.fn(() => new Promise(() => {}));
+    vi.stubGlobal('fetch', mockFetch);
 
     let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
     vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
@@ -717,7 +726,13 @@ describe('handleBidirectionalGate', () => {
       return { close: vi.fn() };
     });
 
-    const promise = handleBidirectionalGate(makeGateParams({ gate, store: makeGateStore(gate) }));
+    let settled = false;
+    const promise = handleBidirectionalGate(
+      makeGateParams({ gate, store: makeGateStore(gate) }),
+    ).then((r) => {
+      settled = true;
+      return r;
+    });
     expect(capturedOnEvent).toBeDefined();
     capturedOnEvent!({
       event_id: 'H1',
@@ -727,11 +742,26 @@ describe('handleBidirectionalGate', () => {
       ts: '1234567890.001',
     });
 
-    const start = Date.now();
-    await promise; // must resolve via the bounded drain, not hang on the never-resolving reply
-    const elapsed = Date.now() - start;
-    expect(elapsed).toBeLessThan(4500); // bounded — without the drain-timeout it would hang to 5s
-    expect(elapsed).toBeGreaterThanOrEqual(1500); // the drain actually engaged (~DRAIN_TIMEOUT_MS)
+    // Flush up to (but not across) the drain timeout: the poll loop resolves almost immediately
+    // (0ms poll interval), the candidate blocks on the never-resolving fetch, and the ONLY thing
+    // that can still unblock the handler from here is the drain timer itself.
+    await vi.advanceTimersByTimeAsync(DRAIN_TIMEOUT_MS - 1);
+    expect(settled).toBe(false); // not settled — proves the reply itself never unblocked it
+
+    // Cross the drain timeout — this is what actually unblocks the handler.
+    await vi.advanceTimersByTimeAsync(1);
+    await promise; // must now resolve via the bounded drain, not the never-resolving reply
+    expect(settled).toBe(true);
+
+    // The confirmation reply was attempted exactly once (the never-resolving fetch we stubbed) —
+    // the drain gave up waiting for it to settle rather than blocking forever, and did not retry
+    // or double-post while waiting.
+    const replyCalls = mockFetch.mock.calls.filter(([url]) =>
+      (url as string).includes('postMessage'),
+    );
+    expect(replyCalls).toHaveLength(1);
+
+    vi.useRealTimers();
   });
 
   // Submit failure (submitHumanResponse returns an error envelope) must surface ONE error reply,
