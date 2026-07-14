@@ -18,6 +18,10 @@ All notable changes to this project are documented here.
 
 - The YAML loader's internal parser is now pure — warnings are collected as data and handed to the caller, which decides whether to print them (the default, byte-identical behavior) or surface them structurally instead. No observable behavior change for existing callers.
 
+### Fixed
+
+- **An empty or whitespace-only `protocol.quick_start` no longer wipes the agent protocol's generated quick-start default (issue #178).** Whether authored directly in workflow YAML (`protocol: { quick_start: "" }`) or submitted via `create_workflow`'s `metadata.task_description: ""`, a blank value is now treated as absent instead of silently blanking the imperative "how to begin" instruction the driving agent reads from `get_workflow_protocol`. A genuinely non-empty value (including one with incidental surrounding whitespace around real content) is still used verbatim, unchanged.
+
 ---
 
 ## [0.22.0] — 2026-07-13

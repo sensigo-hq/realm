@@ -232,7 +232,10 @@ function buildWorkflowDefinition(workflowId: string, args: CreateWorkflowArgs): 
     steps: stepsRecord,
   };
 
-  if (metadata?.task_description !== undefined) {
+  // issue #178: mirrors metadata.description's guard below — an empty/whitespace-only
+  // task_description is treated as not-provided, so we never create a pointless
+  // protocol: { quick_start: '' } object (which would otherwise blank the generated default).
+  if (metadata?.task_description !== undefined && metadata.task_description.trim() !== '') {
     definition.protocol = { quick_start: metadata.task_description };
   }
 
