@@ -47,6 +47,61 @@ describe('generateProtocol', () => {
     expect(protocol.quick_start).toBe('Custom start');
   });
 
+  // issue #178: an empty/whitespace-only authored quick_start must not blank the generated
+  // default — `??` treats '' as "present," this must not.
+  describe('quick_start — empty/whitespace-only falls back to the generated default (issue #178)', () => {
+    const GENERATED_DEFAULT =
+      "Call start_run with workflow_id 'test-wf'. The engine handles all steps automatically. " +
+      'Follow the next_action in each response until the workflow completes.';
+
+    it('protocol.quick_start: "" falls back to the generated default', () => {
+      const definition: WorkflowDefinition = {
+        id: 'test-wf',
+        name: 'Test',
+        version: 1,
+        protocol: { quick_start: '' },
+        steps: {},
+      };
+      const protocol = generateProtocol(definition);
+      expect(protocol.quick_start).toBe(GENERATED_DEFAULT);
+    });
+
+    it('protocol.quick_start: "   " (whitespace-only) falls back to the generated default', () => {
+      const definition: WorkflowDefinition = {
+        id: 'test-wf',
+        name: 'Test',
+        version: 1,
+        protocol: { quick_start: '   ' },
+        steps: {},
+      };
+      const protocol = generateProtocol(definition);
+      expect(protocol.quick_start).toBe(GENERATED_DEFAULT);
+    });
+
+    it('absent protocol.quick_start still falls back to the generated default (unchanged, regression guard)', () => {
+      const definition: WorkflowDefinition = {
+        id: 'test-wf',
+        name: 'Test',
+        version: 1,
+        steps: {},
+      };
+      const protocol = generateProtocol(definition);
+      expect(protocol.quick_start).toBe(GENERATED_DEFAULT);
+    });
+
+    it('a real quick_start with surrounding whitespace but real content is used VERBATIM — not swallowed', () => {
+      const definition: WorkflowDefinition = {
+        id: 'test-wf',
+        name: 'Test',
+        version: 1,
+        protocol: { quick_start: '  Custom start with padding  ' },
+        steps: {},
+      };
+      const protocol = generateProtocol(definition);
+      expect(protocol.quick_start).toBe('  Custom start with padding  ');
+    });
+  });
+
   it('uses protocol.rules override when present', () => {
     const definition: WorkflowDefinition = {
       id: 'test-wf',

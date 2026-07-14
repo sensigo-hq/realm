@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
 import { handleCreateWorkflow, type CreateWorkflowArgs } from './create-workflow.js';
 import { handleExecuteStep } from './execute-step.js';
+import { generateProtocol } from '../protocol/generator.js';
 
 describe('handleCreateWorkflow', () => {
   let runDir: string;
@@ -278,6 +279,54 @@ describe('handleCreateWorkflow', () => {
     const def = await stores.workflowStore.get(result.data['workflow_id'] as string);
     expect(def.description).toBe('Declarative purpose.');
     expect(def.protocol?.quick_start).toBe('Imperative how-to-begin.');
+  });
+
+  // issue #178: mirrors metadata.description's empty/whitespace-only guard — a blank
+  // task_description must not create a protocol: { quick_start: '' } that would blank the
+  // generated default.
+  it('metadata.task_description: "" does not set protocol.quick_start — the generated protocol shows the default', async () => {
+    const result = await handleCreateWorkflow(
+      {
+        steps: [{ id: 'step-a', description: 'Do something' }],
+        metadata: { task_description: '' },
+      },
+      stores,
+    );
+    expect(result.status).toBe('ok');
+    const def = await stores.workflowStore.get(result.data['workflow_id'] as string);
+    expect(def.protocol?.quick_start).toBeUndefined();
+    const protocol = generateProtocol(def);
+    expect(protocol.quick_start.length).toBeGreaterThan(0);
+    expect(protocol.quick_start).toContain('Call start_run');
+  });
+
+  it('metadata.task_description: "   " (whitespace-only) does not set protocol.quick_start — the generated protocol shows the default', async () => {
+    const result = await handleCreateWorkflow(
+      {
+        steps: [{ id: 'step-a', description: 'Do something' }],
+        metadata: { task_description: '   ' },
+      },
+      stores,
+    );
+    expect(result.status).toBe('ok');
+    const def = await stores.workflowStore.get(result.data['workflow_id'] as string);
+    expect(def.protocol?.quick_start).toBeUndefined();
+    const protocol = generateProtocol(def);
+    expect(protocol.quick_start.length).toBeGreaterThan(0);
+    expect(protocol.quick_start).toContain('Call start_run');
+  });
+
+  it('a real metadata.task_description still maps to protocol.quick_start exactly as before (regression guard)', async () => {
+    const result = await handleCreateWorkflow(
+      {
+        steps: [{ id: 'step-a', description: 'Do something' }],
+        metadata: { task_description: 'A real task description.' },
+      },
+      stores,
+    );
+    expect(result.status).toBe('ok');
+    const def = await stores.workflowStore.get(result.data['workflow_id'] as string);
+    expect(def.protocol?.quick_start).toBe('A real task description.');
   });
 });
 

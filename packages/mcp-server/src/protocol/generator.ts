@@ -144,9 +144,15 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
 
   const rules = definition.protocol?.rules ?? DEFAULT_RULES;
 
+  // issue #178: `??` only falls back on null/undefined — an empty or whitespace-only authored
+  // quick_start is a "present" value that would otherwise win and blank out the generated
+  // default. Treat it as absent instead; a genuinely non-empty value (including one with
+  // incidental surrounding whitespace around real content) is still used verbatim.
+  const authoredQuickStart = definition.protocol?.quick_start;
   const quick_start =
-    definition.protocol?.quick_start ??
-    `Call start_run with workflow_id '${definition.id}'. ${agentStepCount > 0 ? `The engine will run auto steps automatically and return control at the first step requiring agent action.` : `The engine handles all steps automatically.`} Follow the next_action in each response until the workflow completes.`;
+    authoredQuickStart !== undefined && authoredQuickStart.trim() !== ''
+      ? authoredQuickStart
+      : `Call start_run with workflow_id '${definition.id}'. ${agentStepCount > 0 ? `The engine will run auto steps automatically and return control at the first step requiring agent action.` : `The engine handles all steps automatically.`} Follow the next_action in each response until the workflow completes.`;
 
   const protocol: WorkflowProtocol = {
     workflow_id: definition.id,
