@@ -11,11 +11,11 @@
 //     the keys/ subdir).
 //   - The path is derived ONLY from the server-generated UUIDv4 runId (`[0-9a-f-]`), never from
 //     caller-supplied input — a path-safety invariant.
-import { existsSync } from 'node:fs';
-import { appendFile, readFile, stat, unlink } from 'node:fs/promises';
+import { appendFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FailedAttemptRecord } from '../observability/failed-attempt-record.js';
 import type { PerRunArtifactStore } from './per-run-artifact-store.js';
+import { readIfExists, deleteIfExists, toArtifactDeleteFailedError } from './fs-io.js';
 
 /**
  * Append-and-stop byte ceiling per sidecar (~80+ full ≤3072B records — ample forensics). Approximate
@@ -77,7 +77,12 @@ export class FailedAttemptStore implements PerRunArtifactStore {
    */
   async read(runId: string): Promise<FailedAttemptReadResult> {
     const path = this.sidecarPath(runId);
-    if (!existsSync(path)) return { records: [], capped: false };
+    // issue #183: readIfExists distinguishes absence (undefined → empty result, the pre-existing
+    // behavior) from a genuine I/O failure (now propagates, rather than being silently swallowed
+    // into the same empty result an absent file produces — that conflation is exactly what let a
+    // real read failure masquerade as "no failed attempts recorded").
+    const content = await readIfExists(path);
+    if (content === undefined) return { records: [], capped: false };
 
     let capped = false;
     try {
@@ -85,13 +90,6 @@ export class FailedAttemptStore implements PerRunArtifactStore {
       capped = info.size >= FAILED_ATTEMPT_SIDECAR_MAX_BYTES;
     } catch {
       // ignore — capped stays false
-    }
-
-    let content: string;
-    try {
-      content = await readFile(path, 'utf8');
-    } catch {
-      return { records: [], capped };
     }
 
     const records: FailedAttemptRecord[] = [];
@@ -114,6 +112,11 @@ export class FailedAttemptStore implements PerRunArtifactStore {
    * double-invocation already removed it) is a no-op, never an error.
    */
   async deleteAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<void> {
-    await unlink(this.sidecarPath(runId)).catch(() => {});
+    const path = this.sidecarPath(runId);
+    try {
+      await deleteIfExists(path);
+    } catch (err) {
+      throw toArtifactDeleteFailedError(runId, 'FailedAttemptStore', [], path, err);
+    }
   }
 }

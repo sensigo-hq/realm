@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **The store layer no longer conflates absence, unreachability, and corruption (issue #183).** `deleteAllForRun` (on `JsonFileStore`, `FailedAttemptStore`, and `JsonTraceBufferStore`), the run/pointer/WAL reads, and the WAL directory listing now treat only `ENOENT` as "not there" — idempotent, never an error. Any OTHER I/O errno (permissions, a read-only filesystem, a torn mount, disk failure) now THROWS a typed `ENGINE_ARTIFACT_DELETE_FAILED` error naming the failing artifact, instead of being silently swallowed and reported as success. This closes the `realm run purge` false-attestation bug: previously, if an artifact genuinely could not be deleted, `purge` would still report it as `purged` — the safety story `purge --force` (an irreversible, operator-invoked deletion) depends on now actually holds. Parse/JSON corruption (a torn WAL line, a garbage idempotency-key pointer) is unaffected by this change in one direction and improved in another: it still recovers (per-line skip, or self-healing to "absent") rather than throwing — but recovery is no longer silent, emitting a structured warning so an operator or log consumer can see it happened. A crash mid-write to a trace-buffer WAL file no longer discards the entire buffer — only the one torn line is skipped, and every entry recorded before the crash is preserved.
+
+---
+
 ## [0.23.0] — 2026-07-14
 
 ### Added

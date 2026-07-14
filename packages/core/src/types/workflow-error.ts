@@ -57,6 +57,10 @@ export type ErrorCode =
   // ENGINE
   | 'ENGINE_INTERNAL'
   | 'ENGINE_STORE_FAILED'
+  // a PerRunArtifactStore.deleteAllForRun implementation could not delete (or could not even
+  // confirm the presence/absence of) an artifact it owns for a run — a genuine non-ENOENT I/O
+  // failure, never used for a plain "already gone" (issue #183)
+  | 'ENGINE_ARTIFACT_DELETE_FAILED'
   | 'ENGINE_ADAPTER_FAILED'
   | 'ENGINE_ADAPTER_NOT_REGISTERED'
   | 'ENGINE_PROCESSOR_FAILED'

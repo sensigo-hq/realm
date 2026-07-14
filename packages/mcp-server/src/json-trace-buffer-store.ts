@@ -1,6 +1,6 @@
 // json-trace-buffer-store.ts — File-based TraceBufferStore using JSONL WAL files.
 import { existsSync } from 'node:fs';
-import { readFile, appendFile, unlink, readdir } from 'node:fs/promises';
+import { appendFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import lockfile from 'proper-lockfile';
 import {
@@ -13,6 +13,9 @@ import {
   BUFFER_LIMIT_BYTES,
   FINAL_LIMIT_ENTRIES,
   FINAL_LIMIT_BYTES,
+  readIfExists,
+  deleteIfExists,
+  toArtifactDeleteFailedError,
 } from '@sensigo/realm';
 import type { AgentTraceEntry } from '@sensigo/realm';
 import { WorkflowError } from '@sensigo/realm';
@@ -42,22 +45,30 @@ export class JsonTraceBufferStore implements TraceBufferStore, PerRunArtifactSto
   private async readWal(
     walPath: string,
   ): Promise<{ count: number; bytes: number; lines: WalLine[] }> {
-    if (!existsSync(walPath)) {
+    // issue #183: readIfExists distinguishes absence (undefined → empty, the pre-existing
+    // behavior) from a genuine I/O failure (now propagates). The old whole-buffer catch treated
+    // BOTH a real I/O failure AND a single torn/partial line (e.g. a crash mid-appendFile — the
+    // abandoned-agent scenario) as "corrupted WAL, discard everything" — losing every earlier,
+    // perfectly good line to one partial write. Per-line parsing below (mirroring
+    // readAllForRun's discipline) skips only the bad line and keeps the rest.
+    const content = await readIfExists(walPath);
+    if (content === undefined) {
       return { count: 0, bytes: 0, lines: [] };
     }
-    try {
-      const content = await readFile(walPath, 'utf8');
-      const lines: WalLine[] = content
-        .split('\n')
-        .filter((l) => l.trim().length > 0)
-        .map((l) => JSON.parse(l) as WalLine);
-      const count = lines.reduce((acc, l) => acc + l.entries.length, 0);
-      const bytes = Buffer.byteLength(content);
-      return { count, bytes, lines };
-    } catch {
-      // Treat corrupted WAL as empty.
-      return { count: 0, bytes: 0, lines: [] };
+
+    const lines: WalLine[] = [];
+    for (const raw of content.split('\n')) {
+      const trimmed = raw.trim();
+      if (trimmed.length === 0) continue;
+      try {
+        lines.push(JSON.parse(trimmed) as WalLine);
+      } catch {
+        console.warn(`⚠ realm: skipping unparseable trace-buffer WAL line in '${walPath}'`);
+      }
     }
+    const count = lines.reduce((acc, l) => acc + l.entries.length, 0);
+    const bytes = Buffer.byteLength(content);
+    return { count, bytes, lines };
   }
 
   async append(runId: string, stepId: string, entries: AgentTraceEntry[]): Promise<AppendResult> {
@@ -146,8 +157,15 @@ export class JsonTraceBufferStore implements TraceBufferStore, PerRunArtifactSto
   }
 
   async delete(runId: string, stepId: string): Promise<void> {
+    // issue #183: this single-step cleanup is best-effort BY CONVENTION at every call site (all
+    // four callers — execution-loop.ts ×3, reclaim-step.ts ×1 — already wrap this call in their
+    // own try/catch that converts a failure into a warning, never treating success as load-bearing
+    // the way deleteAllForRun/purge do). Converting the raw unlink to deleteIfExists here doesn't
+    // change that contract (delete() can still fail — callers already expect and handle it); it
+    // just stops a real I/O error from being invisibly swallowed with NO signal at all, which the
+    // source-text guard (store-fs-guard.test.ts) also requires (no raw unlink in this file).
     const walPath = this.walPath(runId, stepId);
-    await unlink(walPath).catch(() => {});
+    await deleteIfExists(walPath);
   }
 
   /**
@@ -166,15 +184,31 @@ export class JsonTraceBufferStore implements TraceBufferStore, PerRunArtifactSto
     } else {
       try {
         files = await readdir(this.runsDir);
-      } catch {
-        return;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          files = []; // runsDir itself absent → nothing to delete, success
+        } else {
+          throw toArtifactDeleteFailedError(runId, 'JsonTraceBufferStore', [], this.runsDir, err);
+        }
       }
     }
-    await Promise.all(
-      files
-        .filter((f) => f.startsWith(prefix) && f.endsWith('.jsonl'))
-        .map((f) => unlink(join(this.runsDir, f)).catch(() => {})),
-    );
+
+    // SORTED candidates — deterministic residue (which artifact fails first is reproducible
+    // across retries/tests, not dependent on readdir's unspecified ordering).
+    const matching = [...files].filter((f) => f.startsWith(prefix) && f.endsWith('.jsonl')).sort();
+
+    const deleted: string[] = [];
+    for (const file of matching) {
+      const path = join(this.runsDir, file);
+      try {
+        const didDelete = await deleteIfExists(path);
+        if (didDelete) deleted.push(file);
+      } catch (err) {
+        // Sequential stop-on-first-hard-error: don't attempt the remaining candidates once one
+        // has genuinely failed — report exactly what succeeded before the failure.
+        throw toArtifactDeleteFailedError(runId, 'JsonTraceBufferStore', deleted, file, err);
+      }
+    }
   }
 
   /**
@@ -198,8 +232,11 @@ export class JsonTraceBufferStore implements TraceBufferStore, PerRunArtifactSto
     let files: string[];
     try {
       files = await readdir(this.runsDir);
-    } catch {
-      return {};
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return {}; // runsDir itself absent → no WAL for anyone, not just this run
+      }
+      throw err;
     }
 
     const result: Record<string, unknown[]> = {};
@@ -214,11 +251,12 @@ export class JsonTraceBufferStore implements TraceBufferStore, PerRunArtifactSto
         continue; // malformed filename — skip this one file, not the whole export
       }
 
-      let content: string;
-      try {
-        content = await readFile(join(this.runsDir, file), 'utf8');
-      } catch {
-        continue; // vanished or unreadable between readdir and this read — skip, not a throw
+      // issue #183: readIfExists discriminates ENOENT (vanished between readdir and this read — a
+      // benign race, skip) from a genuine I/O failure (now throws, rather than being silently
+      // treated the same as the benign-vanished case).
+      const content = await readIfExists(join(this.runsDir, file));
+      if (content === undefined) {
+        continue;
       }
 
       const lines: unknown[] = [];

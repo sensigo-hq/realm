@@ -18,6 +18,12 @@ export interface PerRunArtifactStore {
    * call, or a call after a concurrent purge already removed the artifact, is a no-op, never an
    * error).
    *
+   * Corollary contract (issue #183): **a store MUST NOT report success for artifacts it cannot
+   * see. Absence (ENOENT) is success; unreachability (any other errno) MUST throw.** A store that
+   * silently swallows a real I/O error (permissions, a torn mount, disk failure) and resolves
+   * anyway is lying to every caller — most consequentially `realm run purge`, whose entire
+   * safety story rests on `purged` meaning the artifact is actually gone.
+   *
    * @param dirEntries Optional pre-scanned `readdir(runsDir)` listing, supplied by a BATCH purge so
    *   glob-based stores avoid one `readdir` per run (O(N×dir) → O(dir)). This is a filesystem-only
    *   optimization — non-fs stores (e.g. Postgres) and exact-path stores ignore it. When omitted, a
