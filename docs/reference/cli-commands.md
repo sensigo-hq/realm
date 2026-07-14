@@ -83,6 +83,7 @@ and invalid `depends_on` references.
 
 ```bash
 realm workflow validate ./my-workflow
+realm workflow validate ./my-workflow --strict   # fail (exit 1) if any warning is present
 ```
 
 Workflows declaring `extensions:` (or validated with `--extensions-module <path>`) are loaded
@@ -90,6 +91,23 @@ file-based, their extension modules are loaded, and step `config` is then valida
 resolved adapter's `config_schema` (two-pass). Extension-free workflows keep the historical
 string-based validation surface — a deliberate strictness asymmetry (file-context checks like
 agent-profile resolution only run for declaring workflows).
+
+**`--strict` (issue #169):** by default, a non-fatal loader warning (an unknown workflow/step key,
+a retry-without-timeout advisory, a sentinel-credential fallback) is printed but the command still
+exits `0` — the workflow is `Valid:` regardless. `--strict` changes that: if **any** warning is
+present, the summary line names the count and the command exits `1` instead. Nothing is checked
+that isn't already checked without the flag — `--strict` only changes what counts as success, so
+it's meant for CI gates that want to catch a typo before it reaches `register`.
+
+```bash
+$ realm workflow validate ./my-workflow --strict
+⚠ step 'sync_data': unknown key 'dependson' — ignored (did you mean 'depends_on'?)
+Valid: my-workflow v1 (3 steps) — 1 warning(s); failing due to --strict
+$ echo $?
+1
+```
+
+Without `--strict`, the same workflow prints the identical warning but exits `0`.
 
 ---
 
@@ -101,12 +119,19 @@ on each call. Fails immediately if any agent profile declared in the workflow is
 
 ```bash
 realm workflow register ./my-workflow
+realm workflow register ./my-workflow --strict   # refuse to persist if any warning is present
 ```
 
 Registering **mints the trust decision** for project extensions: when the workflow declares
 `extensions:`, the modules are fully loaded and duck-validated and step `config` gets the
 `config_schema` two-pass — all **before** anything is persisted. See the
 [Project extensions guide](project-extensions.md).
+
+**`--strict` (issue #169):** same warning surface as `validate --strict` (see above), but the
+consequence is stronger — a warning-bearing workflow is never written to the store at all
+(`store.register` is not called), and the command exits `1`. Without `--strict`, registration
+proceeds as always: the workflow is persisted and every warning is printed alongside the
+`Registered:` line.
 
 ---
 

@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Structured loader-warning channel (issue #169).** The YAML loader's warnings — an unknown workflow/step key, an idempotent-but-inert flag, dual schema declarations — are now typed, code-tagged data (`LoaderWarning { code, severity, message, scope, key?, did_you_mean? }`) resolved through a code→severity policy, instead of fire-and-forget `console.warn`. This is what powers `--strict`, agent-facing diagnostics, and (as a tracked follow-up, issue #170) a future hard-reject expressed as a single, already-wired policy flip.
+- **New public exports from `@sensigo/realm` (additive — nothing removed or changed).** `loadWorkflowFromFileWithDiagnostics` / `loadWorkflowFromStringWithDiagnostics` return `{ definition, warnings }` and print nothing, for callers that want to surface warnings themselves. Also exported: the diagnostics module itself — `DEFAULT_POLICY`, `resolveSeverity`, `findUnknownKeys`, `renderLoaderWarning`, and the `WarningCode` / `LoaderWarning` types. **Non-breaking guarantee:** `loadWorkflowFromFile` / `loadWorkflowFromString` keep their exact signatures and default `console.warn` behavior — existing callers need no change.
+- **`realm workflow validate --strict` and `realm workflow register --strict` (issue #169).** Exit non-zero when any loader warning is present (unknown keys, a retry-without-timeout advisory, a sentinel-credential fallback); `register --strict` additionally refuses to persist the workflow. Opt-in CI enforcement — default (non-strict) behavior is unchanged: warnings still print, the command still succeeds.
+- **"Did you mean…" suggestions on unknown keys (issue #169).** A close typo now gets a targeted suggestion — e.g. a mistyped `dependson` prints `⚠ step 'x': unknown key 'dependson' — ignored (did you mean 'depends_on'?)` — instead of just "ignored." Helps humans fix workflow YAML faster and lets an authoring agent self-correct.
+- **Agent-facing structured diagnostics on `create_workflow` (issue #169).** The response envelope gains an additive `diagnostics?: LoaderWarning[]` field alongside the unchanged `warnings: string[]` — an authoring agent can now branch on `code`/`key`/`did_you_mean` instead of parsing warning text. An unrecognized step key is still only ever dropped and warned, never rejected; the workflow is created either way.
+
+### Changed
+
+- The YAML loader's internal parser is now pure — warnings are collected as data and handed to the caller, which decides whether to print them (the default, byte-identical behavior) or surface them structurally instead. No observable behavior change for existing callers.
+
+---
+
 ## [0.22.0] — 2026-07-13
 
 ### Added
