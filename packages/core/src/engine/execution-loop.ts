@@ -2361,8 +2361,18 @@ export async function executeChain(
   let entryRun: RunRecord | undefined;
   try {
     entryRun = await store.get(options.runId);
-  } catch {
-    entryRun = undefined; // run not readable → fall through to the normal path
+  } catch (err) {
+    // issue #183: the store layer no longer conflates absence with unreachability — store.get()
+    // now throws a typed I/O error (rather than mapping it to STATE_RUN_NOT_FOUND) when the run
+    // record exists but can't actually be read. Swallow ONLY the expected "doesn't exist" case
+    // and fall through to the normal path (which re-attempts the read and surfaces its own
+    // properly-typed ENGINE_STORE_FAILED); re-throw everything else immediately rather than
+    // silently treating a real I/O failure as "the run doesn't exist."
+    if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
+      entryRun = undefined;
+    } else {
+      throw err;
+    }
   }
   if (entryRun !== undefined && isTerminalPhase(entryRun.run_phase)) {
     return {

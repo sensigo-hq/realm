@@ -1,6 +1,6 @@
 // Local file-backed run store. Stores each run as a JSON file in ~/.realm/runs/.
 // Uses proper-lockfile to prevent concurrent writes.
-import { mkdir, readFile, readdir, unlink } from 'node:fs/promises';
+import { mkdir, readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -17,6 +17,7 @@ import { computeClaimDeadline } from '../engine/claim-liveness.js';
 import { hashParams } from './params-hash.js';
 import { decideIdempotencyPolicy } from './idempotency-policy.js';
 import { atomicWriteFile } from './atomic-write.js';
+import { readIfExists, deleteIfExists, toArtifactDeleteFailedError } from './fs-io.js';
 
 const DEFAULT_RUNS_DIR = join(homedir(), '.realm', 'runs');
 
@@ -125,12 +126,24 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     await mkdir(this.keysDir(), { recursive: true });
   }
 
-  /** Read a pointer file; returns undefined if absent or unparseable (self-heals via reclaim/fallback). */
+  /**
+   * Read a pointer file. Absence (ENOENT) → undefined. A genuine I/O failure (permissions, a
+   * torn mount, …) THROWS — issue #183: previously any error here, I/O or parse alike, silently
+   * self-healed to "absent," which let a real read failure masquerade as a missing pointer. Parse
+   * corruption (a torn/garbage pointer file) still self-heals to undefined — `create()` and
+   * `reconcileKeys()` both depend on that recovery — but is no longer SILENT: a loud, structured
+   * warning is emitted so an operator/log consumer can see the corruption happened.
+   */
   private async readPointer(keyPath: string): Promise<KeyPointer | undefined> {
-    if (!existsSync(keyPath)) return undefined;
+    const raw = await readIfExists(keyPath);
+    if (raw === undefined) return undefined;
     try {
-      return JSON.parse(await readFile(keyPath, 'utf8')) as KeyPointer;
-    } catch {
+      return JSON.parse(raw) as KeyPointer;
+    } catch (err) {
+      console.warn(
+        `⚠ realm: corrupt idempotency-key pointer at '${keyPath}' — treating as absent and ` +
+          `self-healing (${err instanceof Error ? err.message : String(err)}).`,
+      );
       return undefined;
     }
   }
@@ -272,20 +285,14 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
 
   async get(runId: string): Promise<RunRecord> {
     const path = this.filePath(runId);
-    if (!existsSync(path)) {
-      throw this.runNotFoundError(runId);
-    }
-    // issue #107: closes the TOCTOU window between the existsSync check above and this read — a
-    // concurrent purge (or any other deletion) can remove the file in between. ENOENT here maps to
-    // the SAME STATE_RUN_NOT_FOUND the pre-check promises; anything else rethrows (#132's torn-read
-    // loudness is preserved — this only silences the one specific, expected race).
-    let raw: string;
-    try {
-      raw = await readFile(path, 'utf8');
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw this.runNotFoundError(runId);
-      throw err;
-    }
+    // issue #183: readIfExists collapses the old existsSync-then-readFile TOCTOU pair into one
+    // ENOENT-discriminating read — ENOENT (whether the file was never there, or a concurrent
+    // purge removed it between calls) maps to the SAME STATE_RUN_NOT_FOUND; any OTHER errno
+    // PROPAGATES rather than being mapped to STATE_RUN_NOT_FOUND — mapping a real I/O failure to
+    // "not found" is exactly the already_purged false-attestation bug #183 exists to close.
+    // #132's torn-read loudness is preserved throughout.
+    const raw = await readIfExists(path);
+    if (raw === undefined) throw this.runNotFoundError(runId);
     const parsed = JSON.parse(raw) as Record<string, unknown>;
 
     // Legacy format detection: runs written before Phase 35 have `state` but no `completed_steps`.
@@ -639,8 +646,14 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       record = await this.get(runId);
     } catch (err) {
       if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') return; // already gone
-      throw err;
+      // issue #183: any OTHER failure here means deleteAllForRun cannot even determine what to
+      // delete (or confirm the run file itself is reachable) — wrap it into the SAME aggregate
+      // shape the unlink failures below use, so a caller (e.g. purge) always observes ONE
+      // consistent, typed failure contract regardless of which internal step actually failed.
+      throw toArtifactDeleteFailedError(runId, 'JsonFileStore', [], this.filePath(runId), err);
     }
+
+    const deleted: string[] = [];
 
     // Conditional pointer delete: only when this run actually owns an idempotency key. A
     // `rerun`/supersede may have repointed the key to a NEWER run since this run was minted —
@@ -649,15 +662,34 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     // self-heals a dangling pointer regardless, so skipping a repointed one here is always safe.
     if (record.idempotency_key !== undefined) {
       const keyPath = this.keyPath(record.workflow_id, record.idempotency_key);
-      const pointer = await this.readPointer(keyPath);
+      let pointer: KeyPointer | undefined;
+      try {
+        pointer = await this.readPointer(keyPath);
+      } catch (err) {
+        throw toArtifactDeleteFailedError(runId, 'JsonFileStore', deleted, keyPath, err);
+      }
       if (pointer !== undefined && pointer.run_id === runId) {
-        await unlink(keyPath).catch(() => {});
+        try {
+          const didDelete = await deleteIfExists(keyPath);
+          if (didDelete) deleted.push(keyPath);
+        } catch (err) {
+          // Sequential stop-on-first-hard-error: a pointer we cannot delete means we STOP here —
+          // do NOT proceed to the run-file delete below. Leaving the run file in place on a
+          // partial failure is the safe outcome (issue #107's crash-anchor invariant): the run is
+          // re-enumerated and the whole purge retried on the next pass.
+          throw toArtifactDeleteFailedError(runId, 'JsonFileStore', deleted, keyPath, err);
+        }
       }
     }
 
     // The run file LAST — it is the crash re-enumeration anchor: a crash mid-purge leaves this
     // file in place, so the run is found again on the next purge/list pass and retried
     // idempotently (the pointer, if any, is already gone by then).
-    await unlink(this.filePath(runId)).catch(() => {});
+    try {
+      const didDelete = await deleteIfExists(this.filePath(runId));
+      if (didDelete) deleted.push(this.filePath(runId));
+    } catch (err) {
+      throw toArtifactDeleteFailedError(runId, 'JsonFileStore', deleted, this.filePath(runId), err);
+    }
   }
 }

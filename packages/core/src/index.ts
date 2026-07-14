@@ -9,6 +9,16 @@ export { JsonFileStore } from './store/json-file-store.js';
 export type { ReconcileSummary } from './store/json-file-store.js';
 export type { PerRunArtifactStore } from './store/per-run-artifact-store.js';
 export { atomicWriteFile } from './store/atomic-write.js';
+export {
+  deleteIfExists,
+  readIfExists,
+  statIfExists,
+  FsIoError,
+  isRetryableArtifactErrno,
+  artifactDeleteFailedError,
+  toArtifactDeleteFailedError,
+} from './store/fs-io.js';
+export type { ArtifactDeleteFailure } from './store/fs-io.js';
 export { hashParams, canonicalJson } from './store/params-hash.js';
 export { decideIdempotencyPolicy } from './store/idempotency-policy.js';
 export type { IdempotencyDecision } from './store/idempotency-policy.js';

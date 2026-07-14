@@ -33,6 +33,23 @@ describe('JsonTraceBufferStore', () => {
     expect(entries[0]?.event).toBe('evt');
   });
 
+  it('read() is torn-line-safe: a corrupt/partial line is skipped, sibling good lines in the SAME file survive (issue #183)', async () => {
+    // Exercises readWal directly (via the public read()/append() surface) — distinct from the
+    // readAllForRun torn-line test below, which exercises a DIFFERENT method that already had its
+    // own per-line discipline before #183. readWal's old behavior was whole-buffer discard on ANY
+    // parse error (`catch { return { count: 0, bytes: 0, lines: [] }; }`) — this proves that's
+    // fixed: a crash mid-appendFile no longer nukes every entry recorded before it.
+    await store.append('run-1', 'step-a', [{ event: 'a1' }]);
+    await store.append('run-1', 'step-a', [{ event: 'a2' }]);
+    const path = join(dir, walFileName('run-1', 'step-a'));
+    await appendFile(path, '{ this is not valid json\n', 'utf8');
+
+    const entries = await store.read('run-1', 'step-a');
+
+    expect(entries).toHaveLength(2); // only the two well-formed lines — not zero
+    expect(entries.map((e) => e.event).sort()).toEqual(['a1', 'a2']);
+  });
+
   describe('deleteAllForRun (issue #107)', () => {
     it('deletes every WAL file for the run across multiple steps', async () => {
       await store.append('run-1', 'step-a', [{ event: 'a' }]);

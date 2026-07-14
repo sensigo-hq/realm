@@ -2,6 +2,12 @@
 
 // Store
 export { InMemoryStore } from './store/in-memory-store.js';
+export { perRunArtifactStoreContract } from './store/per-run-artifact-store-contract.js';
+export type {
+  ArtifactStoreLaw,
+  ArtifactStoreContractCase,
+  PerRunArtifactStoreContractAdapter,
+} from './store/per-run-artifact-store-contract.js';
 
 // Fixtures
 export {
