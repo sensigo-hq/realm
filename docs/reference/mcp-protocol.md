@@ -264,10 +264,14 @@ on the next call instead of repeating the same typo.
 
 ### Metadata fields
 
-| Field              | Required | Description                                           |
-| ------------------ | -------- | ----------------------------------------------------- |
-| `name`             | No       | Short kebab-case slug used to derive the workflow ID. |
-| `task_description` | No       | Human-readable description of the overall task.       |
+| Field              | Required | Description                                                                                                                                                                                                                                                                                                    |
+| ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`             | No       | Short kebab-case slug used to derive the workflow ID.                                                                                                                                                                                                                                                          |
+| `description`      | No       | **Declarative** — what this workflow is for / when to use it. Becomes the workflow's `description`, surfaced in the agent protocol (`get_workflow_protocol`) and echoed by `realm workflow validate`/`register`. No synthesized default: omit it (or submit only whitespace) and the workflow simply has none. |
+| `task_description` | No       | **Imperative** — how to begin driving this run (the quick-start instruction). Becomes `protocol.quick_start`. Distinct from `description` above — one says what the workflow is, this says how to start it.                                                                                                    |
+
+`description` and `task_description` map to different places and are never blurred: `description` is
+the declarative "what it's for," `task_description` is the imperative "how to begin."
 
 ### Response and continuation
 
