@@ -2,9 +2,10 @@
 import { watch, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { Command } from 'commander';
-import { loadWorkflowFromFile, WorkflowError } from '@sensigo/realm';
+import { loadWorkflowFromFileWithDiagnostics, WorkflowError } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
 import { loadWorkflowForRegistration } from './register.js';
+import { printLoaderWarnings, rejectOnErrorSeverity } from '../lib/loader-warnings.js';
 
 /**
  * Attempts to load and register a workflow YAML file.
@@ -13,14 +14,26 @@ import { loadWorkflowForRegistration } from './register.js';
  * workflow declares `extensions:`, the modules load + duck-validate and step config gets the
  * config_schema two-pass BEFORE persisting. NOTE: long-lived watch processes keep the FIRST
  * imported content of each module path (ESM cache) — restart watch to pick up module changes.
+ *
+ * Prints every accumulated loader warning via printLoaderWarnings (issue #169) and applies the
+ * dormant issue #170 boundary-reject (inert today) — but never `--strict` (watch is a dev loop;
+ * `--strict` is deliberately validate/register-only).
  * @param filePath Path to the workflow YAML file.
  * @param store    The registrar to register into.
  */
 async function registerFile(filePath: string, store: WorkflowRegistrar): Promise<void> {
   const timestamp = new Date().toISOString();
   try {
-    const definition = await loadWorkflowForRegistration(filePath);
+    const { definition, warnings } = await loadWorkflowForRegistration(filePath);
+    if (rejectOnErrorSeverity(warnings)) {
+      printLoaderWarnings(warnings);
+      console.error(
+        `[${timestamp}] Invalid: '${definition.id}' has a warning escalated to an error by policy — refusing to register.`,
+      );
+      return;
+    }
     await store.register(definition);
+    printLoaderWarnings(warnings);
     console.log(
       `[${timestamp}] Registered: ${definition.id} v${definition.version} (${Object.keys(definition.steps).length} steps)`,
     );
@@ -60,7 +73,10 @@ export async function watchWorkflow(
   if (resolvedProfilesDir === undefined) {
     const workflowDir = dirname(resolve(filePath));
     try {
-      const definition = loadWorkflowFromFile(filePath);
+      // WithDiagnostics + discard its warnings (issue #169): this load exists only to read
+      // profiles_dir, not to surface anything — registerFile (just above) already owns
+      // surfacing every warning for this same file, so printing here would double it.
+      const { definition } = loadWorkflowFromFileWithDiagnostics(filePath);
       resolvedProfilesDir =
         definition.profiles_dir !== undefined
           ? resolve(workflowDir, definition.profiles_dir)

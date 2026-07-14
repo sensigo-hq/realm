@@ -11,6 +11,12 @@ import type {
 } from '../types/workflow-definition.js';
 import { KNOWN_STEP_KEYS, KNOWN_WORKFLOW_KEYS } from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import {
+  findUnknownKeys,
+  renderLoaderWarning,
+  resolveSeverity,
+  type LoaderWarning,
+} from './diagnostics.js';
 import { resolveTemplates } from './template-resolver.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
@@ -198,13 +204,18 @@ export function findTrustRoot(dir: string): string {
 }
 
 /**
- * Loads a WorkflowDefinition from a YAML file on disk.
+ * Pure core of loadWorkflowFromFile (issue #169): parses + resolves everything a file-based load
+ * needs, but never prints and never chooses between the two public presentations — it always
+ * returns the definition alongside every collected LoaderWarning. `loadWorkflowFromFile` (prints
+ * via renderLoaderWarning, returns just the definition — byte-identical default behavior, the
+ * non-breaking invariant) and `loadWorkflowFromFileWithDiagnostics` (prints nothing, returns both)
+ * are both thin wrappers over this.
  * @throws WorkflowError on read failure or structural validation errors.
  */
-export function loadWorkflowFromFile(
+function loadWorkflowFromFileCore(
   filePath: string,
   registry?: ExtensionRegistry,
-): WorkflowDefinition {
+): { definition: WorkflowDefinition; warnings: LoaderWarning[] } {
   let content: string;
   try {
     content = readFileSync(filePath, 'utf8');
@@ -217,7 +228,9 @@ export function loadWorkflowFromFile(
       retryable: false,
     });
   }
-  const definition = parseWorkflowString(content, registry, { allowExtensions: true });
+  const { definition, warnings } = parseWorkflowString(content, registry, {
+    allowExtensions: true,
+  });
 
   // Resolve agent profiles — only possible when we have a file path.
   const workflowDir = dirname(resolve(filePath));
@@ -341,11 +354,42 @@ export function loadWorkflowFromFile(
 
   definition.origin = 'human';
 
+  return { definition, warnings };
+}
+
+/**
+ * Loads a WorkflowDefinition from a YAML file on disk. UNCHANGED signature/return type — the
+ * non-breaking invariant (issue #169): every existing execution caller keeps compiling and
+ * printing warnings for free. Structured warnings are reachable only via
+ * `loadWorkflowFromFileWithDiagnostics`.
+ * @throws WorkflowError on read failure or structural validation errors.
+ */
+export function loadWorkflowFromFile(
+  filePath: string,
+  registry?: ExtensionRegistry,
+): WorkflowDefinition {
+  const { definition, warnings } = loadWorkflowFromFileCore(filePath, registry);
+  for (const w of warnings) console.warn(renderLoaderWarning(w));
   return definition;
 }
 
 /**
- * Loads a WorkflowDefinition from a YAML string.
+ * Same as `loadWorkflowFromFile`, but prints nothing and returns every collected LoaderWarning
+ * alongside the definition (issue #169). Opt-in for callers that want to surface warnings
+ * themselves (validate/register/watch/`--strict`) instead of the default console.warn behavior.
+ */
+export function loadWorkflowFromFileWithDiagnostics(
+  filePath: string,
+  registry?: ExtensionRegistry,
+): { definition: WorkflowDefinition; warnings: LoaderWarning[] } {
+  return loadWorkflowFromFileCore(filePath, registry);
+}
+
+/**
+ * Loads a WorkflowDefinition from a YAML string. UNCHANGED signature/return type — the
+ * non-breaking invariant (issue #169): every existing execution caller keeps compiling and
+ * printing warnings for free. Structured warnings are reachable only via
+ * `loadWorkflowFromStringWithDiagnostics`.
  * Validates structure and DAG dependency references.
  * A declared `extensions` key is a hard load error — extensions require file-based loading
  * (no directory context exists to resolve relative extension module paths against).
@@ -355,6 +399,21 @@ export function loadWorkflowFromString(
   content: string,
   registry?: ExtensionRegistry,
 ): WorkflowDefinition {
+  const { definition, warnings } = parseWorkflowString(content, registry, {
+    allowExtensions: false,
+  });
+  for (const w of warnings) console.warn(renderLoaderWarning(w));
+  return definition;
+}
+
+/**
+ * Same as `loadWorkflowFromString`, but prints nothing and returns every collected LoaderWarning
+ * alongside the definition (issue #169).
+ */
+export function loadWorkflowFromStringWithDiagnostics(
+  content: string,
+  registry?: ExtensionRegistry,
+): { definition: WorkflowDefinition; warnings: LoaderWarning[] } {
   return parseWorkflowString(content, registry, { allowExtensions: false });
 }
 
@@ -428,13 +487,19 @@ function detectDependencyCycles(edges: Map<string, string[]>): string[][] {
  * Shared YAML → WorkflowDefinition parser. `allowExtensions` distinguishes file-based loading
  * (extensions permitted — a directory context exists) from string-based loading (hard error,
  * fired before any other processing).
+ *
+ * PURE (issue #169): never prints, never throws on a warning — every non-fatal condition is
+ * collected into the returned `warnings: LoaderWarning[]` instead of console.warn'd directly.
+ * Callers (loadWorkflowFromFile/loadWorkflowFromFileCore, loadWorkflowFromString) decide whether
+ * to print (the default, byte-identical wrappers) or surface the structured array
+ * (the `...WithDiagnostics` variants).
  * @throws WorkflowError on parse failure or structural validation errors.
  */
 function parseWorkflowString(
   content: string,
   registry: ExtensionRegistry | undefined,
   opts: { allowExtensions: boolean },
-): WorkflowDefinition {
+): { definition: WorkflowDefinition; warnings: LoaderWarning[] } {
   // Step 1: Parse YAML
   let raw: unknown;
   try {
@@ -452,6 +517,7 @@ function parseWorkflowString(
   }
 
   const errors: string[] = [];
+  const warnings: LoaderWarning[] = [];
 
   // Step 2: Top-level validation
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -474,13 +540,13 @@ function parseWorkflowString(
   // (hard-reject) and #169 (structured warnings channel) are deliberately out of scope here.
   {
     const workflowId = typeof doc['id'] === 'string' ? doc['id'] : '<unknown>';
-    for (const key of Object.keys(doc)) {
-      if (!(KNOWN_WORKFLOW_KEYS as readonly string[]).includes(key)) {
-        console.warn(
-          `⚠ workflow '${workflowId}': unknown key '${key}' — ignored (not a recognized workflow field).`,
-        );
-      }
-    }
+    warnings.push(
+      ...findUnknownKeys(doc, KNOWN_WORKFLOW_KEYS, {
+        scope: 'workflow',
+        code: 'UNKNOWN_WORKFLOW_KEY',
+        id: workflowId,
+      }),
+    );
   }
 
   // Project extensions: hard error for string-based loading (fires before any other
@@ -555,14 +621,14 @@ function parseWorkflowString(
 
     // WARN (do not reject) on an unknown step key — runs after template resolution above, so a
     // template-expanded step's keys are checked too. Same non-breaking posture as the
-    // workflow-level check (issue #144); #170/#169 remain deliberately out of scope.
-    for (const key of Object.keys(step)) {
-      if (!(KNOWN_STEP_KEYS as readonly string[]).includes(key)) {
-        console.warn(
-          `⚠ step '${stepName}': unknown key '${key}' — ignored (not a recognized step field).`,
-        );
-      }
-    }
+    // workflow-level check (issue #144).
+    warnings.push(
+      ...findUnknownKeys(step, KNOWN_STEP_KEYS, {
+        scope: 'step',
+        code: 'UNKNOWN_STEP_KEY',
+        step: stepName,
+      }),
+    );
 
     if (stepName === 'run' || stepName === 'context') {
       errors.push(`Step name '${stepName}' is reserved and cannot be used as a step identifier`);
@@ -698,11 +764,16 @@ function parseWorkflowString(
     // `deadline: null` (issue #101), so the flag is inert — `realm run reclaim --all` can never
     // select it. The author should know it stays per-step-manual-reclaim-only.
     if (step['idempotent'] === true && step['execution'] === 'auto' && hasFinalizerStep) {
-      console.warn(
-        `Step '${stepName}': 'idempotent: true' is inert in a finalizer-bearing workflow (its claim ` +
+      warnings.push({
+        code: 'IDEMPOTENT_INERT_IN_FINALIZER',
+        severity: resolveSeverity('IDEMPOTENT_INERT_IN_FINALIZER'),
+        scope: 'step',
+        step: stepName,
+        message:
+          `Step '${stepName}': 'idempotent: true' is inert in a finalizer-bearing workflow (its claim ` +
           `carries no deadline, so 'realm run reclaim --all' can never select it). Recover it with ` +
           `'realm run reclaim --step ${stepName} --force'.`,
-      );
+      });
     }
 
     // output_schema is only valid on execution: agent steps.
@@ -719,10 +790,15 @@ function parseWorkflowString(
       step['input_schema'] !== undefined &&
       step['output_schema'] !== undefined
     ) {
-      console.warn(
-        `Step '${stepName}': declares both input_schema and output_schema; the agent's submitted ` +
+      warnings.push({
+        code: 'DUAL_SCHEMA_DECLARED',
+        severity: resolveSeverity('DUAL_SCHEMA_DECLARED'),
+        scope: 'step',
+        step: stepName,
+        message:
+          `Step '${stepName}': declares both input_schema and output_schema; the agent's submitted ` +
           `output is validated against both — prefer one to avoid divergence.`,
-      );
+      });
     }
 
     // trace_schema is only valid on execution: agent steps.
@@ -1205,7 +1281,7 @@ function parseWorkflowString(
   // Step 4: Stamp schema version and return typed result
   const definition = doc as unknown as WorkflowDefinition;
   definition.schema_version = CURRENT_WORKFLOW_SCHEMA_VERSION;
-  return definition;
+  return { definition, warnings };
 }
 
 /** Returns true if any step in the raw steps map declares use_template. */

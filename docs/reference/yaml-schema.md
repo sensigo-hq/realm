@@ -2,6 +2,14 @@
 
 Complete reference for `workflow.yaml` fields. Every field documented here is validated at `realm workflow register` time — errors include the field name and expected type.
 
+An unrecognized top-level or step key (a typo, or a field from a removed feature) is never a hard
+error — it's dropped and a warning is printed, e.g. `⚠ step 'sync_data': unknown key 'dependson' —
+ignored (did you mean 'depends_on'?)`, with the **did-you-mean** suggestion appearing only when
+the key is a close match of a real one. `realm workflow validate --strict` (or `register --strict`)
+turns these warnings into a failure, for CI. A future major version will hard-reject unrecognized
+keys outright (tracked in [issue #170](https://github.com/sensigo-hq/realm/issues/170)) — until
+then, leaving one in place while you fix it is safe.
+
 ---
 
 ## Top-level fields

@@ -53,21 +53,22 @@ action. See [Operating & recovering runs](operating-runs.md).
 
 Every tool call returns a `ResponseEnvelope`:
 
-| Field                | Type     | Description                                                                                                             |
-| -------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `command`            | string   | The step name that was executed.                                                                                        |
-| `run_id`             | string   | Stable run identifier.                                                                                                  |
-| `run_version`        | number   | Integer version of the run record. Observability only — not required as input to any tool.                              |
-| `status`             | string   | `ok`, `error`, `blocked`, or `confirm_required`.                                                                        |
-| `data`               | object   | Step output from the handler or adapter.                                                                                |
-| `evidence`           | array    | Evidence snapshots produced by this call.                                                                               |
-| `warnings`           | string[] | Non-fatal notices (e.g. a recovery path was taken — check `context_hint` for details).                                  |
-| `errors`             | string[] | Error messages when `status` is `error` or `blocked`.                                                                   |
-| `context_hint`       | string   | Human-readable description of what just happened and the current run state. Present on every response including errors. |
-| `next_actions`       | array    | Steps available for execution. Empty on terminal or unrecoverable states. Multiple items signal parallel fan-out.       |
-| `agent_action`       | string   | Error recovery instruction. Present only when `status` is `error` or `blocked`.                                         |
-| `chained_auto_steps` | array    | Ordered record of auto steps the engine ran silently in this call. Omitted when no auto steps were chained.             |
-| `gate`               | object   | Gate data. Present only when `status` is `confirm_required`.                                                            |
+| Field                | Type     | Description                                                                                                                                                                                                                                                                                                           |
+| -------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `command`            | string   | The step name that was executed.                                                                                                                                                                                                                                                                                      |
+| `run_id`             | string   | Stable run identifier.                                                                                                                                                                                                                                                                                                |
+| `run_version`        | number   | Integer version of the run record. Observability only — not required as input to any tool.                                                                                                                                                                                                                            |
+| `status`             | string   | `ok`, `error`, `blocked`, or `confirm_required`.                                                                                                                                                                                                                                                                      |
+| `data`               | object   | Step output from the handler or adapter.                                                                                                                                                                                                                                                                              |
+| `evidence`           | array    | Evidence snapshots produced by this call.                                                                                                                                                                                                                                                                             |
+| `warnings`           | string[] | Non-fatal notices (e.g. a recovery path was taken — check `context_hint` for details).                                                                                                                                                                                                                                |
+| `diagnostics`        | array    | Structured, code-tagged counterpart to `warnings` — `{ code, severity, message, scope, key?, did_you_mean? }` per entry. Additive-optional; only `create_workflow` populates it today (see below), every other tool omits it. Lets an agent branch on `code`/`key`/`did_you_mean` instead of parsing `warnings` text. |
+| `errors`             | string[] | Error messages when `status` is `error` or `blocked`.                                                                                                                                                                                                                                                                 |
+| `context_hint`       | string   | Human-readable description of what just happened and the current run state. Present on every response including errors.                                                                                                                                                                                               |
+| `next_actions`       | array    | Steps available for execution. Empty on terminal or unrecoverable states. Multiple items signal parallel fan-out.                                                                                                                                                                                                     |
+| `agent_action`       | string   | Error recovery instruction. Present only when `status` is `error` or `blocked`.                                                                                                                                                                                                                                       |
+| `chained_auto_steps` | array    | Ordered record of auto steps the engine ran silently in this call. Omitted when no auto steps were chained.                                                                                                                                                                                                           |
+| `gate`               | object   | Gate data. Present only when `status` is `confirm_required`.                                                                                                                                                                                                                                                          |
 
 ---
 
@@ -255,12 +256,22 @@ Use `create_workflow` when no registered workflow matches the task. It registers
 | `input_schema`    | No       | JSON Schema for the fields this step's `params` must include. Used to validate `execute_step` submissions. |
 | `timeout_seconds` | No       | Positive integer. If the step is not completed within this time, the run enters an error state.            |
 
+An unrecognized step key (e.g. a typo like `dependson`) is never rejected — the field is dropped
+and the workflow is still created. It's surfaced both in `warnings` (the rendered text, e.g.
+`⚠ step 'x': unknown key 'dependson' — ignored (did you mean 'depends_on'?)`) and as a structured
+entry (`code: "UNKNOWN_CREATE_WORKFLOW_KEY"`) in `diagnostics` — an authoring agent can self-correct
+on the next call instead of repeating the same typo.
+
 ### Metadata fields
 
-| Field              | Required | Description                                           |
-| ------------------ | -------- | ----------------------------------------------------- |
-| `name`             | No       | Short kebab-case slug used to derive the workflow ID. |
-| `task_description` | No       | Human-readable description of the overall task.       |
+| Field              | Required | Description                                                                                                                                                                                                                                                                                                    |
+| ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`             | No       | Short kebab-case slug used to derive the workflow ID.                                                                                                                                                                                                                                                          |
+| `description`      | No       | **Declarative** — what this workflow is for / when to use it. Becomes the workflow's `description`, surfaced in the agent protocol (`get_workflow_protocol`) and echoed by `realm workflow validate`/`register`. No synthesized default: omit it (or submit only whitespace) and the workflow simply has none. |
+| `task_description` | No       | **Imperative** — how to begin driving this run (the quick-start instruction). Becomes `protocol.quick_start`. Distinct from `description` above — one says what the workflow is, this says how to start it.                                                                                                    |
+
+`description` and `task_description` map to different places and are never blurred: `description` is
+the declarative "what it's for," `task_description` is the imperative "how to begin."
 
 ### Response and continuation
 

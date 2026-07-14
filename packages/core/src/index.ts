@@ -164,11 +164,22 @@ export { validateInputSchema } from './validation/input-schema.js';
 export {
   loadWorkflowFromFile,
   loadWorkflowFromString,
+  loadWorkflowFromFileWithDiagnostics,
+  loadWorkflowFromStringWithDiagnostics,
   findTrustRoot,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from './workflow/yaml-loader.js';
 export { JsonWorkflowStore } from './workflow/registrar.js';
 export type { WorkflowRegistrar } from './workflow/registrar.js';
+
+// Diagnostics — structured loader-warning channel (issue #169)
+export {
+  DEFAULT_POLICY,
+  resolveSeverity,
+  findUnknownKeys,
+  renderLoaderWarning,
+} from './workflow/diagnostics.js';
+export type { WarningCode, LoaderWarning } from './workflow/diagnostics.js';
 
 // Handler primitives
 export { resolveResource } from './handlers/primitives/resolve-resource.js';
