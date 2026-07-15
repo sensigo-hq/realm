@@ -4,7 +4,11 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
+## [0.25.0] — 2026-07-15
+
+### Added
+
+- **`EvidenceSnapshot.trace_summary.buffered_lines_adopted` (issue #185).** An optional count, present only when > 0, recording how many buffer/WAL lines a claiming execution adopted into its canonical trace — an honest signal that the trace may include observations from a prior or concurrent writer (the agent trace buffer has no single owner). Faithful per-writer separation via an optional client-supplied nonce is tracked as a follow-up (#197).
 
 ### Fixed
 
