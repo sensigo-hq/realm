@@ -396,6 +396,23 @@ function printGcReport(
   console.log(`\n${NOT_REAPED_FOOTER}`);
 }
 
+/** gc's exit code: non-zero iff gc could not complete a sweep it attempted (issue #163
+ *  exit-code correction). A failed unlink in EITHER sweep, OR an aborted orphan sweep
+ *  (enumeration failed — `artifactSweepError` set), is a failure. Merely *finding* reapable
+ *  residue is NOT — that holds in both dry-run and `--force`, so this one helper decides both
+ *  branches' exit code instead of each re-deriving its own (inline) predicate. */
+export function gcExitCode(
+  tempResult: SweepOrphansResult,
+  artifactResult: OrphanArtifactSweepResult | undefined,
+  artifactSweepError: string | undefined,
+): number {
+  const anyFailure =
+    tempResult.failed.length > 0 ||
+    (artifactResult?.failed.length ?? 0) > 0 ||
+    artifactSweepError !== undefined;
+  return anyFailure ? 1 : 0;
+}
+
 export const gcCommand = new Command('gc')
   .description(
     'Sweep orphaned atomic-write .tmp files and run-less orphaned WAL/sidecar artifacts (dry-run by default)',
@@ -465,6 +482,9 @@ export const gcCommand = new Command('gc')
 
       if (opts.force !== true) {
         printGcReport(preview, bytes, true, artifactPreview, artifactSweepError);
+        if (gcExitCode(preview, artifactPreview, artifactSweepError) !== 0) {
+          process.exit(1);
+        }
         return;
       }
 
@@ -489,7 +509,7 @@ export const gcCommand = new Command('gc')
       }
 
       printGcReport(result, bytes, false, artifactResult, artifactSweepError);
-      if (result.failed.length > 0 || (artifactResult?.failed.length ?? 0) > 0) {
+      if (gcExitCode(result, artifactResult, artifactSweepError) !== 0) {
         process.exit(1);
       }
     } catch (err) {

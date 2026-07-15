@@ -13,7 +13,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore, FailedAttemptStore } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
-import { sweepOrphans, sweepOrphanArtifacts } from './gc.js';
+import { sweepOrphans, sweepOrphanArtifacts, gcExitCode } from './gc.js';
+import type { SweepOrphansResult, OrphanArtifactSweepResult } from './gc.js';
 
 /** Matches the module-private `FLOOR_MS` in gc.ts (1 hour) — not imported (sweepOrphans is the
  *  ONLY export; the floor is enforced inside it, per the design's "reap logic module-private"). */
@@ -577,5 +578,40 @@ describe('fail-closed wiring: a listRunIds() failure must abort the orphan sweep
       await chmod(dir, 0o700).catch(() => {});
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('gcExitCode (issue #163 exit-code correction)', () => {
+  const clean: SweepOrphansResult = { reaped: [], already_gone: [], failed: [] };
+  const cleanArtifacts: OrphanArtifactSweepResult = { reaped: [], already_gone: [], failed: [] };
+
+  it('all-clean: no temp failures, no artifact failures, no abort → 0', () => {
+    expect(gcExitCode(clean, cleanArtifacts, undefined)).toBe(0);
+  });
+
+  it('a failed temp unlink → 1', () => {
+    const tempResult: SweepOrphansResult = {
+      reaped: [],
+      already_gone: [],
+      failed: [{ path: '/some/path.tmp', error: 'EACCES' }],
+    };
+    expect(gcExitCode(tempResult, cleanArtifacts, undefined)).toBe(1);
+  });
+
+  it('a failed orphan-artifact reap → 1', () => {
+    const artifactResult: OrphanArtifactSweepResult = {
+      reaped: [],
+      already_gone: [],
+      failed: [{ path: '/some/wal.jsonl', runId: 'x', error: 'EACCES' }],
+    };
+    expect(gcExitCode(clean, artifactResult, undefined)).toBe(1);
+  });
+
+  it('an aborted orphan sweep (artifactSweepError defined) → 1 — the case that was exit-0 before this correction', () => {
+    expect(gcExitCode(clean, undefined, 'EACCES: permission denied')).toBe(1);
+  });
+
+  it('an abort ALONGSIDE an otherwise-clean temp sweep and no artifactResult → 1 (the abort dominates)', () => {
+    expect(gcExitCode(clean, undefined, 'listRunIds failed')).toBe(1);
   });
 });
