@@ -14,6 +14,7 @@ import type { RunStore, CreateRunOptions } from './store-interface.js';
 import type { PerRunArtifactStore } from './per-run-artifact-store.js';
 import { findEligibleSteps, deriveRunPhase } from '../engine/eligibility.js';
 import { computeClaimDeadline } from '../engine/claim-liveness.js';
+import { TERMINAL_PHASES } from '../engine/lifecycle.js';
 import { hashParams } from './params-hash.js';
 import { decideIdempotencyPolicy } from './idempotency-policy.js';
 import { atomicWriteFile } from './atomic-write.js';
@@ -88,6 +89,17 @@ function pickCanonical(runs: RunRecord[]): { canonical: RunRecord; extraLive: Ru
   return { canonical: sorted[0]!, extraLive: [] };
 }
 
+/**
+ * GLOBAL LOCK ORDER (issue #184): run-file lock BEFORE key lock, never the reverse.
+ * `deleteAllForRun` is the only site that nests them (run-file lock held, key lock acquired
+ * inside it, key lock released, then the run file is deleted and the run-file lock released).
+ * Every other method that touches both takes them SEQUENTIALLY, never nested: `save()` releases
+ * its run-file lock before `registerImportedKey()` acquires the key lock; `create()` only ever
+ * takes the key lock (the run file it writes under that lock is a fresh path, not yet lockable
+ * meaningfully — no run-file lock is held during `create()`). Violating this order (acquiring a
+ * key lock and THEN a run-file lock while still holding the key lock) is the classic two-lock
+ * deadlock shape and must never be introduced.
+ */
 export class JsonFileStore implements RunStore, PerRunArtifactStore {
   private readonly runsDir: string;
 
@@ -365,9 +377,10 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     }
   }
 
-  // issue #107: no ENOENT-hardening needed here — purge is terminal-only, and claimStep only ever
-  // targets a run that findEligibleSteps has just proven has a non-terminal eligible step, so it
-  // can never race a purge (which requires terminal_state). Left as a plain existsSync check.
+  // issue #184: the #107 comment that used to sit here ("no ENOENT-hardening needed — purge is
+  // terminal-only") is now FALSE — a single-id `realm run purge <id> --force` has no age gate and
+  // can race a claimStep (the resurrect-race class of bug this issue fixes generally), so the
+  // post-lock read below is now ENOENT-hardened like update()'s already was.
   async claimStep(
     runId: string,
     stepName: string,
@@ -389,7 +402,13 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     const release = await lockfile.lock(path, { retries: { retries: 3, minTimeout: 50 } });
     try {
       // Re-read the freshest version under lock.
-      const raw = await readFile(path, 'utf8');
+      let raw: string;
+      try {
+        raw = await readFile(path, 'utf8');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw this.runNotFoundError(runId);
+        throw err;
+      }
       const run = JSON.parse(raw) as RunRecord;
 
       // Guard: step must not already be claimed.
@@ -633,63 +652,138 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
   }
 
   /**
+   * Builds the `STATE_RUN_BUSY` error thrown when `deleteAllForRun` cannot proceed because
+   * another writer holds the run-file (or key) lock, or because the run is no longer terminal
+   * (issue #184). Retryable: a live writer self-heals (the lock is released), and a genuinely
+   * stale lock is eventually stolen by the next contender.
+   */
+  private runBusyError(runId: string, reason: 'locked' | 'no_longer_terminal'): WorkflowError {
+    const message =
+      reason === 'locked'
+        ? `Run '${runId}' is locked by another writer`
+        : `Run '${runId}' is no longer terminal — refusing to delete (it may have been resumed)`;
+    return new WorkflowError(message, {
+      code: 'STATE_RUN_BUSY',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: true,
+      details: { runId, reason },
+    });
+  }
+
+  /**
    * Deletes every artifact this store owns for `runId` (issue #107): the idempotency-key
    * pointer (conditionally) and the run file itself. Exact-path — ignores `dirEntries` (this
    * store never needs a directory listing to locate its own artifacts).
    *
    * Idempotent: if the run file is already gone (a concurrent purge, or a double-invocation),
    * this is a no-op, not an error.
+   *
+   * issue #184 — the resurrect-race fix: the WHOLE body runs under the run-file lock (matching
+   * `update()`/`claimStep()`), and the run's terminal state is RE-VERIFIED under that lock, not
+   * just at selection time. `RESUMABLE_PHASES ⊂ TERMINAL_PHASES` and `resume.ts` sets
+   * `terminal_state: false`, and `atomicWriteFile` (a temp write + `rename`) recreates a
+   * deleted target on `rename` — so, unlocked, a concurrent `realm resume` racing a batch purge
+   * could resurrect the run file as a LIVE run with its WAL/sidecar/pointer already gone, while
+   * purge still reported `purged`. Re-checking terminal state under the SAME lock `update()`
+   * uses closes that window: `deleteAllForRun` now unconditionally refuses a non-terminal run.
    */
   async deleteAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<void> {
-    let record: RunRecord;
+    const path = this.filePath(runId);
+    let release: () => Promise<void>;
     try {
-      record = await this.get(runId);
+      release = await lockfile.lock(path, {
+        realpath: false,
+        retries: { retries: 3, minTimeout: 50 },
+      });
     } catch (err) {
-      if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') return; // already gone
-      // issue #183: any OTHER failure here means deleteAllForRun cannot even determine what to
-      // delete (or confirm the run file itself is reachable) — wrap it into the SAME aggregate
-      // shape the unlink failures below use, so a caller (e.g. purge) always observes ONE
-      // consistent, typed failure contract regardless of which internal step actually failed.
-      throw toArtifactDeleteFailedError(runId, 'JsonFileStore', [], this.filePath(runId), err);
+      if ((err as NodeJS.ErrnoException).code === 'ELOCKED') {
+        throw this.runBusyError(runId, 'locked');
+      }
+      throw err;
     }
 
-    const deleted: string[] = [];
-
-    // Conditional pointer delete: only when this run actually owns an idempotency key. A
-    // `rerun`/supersede may have repointed the key to a NEWER run since this run was minted —
-    // deleting the pointer unconditionally would destroy the successor's LIVE pointer out from
-    // under it. Only unlink when the pointer still points back at THIS run; reconcileKeys()
-    // self-heals a dangling pointer regardless, so skipping a repointed one here is always safe.
-    if (record.idempotency_key !== undefined) {
-      const keyPath = this.keyPath(record.workflow_id, record.idempotency_key);
-      let pointer: KeyPointer | undefined;
+    try {
+      let record: RunRecord;
       try {
-        pointer = await this.readPointer(keyPath);
+        record = await this.get(runId);
       } catch (err) {
-        throw toArtifactDeleteFailedError(runId, 'JsonFileStore', deleted, keyPath, err);
+        if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') return; // already gone
+        // issue #183: any OTHER failure here means deleteAllForRun cannot even determine what to
+        // delete (or confirm the run file itself is reachable) — wrap it into the SAME aggregate
+        // shape the unlink failures below use, so a caller (e.g. purge) always observes ONE
+        // consistent, typed failure contract regardless of which internal step actually failed.
+        throw toArtifactDeleteFailedError(runId, 'JsonFileStore', [], path, err);
       }
-      if (pointer !== undefined && pointer.run_id === runId) {
+
+      // issue #184 — the resurrect-race fix: re-verify terminal UNDER THE LOCK. A run selected as
+      // terminal at purge-selection time may have been resumed since — `deleteAllForRun` must
+      // refuse to delete a run that is (now) live, regardless of what the caller believed at
+      // selection. This is a sound store-level invariant, not just a purge-specific patch:
+      // `deleteAllForRun` never deletes a non-terminal run, full stop.
+      if (!TERMINAL_PHASES.has(record.run_phase) || record.terminal_state !== true) {
+        throw this.runBusyError(runId, 'no_longer_terminal');
+      }
+
+      const deleted: string[] = [];
+
+      // Conditional pointer delete: only when this run actually owns an idempotency key. A
+      // `rerun`/supersede may have repointed the key to a NEWER run since this run was minted —
+      // deleting the pointer unconditionally would destroy the successor's LIVE pointer out from
+      // under it. Only unlink when the pointer still points back at THIS run; reconcileKeys()
+      // self-heals a dangling pointer regardless, so skipping a repointed one here is always safe.
+      //
+      // issue #184 — the pointer TOCTOU fix: the whole read→check→delete critical section is now
+      // KEY-LOCKED (matching `create()`/`writePointer()`), nested INSIDE the run-file lock already
+      // held above — see the GLOBAL LOCK ORDER invariant on the class docstring. Without this, a
+      // concurrent supersede could repoint the key to a live successor between the read and the
+      // unlink, and purge would delete a LIVE pointer out from under it.
+      if (record.idempotency_key !== undefined) {
+        const keyPath = this.keyPath(record.workflow_id, record.idempotency_key);
+        let keyRelease: () => Promise<void>;
         try {
-          const didDelete = await deleteIfExists(keyPath);
-          if (didDelete) deleted.push(keyPath);
+          keyRelease = await lockfile.lock(keyPath, { realpath: false, retries: KEY_LOCK_RETRIES });
         } catch (err) {
-          // Sequential stop-on-first-hard-error: a pointer we cannot delete means we STOP here —
-          // do NOT proceed to the run-file delete below. Leaving the run file in place on a
-          // partial failure is the safe outcome (issue #107's crash-anchor invariant): the run is
-          // re-enumerated and the whole purge retried on the next pass.
-          throw toArtifactDeleteFailedError(runId, 'JsonFileStore', deleted, keyPath, err);
+          if ((err as NodeJS.ErrnoException).code === 'ELOCKED') {
+            throw this.runBusyError(runId, 'locked');
+          }
+          throw err;
+        }
+        try {
+          let pointer: KeyPointer | undefined;
+          try {
+            pointer = await this.readPointer(keyPath);
+          } catch (err) {
+            throw toArtifactDeleteFailedError(runId, 'JsonFileStore', deleted, keyPath, err);
+          }
+          if (pointer !== undefined && pointer.run_id === runId) {
+            try {
+              const didDelete = await deleteIfExists(keyPath);
+              if (didDelete) deleted.push(keyPath);
+            } catch (err) {
+              // Sequential stop-on-first-hard-error: a pointer we cannot delete means we STOP
+              // here — do NOT proceed to the run-file delete below. Leaving the run file in place
+              // on a partial failure is the safe outcome (issue #107's crash-anchor invariant):
+              // the run is re-enumerated and the whole purge retried on the next pass.
+              throw toArtifactDeleteFailedError(runId, 'JsonFileStore', deleted, keyPath, err);
+            }
+          }
+        } finally {
+          await keyRelease();
         }
       }
-    }
 
-    // The run file LAST — it is the crash re-enumeration anchor: a crash mid-purge leaves this
-    // file in place, so the run is found again on the next purge/list pass and retried
-    // idempotently (the pointer, if any, is already gone by then).
-    try {
-      const didDelete = await deleteIfExists(this.filePath(runId));
-      if (didDelete) deleted.push(this.filePath(runId));
-    } catch (err) {
-      throw toArtifactDeleteFailedError(runId, 'JsonFileStore', deleted, this.filePath(runId), err);
+      // The run file LAST — it is the crash re-enumeration anchor: a crash mid-purge leaves this
+      // file in place, so the run is found again on the next purge/list pass and retried
+      // idempotently (the pointer, if any, is already gone by then).
+      try {
+        const didDelete = await deleteIfExists(path);
+        if (didDelete) deleted.push(path);
+      } catch (err) {
+        throw toArtifactDeleteFailedError(runId, 'JsonFileStore', deleted, path, err);
+      }
+    } finally {
+      await release();
     }
   }
 }

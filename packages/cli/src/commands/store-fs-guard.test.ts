@@ -12,6 +12,23 @@
 //     repo — a store that adds `deleteAllForRun` and is wired into purge.ts but never actually
 //     run through `perRunArtifactStoreContract` would silently ship unverified against the L1-L4
 //     laws.
+//
+// A THIRD guard was considered and DEFERRED (issue #184's own STOP/report escape hatch): a
+// source-text check asserting `JsonFileStore.deleteAllForRun` never acquires a key lock BEFORE
+// (or without) its run-file lock — the GLOBAL LOCK ORDER invariant declared on `JsonFileStore`'s
+// class docstring (run-file lock, then key lock nested inside it; never the reverse; see also the
+// `save()`/`registerImportedKey()` SEQUENTIAL — not nested — precedent that invariant contrasts
+// with). No robust source-text matcher was found: a same-file, line-number-order check (does
+// `lockfile.lock(path` appear before `lockfile.lock(keyPath` textually) would (a) false-positive
+// on a compliant reorder that happens to mention `keyPath` earlier in an unrelated comment or
+// string, and (b) false-NEGATIVE on a rewrite that preserves textual order while no longer
+// actually nesting the two locks (e.g. two SEQUENTIAL lock/release pairs in the same relative
+// order, which look identical to this regex but do not share the ordering guarantee the real
+// invariant requires) — giving false confidence in exactly the shape of regression this guard
+// would exist to catch. A true structural (AST-scope) check is disproportionate for one method's
+// one invariant and inconsistent with this repo's established source-text-guard convention. The
+// invariant is therefore declared-only (the class docstring + this comment), not guarded — flagged
+// here per issue #184's explicit instruction to defer rather than ship a flaky regex.
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
