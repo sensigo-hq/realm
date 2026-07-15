@@ -190,18 +190,22 @@ realm run export abc123 --out bug-1234.json # writes exactly that file
 
 ```jsonc
 {
-  "realm_export_version": 1,
+  "realm_export_version": 2,
   "exported_at": "<ISO-8601, stamped at export time>",
   "run": {
     /* the full RunRecord — steps, evidence, skip_details, claims, etc. */
   },
   "attempts": [
-    /* parsed failed-attempt records — [] if none */
+    /* parsed failed-attempt records — [] if none, OR if the sidecar read failed (check "complete") */
   ],
   "attempts_capped": false /* true = the sidecar hit its 256KB ceiling — attempts is a PREFIX, not exhaustive */,
   "wal": {
-    /* { "<stepId>": [...] } — every buffered/WAL trace for the run — {} if none */
+    /* { "<stepId>": [...] } — every buffered/WAL trace for the run — {} if none, OR if the WAL read failed (check "complete") */
   },
+  "complete": true /* false iff any artifact below failed to read — a real I/O error, never a genuine absence */,
+  "artifact_errors": [
+    /* { artifact, code, message } for each artifact that failed — always [] when "complete" is true */
+  ],
 }
 ```
 
@@ -211,7 +215,24 @@ runs — the case export matters most for. `attempts_capped` mirrors `realm run 
 `capped` flag: if the failed-attempt sidecar reached its append-and-stop ceiling, later attempts were
 dropped at write time, so `attempts` is a prefix of what actually happened, not the whole story — the
 CLI also prints a warning at export time when this is true, so you don't have to notice it only by
-inspecting the JSON later.
+inspecting the JSON later. `attempts_capped` and `complete` are independent signals: a sidecar can be
+both fully readable and capped (a known, positively-characterized truncation) — that is a different
+thing from a read that failed outright.
+
+**`realm_export_version: 2` — the bundle never lies by omission.** Before v2, a real I/O failure
+reading the failed-attempt sidecar or the WAL meant **no bundle at all** — the command exited 1 with
+nothing written, stranding you without even the run record in exactly the stuck-run-handoff case
+export exists for. As of v2, the run record and every artifact that CAN be read are still written;
+`complete: false` and a populated `artifact_errors` (naming which artifact, its errno/error code, and
+the message) mark the bundle as incomplete instead. The command still exits non-zero and prints an
+`⚠ INCOMPLETE export` warning naming each failed artifact — the exit code carries the signal for
+CI/scripts, but the file itself is never withheld. There is no flag to opt out of this — honesty is
+not opt-in. **A `realm_export_version: 1` bundle predates these two fields, so its completeness is
+unknown** — v1 either had everything (an all-or-nothing success) or doesn't exist at all (an
+all-or-nothing failure produced no file), but nothing in the bundle itself states which case you're
+looking at; only a v2 bundle's `complete` field can be trusted as an explicit signal. Only a genuinely
+**unreadable run record** (a real I/O error, not "the run doesn't exist") still produces no bundle at
+all — the run record is the bundle's core, so there is truly nothing to hand off if it can't be read.
 
 **Works on any run, not just terminal ones.** Unlike `purge`, export has no terminal-only gate:
 handing off a _stuck_ (non-terminal) run for debugging is its highest-value use case, and read-only

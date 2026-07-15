@@ -15,6 +15,8 @@ import {
   FailedAttemptStore,
   buildFailedAttemptRecord,
   serializeFailedAttemptLine,
+  FsIoError,
+  WorkflowError,
 } from '@sensigo/realm';
 import type { RunRecord } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
@@ -92,7 +94,7 @@ describe('buildExportBundle', () => {
       );
 
       expect(warning).toBeUndefined(); // terminal — no best-effort warning
-      expect(bundle.realm_export_version).toBe(1);
+      expect(bundle.realm_export_version).toBe(2);
       expect(bundle.exported_at).toBe(now.toISOString());
       expect(bundle.run).toEqual(run);
       expect(bundle.attempts).toHaveLength(1);
@@ -100,6 +102,8 @@ describe('buildExportBundle', () => {
       expect(Object.keys(bundle.wal).sort()).toEqual(['step-a', 'step-b']);
       expect(bundle.wal['step-a']).toHaveLength(1);
       expect(bundle.wal['step-b']).toHaveLength(1);
+      expect(bundle.complete).toBe(true); // issue #186: everything read cleanly
+      expect(bundle.artifact_errors).toEqual([]);
 
       // The whole bundle is genuinely JSON-serializable (a real export writes JSON.stringify(bundle)).
       expect(() => JSON.stringify(bundle)).not.toThrow();
@@ -108,7 +112,7 @@ describe('buildExportBundle', () => {
     }
   });
 
-  it('clean run (no attempts, no WAL): attempts: [], attempts_capped: false, wal: {} — not an error', async () => {
+  it('clean run (no attempts, no WAL): attempts: [], attempts_capped: false, wal: {} — not an error (issue #186: complete: true, absence is not a failure)', async () => {
     const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'completed', terminal_state: true });
@@ -123,9 +127,177 @@ describe('buildExportBundle', () => {
       expect(bundle.attempts).toEqual([]);
       expect(bundle.attempts_capped).toBe(false);
       expect(bundle.wal).toEqual({});
+      expect(bundle.complete).toBe(true); // genuine ENOENT absence, not a read failure
+      expect(bundle.artifact_errors).toEqual([]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  describe('graceful degradation — never all-or-nothing (issue #186)', () => {
+    it('unreadable WAL: bundle is still written with the run record, complete: false, artifact_errors names the WAL + code, wal: {}', async () => {
+      const { dir, runStore, failedAttemptStore } = await makeStores();
+      try {
+        const run = makeRun({ run_phase: 'completed', terminal_state: true });
+        await injectRun(dir, run);
+
+        const brokenTraceBufferStore = {
+          readAllForRun: async () => {
+            throw new FsIoError(
+              'readFile',
+              '/fake/trace-buffer.jsonl',
+              Object.assign(new Error('boom'), { code: 'EISDIR' }),
+            );
+          },
+        };
+
+        const { bundle } = await buildExportBundle(run.id, {
+          runStore,
+          failedAttemptStore,
+          traceBufferStore: brokenTraceBufferStore,
+        });
+
+        expect(bundle.run.id).toBe(run.id); // the run record is STILL present
+        expect(bundle.complete).toBe(false);
+        expect(bundle.wal).toEqual({}); // substituted, not omitted
+        expect(bundle.artifact_errors).toEqual([
+          {
+            artifact: 'trace-buffer WAL',
+            code: 'EISDIR',
+            message: expect.stringContaining('boom'),
+          },
+        ]);
+        // still genuinely JSON-serializable — a real export writes this straight to disk.
+        expect(() => JSON.stringify(bundle)).not.toThrow();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('unreadable sidecar: same shape for attempts — complete: false, artifact_errors names the sidecar + code, attempts: []', async () => {
+      const { dir, runStore, traceBufferStore } = await makeStores();
+      try {
+        const run = makeRun({ run_phase: 'completed', terminal_state: true });
+        await injectRun(dir, run);
+
+        const brokenFailedAttemptStore = {
+          read: async () => {
+            throw new FsIoError(
+              'readFile',
+              '/fake/sidecar.jsonl',
+              Object.assign(new Error('kaboom'), { code: 'EACCES' }),
+            );
+          },
+        };
+
+        const { bundle } = await buildExportBundle(run.id, {
+          runStore,
+          failedAttemptStore: brokenFailedAttemptStore,
+          traceBufferStore,
+        });
+
+        expect(bundle.run.id).toBe(run.id);
+        expect(bundle.complete).toBe(false);
+        expect(bundle.attempts).toEqual([]); // substituted, not omitted
+        expect(bundle.attempts_capped).toBe(false); // the read never succeeded — capped stays false
+        expect(bundle.artifact_errors).toEqual([
+          {
+            artifact: 'failed-attempt sidecar',
+            code: 'EACCES',
+            message: expect.stringContaining('kaboom'),
+          },
+        ]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('BOTH artifacts unreadable: complete: false with two entries in artifact_errors, run record still present', async () => {
+      const { dir, runStore } = await makeStores();
+      try {
+        const run = makeRun({ run_phase: 'completed', terminal_state: true });
+        await injectRun(dir, run);
+
+        const brokenFailedAttemptStore = {
+          read: async () => {
+            throw new FsIoError('readFile', '/fake/sidecar.jsonl', { code: 'EIO' });
+          },
+        };
+        const brokenTraceBufferStore = {
+          readAllForRun: async () => {
+            throw new FsIoError('readFile', '/fake/wal.jsonl', { code: 'EIO' });
+          },
+        };
+
+        const { bundle } = await buildExportBundle(run.id, {
+          runStore,
+          failedAttemptStore: brokenFailedAttemptStore,
+          traceBufferStore: brokenTraceBufferStore,
+        });
+
+        expect(bundle.run.id).toBe(run.id);
+        expect(bundle.complete).toBe(false);
+        expect(bundle.artifact_errors).toHaveLength(2);
+        expect(bundle.artifact_errors.map((e) => e.artifact).sort()).toEqual([
+          'failed-attempt sidecar',
+          'trace-buffer WAL',
+        ]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('run record unreadable (a real I/O error, not STATE_RUN_NOT_FOUND): no bundle at all — propagates, never fabricated', async () => {
+      const { dir, failedAttemptStore, traceBufferStore } = await makeStores();
+      try {
+        const brokenRunStore = {
+          get: async () => {
+            throw new WorkflowError('disk exploded', {
+              code: 'ENGINE_STORE_FAILED',
+              category: 'ENGINE',
+              agentAction: 'stop',
+              retryable: false,
+            });
+          },
+        };
+
+        await expect(
+          buildExportBundle('whatever-id', {
+            runStore: brokenRunStore,
+            failedAttemptStore,
+            traceBufferStore,
+          }),
+        ).rejects.toMatchObject({ code: 'ENGINE_STORE_FAILED' });
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('attempts_capped and complete are independent: a capped-but-fully-readable run → complete: true, attempts_capped: true', async () => {
+      const { dir, runStore, traceBufferStore } = await makeStores();
+      try {
+        const run = makeRun({ run_phase: 'completed', terminal_state: true });
+        await injectRun(dir, run);
+
+        // The read SUCCEEDS (no throw) but reports capped: true — a known, positively
+        // characterized truncation, distinct from a read that failed outright.
+        const cappedButReadableStore = {
+          read: async () => ({ records: [], capped: true }),
+        };
+
+        const { bundle } = await buildExportBundle(run.id, {
+          runStore,
+          failedAttemptStore: cappedButReadableStore,
+          traceBufferStore,
+        });
+
+        expect(bundle.complete).toBe(true); // no read FAILED — capped is a different signal
+        expect(bundle.attempts_capped).toBe(true);
+        expect(bundle.artifact_errors).toEqual([]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('attempts_capped (correction — the truncation signal)', () => {
