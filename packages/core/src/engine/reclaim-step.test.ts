@@ -8,11 +8,13 @@ import { findEligibleSteps } from './eligibility.js';
 import { classifyInProgressClaims } from './claim-liveness.js';
 import { executeStep } from './execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryTraceBufferStore } from '../store/trace-buffer-store.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import type { TraceBufferStore } from '../store/trace-buffer-store.js';
 import type { StepHandler } from '../extensions/step-handler.js';
 
 const autoWf: WorkflowDefinition = {
@@ -332,5 +334,123 @@ describe('reclaimStep — finalizer-wedge recovery (headline)', () => {
     expect(final.terminal_state).toBe(true);
     expect(cleanupRan).toHaveBeenCalledTimes(1);
     expect(final.completed_steps).toContain('cleanup'); // the finalizer ran on recovery
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Clearing the stale trace buffer on reclaim (issue #198).
+// ---------------------------------------------------------------------------
+
+const agentReclaimWf: WorkflowDefinition = {
+  id: 'reclaim-agent-wf',
+  name: 'Reclaim Agent WF',
+  version: 1,
+  steps: {
+    'step-agent': { description: 'agent step', execution: 'agent', depends_on: [] },
+  },
+};
+
+describe('reclaimStep — clearing the stale trace buffer (issue #198)', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-reclaim-wal-'));
+    store = new JsonFileStore(dir);
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("clears the reclaimed step's WAL — a subsequent claim + executeStep adopts NO stale lines (no buffered_lines_adopted caveat)", async () => {
+    const { run } = await store.create({
+      workflowId: 'reclaim-agent-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const claimed = await store.claimStep(run.id, 'step-agent', agentReclaimWf);
+    await store.update({ ...claimed, claims: { 'step-agent': { deadline: pastIso() } } });
+
+    const traceBufferStore = new InMemoryTraceBufferStore();
+    await traceBufferStore.append(run.id, 'step-agent', [{ event: 'dead_attempt_line' }]);
+    expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(1);
+
+    const result = await reclaimStep(store, run.id, 'step-agent', { traceBufferStore });
+    expect(result.outcome).toBe('reclaimed');
+
+    // The WAL is gone — cleared by the reclaim itself, not left for the next attempt to inherit.
+    expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(0);
+
+    // A subsequent claim + executeStep starts from a clean buffer: no stale lines adopted, so
+    // Fix 3's (#185) caveat never fires — this execution's trace is entirely its own.
+    const envelope = await executeStep(store, agentReclaimWf, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => ({}),
+      traceBufferStore,
+      trace: [{ event: 'fresh_conclusion' }],
+    });
+    expect(envelope.status).toBe('ok');
+    const snap = envelope.evidence[0];
+    expect(snap?.trace).toEqual([{ seq: 1, event: 'fresh_conclusion' }]);
+    expect(snap?.trace_summary?.buffered_lines_adopted).toBeUndefined();
+  });
+
+  it('clearStaleWal warns loudly (never rethrows) on a real I/O failure — the reclaim itself still succeeds', async () => {
+    const { run } = await store.create({
+      workflowId: 'reclaim-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const claimed = await store.claimStep(run.id, 'work', autoWf);
+    await store.update({ ...claimed, claims: { work: { deadline: pastIso() } } });
+
+    const failingTraceBufferStore: TraceBufferStore = {
+      append: async () => {
+        throw new Error('should not be called');
+      },
+      read: async () => [],
+      delete: async () => {
+        throw new Error('simulated disk failure');
+      },
+      deleteAllForRun: async () => {},
+      readAllForRun: async () => ({}),
+    };
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await reclaimStep(store, run.id, 'work', {
+        traceBufferStore: failingTraceBufferStore,
+      });
+      // Not blocked — the reclaim itself succeeded despite the WAL clear failing.
+      expect(result.outcome).toBe('reclaimed');
+      const after = await store.get(run.id);
+      expect(after.in_progress_steps).not.toContain('work');
+
+      // But it was NOT silently swallowed (issue #183 contract) — a warning was emitted naming
+      // the run, the step, and the underlying error.
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const [message] = warnSpy.mock.calls[0]!;
+      expect(String(message)).toContain(run.id);
+      expect(String(message)).toContain('work');
+      expect(String(message)).toContain('simulated disk failure');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('reclaimStep without a traceBufferStore is unchanged — the undefined early-return still holds (no regression for any caller that omits it)', async () => {
+    const { run } = await store.create({
+      workflowId: 'reclaim-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const claimed = await store.claimStep(run.id, 'work', autoWf);
+    await store.update({ ...claimed, claims: { work: { deadline: pastIso() } } });
+
+    // No options at all — mirrors every pre-#198 caller.
+    const result = await reclaimStep(store, run.id, 'work');
+    expect(result.outcome).toBe('reclaimed');
   });
 });

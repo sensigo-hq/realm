@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **`append_trace` now rejects a terminal run (issue #187).** A late `append_trace` to a `completed`/`failed`/`abandoned`/`aborted` run returns a typed error (`report_to_user`) instead of writing unreadable WAL residue — closing the one orphan source correct purge ordering cannot reach (a WAL born after purge's snapshot).
+
+### Fixed
+
+- **`realm run reclaim` now clears the reclaimed step's stale trace buffer (issue #198).** The `clearStaleWal` hook was inert (the CLI never passed a trace-buffer store); wiring it means a re-driven step starts from a clean buffer instead of inheriting a dead attempt's lines, and a failed clear now warns loudly instead of being silently swallowed (the #183 contract). Reduces how often #185's "may include a prior/concurrent writer" caveat fires.
+
+---
+
 ## [0.25.0] — 2026-07-15
 
 ### Added

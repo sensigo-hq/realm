@@ -9,7 +9,7 @@ import {
   InMemoryTraceBufferStore,
   BUFFER_LIMIT_COUNT,
 } from '@sensigo/realm';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import type { WorkflowDefinition, RunRecord } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import { handleAppendTrace, registerAppendTrace } from './append-trace.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -231,6 +231,92 @@ describe('handleAppendTrace', () => {
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
       // Only 'valid_event' survives normalization.
+      expect(result.buffer_count).toBe(1);
+    }
+  });
+});
+
+describe('append_trace terminal-run guard (issue #187)', () => {
+  let runDir: string;
+  let workflowDir: string;
+  let runStore: JsonFileStore;
+  let workflowStore: JsonWorkflowStore;
+  let traceBufferStore: InMemoryTraceBufferStore;
+
+  beforeEach(async () => {
+    runDir = await mkdtemp(join(tmpdir(), 'realm-append-trace-terminal-runs-'));
+    workflowDir = await mkdtemp(join(tmpdir(), 'realm-append-trace-terminal-wf-'));
+    runStore = new JsonFileStore(runDir);
+    workflowStore = new JsonWorkflowStore(workflowDir);
+    traceBufferStore = new InMemoryTraceBufferStore();
+
+    const def = makeWorkflowDef();
+    await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+  });
+
+  /** Drives a fresh run to exactly the requested terminal `run_phase` via deriveRunPhase's own
+   *  rules (see engine/eligibility.ts) — abandoned_at / aborted_at / terminal_reason /
+   *  failed_steps are the ONLY inputs that decide it. */
+  async function makeTerminalRun(
+    phase: 'completed' | 'failed' | 'abandoned' | 'aborted',
+  ): Promise<RunRecord> {
+    const { run } = await runStore.create({
+      workflowId: 'append-trace-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const patch: Partial<RunRecord> =
+      phase === 'completed'
+        ? { terminal_state: true, terminal_reason: 'Workflow completed.' }
+        : phase === 'failed'
+          ? {
+              terminal_state: true,
+              terminal_reason: `Step 'step-agent' failed: boom`,
+              failed_steps: ['step-agent'],
+            }
+          : phase === 'aborted'
+            ? { terminal_state: true, aborted_at: { step_id: 'step-agent' } }
+            : { terminal_state: true, abandoned_at: new Date().toISOString() };
+    const updated = await runStore.update({ ...run, ...patch });
+    expect(updated.run_phase).toBe(phase); // sanity: confirms the fixture actually reaches the phase under test
+    return updated;
+  }
+
+  it.each(['completed', 'failed', 'abandoned', 'aborted'] as const)(
+    'append_trace to a %s run is rejected (typed error, report_to_user) and writes NO WAL',
+    async (phase) => {
+      const run = await makeTerminalRun(phase);
+
+      await expect(
+        handleAppendTrace(
+          { run_id: run.id, step_id: 'step-agent', entries: [{ event: 'late_entry' }] },
+          { runStore, workflowStore, traceBufferStore },
+        ),
+      ).rejects.toMatchObject({
+        code: 'STATE_STEP_NOT_ELIGIBLE',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: { step_state: 'run_terminal', run_phase: phase },
+      });
+
+      // No WAL was written — the buffer is empty (append() was never reached).
+      const remaining = await traceBufferStore.read(run.id, 'step-agent');
+      expect(remaining).toHaveLength(0);
+    },
+  );
+
+  it('append_trace to a non-terminal run with an eligible step is unaffected — still succeeds, byte-identical to before', async () => {
+    const { run } = await runStore.create({
+      workflowId: 'append-trace-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const result = await handleAppendTrace(
+      { run_id: run.id, step_id: 'step-agent', entries: [{ event: 'ok_entry' }] },
+      { runStore, workflowStore, traceBufferStore },
+    );
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
       expect(result.buffer_count).toBe(1);
     }
   });

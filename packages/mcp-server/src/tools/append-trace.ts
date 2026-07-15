@@ -6,6 +6,7 @@ import {
   JsonFileStore,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
+  isTerminalPhase,
   type AppendResult,
   type TraceBufferStore,
   type AgentTraceEntry,
@@ -44,6 +45,31 @@ export async function handleAppendTrace(
 
   // 1. Load the run. Throws STATE_RUN_NOT_FOUND if missing.
   const run = await runStore.get(args.run_id);
+
+  // 1b. issue #187: reject a terminal run BEFORE any step guard or WAL write. A WAL appended to
+  // a completed/failed/abandoned/aborted run is always unreadable residue — the step it names
+  // will never finalize again, so nothing will ever adopt or delete it. This is the one orphan
+  // source correct purge ordering structurally can't reach (a WAL born after purge's snapshot
+  // but before the run-file unlink) — refusing it here means it is never created in the first
+  // place. A terminal run is permanent, so this is agentAction: 'report_to_user' (NOT
+  // provide_input/retryable — retrying can't un-terminate a run).
+  if (isTerminalPhase(run.run_phase)) {
+    throw new WorkflowError(
+      `Run '${args.run_id}' is terminal (phase: '${run.run_phase}') — trace entries can no longer be adopted by any step.`,
+      {
+        code: 'STATE_STEP_NOT_ELIGIBLE',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: {
+          step_id: args.step_id,
+          step_state: 'run_terminal',
+          run_phase: run.run_phase,
+          run_version: run.version,
+        },
+      },
+    );
+  }
 
   // 2. Load the workflow definition.
   const definition = await workflowStore.get(run.workflow_id);
