@@ -7,11 +7,13 @@ import {
   abandonRun,
   resolvePreExecutionAgentAction,
   type RunPhase,
+  type RunStore,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 
 export interface HandleAbandonRunStores {
-  runStore?: JsonFileStore;
+  /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
+  runStore?: RunStore;
 }
 
 export interface AbandonRunSummary {

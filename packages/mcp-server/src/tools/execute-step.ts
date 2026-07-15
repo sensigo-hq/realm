@@ -12,9 +12,8 @@ import {
   type StepDispatcher,
   type ResponseEnvelope,
   type AgentTraceEntry,
-  type FailedAttemptStore,
 } from '@sensigo/realm';
-import type { HandleRunStores } from './start-run.js';
+import type { HandleRunStores, FailedAttemptStoreLike } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
 
 /**
@@ -44,7 +43,7 @@ async function emitFailedAttemptTelemetry(
   },
   workflowId: string,
   result: ResponseEnvelope,
-  failedAttemptStore?: FailedAttemptStore,
+  failedAttemptStore?: FailedAttemptStoreLike,
 ): Promise<void> {
   // Build the shared metadata-only record once (bail both sinks if it can't be built).
   let record: ReturnType<typeof buildFailedAttemptRecord>;

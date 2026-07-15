@@ -9,6 +9,7 @@ All notable changes to this project are documented here.
 ### Changed
 
 - **`append_trace` now rejects a terminal run (issue #187).** A late `append_trace` to a `completed`/`failed`/`abandoned`/`aborted` run returns a typed error (`report_to_user`) instead of writing unreadable WAL residue — closing the one orphan source correct purge ordering cannot reach (a WAL born after purge's snapshot).
+- **The MCP server's `runStore` option now accepts any `RunStore` implementation (issue #188, PR-1 — internal/API-surface, non-breaking).** Was concrete `JsonFileStore`-only, which meant a Postgres/cloud-backed run store could neither satisfy the option type nor be injected at all. Artifact stores (the trace buffer, the failed-attempt sidecar) can now also be injected as objects, for backends that don't co-locate artifacts on the filesystem — with an explicit co-location contract (documented on `RealmMcpServerOptions`): inject BOTH artifact stores together (co-located with the run store's own domain), or use a `JsonFileStore` run store and let both be derived exactly as before. The local default is unchanged and byte-identical; a run store without a derivable path and no injected artifact stores now fails loudly at construction instead of silently losing every trace. Prerequisite for pluggable/cloud run stores — does not itself add any capability flags or gates (that is PR-2).
 
 ### Fixed
 

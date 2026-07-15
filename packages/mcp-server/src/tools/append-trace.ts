@@ -11,12 +11,14 @@ import {
   type TraceBufferStore,
   type AgentTraceEntry,
   type ResponseEnvelope,
+  type RunStore,
 } from '@sensigo/realm';
 import { traceEntrySchema } from './execute-step.js';
 import { sseJsonStringify } from '../sse-json.js';
 
 export interface HandleAppendTraceStores {
-  runStore?: JsonFileStore;
+  /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
+  runStore?: RunStore;
   workflowStore?: JsonWorkflowStore;
   traceBufferStore?: TraceBufferStore;
 }
@@ -145,14 +147,7 @@ export async function handleAppendTrace(
 }
 
 /** Registers the append_trace MCP tool on the server. */
-export function registerAppendTrace(
-  server: McpServer,
-  opts?: {
-    runStore?: JsonFileStore;
-    workflowStore?: JsonWorkflowStore;
-    traceBufferStore?: TraceBufferStore;
-  },
-): void {
+export function registerAppendTrace(server: McpServer, opts?: HandleAppendTraceStores): void {
   server.tool(
     'append_trace',
     [
