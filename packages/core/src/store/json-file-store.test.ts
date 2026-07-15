@@ -1423,3 +1423,76 @@ describe('JsonFileStore ENOENT hardening (issue #107)', () => {
     }
   });
 });
+
+describe('JsonFileStore.listRunIds (issue #163)', () => {
+  it('returns the raw <id>.json basename set — no record parse', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run: a } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { run: b } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+
+      const ids = await store.listRunIds();
+
+      expect(ids).toEqual(new Set([a.id, b.id]));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a corrupt-but-present <id>.json still counts as LIVE (proves this is basename-only, not list())', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const corruptId = 'deadbeef-dead-4eef-8eef-deadbeefdead';
+      await writeFile(join(dir, `${corruptId}.json`), '{ this is not valid json', 'utf8');
+
+      // Sanity: list() would choke on this exact file (JSON.parse with no try/catch) — confirming
+      // listRunIds() is NOT built on top of list() for exactly this reason.
+      await expect(store.list()).rejects.toThrow();
+
+      const ids = await store.listRunIds();
+      expect(ids.has(corruptId)).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores the keys/ subdirectory and any non-.json entries', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+        idempotencyKey: 'k1',
+      });
+      // keys/ now exists (create() with an idempotencyKey makes it) — must not appear in the set.
+
+      const ids = await store.listRunIds();
+
+      expect(ids).toEqual(new Set([run.id]));
+      expect(ids.has('keys')).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a missing runsDir (ENOENT) resolves to an empty set — not a throw', async () => {
+    const dir = join(await mkdtemp(join(tmpdir(), 'realm-test-')), 'does', 'not', 'exist');
+    const store = new JsonFileStore(dir);
+    await expect(store.listRunIds()).resolves.toEqual(new Set());
+  });
+
+  it('fail-closed: a non-ENOENT readdir error THROWS — never a fabricated empty set', async () => {
+    const { dir } = await makeTmpStore();
+    try {
+      // A file (not a directory) in place of runsDir's own path — readdir on it fails ENOTDIR.
+      const notADirPath = join(dir, 'poison');
+      await writeFile(notADirPath, 'x');
+      const brokenStore = new JsonFileStore(notADirPath);
+
+      await expect(brokenStore.listRunIds()).rejects.toMatchObject({ code: 'ENOTDIR' });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
