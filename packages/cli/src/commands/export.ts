@@ -21,21 +21,53 @@ import { writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { Command } from 'commander';
 import type { RunRecord, RunStore, FailedAttemptRecord, TraceBufferStore } from '@sensigo/realm';
-import { WorkflowError, isTerminalPhase } from '@sensigo/realm';
+import { WorkflowError, isTerminalPhase, FsIoError } from '@sensigo/realm';
+
+/** One artifact `buildExportBundle` could not read (issue #186) — never silently omitted. */
+export interface ExportArtifactError {
+  /** A human label for the artifact — the STORE owns the actual on-disk path/filename; the
+   *  command never reconstructs one, matching this file's own no-filename-layout discipline. */
+  artifact: string;
+  /** The errno/FsIoError code, or `'UNKNOWN'` if the thrown value carried none. */
+  code: string;
+  message: string;
+}
 
 export interface ExportBundle {
-  realm_export_version: 1;
+  /**
+   * Bumped 1 → 2 (issue #186): a v1 bundle predates the `complete`/`artifact_errors` fields, so a
+   * v1 bundle's completeness is UNKNOWN to a reader — it was written back when export was
+   * all-or-nothing (any read failure meant no bundle at all), so v1's mere existence was itself a
+   * (weaker) completeness signal, but nothing in a v1 bundle states it explicitly. v2 always
+   * states it explicitly via `complete`.
+   */
+  realm_export_version: 2;
   /** ISO-8601, stamped by the CLI at assembly time. */
   exported_at: string;
   /** The full RunRecord — steps, evidence, skip_details, claims, etc. */
   run: RunRecord;
-  /** Parsed failed-attempt records; `[]` if none were ever recorded for this run. */
+  /** Parsed failed-attempt records; `[]` if none were ever recorded for this run OR if the sidecar
+   *  read failed (see `artifact_errors` — the empty array does not by itself mean "none recorded"
+   *  in that case; check `complete` first). */
   attempts: FailedAttemptRecord[];
   /** True if the run hit the failed-attempt sidecar's 256KB ceiling — later attempts were dropped
-   *  at write time (append-and-stop), so `attempts` is NOT exhaustive. */
+   *  at write time (append-and-stop), so `attempts` is NOT exhaustive. Independent of `complete`:
+   *  a sidecar can be BOTH fully readable AND capped (a known, positively-characterized
+   *  truncation) — that is a different signal from a read that failed outright. */
   attempts_capped: boolean;
-  /** `{ <stepId>: [...] }` — every buffered/WAL entry for the run, across all steps; `{}` if none. */
+  /** `{ <stepId>: [...] }` — every buffered/WAL entry for the run, across all steps; `{}` if none
+   *  OR if the WAL read failed (see `artifact_errors` — check `complete` first). */
   wal: Record<string, unknown[]>;
+  /**
+   * False iff any artifact below (`attempts`/`wal`) could not be read (issue #186) — a real I/O
+   * failure, not a genuine ENOENT absence (an absent artifact is legitimately `[]`/`{}` and
+   * `complete: true`). The bundle NEVER lies by omission: every readable artifact is still
+   * written, and the run record itself is always present when `complete` is `false` (a run-record
+   * read failure means no bundle is written at all — see `buildExportBundle`).
+   */
+  complete: boolean;
+  /** The artifacts that failed to read; always `[]` when `complete` is `true`. */
+  artifact_errors: ExportArtifactError[];
 }
 
 export interface ExportRunResult {
@@ -58,10 +90,26 @@ export interface ExportStores {
   traceBufferStore: Pick<TraceBufferStore, 'readAllForRun'>;
 }
 
+/** Extracts an errno/FsIoError code from a thrown value; `'UNKNOWN'` if it carries none. */
+function errnoCodeOf(err: unknown): string {
+  if (err instanceof FsIoError) return err.code;
+  const code = (err as { code?: unknown } | undefined)?.code;
+  return typeof code === 'string' ? code : 'UNKNOWN';
+}
+
 /**
  * Assembles the export bundle for `runId` from each store's existing read methods — never writes,
  * never locks, never touches `runsDir`. Throws `STATE_RUN_NOT_FOUND` (propagated from
  * `runStore.get`) for a nonexistent run; the CLI action maps that to an error message + exit(1).
+ *
+ * issue #186 — graceful degradation, never all-or-nothing: `run` is the bundle's core, so a
+ * failure reading IT propagates (there is genuinely nothing to hand off — no bundle at all). But
+ * `attempts` and `wal` are each read in their OWN try/catch: a real I/O failure on either (post
+ * #183, `failedAttemptStore.read`/`traceBufferStore.readAllForRun` throw on a genuine I/O error,
+ * not just a benign ENOENT-absence, which still legitimately yields `[]`/`{}`) substitutes the
+ * empty value, records the failure in `artifact_errors`, and the OTHER artifact is still
+ * attempted — the bundle self-describes its own incompleteness via `complete` instead of
+ * disappearing entirely.
  */
 export async function buildExportBundle(
   runId: string,
@@ -69,16 +117,43 @@ export async function buildExportBundle(
   now: Date = new Date(),
 ): Promise<ExportRunResult> {
   const run = await stores.runStore.get(runId);
-  const { records: attempts, capped: attemptsCapped } = await stores.failedAttemptStore.read(runId);
-  const wal = await stores.traceBufferStore.readAllForRun(runId);
+
+  const artifactErrors: ExportArtifactError[] = [];
+
+  let attempts: FailedAttemptRecord[] = [];
+  let attemptsCapped = false;
+  try {
+    const result = await stores.failedAttemptStore.read(runId);
+    attempts = result.records;
+    attemptsCapped = result.capped;
+  } catch (err) {
+    artifactErrors.push({
+      artifact: 'failed-attempt sidecar',
+      code: errnoCodeOf(err),
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  let wal: Record<string, unknown[]> = {};
+  try {
+    wal = await stores.traceBufferStore.readAllForRun(runId);
+  } catch (err) {
+    artifactErrors.push({
+      artifact: 'trace-buffer WAL',
+      code: errnoCodeOf(err),
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
 
   const bundle: ExportBundle = {
-    realm_export_version: 1,
+    realm_export_version: 2,
     exported_at: now.toISOString(),
     run,
     attempts,
     attempts_capped: attemptsCapped,
     wal,
+    complete: artifactErrors.length === 0,
+    artifact_errors: artifactErrors,
   };
 
   const warning = !isTerminalPhase(run.run_phase)
@@ -186,6 +261,23 @@ export const exportCommand = new Command('export')
       const target = resolveExportPath({ runId, out: opts.out, runsDir });
       const json = JSON.stringify(bundle, null, 2);
       await writeFile(target, json, 'utf8');
+
+      // issue #186: an incomplete bundle is still written (for recovery) but never reported as a
+      // plain success — the exit code carries the signal for CI/scripts, and the operator sees
+      // exactly which artifact(s) failed and why. No --allow-incomplete flag: honesty here is not
+      // opt-in.
+      if (!bundle.complete) {
+        console.error(
+          `⚠ INCOMPLETE export: ${bundle.artifact_errors.length} artifact(s) could not be read`,
+        );
+        for (const e of bundle.artifact_errors) {
+          console.error(`  ✗ ${e.artifact} (${e.code}): ${e.message}`);
+        }
+        console.error(
+          `The bundle was still written to '${target}' — inspect it for what could be recovered.`,
+        );
+        process.exit(1);
+      }
 
       const walStepCount = Object.keys(bundle.wal).length;
       console.log(
