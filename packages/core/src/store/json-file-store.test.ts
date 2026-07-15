@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import lockfile from 'proper-lockfile';
 import { JsonFileStore } from './json-file-store.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -1108,6 +1109,9 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
     try {
       const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
       expect(existsSync(join(dir, `${run.id}.json`))).toBe(true);
+      // issue #184: deleteAllForRun now re-verifies terminal state under its lock — a fresh
+      // store.create() run is 'running' by default, so mark it terminal before purging it.
+      await store.update({ ...run, run_phase: 'completed', terminal_state: true });
 
       await store.deleteAllForRun(run.id);
 
@@ -1128,6 +1132,8 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
       });
       const ptrPath = keyPointerPath(dir, 'wf-1', 'k1');
       expect(existsSync(ptrPath)).toBe(true);
+      // issue #184: mark terminal before purging (see the sibling test above for why).
+      await store.update({ ...run, run_phase: 'completed', terminal_state: true });
 
       await store.deleteAllForRun(run.id);
 
@@ -1180,6 +1186,8 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
     const { store, dir } = await makeTmpStore();
     try {
       const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      // issue #184: mark terminal before purging (see the first test in this describe for why).
+      await store.update({ ...run, run_phase: 'completed', terminal_state: true });
 
       await store.deleteAllForRun(run.id);
 
@@ -1194,12 +1202,118 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
     const { store, dir } = await makeTmpStore();
     try {
       const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      // issue #184: mark terminal before purging (see the first test in this describe for why).
+      await store.update({ ...run, run_phase: 'completed', terminal_state: true });
 
       // A dirEntries hint that does NOT mention the run file at all — deleteAllForRun must still
       // find and delete it via its own exact path, proving the hint really is ignored.
       await store.deleteAllForRun(run.id, ['completely-unrelated.json']);
 
       expect(existsSync(join(dir, `${run.id}.json`))).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () => {
+  it('resurrect-race fix: refuses (STATE_RUN_BUSY, reason no_longer_terminal) when the on-disk record is no longer terminal at delete time, and the run file survives intact', async () => {
+    // Deterministic proof of the actual bug: a run selected as terminal can be "resumed" (flipped
+    // back to a live state) BEFORE deleteAllForRun's lock is acquired — simulating exactly what a
+    // concurrent `realm resume` racing a batch purge does (resume.ts sets terminal_state: false;
+    // RESUMABLE_PHASES ⊂ TERMINAL_PHASES). deleteAllForRun must re-verify UNDER ITS OWN LOCK, not
+    // trust a caller's earlier selection-time snapshot.
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      await store.update({ ...run, run_phase: 'abandoned', terminal_state: true });
+
+      // The "concurrent resume" — mirrors resume.ts's own field flip exactly.
+      const resumed = await store.get(run.id);
+      await store.update({ ...resumed, run_phase: 'running', terminal_state: false });
+
+      await expect(store.deleteAllForRun(run.id)).rejects.toMatchObject({
+        code: 'STATE_RUN_BUSY',
+        details: { runId: run.id, reason: 'no_longer_terminal' },
+      });
+
+      // The run file MUST survive, completely intact — not partially deleted.
+      expect(existsSync(join(dir, `${run.id}.json`))).toBe(true);
+      const survivor = await store.get(run.id);
+      expect(survivor.terminal_state).toBe(false);
+      expect(survivor.run_phase).toBe('running');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ELOCKED: refuses (STATE_RUN_BUSY, reason locked) when another writer holds the run-file lock, and the run file survives untouched', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      await store.update({ ...run, run_phase: 'completed', terminal_state: true });
+
+      const path = join(dir, `${run.id}.json`);
+      const contentBefore = await readFile(path, 'utf8');
+
+      // Hold the SAME run-file lock deleteAllForRun will try to acquire — proper-lockfile's lock
+      // is a real on-disk directory (`<path>.lock`), so this is genuine cross-caller contention
+      // within the same process, not a mock.
+      const externalRelease = await lockfile.lock(path, {
+        realpath: false,
+        retries: { retries: 3, minTimeout: 50 },
+      });
+      try {
+        await expect(store.deleteAllForRun(run.id)).rejects.toMatchObject({
+          code: 'STATE_RUN_BUSY',
+          details: { runId: run.id, reason: 'locked' },
+        });
+      } finally {
+        await externalRelease();
+      }
+
+      // Untouched: not just present, but byte-identical to before the attempt.
+      expect(existsSync(path)).toBe(true);
+      expect(await readFile(path, 'utf8')).toBe(contentBefore);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('key-lock TOCTOU: the pointer delete happens under the key lock — held briefly by another writer, deleteAllForRun retries and succeeds once it frees up', async () => {
+    // Proves the pointer read→check→delete critical section genuinely goes through the SAME key
+    // lock create()/writePointer() use (nested inside the run-file lock — see the class's GLOBAL
+    // LOCK ORDER doc). Held only briefly (well inside KEY_LOCK_RETRIES' budget) rather than to
+    // full exhaustion — KEY_LOCK_RETRIES is 10 retries with exponential backoff off a 50ms floor
+    // (the `retry` package's default factor is 2), so fully exhausting it takes upwards of 50
+    // SECONDS — this test instead confirms deleteAllForRun genuinely WAITS for the lock (a timing
+    // floor, not just an eventual-success check — an unlocked implementation would sail through in
+    // a few ms regardless of this external hold) and then succeeds once it's free.
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+        idempotencyKey: 'k1',
+      });
+      await store.update({ ...run, run_phase: 'completed', terminal_state: true });
+      const ptrPath = keyPointerPath(dir, 'wf-1', 'k1');
+      expect(existsSync(ptrPath)).toBe(true);
+
+      const HOLD_MS = 150;
+      const externalKeyRelease = await lockfile.lock(ptrPath, { realpath: false });
+      setTimeout(() => {
+        void externalKeyRelease();
+      }, HOLD_MS);
+
+      const before = Date.now();
+      await store.deleteAllForRun(run.id);
+      const elapsed = Date.now() - before;
+
+      expect(elapsed).toBeGreaterThanOrEqual(HOLD_MS - 20); // waited for the external hold — not a race
+      expect(existsSync(join(dir, `${run.id}.json`))).toBe(false);
+      expect(existsSync(ptrPath)).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -1244,6 +1358,9 @@ describe('JsonFileStore ENOENT hardening (issue #107)', () => {
           workflowVersion: 1,
           params: { i },
         });
+        // issue #184: mark terminal before purging (deleteAllForRun now re-verifies terminal
+        // state under its lock).
+        await store.update({ ...run, run_phase: 'completed', terminal_state: true });
         ids.push(run.id);
       }
 
@@ -1293,6 +1410,9 @@ describe('JsonFileStore ENOENT hardening (issue #107)', () => {
         workflowVersion: 1,
         params: {},
       });
+      // issue #184: mark the victim terminal before purging it (deleteAllForRun now re-verifies
+      // terminal state under its lock).
+      await store.update({ ...victim, run_phase: 'completed', terminal_state: true });
 
       const [, all] = await Promise.all([store.deleteAllForRun(victim.id), store.list()]);
       const ids = all.map((r) => r.id);

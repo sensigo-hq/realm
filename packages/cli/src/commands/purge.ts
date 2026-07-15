@@ -138,6 +138,13 @@ export interface PurgeRunsResult {
   purged: string[];
   /** Populated only when `dryRun` is false: a concurrent/prior purge had already removed it — never a failure. */
   already_purged: string[];
+  /**
+   * Populated only when `dryRun` is false (issue #184): the run could not be deleted right now
+   * because another writer holds its lock (`ELOCKED`), or because it is no longer terminal (a
+   * concurrent `realm resume` raced the purge) — `STATE_RUN_BUSY` from the anchor store. NEVER a
+   * failure: a live writer self-heals, and a stale lock is eventually stolen.
+   */
+  blocked: Array<{ runId: string; reason: string }>;
   /** Populated only when `dryRun` is false: deletion genuinely failed. */
   failed: Array<{ runId: string; error: string }>;
 }
@@ -155,26 +162,34 @@ export interface PurgeRunsOptions {
 
 /**
  * Selects eligible run(s) (single `runId` or a batch aged past `olderThan`), reports bytes and
- * resumability, and — when `dryRun` is false — deletes them via `artifactStores`, in the order
- * given (LOAD-BEARING: `runStore`, the `JsonFileStore` element, must be last — see purge.ts's
- * command wiring and `purge-guard.test.ts`). Continue-on-error across the batch: a
- * `STATE_RUN_NOT_FOUND` hit while deleting (a concurrent purge already removed it) is bucketed as
- * `already_purged`, never `failed` — a benign race must not be reported as a failure.
+ * resumability, and — when `dryRun` is false — deletes them. Deletion is anchor-structural (issue
+ * #184): every `artifactStores` entry (non-anchor stores only) must succeed BEFORE
+ * `anchorStore.deleteAllForRun` — the `JsonFileStore` run file — is ever called, and only on
+ * total success. Any throw before that point leaves the anchor (and therefore the run) intact —
+ * the crash-anchor property is now structural (guaranteed by this function's control flow), not
+ * merely positional (an array-ordering convention a future edit could silently break — see
+ * `purge-guard.test.ts`'s ANCHOR checks for the source-text half of this guarantee).
+ *
+ * Continue-on-error across the batch: a `STATE_RUN_NOT_FOUND` hit while deleting (a concurrent
+ * purge already removed it) is bucketed as `already_purged`; a `STATE_RUN_BUSY` hit (another
+ * writer holds the lock, or the run was resumed since selection — issue #184) is bucketed as
+ * `blocked`; neither is ever a `failed`.
  */
 export async function purgeRuns(
   options: PurgeRunsOptions,
-  runStore: Pick<RunStore, 'get' | 'list'> & { readonly runsDirPath: string },
+  anchorStore: Pick<RunStore, 'get' | 'list'> &
+    PerRunArtifactStore & { readonly runsDirPath: string },
   artifactStores: PerRunArtifactStore[],
 ): Promise<PurgeRunsResult> {
   const dryRun = options.dryRun ?? true;
   const now = new Date();
-  const runsDir = runStore.runsDirPath;
+  const runsDir = anchorStore.runsDirPath;
 
   const candidates: Array<{ run: RunRecord; overriddenClaimStep?: string | undefined }> = [];
   const skipped: Array<{ runId: string; reason: string }> = [];
 
   if (options.runId !== undefined) {
-    const run = await runStore.get(options.runId);
+    const run = await anchorStore.get(options.runId);
     // explicit: true — the operator named this exact run, so a claim_unknown_age claim is an
     // eligible override, never a healthy one (issue #107 correction).
     const verdict = isPurgeEligible(run, { explicit: true, now });
@@ -185,7 +200,7 @@ export async function purgeRuns(
     }
   } else {
     const thresholdMs = options.olderThan !== undefined ? parseDuration(options.olderThan) : 0;
-    const all = await runStore.list(options.workflow);
+    const all = await anchorStore.list(options.workflow);
     for (const run of all) {
       // explicit: false — a batch/cron sweep cannot prove an indeterminate-age claim's runner is
       // dead, so claim_unknown_age is refused here (skipped+warned below), not overridden.
@@ -225,7 +240,14 @@ export async function purgeRuns(
     });
   }
 
-  const result: PurgeRunsResult = { selected, skipped, purged: [], already_purged: [], failed: [] };
+  const result: PurgeRunsResult = {
+    selected,
+    skipped,
+    purged: [],
+    already_purged: [],
+    blocked: [],
+    failed: [],
+  };
   if (dryRun) return result;
 
   for (const { run } of selected) {
@@ -233,14 +255,24 @@ export async function purgeRuns(
       // Re-check the run still exists immediately before deleting — closes the window against a
       // concurrent purge that already removed it between selection and here. A STATE_RUN_NOT_FOUND
       // surfacing here means "already gone," which the catch below routes to already_purged.
-      await runStore.get(run.id);
+      await anchorStore.get(run.id);
       for (const store of artifactStores) {
         await store.deleteAllForRun(run.id, dirEntries);
       }
+      // The anchor LAST, and only on total success (issue #184) — structural crash-anchor: any
+      // throw above (from a non-anchor artifact store) never reaches this line, so the run file
+      // is guaranteed intact for re-enumeration on the next pass.
+      await anchorStore.deleteAllForRun(run.id, dirEntries);
       result.purged.push(run.id);
     } catch (err) {
       if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
         result.already_purged.push(run.id);
+      } else if (err instanceof WorkflowError && err.code === 'STATE_RUN_BUSY') {
+        const reason = err.details['reason'];
+        result.blocked.push({
+          runId: run.id,
+          reason: typeof reason === 'string' ? reason : err.message,
+        });
       } else {
         result.failed.push({
           runId: run.id,
@@ -285,7 +317,6 @@ function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void {
     return;
   }
 
-  const totalBytes = result.selected.reduce((sum, c) => sum + c.bytes, 0);
   const resumableCount = result.selected.filter((c) => c.resumable).length;
   const resumableLine =
     `${resumableCount} of ${result.selected.length} selected run(s) ` +
@@ -293,6 +324,9 @@ function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void {
     `purging ${dryRun ? 'would destroy' : 'has destroyed'} that path ${dryRun ? 'permanently' : 'for them'}.`;
 
   if (dryRun) {
+    // Dry-run's "to free" total is a PROJECTION over every selected candidate — nothing has been
+    // purged yet, so the full selected total is the correct (and only sensible) figure here.
+    const totalBytes = result.selected.reduce((sum, c) => sum + c.bytes, 0);
     console.log(
       `${result.selected.length} run(s) WOULD be purged (${formatBytes(totalBytes)} to free):`,
     );
@@ -307,14 +341,25 @@ function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void {
     return;
   }
 
+  // issue #184: sum bytes over ACTUALLY-PURGED runs only — `selected` also includes candidates
+  // that ended up already_purged/blocked/failed, whose bytes were never actually freed. Summing
+  // over `selected` here would over-report "freed" bytes for anything but a 100%-successful batch.
+  const purgedIds = new Set(result.purged);
+  const freedBytes = result.selected
+    .filter((c) => purgedIds.has(c.run.id))
+    .reduce((sum, c) => sum + c.bytes, 0);
+
   console.log(
-    `Purged ${result.purged.length}/${result.selected.length} run(s) (${formatBytes(totalBytes)} freed). ` +
-      `${result.already_purged.length} already gone, ${result.failed.length} failed.`,
+    `Purged ${result.purged.length}/${result.selected.length} run(s) (${formatBytes(freedBytes)} freed). ` +
+      `${result.already_purged.length} already gone, ${result.blocked.length} blocked, ${result.failed.length} failed.`,
   );
   for (const c of result.selected) {
     if (c.overriddenClaimStep !== undefined) {
       console.log(`  ⚠ ${c.run.id}: ${overriddenClaimPhrase(c.overriddenClaimStep, false)}`);
     }
+  }
+  for (const b of result.blocked) {
+    console.error(`  ⚠ ${b.runId}: ${b.reason}`);
   }
   for (const f of result.failed) {
     console.error(`  ✗ ${f.runId}: ${f.error}`);
@@ -357,14 +402,14 @@ export const purgeCommand = new Command('purge')
       const runsDir = runStore.runsDirPath;
       const failedAttemptStore = new FailedAttemptStore(runsDir);
       const traceBufferStore = new JsonTraceBufferStore(runsDir);
-      // Orchestration order is LOAD-BEARING (issue #107): runStore MUST be last — a crash mid-purge
-      // leaves the run record in place, so the run is re-enumerated and the purge is retried
-      // idempotently. purge-guard.test.ts asserts this exact order via source-text — do not
-      // reorder these three lines without updating that test.
+      // The crash-anchor is now STRUCTURAL, not positional (issue #184): runStore (JsonFileStore)
+      // is passed to purgeRuns as the separate anchorStore argument, and purgeRuns's own control
+      // flow guarantees it is only ever deleted after every entry below has succeeded — it is
+      // deliberately ABSENT from this array. purge-guard.test.ts's ANCHOR check asserts this
+      // absence via source-text; do not re-add it here.
       const artifactStores: PerRunArtifactStore[] = [
         traceBufferStore, // JsonTraceBufferStore
         failedAttemptStore, // FailedAttemptStore
-        runStore, // JsonFileStore — LAST: crash-anchor (issue #107)
       ];
 
       const dryRun = opts.force !== true;

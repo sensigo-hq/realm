@@ -42,6 +42,10 @@ async function makeAdapter(): Promise<{
   const dir = await mkdtemp(join(tmpdir(), 'json-file-store-tck-'));
   const store = new JsonFileStore(dir);
   const { run } = await store.create({ workflowId: 'wf-tck', workflowVersion: 1, params: {} });
+  // issue #184: deleteAllForRun now re-verifies terminal state under its own lock and refuses a
+  // non-terminal run (the resurrect-race fix) — a fresh store.create() run is 'running' by
+  // default, so mark it terminal before the TCK exercises deleteAllForRun against it.
+  await store.update({ ...run, run_phase: 'completed', terminal_state: true });
 
   const adapter: PerRunArtifactStoreContractAdapter = {
     store,

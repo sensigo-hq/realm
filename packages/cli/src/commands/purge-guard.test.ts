@@ -72,50 +72,59 @@ function findDeclarers(): Declarer[] {
   return declarers;
 }
 
-// The partition. WIRED_ORDER must equal purge.ts's `artifactStores: PerRunArtifactStore[]` — in
-// the SAME order, since `runStore` (JsonFileStore) being last is the crash-anchor invariant.
-const WIRED_ORDER = ['JsonTraceBufferStore', 'FailedAttemptStore', 'JsonFileStore'];
+// The partition. WIRED_ORDER must equal purge.ts's `artifactStores: PerRunArtifactStore[]` array
+// literal exactly, in order — the NON-anchor stores purge.ts's deletion loop iterates BEFORE the
+// anchor. ANCHOR (issue #184) is JsonFileStore: it is deliberately ABSENT from that array now —
+// its deleteAllForRun is invoked separately, by purgeRuns itself, structurally LAST and only on
+// total success (the crash-anchor property moved from positional — "runStore is the last array
+// element" — to structural — "purgeRuns's own control flow guarantees it"). ANCHOR must still be
+// classified (it has a real deleteAllForRun declaration and its own TCK contract test — see
+// store-fs-guard.test.ts's WIRED⇒TCK check, which is UNCHANGED and still expects JsonFileStore
+// covered) — it just never appears in WIRED_ORDER or the array-literal check below.
+const WIRED_ORDER = ['JsonTraceBufferStore', 'FailedAttemptStore'];
+const ANCHOR = 'JsonFileStore';
 const EXCLUDED: Record<string, string> = {
   InMemoryTraceBufferStore: 'test-only in-memory store — never purged (no on-disk artifacts)',
 };
 
-describe('#107 PerRunArtifactStore.deleteAllForRun — declarer enumeration (anti-recurrence)', () => {
+describe('#107/#184 PerRunArtifactStore.deleteAllForRun — declarer enumeration (anti-recurrence)', () => {
   const declarers = findDeclarers();
 
   it('at least one declarer is discovered (the scan is wired correctly)', () => {
     expect(declarers.length).toBeGreaterThan(0);
   });
 
-  it('EVERY deleteAllForRun class-method declarer is classified WIRED or EXCLUDED-with-reason', () => {
+  it('EVERY deleteAllForRun class-method declarer is classified WIRED, ANCHOR, or EXCLUDED-with-reason', () => {
     const unclassified = declarers
       .map((d) => d.className)
-      .filter((name) => !WIRED_ORDER.includes(name) && !(name in EXCLUDED));
+      .filter((name) => !WIRED_ORDER.includes(name) && name !== ANCHOR && !(name in EXCLUDED));
     expect(
       unclassified,
       `Unclassified deleteAllForRun declarer(s): ${unclassified.join(', ')}. Wire it into ` +
-        `purge.ts's artifactStores orchestrator (and list it in WIRED_ORDER) or document why it ` +
-        `is excluded (add it to EXCLUDED with a reason).`,
+        `purge.ts's artifactStores orchestrator (and list it in WIRED_ORDER), pass it as the ` +
+        `anchorStore param (and set ANCHOR to its name), or document why it is excluded (add it ` +
+        `to EXCLUDED with a reason).`,
     ).toEqual([]);
   });
 
-  it('the WIRED set matches exactly (nothing missing)', () => {
+  it('the WIRED set and the ANCHOR both match exactly (nothing missing)', () => {
     const found = new Set(declarers.map((d) => d.className));
-    for (const name of WIRED_ORDER) {
+    for (const name of [...WIRED_ORDER, ANCHOR]) {
       expect(
         found.has(name),
-        `${name} is listed WIRED but has no deleteAllForRun declaration`,
+        `${name} is listed WIRED/ANCHOR but has no deleteAllForRun declaration`,
       ).toBe(true);
     }
   });
 
-  it('no classification entry is stale (every WIRED/EXCLUDED name still has a declaration)', () => {
+  it('no classification entry is stale (every WIRED/ANCHOR/EXCLUDED name still has a declaration)', () => {
     const present = new Set(declarers.map((d) => d.className));
-    for (const name of [...WIRED_ORDER, ...Object.keys(EXCLUDED)]) {
+    for (const name of [...WIRED_ORDER, ANCHOR, ...Object.keys(EXCLUDED)]) {
       expect(present.has(name), `${name} is classified but no longer has a declaration`).toBe(true);
     }
   });
 
-  it("purge.ts's orchestrator array matches WIRED_ORDER exactly, in order — runStore (JsonFileStore) LAST", () => {
+  it("purge.ts's artifactStores array matches WIRED_ORDER exactly, in order, and the ANCHOR (JsonFileStore) is ABSENT from it (issue #184)", () => {
     const purgeSrc = readFileSync(join(PACKAGES_DIR, 'cli', 'src', 'commands', 'purge.ts'), 'utf8');
     const arrayMatch = /PerRunArtifactStore\[\]\s*=\s*\[([\s\S]*?)\];/.exec(purgeSrc);
     expect(arrayMatch, "purge.ts's artifactStores array literal was not found").not.toBeNull();
@@ -127,9 +136,27 @@ describe('#107 PerRunArtifactStore.deleteAllForRun — declarer enumeration (ant
       WIRED_ORDER,
     );
     expect(
-      order[order.length - 1],
-      'runStore (JsonFileStore) must be LAST — the crash anchor',
-    ).toBe('JsonFileStore');
+      order,
+      `${ANCHOR} must be ABSENT from artifactStores — it is now the structural anchor, passed to ` +
+        `purgeRuns separately as anchorStore (a future edit re-adding it here reintroduces ` +
+        `anchor-before-children with no test catching it)`,
+    ).not.toContain(ANCHOR);
+  });
+
+  it('JsonFileStore is passed as the anchorStore argument to purgeRuns, not inside artifactStores (issue #184)', () => {
+    const purgeSrc = readFileSync(join(PACKAGES_DIR, 'cli', 'src', 'commands', 'purge.ts'), 'utf8');
+    // purgeRuns(<options object>, <anchorStore var>, <artifactStores var>)
+    const callMatch = /purgeRuns\(\s*\{[\s\S]*?\},\s*(\w+),\s*(\w+),?\s*\)/.exec(purgeSrc);
+    expect(callMatch, 'purgeRuns(...) call site was not found').not.toBeNull();
+    const anchorVarName = callMatch![1]!;
+    const anchorDeclMatch = new RegExp(
+      `\\bconst\\s+${anchorVarName}\\s*=\\s*new\\s+JsonFileStore\\(`,
+    ).exec(purgeSrc);
+    expect(
+      anchorDeclMatch,
+      `expected purgeRuns's 2nd argument ('${anchorVarName}') to be constructed via ` +
+        `'new JsonFileStore(...)' — the anchorStore param must be the JsonFileStore instance`,
+    ).not.toBeNull();
   });
 
   it('the TraceBufferStore interface declaration is excluded structurally (ends ";", not "{")', () => {

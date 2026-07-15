@@ -33,6 +33,10 @@ export type ErrorCode =
   | 'STATE_RUN_TERMINAL'
   | 'STATE_SNAPSHOT_MISMATCH'
   | 'STATE_RUN_LOCKED'
+  // a deleteAllForRun-owning store could not acquire its run-file (or key) lock (ELOCKED), or —
+  // under that lock — found the run is no longer terminal (a concurrent resume raced the purge).
+  // Retryable: a live writer self-heals, and a stale lock is eventually stolen (issue #184).
+  | 'STATE_RUN_BUSY'
   | 'STATE_TRANSITION_DENIED'
   | 'STATE_LEGACY_FORMAT'
   | 'STATE_STEP_ALREADY_CLAIMED'

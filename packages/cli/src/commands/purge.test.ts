@@ -16,6 +16,7 @@ import {
   FailedAttemptStore,
   buildFailedAttemptRecord,
   serializeFailedAttemptLine,
+  WorkflowError,
 } from '@sensigo/realm';
 import type { RunRecord, RunStore, PerRunArtifactStore } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
@@ -74,7 +75,9 @@ async function makeStores(): Promise<Stores> {
     runStore,
     failedAttemptStore,
     traceBufferStore,
-    artifactStores: [traceBufferStore, failedAttemptStore, runStore],
+    // issue #184: runStore is now passed to purgeRuns SEPARATELY as the anchorStore argument —
+    // artifactStores holds the non-anchor stores only (mechanical signature update).
+    artifactStores: [traceBufferStore, failedAttemptStore],
   };
 }
 
@@ -514,8 +517,13 @@ describe('purgeRuns — batch mode (--older-than)', () => {
       // Deterministically simulate "a concurrent purge already removed this run": intercept the
       // get() re-check purgeRuns performs immediately before deleting each selected run, and for
       // 'vanishing' specifically, delete its file first so the real get() call throws
-      // STATE_RUN_NOT_FOUND on its own (no actual timing race needed).
-      const wrappedRunStore: Pick<RunStore, 'get' | 'list'> & { runsDirPath: string } = {
+      // STATE_RUN_NOT_FOUND on its own (no actual timing race needed). issue #184: anchorStore
+      // must now also satisfy PerRunArtifactStore — deleteAllForRun delegates to the real
+      // runStore so the anchor-last delete still genuinely happens for 'ok'.
+      const wrappedRunStore: Pick<RunStore, 'get' | 'list'> &
+        PerRunArtifactStore & {
+          runsDirPath: string;
+        } = {
         runsDirPath: runStore.runsDirPath,
         list: (wf?: string) => runStore.list(wf),
         get: async (id: string) => {
@@ -524,13 +532,16 @@ describe('purgeRuns — batch mode (--older-than)', () => {
           }
           return runStore.get(id);
         },
+        deleteAllForRun: (id: string, dirEntries?: readonly string[]) =>
+          runStore.deleteAllForRun(id, dirEntries),
       };
 
       // A genuinely broken artifact store for 'broken' — a non-ENOENT failure must land in
       // `failed`, distinct from the benign concurrent-purge case above. Placed FIRST in the array
-      // (mirroring the crash-anchor property: runStore is always last in production, so a genuine
-      // failure in an earlier store aborts before runStore ever runs, and the run file survives —
-      // exactly what makes the run re-purgeable/re-enumerable on the next attempt).
+      // (mirroring the crash-anchor property: the anchor is always deleted last and only on total
+      // success, issue #184, so a genuine failure in an earlier store aborts before the anchor
+      // ever runs, and the run file survives — exactly what makes the run re-purgeable/
+      // re-enumerable on the next attempt).
       const poisoned: PerRunArtifactStore = {
         deleteAllForRun: async (id: string) => {
           if (id === 'broken') throw new Error('simulated disk failure');
@@ -619,6 +630,172 @@ describe('purgeRuns — supersede soundness (mutation-probe #2 companion, at the
       const ptr = JSON.parse(await readFile(keyPointerPath(dir, 'wf-1', 'k1'), 'utf8'));
       expect(ptr.run_id).toBe(newRun.id);
       expect((await runStore.get(newRun.id)).id).toBe(newRun.id);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('purgeRuns — purge correctness (issue #184)', () => {
+  it('resurrect race: an anchorStore reporting STATE_RUN_BUSY (no_longer_terminal) is bucketed blocked, never failed — the run is untouched', async () => {
+    // Drives the fix deterministically at the orchestration level (JsonFileStore's OWN under-lock
+    // re-verify is exercised directly and independently in json-file-store.test.ts) — this proves
+    // purgeRuns correctly ROUTES whatever STATE_RUN_BUSY the anchor throws, regardless of why.
+    const { dir, runStore, artifactStores } = await makeStores();
+    try {
+      const run = makeRun({
+        id: 'resumed-under-lock',
+        run_phase: 'completed',
+        terminal_state: true,
+      });
+      await injectRun(dir, run);
+
+      const anchorWithResurrectRace: Pick<RunStore, 'get' | 'list'> &
+        PerRunArtifactStore & { runsDirPath: string } = {
+        runsDirPath: runStore.runsDirPath,
+        get: (id: string) => runStore.get(id),
+        list: (wf?: string) => runStore.list(wf),
+        deleteAllForRun: async (id: string, dirEntries?: readonly string[]) => {
+          if (id === 'resumed-under-lock') {
+            throw new WorkflowError(`Run '${id}' is no longer terminal`, {
+              code: 'STATE_RUN_BUSY',
+              category: 'STATE',
+              agentAction: 'report_to_user',
+              retryable: true,
+              details: { runId: id, reason: 'no_longer_terminal' },
+            });
+          }
+          return runStore.deleteAllForRun(id, dirEntries);
+        },
+      };
+
+      const result = await purgeRuns(
+        { runId: 'resumed-under-lock', dryRun: false },
+        anchorWithResurrectRace,
+        artifactStores,
+      );
+
+      expect(result.blocked).toEqual([
+        { runId: 'resumed-under-lock', reason: 'no_longer_terminal' },
+      ]);
+      expect(result.failed).toEqual([]);
+      expect(result.purged).toEqual([]);
+      expect(existsSync(join(dir, 'resumed-under-lock.json'))).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ELOCKED: an anchorStore reporting STATE_RUN_BUSY (locked) is bucketed blocked, never failed — the run is untouched, exit is not gated on it', async () => {
+    const { dir, runStore, artifactStores } = await makeStores();
+    try {
+      const run = makeRun({ id: 'held-by-writer', run_phase: 'completed', terminal_state: true });
+      await injectRun(dir, run);
+
+      const anchorWithElocked: Pick<RunStore, 'get' | 'list'> &
+        PerRunArtifactStore & { runsDirPath: string } = {
+        runsDirPath: runStore.runsDirPath,
+        get: (id: string) => runStore.get(id),
+        list: (wf?: string) => runStore.list(wf),
+        deleteAllForRun: async (id: string, dirEntries?: readonly string[]) => {
+          if (id === 'held-by-writer') {
+            throw new WorkflowError(`Run '${id}' is locked by another writer`, {
+              code: 'STATE_RUN_BUSY',
+              category: 'STATE',
+              agentAction: 'report_to_user',
+              retryable: true,
+              details: { runId: id, reason: 'locked' },
+            });
+          }
+          return runStore.deleteAllForRun(id, dirEntries);
+        },
+      };
+
+      const result = await purgeRuns(
+        { runId: 'held-by-writer', dryRun: false },
+        anchorWithElocked,
+        artifactStores,
+      );
+
+      expect(result.blocked).toEqual([{ runId: 'held-by-writer', reason: 'locked' }]);
+      expect(result.failed).toEqual([]); // NOT a failure — purgeCommand's exit code is gated on failed.length only
+      expect(existsSync(join(dir, 'held-by-writer.json'))).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('anchor structural: an artifactStores failure means the anchor deleteAllForRun is NEVER called — the run file survives and the run is failed', async () => {
+    const { dir, runStore } = await makeStores();
+    try {
+      const run = makeRun({ id: 'r1', run_phase: 'completed', terminal_state: true });
+      await injectRun(dir, run);
+
+      let anchorCalls = 0;
+      const spyingAnchor: Pick<RunStore, 'get' | 'list'> &
+        PerRunArtifactStore & { runsDirPath: string } = {
+        runsDirPath: runStore.runsDirPath,
+        get: (id: string) => runStore.get(id),
+        list: (wf?: string) => runStore.list(wf),
+        deleteAllForRun: async (id: string, dirEntries?: readonly string[]) => {
+          anchorCalls++;
+          return runStore.deleteAllForRun(id, dirEntries);
+        },
+      };
+      const throwingArtifactStore: PerRunArtifactStore = {
+        deleteAllForRun: async () => {
+          throw new Error('trace-buffer store exploded');
+        },
+      };
+
+      const result = await purgeRuns(
+        { runId: 'r1', dryRun: false },
+        spyingAnchor,
+        [throwingArtifactStore], // the ONLY artifact store — guaranteed to run before the anchor
+      );
+
+      expect(anchorCalls).toBe(0); // the anchor's deleteAllForRun was NEVER invoked
+      expect(result.failed).toEqual([{ runId: 'r1', error: 'trace-buffer store exploded' }]);
+      expect(result.purged).toEqual([]);
+      expect(existsSync(join(dir, 'r1.json'))).toBe(true); // survives intact — the crash-anchor guarantee
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('two concurrent purgeRuns over the same selected set: zero failures, zero residue, no double-failed', async () => {
+    // The run-file lock (issue #184) is what makes this safe: whichever invocation wins the lock
+    // for a given run deletes it; the loser's anchor-delete call finds the file already gone —
+    // deleteAllForRun's idempotent contract (ENOENT-safe: "already gone" IS success, exactly like
+    // the existing "a second call is a no-op" guarantee json-file-store.test.ts already covers)
+    // means BOTH invocations legitimately report that id as `purged` — that is not a bug; it is
+    // the documented idempotent-success contract. What must NEVER happen is a genuine `failed`.
+    const { dir, runStore, artifactStores } = await makeStores();
+    try {
+      const ids = ['c1', 'c2', 'c3', 'c4', 'c5'];
+      for (const id of ids) {
+        await injectRun(dir, makeRun({ id, run_phase: 'completed', terminal_state: true }));
+      }
+
+      const [r1, r2] = await Promise.all([
+        purgeRuns({ olderThan: '0m', dryRun: false }, runStore, artifactStores),
+        purgeRuns({ olderThan: '0m', dryRun: false }, runStore, artifactStores),
+      ]);
+
+      expect(r1.failed).toEqual([]);
+      expect(r2.failed).toEqual([]);
+      expect(r1.blocked).toEqual([]);
+      expect(r2.blocked).toEqual([]);
+
+      // Together, every run is accounted for as purged or already_purged (idempotent-success
+      // overlap between the two invocations is expected and fine — see above) — zero residue.
+      const purgedTogether = [...r1.purged, ...r2.purged];
+      const alreadyPurgedTogether = [...r1.already_purged, ...r2.already_purged];
+      expect([...new Set([...purgedTogether, ...alreadyPurgedTogether])].sort()).toEqual(ids);
+
+      for (const id of ids) {
+        expect(existsSync(join(dir, `${id}.json`))).toBe(false);
+      }
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
