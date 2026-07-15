@@ -11,11 +11,23 @@
 //     the keys/ subdir).
 //   - The path is derived ONLY from the server-generated UUIDv4 runId (`[0-9a-f-]`), never from
 //     caller-supplied input — a path-safety invariant.
-import { appendFile, stat } from 'node:fs/promises';
+import { appendFile, stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FailedAttemptRecord } from '../observability/failed-attempt-record.js';
 import type { PerRunArtifactStore } from './per-run-artifact-store.js';
-import { readIfExists, deleteIfExists, toArtifactDeleteFailedError } from './fs-io.js';
+import type { OrphanSweepableStore, OrphanArtifact } from './orphan-sweepable-store.js';
+import {
+  readIfExists,
+  deleteIfExists,
+  statIfExists,
+  toArtifactDeleteFailedError,
+} from './fs-io.js';
+
+/** The sidecar filename suffix — everything before it (the runId) is derived ONLY from the
+ *  server-generated UUIDv4 runId, so stripping it back off is unambiguous (no delimiter
+ *  ambiguity the way the WAL filename has, since there is no second segment after the runId
+ *  here — see JsonTraceBufferStore.listOrphans for the trickier case). */
+const SIDECAR_SUFFIX = '.attempts.jsonl';
 
 /**
  * Append-and-stop byte ceiling per sidecar (~80+ full ≤3072B records — ample forensics). Approximate
@@ -36,7 +48,7 @@ export interface FailedAttemptReadResult {
  * atomic and interleave-safe across concurrent processes (the size bound is what buys lock-freedom —
  * the deliberate difference from the WAL store).
  */
-export class FailedAttemptStore implements PerRunArtifactStore {
+export class FailedAttemptStore implements PerRunArtifactStore, OrphanSweepableStore {
   private readonly runsDir: string;
 
   constructor(runsDir: string) {
@@ -118,5 +130,40 @@ export class FailedAttemptStore implements PerRunArtifactStore {
     } catch (err) {
       throw toArtifactDeleteFailedError(runId, 'FailedAttemptStore', [], path, err);
     }
+  }
+
+  /**
+   * Returns every `.attempts.jsonl` sidecar whose runId is NOT in `liveRunIds` (issue #163) —
+   * candidate orphans for `realm run gc`'s remediation sweep. Does not apply an age floor or
+   * delete anything — see `OrphanSweepableStore`'s own doc for why that's the caller's job.
+   *
+   * FAIL-CLOSED: `ENOENT` on `runsDir` itself → `[]` (nothing has ever been created here). Any
+   * OTHER `readdir` or `stat` error THROWS — never fabricate an empty/partial list, which would
+   * make a live run's sidecar look orphaned.
+   */
+  async listOrphans(liveRunIds: ReadonlySet<string>): Promise<OrphanArtifact[]> {
+    let entries: string[];
+    try {
+      entries = await readdir(this.runsDir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw err;
+    }
+
+    const orphans: OrphanArtifact[] = [];
+    for (const name of entries) {
+      if (!name.endsWith(SIDECAR_SUFFIX)) continue;
+      const runId = name.slice(0, -SIDECAR_SUFFIX.length);
+      if (liveRunIds.has(runId)) continue;
+
+      const path = join(this.runsDir, name);
+      // #183 discipline: statIfExists returns undefined only on ENOENT (a benign vanished-
+      // between-readdir-and-stat race — skip it); any other errno throws, aborting the WHOLE
+      // sweep (fail-closed) rather than silently omitting this one artifact.
+      const info = await statIfExists(path);
+      if (info === undefined) continue;
+      orphans.push({ path, runId, mtimeMs: info.mtimeMs });
+    }
+    return orphans;
   }
 }

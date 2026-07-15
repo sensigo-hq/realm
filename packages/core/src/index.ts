@@ -8,6 +8,7 @@ export * from './store/store-interface.js';
 export { JsonFileStore } from './store/json-file-store.js';
 export type { ReconcileSummary } from './store/json-file-store.js';
 export type { PerRunArtifactStore } from './store/per-run-artifact-store.js';
+export type { OrphanSweepableStore, OrphanArtifact } from './store/orphan-sweepable-store.js';
 export { atomicWriteFile } from './store/atomic-write.js';
 export {
   deleteIfExists,

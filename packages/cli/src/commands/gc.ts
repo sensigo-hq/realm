@@ -1,5 +1,7 @@
-// gc command — sweep orphaned atomic-write temps (issue #160, Phase 1: .tmp only).
+// gc command — sweep orphaned atomic-write temps (issue #160) AND run-less orphaned WAL/sidecar
+// artifacts (issue #163). One operator command, two independent sweeps, same flags.
 //
+// --- Sweep 1: atomic-write temps (issue #160, Phase 1: .tmp only) ---
 // atomicWriteFile (packages/core/src/store/atomic-write.ts) writes a unique sibling temp
 // (`${path}.<pid>.<counter>.tmp`) then POSIX-renames it over the target. A process dying between
 // the write and the rename orphans that temp forever — it is not runId-keyed for the key-pointer
@@ -14,24 +16,55 @@
 // torn file). Combined with the 1h floor below, an in-flight write's temp (age ≪ floor) is never
 // even selected.
 //
-// Phase 1 = `.tmp` only. `.lock` reaping is deliberately split to #164 (deferred — proper-lockfile
-// self-heals a live-path lock; only a purged-target's lock lingers, which is negligible). Run-less
-// `trace-buffer-*.jsonl` WAL cleanup is #163. Neither is this command's job — see the report footer.
+// --- Sweep 2: run-less orphaned WAL/sidecar artifacts (issue #163) ---
+// #163 was ORIGINALLY filed on a premise that does not hold: it claimed a WAL could orphan
+// "between WAL-create and run-file-create." That path does not exist — `append_trace` calls
+// `runStore.get(runId)` FIRST, so a WAL's `<runId>.json` provably existed at WAL-creation time and
+// exists for the run's ENTIRE life. "Artifact present, run file absent" is therefore only true
+// AFTER the run file has been deleted (a pre-#183 purge, a manual `rm`, disk corruption) or DURING
+// the sub-second atomic-write temp-rename window (the run file is a `<id>.json.<pid>.tmp`, not yet
+// renamed). This is remediation for the rare/residual case, not a rescue for an ongoing leak — the
+// git history shows the pre-#183/#184 orphan-manufacturing window was ~48h and opt-in.
+//
+// `.lock` reaping is deliberately split to #164 (deferred — proper-lockfile self-heals a live-path
+// lock; only a purged-target's lock lingers, which is negligible). Neither is this command's job
+// yet — see the report footer.
 import { readdir, lstat, unlink, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { WorkflowError } from '@sensigo/realm';
+import { WorkflowError, deleteIfExists } from '@sensigo/realm';
+import type { OrphanSweepableStore, OrphanArtifact } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 
 /**
- * Minimum `--older-than` the sweep will ever honor (1 hour) — a conservative floor for hygiene of
- * non-urgent crash residue, and, forward-consistency-wise, the safety guard the deferred `.lock`
- * reaping (#164) will also require; enforcing it here means #164 inherits an already-tested guard.
- * Temps themselves are safe to reap at any age past a few seconds (see the module doc above) — this
- * floor is conservatism, not the temp-safety mechanism. Module-private: the only way to reach a
- * delete is through `sweepOrphans`, which checks this FIRST, before any filesystem access.
+ * Minimum `--older-than` EITHER sweep will ever honor (1 hour) — a conservative floor for hygiene
+ * of non-urgent crash residue, and, forward-consistency-wise, the safety guard the deferred
+ * `.lock` reaping (#164) will also require; enforcing it here means #164 inherits an
+ * already-tested guard. Temps themselves are safe to reap at any age past a few seconds (see the
+ * module doc above); a run-less WAL/sidecar past this floor is genuinely orphaned, not merely
+ * in-flight (see `sweepOrphanArtifacts`'s own doc for why the floor is exactly the create-window
+ * guard there) — either way this floor is conservatism, not the per-sweep safety mechanism.
+ * Module-private: the only way to reach a delete in EITHER sweep is through `assertOlderThanFloor`,
+ * checked FIRST, before any filesystem access.
  */
 const FLOOR_MS = 3_600_000;
+
+/** Shared floor guard for both sweeps — checked before any filesystem access in either. */
+function assertOlderThanFloor(olderThanMs: number, subject: string): void {
+  if (olderThanMs < FLOOR_MS) {
+    throw new WorkflowError(
+      `--older-than must resolve to at least 1h (got ${olderThanMs}ms) — gc refuses to reap ` +
+        `${subject} younger than that, even with --force.`,
+      {
+        code: 'VALIDATION_INPUT_SCHEMA',
+        category: 'VALIDATION',
+        agentAction: 'provide_input',
+        retryable: false,
+        details: { olderThanMs, floorMs: FLOOR_MS },
+      },
+    );
+  }
+}
 
 export interface SweepOrphansOptions {
   /** Minimum age (ms) a `.tmp` must have to be reaped. Rejected below `FLOOR_MS` — see above. */
@@ -100,19 +133,7 @@ export async function sweepOrphans(
   runsDir: string,
   options: SweepOrphansOptions,
 ): Promise<SweepOrphansResult> {
-  if (options.olderThanMs < FLOOR_MS) {
-    throw new WorkflowError(
-      `--older-than must resolve to at least 1h (got ${options.olderThanMs}ms) — gc refuses to ` +
-        `reap crash residue younger than that, even with --force.`,
-      {
-        code: 'VALIDATION_INPUT_SCHEMA',
-        category: 'VALIDATION',
-        agentAction: 'provide_input',
-        retryable: false,
-        details: { olderThanMs: options.olderThanMs, floorMs: FLOOR_MS },
-      },
-    );
-  }
+  assertOlderThanFloor(options.olderThanMs, 'crash residue');
 
   const now = options.now ?? new Date();
   const candidatePaths = await findTempCandidates(runsDir);
@@ -171,6 +192,95 @@ export async function sweepOrphans(
   return result;
 }
 
+/** One orphan artifact's outcome in a sweep report — carries the runId alongside the path so an
+ *  operator can correlate a reaped file back to which run it belonged to. */
+export interface OrphanArtifactEntry {
+  path: string;
+  runId: string;
+}
+
+export interface OrphanArtifactSweepResult {
+  /** Reaped (force mode) or would-be-reaped (dry-run) artifacts. */
+  reaped: OrphanArtifactEntry[];
+  /** A candidate vanished on its own (unlink hit ENOENT) — benign, never a failure. */
+  already_gone: OrphanArtifactEntry[];
+  /** A genuine delete failure (permissions, I/O) — loud, never silently swallowed. */
+  failed: Array<{ path: string; runId: string; error: string }>;
+}
+
+/**
+ * Reaps run-less orphaned WAL/sidecar artifacts (issue #163) — the second sweep behind
+ * `realm run gc`. `stores` is every `OrphanSweepableStore` gc knows about (today:
+ * `JsonTraceBufferStore`, `FailedAttemptStore`); `liveRunIds` is the caller's ALREADY-COMPUTED
+ * `JsonFileStore.listRunIds()` result (computed once, shared across every store, and — this is
+ * load-bearing — the caller's responsibility to have fail-closed on: see the CLI action for why
+ * this function never calls `listRunIds()` itself).
+ *
+ * **The floor is the create-temp-window guard.** `append_trace` calls `runStore.get(runId)`
+ * BEFORE ever writing a WAL entry, so a WAL's `<runId>.json` provably existed at WAL-creation
+ * time and exists for the run's entire life (see this module's own header for the full
+ * correctness backbone). The ONLY way "artifact present, run file absent" can be true for a
+ * FRESH run is the sub-second window between the run file being written as a temp
+ * (`<id>.json.<pid>.tmp`) and its atomic rename to `<id>.json` — during which `listRunIds()`
+ * would not yet see it. `FLOOR_MS` (1h) dwarfs that window by many orders of magnitude, so a
+ * fresh in-flight run's WAL is always younger than the floor and never selected; a WAL/sidecar
+ * OLDER than the floor with no matching run file is genuinely run-less.
+ *
+ * Each `OrphanSweepableStore.listOrphans()` call is fail-closed BY THE STORE'S OWN CONTRACT (see
+ * `orphan-sweepable-store.ts`) — a non-ENOENT enumeration/stat failure throws, propagating out of
+ * THIS function too (uncaught here, deliberately): this sweep has nothing safe to report if it
+ * cannot trust what "orphaned" even means for that store, so it aborts entirely rather than
+ * reaping a partial, possibly-wrong candidate set.
+ */
+export async function sweepOrphanArtifacts(
+  stores: readonly OrphanSweepableStore[],
+  liveRunIds: ReadonlySet<string>,
+  options: SweepOrphansOptions,
+): Promise<OrphanArtifactSweepResult> {
+  assertOlderThanFloor(options.olderThanMs, 'orphaned artifacts');
+
+  const now = options.now ?? new Date();
+
+  const candidates: OrphanArtifact[] = [];
+  for (const store of stores) {
+    candidates.push(...(await store.listOrphans(liveRunIds)));
+  }
+
+  const result: OrphanArtifactSweepResult = { reaped: [], already_gone: [], failed: [] };
+  const toReap: OrphanArtifact[] = [];
+
+  for (const artifact of candidates) {
+    const ageMs = now.getTime() - artifact.mtimeMs;
+    if (ageMs < 0) continue; // future mtime (clock skew) — skip, never reap
+    if (ageMs <= options.olderThanMs) continue; // too fresh — the create-temp-window guard above
+
+    toReap.push(artifact);
+  }
+
+  if (options.dryRun) {
+    result.reaped = toReap.map((a) => ({ path: a.path, runId: a.runId }));
+    return result;
+  }
+
+  for (const artifact of toReap) {
+    const entry = { path: artifact.path, runId: artifact.runId };
+    try {
+      // #183 discipline: deleteIfExists resolves false (not an error) on ENOENT — already gone
+      // is success, never a failure; any other errno throws.
+      const didDelete = await deleteIfExists(artifact.path);
+      if (didDelete) {
+        result.reaped.push(entry);
+      } else {
+        result.already_gone.push(entry);
+      }
+    } catch (err) {
+      result.failed.push({ ...entry, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  return result;
+}
+
 /** Best-effort total bytes for a known list of paths — reporting-only, never gates reaping.
  *  Called against a fresh dry-run preview, so the paths are still on disk when stat'd. */
 async function statPathBytes(paths: readonly string[]): Promise<number> {
@@ -195,14 +305,29 @@ function formatBytes(n: number): string {
 }
 
 /** So an operator doesn't distrust the tool when `runsDir` still holds residue gc deliberately
- *  does not touch — printed on every report, dry-run or force, empty or not. */
+ *  does not touch — printed on every report, dry-run or force, empty or not. issue #163: WALs and
+ *  failed-attempt sidecars are now reaped (the second sweep above) — only `.lock` dirs remain
+ *  deferred (issue #164). */
 const NOT_REAPED_FOOTER =
-  'gc does NOT reap orphaned .lock dirs (deferred — issue #164) or run-less trace-buffer-*.jsonl ' +
-  'WAL files (issue #163). Their presence in runsDir is expected and not a sign gc is broken.';
+  'gc does NOT yet reap orphaned .lock dirs (deferred — issue #164). Their presence in runsDir ' +
+  'is expected and not a sign gc is broken.';
 
 /** Prints the dry-run / force report shared by both code paths. `previewBytes` always comes from
- *  the initial (always non-destructive) preview pass — see the action below for why. */
-function printGcReport(result: SweepOrphansResult, previewBytes: number, dryRun: boolean): void {
+ *  the initial (always non-destructive) preview pass — see the action below for why.
+ *
+ * `artifactResult`/`artifactSweepError` are mutually exclusive (issue #163): a defined
+ * `artifactSweepError` means `listRunIds()` or a store's `listOrphans()` threw — the orphan
+ * sweep aborted loudly, reaping NOTHING, and there is no `artifactResult` to report. Both may be
+ * `undefined` only if the temp-only sweep somehow bypassed the orphan sweep entirely (never
+ * happens in the real CLI action — always one or the other).
+ */
+function printGcReport(
+  result: SweepOrphansResult,
+  previewBytes: number,
+  dryRun: boolean,
+  artifactResult: OrphanArtifactSweepResult | undefined,
+  artifactSweepError: string | undefined,
+): void {
   const nothingToReport =
     result.reaped.length === 0 && result.already_gone.length === 0 && result.failed.length === 0;
 
@@ -229,16 +354,55 @@ function printGcReport(result: SweepOrphansResult, previewBytes: number, dryRun:
   if (dryRun && !nothingToReport) {
     console.log('\nRe-run with --force to actually delete.');
   }
+
+  // --- orphan-artifacts section (issue #163) ---
+  if (artifactSweepError !== undefined) {
+    console.error(
+      `\n✗ orphan-artifact sweep ABORTED (reaped nothing from it): ${artifactSweepError}`,
+    );
+  } else if (artifactResult !== undefined) {
+    const nothingToReportArtifacts =
+      artifactResult.reaped.length === 0 &&
+      artifactResult.already_gone.length === 0 &&
+      artifactResult.failed.length === 0;
+
+    if (nothingToReportArtifacts) {
+      console.log('\nNo run-less orphaned WAL/sidecar artifacts found to reap.');
+    } else if (dryRun) {
+      console.log(
+        `\n${artifactResult.reaped.length} run-less orphaned artifact(s) WOULD be reaped:`,
+      );
+      for (const a of artifactResult.reaped) console.log(`  • ${a.path}  (run ${a.runId})`);
+      if (artifactResult.already_gone.length > 0) {
+        console.log(
+          `(${artifactResult.already_gone.length} candidate(s) already vanished on their own.)`,
+        );
+      }
+    } else {
+      console.log(
+        `\nReaped ${artifactResult.reaped.length} run-less orphaned artifact(s). ` +
+          `${artifactResult.already_gone.length} already gone, ${artifactResult.failed.length} failed.`,
+      );
+      for (const a of artifactResult.reaped) console.log(`  • ${a.path}  (run ${a.runId})`);
+    }
+    for (const f of artifactResult.failed) {
+      console.error(`  ✗ ${f.path} (run ${f.runId}): ${f.error}`);
+    }
+    if (dryRun && !nothingToReportArtifacts) {
+      console.log('Re-run with --force to actually delete.');
+    }
+  }
+
   console.log(`\n${NOT_REAPED_FOOTER}`);
 }
 
 export const gcCommand = new Command('gc')
   .description(
-    'Sweep orphaned atomic-write .tmp files — crash residue from a process that died mid-write (dry-run by default)',
+    'Sweep orphaned atomic-write .tmp files and run-less orphaned WAL/sidecar artifacts (dry-run by default)',
   )
   .requiredOption(
     '--older-than <duration>',
-    'Reap temps idle at least this long (minimum 1h; e.g. 1h, 6h, 30d)',
+    'Reap residue idle at least this long (minimum 1h; e.g. 1h, 6h, 30d)',
   )
   .option('--force', 'Actually delete (without this, gc only reports what WOULD be reaped)')
   .action(async (opts: { olderThan: string; force?: boolean }) => {
@@ -251,8 +415,9 @@ export const gcCommand = new Command('gc')
       return;
     }
 
-    // Defense-in-depth over sweepOrphans's own floor check — reject before touching the
-    // filesystem at all, with a CLI-friendly message naming the flag the operator just typed.
+    // Defense-in-depth over sweepOrphans's/sweepOrphanArtifacts's own floor checks — reject
+    // before touching the filesystem at all, with a CLI-friendly message naming the flag the
+    // operator just typed.
     if (olderThanMs < FLOOR_MS) {
       console.error(
         `--older-than must be at least 1h (got '${opts.olderThan}'). gc refuses to reap crash ` +
@@ -262,8 +427,13 @@ export const gcCommand = new Command('gc')
       return;
     }
 
-    const { JsonFileStore } = await import('@sensigo/realm');
-    const runsDir = new JsonFileStore().runsDirPath;
+    const { JsonFileStore, FailedAttemptStore } = await import('@sensigo/realm');
+    const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
+    const runStore = new JsonFileStore();
+    const runsDir = runStore.runsDirPath;
+    const failedAttemptStore = new FailedAttemptStore(runsDir);
+    const traceBufferStore = new JsonTraceBufferStore(runsDir);
+    const orphanSweepableStores: OrphanSweepableStore[] = [traceBufferStore, failedAttemptStore];
     const now = new Date();
 
     try {
@@ -276,14 +446,52 @@ export const gcCommand = new Command('gc')
       const preview = await sweepOrphans(runsDir, { olderThanMs, dryRun: true, now });
       const bytes = await statPathBytes(preview.reaped);
 
+      // issue #163: FAIL-CLOSED. A `listRunIds()` (or a store's `listOrphans()`) failure aborts
+      // ONLY the orphan-artifact sweep, loudly — it must NEVER fabricate an empty `liveRunIds`,
+      // which would make every live run's artifacts look orphaned and reap them. The temp sweep
+      // above is fully independent of this and is completely unaffected either way.
+      let artifactPreview: OrphanArtifactSweepResult | undefined;
+      let artifactSweepError: string | undefined;
+      try {
+        const liveRunIds = await runStore.listRunIds();
+        artifactPreview = await sweepOrphanArtifacts(orphanSweepableStores, liveRunIds, {
+          olderThanMs,
+          dryRun: true,
+          now,
+        });
+      } catch (err) {
+        artifactSweepError = err instanceof Error ? err.message : String(err);
+      }
+
       if (opts.force !== true) {
-        printGcReport(preview, bytes, true);
+        printGcReport(preview, bytes, true, artifactPreview, artifactSweepError);
         return;
       }
 
       const result = await sweepOrphans(runsDir, { olderThanMs, dryRun: false, now });
-      printGcReport(result, bytes, false);
-      if (result.failed.length > 0) process.exit(1);
+
+      let artifactResult: OrphanArtifactSweepResult | undefined;
+      if (artifactSweepError === undefined) {
+        // The preview above already proved listRunIds()/listOrphans() succeed — re-read for the
+        // real pass (a fresh liveRunIds, since force mode is a separate call; a run created or
+        // completed between the preview and here is a benign, narrow race — exactly the same
+        // shape the temp sweep's own preview/force split already accepts).
+        try {
+          const liveRunIds = await runStore.listRunIds();
+          artifactResult = await sweepOrphanArtifacts(orphanSweepableStores, liveRunIds, {
+            olderThanMs,
+            dryRun: false,
+            now,
+          });
+        } catch (err) {
+          artifactSweepError = err instanceof Error ? err.message : String(err);
+        }
+      }
+
+      printGcReport(result, bytes, false, artifactResult, artifactSweepError);
+      if (result.failed.length > 0 || (artifactResult?.failed.length ?? 0) > 0) {
+        process.exit(1);
+      }
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);

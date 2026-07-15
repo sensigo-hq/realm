@@ -652,6 +652,38 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
   }
 
   /**
+   * The raw set of run IDs present in `runsDir` (issue #163) — every `<id>.json` BASENAME, with
+   * NO record parse. Deliberately NOT `list()`: `list()` parses each file as a `RunRecord`
+   * (`JSON.parse(raw) as RunRecord`, uncaught) — a syntactically corrupt-but-PRESENT `<id>.json`
+   * would throw there, whereas here it correctly still counts as a live run (the file exists on
+   * disk; whatever reads it later is a separate concern from whether `realm run gc`'s orphan
+   * sweep should treat this run's WAL/sidecar as run-less). Using `list()` for the orphan sweep's
+   * `liveRunIds` would wrongly orphan — and reap — a live-but-corrupt run's artifacts.
+   *
+   * Concrete method, NOT on the `RunStore` interface (issue #163) — `gc` constructs a concrete
+   * `JsonFileStore` directly (as it already does for `runsDirPath`), so no external `RunStore`
+   * implementer is forced to add this.
+   *
+   * FAIL-CLOSED, load-bearing: `ENOENT` (no `runsDir` at all — nothing has ever been created) is
+   * the ONLY tolerated case, yielding an empty set (no runs exist, so nothing is "wrongly" live or
+   * orphaned). Any OTHER `readdir` error (permissions, a torn mount) THROWS — a fabricated empty
+   * set here would make the orphan sweep believe NO runs exist, and reap every live run's
+   * artifacts as "run-less." This is the single most dangerous failure mode in the whole feature;
+   * see `orphan-sweepable-store.ts`'s own doc for the matching contract on the artifact-store side.
+   */
+  async listRunIds(): Promise<ReadonlySet<string>> {
+    let entries: string[];
+    try {
+      entries = await readdir(this.runsDir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return new Set();
+      throw err;
+    }
+    const ids = entries.filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -'.json'.length));
+    return new Set(ids);
+  }
+
+  /**
    * Builds the `STATE_RUN_BUSY` error thrown when `deleteAllForRun` cannot proceed because
    * another writer holds the run-file (or key) lock, or because the run is no longer terminal
    * (issue #184). Retryable: a live writer self-heals (the lock is released), and a genuinely

@@ -194,4 +194,85 @@ describe('JsonTraceBufferStore', () => {
       expect(await store.read('run-1', 'step-a')).toHaveLength(1);
     });
   });
+
+  describe('listOrphans (issue #163)', () => {
+    // Real 36-char UUIDv4-shaped runIds — listOrphans's runId parse requires the fixed length;
+    // a short test id like 'run-1' (used elsewhere in this file) is shorter than 36 chars and
+    // would be (correctly) treated as malformed/skipped, not a useful case here.
+    const LIVE = '11111111-1111-4111-8111-111111111111';
+    const ORPHAN = '22222222-2222-4222-8222-222222222222';
+
+    it('a WAL whose runId is NOT in liveRunIds is returned; one whose runId IS is not', async () => {
+      await store.append(LIVE, 'step-a', [{ event: 'x' }]);
+      await store.append(ORPHAN, 'step-a', [{ event: 'y' }]);
+
+      const orphans = await store.listOrphans(new Set([LIVE]));
+
+      expect(orphans).toHaveLength(1);
+      expect(orphans[0]?.runId).toBe(ORPHAN);
+      expect(orphans[0]?.path).toBe(join(dir, walFileName(ORPHAN, 'step-a')));
+      expect(orphans[0]?.mtimeMs).toBeGreaterThan(0);
+    });
+
+    it('a run with WAL entries across MULTIPLE steps: every step file is reported once, all under the same runId', async () => {
+      await store.append(ORPHAN, 'step-a', [{ event: 'x' }]);
+      await store.append(ORPHAN, 'step-b', [{ event: 'y' }]);
+
+      const orphans = await store.listOrphans(new Set());
+
+      expect(orphans).toHaveLength(2);
+      expect(orphans.every((o) => o.runId === ORPHAN)).toBe(true);
+    });
+
+    it('runId parse is correct when the base64url step segment itself contains "-" or "_" (not split-on-dash)', async () => {
+      // 'step->' base64url-encodes to 'c3RlcC0-' (ends in '-'); 'step-?' encodes to 'c3RlcC0_'
+      // (ends in '_') — both exercise the exact ambiguity a naive split('-') would mis-parse.
+      const dashStep = 'step->';
+      const underscoreStep = 'step-?';
+      expect(Buffer.from(dashStep).toString('base64url')).toContain('-');
+      expect(Buffer.from(underscoreStep).toString('base64url')).toContain('_');
+
+      await store.append(LIVE, dashStep, [{ event: 'x' }]);
+      await store.append(ORPHAN, underscoreStep, [{ event: 'y' }]);
+
+      const orphans = await store.listOrphans(new Set([LIVE]));
+
+      // The LIVE run's dash-bearing-step WAL must NOT appear (correctly recognized as live);
+      // only the ORPHAN run's underscore-bearing-step WAL should.
+      expect(orphans).toHaveLength(1);
+      expect(orphans[0]?.runId).toBe(ORPHAN);
+      expect(orphans[0]?.path).toBe(join(dir, walFileName(ORPHAN, underscoreStep)));
+    });
+
+    it('a malformed filename (too short to contain a full UUID) is skipped, not mis-parsed', async () => {
+      await writeFile(join(dir, 'trace-buffer-short-c3RlcA.jsonl'), '{"ts":1,"entries":[]}\n');
+      const orphans = await store.listOrphans(new Set());
+      expect(orphans).toEqual([]);
+    });
+
+    it('no WAL files at all: returns []', async () => {
+      const orphans = await store.listOrphans(new Set([LIVE]));
+      expect(orphans).toEqual([]);
+    });
+
+    it('a missing runsDir (ENOENT) resolves to [] — not a throw', async () => {
+      const missingStore = new JsonTraceBufferStore(join(dir, 'does', 'not', 'exist'));
+      await expect(missingStore.listOrphans(new Set())).resolves.toEqual([]);
+    });
+
+    it('fail-closed: a non-ENOENT readdir error THROWS — never a fabricated empty/partial list', async () => {
+      const notADir = join(dir, 'i-am-a-file');
+      await writeFile(notADir, 'x');
+      const brokenStore = new JsonTraceBufferStore(notADir);
+
+      await expect(brokenStore.listOrphans(new Set())).rejects.toMatchObject({ code: 'ENOTDIR' });
+    });
+
+    it('ignores non-WAL files entirely (a run file, a sidecar survive unexamined)', async () => {
+      await writeFile(join(dir, `${ORPHAN}.json`), '{}');
+      await writeFile(join(dir, `${ORPHAN}.attempts.jsonl`), 'x');
+      const orphans = await store.listOrphans(new Set());
+      expect(orphans).toEqual([]);
+    });
+  });
 });

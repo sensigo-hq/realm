@@ -164,4 +164,53 @@ describe('FailedAttemptStore', () => {
       expect(existsSync(join(dir, `${OTHER}.attempts.jsonl`))).toBe(true);
     });
   });
+
+  describe('listOrphans (issue #163)', () => {
+    const LIVE = '11111111-1111-4111-8111-111111111111';
+    const ORPHAN = '22222222-2222-4222-8222-222222222222';
+
+    it('a sidecar whose runId is NOT in liveRunIds is returned; one whose runId IS is not', async () => {
+      await store.append(LIVE, line());
+      await store.append(ORPHAN, line());
+
+      const orphans = await store.listOrphans(new Set([LIVE]));
+
+      expect(orphans).toHaveLength(1);
+      expect(orphans[0]?.runId).toBe(ORPHAN);
+      expect(orphans[0]?.path).toBe(join(dir, `${ORPHAN}.attempts.jsonl`));
+      expect(orphans[0]?.mtimeMs).toBeGreaterThan(0);
+    });
+
+    it('empty liveRunIds: every existing sidecar is a candidate orphan', async () => {
+      await store.append(LIVE, line());
+      const orphans = await store.listOrphans(new Set());
+      expect(orphans.map((o) => o.runId)).toEqual([LIVE]);
+    });
+
+    it('no sidecars at all: returns []', async () => {
+      const orphans = await store.listOrphans(new Set([LIVE]));
+      expect(orphans).toEqual([]);
+    });
+
+    it('a missing runsDir (ENOENT) resolves to [] — not a throw', async () => {
+      const missingStore = new FailedAttemptStore(join(dir, 'does', 'not', 'exist'));
+      await expect(missingStore.listOrphans(new Set())).resolves.toEqual([]);
+    });
+
+    it('fail-closed: a non-ENOENT readdir error THROWS — never a fabricated empty/partial list', async () => {
+      // A file (not a directory) in place of runsDir — readdir on it fails with ENOTDIR, not ENOENT.
+      const notADir = join(dir, 'i-am-a-file');
+      await writeFile(notADir, 'x');
+      const brokenStore = new FailedAttemptStore(notADir);
+
+      await expect(brokenStore.listOrphans(new Set())).rejects.toMatchObject({ code: 'ENOTDIR' });
+    });
+
+    it('ignores non-sidecar files entirely (a run file, a WAL file survive unexamined)', async () => {
+      await writeFile(join(dir, `${ORPHAN}.json`), '{}');
+      await writeFile(join(dir, `trace-buffer-${ORPHAN}-c3RlcA.jsonl`), 'x');
+      const orphans = await store.listOrphans(new Set());
+      expect(orphans).toEqual([]);
+    });
+  });
 });

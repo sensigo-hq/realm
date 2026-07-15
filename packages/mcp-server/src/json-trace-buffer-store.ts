@@ -8,6 +8,8 @@ import {
   type BufferedEntry,
   type AppendResult,
   type PerRunArtifactStore,
+  type OrphanSweepableStore,
+  type OrphanArtifact,
   normalizeEntryForBuffer,
   BUFFER_LIMIT_COUNT,
   BUFFER_LIMIT_BYTES,
@@ -15,6 +17,7 @@ import {
   FINAL_LIMIT_BYTES,
   readIfExists,
   deleteIfExists,
+  statIfExists,
   toArtifactDeleteFailedError,
 } from '@sensigo/realm';
 import type { AgentTraceEntry } from '@sensigo/realm';
@@ -26,11 +29,22 @@ interface WalLine {
   entries: AgentTraceEntry[];
 }
 
+/** WAL filename shape: `trace-buffer-<runId>-<base64url(stepId)>.jsonl`. `runId` is a
+ *  server-generated UUIDv4 — always exactly 36 characters (8-4-4-4-12 hex, RFC 4122 string
+ *  form) — so it can be recovered by FIXED-LENGTH slicing rather than splitting on `-`, which
+ *  would break the moment a base64url step segment itself contains `-` or `_` (both are valid
+ *  base64url alphabet characters). See `listOrphans` below for where this matters (issue #163). */
+const WAL_PREFIX = 'trace-buffer-';
+const WAL_SUFFIX = '.jsonl';
+const RUN_ID_LENGTH = 36;
+
 /**
  * File-based TraceBufferStore that persists WAL entries to JSONL files on disk.
  * WAL file path: <runsDir>/trace-buffer-<runId>-<base64url(stepId)>.jsonl
  */
-export class JsonTraceBufferStore implements TraceBufferStore, PerRunArtifactStore {
+export class JsonTraceBufferStore
+  implements TraceBufferStore, PerRunArtifactStore, OrphanSweepableStore
+{
   private readonly runsDir: string;
 
   constructor(runsDir: string) {
@@ -274,5 +288,54 @@ export class JsonTraceBufferStore implements TraceBufferStore, PerRunArtifactSto
     }
 
     return result;
+  }
+
+  /**
+   * Returns every WAL file (across all steps, all runs) whose runId is NOT in `liveRunIds`
+   * (issue #163) — candidate orphans for `realm run gc`'s remediation sweep. Does not apply an
+   * age floor or delete anything — see `OrphanSweepableStore`'s own doc for why that's the
+   * caller's job.
+   *
+   * The runId parse is fixed-length, NOT delimiter-based: a WAL filename is
+   * `trace-buffer-<36-char UUID>-<base64url(stepId)>.jsonl`, and the base64url step segment
+   * legitimately contains `-`/`_` — splitting on `-` would silently misparse the runId the
+   * moment a step name's base64url encoding starts with one of those characters. Slicing by the
+   * UUID's known fixed length (36) is unambiguous regardless of what the step segment contains.
+   *
+   * FAIL-CLOSED: `ENOENT` on `runsDir` itself → `[]`. Any OTHER `readdir`/`stat` error THROWS —
+   * never fabricate an empty/partial list, which would make a live run's WAL look orphaned.
+   */
+  async listOrphans(liveRunIds: ReadonlySet<string>): Promise<OrphanArtifact[]> {
+    let entries: string[];
+    try {
+      entries = await readdir(this.runsDir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw err;
+    }
+
+    const orphans: OrphanArtifact[] = [];
+    for (const name of entries) {
+      if (!name.startsWith(WAL_PREFIX) || !name.endsWith(WAL_SUFFIX)) continue;
+
+      // Everything between the fixed prefix and suffix is "<uuid>-<b64url step>" — slice the
+      // UUID off by its KNOWN length, then require the very next character to be the '-'
+      // separator `walPath` always writes. A name that's too short, or missing that separator
+      // at exactly this position, is malformed (never produced by this store) — skip it rather
+      // than guess.
+      const afterPrefix = name.slice(WAL_PREFIX.length, -WAL_SUFFIX.length);
+      if (afterPrefix.length <= RUN_ID_LENGTH || afterPrefix[RUN_ID_LENGTH] !== '-') continue;
+      const runId = afterPrefix.slice(0, RUN_ID_LENGTH);
+      if (liveRunIds.has(runId)) continue;
+
+      const path = join(this.runsDir, name);
+      // #183 discipline: statIfExists returns undefined only on ENOENT (a benign vanished-
+      // between-readdir-and-stat race — skip it); any other errno throws, aborting the WHOLE
+      // sweep (fail-closed) rather than silently omitting this one artifact.
+      const info = await statIfExists(path);
+      if (info === undefined) continue;
+      orphans.push({ path, runId, mtimeMs: info.mtimeMs });
+    }
+    return orphans;
   }
 }
