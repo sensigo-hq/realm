@@ -69,6 +69,23 @@ function applyReclaim(run: RunRecord, stepName: string, now: Date): RunRecord {
   };
 }
 
+/**
+ * Clears the reclaimed step's stale trace buffer (issue #198). This is correct, not merely
+ * tidy: reclaim IS the recovery boundary for a dead claim — the buffer being cleared here was
+ * never adopted into any settled evidence (the claim wedged before `execute_step` ever reached
+ * its post-claim adoption read — see #185's execution-loop.ts), so nothing is being discarded
+ * that any consumer has seen or could ever see. #185 already discards a losing attempt's WAL
+ * lines at the WINNER's settlement time (whoever claims the step next adopts them, then they're
+ * unlinked); #198 simply does the same discard EARLIER — at the moment the dead attempt is
+ * declared dead, rather than leaving it on disk for the next attempt to silently adopt and then
+ * have to caveat as "may include a prior writer" (`buffered_lines_adopted`). No SETTLED evidence
+ * is ever touched by this function — only pre-claim, never-adopted buffer content.
+ *
+ * Best-effort and non-blocking by design: a failed clear must never fail the reclaim itself (the
+ * claim recovery is the important, safety-gated act; WAL hygiene is secondary) — but per the
+ * #183 contract (a real I/O failure must be loud, never silently swallowed), a genuine delete
+ * failure now warns instead of vanishing into an empty catch.
+ */
 async function clearStaleWal(
   traceBufferStore: TraceBufferStore | undefined,
   runId: string,
@@ -77,8 +94,12 @@ async function clearStaleWal(
   if (traceBufferStore === undefined) return;
   try {
     await traceBufferStore.delete(runId, stepName);
-  } catch {
-    // Best-effort WAL hygiene — a failed delete never blocks the reclaim.
+  } catch (err) {
+    console.warn(
+      `⚠ realm: failed to clear stale trace buffer for run '${runId}' step '${stepName}' during ` +
+        `reclaim (${err instanceof Error ? err.message : String(err)}) — the reclaim itself ` +
+        `still succeeded; the next attempt may adopt this buffer's lines.`,
+    );
   }
 }
 

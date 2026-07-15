@@ -69,7 +69,14 @@ export const reclaimCommand = new Command('reclaim')
     ) => {
       const { JsonFileStore, JsonWorkflowStore, reclaimStep, classifyInProgressClaims } =
         await import('@sensigo/realm');
+      const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
       const store = new JsonFileStore();
+      // issue #198: wire the trace buffer so a reclaim clears the reclaimed step's stale WAL —
+      // without this, reclaimStep's own clearStaleWal hook is inert (traceBufferStore stays
+      // undefined) and the next attempt adopts the dead attempt's buffered lines, which is the
+      // mechanical reason a sequential-abandon-then-retry is #185's dominant "adopted a
+      // prior/concurrent writer's lines" population.
+      const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath);
 
       // Loud-fail on a store that cannot persist the claim clock (liveness recovery unavailable).
       if (!store.persistsClaims) {
@@ -157,7 +164,7 @@ export const reclaimCommand = new Command('reclaim')
         let reclaimed = 0;
         for (const { runId: rid, claim } of selected) {
           try {
-            const result = await reclaimStep(store, rid, claim.step);
+            const result = await reclaimStep(store, rid, claim.step, { traceBufferStore });
             if (result.outcome === 'reclaimed') reclaimed += 1;
             console.log(`  ✓ ${rid} / ${claim.step}: ${result.outcome} (was ${result.priorState})`);
           } catch (err) {
@@ -212,7 +219,7 @@ export const reclaimCommand = new Command('reclaim')
             `⚠ Reclaiming '${opts.step}' on run '${runId}' — this re-drives the step; ` +
               `its side effects may repeat.`,
           );
-          const result = await reclaimStep(store, runId, opts.step);
+          const result = await reclaimStep(store, runId, opts.step, { traceBufferStore });
           if (result.outcome === 'reclaimed') {
             console.log(
               `Reclaimed '${opts.step}' (was ${result.priorState}). It is eligible again — the next ` +
