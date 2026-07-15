@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **The agent trace buffer is no longer ownerless (issue #185).** A claiming execution's canonical trace now (1) always preserves the execution's own conclusion instead of letting older buffered lines truncate it out, (2) captures every buffered line present at settlement (closing a race that silently dropped a concurrently-appended line), and (3) carries an honest `trace_summary` caveat when it adopted buffered lines that may originate from a prior or concurrent writer — the engine no longer folds unattributable observations into a step's evidence while asserting single authorship. Faithful per-writer separation via an optional client-supplied nonce is tracked as a follow-up.
+
+---
+
 ## [0.24.0] — 2026-07-15
 
 ### Added

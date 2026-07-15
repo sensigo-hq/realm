@@ -2877,6 +2877,350 @@ describe('WAL trace buffer integration (B-lite)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Trace provenance — honest seal-at-claim (issue #185)
+// ---------------------------------------------------------------------------
+
+describe('trace provenance — honest seal-at-claim (issue #185)', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  const agentDef: WorkflowDefinition = {
+    id: 'wal-test-wf',
+    name: 'WAL Test Workflow',
+    version: 1,
+    steps: {
+      'step-agent': {
+        description: 'Agent step',
+        execution: 'agent',
+        depends_on: [],
+      },
+    },
+  };
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-185-test-'));
+    store = new JsonFileStore(dir);
+  });
+
+  describe('Finding 1 — budget-priority preserves the conclusion', () => {
+    it('a WAL with more entries than the truncation budget still yields a canonical trace containing the execute_step conclusion, dropping the OLDEST buffer lines as overflow', async () => {
+      const bufferStore = new InMemoryTraceBufferStore();
+      const { run } = await store.create({
+        workflowId: 'wal-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // 105 buffer lines, appended in one batch (oldest → newest is array order) — 5 more than
+      // the 100-entry budget once the conclusion is added (106 total candidates).
+      const bufferBatch = Array.from({ length: 105 }, (_, i) => ({ event: `buffered_${i}` }));
+      await bufferStore.append(run.id, 'step-agent', bufferBatch);
+
+      const envelope = await executeStep(store, agentDef, {
+        runId: run.id,
+        command: 'step-agent',
+        input: {},
+        dispatcher: async () => ({}),
+        traceBufferStore: bufferStore,
+        trace: [{ event: 'the_conclusion' }],
+      });
+
+      expect(envelope.status).toBe('ok');
+      const snap = envelope.evidence[0];
+      const trace = snap?.trace ?? [];
+
+      // The conclusion survived.
+      expect(trace.some((e) => e.event === 'the_conclusion')).toBe(true);
+
+      // Truncation occurred and is reported honestly.
+      expect(snap?.trace_summary?.truncated).toBe(true);
+      expect(snap?.trace_summary?.truncation_reason).toBe('count_limit');
+      expect(snap?.trace_summary?.submitted_entries).toBe(106); // 105 buffer + 1 conclusion
+      expect(snap?.trace_summary?.discarded_overflow_entries).toBe(6); // 106 - 100 budget
+      expect(snap?.trace_summary?.stored_entries).toBe(101); // 100 real + 1 sentinel
+
+      // The 6 OLDEST buffer lines (buffered_0..buffered_5) were dropped, never the conclusion.
+      const survivingEvents = new Set(trace.map((e) => e.event));
+      for (let i = 0; i < 6; i++) {
+        expect(survivingEvents.has(`buffered_${i}`)).toBe(false);
+      }
+      for (let i = 6; i < 105; i++) {
+        expect(survivingEvents.has(`buffered_${i}`)).toBe(true);
+      }
+
+      // The conclusion is chronologically last among real (non-sentinel) entries — highest seq.
+      const nonSentinel = trace.filter((e) => e.event !== 'trace.truncated');
+      expect(nonSentinel[nonSentinel.length - 1]?.event).toBe('the_conclusion');
+      const conclusionEntry = trace.find((e) => e.event === 'the_conclusion');
+      const oldestSurvivingBuffer = trace.find((e) => e.event === 'buffered_6');
+      expect(oldestSurvivingBuffer!.seq).toBeLessThan(conclusionEntry!.seq);
+
+      // The sentinel is present and last.
+      expect(trace[trace.length - 1]?.event).toBe('trace.truncated');
+    });
+
+    it('the conclusion still survives when the WAL alone (no execute_step.trace overlap needed) pushes the merge past the byte budget', async () => {
+      const bufferStore = new InMemoryTraceBufferStore();
+      const { run } = await store.create({
+        workflowId: 'wal-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Fewer than 100 entries, but each large enough that the total blows the 50KB budget
+      // before the count limit would ever trigger (verified: 95 * ~555 bytes ≈ 52.7KB > 50KB,
+      // while 95 < the 100-entry count limit).
+      const bigValue = 'x'.repeat(500); // MAX_STRING_VALUE (500) — stays uncapped by normalizeData
+      const bufferBatch = Array.from({ length: 95 }, (_, i) => ({
+        event: `buffered_${i}`,
+        data: { payload: bigValue },
+      }));
+      await bufferStore.append(run.id, 'step-agent', bufferBatch);
+
+      const envelope = await executeStep(store, agentDef, {
+        runId: run.id,
+        command: 'step-agent',
+        input: {},
+        dispatcher: async () => ({}),
+        traceBufferStore: bufferStore,
+        trace: [{ event: 'the_conclusion' }],
+      });
+
+      expect(envelope.status).toBe('ok');
+      const snap = envelope.evidence[0];
+      const trace = snap?.trace ?? [];
+
+      expect(trace.some((e) => e.event === 'the_conclusion')).toBe(true);
+      expect(snap?.trace_summary?.truncated).toBe(true);
+      expect(snap?.trace_summary?.truncation_reason).toBe('byte_limit');
+      // Whatever was dropped is from the front (oldest) of the buffer — buffered_0 specifically.
+      const survivingEvents = new Set(trace.map((e) => e.event));
+      expect(survivingEvents.has('buffered_0')).toBe(false);
+    });
+  });
+
+  describe('Finding 2 — the post-claim re-read closes the silent-loss window', () => {
+    it('a line appended in the window between the pre-claim read and the claim is captured, not silently lost before WAL delete()', async () => {
+      const bufferStore = new InMemoryTraceBufferStore();
+      const { run } = await store.create({
+        workflowId: 'wal-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Simulates a concurrent append_trace landing AFTER the pre-claim WAL read (already
+      // executed by the time executeStep reaches claimStep) but before/at the claim itself.
+      const originalClaimStep = store.claimStep.bind(store);
+      const claimSpy = vi
+        .spyOn(store, 'claimStep')
+        .mockImplementationOnce(async (runId, stepId, def) => {
+          await bufferStore.append(runId, stepId, [{ event: 'race_window_line' }]);
+          return originalClaimStep(runId, stepId, def);
+        });
+
+      try {
+        const envelope = await executeStep(store, agentDef, {
+          runId: run.id,
+          command: 'step-agent',
+          input: {},
+          dispatcher: async () => ({}),
+          traceBufferStore: bufferStore,
+          // No options.trace, no pre-seeded buffer — the pre-claim read sees NOTHING at all.
+        });
+
+        expect(envelope.status).toBe('ok');
+        const snap = envelope.evidence[0];
+        expect(snap?.trace?.some((e) => e.event === 'race_window_line')).toBe(true);
+
+        // The WAL is gone after settlement — the line was captured before delete(), not lost.
+        const remaining = await bufferStore.read(run.id, 'step-agent');
+        expect(remaining).toHaveLength(0);
+      } finally {
+        claimSpy.mockRestore();
+      }
+    });
+
+    it('enforce-mode schema validation still runs pre-claim (against a possibly-incomplete set) — its verdict is carried onto the final captured summary', async () => {
+      const schemaEnforceDef: WorkflowDefinition = {
+        id: 'wal-schema-185-wf',
+        name: 'WAL Schema 185 Workflow',
+        version: 1,
+        steps: {
+          'step-agent': {
+            description: 'Agent step with trace schema',
+            execution: 'agent',
+            depends_on: [],
+            // Validates against the NORMALIZED entry shape (seq/event), which every canonical
+            // trace entry always has — unlike a schema requiring a custom field nested under
+            // `data`, this one can actually pass.
+            trace_schema: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['seq', 'event'],
+                properties: { seq: { type: 'number' }, event: { type: 'string' } },
+              },
+            },
+            trace_validation_mode: 'enforce',
+          },
+        },
+      };
+      const bufferStore = new InMemoryTraceBufferStore();
+      const { run } = await store.create({
+        workflowId: 'wal-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, schemaEnforceDef, {
+        runId: run.id,
+        command: 'step-agent',
+        input: {},
+        dispatcher: async () => ({}),
+        traceBufferStore: bufferStore,
+        trace: [{ event: 'ok_entry' }],
+      });
+
+      expect(envelope.status).toBe('ok');
+      const snap = envelope.evidence[0];
+      expect(snap?.trace_summary?.schema_applied).toBe(true);
+      expect(snap?.trace_summary?.validation_mode).toBe('enforce');
+      expect(snap?.trace_summary?.validation_errors).toBe(0);
+    });
+  });
+
+  describe('Fix 3 — the honest trace_summary caveat', () => {
+    it('adopting any buffer/WAL line carries buffered_lines_adopted with the exact count', async () => {
+      const bufferStore = new InMemoryTraceBufferStore();
+      const { run } = await store.create({
+        workflowId: 'wal-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      await bufferStore.append(run.id, 'step-agent', [
+        { event: 'buffered_a' },
+        { event: 'buffered_b' },
+      ]);
+
+      const envelope = await executeStep(store, agentDef, {
+        runId: run.id,
+        command: 'step-agent',
+        input: {},
+        dispatcher: async () => ({}),
+        traceBufferStore: bufferStore,
+        trace: [{ event: 'the_conclusion' }],
+      });
+
+      expect(envelope.status).toBe('ok');
+      const snap = envelope.evidence[0];
+      expect(snap?.trace_summary?.buffered_lines_adopted).toBe(2);
+    });
+
+    it('an execute_step.trace-only execution (no buffer contribution) carries NO caveat', async () => {
+      const bufferStore = new InMemoryTraceBufferStore();
+      const { run } = await store.create({
+        workflowId: 'wal-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, agentDef, {
+        runId: run.id,
+        command: 'step-agent',
+        input: {},
+        dispatcher: async () => ({}),
+        traceBufferStore: bufferStore,
+        trace: [{ event: 'the_conclusion' }],
+      });
+
+      expect(envelope.status).toBe('ok');
+      const snap = envelope.evidence[0];
+      expect(snap?.trace_summary?.buffered_lines_adopted).toBeUndefined();
+    });
+
+    it('no traceBufferStore configured at all → no caveat (pre-#185 shape, still exact)', async () => {
+      const { run } = await store.create({
+        workflowId: 'wal-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, agentDef, {
+        runId: run.id,
+        command: 'step-agent',
+        input: {},
+        dispatcher: async () => ({}),
+        trace: [{ event: 'the_conclusion' }],
+      });
+
+      expect(envelope.status).toBe('ok');
+      const snap = envelope.evidence[0];
+      expect(snap?.trace_summary?.buffered_lines_adopted).toBeUndefined();
+    });
+  });
+
+  describe('Regression guard — off the overflow/race/foreign-line paths, output is unchanged', () => {
+    it('a normal WAL contribution (buffer well under budget) + a conclusion produces the same merged trace shape as before #185', async () => {
+      const bufferStore = new InMemoryTraceBufferStore();
+      const { run } = await store.create({
+        workflowId: 'wal-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      await bufferStore.append(run.id, 'step-agent', [{ event: 'wal_first' }]);
+
+      const envelope = await executeStep(store, agentDef, {
+        runId: run.id,
+        command: 'step-agent',
+        input: {},
+        dispatcher: async () => ({}),
+        traceBufferStore: bufferStore,
+        trace: [{ event: 'final_last' }],
+      });
+
+      expect(envelope.status).toBe('ok');
+      const snap = envelope.evidence[0];
+      expect(snap?.trace).toHaveLength(2);
+      const walEntry = snap?.trace?.find((e) => e.event === 'wal_first');
+      const finalEntry = snap?.trace?.find((e) => e.event === 'final_last');
+      expect(walEntry?.seq).toBeLessThan(finalEntry!.seq);
+      expect(snap?.trace_summary?.truncated).toBe(false);
+      expect(snap?.trace_summary?.buffered_lines_adopted).toBe(1);
+    });
+
+    it('an execute_step.trace-only step (no traceBufferStore) is byte-identical to before #185', async () => {
+      const { run } = await store.create({
+        workflowId: 'wal-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, agentDef, {
+        runId: run.id,
+        command: 'step-agent',
+        input: {},
+        dispatcher: async () => ({}),
+        trace: [{ event: 'direct_trace', data: { k: 'v' } }],
+      });
+
+      expect(envelope.status).toBe('ok');
+      const snap = envelope.evidence[0];
+      expect(snap?.trace).toEqual([{ seq: 1, event: 'direct_trace', data: { k: 'v' } }]);
+      expect(snap?.trace_summary).toEqual({
+        submitted_entries: 1,
+        stored_entries: 1,
+        discarded_entries: 0,
+        discarded_reserved_event_entries: 0,
+        discarded_overflow_entries: 0,
+        truncated: false,
+      });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Step 5 dispatch-failure envelope — agent_action, next_actions, run_version
 // ---------------------------------------------------------------------------
 

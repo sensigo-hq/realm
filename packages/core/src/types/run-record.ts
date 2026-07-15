@@ -39,6 +39,19 @@ export interface TraceNormalizationSummary {
   validation_mode?: 'warn' | 'enforce';
   /** Number of Ajv validation errors found. Zero means schema-conformant. Present when schema_applied is true. */
   validation_errors?: number;
+  /**
+   * Issue #185 (honest seal): the count of buffer/WAL lines adopted into this canonical trace.
+   * Present ONLY when > 0 — i.e., only when this execution's canonical trace includes lines it
+   * cannot itself attribute: the agent trace buffer is not owned by any one writer, so an
+   * adopted line may have been appended by a PRIOR execution attempt (e.g. a crashed run this
+   * one resumed) or by a CONCURRENT one racing on the same (run, step). The engine records this
+   * as an honest fact rather than silently asserting single authorship over content it cannot
+   * verify the provenance of. Absent (never `0` or `false`) when canonical trace was built
+   * entirely from this execution's own `execute_step` submission — no caveat is warranted there.
+   * Faithful per-writer separation (a client-supplied nonce distinguishing writers) is tracked as
+   * a follow-up; this field is deliberately just an honest count, not an attribution mechanism.
+   */
+  buffered_lines_adopted?: number;
 }
 
 /** Diagnostic metadata captured during step execution. Written once; read by inspect. */

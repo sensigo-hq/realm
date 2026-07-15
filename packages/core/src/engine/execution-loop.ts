@@ -8,6 +8,7 @@ import type {
   EvidenceSnapshot,
   WorkflowContextSnapshot,
   AgentTraceEntry,
+  TraceNormalizationSummary,
 } from '../types/run-record.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import { extensionIdentityDiffers } from '../types/extension-identity.js';
@@ -587,6 +588,101 @@ function mergeWarnings(traceWarnings: string[], cleanupWarning?: string): string
   return cleanupWarning !== undefined ? [...traceWarnings, cleanupWarning] : [...traceWarnings];
 }
 
+/**
+ * Issue #185 Fix 1 (budget-priority): builds the merged, canonicalized trace for an agent step,
+ * giving `traceInput` (the `execute_step` conclusion — unambiguously THIS execution's own)
+ * priority into the truncation budget over `bufferEntries` (buffer/WAL lines, which may
+ * originate from a prior or concurrent writer — see Fix 3 / `buffered_lines_adopted`).
+ *
+ * Previously the merge sorted `options.trace` last (chronologically) and handed the WHOLE set to
+ * `normalizeTrace`, which keeps the FIRST N entries and drops the rest once truncated. When a
+ * prior/concurrent attempt left more than the budget's worth of buffer lines, the winner's own
+ * conclusion was the first thing dropped — canonical trace became majority-foreign plus a
+ * truncation sentinel, with the real conclusion gone. This function establishes the invariant
+ * that `traceInput`, when present, always survives, while keeping truncation accounting honest
+ * (the OLDEST buffer lines are the ones actually reported as overflow).
+ *
+ * `normalizeTrace`'s global keep-first truncation semantics are UNCHANGED — every single-input
+ * trace still depends on them, and this function calls it unmodified. Instead, THIS function
+ * decides the ORDER entries reach `normalizeTrace`:
+ *   1. A throwaway DRY pass processes candidates in PRIORITY order (the conclusion first, then
+ *      buffer lines newest→oldest, using each entry's chronological RANK — not a timestamp
+ *      comparison, so same-batch buffer entries sharing one `_internalTs` still resolve
+ *      unambiguously) purely to learn how many entries the budget admits (`acceptedCount`).
+ *   2. The REAL call then processes: the first `acceptedCount` priority-order candidates,
+ *      re-sorted into TRUE CHRONOLOGICAL order (so `seq` still functions as a chronological
+ *      proxy) — followed by the remaining priority-order tail, UNCHANGED. Because a fixed
+ *      accepted set's total byte/count cost is order-invariant (see below), this reordered
+ *      prefix is guaranteed to be accepted in full, and the tail then reproduces the EXACT SAME
+ *      trip point (same running total, same next candidate) the dry pass already found — so the
+ *      real call organically, honestly re-derives its own accurate sentinel/summary. No manual
+ *      patching of `normalizeTrace`'s output is needed anywhere in this function.
+ *
+ * Why the reordered prefix can never re-trigger truncation before the tail: `normalizeTrace`
+ * assigns `seq` sequentially as entries are accepted, so processing a FIXED accepted set in a
+ * different order only relabels which member gets which number 1..N — the total serialized byte
+ * cost of that field is therefore order-invariant, as is every other (content-derived) field. A
+ * first-trigger scan's running total is a partial sum of non-negative terms, so it never exceeds
+ * the set's own final total — and the dry pass already proved that final total fits. This also
+ * means a reserved-prefix (`trace.*`) buffer entry landing inside the reordered prefix costs
+ * nothing (skipped for free, as always) and is self-correcting: the real call simply accepts one
+ * further tail entry to compensate, still preferring the next-newest buffer line — the "prefer
+ * newest" invariant holds exactly, not just approximately.
+ *
+ * Pass-through (byte-identical to pre-#185 behavior) when `bufferEntries` is empty — the
+ * regression guard this preserves.
+ */
+function buildPriorityMergedTrace(
+  bufferEntries: BufferedEntry[],
+  traceInput: AgentTraceEntry[] | undefined,
+): NormalizeTraceResult {
+  if (bufferEntries.length === 0) {
+    return normalizeTrace(traceInput ?? []);
+  }
+
+  // Chronological rank: buffer entries keep their stored (append) order — read() returns them
+  // oldest-first, across however many separate append() batches contributed. options.trace
+  // entries (the execute_step conclusion) always rank after every buffer entry, mirroring the
+  // pre-#185 merge's "conclusion sorts last" intent — a plain integer rank sidesteps same-batch
+  // buffer entries sharing one `_internalTs` (a real, common case: one append() call stamps its
+  // whole batch with a single timestamp), which a timestamp-only sort cannot resolve stably.
+  type Ranked = AgentTraceEntry & { _rank: number };
+  const rankedBuffer: Ranked[] = bufferEntries.map((entry, i) => {
+    const { _internalTs: _drop, ...rest } = entry;
+    return { ...rest, _rank: i };
+  });
+  const rankedTrace: Ranked[] = (traceInput ?? []).map((entry, i) => ({
+    ...entry,
+    _rank: bufferEntries.length + i,
+  }));
+
+  // Priority order: the conclusion first (always favored), then buffer lines newest→oldest.
+  const priorityOrder: Ranked[] = [...rankedTrace, ...[...rankedBuffer].reverse()];
+
+  const dryRun = normalizeTrace(priorityOrder.map(({ _rank: _drop, ...rest }) => rest));
+  if (!dryRun.summary.truncated) {
+    // Nothing exceeds the budget — chronological merge + a single normalize, byte-identical to
+    // the pre-#185 merge shape (no selection needed).
+    const chronological = [...priorityOrder]
+      .sort((a, b) => a._rank - b._rank)
+      .map(({ _rank: _drop, ...rest }) => rest);
+    return normalizeTrace(chronological);
+  }
+
+  // stored_entries counts the dry pass's own sentinel too — subtract it to get the count of
+  // genuinely-submitted candidates the budget actually admits, in priority order.
+  const acceptedCount = dryRun.summary.stored_entries - 1;
+  const survivorsChronological = priorityOrder
+    .slice(0, acceptedCount)
+    .sort((a, b) => a._rank - b._rank);
+  const tail = priorityOrder.slice(acceptedCount); // unchanged priority-order tail — see doc above
+  const reordered: AgentTraceEntry[] = [...survivorsChronological, ...tail].map(
+    ({ _rank: _drop, ...rest }) => rest,
+  );
+
+  return normalizeTrace(reordered);
+}
+
 /** Builds a minimal error ResponseEnvelope from primitive fields. */
 function errorEnvelope(
   command: string,
@@ -800,14 +896,29 @@ export async function executeStep(
     }
   }
 
-  // Step 2d: Merge WAL buffer + execute_step trace, normalize, validate (agent steps only, pre-claim).
-  // walEntries is declared at this scope so it is in scope at the captureEvidence call site below.
+  // Step 2d: PRE-claim WAL read — issue #185 Fix 2: this read serves the enforce-gate ONLY.
+  // Schema validation stays pre-claim so an invalid trace still doesn't consume a claim. The
+  // trace actually CAPTURED into evidence is built from a fresh POST-claim re-read further below
+  // (once the claim below freezes appends) — see that block's comment for why: a concurrent
+  // append_trace landing in the narrow window between this read and the claim would otherwise
+  // never be adopted, then be silently destroyed when the WAL is deleted at settlement (issue
+  // #185 Finding 2). A rare line landing in exactly that window bypasses THIS enforce check —
+  // documented, accepted (see the post-claim block).
+  //
+  // walEntries is declared at this outer scope because it is REASSIGNED to the post-claim read
+  // below and referenced at the captureEvidence call site further down this function.
   const traceWarnings: string[] = [];
   let preNormalizedTrace: NormalizeTraceResult | undefined;
   let walEntries: BufferedEntry[] = [];
+  let preClaimSchemaResult:
+    | {
+        schema_applied: NonNullable<TraceNormalizationSummary['schema_applied']>;
+        validation_mode: NonNullable<TraceNormalizationSummary['validation_mode']>;
+        validation_errors: NonNullable<TraceNormalizationSummary['validation_errors']>;
+      }
+    | undefined;
 
   if (stepDef?.execution === 'agent') {
-    // Read WAL buffer if a buffer store is configured.
     walEntries =
       options.traceBufferStore !== undefined
         ? await options.traceBufferStore.read(options.runId, options.command)
@@ -817,21 +928,10 @@ export async function executeStep(
       walEntries.length > 0 || (options.trace !== undefined && options.trace.length > 0);
 
     if (hasAnyTrace) {
-      // Build merge set: WAL entries carry their _internalTs; execute_step entries
-      // receive Date.now() so they sort after all WAL batches (step conclusion ordering).
-      const finalTs = Date.now();
-      const mergeSet: Array<AgentTraceEntry & { _internalTs: number }> = [
-        ...walEntries, // already have _internalTs from buffer store
-        ...(options.trace ?? []).map((e) => ({ ...e, _internalTs: finalTs })),
-      ];
-
-      // Sort by _internalTs to produce chronological order, then strip the field before
-      // passing to normalizeTrace (which operates on plain AgentTraceEntry[]).
-      mergeSet.sort((a, b) => a._internalTs - b._internalTs);
-      const sortedEntries: AgentTraceEntry[] = mergeSet.map(({ _internalTs: _, ...rest }) => rest);
-
-      // Normalize the merged set once. This is the single canonicalization pass.
-      preNormalizedTrace = normalizeTrace(sortedEntries);
+      // issue #185 Fix 1: budget-priority merge (see buildPriorityMergedTrace's own doc) — this
+      // pre-claim pass exists only to feed validateTraceSchema below; its RESULT is discarded
+      // (not stored into the outer preNormalizedTrace) once the enforce-gate decision is made.
+      const preClaimNormalized = buildPriorityMergedTrace(walEntries, options.trace);
 
       // Validate trace schema if configured (unchanged call site).
       if (stepDef.trace_schema !== undefined) {
@@ -839,28 +939,32 @@ export async function executeStep(
         if (mode === 'enforce') {
           try {
             validateTraceSchema(
-              preNormalizedTrace.entries,
+              preClaimNormalized.entries,
               stepDef.trace_schema,
               options.command,
               'enforce',
             );
-            preNormalizedTrace.summary.schema_applied = true;
-            preNormalizedTrace.summary.validation_mode = 'enforce';
-            preNormalizedTrace.summary.validation_errors = 0;
+            preClaimSchemaResult = {
+              schema_applied: true,
+              validation_mode: 'enforce',
+              validation_errors: 0,
+            };
           } catch (err) {
             // On enforce rejection: do NOT delete the WAL — agent retries with WAL preserved.
             return makeErrorEnvelope(options, run, err as WorkflowError, definition);
           }
         } else {
           const result = validateTraceSchema(
-            preNormalizedTrace.entries,
+            preClaimNormalized.entries,
             stepDef.trace_schema,
             options.command,
             'warn',
           );
-          preNormalizedTrace.summary.schema_applied = true;
-          preNormalizedTrace.summary.validation_mode = 'warn';
-          preNormalizedTrace.summary.validation_errors = result.errorCount;
+          preClaimSchemaResult = {
+            schema_applied: true,
+            validation_mode: 'warn',
+            validation_errors: result.errorCount,
+          };
           if (result.errorCount > 0) {
             traceWarnings.push(result.warning);
           }
@@ -916,6 +1020,50 @@ export async function executeStep(
       definition,
       traceWarnings.length > 0 ? traceWarnings : undefined,
     );
+  }
+
+  // issue #185 Fix 2: POST-claim WAL re-read. Appends are frozen once a step is in_progress
+  // (claimed above) — so THIS read is complete, unlike the pre-claim read further up, which only
+  // served the enforce-gate. Re-running unconditionally (whether or not the pre-claim read found
+  // anything) is required: Finding 2's race is exactly a concurrent append_trace landing AFTER
+  // the pre-claim read but before/at the claim, meaning the pre-claim read alone could show
+  // nothing while a line already exists by the time we reach here. This re-read — and the
+  // re-normalized result built from it — is what is actually captured into evidence below; the
+  // pre-claim result above is discarded once the enforce-gate decision was made.
+  //
+  // walEntries is REASSIGNED here (declared pre-claim above) — from this point on it denotes the
+  // complete, post-claim set, which is also what the captureEvidence call site further below
+  // keys its `stepDef?.execution === 'agent' && walEntries.length > 0` check on.
+  if (stepDef?.execution === 'agent') {
+    walEntries =
+      options.traceBufferStore !== undefined
+        ? await options.traceBufferStore.read(options.runId, options.command)
+        : [];
+
+    if (walEntries.length > 0 || (options.trace !== undefined && options.trace.length > 0)) {
+      // issue #185 Fix 1: same budget-priority merge as the pre-claim pass, now over the
+      // complete post-claim set — this is the value captured into evidence.
+      preNormalizedTrace = buildPriorityMergedTrace(walEntries, options.trace);
+
+      // Carry over the enforce-gate's schema-validation result (computed pre-claim against a
+      // possibly-incomplete set) rather than re-validating here — Fix 2 deliberately keeps
+      // validation pre-claim (see that block's comment); this just republishes its verdict onto
+      // the summary that is actually captured.
+      if (preClaimSchemaResult !== undefined) {
+        preNormalizedTrace.summary.schema_applied = preClaimSchemaResult.schema_applied;
+        preNormalizedTrace.summary.validation_mode = preClaimSchemaResult.validation_mode;
+        preNormalizedTrace.summary.validation_errors = preClaimSchemaResult.validation_errors;
+      }
+
+      // issue #185 Fix 3: the honest label. Any buffer/WAL line adopted here is NOT attributable
+      // to this execution — the agent trace buffer has no single owner, so an adopted line may
+      // originate from a prior attempt (e.g. a crashed run this one resumed) or a concurrent one
+      // racing on the same (run, step). Present only when buffer lines were actually adopted;
+      // an options.trace-only execution carries no caveat.
+      if (walEntries.length > 0) {
+        preNormalizedTrace.summary.buffered_lines_adopted = walEntries.length;
+      }
+    }
   }
 
   // Load workflow context once at run start — skip if already populated.
