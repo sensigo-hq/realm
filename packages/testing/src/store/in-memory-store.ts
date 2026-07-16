@@ -9,6 +9,7 @@ import {
   type RunRecord,
   type CreateRunOptions,
   type WorkflowDefinition,
+  type LoadBearingRunRecordField,
 } from '@sensigo/realm';
 
 /** In-memory implementation of RunStore. Uses a Map keyed by run ID. No I/O, no locking. */
@@ -19,6 +20,14 @@ export class InMemoryStore implements RunStore {
 
   /** Parity with JsonFileStore: round-trips the per-claim `claims` liveness clock (issue #101). */
   readonly persistsClaims = true;
+
+  /** Parity with JsonFileStore (issue #188): every `create`/`update` stores the whole `RunRecord`
+   *  object as-is (no field-by-field mapping), so nothing is ever dropped — declares the full set. */
+  readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField> = new Set([
+    'capability_blocks',
+    'workflow_context_snapshots',
+    'extension_identity',
+  ]);
 
   async create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
     // Idempotency: a key match applies the re-encounter policy, like JsonFileStore.
@@ -111,7 +120,24 @@ export class InMemoryStore implements RunStore {
     stepName: string,
     definition: WorkflowDefinition,
   ): Promise<RunRecord> {
-    const run = await this.get(runId);
+    // issue #188: read the record SYNCHRONOUSLY (a direct Map.get, not `await this.get(...)`) so
+    // the read → eligibility-check → write below is one indivisible synchronous stretch. This is
+    // what makes claimStep single-owner for concurrent same-process calls (the cross-cutting
+    // obligation on RunStore.claimStep; the TCK's concurrent-claimStep case exercises exactly
+    // this against this store). `await this.get(runId)` would NOT be safe here even though the
+    // lookup itself has no I/O: unwrapping an already-resolved promise still costs one microtask
+    // tick, during which a second `Promise.all`'d claimStep call's own (equally synchronous) read
+    // can run BEFORE either call has written — verified empirically: two concurrent claimStep
+    // calls for the same (runId, step) both resolved successfully before this fix.
+    const run = this.runs.get(runId);
+    if (run === undefined) {
+      throw new WorkflowError(`Run '${runId}' not found`, {
+        code: 'STATE_RUN_NOT_FOUND',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+      });
+    }
     const alreadyDone = [
       ...run.completed_steps,
       ...run.in_progress_steps,

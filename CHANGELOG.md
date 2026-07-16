@@ -6,6 +6,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **The `RunStore` contract now declares field fidelity (issue #188).** A store declares (via optional `persistedRunRecordFields`, fail-closed default) which load-bearing `RunRecord` fields it round-trips; the engine surfaces an honest diagnostic — instead of silently misreading a dropped field as legitimate absence — when a store doesn't persist a field it depends on (`capability_blocks` → capability-block state unavailable; `workflow_context_snapshots` → snapshot history not durable; `extension_identity` → drift detection unavailable). A framework-agnostic conformance TCK (`@sensigo/realm-testing`) forces any store to prove its declared fidelity is honest (a store that claims to persist a field but drops it fails conformance) and asserts `claimStep`'s single-owner guarantee. `JsonFileStore` declares the full set → zero behavior change locally. Prerequisite-hardening for pluggable/cloud run stores; the `claimStep` doc now states the cross-host single-owner obligation. (Partitioned artifact-reachability enforcement in purge/gc/export is tracked separately as #188 PR-3.)
+
 ### Changed
 
 - **`append_trace` now rejects a terminal run (issue #187).** A late `append_trace` to a `completed`/`failed`/`abandoned`/`aborted` run returns a typed error (`report_to_user`) instead of writing unreadable WAL residue — closing the one orphan source correct purge ordering cannot reach (a WAL born after purge's snapshot).

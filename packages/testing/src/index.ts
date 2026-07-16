@@ -8,6 +8,12 @@ export type {
   ArtifactStoreContractCase,
   PerRunArtifactStoreContractAdapter,
 } from './store/per-run-artifact-store-contract.js';
+export { runStoreFidelityContract } from './store/run-store-fidelity-contract.js';
+export type {
+  RunStoreFidelityLaw,
+  RunStoreFidelityContractCase,
+  RunStoreFidelityContractAdapter,
+} from './store/run-store-fidelity-contract.js';
 
 // Fixtures
 export {

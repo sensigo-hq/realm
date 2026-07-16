@@ -10,6 +10,7 @@ import {
   findEligibleSteps,
   classifyInProgressClaims,
   findCapabilityBlockedSteps,
+  persistsField,
   type RunPhase,
   type NextAction,
   type ClaimState,
@@ -111,6 +112,14 @@ export interface RunStateSummary {
    * here (a legacy run, or a skip family not yet carrying a detail).
    */
   skip_details?: Record<string, SkipDetail>;
+  /**
+   * Honest store-fidelity diagnostics (issue #188) — present only when non-empty. Advisory only,
+   * never a throw: surfaces when the configured run store does NOT declare it persists a
+   * load-bearing `RunRecord` field this response depends on, so a consumer knows a field reading
+   * as absent/empty may be a store limitation rather than genuine absence (e.g. `capability_blocks`
+   * reading `[]` could mean "no blocks" OR "this store doesn't persist blocks at all").
+   */
+  warnings?: string[];
 }
 
 /**
@@ -128,6 +137,20 @@ export async function handleGetRunState(
   // computed once and used both to refine the status (below) and as the advisory array (in the return).
   // Terminal guard mirrors stuck_claims: a sealed run surfaces nothing to do.
   const capabilityBlocks = run.terminal_state ? [] : findCapabilityBlockedSteps(run);
+
+  // issue #188 field-fidelity gate: capability_blocks read above is only trustworthy if the
+  // configured store actually persists it — a store that silently drops it makes a genuinely
+  // blocked step look identical to "no blocks" ([] either way). Advisory only: this NEVER changes
+  // capabilityBlocks/nextActionsStatus above, it only tells the consumer the read may be a store
+  // limitation rather than a real absence.
+  const fidelityWarnings: string[] = [];
+  if (!persistsField(runStore, 'capability_blocks')) {
+    fidelityWarnings.push(
+      "this run store does not persist 'capability_blocks' — capability-block state is " +
+        'unavailable and not authoritative (an empty result may mean "no blocks" or "this ' +
+        'store cannot report blocks at all").',
+    );
+  }
 
   // Compute next_actions + diagnostic status (read-only). Precedence:
   // terminal → skipped_terminal; gate open → awaiting_human; no/unresolved workflow →
@@ -223,6 +246,7 @@ export async function handleGetRunState(
     ...(run.skip_details !== undefined && Object.keys(run.skip_details).length > 0
       ? { skip_details: run.skip_details }
       : {}),
+    ...(fidelityWarnings.length > 0 ? { warnings: fidelityWarnings } : {}),
   };
 }
 

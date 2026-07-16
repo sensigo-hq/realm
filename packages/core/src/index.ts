@@ -5,6 +5,7 @@ export * from './types/workflow-error.js';
 export { resolvePreExecutionAgentAction } from './engine/error-resolution.js';
 export * from './types/workflow-definition.js';
 export * from './store/store-interface.js';
+export { persistsField } from './store/store-fidelity.js';
 export { JsonFileStore } from './store/json-file-store.js';
 export type { ReconcileSummary } from './store/json-file-store.js';
 export type { PerRunArtifactStore } from './store/per-run-artifact-store.js';

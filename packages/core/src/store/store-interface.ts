@@ -2,6 +2,27 @@
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
+/**
+ * The load-bearing `RunRecord` fields whose ABSENCE the engine interprets (control flow / the
+ * drift-detection pillar) — a store that drops one silently corrupts behavior, so it must
+ * DECLARE which it round-trips (issue #188). This is a CLOSED set — only fields with a real,
+ * verified read-site consumer (see `RunStore.persistedRunRecordFields`'s own doc for the
+ * consumer list), not an open-ended "everything RunRecord might ever carry":
+ *  - `capability_blocks` — read by `findCapabilityBlockedSteps` (capability.ts), which returns
+ *    `[]` on `undefined`; a store that drops it makes a genuinely-blocked step silently look
+ *    unblocked to `get_run_state` / `list` / `run-agent`.
+ *  - `workflow_context_snapshots` — read by the execution loop's `=== undefined` branch, which
+ *    re-snapshots when absent; a store that drops it loses snapshot HISTORY (current context
+ *    self-heals via re-snapshot, but prior snapshots are gone).
+ *  - `extension_identity` — read by the execution loop's drift-evidence append (issue #119) and
+ *    `realm inspect --check-drift`; a store that drops it resets the drift baseline every
+ *    execution, so drift can never accumulate or be detected.
+ */
+export type LoadBearingRunRecordField =
+  | 'capability_blocks'
+  | 'workflow_context_snapshots'
+  | 'extension_identity';
+
 export interface CreateRunOptions {
   workflowId: string;
   workflowVersion: number;
@@ -39,6 +60,24 @@ export interface RunStore {
   persistsClaims: boolean;
 
   /**
+   * Which {@link LoadBearingRunRecordField}s this store guarantees to round-trip through
+   * `create`/`update`/`get` (issue #188). OPTIONAL and FAIL-CLOSED: `undefined` (or a field
+   * absent from the declared set) means the engine must NOT assume the field's absence on a
+   * read is authoritative — it surfaces the gap honestly instead (see the runtime gates in
+   * `execution-loop.ts` and `get-run-state.ts`). A store that persists every `RunRecord` field
+   * it's given (the common case — `JsonFileStore` and the `@sensigo/realm-testing` in-memory
+   * store both do, by generic serialize/deserialize or by never dropping anything on write)
+   * declares the FULL set, which makes every gate dormant: zero behavior change.
+   *
+   * This is intentionally the inverse of a REQUIRED capability: the default (absent) is the
+   * CONSERVATIVE reading (assume nothing is persisted, warn accordingly), so adding this field
+   * cannot retroactively break an external implementer that predates it (cf. issue #169's
+   * "never make a capability required" precedent) — it only makes such a store's pre-existing
+   * silent field-drop finally visible.
+   */
+  readonly persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>;
+
+  /**
    * Create a new run record, or — when an `idempotencyKey` is supplied and a run with the
    * same `(workflowId, idempotencyKey)` already exists — return that existing run instead.
    *
@@ -74,6 +113,15 @@ export interface RunStore {
    *    throws STATE_STEP_NOT_ELIGIBLE.
    * 4. Adds step to in_progress_steps, increments version, writes.
    * Returns the updated record.
+   *
+   * **Cross-cutting single-owner obligation (issue #188):** MUST be atomic and single-owner
+   * across ALL processes/hosts sharing this store: two concurrent `claimStep` calls for the
+   * same `(runId, step)` MUST NOT both succeed. A store that cannot guarantee this (e.g.
+   * without a row-lock/CAS) breaks both the resurrect-race protection (#184) and the
+   * trace-buffer epoch minting (#185). This obligation is stated here for any external store
+   * implementer; a store's own conformance suite must verify it holds across its actual
+   * concurrency model (the in-repo TCK's `claimStep` test only verifies the same-host case —
+   * see its own doc for why cross-host cannot be verified generically).
    */
   claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<RunRecord>;
 }
