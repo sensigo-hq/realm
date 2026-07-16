@@ -23,6 +23,7 @@ import type {
   LiteralNode,
 } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
+import { persistsField } from '../store/store-fidelity.js';
 import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-store.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import {
@@ -1077,6 +1078,17 @@ export async function executeStep(
       ...pendingRun,
       workflow_context_snapshots: contextSnapshots,
     });
+    // issue #188 field-fidelity gate: advisory only, never blocks — the re-snapshot above
+    // already self-healed CURRENT context regardless of what the store persists. This warns
+    // that the HISTORY of snapshots won't survive on a store that doesn't declare the field
+    // (every future execution will re-enter this branch and re-snapshot from scratch).
+    if (!persistsField(store, 'workflow_context_snapshots')) {
+      traceWarnings.push(
+        "this run store does not persist 'workflow_context_snapshots' — snapshot history is " +
+          'not durable on this store (re-snapshotting recovers current context each time, but ' +
+          'prior snapshots are lost)',
+      );
+    }
   }
 
   // Extension-code drift evidence (issue #119): lazy append-on-change, mirroring the
@@ -1088,6 +1100,19 @@ export async function executeStep(
   // identity (extension-free runs) → byte-identical behavior, field never written.
   const registryIdentity = options.registry?.identity;
   if (registryIdentity !== undefined) {
+    // issue #188 field-fidelity gate: a SEPARATE, unconditional advisory (independent of
+    // whether THIS call's append-on-change detects an actual diff below) — if the store can't
+    // persist extension_identity at all, the baseline resets every execution, so drift can
+    // NEVER accumulate or be detected on this store, not just "not detected this time". Preserves
+    // the #119 WARN-never-gate flow exactly: this only ever pushes a warning, never blocks or
+    // alters the append-on-change logic that follows.
+    if (!persistsField(store, 'extension_identity')) {
+      traceWarnings.push(
+        "this run store does not persist 'extension_identity' — drift detection is unavailable " +
+          '(the baseline resets every execution, so drift can never accumulate or be detected ' +
+          'on this store)',
+      );
+    }
     const identityHistory = pendingRun.extension_identity ?? [];
     const lastIdentity = identityHistory[identityHistory.length - 1];
     if (lastIdentity === undefined || extensionIdentityDiffers(lastIdentity, registryIdentity)) {

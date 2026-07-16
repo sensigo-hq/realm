@@ -52,6 +52,9 @@ const N_A: Record<string, string> = {
     'the child drives via recoverable-settle + the A5 surfaces, so warning at spawn would duplicate it',
   'test-runner.ts':
     'test harness — emitting warnings here would change test output; not a production run-creating path',
+  'run-store-fidelity-contract.ts':
+    'the issue #188 RunStore fidelity/claimStep TCK — creates throwaway runs purely to exercise ' +
+    'conformance cases against a store under test; not a production run-creating path',
 };
 
 describe('#134 pre-flight capability warning — create-site enumeration (Part B3)', () => {

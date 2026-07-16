@@ -10,7 +10,7 @@ import lockfile from 'proper-lockfile';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
-import type { RunStore, CreateRunOptions } from './store-interface.js';
+import type { RunStore, CreateRunOptions, LoadBearingRunRecordField } from './store-interface.js';
 import type { PerRunArtifactStore } from './per-run-artifact-store.js';
 import { findEligibleSteps, deriveRunPhase } from '../engine/eligibility.js';
 import { computeClaimDeadline } from '../engine/claim-liveness.js';
@@ -105,6 +105,17 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
 
   /** This store round-trips the per-claim `claims` liveness clock (issue #101). */
   readonly persistsClaims = true;
+
+  /**
+   * Round-trips every `RunRecord` field it's given (issue #188) — `create`/`update` serialize the
+   * whole record to JSON and `get` parses it back verbatim, so nothing is dropped field-by-field.
+   * Declaring the full set keeps every field-fidelity gate dormant on the local default.
+   */
+  readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField> = new Set([
+    'capability_blocks',
+    'workflow_context_snapshots',
+    'extension_identity',
+  ]);
 
   constructor(runsDir?: string) {
     this.runsDir = runsDir ?? DEFAULT_RUNS_DIR;
