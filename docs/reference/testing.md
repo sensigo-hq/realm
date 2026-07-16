@@ -194,6 +194,111 @@ Implements the full `RunStore` interface from `@sensigo/realm`: `create`, `get`,
 `claimStep`, `list`. The `update` method enforces optimistic concurrency — passes the version
 check in single-threaded test code and throws `STATE_SNAPSHOT_MISMATCH` if two updates race.
 
+`InMemoryStore` is a **faithful, fully-conformant reference `RunStore`**: it declares
+`persistsClaims: true` (the issue #101 per-claim liveness clock round-trips) and the full
+`persistedRunRecordFields` set (issue #188 — see the RunStore conformance section below), so
+nothing it does is ever flagged by the engine's honesty diagnostics.
+
+`claimStep` also carries a cross-cutting obligation every `RunStore` implementation — including
+a future cloud/Postgres store — must satisfy: **it must be atomic and single-owner across all
+processes/hosts sharing the store.** Two concurrent `claimStep` calls for the same `(runId,
+step)` must not both succeed; a store that can't guarantee this breaks the resurrect-race
+protection (issue #184) and the trace-buffer epoch minting (issue #185). `InMemoryStore`
+satisfies this for same-process concurrency by construction (no internal `await` between its
+read and write, so one call's `claimStep` body always runs to completion before another can
+observe the record). The `CLAIM_SINGLE_OWNER` conformance law below verifies this same-process
+guarantee for any store — see its own caveat for what it does _not_ prove.
+
+---
+
+## RunStore conformance — `runStoreFidelityContract`
+
+A framework-agnostic conformance kit (issue #188) that **any** `RunStore` implementation —
+including an external store built for a future deployment (e.g. a cloud/Postgres-backed store)
+— can be run against to prove it satisfies the store contract. It returns plain case
+descriptors, not test-runner assertions: no `describe`/`it`/`expect` import, so it carries no
+test-framework dependency into `@sensigo/realm-testing`'s published `dist`. Each calling test
+file wires the returned cases into whatever framework it already uses.
+
+**Why it exists:** a store that silently drops a load-bearing `RunRecord` field, or lies about
+what it claims to persist, corrupts the engine in ways that are easy to miss in review —
+capability-block state goes silently unreported, snapshot history disappears, or drift
+detection never fires. The TCK catches that dishonesty **before the store ships**, rather than
+relying on the engine's runtime diagnostics (which only ever say "this store doesn't declare
+persisting X," never "this store lied about persisting X").
+
+**The capability it verifies:** `RunStore` carries an optional
+`persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>` (both exported from
+`@sensigo/realm`) — the set of load-bearing `RunRecord` fields a store guarantees to round-trip
+through `create`/`update`/`get`. `LoadBearingRunRecordField` is a closed set of three fields,
+each with a real engine read-site: `capability_blocks` (capability-block state),
+`workflow_context_snapshots` (context-snapshot history), and `extension_identity` (drift-detection
+baseline). The default is **fail-closed**: `undefined` (or a field simply absent from the
+declared set) means the engine must _not_ treat that field's absence on a read as authoritative
+— it surfaces an honest diagnostic instead of silently trusting an empty result. A store that
+persists every `RunRecord` field it's given — like `JsonFileStore` and `InMemoryStore`, both by
+generic serialize/deserialize or by never dropping anything on write — declares the **full**
+set, which keeps every honesty gate dormant: zero behavior change. This is the inverse of a
+_required_ capability, so adding it can never retroactively break an external store implementer
+that predates it — it only makes a pre-existing silent field-drop finally visible. An external
+`RunStore` implementer should declare `persistedRunRecordFields` honestly and verify that
+honesty with the TCK below.
+
+```typescript
+import { runStoreFidelityContract, type RunStoreFidelityLaw } from '@sensigo/realm-testing';
+import { JsonFileStore } from '@sensigo/realm';
+import type { WorkflowDefinition } from '@sensigo/realm';
+
+// A minimal workflow definition carrying exactly one step, immediately eligible on a fresh run
+// (no unmet depends_on) — CLAIM_SINGLE_OWNER races two concurrent claimStep calls against it.
+const definition: WorkflowDefinition = {
+  id: 'my-store-tck-wf',
+  name: 'My Store TCK WF',
+  version: 1,
+  steps: {
+    work: { description: 'Immediately eligible step', execution: 'agent', depends_on: [] },
+  },
+};
+
+const store = new JsonFileStore('/tmp/my-store-under-test');
+const cases = runStoreFidelityContract({ store, definition, stepName: 'work' });
+
+for (const testCase of cases) {
+  it(`${testCase.law}: ${testCase.name}`, async () => {
+    await testCase.run(); // rejects (throws) on failure
+  });
+}
+```
+
+### `runStoreFidelityContract(adapter)`
+
+| Parameter            | Type                 | Description                                                                                        |
+| -------------------- | -------------------- | -------------------------------------------------------------------------------------------------- |
+| `adapter.store`      | `RunStore`           | The store under test.                                                                              |
+| `adapter.definition` | `WorkflowDefinition` | A definition with exactly one step, named `adapter.stepName`, immediately eligible on a fresh run. |
+| `adapter.stepName`   | string               | The eligible step's name.                                                                          |
+
+Returns `RunStoreFidelityContractCase[]` — each case is `{ law: RunStoreFidelityLaw, name: string,
+run: () => Promise<void> }`. `run()` rejects on failure; any test framework's `await run()` (a
+rejection fails the test) or `expect(run()).rejects...` maps directly onto this.
+
+### The two laws
+
+| Law                  | What it checks                                                                                                                                                                             | A store fails when...                                                                                                                                                                                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FIDELITY_HONESTY`   | For **each field the store declares** in `persistedRunRecordFields`, a real sample value is written through `create`/`update` and read back through `get`; the round-trip must byte-match. | It declares a field but drops, mutates, or fails to persist it. (A store that declares nothing generates zero `FIDELITY_HONESTY` cases — that combination is correct-by-design, not a gap; such a store instead relies on the engine's runtime honesty gates.) |
+| `CLAIM_SINGLE_OWNER` | Two concurrent `claimStep(runId, sameStep)` calls against a fresh run.                                                                                                                     | More than one call succeeds, or a losing call rejects with anything other than a `WorkflowError` carrying `STATE_STEP_ALREADY_CLAIMED`.                                                                                                                        |
+
+**Cross-host caveat:** `CLAIM_SINGLE_OWNER` only exercises and asserts the **same-process
+(same-host) guarantee** — for an in-memory store this is same-process by construction; for a
+lock-based store like `JsonFileStore` it exercises same-host multi-process safety via the real
+OS-level lock the two concurrent calls contend on. But the TCK run itself happens within one
+test process, so it does not and cannot exercise true cross-host concurrency. The cross-host
+single-owner obligation stated on `RunStore.claimStep`'s own contract can only be verified by a
+store's **own** conformance suite against its real concurrent backend (e.g. a Postgres store's
+suite exercising genuine multi-connection contention) — a green run of this TCK is not proof of
+cross-host safety.
+
 ---
 
 ## createAgentDispatcher
