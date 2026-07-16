@@ -14,11 +14,13 @@ import {
   type NextAction,
   type ClaimState,
   type SkipDetail,
+  type RunStore,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 
 export interface HandleRunStateStores {
-  runStore?: JsonFileStore;
+  /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
+  runStore?: RunStore;
   /**
    * Optional workflow store used to compute `next_actions`. When absent (or the workflow is not
    * registered), `next_actions_status` is `'workflow_unresolved'`. Intentionally NOT defaulted to a

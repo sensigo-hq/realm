@@ -4,7 +4,6 @@ import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   JsonWorkflowStore,
-  JsonFileStore,
   WorkflowError,
   resolvePreExecutionAgentAction,
   findUnknownKeys,
@@ -13,6 +12,7 @@ import {
   type ResponseEnvelope,
   type JsonSchema,
   type LoaderWarning,
+  type RunStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
 import { handleStartRun, type HandleRunStores } from './start-run.js';
@@ -260,7 +260,7 @@ function buildWorkflowDefinition(workflowId: string, args: CreateWorkflowArgs): 
  */
 export async function handleCreateWorkflow(
   args: CreateWorkflowArgs,
-  stores?: { workflowStore?: JsonWorkflowStore; runStore?: JsonFileStore },
+  stores?: { workflowStore?: JsonWorkflowStore; runStore?: RunStore },
 ): Promise<ResponseEnvelope> {
   const errors = validateArgs(args);
   if (errors.length > 0) {

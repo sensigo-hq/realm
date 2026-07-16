@@ -9,13 +9,17 @@ import {
   JsonWorkflowStore,
   JsonFileStore,
   FailedAttemptStore,
+  WorkflowError,
   createDefaultRegistry,
+  type RunStore,
+  type TraceBufferStore,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import { registerListWorkflows } from './tools/list-workflows.js';
 import { registerGetWorkflowProtocol } from './tools/get-workflow-protocol.js';
 import { registerStartRun } from './tools/start-run.js';
+import type { FailedAttemptStoreLike } from './tools/start-run.js';
 import { registerExecuteStep } from './tools/execute-step.js';
 import { registerSubmitHumanResponse } from './tools/submit-human-response.js';
 import { registerGetRunState } from './tools/get-run-state.js';
@@ -37,8 +41,41 @@ export interface RealmMcpServerOptions {
   /** Pre-populated workflow store. When provided, tools use this instead of creating
    *  a new JsonWorkflowStore() pointing at ~/.realm/workflows/. */
   workflowStore?: JsonWorkflowStore;
-  /** Run store. When provided, tools use this instead of creating a new JsonFileStore(). */
-  runStore?: JsonFileStore;
+  /**
+   * Run store. Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only).
+   * When omitted, defaults to a new `JsonFileStore()` pointing at `~/.realm/runs/`.
+   *
+   * **Co-location contract with `traceBufferStore` / `failedAttemptStore` below:** the run store
+   * and the trace-buffer / failed-attempt artifact stores MUST share ONE reachability domain.
+   * `append_trace` writes a WAL that `execute_step` reads back at finalization, and the
+   * failed-attempt sidecar is looked up the same way — if the run store and the artifact stores
+   * point at DIFFERENT backing domains (e.g. a cloud run store paired with a locally-derived
+   * trace buffer, or vice versa), traces and sidecar entries are silently lost: nothing will ever
+   * look in the same place twice. Two supported configurations:
+   *  - **Local default (unchanged, byte-identical to pre-#188 behavior):** no `traceBufferStore`/
+   *    `failedAttemptStore` injected, and the run store exposes `runsDirPath` (the `JsonFileStore`
+   *    case) → both artifact stores are derived from that path, exactly as before this PR.
+   *  - **Injected / single-domain-blessed (the cloud case):** inject BOTH `traceBufferStore` AND
+   *    `failedAttemptStore` as objects already co-located with the run store's own domain (e.g.
+   *    both backed by the same Postgres database or object-storage bucket the run store uses) —
+   *    the INJECTOR guarantees co-location; `createRealmMcpServer` does not and cannot verify it.
+   *
+   * A run store that does NOT expose `runsDirPath` (cannot derive a local path) AND has NOT had
+   * BOTH artifact stores injected is a misconfiguration: `createRealmMcpServer` throws rather than
+   * silently falling back to an empty or wrong-domain artifact store.
+   */
+  runStore?: RunStore;
+  /**
+   * Trace-buffer WAL store for incremental agent-trace ingestion (B-lite). Object injection, not
+   * a path string — a Postgres/object-storage-backed run store has no filesystem directory to
+   * derive one from. See the co-location contract on `runStore` above.
+   */
+  traceBufferStore?: TraceBufferStore;
+  /**
+   * Durable per-run failed-attempt sidecar store (observability P3). Object injection — see the
+   * co-location contract on `runStore` above.
+   */
+  failedAttemptStore?: FailedAttemptStoreLike;
 }
 
 /**
@@ -90,10 +127,42 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
 
   // Shared trace buffer store: one instance used by both append_trace and execute_step so
   // WAL entries written by append_trace are visible when execute_step finalizes the step.
-  const effectiveRunStore = options?.runStore ?? new JsonFileStore();
-  const traceBufferStore = new JsonTraceBufferStore(effectiveRunStore.runsDirPath);
-  // Durable failed-attempt sidecar store, co-located with run files (observability P3).
-  const failedAttemptStore = new FailedAttemptStore(effectiveRunStore.runsDirPath);
+  const effectiveRunStore: RunStore = options?.runStore ?? new JsonFileStore();
+
+  // issue #188, PR-1: the co-location seam. See the doc comment on `runStore` above for the full
+  // contract. Three cases, checked in order:
+  let traceBufferStore: TraceBufferStore;
+  let failedAttemptStore: FailedAttemptStoreLike;
+  if (options?.traceBufferStore !== undefined && options?.failedAttemptStore !== undefined) {
+    // Both injected — the injector guarantees co-location (see the contract doc above); use them
+    // as-is, no derivation.
+    traceBufferStore = options.traceBufferStore;
+    failedAttemptStore = options.failedAttemptStore;
+  } else if ('runsDirPath' in effectiveRunStore) {
+    // The local JsonFileStore case — derive whichever artifact store was NOT already injected
+    // from the run store's own directory. When neither was injected (the ordinary local-default
+    // path), this is byte-identical to pre-#188 behavior. A store the caller DID inject here
+    // (a partial injection) is still respected, never silently overridden.
+    const runsDirPath = (effectiveRunStore as JsonFileStore).runsDirPath;
+    traceBufferStore = options?.traceBufferStore ?? new JsonTraceBufferStore(runsDirPath);
+    failedAttemptStore = options?.failedAttemptStore ?? new FailedAttemptStore(runsDirPath);
+  } else {
+    // The run store cannot supply an artifact directory (e.g. a Postgres-backed RunStore) AND no
+    // artifact stores were injected — a misconfiguration. Fail loud rather than silently deriving
+    // an empty or wrong-domain store that would lose every trace/sidecar entry at finalization.
+    throw new WorkflowError(
+      "createRealmMcpServer: the run store does not expose 'runsDirPath' (it is not a local " +
+        'JsonFileStore) and no traceBufferStore/failedAttemptStore were injected. Artifact ' +
+        'stores cannot be derived — inject BOTH traceBufferStore and failedAttemptStore ' +
+        "co-located with the run store's own domain, or use a JsonFileStore run store.",
+      {
+        code: 'ENGINE_INTERNAL',
+        category: 'ENGINE',
+        agentAction: 'stop',
+        retryable: false,
+      },
+    );
+  }
 
   registerListWorkflows(server, effectiveOptions);
   registerGetWorkflowProtocol(server, effectiveOptions);

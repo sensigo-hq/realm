@@ -15,6 +15,7 @@ import {
   createDefaultRegistry,
   type StepDispatcher,
   type ResponseEnvelope,
+  type RunStore,
   type TraceBufferStore,
   type FailedAttemptStore,
   ExtensionRegistry,
@@ -26,8 +27,21 @@ function logDedup(fields: Record<string, unknown>): void {
   console.error(JSON.stringify({ event: 'idempotency_dedup', ...fields }));
 }
 
+/**
+ * Structural (not nominal) shape of `FailedAttemptStore`'s public surface, derived via `Pick` so a
+ * duck-typed cloud-backed object can satisfy it too — the concrete `FailedAttemptStore` class has
+ * a private `runsDir` field, so a plain object literal implementing these methods could never be
+ * assignable to the class type itself (issue #188, PR-1: the co-location injection seam). Used
+ * anywhere a `FailedAttemptStore`-like store is threaded through as an injectable option.
+ */
+export type FailedAttemptStoreLike = Pick<
+  FailedAttemptStore,
+  'append' | 'read' | 'deleteAllForRun' | 'listOrphans'
+>;
+
 export interface HandleRunStores {
-  runStore?: JsonFileStore;
+  /** Run store. Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
+  runStore?: RunStore;
   workflowStore?: JsonWorkflowStore;
   /** Extension registry for resolving service adapters and step handlers. */
   registry?: ExtensionRegistry;
@@ -42,7 +56,7 @@ export interface HandleRunStores {
   /** Trace buffer store for incremental WAL-based trace ingestion (B-lite). */
   traceBufferStore?: TraceBufferStore;
   /** Durable per-run sidecar for failed agent-attempt telemetry (observability P3). */
-  failedAttemptStore?: FailedAttemptStore;
+  failedAttemptStore?: FailedAttemptStoreLike;
 }
 
 // Fallback dispatcher for agent steps and auto steps without a registry entry.
