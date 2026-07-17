@@ -19,6 +19,7 @@ import {
   deleteIfExists,
   statIfExists,
   toArtifactDeleteFailedError,
+  FsIoError,
 } from '@sensigo/realm';
 import type { AgentTraceEntry } from '@sensigo/realm';
 import { WorkflowError } from '@sensigo/realm';
@@ -38,22 +39,118 @@ const WAL_PREFIX = 'trace-buffer-';
 const WAL_SUFFIX = '.jsonl';
 const RUN_ID_LENGTH = 36;
 
+/** A `proper-lockfile` retry policy: either a bare retry count (its own simple default backoff)
+ *  or an explicit `retry`-module-compatible options object. */
+type LockRetries = number | { retries: number; minTimeout?: number; maxTimeout?: number };
+
+/** Lock-acquisition profile shared by every `lockWal` call in this file (issue #207).
+ *  Constructor-injectable so a conformance suite can inflate the retry budget (e.g. to make a
+ *  deliberately slow/latched guard's lock contention observable instead of exhausting the retry
+ *  budget too quickly and masking the scenario under test). */
+export interface TraceBufferLockProfile {
+  retries: LockRetries;
+  stale: number;
+  realpath: boolean;
+}
+
+/** Default profile: ~4s worst-case budget (6 retries, 50ms→1000ms exponential backoff) —
+ *  outlasts any legitimate millisecond-scale critical section by orders of magnitude, but never
+ *  hangs an engine path for minutes on genuine contention. */
+const DEFAULT_LOCK_PROFILE: TraceBufferLockProfile = {
+  retries: { retries: 6, minTimeout: 50, maxTimeout: 1000 },
+  stale: 5000,
+  realpath: false,
+};
+
+/** `append`/`appendFenced` keep the pre-existing, more patient retry count (today's shipped
+ *  behavior, unchanged) — appends are the highest-frequency, most latency-sensitive operation. */
+const APPEND_RETRIES = 10;
+
+/** True iff `err` is `proper-lockfile`'s own lock-contention error (retry budget exhausted). */
+function isLockContentionError(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | undefined)?.code === 'ELOCKED';
+}
+
+/** Classifies a lock-acquisition failure as `STATE_RUN_BUSY` (issue #207) — the same code/
+ *  category/agentAction/retryable convention `JsonFileStore`'s own `runBusyError` uses for the
+ *  analogous run-file-lock-contention case. Retryable: a live holder self-heals (the lock is
+ *  released), and a genuinely stale lock is eventually stolen by the next contender. */
+function lockBusyError(walPath: string): WorkflowError {
+  return new WorkflowError(
+    `Could not acquire the trace-buffer lock for '${walPath}' — contention exceeded the retry budget`,
+    {
+      code: 'STATE_RUN_BUSY',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: true,
+      details: { walPath },
+    },
+  );
+}
+
 /**
  * File-based TraceBufferStore that persists WAL entries to JSONL files on disk.
  * WAL file path: <runsDir>/trace-buffer-<runId>-<base64url(stepId)>.jsonl
+ *
+ * Crash model: like `JsonFileStore`, this store never calls `fsync` — process-crash consistency
+ * comes from `appendFile`'s per-line granularity plus `readWal`'s per-line, torn-line-tolerant
+ * parsing (a crash mid-write can leave one unparseable trailing line, which is skipped; every
+ * earlier, already-written line survives intact). Durability across a true power loss (not just a
+ * process crash) is outside this store's contract, unchanged from its pre-#207 posture.
+ *
+ * Declares the fenced trio (issue #207): `read`, `delete`, and `deleteAllForRun` now serialize on
+ * the SAME per-(runId, stepId) critical section (a `proper-lockfile` lock on the WAL path)
+ * `appendFenced`/`deleteFenced`/`deleteAllForRunFenced` use — see `lockWal` and the interface's
+ * own doc for the full contract.
  */
 export class JsonTraceBufferStore
   implements TraceBufferStore, PerRunArtifactStore, OrphanSweepableStore
 {
   private readonly runsDir: string;
+  private readonly lockProfile: TraceBufferLockProfile;
 
-  constructor(runsDir: string) {
+  constructor(runsDir: string, lockProfile?: Partial<TraceBufferLockProfile>) {
     this.runsDir = runsDir;
+    this.lockProfile = { ...DEFAULT_LOCK_PROFILE, ...lockProfile };
   }
 
   private walPath(runId: string, stepId: string): string {
     const safeStepId = Buffer.from(stepId).toString('base64url');
     return join(this.runsDir, `trace-buffer-${runId}-${safeStepId}.jsonl`);
+  }
+
+  /**
+   * The SOLE `lockfile.lock(` call site in this file (issue #207) — every critical-section
+   * acquisition (`append`, `appendFenced`, `read`, `delete`, `deleteFenced`, `deleteAllForRun`,
+   * `deleteAllForRunFenced`) goes through this one chokepoint. Pins the shared base options
+   * (`stale`/`realpath`) and always installs an explicit `onCompromised` handler — a loud
+   * `console.warn` naming the WAL path — never `proper-lockfile`'s own default handler, which
+   * THROWS from inside a timer callback and crashes the process. `retriesOverride` lets
+   * `append`/`appendFenced` keep their own, more patient retry count; every other caller uses
+   * this store's configured `lockProfile.retries` (constructor-injectable — e.g. a conformance
+   * suite inflating it to make contention observable rather than exhausted-too-fast).
+   *
+   * Verified (issue #207): `lockfile.lock(path, { realpath: false })` acquires cleanly against a
+   * path that does not yet exist — no pre-lock placeholder file is needed for that. `append()`'s
+   * own placeholder-creation below predates this and stays byte-identical for that method, but no
+   * fenced method replicates it.
+   */
+  private async lockWal(
+    walPath: string,
+    retriesOverride?: LockRetries,
+  ): Promise<() => Promise<void>> {
+    return lockfile.lock(walPath, {
+      retries: retriesOverride ?? this.lockProfile.retries,
+      stale: this.lockProfile.stale,
+      realpath: this.lockProfile.realpath,
+      onCompromised: (err) => {
+        console.warn(
+          `[JsonTraceBufferStore] lock compromised for '${walPath}': ${err.message} — a stale ` +
+            'lock was stolen; this is the accepted cost of tokenless mutual exclusion (issue ' +
+            '#207 residual 1), never a silent crash',
+        );
+      },
+    });
   }
 
   private async readWal(
@@ -85,6 +182,59 @@ export class JsonTraceBufferStore
     return { count, bytes, lines };
   }
 
+  /**
+   * The actual write logic, shared by `append` and `appendFenced` (issue #207) so BUFFER_FULL /
+   * normalization / `AppendResult` shape live in exactly one place. Assumes the caller already
+   * holds the per-path critical section.
+   */
+  private async appendWithinCS(walPath: string, entries: AgentTraceEntry[]): Promise<AppendResult> {
+    const { count: existingCount, bytes: existingBytes } = await this.readWal(walPath);
+
+    const normalized = entries
+      .map((e) => normalizeEntryForBuffer(e))
+      .filter((e): e is AgentTraceEntry => e !== null);
+
+    if (normalized.length === 0) {
+      return {
+        buffer_count: existingCount,
+        buffer_bytes: existingBytes,
+        limit_count: BUFFER_LIMIT_COUNT,
+        limit_bytes: BUFFER_LIMIT_BYTES,
+        final_limit_entries: FINAL_LIMIT_ENTRIES,
+        final_limit_bytes: FINAL_LIMIT_BYTES,
+      };
+    }
+
+    const newLine = JSON.stringify({ ts: Date.now(), entries: normalized });
+    const newBytes = Buffer.byteLength(newLine + '\n');
+
+    if (
+      existingCount + normalized.length > BUFFER_LIMIT_COUNT ||
+      existingBytes + newBytes > BUFFER_LIMIT_BYTES
+    ) {
+      throw new WorkflowError('Trace buffer full for step', {
+        code: 'BUFFER_FULL',
+        category: 'ENGINE',
+        agentAction: 'provide_input',
+        retryable: false,
+        details: { buffer_count: existingCount, buffer_bytes: existingBytes },
+      });
+    }
+
+    await appendFile(walPath, newLine + '\n', 'utf8');
+
+    const updatedCount = existingCount + normalized.length;
+    const updatedBytes = existingBytes + newBytes;
+    return {
+      buffer_count: updatedCount,
+      buffer_bytes: updatedBytes,
+      limit_count: BUFFER_LIMIT_COUNT,
+      limit_bytes: BUFFER_LIMIT_BYTES,
+      final_limit_entries: FINAL_LIMIT_ENTRIES,
+      final_limit_bytes: FINAL_LIMIT_BYTES,
+    };
+  }
+
   async append(runId: string, stepId: string, entries: AgentTraceEntry[]): Promise<AppendResult> {
     const walPath = this.walPath(runId, stepId);
 
@@ -108,53 +258,8 @@ export class JsonTraceBufferStore
 
     let release: (() => Promise<void>) | undefined;
     try {
-      release = await lockfile.lock(walPath, { retries: 10, stale: 5000, realpath: false });
-
-      const { count: existingCount, bytes: existingBytes } = await this.readWal(walPath);
-
-      const normalized = entries
-        .map((e) => normalizeEntryForBuffer(e))
-        .filter((e): e is AgentTraceEntry => e !== null);
-
-      if (normalized.length === 0) {
-        return {
-          buffer_count: existingCount,
-          buffer_bytes: existingBytes,
-          limit_count: BUFFER_LIMIT_COUNT,
-          limit_bytes: BUFFER_LIMIT_BYTES,
-          final_limit_entries: FINAL_LIMIT_ENTRIES,
-          final_limit_bytes: FINAL_LIMIT_BYTES,
-        };
-      }
-
-      const newLine = JSON.stringify({ ts: Date.now(), entries: normalized });
-      const newBytes = Buffer.byteLength(newLine + '\n');
-
-      if (
-        existingCount + normalized.length > BUFFER_LIMIT_COUNT ||
-        existingBytes + newBytes > BUFFER_LIMIT_BYTES
-      ) {
-        throw new WorkflowError('Trace buffer full for step', {
-          code: 'BUFFER_FULL',
-          category: 'ENGINE',
-          agentAction: 'provide_input',
-          retryable: false,
-          details: { buffer_count: existingCount, buffer_bytes: existingBytes },
-        });
-      }
-
-      await appendFile(walPath, newLine + '\n', 'utf8');
-
-      const updatedCount = existingCount + normalized.length;
-      const updatedBytes = existingBytes + newBytes;
-      return {
-        buffer_count: updatedCount,
-        buffer_bytes: updatedBytes,
-        limit_count: BUFFER_LIMIT_COUNT,
-        limit_bytes: BUFFER_LIMIT_BYTES,
-        final_limit_entries: FINAL_LIMIT_ENTRIES,
-        final_limit_bytes: FINAL_LIMIT_BYTES,
-      };
+      release = await this.lockWal(walPath, APPEND_RETRIES);
+      return await this.appendWithinCS(walPath, entries);
     } finally {
       if (release !== undefined) {
         await release();
@@ -162,35 +267,91 @@ export class JsonTraceBufferStore
     }
   }
 
+  /**
+   * `guard` runs INSIDE the critical section, immediately before the physical write (issue #207)
+   * — see the interface doc for the full guard contract. NO pre-lock placeholder file: verified
+   * `lockfile.lock(path, { realpath: false })` acquires cleanly against a target that does not yet
+   * exist; the legacy `append()`'s placeholder above predates this and stays byte-identical there,
+   * but is not needed and is not replicated here — `appendFile`'s own `O_CREAT`, inside the
+   * critical section, is the sole creator of the WAL file on this path.
+   */
+  async appendFenced(
+    runId: string,
+    stepId: string,
+    entries: AgentTraceEntry[],
+    guard: () => Promise<void>,
+  ): Promise<AppendResult> {
+    const walPath = this.walPath(runId, stepId);
+    const release = await this.lockWal(walPath, APPEND_RETRIES);
+    try {
+      await guard();
+      return await this.appendWithinCS(walPath, entries);
+    } finally {
+      await release();
+    }
+  }
+
   async read(runId: string, stepId: string): Promise<BufferedEntry[]> {
     const walPath = this.walPath(runId, stepId);
-    const { lines } = await this.readWal(walPath);
-    return lines.flatMap((line) =>
-      line.entries.map((entry) => ({ ...entry, _internalTs: line.ts })),
-    );
+    const release = await this.lockWal(walPath);
+    try {
+      const { lines } = await this.readWal(walPath);
+      return lines.flatMap((line) =>
+        line.entries.map((entry) => ({ ...entry, _internalTs: line.ts })),
+      );
+    } finally {
+      await release();
+    }
   }
 
   async delete(runId: string, stepId: string): Promise<void> {
-    // issue #183: this single-step cleanup is best-effort BY CONVENTION at every call site (all
-    // four callers — execution-loop.ts ×3, reclaim-step.ts ×1 — already wrap this call in their
-    // own try/catch that converts a failure into a warning, never treating success as load-bearing
-    // the way deleteAllForRun/purge do). Converting the raw unlink to deleteIfExists here doesn't
-    // change that contract (delete() can still fail — callers already expect and handle it); it
-    // just stops a real I/O error from being invisibly swallowed with NO signal at all, which the
-    // source-text guard (store-fs-guard.test.ts) also requires (no raw unlink in this file).
+    // issue #207: now serialized on the same per-path critical section append/appendFenced use —
+    // declaring the fenced trio commits read/delete/deleteAllForRun to the same CS (see the
+    // interface doc).
+    //
+    // issue #183: this single-step cleanup is best-effort BY CONVENTION at MOST call sites — but
+    // NOT ALL FOUR: execution-loop.ts's :1857 success-settle call site does NOT wrap this call in
+    // a try/catch today (a follow-up PR fixes that site directly); the other three
+    // (execution-loop.ts's other two + reclaim-step.ts's one) do. Converting the raw unlink to
+    // deleteIfExists here doesn't change that contract — delete() can still fail; it just stops a
+    // real I/O error from being invisibly swallowed with NO signal at all, which the source-text
+    // guard (store-fs-guard.test.ts) also requires (no raw unlink in this file).
     const walPath = this.walPath(runId, stepId);
-    await deleteIfExists(walPath);
+    const release = await this.lockWal(walPath);
+    try {
+      await deleteIfExists(walPath);
+    } finally {
+      await release();
+    }
   }
 
   /**
-   * Deletes every orphaned WAL file for `runId` (issue #107).
-   *
-   * @param dirEntries Optional pre-scanned `readdir(runsDir)` listing supplied by a batch purge —
-   *   when present, this method filters it in-memory instead of re-scanning the directory itself
-   *   (O(N runs × readdir) → O(readdir) for a batch of N). Falls back to its own `readdir` when
-   *   omitted, exactly as before.
+   * `guard` runs INSIDE the same per-path critical section `append`/`appendFenced` use,
+   * immediately before the delete (issue #207) — see the interface doc for the full guard
+   * contract. Returns the number of entries actually deleted (`0` = buffer already absent; the
+   * guard still ran first). Counts via the already-open `readWal` internals — NEVER the public
+   * `read()`, which would re-acquire this same lock (a critical section must never be re-entered
+   * from within itself — `proper-lockfile` is not reentrant).
    */
-  async deleteAllForRun(runId: string, dirEntries?: readonly string[]): Promise<void> {
+  async deleteFenced(runId: string, stepId: string, guard: () => Promise<void>): Promise<number> {
+    const walPath = this.walPath(runId, stepId);
+    const release = await this.lockWal(walPath);
+    try {
+      await guard();
+      const { count } = await this.readWal(walPath);
+      await deleteIfExists(walPath);
+      return count;
+    } finally {
+      await release();
+    }
+  }
+
+  /** Resolves the candidate WAL files for `runId`, sorted deterministically — shared by
+   *  `deleteAllForRun` and `deleteAllForRunFenced` (issue #207). */
+  private async matchingWalFiles(
+    runId: string,
+    dirEntries: readonly string[] | undefined,
+  ): Promise<string[]> {
     const prefix = `trace-buffer-${runId}-`;
     let files: readonly string[];
     if (dirEntries !== undefined) {
@@ -206,14 +367,34 @@ export class JsonTraceBufferStore
         }
       }
     }
-
     // SORTED candidates — deterministic residue (which artifact fails first is reproducible
     // across retries/tests, not dependent on readdir's unspecified ordering).
-    const matching = [...files].filter((f) => f.startsWith(prefix) && f.endsWith('.jsonl')).sort();
+    return [...files].filter((f) => f.startsWith(prefix) && f.endsWith('.jsonl')).sort();
+  }
+
+  /**
+   * Deletes every orphaned WAL file for `runId` (issue #107). Now serialized per-file on the same
+   * critical section `appendFenced`/`deleteFenced` use (issue #207) — declaring the fenced trio
+   * commits this legacy method too.
+   *
+   * @param dirEntries Optional pre-scanned `readdir(runsDir)` listing supplied by a batch purge —
+   *   when present, this method filters it in-memory instead of re-scanning the directory itself
+   *   (O(N runs × readdir) → O(readdir) for a batch of N). Falls back to its own `readdir` when
+   *   omitted, exactly as before.
+   */
+  async deleteAllForRun(runId: string, dirEntries?: readonly string[]): Promise<void> {
+    const matching = await this.matchingWalFiles(runId, dirEntries);
 
     const deleted: string[] = [];
     for (const file of matching) {
       const path = join(this.runsDir, file);
+      let release: (() => Promise<void>) | undefined;
+      try {
+        release = await this.lockWal(path);
+      } catch (err) {
+        if (isLockContentionError(err)) throw lockBusyError(path);
+        throw err;
+      }
       try {
         const didDelete = await deleteIfExists(path);
         if (didDelete) deleted.push(file);
@@ -221,6 +402,59 @@ export class JsonTraceBufferStore
         // Sequential stop-on-first-hard-error: don't attempt the remaining candidates once one
         // has genuinely failed — report exactly what succeeded before the failure.
         throw toArtifactDeleteFailedError(runId, 'JsonTraceBufferStore', deleted, file, err);
+      } finally {
+        await release();
+      }
+    }
+  }
+
+  /**
+   * `guard` is RE-INVOKED inside EACH per-file critical section, immediately before that file's
+   * delete (issue #207) — a refusal on any one file aborts the whole sweep with that file's error
+   * (stop-on-first-error, matching the legacy method's own semantics). When zero files match
+   * `runId` at all, `guard` is still invoked once, before the (empty) scan. A guard rejection, and
+   * a per-file lock-contention failure (classified `STATE_RUN_BUSY`, mirroring `deleteAllForRun`'s
+   * own classification above), both propagate UNWRAPPED — never touched by
+   * `toArtifactDeleteFailedError`, which still wraps genuine unlink/I-O failures (the #183
+   * absence/unreachable/corrupt trichotomy, extended with this third, distinct guard-refusal
+   * outcome).
+   */
+  async deleteAllForRunFenced(
+    runId: string,
+    guard: () => Promise<void>,
+    dirEntries?: readonly string[],
+  ): Promise<void> {
+    const matching = await this.matchingWalFiles(runId, dirEntries);
+
+    if (matching.length === 0) {
+      await guard();
+      return;
+    }
+
+    const deleted: string[] = [];
+    for (const file of matching) {
+      const path = join(this.runsDir, file);
+      let release: (() => Promise<void>) | undefined;
+      try {
+        release = await this.lockWal(path);
+      } catch (err) {
+        if (isLockContentionError(err)) throw lockBusyError(path);
+        throw err;
+      }
+      try {
+        await guard();
+        const didDelete = await deleteIfExists(path);
+        if (didDelete) deleted.push(file);
+      } catch (err) {
+        // Only deleteIfExists's own failure mode (FsIoError) gets wrapped — a guard rejection
+        // (whatever type the caller's guard throws; typically a typed WorkflowError like
+        // STATE_RUN_BUSY, but never assumed) propagates exactly as thrown.
+        if (err instanceof FsIoError) {
+          throw toArtifactDeleteFailedError(runId, 'JsonTraceBufferStore', deleted, file, err);
+        }
+        throw err;
+      } finally {
+        await release();
       }
     }
   }

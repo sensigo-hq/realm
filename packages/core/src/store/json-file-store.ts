@@ -12,7 +12,11 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunStore, CreateRunOptions, LoadBearingRunRecordField } from './store-interface.js';
 import type { PerRunArtifactStore } from './per-run-artifact-store.js';
-import { findEligibleSteps, deriveRunPhase } from '../engine/eligibility.js';
+import {
+  findEligibleSteps,
+  deriveRunPhase,
+  isStepSettledOrInFlight,
+} from '../engine/eligibility.js';
 import { computeClaimDeadline } from '../engine/claim-liveness.js';
 import { TERMINAL_PHASES } from '../engine/lifecycle.js';
 import { hashParams } from './params-hash.js';
@@ -423,12 +427,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       const run = JSON.parse(raw) as RunRecord;
 
       // Guard: step must not already be claimed.
-      if (
-        run.in_progress_steps.includes(stepName) ||
-        run.completed_steps.includes(stepName) ||
-        run.failed_steps.includes(stepName) ||
-        run.skipped_steps.includes(stepName)
-      ) {
+      if (isStepSettledOrInFlight(run, stepName)) {
         throw new WorkflowError(
           `Step '${stepName}' is already claimed or completed on run '${runId}'.`,
           {

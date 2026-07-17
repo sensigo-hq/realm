@@ -54,6 +54,7 @@ export {
   deriveRunPhase,
   buildEvidenceByStep,
   propagateSkips,
+  isStepSettledOrInFlight,
 } from './engine/eligibility.js';
 export {
   TERMINAL_PHASES,

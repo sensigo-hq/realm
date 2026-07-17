@@ -5,6 +5,7 @@ import {
   deriveRunPhase,
   decideIdempotencyPolicy,
   computeClaimDeadline,
+  isStepSettledOrInFlight,
   type RunStore,
   type RunRecord,
   type CreateRunOptions,
@@ -129,6 +130,9 @@ export class InMemoryStore implements RunStore {
     // tick, during which a second `Promise.all`'d claimStep call's own (equally synchronous) read
     // can run BEFORE either call has written — verified empirically: two concurrent claimStep
     // calls for the same (runId, step) both resolved successfully before this fix.
+    // issue #207: `isStepSettledOrInFlight` (below) is pure/synchronous by design — it performs no
+    // I/O and awaits nothing, so calling it here does not reintroduce the microtask-yield point
+    // this fix removes; the no-await constraint above still holds.
     const run = this.runs.get(runId);
     if (run === undefined) {
       throw new WorkflowError(`Run '${runId}' not found`, {
@@ -138,13 +142,7 @@ export class InMemoryStore implements RunStore {
         retryable: false,
       });
     }
-    const alreadyDone = [
-      ...run.completed_steps,
-      ...run.in_progress_steps,
-      ...run.failed_steps,
-      ...run.skipped_steps,
-    ];
-    if (alreadyDone.includes(stepName)) {
+    if (isStepSettledOrInFlight(run, stepName)) {
       throw new WorkflowError(`Step '${stepName}' is already claimed or done`, {
         code: 'STATE_STEP_ALREADY_CLAIMED',
         category: 'STATE',
