@@ -17,8 +17,10 @@ All notable changes to this project are documented here.
   `deleteAllForRun()` to serialize on the same per-(runId, stepId) critical sections. Both in-repo
   stores (`JsonTraceBufferStore`, `InMemoryTraceBufferStore`) now declare the trio — dormant until
   a consumer adopts it (this PR touches no call site; see #207 PR-2 for that). A new exported core
-  helper, `isStepSettledOrInFlight`, replaces four inlined four-array membership checks with one
-  chokepoint (and fixes a latent `skipped_steps` omission at one of them). A new framework-agnostic
+  helper, `isStepSettledOrInFlight`, centralizes four inlined four-array membership checks into one
+  chokepoint (all four already covered `skipped_steps` correctly — no behavior change at these
+  sites; the separate, latent `skipped_steps` omission in `append_trace`'s own eligibility check is
+  closed in PR-2, when that tool adopts the helper). A new framework-agnostic
   conformance TCK (`@sensigo/realm-testing`'s `fencedTraceBufferContract`) forces any fenced-trio
   store to prove `STRUCTURAL`/`FENCE_REFUSES`/`CS_OCCUPANCY`/`PER_KEY_INDEPENDENCE`/
   `NO_SILENT_LOSS` — a store enforcing the fence via a transaction-scoped SQL predicate instead of

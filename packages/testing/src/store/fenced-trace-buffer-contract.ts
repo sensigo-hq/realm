@@ -12,7 +12,12 @@
 // attached before the law ever awaits anything else, the "drain" step never depends on the
 // latched call's own settlement, and the latch is always released before the law awaits the
 // latched call's result.
-import { WorkflowError, type TraceBufferStore, type AgentTraceEntry } from '@sensigo/realm';
+import {
+  WorkflowError,
+  FsIoError,
+  type TraceBufferStore,
+  type AgentTraceEntry,
+} from '@sensigo/realm';
 
 /** One of the five laws every fenced-trio-declaring `TraceBufferStore` must satisfy (issue #207). */
 export type FencedTraceBufferLaw =
@@ -190,7 +195,30 @@ async function startLatchedHolder(
   return { parkedP, latch };
 }
 
-/** Builds the CS_OCCUPANCY case for one `holder` kind (issue #207, D3 §7). */
+/**
+ * Builds the CS_OCCUPANCY case for one `holder` kind (issue #207, D3 §7).
+ *
+ * Honest guarantee this law provides (issue #207 correction): it is deterministic-no-false-red —
+ * a conforming store can never fail it by bad luck, only a genuinely non-serializing store fails
+ * it. It is NOT deterministic-no-false-green against every possible violator: a store whose
+ * read/delete merely SKIP the lock (rather than sharing no critical section at all) can, on a
+ * sufficiently loaded machine, false-green here — the lock-skipping concurrent call may simply
+ * not have reached its own I/O completion yet when the Phase-1 assertion runs, even though it
+ * never actually respected the CS. An in-memory (synchronous-scheduling) violator has no such
+ * escape and reddens deterministically. Empirically (mutation probe (b), issue #207 correction),
+ * the fs store's own lock-skipping mutation reddened deterministically 5/5 runs on a fast,
+ * unloaded machine — this does not contradict the caveat above; it shows the false-green risk is
+ * a loaded/slow-environment concern, not a claim that the fs law usually (or ever, on a given
+ * machine) false-greens.
+ *
+ * The single-waiter subcase (`buildCsOccupancySingleWaiterCase`, below) is this law's
+ * probabilistic net against a "CS-split" store — one that releases its lock/CS handle before the
+ * write it guards has actually completed (write-after-release). Such a store could conceivably
+ * survive the multi-op Phase 1 above by chance (three concurrent operations racing the same
+ * narrow post-release window), but a single, isolated concurrent read is a comparatively larger
+ * fraction of that same window to land inside — raising, not guaranteeing, the odds of catching a
+ * CS-split violator. Like the caveat above, this is a probabilistic, not deterministic, net.
+ */
 function buildCsOccupancyCase(
   adapter: FencedTraceBufferContractAdapter,
   holder: CsHolder,
@@ -218,8 +246,13 @@ function buildCsOccupancyCase(
       await drain(store);
 
       // Phase 1 (occupancy): NONE of the three may have completed SUCCESSFULLY yet — still
-      // pending, or a typed lock-contention rejection, both conform. Immediate success is the
-      // deterministic red.
+      // pending, or ANY rejection (not just a typed lock-contention error), both conform.
+      // Immediate success is the deterministic red. Tolerating any rejection type here (wider
+      // than requiring a specific typed lock-contention error) is deliberate (issue #207
+      // correction): widening what counts as "conforming" can only ever make this check
+      // false-green (a store rejecting for some unrelated reason still passes Phase 1), never
+      // false-red — consistent with Phase 1's own guarantee already being one-sided toward
+      // false-green, never false-red (see this function's own doc, above).
       for (const [label, rec] of [
         ['read', readRec],
         ['delete', deleteRec],
@@ -311,6 +344,22 @@ function buildPerKeyIndependenceCase(
   };
 }
 
+/**
+ * Builds the NO_SILENT_LOSS case (issue #207, D3 §7): a settle (read-then-delete) racing a
+ * still-parked `appendFenced` must adopt the full committed batch — never lose it silently.
+ *
+ * Scope note (issue #207 correction): this case only exercises the "settle wins the race, the
+ * guard is never asked to refuse" path. The complementary branch — the guard REFUSING because a
+ * settle already started (the `settledFlag` check inside this case's own guard) — is deliberately
+ * NOT separately re-asserted as its own top-level assertion here: it is absorbed by
+ * FENCE_REFUSES's own `appendFenced` refusal case above, which already asserts identical content
+ * (typed rejection, nothing written). Duplicating that assertion under this law's banner too would
+ * add no additional coverage.
+ *
+ * The one-sided fs caveat from `buildCsOccupancyCase`'s doc (above) applies here too: against a
+ * lock-skipping (rather than genuinely non-serializing) violator, false-green risk here is a
+ * loaded/slow-environment concern only, not a claim this case usually passes such a store.
+ */
 function buildNoSilentLossCase(
   adapter: FencedTraceBufferContractAdapter,
 ): FencedTraceBufferContractCase {
@@ -432,6 +481,15 @@ export function fencedTraceBufferContract(
   });
 
   // ── FENCE_REFUSES ───────────────────────────────────────────────────────────────────────────
+  // Accepted limits of this law (issue #207 correction): FENCE_REFUSES asserts that a guard
+  // rejection propagates typed/unwrapped with nothing written/deleted — it does NOT, and cannot,
+  // distinguish that outcome from a store that (a) performs the write/delete, THEN discovers the
+  // guard should have refused, and rolls the effect back via a compensating action
+  // (write-then-rollback); or (b) a genuine crash between the effect and its own bookkeeping
+  // happens to leave residue that looks, from this law's own read-after observation, like
+  // "nothing written". Both are indistinguishable from a true refusal by this law's assertions —
+  // a store relying on either is simply out of this TCK's detection range, not certified free of
+  // that residue by a green run here.
   cases.push({
     law: 'FENCE_REFUSES',
     name: 'appendFenced: guard rejection propagates typed with a populated reason category, nothing written',
@@ -512,21 +570,27 @@ export function fencedTraceBufferContract(
 
   cases.push({
     law: 'FENCE_REFUSES',
-    name: 'deleteAllForRunFenced: refusal with >=2 seeded files — ALL files intact',
+    name: 'deleteAllForRunFenced: refusal with >=2 seeded files — ALL files intact, error propagates exactly as the guard threw it',
     run: async () => {
       const { runId } = adapter.makeKey();
       const stepA = 'fenced-tck-step-a';
       const stepB = 'fenced-tck-step-b';
       await store.append(runId, stepA, [{ event: 'a' }]);
       await store.append(runId, stepB, [{ event: 'b' }]);
-      let threw = false;
+      let caught: unknown;
       try {
         await store.deleteAllForRunFenced!(runId, refusingGuard());
-      } catch {
-        threw = true;
+      } catch (err) {
+        caught = err;
       }
-      if (!threw) {
-        throw new Error('expected deleteAllForRunFenced to reject when the guard refuses');
+      // issue #207 correction: assert the propagated error IS the guard's own typed error —
+      // never something a wrapping layer (e.g. toArtifactDeleteFailedError) substituted in its
+      // place (that would surface as ENGINE_ARTIFACT_DELETE_FAILED instead of REFUSAL_CODE).
+      if (!(caught instanceof WorkflowError) || caught.code !== REFUSAL_CODE) {
+        throw new Error(
+          `expected deleteAllForRunFenced to reject with the guard's own typed error ` +
+            `(WorkflowError, code=${REFUSAL_CODE}) — never wrapped — got: ${caught}`,
+        );
       }
       const a = await store.read(runId, stepA);
       const b = await store.read(runId, stepB);
@@ -540,7 +604,7 @@ export function fencedTraceBufferContract(
 
   cases.push({
     law: 'FENCE_REFUSES',
-    name: 'deleteAllForRunFenced: zero-match sweep still invokes the guard at least once',
+    name: 'deleteAllForRunFenced: zero-match sweep still invokes the guard at least once, and its rejection propagates unwrapped',
     run: async () => {
       const { runId } = adapter.makeKey(); // never written — zero files match
       let guardCalls = 0;
@@ -553,20 +617,61 @@ export function fencedTraceBufferContract(
           retryable: true,
         });
       };
-      let threw = false;
+      let caught: unknown;
       try {
         await store.deleteAllForRunFenced!(runId, countingRefusingGuard);
-      } catch {
-        threw = true;
+      } catch (err) {
+        caught = err;
       }
-      if (!threw) {
+      // issue #207 correction: same exact-identity assertion as the >=2-file case above — a
+      // zero-match sweep is not a laxer case, it must reject with the guard's own typed error too.
+      if (!(caught instanceof WorkflowError) || caught.code !== REFUSAL_CODE) {
         throw new Error(
-          'expected a zero-match sweep with a refusing guard to still reject (guard consulted first)',
+          `expected a zero-match sweep with a refusing guard to reject with the guard's own typed ` +
+            `error (WorkflowError, code=${REFUSAL_CODE}) — never wrapped — got: ${caught}`,
         );
       }
       if (guardCalls < 1) {
         throw new Error(
           'expected the guard to be invoked at least once even for a zero-match sweep',
+        );
+      }
+    },
+  });
+
+  cases.push({
+    law: 'FENCE_REFUSES',
+    name: "deleteAllForRunFenced: a guard throwing FsIoError propagates it exactly — never mistaken for deleteIfExists's own failure and wrapped",
+    run: async () => {
+      // issue #207 correction, dedicated case (D3 §1's own demanded test): a realistic scenario
+      // is the guard's lock-free `runStore.get` itself hitting a filesystem error (e.g. EACCES on
+      // the run-record file) — since that surfaces as an FsIoError too, a sweep implementation
+      // that wraps "any FsIoError seen inside the per-file try" (rather than scoping the wrap to
+      // ONLY deleteIfExists's own failure) would incorrectly re-wrap the guard's own error as
+      // ENGINE_ARTIFACT_DELETE_FAILED, discarding its original identity.
+      const { runId } = adapter.makeKey();
+      const stepA = 'fenced-tck-step-fsio';
+      await store.append(runId, stepA, [{ event: 'seed' }]);
+      const cause = Object.assign(new Error('EACCES (simulated)'), { code: 'EACCES' });
+      const fsIoGuard = async (): Promise<void> => {
+        throw new FsIoError('read', '/fenced-tck/simulated-guard-path', cause);
+      };
+      let caught: unknown;
+      try {
+        await store.deleteAllForRunFenced!(runId, fsIoGuard);
+      } catch (err) {
+        caught = err;
+      }
+      if (!(caught instanceof FsIoError)) {
+        throw new Error(
+          `expected the guard's own FsIoError to propagate exactly (not wrapped as ` +
+            `ENGINE_ARTIFACT_DELETE_FAILED via toArtifactDeleteFailedError), got: ${caught}`,
+        );
+      }
+      const after = await store.read(runId, stepA);
+      if (after.length !== 1) {
+        throw new Error(
+          `expected the seeded file intact after a sweep refused by an FsIoError guard, got ${after.length}`,
         );
       }
     },

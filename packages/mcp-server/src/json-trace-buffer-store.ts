@@ -1,7 +1,7 @@
 // json-trace-buffer-store.ts — File-based TraceBufferStore using JSONL WAL files.
 import { existsSync } from 'node:fs';
 import { appendFile, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import lockfile from 'proper-lockfile';
 import {
   type TraceBufferStore,
@@ -65,6 +65,19 @@ const DEFAULT_LOCK_PROFILE: TraceBufferLockProfile = {
 /** `append`/`appendFenced` keep the pre-existing, more patient retry count (today's shipped
  *  behavior, unchanged) — appends are the highest-frequency, most latency-sensitive operation. */
 const APPEND_RETRIES = 10;
+
+/** Best-effort extraction of the runId from a WAL path's basename, for the `onCompromised` warn
+ *  message only (issue #207 correction) — mirrors `listOrphans`'s fixed-length-36 slice (never
+ *  string-splits on '-', which the base64url-encoded stepId segment can legitimately contain).
+ *  Returns `undefined` if the basename doesn't match the expected shape; never throws — this is
+ *  purely a best-effort logging aid, not a parser any control-flow depends on. */
+function runIdFromWalPath(walPath: string): string | undefined {
+  const base = basename(walPath);
+  if (!base.startsWith(WAL_PREFIX) || !base.endsWith(WAL_SUFFIX)) return undefined;
+  const afterPrefix = base.slice(WAL_PREFIX.length, -WAL_SUFFIX.length);
+  if (afterPrefix.length <= RUN_ID_LENGTH || afterPrefix[RUN_ID_LENGTH] !== '-') return undefined;
+  return afterPrefix.slice(0, RUN_ID_LENGTH);
+}
 
 /** True iff `err` is `proper-lockfile`'s own lock-contention error (retry budget exhausted). */
 function isLockContentionError(err: unknown): boolean {
@@ -144,10 +157,19 @@ export class JsonTraceBufferStore
       stale: this.lockProfile.stale,
       realpath: this.lockProfile.realpath,
       onCompromised: (err) => {
+        // issue #207 correction: decode the runId (fixed-length slice, mirrors listOrphans) so
+        // the warn carries genuine run/step context rather than only the raw path — the stepId
+        // segment stays base64url-encoded in that path (not decoded here; this is a best-effort
+        // logging aid, not a place to risk throwing on a malformed name).
+        const runId = runIdFromWalPath(walPath);
+        const context =
+          runId !== undefined
+            ? ` (runId=${runId}; stepId is base64url-encoded within the path)`
+            : '';
         console.warn(
-          `[JsonTraceBufferStore] lock compromised for '${walPath}': ${err.message} — a stale ` +
-            'lock was stolen; this is the accepted cost of tokenless mutual exclusion (issue ' +
-            '#207 residual 1), never a silent crash',
+          `[JsonTraceBufferStore] lock compromised for '${walPath}'${context}: ${err.message} — ` +
+            'a stale lock was stolen; this is the accepted cost of tokenless mutual exclusion ' +
+            '(issue #207 residual 1), never a silent crash',
         );
       },
     });
@@ -412,12 +434,19 @@ export class JsonTraceBufferStore
    * `guard` is RE-INVOKED inside EACH per-file critical section, immediately before that file's
    * delete (issue #207) — a refusal on any one file aborts the whole sweep with that file's error
    * (stop-on-first-error, matching the legacy method's own semantics). When zero files match
-   * `runId` at all, `guard` is still invoked once, before the (empty) scan. A guard rejection, and
-   * a per-file lock-contention failure (classified `STATE_RUN_BUSY`, mirroring `deleteAllForRun`'s
-   * own classification above), both propagate UNWRAPPED — never touched by
-   * `toArtifactDeleteFailedError`, which still wraps genuine unlink/I-O failures (the #183
-   * absence/unreachable/corrupt trichotomy, extended with this third, distinct guard-refusal
-   * outcome).
+   * `runId` at all, `guard` is still consulted at least once (issue #207 correction: the scan
+   * — resolving which files match — necessarily runs FIRST, since there is nothing to invoke a
+   * per-file guard against otherwise; the guard is then invoked once for the empty case). If it
+   * throws, the sweep rejects with that error exactly as it would for a non-empty sweep —
+   * propagation is UNIFORM across the zero-match and non-empty cases (the TCK asserts rejection
+   * here, not merely invocation count: a refusing guard makes even a zero-match sweep reject). A
+   * guard rejection, and a per-file lock-contention failure (classified `STATE_RUN_BUSY`,
+   * mirroring `deleteAllForRun`'s own classification above), both propagate UNWRAPPED — never
+   * touched by `toArtifactDeleteFailedError`, which still wraps genuine unlink/I-O failures (the
+   * #183 absence/unreachable/corrupt trichotomy, extended with this third, distinct guard-refusal
+   * outcome). The guard call itself sits OUTSIDE the try/catch scope that performs this wrapping
+   * (see the loop body below) — so a guard that happens to throw an `FsIoError` (e.g. its own
+   * lock-free `runStore.get` hitting EACCES) is never mistaken for `deleteIfExists`'s own failure.
    */
   async deleteAllForRunFenced(
     runId: string,
@@ -442,17 +471,23 @@ export class JsonTraceBufferStore
         throw err;
       }
       try {
+        // issue #207 correction: `guard()` sits OUTSIDE the FsIoError-wrap scope below — a guard
+        // rejection of ANY type, including one that happens to itself be an FsIoError (a
+        // realistic case: the guard's lock-free `runStore.get` hitting EACCES), must propagate
+        // exactly as thrown. The earlier shape wrapped BOTH the guard call and `deleteIfExists`
+        // in one try/catch keyed only on `err instanceof FsIoError` — which mistook a
+        // guard-thrown FsIoError for deleteIfExists's own failure and wrapped it too.
         await guard();
-        const didDelete = await deleteIfExists(path);
-        if (didDelete) deleted.push(file);
-      } catch (err) {
-        // Only deleteIfExists's own failure mode (FsIoError) gets wrapped — a guard rejection
-        // (whatever type the caller's guard throws; typically a typed WorkflowError like
-        // STATE_RUN_BUSY, but never assumed) propagates exactly as thrown.
-        if (err instanceof FsIoError) {
-          throw toArtifactDeleteFailedError(runId, 'JsonTraceBufferStore', deleted, file, err);
+        try {
+          const didDelete = await deleteIfExists(path);
+          if (didDelete) deleted.push(file);
+        } catch (err) {
+          // Only deleteIfExists's own failure mode (FsIoError) gets wrapped here.
+          if (err instanceof FsIoError) {
+            throw toArtifactDeleteFailedError(runId, 'JsonTraceBufferStore', deleted, file, err);
+          }
+          throw err;
         }
-        throw err;
       } finally {
         await release();
       }
