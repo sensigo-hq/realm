@@ -26,13 +26,53 @@ export interface HandleAppendTraceStores {
 
 export type AppendTraceOkResult = { status: 'ok' } & AppendResult & {
     /**
-     * Advisory only, never a gate (#119) — present only when the configured `traceBufferStore`
-     * does NOT declare the fenced trio (issue #207 PR-2): this append was not fenced against a
-     * concurrent settlement, so the entries acknowledged here may end up neither adopted nor
-     * refused (silently orphaned WAL content). Absent entirely once the store declares the trio.
+     * Advisory only, never a gate (#119). May carry the unfenced-store caveat (issue #207 PR-2,
+     * present only when the configured `traceBufferStore` does NOT declare the fenced trio) and/or
+     * the capacity early-warning (issue #208, present once the post-append fill ratio crosses
+     * `CAPACITY_WARNING_THRESHOLD` — see `capacityWarning`, below). Absent entirely (`undefined`,
+     * never `[]`) when neither applies.
      */
     warnings?: string[];
   };
+
+/**
+ * Fill-ratio threshold (issue #208) at which `append_trace` starts advising the calling agent
+ * that this step's trace buffer is approaching `BUFFER_FULL` — a concrete instantiation of the
+ * issue's own "e.g. 80%" motivation. Advisory only (#119): never gates, never changes `status`.
+ * Chosen at 0.8 as the balance point: early enough that an agent can still act (trim tracing
+ * verbosity, or call `execute_step` to finalize the step) before the ceiling is hit, but late
+ * enough that it doesn't nag on every ordinary append.
+ */
+const CAPACITY_WARNING_THRESHOLD = 0.8;
+
+/**
+ * Pure, store-agnostic capacity-warning helper (issue #208, AC 1/3/4) — every `AppendResult`
+ * already carries `buffer_count`/`limit_count`/`buffer_bytes`/`limit_bytes` regardless of which
+ * `TraceBufferStore` implementation produced it, so this needs no store-specific knowledge at all
+ * (the fix genuinely lives at the tool layer, not in any store). Returns `undefined` strictly
+ * below `CAPACITY_WARNING_THRESHOLD`; AT OR ABOVE it (`>=`, deliberately not `>` — hitting the
+ * threshold exactly still warns) returns ONE deterministic message naming whichever dimension
+ * (entries or bytes) is closer to its own ceiling, the actual numbers and percentage, and the
+ * issue's own actionable guidance.
+ */
+function capacityWarning(result: AppendResult): string | undefined {
+  const countRatio = result.buffer_count / result.limit_count;
+  const bytesRatio = result.buffer_bytes / result.limit_bytes;
+  const ratio = Math.max(countRatio, bytesRatio);
+  if (ratio < CAPACITY_WARNING_THRESHOLD) return undefined;
+
+  const binding = countRatio >= bytesRatio ? 'entries' : 'bytes';
+  const detail =
+    binding === 'entries'
+      ? `${result.buffer_count}/${result.limit_count} entries (${Math.round(countRatio * 100)}%)`
+      : `${result.buffer_bytes}/${result.limit_bytes} bytes (${Math.round(bytesRatio * 100)}%)`;
+
+  return (
+    `trace buffer for this step is at ${detail} of capacity, approaching the limit — reduce ` +
+    'tracing verbosity or call execute_step to finalize the step before further appends are ' +
+    'refused with BUFFER_FULL'
+  );
+}
 
 /** The specific settled/in-flight state for a step, or `undefined` if none apply — the granular
  *  counterpart to `isStepSettledOrInFlight` (issue #207 PR-2). `append_trace`'s refusal detail
@@ -199,10 +239,18 @@ export async function handleAppendTrace(
 
   // 6. Empty entries — return current buffer state without writing. Stays on the raw unlocked
   // path UNCONDITIONALLY (issue #207 PR-2, D3 §2) — writes nothing, so there is no settlement
-  // race to fence against and no advisory to add, regardless of what the store declares.
+  // race to fence against and no unfenced-store advisory to add here, regardless of what the
+  // store declares. The CAPACITY warning (issue #208) still applies: this is the natural
+  // read-your-capacity call — an agent probing at 85% full should see it just as a real append
+  // would show it.
   if (args.entries.length === 0) {
     const result = await traceBufferStore.append(args.run_id, args.step_id, []);
-    return { status: 'ok', ...result };
+    const capacity = capacityWarning(result);
+    return {
+      status: 'ok',
+      ...result,
+      ...(capacity !== undefined ? { warnings: [capacity] } : {}),
+    };
   }
 
   // 7. Append entries to the buffer.
@@ -237,7 +285,12 @@ export async function handleAppendTrace(
       }
     };
     const result = await appendFenced(args.run_id, args.step_id, args.entries, guard);
-    return { status: 'ok', ...result };
+    const capacity = capacityWarning(result);
+    return {
+      status: 'ok',
+      ...result,
+      ...(capacity !== undefined ? { warnings: [capacity] } : {}),
+    };
   }
 
   // Capability absent (issue #207 PR-2): legacy unfenced append() — Window A stays open for this
@@ -255,12 +308,16 @@ export async function handleAppendTrace(
     );
   }
   const result = await traceBufferStore.append(args.run_id, args.step_id, args.entries);
+  const capacity = capacityWarning(result);
   return {
     status: 'ok',
     ...result,
+    // issue #208: capacity SECOND, after the pre-existing unfenced-store advisory — both may be
+    // present at once (the store's fenced-ness and its fill level are independent facts).
     warnings: [
       'this store does not fence trace appends against concurrent settlement; entries ' +
         'acknowledged here may not be adopted',
+      ...(capacity !== undefined ? [capacity] : []),
     ],
   };
 }

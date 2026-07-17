@@ -33,6 +33,12 @@ All notable changes to this project are documented here.
   the configured `traceBufferStore` does not declare the fenced trio — appended entries are not
   fenced against a concurrent settlement and may end up neither adopted nor refused. Auto-clears
   once the store declares the trio.
+- **`append_trace` capacity early-warning (issue #208).** Responses now carry an advisory
+  `warnings` entry once the step's trace buffer crosses 80% of either ceiling (entry count or
+  bytes, whichever is closer to its own limit) — actionable before the buffer hits `BUFFER_FULL`
+  outright. Purely advisory (never gates, never changes `status`) and store-agnostic (reads only
+  `AppendResult`'s already-returned fields; works identically regardless of which
+  `TraceBufferStore` implementation is injected).
 
 ### Changed
 
