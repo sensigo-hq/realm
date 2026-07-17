@@ -257,7 +257,21 @@ export async function purgeRuns(
       // surfacing here means "already gone," which the catch below routes to already_purged.
       await anchorStore.get(run.id);
       for (const store of artifactStores) {
-        await store.deleteAllForRun(run.id, dirEntries);
+        if (hasDeleteAllForRunFenced(store)) {
+          // issue #207 PR-2 (D3 §5): fenced — re-verifies at destruction time, inside the
+          // store's own critical section, that the run is still gone/terminal.
+          await store.deleteAllForRunFenced(
+            run.id,
+            buildPurgeWalGuard(anchorStore, run.id),
+            dirEntries,
+          );
+        } else {
+          // Non-declaring artifact store (e.g. FailedAttemptStore — issue #207 PR-2, D3 §5
+          // residual 4): the sidecar delete remains UNFENCED, a named residual (telemetry-grade,
+          // best-effort by that store's own contract — not run-record evidence, not
+          // acknowledged-durable data; the anchor stays #184-protected regardless).
+          await store.deleteAllForRun(run.id, dirEntries);
+        }
       }
       // The anchor LAST, and only on total success (issue #184) — structural crash-anchor: any
       // throw above (from a non-anchor artifact store) never reaches this line, so the run file
@@ -283,6 +297,70 @@ export async function purgeRuns(
   }
 
   return result;
+}
+
+/** The subset of the fenced trio purge actually calls (issue #207 PR-2) — a store-shape check,
+ *  not an import from `@sensigo/realm`'s `TraceBufferStore`, since `artifactStores` is typed as
+ *  `PerRunArtifactStore[]` (narrower) and a concrete store (e.g. `JsonTraceBufferStore`) may
+ *  additionally implement this. */
+interface DeleteAllForRunFencedCapable {
+  deleteAllForRunFenced(
+    runId: string,
+    guard: () => Promise<void>,
+    dirEntries?: readonly string[],
+  ): Promise<void>;
+}
+
+function hasDeleteAllForRunFenced(
+  store: PerRunArtifactStore,
+): store is PerRunArtifactStore & DeleteAllForRunFencedCapable {
+  return (
+    typeof (store as Partial<DeleteAllForRunFencedCapable>).deleteAllForRunFenced === 'function'
+  );
+}
+
+/**
+ * Builds the fenced-delete guard for one run (issue #207 PR-2, D3 §5): a lock-free
+ * `anchorStore.get(runId)` re-verified INSIDE the artifact store's own critical section,
+ * immediately before its WAL delete. Proceeds (resolves) iff the run is now genuinely gone
+ * (`STATE_RUN_NOT_FOUND`) or is still terminal — both mean no live/resumed run depends on this
+ * WAL anymore. Otherwise (a concurrent `realm resume` raced the purge, or ANY other read failure)
+ * throws the SAME typed `STATE_RUN_BUSY` shape purge's own bucket mapping already routes to
+ * `blocked` (verified by the extended purge-guard test, not rebuilt here) — extending #184's
+ * terminal-re-verify from the anchor layer to the WAL artifact layer, closing the purge/resume
+ * resurrect race for WALs too.
+ */
+function buildPurgeWalGuard(
+  anchorStore: Pick<RunStore, 'get'>,
+  runId: string,
+): () => Promise<void> {
+  return async () => {
+    let fresh: RunRecord;
+    try {
+      fresh = await anchorStore.get(runId);
+    } catch (err) {
+      if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
+        return; // gone — safe to purge its WAL
+      }
+      throw err;
+    }
+    if (!TERMINAL_PHASES.has(fresh.run_phase)) {
+      throw new WorkflowError(
+        `Run '${runId}' is no longer terminal — refusing to purge its trace buffer`,
+        {
+          code: 'STATE_RUN_BUSY',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: true,
+          details: {
+            runId,
+            reason: `run '${runId}' is no longer terminal (resumed since selection) — refusing to purge its trace buffer`,
+          },
+        },
+      );
+    }
+    // Still gone or still terminal, same run — proceed.
+  };
 }
 
 function formatBytes(n: number): string {

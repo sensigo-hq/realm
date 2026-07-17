@@ -3,7 +3,7 @@
 // Mirrors cleanup.test.ts's style: the exported LOGIC (isPurgeEligible, purgeRuns) is tested
 // directly against real stores over a real tmp directory — no console/exit-code assertions (that
 // thin formatting layer isn't unit-tested here either, consistent with cleanup.ts/reclaim.ts).
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, readdir, writeFile, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -796,6 +796,105 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
       for (const id of ids) {
         expect(existsSync(join(dir, `${id}.json`))).toBe(false);
       }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
+  it('a declaring artifact store (JsonTraceBufferStore) routes through deleteAllForRunFenced, not the legacy deleteAllForRun, and still clears the WAL', async () => {
+    const { dir, runStore } = await makeStores();
+    try {
+      const run = makeRun({
+        id: 'fenced-happy-path',
+        run_phase: 'completed',
+        terminal_state: true,
+      });
+      await injectRun(dir, run);
+      const traceBufferStore = new JsonTraceBufferStore(dir);
+      await traceBufferStore.append(run.id, 'step-agent', [{ event: 'e' }]);
+      const fencedSpy = vi.spyOn(traceBufferStore, 'deleteAllForRunFenced');
+      const legacySpy = vi.spyOn(traceBufferStore, 'deleteAllForRun');
+
+      const result = await purgeRuns({ runId: 'fenced-happy-path', dryRun: false }, runStore, [
+        traceBufferStore,
+      ]);
+
+      expect(result.purged).toEqual(['fenced-happy-path']);
+      expect(fencedSpy).toHaveBeenCalledTimes(1);
+      expect(legacySpy).not.toHaveBeenCalled();
+      expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('resumed-mid-purge: a run that becomes non-terminal between selection and the fenced guard is refused — bucketed blocked, anchor untouched, WAL intact', async () => {
+    const { dir, runStore } = await makeStores();
+    try {
+      const run = makeRun({
+        id: 'resumed-mid-purge',
+        run_phase: 'completed',
+        terminal_state: true,
+      });
+      await injectRun(dir, run);
+      const traceBufferStore = new JsonTraceBufferStore(dir);
+      await traceBufferStore.append(run.id, 'step-agent', [{ event: 'e' }]);
+
+      let getCalls = 0;
+      let anchorDeleteCalls = 0;
+      const anchorStub: Pick<RunStore, 'get' | 'list'> &
+        PerRunArtifactStore & { runsDirPath: string } = {
+        runsDirPath: runStore.runsDirPath,
+        get: async (id: string) => {
+          getCalls++;
+          // Calls 1-2 are purgeRuns's own selection + pre-delete re-check (both still terminal —
+          // unaffected by this test). Call 3+ is the fenced guard's OWN re-check, invoked from
+          // inside deleteAllForRunFenced — simulate a concurrent `realm resume` landing exactly
+          // there.
+          if (getCalls <= 2) return runStore.get(id);
+          const fresh = await runStore.get(id);
+          return { ...fresh, run_phase: 'running' as const, terminal_state: false };
+        },
+        list: (wf?: string) => runStore.list(wf),
+        deleteAllForRun: async (id: string, dirEntries?: readonly string[]) => {
+          anchorDeleteCalls++;
+          return runStore.deleteAllForRun(id, dirEntries);
+        },
+      };
+
+      const result = await purgeRuns({ runId: 'resumed-mid-purge', dryRun: false }, anchorStub, [
+        traceBufferStore,
+      ]);
+
+      expect(result.blocked).toHaveLength(1);
+      expect(result.blocked[0]?.runId).toBe('resumed-mid-purge');
+      expect(result.failed).toEqual([]);
+      expect(result.purged).toEqual([]);
+      expect(anchorDeleteCalls).toBe(0); // anchor never reached
+      expect(existsSync(join(dir, 'resumed-mid-purge.json'))).toBe(true);
+      // The WAL survives too — the guard refused before deleteIfExists ever ran.
+      expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a non-declaring artifact store (FailedAttemptStore) keeps the plain, unfenced deleteAllForRun call (named residual, D3 §8 residual 4)', async () => {
+    const { dir, runStore } = await makeStores();
+    try {
+      const run = makeRun({ id: 'sidecar-unfenced', run_phase: 'completed', terminal_state: true });
+      await injectRun(dir, run);
+      const failedAttemptStore = new FailedAttemptStore(dir);
+      await appendSidecarLine(failedAttemptStore, run.id);
+
+      const result = await purgeRuns({ runId: 'sidecar-unfenced', dryRun: false }, runStore, [
+        failedAttemptStore,
+      ]);
+
+      expect(result.purged).toEqual(['sidecar-unfenced']);
+      expect(existsSync(join(dir, `${run.id}.attempts.jsonl`))).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

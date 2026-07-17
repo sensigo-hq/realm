@@ -454,3 +454,166 @@ describe('reclaimStep — clearing the stale trace buffer (issue #198)', () => {
     expect(result.outcome).toBe('reclaimed');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fenced pre-update clear (issue #207 PR-2): a declaring store's WAL clear moves BEFORE the
+// un-claiming update, version-fenced against the decision read that made the reclaim call.
+// ---------------------------------------------------------------------------
+
+describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-reclaim-fenced-'));
+    store = new JsonFileStore(dir);
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('call-order recorder: deleteFenced fires BEFORE the update on BOTH the primary and the CAS-retry path (forced first-update STATE_SNAPSHOT_MISMATCH), and warns with the destroyed count', async () => {
+    const { run } = await store.create({
+      workflowId: 'reclaim-agent-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const claimed = await store.claimStep(run.id, 'step-agent', agentReclaimWf);
+    await store.update({ ...claimed, claims: { 'step-agent': { deadline: pastIso() } } });
+
+    const traceBufferStore = new InMemoryTraceBufferStore();
+    await traceBufferStore.append(run.id, 'step-agent', [{ event: 'dead_attempt_line' }]);
+
+    const calls: string[] = [];
+    const originalUpdate = store.update.bind(store);
+    let updateCallNum = 0;
+    vi.spyOn(store, 'update').mockImplementation(async (rec) => {
+      updateCallNum += 1;
+      if (updateCallNum === 1) {
+        calls.push('update#1(forced-reject)');
+        throw new WorkflowError('Version conflict — simulated', {
+          code: 'STATE_SNAPSHOT_MISMATCH',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: true,
+        });
+      }
+      calls.push(`update#${updateCallNum}`);
+      return originalUpdate(rec);
+    });
+    const originalDeleteFenced = traceBufferStore.deleteFenced!.bind(traceBufferStore);
+    vi.spyOn(traceBufferStore, 'deleteFenced').mockImplementation(async (...args) => {
+      calls.push('deleteFenced');
+      return originalDeleteFenced(...args);
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await reclaimStep(store, run.id, 'step-agent', { traceBufferStore });
+      expect(result.outcome).toBe('reclaimed');
+      // Strict clear-before-update ordering, independently on EACH attempt.
+      expect(calls).toEqual([
+        'deleteFenced',
+        'update#1(forced-reject)',
+        'deleteFenced',
+        'update#2',
+      ]);
+      // The buffer was actually cleared (first deleteFenced call, before the forced-reject
+      // update, already drained it) — the second call is an idempotent no-op (already absent).
+      expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(0);
+      // Drain-warn with count (the #198 delta): warns with the destroyed entry count > 0.
+      expect(
+        warnSpy.mock.calls.some(([msg]) =>
+          String(msg).includes('reclaim cleared 1 buffered trace entries'),
+        ),
+      ).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('version-fence refusal: a concurrent bump detected at EITHER clear-guard skips the clear (WAL intact) and warns — the state reclaim itself still proceeds via the existing CAS-retry machinery', async () => {
+    // A fully scripted store (mirrors the CAS-mismatch describe block above) — four DISTINCT
+    // get() calls occur in order: (1) the initial decision read, (2) the primary clear-guard's
+    // fresh get, (3) the CAS-retry's own reloaded re-evaluation read, (4) the retry clear-guard's
+    // fresh get. Scripting all four independently (rather than relying on the 2-record clamping
+    // shape the CAS-mismatch tests above use) lets this test force a version mismatch at BOTH
+    // clear-guard checkpoints deterministically, without also being forced through by the
+    // update() calls' own (separately scripted) CAS behavior.
+    const staleClaim = { deadline: pastIso() };
+    const decisionRead = makeRun({
+      in_progress_steps: ['work'],
+      claims: { work: staleClaim },
+      version: 5,
+    });
+    const primaryGuardSees = makeRun({
+      in_progress_steps: ['work'],
+      claims: { work: staleClaim },
+      version: 6,
+    });
+    const retryDecisionRead = makeRun({
+      in_progress_steps: ['work'],
+      claims: { work: staleClaim },
+      version: 6,
+    });
+    const retryGuardSees = makeRun({
+      in_progress_steps: ['work'],
+      claims: { work: staleClaim },
+      version: 9,
+    });
+    const records = [decisionRead, primaryGuardSees, retryDecisionRead, retryGuardSees];
+    let getIdx = 0;
+    const updateCalls: RunRecord[] = [];
+    let updateCallNum = 0;
+    const deleteFencedCalls: string[] = [];
+    const traceBufferStore: TraceBufferStore = {
+      append: async () => {
+        throw new Error('not used');
+      },
+      read: async () => [],
+      delete: async () => {
+        throw new Error('not used');
+      },
+      deleteAllForRun: async () => {},
+      readAllForRun: async () => ({}),
+      deleteFenced: async (_runId, _stepId, guard) => {
+        await guard(); // throws (refuses) at both checkpoints in this test — never reached below
+        deleteFencedCalls.push('cleared');
+        return 4;
+      },
+    };
+    const scriptedRunStore = {
+      persistsClaims: true,
+      get: async () => records[Math.min(getIdx++, records.length - 1)]!,
+      update: async (rec: RunRecord) => {
+        updateCallNum += 1;
+        if (updateCallNum === 1) {
+          throw new WorkflowError('Version conflict — simulated', {
+            code: 'STATE_SNAPSHOT_MISMATCH',
+            category: 'STATE',
+            agentAction: 'report_to_user',
+            retryable: true,
+          });
+        }
+        updateCalls.push(rec);
+        return { ...rec, version: rec.version + 1 };
+      },
+    } as unknown as RunStore;
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await reclaimStep(scriptedRunStore, 'r1', 'work', { traceBufferStore });
+      // The state reclaim itself still proceeds — unaffected by either clear-guard refusal.
+      expect(result.outcome).toBe('reclaimed');
+      expect(updateCalls).toHaveLength(1); // re-applied once, on the reloaded record
+      // The WAL was NEVER cleared: both clear-guards refused.
+      expect(deleteFencedCalls).toHaveLength(0);
+      expect(
+        warnSpy.mock.calls.filter(([msg]) => String(msg).includes('version fence refused')),
+      ).toHaveLength(2); // once per refused attempt (primary + retry)
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});

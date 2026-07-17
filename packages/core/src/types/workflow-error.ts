@@ -38,6 +38,12 @@ export type ErrorCode =
   // Retryable: a live writer self-heals, and a stale lock is eventually stolen (issue #184).
   | 'STATE_RUN_BUSY'
   | 'STATE_TRANSITION_DENIED'
+  // gc's orphan-artifact sweep (issue #207 PR-2): a fenced destroy-guard's fresh read found the
+  // run EXISTS AGAIN — a JsonFileStore.save() re-import landed between the sweep's snapshot and
+  // the reap. Purely an internal signal between that guard and gc's own catch (routes it to the
+  // `resurrected` bucket, never `failed`/an aborted sweep) — not expected to surface in any
+  // envelope.
+  | 'STATE_RUN_RESURRECTED'
   | 'STATE_LEGACY_FORMAT'
   | 'STATE_STEP_ALREADY_CLAIMED'
   | 'STATE_STEP_NOT_ELIGIBLE'

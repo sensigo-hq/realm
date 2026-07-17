@@ -116,6 +116,11 @@ export const agentCommand = new Command('agent')
       try {
         const workflowStore = new JsonWorkflowStore();
         const store = new JsonFileStore();
+        // issue #207 PR-2 (D3 §5, mixed-wiring gap): construct the trace-buffer store beside the
+        // concrete JsonFileStore (same runsDir), mirroring reclaim.ts's own wiring shape — without
+        // this, `realm agent`'s driver never adopted/fenced a step's streamed WAL trace at all.
+        const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
+        const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath);
         let provider: LlmProvider;
         if (opts.providerModule !== undefined) {
           if (
@@ -186,6 +191,7 @@ export const agentCommand = new Command('agent')
               workflowStore,
               provider,
               registry: loaded.registry,
+              traceBufferStore,
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }
@@ -225,6 +231,7 @@ export const agentCommand = new Command('agent')
               workflowStore,
               provider,
               registry: loaded.registry,
+              traceBufferStore,
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }

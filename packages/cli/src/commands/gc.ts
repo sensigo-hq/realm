@@ -30,10 +30,10 @@
 // lock; only a purged-target's lock lingers, which is negligible). Neither is this command's job
 // yet — see the report footer.
 import { readdir, lstat, unlink, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { Command } from 'commander';
 import { WorkflowError, deleteIfExists } from '@sensigo/realm';
-import type { OrphanSweepableStore, OrphanArtifact } from '@sensigo/realm';
+import type { OrphanSweepableStore, OrphanArtifact, RunStore } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 
 /**
@@ -206,6 +206,17 @@ export interface OrphanArtifactSweepResult {
   already_gone: OrphanArtifactEntry[];
   /** A genuine delete failure (permissions, I/O) — loud, never silently swallowed. */
   failed: Array<{ path: string; runId: string; error: string }>;
+  /**
+   * A fenced candidate's guard refused because the run EXISTS AGAIN at destruction time — a
+   * `JsonFileStore.save()` re-import landing between this sweep's snapshot and the reap (issue
+   * #207 PR-2, D3 §5: the resurrect race gc's absent-guard closes, symmetric with purge's
+   * terminal-re-verify). Benign: these files are no longer orphans by definition, so this is
+   * NEVER an `artifactSweepError` and never affects `gcExitCode`. Only ever populated for a
+   * store that declares the fenced trio AND was reaped with a `runStore` reference — the legacy
+   * (non-declaring-store or no-runStore) fallback path can't detect this race at all and simply
+   * leaves such a file for the next sweep to re-evaluate.
+   */
+  resurrected: OrphanArtifactEntry[];
 }
 
 /**
@@ -231,54 +242,166 @@ export interface OrphanArtifactSweepResult {
  * THIS function too (uncaught here, deliberately): this sweep has nothing safe to report if it
  * cannot trust what "orphaned" even means for that store, so it aborts entirely rather than
  * reaping a partial, possibly-wrong candidate set.
+ *
+ * `runStore` (issue #207 PR-2, D3 §5): when supplied AND a given store declares
+ * `deleteAllForRunFenced`, force-mode reaping for that store routes through the fenced path —
+ * floor-passing candidates are grouped by `runId`, and one `deleteAllForRunFenced(runId, guard,
+ * dirEntries)` call is made per group, `dirEntries` scoped to EXACTLY that group's floor-passing
+ * basenames (never the whole directory). The guard is a lock-free `runStore.get(runId)`: absence
+ * (`STATE_RUN_NOT_FOUND`) means proceed; the run EXISTING again means a `JsonFileStore.save()`
+ * re-import raced this sweep (the resurrect race this closes, symmetric with purge's own
+ * terminal-re-verify) — the guard refuses, and that runId's files land in `resurrected`, never
+ * `failed` (benign, exit-code-neutral). A store that does NOT declare the fenced trio, or a call
+ * that omits `runStore`, keeps the original per-file `deleteIfExists` path unchanged — this is
+ * also why the per-file `already_gone` granularity is preserved for that path only: an aggregate
+ * `deleteAllForRunFenced` call reports its whole runId-group as `reaped` on success (the store's
+ * own absence-is-success contract already covers "some files in the group were already gone").
  */
 export async function sweepOrphanArtifacts(
   stores: readonly OrphanSweepableStore[],
   liveRunIds: ReadonlySet<string>,
   options: SweepOrphansOptions,
+  runStore?: Pick<RunStore, 'get'>,
 ): Promise<OrphanArtifactSweepResult> {
   assertOlderThanFloor(options.olderThanMs, 'orphaned artifacts');
 
   const now = options.now ?? new Date();
 
-  const candidates: OrphanArtifact[] = [];
+  // Per-store candidate lists (issue #207 PR-2) — kept associated with their originating store so
+  // the reap dispatch below can pick the fenced or legacy path per store, not globally.
+  const perStore: Array<{ store: OrphanSweepableStore; artifacts: OrphanArtifact[] }> = [];
   for (const store of stores) {
-    candidates.push(...(await store.listOrphans(liveRunIds)));
+    perStore.push({ store, artifacts: await store.listOrphans(liveRunIds) });
   }
 
-  const result: OrphanArtifactSweepResult = { reaped: [], already_gone: [], failed: [] };
-  const toReap: OrphanArtifact[] = [];
-
-  for (const artifact of candidates) {
+  const passesFloor = (artifact: OrphanArtifact): boolean => {
     const ageMs = now.getTime() - artifact.mtimeMs;
-    if (ageMs < 0) continue; // future mtime (clock skew) — skip, never reap
-    if (ageMs <= options.olderThanMs) continue; // too fresh — the create-temp-window guard above
+    if (ageMs < 0) return false; // future mtime (clock skew) — skip, never reap
+    return ageMs > options.olderThanMs; // too fresh — the create-temp-window guard above
+  };
 
-    toReap.push(artifact);
-  }
+  const result: OrphanArtifactSweepResult = {
+    reaped: [],
+    already_gone: [],
+    failed: [],
+    resurrected: [],
+  };
+
+  const toReapByStore = perStore
+    .map(({ store, artifacts }) => ({ store, artifacts: artifacts.filter(passesFloor) }))
+    .filter(({ artifacts }) => artifacts.length > 0);
 
   if (options.dryRun) {
-    result.reaped = toReap.map((a) => ({ path: a.path, runId: a.runId }));
+    result.reaped = toReapByStore.flatMap(({ artifacts }) =>
+      artifacts.map((a) => ({ path: a.path, runId: a.runId })),
+    );
     return result;
   }
 
-  for (const artifact of toReap) {
-    const entry = { path: artifact.path, runId: artifact.runId };
-    try {
-      // #183 discipline: deleteIfExists resolves false (not an error) on ENOENT — already gone
-      // is success, never a failure; any other errno throws.
-      const didDelete = await deleteIfExists(artifact.path);
-      if (didDelete) {
-        result.reaped.push(entry);
-      } else {
-        result.already_gone.push(entry);
+  for (const { store, artifacts } of toReapByStore) {
+    if (runStore !== undefined && hasDeleteAllForRunFenced(store)) {
+      const byRunId = new Map<string, OrphanArtifact[]>();
+      for (const artifact of artifacts) {
+        const group = byRunId.get(artifact.runId) ?? [];
+        group.push(artifact);
+        byRunId.set(artifact.runId, group);
       }
-    } catch (err) {
-      result.failed.push({ ...entry, error: err instanceof Error ? err.message : String(err) });
+      for (const [runId, group] of byRunId) {
+        const dirEntries = group.map((a) => basename(a.path));
+        const guard = buildGcResurrectGuard(runStore, runId);
+        try {
+          await store.deleteAllForRunFenced(runId, guard, dirEntries);
+          for (const a of group) result.reaped.push({ path: a.path, runId: a.runId });
+        } catch (err) {
+          if (err instanceof WorkflowError && err.code === 'STATE_RUN_RESURRECTED') {
+            for (const a of group) result.resurrected.push({ path: a.path, runId: a.runId });
+          } else {
+            for (const a of group) {
+              result.failed.push({
+                path: a.path,
+                runId: a.runId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+        }
+      }
+      continue;
+    }
+
+    // Non-declaring store (or no runStore supplied) — today's per-file deleteIfExists path,
+    // unchanged.
+    for (const artifact of artifacts) {
+      const entry = { path: artifact.path, runId: artifact.runId };
+      try {
+        // #183 discipline: deleteIfExists resolves false (not an error) on ENOENT — already gone
+        // is success, never a failure; any other errno throws.
+        const didDelete = await deleteIfExists(artifact.path);
+        if (didDelete) {
+          result.reaped.push(entry);
+        } else {
+          result.already_gone.push(entry);
+        }
+      } catch (err) {
+        result.failed.push({ ...entry, error: err instanceof Error ? err.message : String(err) });
+      }
     }
   }
 
   return result;
+}
+
+/** The subset of the fenced trio gc actually calls (issue #207 PR-2) — a store-shape check, not
+ *  an import from `@sensigo/realm`'s `TraceBufferStore`, since `OrphanSweepableStore` only
+ *  guarantees `listOrphans`; a concrete store (e.g. `JsonTraceBufferStore`) may additionally
+ *  implement this. */
+interface DeleteAllForRunFencedCapable {
+  deleteAllForRunFenced(
+    runId: string,
+    guard: () => Promise<void>,
+    dirEntries?: readonly string[],
+  ): Promise<void>;
+}
+
+function hasDeleteAllForRunFenced(
+  store: OrphanSweepableStore,
+): store is OrphanSweepableStore & DeleteAllForRunFencedCapable {
+  return (
+    typeof (store as Partial<DeleteAllForRunFencedCapable>).deleteAllForRunFenced === 'function'
+  );
+}
+
+/**
+ * The resurrect-race guard (issue #207 PR-2, D3 §5): a lock-free `runStore.get(runId)`,
+ * re-verified inside the artifact store's own critical section immediately before its delete.
+ * Proceeds (resolves) iff the run is still absent (`STATE_RUN_NOT_FOUND`); throws a typed,
+ * locally-recognized `STATE_RUN_RESURRECTED` refusal if the run EXISTS again (a `save()`
+ * re-import landed between this sweep's snapshot and the reap) — the sweep's own catch (above)
+ * routes that specific code to the `resurrected` bucket, never `failed`. Any OTHER read failure
+ * propagates unwrapped, landing in `failed` (fail-closed — same posture `listOrphans` itself
+ * already requires).
+ */
+function buildGcResurrectGuard(
+  runStore: Pick<RunStore, 'get'>,
+  runId: string,
+): () => Promise<void> {
+  return async () => {
+    try {
+      await runStore.get(runId);
+    } catch (err) {
+      if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
+        return; // still absent — proceed
+      }
+      throw err;
+    }
+    throw new WorkflowError(`Run '${runId}' exists again — no longer an orphan`, {
+      code: 'STATE_RUN_RESURRECTED',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: { runId },
+    });
+  };
 }
 
 /** Best-effort total bytes for a known list of paths — reporting-only, never gates reaping.
@@ -364,7 +487,8 @@ function printGcReport(
     const nothingToReportArtifacts =
       artifactResult.reaped.length === 0 &&
       artifactResult.already_gone.length === 0 &&
-      artifactResult.failed.length === 0;
+      artifactResult.failed.length === 0 &&
+      artifactResult.resurrected.length === 0;
 
     if (nothingToReportArtifacts) {
       console.log('\nNo run-less orphaned WAL/sidecar artifacts found to reap.');
@@ -384,6 +508,16 @@ function printGcReport(
           `${artifactResult.already_gone.length} already gone, ${artifactResult.failed.length} failed.`,
       );
       for (const a of artifactResult.reaped) console.log(`  • ${a.path}  (run ${a.runId})`);
+    }
+    // issue #207 PR-2: benign, exit-code-neutral — these files are no longer orphans (the run
+    // exists again), reported for operator visibility only, never as a failure.
+    if (artifactResult.resurrected.length > 0) {
+      console.log(
+        `(${artifactResult.resurrected.length} candidate(s) skipped — their run exists again, no longer orphaned.)`,
+      );
+      for (const a of artifactResult.resurrected) {
+        console.log(`  • ${a.path}  (run ${a.runId}, resurrected)`);
+      }
     }
     for (const f of artifactResult.failed) {
       console.error(`  ✗ ${f.path} (run ${f.runId}): ${f.error}`);
@@ -471,11 +605,16 @@ export const gcCommand = new Command('gc')
       let artifactSweepError: string | undefined;
       try {
         const liveRunIds = await runStore.listRunIds();
-        artifactPreview = await sweepOrphanArtifacts(orphanSweepableStores, liveRunIds, {
-          olderThanMs,
-          dryRun: true,
-          now,
-        });
+        artifactPreview = await sweepOrphanArtifacts(
+          orphanSweepableStores,
+          liveRunIds,
+          {
+            olderThanMs,
+            dryRun: true,
+            now,
+          },
+          runStore,
+        );
       } catch (err) {
         artifactSweepError = err instanceof Error ? err.message : String(err);
       }
@@ -498,11 +637,16 @@ export const gcCommand = new Command('gc')
         // shape the temp sweep's own preview/force split already accepts).
         try {
           const liveRunIds = await runStore.listRunIds();
-          artifactResult = await sweepOrphanArtifacts(orphanSweepableStores, liveRunIds, {
-            olderThanMs,
-            dryRun: false,
-            now,
-          });
+          artifactResult = await sweepOrphanArtifacts(
+            orphanSweepableStores,
+            liveRunIds,
+            {
+              olderThanMs,
+              dryRun: false,
+              now,
+            },
+            runStore,
+          );
         } catch (err) {
           artifactSweepError = err instanceof Error ? err.message : String(err);
         }

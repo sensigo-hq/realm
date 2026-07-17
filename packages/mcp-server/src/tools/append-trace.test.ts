@@ -102,7 +102,7 @@ describe('handleAppendTrace', () => {
     });
   });
 
-  it('throws STATE_STEP_NOT_ELIGIBLE when step is in completed_steps', async () => {
+  it('throws STATE_STEP_NOT_ELIGIBLE (step_state: completed) when step is in completed_steps', async () => {
     const { run: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
@@ -121,11 +121,57 @@ describe('handleAppendTrace', () => {
     ).rejects.toMatchObject({
       code: 'STATE_STEP_NOT_ELIGIBLE',
       agentAction: 'report_to_user',
-      details: { step_state: 'already_claimed' },
+      // issue #207 PR-2: the granular taxonomy replaces the old lumped 'already_claimed' value.
+      details: { step_state: 'completed' },
     });
   });
 
-  it('throws STATE_STEP_NOT_ELIGIBLE when step is in in_progress_steps', async () => {
+  it('throws STATE_STEP_NOT_ELIGIBLE (step_state: failed) when step is in failed_steps', async () => {
+    const { run: run } = await runStore.create({
+      workflowId: 'append-trace-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await runStore.update({
+      ...run,
+      failed_steps: ['step-agent'],
+      in_progress_steps: [],
+    });
+    await expect(
+      handleAppendTrace(
+        { run_id: run.id, step_id: 'step-agent', entries: [{ event: 'test' }] },
+        { runStore, workflowStore, traceBufferStore },
+      ),
+    ).rejects.toMatchObject({
+      code: 'STATE_STEP_NOT_ELIGIBLE',
+      agentAction: 'report_to_user',
+      details: { step_state: 'failed' },
+    });
+  });
+
+  it('throws STATE_STEP_NOT_ELIGIBLE (step_state: skipped) when step is in skipped_steps (issue #207, the latent omission)', async () => {
+    const { run: run } = await runStore.create({
+      workflowId: 'append-trace-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await runStore.update({
+      ...run,
+      skipped_steps: ['step-agent'],
+    });
+    await expect(
+      handleAppendTrace(
+        { run_id: run.id, step_id: 'step-agent', entries: [{ event: 'test' }] },
+        { runStore, workflowStore, traceBufferStore },
+      ),
+    ).rejects.toMatchObject({
+      code: 'STATE_STEP_NOT_ELIGIBLE',
+      agentAction: 'report_to_user',
+      details: { step_state: 'skipped' },
+    });
+  });
+
+  it('throws STATE_STEP_NOT_ELIGIBLE (step_state: in_progress, agentAction: resolve_precondition) when step is in in_progress_steps', async () => {
     const { run: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
@@ -142,7 +188,9 @@ describe('handleAppendTrace', () => {
       ),
     ).rejects.toMatchObject({
       code: 'STATE_STEP_NOT_ELIGIBLE',
-      agentAction: 'report_to_user',
+      // issue #207 PR-2: aligned to claimStep's STATE_STEP_ALREADY_CLAIMED precedent — the same
+      // in_progress state must never yield two different agent actions across tools.
+      agentAction: 'resolve_precondition',
       details: { step_state: 'in_progress' },
     });
   });
