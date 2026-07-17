@@ -113,9 +113,12 @@ export interface TraceBufferStore {
    * inside EACH per-file (per-(runId, stepId)) critical section, immediately before that file's
    * delete — a refusal on any one file aborts the whole sweep with that file's error
    * (stop-on-first-error, matching the legacy `deleteAllForRun`'s own semantics). When zero files
-   * match `runId` at all, `guard` is still invoked at least once, before the (empty) scan —
-   * refusal on an empty sweep is never a required behavior, only that the guard is consulted (the
-   * TCK asserts invocation count, not a refusal outcome, for this case). A guard rejection (e.g. a
+   * match `runId` at all, `guard` is still consulted at least once — the scan (resolving which
+   * files match) necessarily runs first, then the guard is invoked at least once even for that
+   * empty result. If it throws, the sweep rejects with that error exactly as it would for a
+   * non-empty sweep — propagation is UNIFORM across the zero-match and non-empty cases (the TCK
+   * asserts rejection here, not merely invocation count: a refusing guard makes even a zero-match
+   * sweep reject). A guard rejection (e.g. a
    * typed `STATE_RUN_BUSY`) propagates to the caller UNWRAPPED, past the store's own
    * `toArtifactDeleteFailedError` wrapping — which still wraps genuine unlink/I-O failures,
    * preserving the #183 absence/unreachable/corrupt trichotomy: a guard refusal is neither
@@ -191,9 +194,9 @@ export function normalizeEntryForBuffer(entry: AgentTraceEntry): AgentTraceEntry
  *
  * Declares the fenced trio (issue #207): `append`, `read`, `delete`, and `deleteAllForRun` all
  * serialize on the SAME per-(runId, stepId) critical section `appendFenced`/`deleteFenced` use,
- * via a per-key async mutex (a promise-chain map) — every one of the six operations for a given
- * key runs strictly after the previous operation on THAT SAME key has settled (success or
- * failure). Liveness posture: a hung guard hangs only that key's chain — a different key's chain
+ * via a per-key async mutex (a promise-chain map) — every one of the seven operations (the four
+ * legacy methods plus the three fenced ones) for a given key runs strictly after the previous
+ * operation on THAT SAME key has settled (success or failure). Liveness posture: a hung guard hangs only that key's chain — a different key's chain
  * is untouched and proceeds normally (this per-key granularity is load-bearing; see the TCK's
  * PER_KEY_INDEPENDENCE law). The chain map's entry for a key is deleted once its own tail
  * settles and no newer call has chained after it, so an idle key holds no Map entry (no leak).
