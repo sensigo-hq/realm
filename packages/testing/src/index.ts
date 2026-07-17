@@ -14,6 +14,12 @@ export type {
   RunStoreFidelityContractCase,
   RunStoreFidelityContractAdapter,
 } from './store/run-store-fidelity-contract.js';
+export { fencedTraceBufferContract } from './store/fenced-trace-buffer-contract.js';
+export type {
+  FencedTraceBufferLaw,
+  FencedTraceBufferContractCase,
+  FencedTraceBufferContractAdapter,
+} from './store/fenced-trace-buffer-contract.js';
 
 // Fixtures
 export {

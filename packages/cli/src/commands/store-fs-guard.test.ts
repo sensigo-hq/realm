@@ -203,3 +203,62 @@ describe('store-fs-guard — every WIRED PerRunArtifactStore has a TCK-invoking 
     ).toEqual([]);
   });
 });
+
+// -----------------------------------------------------------------------------------------------
+// Guard 3: every store declaring the fenced trio has a fenced-TCK-invoking contract test
+// (issue #207 — same Guard-2 co-occurrence pattern, a new independent literal for the same
+// duplication-over-coupling reason as WIRED_STORES above)
+// -----------------------------------------------------------------------------------------------
+
+const WIRED_FENCED_STORES = ['JsonTraceBufferStore', 'InMemoryTraceBufferStore'];
+
+/** This guard's OWN file — excluded from its own scan below (issue #207). Without this, the
+ *  guard would trivially "cover" every store forever: this file's own doc comments and the
+ *  `WIRED_FENCED_STORES` array literal itself contain both the store class name strings AND the
+ *  literal substring `fencedTraceBufferContract(` (inside the string-literal argument to
+ *  `.includes(...)` a few lines below), so scanning this file would always find a false
+ *  co-occurrence regardless of whether any REAL wiring test exists. Confirmed this same
+ *  self-referential gap already existed, unnoticed, in Guard 2's `tckCoveredStores` above (it
+ *  scans its own file too, for the same reason) — not fixed there (out of this task's scope,
+ *  pre-existing and unrelated to issue #207), but not repeated here. */
+const THIS_GUARD_FILE = fileURLToPath(import.meta.url);
+
+/** Every `.test.ts` file anywhere in the repo (other than this guard's own file) that calls
+ *  `fencedTraceBufferContract(`, cross-referenced against which WIRED_FENCED_STORES class
+ *  name(s) it also imports/references — the same same-file co-occurrence proxy
+ *  `tckCoveredStores` uses above, for the fenced TCK. */
+function fencedTckCoveredStores(): Set<string> {
+  const covered = new Set<string>();
+  const packages = ['core', 'cli', 'mcp-server', 'testing'];
+  for (const pkg of packages) {
+    const root = join(PACKAGES_DIR, pkg, 'src');
+    for (const file of walkTestFiles(root)) {
+      if (file === THIS_GUARD_FILE) continue;
+      const src = readFileSync(file, 'utf8');
+      if (!src.includes('fencedTraceBufferContract(')) continue;
+      for (const storeName of WIRED_FENCED_STORES) {
+        if (src.includes(storeName)) covered.add(storeName);
+      }
+    }
+  }
+  return covered;
+}
+
+describe('store-fs-guard — every fenced-trio-declaring store has a fenced-TCK-invoking contract test (issue #207)', () => {
+  it('at least one contract test file invokes fencedTraceBufferContract (the scan is wired correctly)', () => {
+    expect(fencedTckCoveredStores().size).toBeGreaterThan(0);
+  });
+
+  it('EVERY store in WIRED_FENCED_STORES is covered by a fenced-TCK-invoking test file', () => {
+    const covered = fencedTckCoveredStores();
+    const uncovered = WIRED_FENCED_STORES.filter((name) => !covered.has(name));
+    expect(
+      uncovered,
+      `${uncovered.join(', ')} ${uncovered.length === 1 ? 'declares' : 'declare'} the fenced trio ` +
+        `but no test file both imports it and calls fencedTraceBufferContract(...) — add a ` +
+        `*-fenced.contract.test.ts wiring it into the TCK (see ` +
+        `json-trace-buffer-store-fenced.contract.test.ts under packages/cli/src/store-contracts/ ` +
+        `for the pattern).`,
+    ).toEqual([]);
+  });
+});

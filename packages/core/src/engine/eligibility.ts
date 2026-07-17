@@ -298,6 +298,27 @@ export function buildEvidenceByStep(run: RunRecord): Record<string, Record<strin
 }
 
 /**
+ * True iff `stepId` is a member of `completed_steps ∪ failed_steps ∪ skipped_steps ∪
+ * in_progress_steps` on `run` — the shared "already settled or currently claimed" membership
+ * test, factored out (issue #207) from four inline four-array checks that had drifted apart in
+ * shape at their call sites. `append_trace.ts` has its own, separate `skipped_steps` omission
+ * (D3 §2) — NOT fixed by this PR (append_trace.ts is untouched here; adopting this helper there
+ * is PR-2's job). This chokepoint is what makes that fix, once made, a one-line call instead of a
+ * fifth hand-copied four-array check. Pure and synchronous by design — every call site that
+ * depends on running with no `await` between a check and a mutation (e.g. `InMemoryStore
+ * .claimStep`'s issue #188 no-await-between-check-and-mutate fix) can call this helper without
+ * reintroducing a microtask-yield point.
+ */
+export function isStepSettledOrInFlight(run: RunRecord, stepId: string): boolean {
+  return (
+    run.completed_steps.includes(stepId) ||
+    run.failed_steps.includes(stepId) ||
+    run.skipped_steps.includes(stepId) ||
+    run.in_progress_steps.includes(stepId)
+  );
+}
+
+/**
  * Returns the names of all steps currently eligible for execution.
  * Gate serialization: if any gate is open, no steps are eligible.
  * A step is eligible if:
@@ -322,12 +343,7 @@ export function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord
     if (step.execution === 'guard' || step.execution === 'finalizer') continue;
 
     // Already done or in-flight.
-    if (
-      run.completed_steps.includes(stepName) ||
-      run.in_progress_steps.includes(stepName) ||
-      run.failed_steps.includes(stepName) ||
-      run.skipped_steps.includes(stepName)
-    ) {
+    if (isStepSettledOrInFlight(run, stepName)) {
       continue;
     }
 
@@ -363,12 +379,7 @@ export function findEligibleGuardSteps(definition: WorkflowDefinition, run: RunR
     if (step.execution !== 'guard') continue;
 
     // Already settled.
-    if (
-      run.completed_steps.includes(stepName) ||
-      run.in_progress_steps.includes(stepName) ||
-      run.failed_steps.includes(stepName) ||
-      run.skipped_steps.includes(stepName)
-    ) {
+    if (isStepSettledOrInFlight(run, stepName)) {
       continue;
     }
 

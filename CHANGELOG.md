@@ -4,6 +4,31 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`TraceBufferStore`'s fenced trio (issue #207, PR-1 of 2).** Three new OPTIONAL methods —
+  `appendFenced`, `deleteFenced`, `deleteAllForRunFenced` — let a store fence a write or delete
+  against a caller-supplied guard that re-verifies its premise inside the same critical section the
+  destructive effect uses, closing the race where an unconditional `delete()` could destroy trace
+  data a concurrent `append()` just committed. Declaring any one of the three requires declaring
+  all three; declaring the trio also commits the store's legacy `read()`/`delete()`/
+  `deleteAllForRun()` to serialize on the same per-(runId, stepId) critical sections. Both in-repo
+  stores (`JsonTraceBufferStore`, `InMemoryTraceBufferStore`) now declare the trio — dormant until
+  a consumer adopts it (this PR touches no call site; see #207 PR-2 for that). A new exported core
+  helper, `isStepSettledOrInFlight`, replaces four inlined four-array membership checks with one
+  chokepoint (and fixes a latent `skipped_steps` omission at one of them). A new framework-agnostic
+  conformance TCK (`@sensigo/realm-testing`'s `fencedTraceBufferContract`) forces any fenced-trio
+  store to prove `STRUCTURAL`/`FENCE_REFUSES`/`CS_OCCUPANCY`/`PER_KEY_INDEPENDENCE`/
+  `NO_SILENT_LOSS` — a store enforcing the fence via a transaction-scoped SQL predicate instead of
+  an in-process critical section produces an explicit, visible documented-skip for the three
+  latch-based laws rather than a silent omission (that store's own in-transaction suite must verify
+  race closure — mirroring `CLAIM_SINGLE_OWNER`'s own cross-host caveat, issue #188). Semver:
+  minor-additive.
+
+---
+
 ## [0.26.0] — 2026-07-16
 
 ### Added
