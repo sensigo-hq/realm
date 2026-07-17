@@ -70,16 +70,26 @@ function applyReclaim(run: RunRecord, stepName: string, now: Date): RunRecord {
 }
 
 /**
- * Clears the reclaimed step's stale trace buffer (issue #198). This is correct, not merely
- * tidy: reclaim IS the recovery boundary for a dead claim — the buffer being cleared here was
- * never adopted into any settled evidence (the claim wedged before `execute_step` ever reached
- * its post-claim adoption read — see #185's execution-loop.ts), so nothing is being discarded
- * that any consumer has seen or could ever see. #185 already discards a losing attempt's WAL
- * lines at the WINNER's settlement time (whoever claims the step next adopts them, then they're
- * unlinked); #198 simply does the same discard EARLIER — at the moment the dead attempt is
- * declared dead, rather than leaving it on disk for the next attempt to silently adopt and then
- * have to caveat as "may include a prior writer" (`buffered_lines_adopted`). No SETTLED evidence
- * is ever touched by this function — only pre-claim, never-adopted buffer content.
+ * Clears the reclaimed step's stale trace buffer — the NON-declaring-store fallback (issue #198;
+ * superseded by `clearStaleWalFenced` below for any store declaring the fenced trio, issue #207
+ * PR-2). Order and behavior here are BYTE-FROZEN (called only after the un-claiming update,
+ * best-effort, warned-on-failure) — this is the normative fallback D3 §5 requires for a store
+ * that cannot fence the clear at all.
+ *
+ * Honest disposition (issue #207 PR-2 — this doc previously overclaimed a stronger guarantee than
+ * is actually true). It used to read: "nothing is being discarded that any consumer has seen or
+ * could ever see" — that is FALSE as of #207 PR-2's persist-gated failure-settle delete
+ * (execution-loop.ts: the WAL delete there now only fires once `store.update` has already
+ * SUCCEEDED). When that persist instead FAILS, the step is left in_progress with its trace
+ * ALREADY READ INTO an evidence write that never landed anywhere durable — reclaim is exactly the
+ * recovery path for that wedge, and this clear (fenced or not) destroys that adopted-but-
+ * unpersisted content too, same as it always destroyed pre-claim, never-adopted content. This is
+ * a DELIBERATE, WARNED policy (the #198 delta: reclaim always warns with the count it destroys),
+ * not a silent loss, and it is bounded: the destroyed content was never durable anywhere a future
+ * reader could find it (the failed `store.update` never committed), so this never destroys any
+ * consumer's already-durable view — only a write attempt that never took effect. Full
+ * preservation (a sidecar copy taken before this destructive clear) is #197's filed follow-up,
+ * not this function's job.
  *
  * Best-effort and non-blocking by design: a failed clear must never fail the reclaim itself (the
  * claim recovery is the important, safety-gated act; WAL hygiene is secondary) — but per the
@@ -99,6 +109,92 @@ async function clearStaleWal(
       `⚠ realm: failed to clear stale trace buffer for run '${runId}' step '${stepName}' during ` +
         `reclaim (${err instanceof Error ? err.message : String(err)}) — the reclaim itself ` +
         `still succeeded; the next attempt may adopt this buffer's lines.`,
+    );
+  }
+}
+
+/** Internal control-flow signal (issue #207 PR-2): thrown by `clearStaleWalFenced`'s own guard
+ *  when the run's version no longer matches the version captured at reclaim's decision read —
+ *  caught ONLY inside `clearStaleWalFenced`, immediately below; never propagates past this file.
+ *  A plain `Error` (deliberately NOT a `WorkflowError`) so no store's own error-classification
+ *  logic (e.g. a fenced fs store's `instanceof FsIoError` wrap-scoping) could ever mistake it for
+ *  something else — it exists purely as a private signal between the guard and its caller. */
+class ReclaimVersionChanged extends Error {}
+
+/** Outcome of `clearStaleWalFenced` (issue #207 PR-2) — what `reclaimStep` needs to decide what
+ *  to log; never surfaced to reclaim's own caller beyond the console.warn it drives. */
+interface FencedClearResult {
+  /** `true` iff the version fence refused (the clear was skipped, buffer left intact). */
+  skipped: boolean;
+  /** Entries actually cleared — meaningful only when `skipped` is `false`. */
+  count: number;
+}
+
+/**
+ * Fenced pre-update clear (issue #207 PR-2, D3 §5): clears the reclaimed step's trace buffer
+ * BEFORE the un-claiming `store.update`, guarded by a run-VERSION fence re-verified inside the
+ * SAME per-(runId, stepName) critical section `deleteFenced` uses. `expectedVersion` is the
+ * version captured at THIS call's own reclaim-decision read (the primary path's `run` at :133 —
+ * now above; the CAS-retry path's `reloaded` — never a fresh get taken here). Every `RunStore`
+ * mutation (claimStep, settle, reclaim) bumps `version`, so ANY intervening write on this run is
+ * detected — a concurrent claim/settle/reclaim of this exact step since the decision read means
+ * reclaim's premise ("this is a dead, still-in-progress claim") may no longer hold, and the guard
+ * refuses rather than risk destroying content a live/newer actor already adopted or is
+ * mid-adopting.
+ *
+ * A separate `step ∈ in_progress_steps` re-check is deliberately NOT added: since ANY store
+ * mutation bumps version, an unchanged version already implies a byte-identical record — the
+ * membership fact cannot have changed without the version changing too. D3 §5 states this
+ * explicitly: every agent `ClaimRecord` is `{deadline: null}`, so record identity/classification
+ * cannot discriminate further — the version fence alone is the whole guard.
+ *
+ * Returns `{skipped: true}` when the guard refused (the caller must skip-and-warn, never treat
+ * this as an error). Any OTHER thrown error (lock contention, genuine I/O failure) propagates to
+ * the caller UNCHANGED and must abort the reclaim entirely, BEFORE the un-claiming update — the
+ * decision table is total (guard-pass ⇒ drain-with-warned-count; guard-refusal ⇒ skip+warn;
+ * genuine throw ⇒ propagate, claim intact, retryable).
+ */
+async function clearStaleWalFenced(
+  store: RunStore,
+  traceBufferStore: TraceBufferStore,
+  runId: string,
+  stepName: string,
+  expectedVersion: number,
+): Promise<FencedClearResult> {
+  const guard = async (): Promise<void> => {
+    // Fresh lock-free read — never the record already in hand (`run`/`reloaded`), which is
+    // exactly what this guard exists to re-verify against.
+    const fresh = await store.get(runId);
+    if (fresh.version !== expectedVersion) {
+      throw new ReclaimVersionChanged(
+        `reclaim's version fence refused: run '${runId}' changed since the reclaim decision ` +
+          `(expected version ${expectedVersion}, observed ${fresh.version})`,
+      );
+    }
+  };
+  try {
+    const count = await traceBufferStore.deleteFenced!(runId, stepName, guard);
+    return { skipped: false, count };
+  } catch (err) {
+    if (err instanceof ReclaimVersionChanged) {
+      return { skipped: true, count: 0 };
+    }
+    throw err;
+  }
+}
+
+/** Logs the fenced clear's decision-table outcome (issue #207 PR-2) — the sole place this
+ *  console.warn is emitted, called from both reclaimStep call sites. */
+function warnFencedClearOutcome(runId: string, stepName: string, result: FencedClearResult): void {
+  if (result.skipped) {
+    console.warn(
+      `⚠ realm: skipped clearing the trace buffer for run '${runId}' step '${stepName}' during ` +
+        'reclaim — the run changed since the reclaim decision (version fence refused); the ' +
+        'buffer is left intact.',
+    );
+  } else if (result.count > 0) {
+    console.warn(
+      `reclaim cleared ${result.count} buffered trace entries for run '${runId}' step '${stepName}'.`,
     );
   }
 }
@@ -173,9 +269,30 @@ export async function reclaimStep(
     return { run, step: stepName, outcome: 'already_settled', priorState, priorDeadline };
   }
 
+  // issue #207 PR-2: a declaring store's clear moves BEFORE the un-claiming update, version-fenced
+  // against the decision read's own version (`run.version`, just above) — a non-declaring store
+  // falls back to the byte-frozen legacy order (after the update, best-effort). `fenced` decides
+  // which branch each call site below takes; a `deleteFenced`/lock/I-O throw from the fenced path
+  // propagates BEFORE any update runs (claim intact, reclaim aborts loudly, retryable).
+  const traceBufferStore = options?.traceBufferStore;
+  const fenced =
+    traceBufferStore !== undefined && typeof traceBufferStore.deleteFenced === 'function';
+
   try {
+    if (fenced) {
+      const clearResult = await clearStaleWalFenced(
+        store,
+        traceBufferStore,
+        runId,
+        stepName,
+        run.version,
+      );
+      warnFencedClearOutcome(runId, stepName, clearResult);
+    }
     const updated = await store.update(applyReclaim(run, stepName, now));
-    await clearStaleWal(options?.traceBufferStore, runId, stepName);
+    if (!fenced) {
+      await clearStaleWal(traceBufferStore, runId, stepName);
+    }
     return { run: updated, step: stepName, outcome: 'reclaimed', priorState, priorDeadline };
   } catch (err) {
     if (!(err instanceof WorkflowError) || err.code !== 'STATE_SNAPSHOT_MISMATCH') throw err;
@@ -202,8 +319,22 @@ export async function reclaimStep(
     }
     // Still a stale / unknown-age wedge after the concurrent write → re-apply ONCE on the fresh
     // record. A second mismatch propagates (reclaim loses, abandon-style — no retry loop).
+    // issue #207 PR-2: same fenced-clear-before-update shape as the primary path above, but
+    // version-fenced against THIS path's own decision read (`reloaded.version`) — never `run`'s.
+    if (fenced) {
+      const clearResult = await clearStaleWalFenced(
+        store,
+        traceBufferStore,
+        runId,
+        stepName,
+        reloaded.version,
+      );
+      warnFencedClearOutcome(runId, stepName, clearResult);
+    }
     const updated = await store.update(applyReclaim(reloaded, stepName, now));
-    await clearStaleWal(options?.traceBufferStore, runId, stepName);
+    if (!fenced) {
+      await clearStaleWal(traceBufferStore, runId, stepName);
+    }
     return { run: updated, step: stepName, outcome: 'reclaimed', priorState, priorDeadline };
   }
 }

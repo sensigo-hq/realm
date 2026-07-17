@@ -581,12 +581,52 @@ export function buildNextActions(definition: WorkflowDefinition, run: RunRecord)
 }
 
 /**
- * Merges call-scoped trace-schema warnings with an optional cleanup warning into
- * a single warnings array. Trace warnings are listed first (deterministic order).
+ * Merges call-scoped trace-schema warnings with any number of optional extra warnings into a
+ * single warnings array. Trace warnings are listed first (deterministic order); `extraWarnings`
+ * entries are appended in call order, `undefined` entries skipped. Variadic since issue #207
+ * PR-2 (the success-settle path now has TWO independent optional warnings to merge — a
+ * handler-level warning and a WAL-cleanup warning — where every earlier call site had at most
+ * one).
  */
-function mergeWarnings(traceWarnings: string[], cleanupWarning?: string): string[] {
-  if (traceWarnings.length === 0 && cleanupWarning === undefined) return [];
-  return cleanupWarning !== undefined ? [...traceWarnings, cleanupWarning] : [...traceWarnings];
+function mergeWarnings(
+  traceWarnings: string[],
+  ...extraWarnings: (string | undefined)[]
+): string[] {
+  const defined = extraWarnings.filter((w): w is string => w !== undefined);
+  if (traceWarnings.length === 0 && defined.length === 0) return [];
+  return [...traceWarnings, ...defined];
+}
+
+/**
+ * Compensating un-claim (issue #207 PR-2, D3 §5): built from `pendingRun` — the record OUR OWN
+ * `claimStep` call returned, never a fresh get — removing the step from `in_progress_steps` AND
+ * `claims[step]` in the SAME mutation (the settle-site invariant every other settle path in this
+ * file upholds), plus an audit-evidence entry. The caller CAS's this against `pendingRun.version`
+ * (by passing the returned record straight to `store.update`): any intervening write (a
+ * concurrent settle, reclaim, or second claim) bumps version, so this compensating un-claim can
+ * never stomp it — a CAS mismatch means some other actor already resolved the claim, and the
+ * caller must stop immediately rather than retry, leaving the claim exactly as that actor left
+ * it. A step already absent from `in_progress_steps` (should not happen here, but the filter is
+ * naturally idempotent) is simply a no-op mutation, not a special case.
+ */
+function buildCompensatingUnclaim(pendingRun: RunRecord, stepName: string, now: Date): RunRecord {
+  const auditEvidence = captureEvidence({
+    stepId: stepName,
+    startedAt: now,
+    completedAt: now,
+    input: {},
+    output: {
+      compensating_unclaim: true,
+      reason: 'adoption-read failure after claim',
+      unclaimed_at: now.toISOString(),
+    },
+  });
+  return {
+    ...pendingRun,
+    in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== stepName),
+    claims: omitClaim(pendingRun.claims, stepName),
+    evidence: [...pendingRun.evidence, auditEvidence],
+  };
 }
 
 /**
@@ -920,10 +960,31 @@ export async function executeStep(
     | undefined;
 
   if (stepDef?.execution === 'agent') {
-    walEntries =
-      options.traceBufferStore !== undefined
-        ? await options.traceBufferStore.read(options.runId, options.command)
-        : [];
+    // issue #207 PR-2 (D3 §5): wrapped — a rejection here (e.g. lock contention under a fenced
+    // trio's serialized reads) happens BEFORE claimStep, so no claim exists to compensate for;
+    // return a typed, retryable envelope instead of letting the read throw uncaught.
+    try {
+      walEntries =
+        options.traceBufferStore !== undefined
+          ? await options.traceBufferStore.read(options.runId, options.command)
+          : [];
+    } catch (err) {
+      return makeErrorEnvelope(
+        options,
+        run,
+        new WorkflowError('Failed to read trace buffer before claiming step', {
+          code: 'ENGINE_STORE_FAILED',
+          category: 'ENGINE',
+          agentAction: 'stop',
+          retryable: true,
+          details: {
+            step_id: options.command,
+            cause: err instanceof Error ? err.message : String(err),
+          },
+        }),
+        definition,
+      );
+    }
 
     const hasAnyTrace =
       walEntries.length > 0 || (options.trace !== undefined && options.trace.length > 0);
@@ -1036,10 +1097,42 @@ export async function executeStep(
   // complete, post-claim set, which is also what the captureEvidence call site further below
   // keys its `stepDef?.execution === 'agent' && walEntries.length > 0` check on.
   if (stepDef?.execution === 'agent') {
-    walEntries =
-      options.traceBufferStore !== undefined
-        ? await options.traceBufferStore.read(options.runId, options.command)
-        : [];
+    // issue #207 PR-2 (D3 §5): wrapped — a rejection here happens AFTER claimStep, so a claim IS
+    // outstanding. COMPENSATING UN-CLAIM: built from `pendingRun` (our own claimStep result,
+    // never a fresh get) and CAS'd against `pendingRun.version` — an intervening write (someone
+    // else already resolved this claim) makes the CAS fail with STATE_SNAPSHOT_MISMATCH, in
+    // which case we stop immediately and leave the claim exactly as it is. Either way (compensated
+    // or left in place), the caller always gets the same typed retryable envelope — see
+    // buildCompensatingUnclaim's own doc for the full contract.
+    try {
+      walEntries =
+        options.traceBufferStore !== undefined
+          ? await options.traceBufferStore.read(options.runId, options.command)
+          : [];
+    } catch (err) {
+      try {
+        await store.update(buildCompensatingUnclaim(pendingRun, options.command, new Date()));
+      } catch {
+        // CAS mismatch (someone else already resolved the claim) or any other failure to even
+        // un-claim: stop immediately, leave the claim exactly as it is — never retry here.
+      }
+      return makeErrorEnvelope(
+        options,
+        pendingRun,
+        new WorkflowError('Failed to read trace buffer after claiming step', {
+          code: 'ENGINE_STORE_FAILED',
+          category: 'ENGINE',
+          agentAction: 'stop',
+          retryable: true,
+          details: {
+            step_id: options.command,
+            cause: err instanceof Error ? err.message : String(err),
+          },
+        }),
+        definition,
+        traceWarnings.length > 0 ? traceWarnings : undefined,
+      );
+    }
 
     if (walEntries.length > 0 || (options.trace !== undefined && options.trace.length > 0)) {
       // issue #185 Fix 1: same budget-priority merge as the pre-claim pass, now over the
@@ -1472,13 +1565,15 @@ export async function executeStep(
       } catch (storeErr) {
         blockStoreWarning = `Failed to persist capability block: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`;
       }
-      let blockWalWarning: string | undefined;
-      try {
-        // Delete WAL after run state is written — the step's entries are now in evidence.
-        await options.traceBufferStore?.delete(options.runId, options.command);
-      } catch (walErr) {
-        blockWalWarning = `Failed to clean up trace buffer after capability block: ${walErr instanceof Error ? walErr.message : String(walErr)}`;
-      }
+      // issue #207 PR-2 (D3 §5): NO WAL delete belongs on this capability-block settle path — the
+      // prior try/catch here was removed, not just gated. Contract-consistency hygiene, not a
+      // functional fix: capability-block is reachable ONLY for `execution: 'auto'` steps
+      // (ENGINE_HANDLER_NOT_REGISTERED/ENGINE_ADAPTER_NOT_REGISTERED mint only in the
+      // auto-dispatch branches), and a WAL only ever exists for `execution: 'agent'` steps
+      // (`append_trace` refuses non-agent steps) — DISJOINT populations; there is no in-repo
+      // blocked-path WAL to clean up. A custom embedder whose dispatcher throws NOT_REGISTERED
+      // for an agent step would leave WAL residue reaped at purge (an enumerated, accepted
+      // residue class — D3 §8 residual 6), never silently destroyed here.
 
       // Non-terminal 'stop' → 'report_to_user' via the existing mapping: a human must provision the
       // runner (or re-run on a capable one); no further progress is possible on THIS runner.
@@ -1504,7 +1599,7 @@ export async function executeStep(
         status: 'error',
         data: {},
         evidence: allEvidence,
-        warnings: mergeWarnings(traceWarnings, blockStoreWarning ?? blockWalWarning),
+        warnings: mergeWarnings(traceWarnings, blockStoreWarning),
         errors: [dispatchError.message],
         agent_action: blockedAction,
         error_code: recoverableCode,
@@ -1561,11 +1656,19 @@ export async function executeStep(
       storeCleanupWarning = `Failed to persist step failure: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`;
     }
     let walCleanupWarning: string | undefined;
-    try {
-      // Delete WAL after run state is written for failure — entries are now in evidence.
-      await options.traceBufferStore?.delete(options.runId, options.command);
-    } catch (walErr) {
-      walCleanupWarning = `Failed to clean up trace buffer after step failure: ${walErr instanceof Error ? walErr.message : String(walErr)}`;
+    // issue #207 PR-2 (D3 §5): gate the WAL delete on the preceding store.update having actually
+    // SUCCEEDED (persistedRun defined) — a failed persist leaves the step in_progress with its
+    // trace already read into an evidence write that never landed anywhere durable; the WAL is
+    // the SOLE remaining evidence copy until reclaim recovers the wedge (#186 posture). Reclaim's
+    // own drain (reclaim-step.ts) warns with the destroyed entry count when it eventually clears
+    // this same buffer.
+    if (persistedRun !== undefined) {
+      try {
+        // Delete WAL after run state is written for failure — entries are now in evidence.
+        await options.traceBufferStore?.delete(options.runId, options.command);
+      } catch (walErr) {
+        walCleanupWarning = `Failed to clean up trace buffer after step failure: ${walErr instanceof Error ? walErr.message : String(walErr)}`;
+      }
     }
 
     // Derive the agent_action from the error semantics and run termination state.
@@ -1853,8 +1956,17 @@ export async function executeStep(
     );
   }
 
-  // Delete WAL after successful run update — entries are now in evidence.
-  await options.traceBufferStore?.delete(options.runId, options.command);
+  // Delete WAL after successful run update — entries are now in evidence. issue #207 PR-2 (D3
+  // §5, clause (a) of the unified deletion contract): wrapped in try/catch-to-warning — the
+  // settlement already committed and is durably visible, so a cleanup failure here (e.g. lock
+  // contention) must degrade to a warning, never surface as though the STEP itself failed (this
+  // was previously unwrapped and would have thrown straight out of executeStep).
+  let successWalCleanupWarning: string | undefined;
+  try {
+    await options.traceBufferStore?.delete(options.runId, options.command);
+  } catch (err) {
+    successWalCleanupWarning = `Failed to clean up trace buffer after step completion: ${err instanceof Error ? err.message : String(err)}`;
+  }
 
   // Step 7: Build and return ResponseEnvelope.
   const nextActions = savedRun.terminal_state ? [] : buildNextActions(definition, savedRun);
@@ -1871,7 +1983,7 @@ export async function executeStep(
     status: 'ok',
     data: output,
     evidence: allEvidence,
-    warnings: mergeWarnings(traceWarnings, currentWarn),
+    warnings: mergeWarnings(traceWarnings, currentWarn, successWalCleanupWarning),
     errors: [],
     context_hint: orientation,
     run_phase: savedRun.run_phase,

@@ -167,4 +167,27 @@ describe('#107/#184 PerRunArtifactStore.deleteAllForRun — declarer enumeration
       .find((l) => l.trim().startsWith('deleteAllForRun') && l.trim().endsWith(';'));
     expect(interfaceLine, 'expected to find the interface declaration line').toBeDefined();
   });
+
+  it("the fenced variant (issue #207 PR-2) is called from WITHIN the same per-run artifact loop as the legacy fallback — the fenced call site does not bypass WIRED_ORDER's artifact-before-anchor structure", () => {
+    const purgeSrc = readFileSync(join(PACKAGES_DIR, 'cli', 'src', 'commands', 'purge.ts'), 'utf8');
+    // The fenced call must appear TEXTUALLY BETWEEN the per-run loop's `for (const store of
+    // artifactStores)` and the structural anchor call `anchorStore.deleteAllForRun(` — i.e.
+    // inside the same loop the legacy fallback (asserted by WIRED_ORDER/ANCHOR above) already
+    // lives in, never after the anchor delete.
+    const loopStart = purgeSrc.indexOf('for (const store of artifactStores)');
+    const fencedCall = purgeSrc.indexOf('store.deleteAllForRunFenced(');
+    const anchorDeleteCall = purgeSrc.indexOf(
+      'await anchorStore.deleteAllForRun(run.id, dirEntries);',
+    );
+    expect(loopStart, 'expected to find the per-run artifactStores loop').toBeGreaterThan(-1);
+    expect(fencedCall, 'expected to find a store.deleteAllForRunFenced( call site').toBeGreaterThan(
+      -1,
+    );
+    expect(
+      anchorDeleteCall,
+      'expected to find the structural anchor deleteAllForRun call',
+    ).toBeGreaterThan(-1);
+    expect(fencedCall).toBeGreaterThan(loopStart);
+    expect(fencedCall).toBeLessThan(anchorDeleteCall);
+  });
 });

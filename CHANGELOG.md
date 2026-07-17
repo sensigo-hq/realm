@@ -28,6 +28,42 @@ All notable changes to this project are documented here.
   latch-based laws rather than a silent omission (that store's own in-transaction suite must verify
   race closure — mirroring `CLAIM_SINGLE_OWNER`'s own cross-host caveat, issue #188). Semver:
   minor-additive.
+- **Envelope advisory on unfenced trace stores (issue #207, PR-2 of 2).** `append_trace` warns
+  (deduped per store-constructor-name, plus a `warnings` entry on every affected response) when
+  the configured `traceBufferStore` does not declare the fenced trio — appended entries are not
+  fenced against a concurrent settlement and may end up neither adopted nor refused. Auto-clears
+  once the store declares the trio.
+
+### Changed
+
+- **The fenced trio is now adopted everywhere (issue #207, PR-2 of 2 — closes the race PR-1's
+  interface made possible).** `append_trace`'s refusal taxonomy (`details.step_state` ∈
+  `{completed, failed, skipped, in_progress, run_terminal, run_not_found}`) replaces the old
+  lumped `already_claimed` value; the `in_progress` refusal's `agentAction` is now
+  `resolve_precondition` (was `report_to_user` — the same state must never yield two different
+  agent actions elsewhere, mirroring `claimStep`'s own `STATE_STEP_ALREADY_CLAIMED` precedent);
+  a `skipped` step now correctly refuses too (the latent omission #207 identified — previously a
+  skipped step could still accept a trace append). `execute_step`'s trace-store read failures now
+  return a typed, retryable `ENGINE_STORE_FAILED` envelope instead of throwing uncaught: a
+  pre-claim read failure consumes no claim; a post-claim read failure performs a compensating
+  un-claim (built from the engine's own claim record, CAS'd against its version — a concurrent
+  actor that already resolved the claim is never stomped). `reclaim`'s WAL clear now moves BEFORE
+  the un-claiming update on a declaring store, version-fenced against the reclaim decision (skips
+  - warns, buffer left intact, if the run changed since); it warns with the destroyed entry count
+    when it proceeds (the #198 delta — previously silent). `purge` maps a busy/resumed run's WAL
+    delete to its existing `blocked` bucket (extends #184's terminal-re-verify to the WAL artifact
+    layer); `gc`'s orphan-artifact sweep re-verifies run absence at destruction time, routing a
+    `save()`-re-import race to a new, exit-code-neutral `resurrected` bucket rather than reaping a
+    file that is no longer actually orphaned.
+
+### Fixed
+
+- **CLI executors (`realm run`, `realm agent`) now adopt streamed WAL trace (issue #207, PR-2 of
+  2).** Both constructed no `traceBufferStore` at all — an agent step's `append_trace` calls
+  under a CLI-driven run were silently neither adopted nor refused. A `execute_step` success
+  settlement's own WAL-cleanup failure (e.g. lock contention) no longer produces an error envelope
+  on an already-durably-completed step — it degrades to a warning, as the equivalent failure
+  cleanup on the failure-settle path already did.
 
 ---
 

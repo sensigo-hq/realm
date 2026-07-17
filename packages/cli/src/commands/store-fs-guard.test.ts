@@ -262,3 +262,105 @@ describe('store-fs-guard — every fenced-trio-declaring store has a fenced-TCK-
     ).toEqual([]);
   });
 });
+
+// -----------------------------------------------------------------------------------------------
+// Guard 4: exact-count allow-list for every raw `traceBufferStore.delete(`/`.deleteAllForRun(`
+// call site remaining after the fenced-trio adoption (issue #207 PR-2)
+// -----------------------------------------------------------------------------------------------
+//
+// Scoped to core + mcp-server ONLY (stable receiver name: a local variable or `options.` field
+// literally named `traceBufferStore`) — purge.ts/gc.ts use store-TYPED receivers (`store`,
+// looped over `artifactStores`/`OrphanSweepableStore[]`) and stay under their own orchestration
+// guards (purge-guard.test.ts's WIRED_ORDER, gc.ts's own fenced-dispatch tests), not this one.
+//
+// A raw (unfenced) `traceBufferStore.delete(`/`.deleteAllForRun(` call site is a DELIBERATE,
+// residual, unguarded destruction — every one still standing after issue #207 PR-2 must be
+// enumerated here with a one-line contract-clause justification. A NEW raw call site appearing
+// anywhere in-scope, the count at an existing site drifting, or (the specific regression this
+// guard exists to catch) the :1478 capability-block delete creeping back in, all fail this test.
+const RAW_TRACE_BUFFER_STORE_DELETE = /\btraceBufferStore\??\.(delete|deleteAllForRun)\s*\(/;
+
+/** file (relative to PACKAGES_DIR) → exact expected raw call-site count, each with the one-line
+ *  contract-clause justification issue #207 PR-2 requires. */
+const RAW_DELETE_ALLOW_LIST: Record<string, { count: number; reason: string }> = {
+  'core/src/engine/execution-loop.ts': {
+    count: 2,
+    reason:
+      'the failure-settle delete (persist-gated on store.update succeeding — #186 posture) and ' +
+      'the success-settle delete (clause (a) of the unified deletion contract: the settlement ' +
+      'already committed and is durably visible, so this delete never races an unsettled step) ' +
+      '— both intentionally UNFENCED: neither can race a concurrent append_trace once the run ' +
+      "is claimed (appends are refused once in_progress/settled, per append_trace.ts's own " +
+      'eligibility check). The capability-block delete (formerly a third site here) was REMOVED ' +
+      "entirely, not fenced — see execution-loop.ts's own comment at that call site.",
+  },
+  'core/src/engine/reclaim-step.ts': {
+    count: 1,
+    reason:
+      "the non-declaring-store fallback (clearStaleWal) — byte-frozen, today's order (after the " +
+      'un-claiming update, best-effort, warned) — the normative fallback for a store that cannot ' +
+      'fence the clear at all; the declaring-store path uses deleteFenced instead (see ' +
+      'clearStaleWalFenced, same file).',
+  },
+};
+
+function traceBufferStoreDeleteScanFiles(): string[] {
+  return [
+    ...walkTsSourceFiles(join(PACKAGES_DIR, 'core', 'src')),
+    ...walkTsSourceFiles(join(PACKAGES_DIR, 'mcp-server', 'src')),
+  ];
+}
+
+function countRawTraceBufferStoreDeletes(file: string): number {
+  const lines = readFileSync(file, 'utf8').split('\n');
+  let count = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('//') || trimmed.startsWith('*')) continue;
+    if (RAW_TRACE_BUFFER_STORE_DELETE.test(trimmed)) count++;
+  }
+  return count;
+}
+
+describe('store-fs-guard — exact-count allow-list for raw traceBufferStore delete/deleteAllForRun call sites (issue #207 PR-2)', () => {
+  it('at least one file is scanned (the scan is wired correctly)', () => {
+    expect(traceBufferStoreDeleteScanFiles().length).toBeGreaterThan(0);
+  });
+
+  it('every RAW_DELETE_ALLOW_LIST entry still exists as a file', () => {
+    for (const rel of Object.keys(RAW_DELETE_ALLOW_LIST)) {
+      const full = join(PACKAGES_DIR, rel);
+      expect(statSync(full).isFile(), `allow-listed file no longer exists: ${rel}`).toBe(true);
+    }
+  });
+
+  it('every raw call site is inside the allow-list, at EXACTLY the expected count — no new site, no drifted count, no :1478-style delete creeping back', () => {
+    const violations: string[] = [];
+    for (const file of traceBufferStoreDeleteScanFiles()) {
+      const rel = relativeToPackages(file);
+      const actual = countRawTraceBufferStoreDeletes(file);
+      const expected = RAW_DELETE_ALLOW_LIST[rel]?.count ?? 0;
+      if (actual !== expected) {
+        violations.push(`${rel}: expected ${expected}, found ${actual}`);
+      }
+    }
+    expect(
+      violations,
+      `Raw traceBufferStore delete/deleteAllForRun call-site count mismatch: ` +
+        `${violations.join('; ')}. A new (or removed) call site must be reflected in ` +
+        `RAW_DELETE_ALLOW_LIST with a one-line contract-clause justification — or, if this is the ` +
+        `:1478 capability-block delete creeping back, remove it (see execution-loop.ts's own ` +
+        `comment there for why it must not exist).`,
+    ).toEqual([]);
+  });
+
+  it('the allow-listed files THEMSELVES still contain their expected raw call sites (sanity — proves the matcher is not just vacuously passing)', () => {
+    for (const [rel, { count }] of Object.entries(RAW_DELETE_ALLOW_LIST)) {
+      const full = join(PACKAGES_DIR, rel);
+      const actual = countRawTraceBufferStoreDeletes(full);
+      expect(actual, `expected exactly ${count} raw call site(s) in allow-listed ${rel}`).toBe(
+        count,
+      );
+    }
+  });
+});

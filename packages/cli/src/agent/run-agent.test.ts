@@ -447,6 +447,93 @@ describe('runAgent — wedge detection on attach (#101, detect-only)', () => {
   });
 });
 
+describe('runAgent — traceBufferStore threading (issue #207 PR-2, mixed-wiring gap)', () => {
+  const walWf: WorkflowDefinition = {
+    id: 'wal-thread-wf',
+    name: 'WAL Thread WF',
+    version: 1,
+    schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+    steps: {
+      summarize: {
+        description: 'Summarize',
+        execution: 'agent',
+        input_schema: {
+          type: 'object',
+          properties: { summary: { type: 'string' } },
+          required: ['summary'],
+        },
+      },
+    },
+  };
+
+  it('deps.traceBufferStore threads all the way into executeChain — a pre-seeded WAL entry is adopted into evidence (was silently dropped pre-#207)', async () => {
+    const store = new InMemoryStore();
+    const { run: initialRecord } = await store.create({
+      workflowId: 'wal-thread-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const runId = initialRecord.id;
+
+    const { InMemoryTraceBufferStore } = await import('@sensigo/realm');
+    const traceBufferStore = new InMemoryTraceBufferStore();
+    await traceBufferStore.append(runId, 'summarize', [{ event: 'streamed_before_execute' }]);
+
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({ summary: 'all good' });
+    })();
+    const deps: AgentDeps = {
+      store,
+      workflowStore: makeWorkflowStore(walWf),
+      provider,
+      registry: createDefaultRegistry(),
+      traceBufferStore,
+    };
+
+    const result = await runAgent(deps, {
+      existingRunId: runId,
+      definition: walWf,
+      params: {},
+    });
+
+    expect(result).toBe('completed');
+    const run = await store.get(runId);
+    const evidence = run.evidence.find((e) => e.step_id === 'summarize');
+    expect(evidence?.trace?.some((t) => t.event === 'streamed_before_execute')).toBe(true);
+    // The WAL was adopted then cleared on settlement — not left as orphaned residue.
+    expect(await traceBufferStore.read(runId, 'summarize')).toHaveLength(0);
+  });
+
+  it('omitting deps.traceBufferStore is unchanged — no trace adoption, no error (backward compatible)', async () => {
+    const store = new InMemoryStore();
+    const { run: initialRecord } = await store.create({
+      workflowId: 'wal-thread-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const runId = initialRecord.id;
+
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({ summary: 'all good' });
+    })();
+    const deps: AgentDeps = {
+      store,
+      workflowStore: makeWorkflowStore(walWf),
+      provider,
+      registry: createDefaultRegistry(),
+      // traceBufferStore intentionally omitted.
+    };
+
+    const result = await runAgent(deps, {
+      existingRunId: runId,
+      definition: walWf,
+      params: {},
+    });
+
+    expect(result).toBe('completed');
+  });
+});
+
 describe('runAgent — capability recovery (#134)', () => {
   const handlerWorkflow: WorkflowDefinition = {
     id: 'handler-agent',

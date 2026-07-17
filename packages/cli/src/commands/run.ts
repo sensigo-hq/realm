@@ -75,6 +75,11 @@ export const runCommand = new Command('run')
 
       // 3. Create store and initial run record
       const store = new JsonFileStore();
+      // issue #207 PR-2 (D3 §5, mixed-wiring gap): construct a JsonTraceBufferStore beside the
+      // run store (same runsDir) and thread it into executeChain below — without this, `realm
+      // run`'s own dev-mode driver never adopted/fenced a step's streamed WAL trace at all.
+      const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
+      const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath);
 
       const { run: initialRecord } = await store.create({
         workflowId: definition.id,
@@ -165,6 +170,7 @@ export const runCommand = new Command('run')
             input: userOutput,
             dispatcher,
             registry,
+            traceBufferStore,
           });
 
           if (result.status === 'ok') {

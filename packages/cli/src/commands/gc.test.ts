@@ -6,7 +6,7 @@
 // either, consistent with cleanup.ts/reclaim.ts/purge.ts). The CLI wiring itself (--help, a
 // non-destructive dry-run, the not-reaped footer) is smoke-tested against the built binary — see
 // the implementation report — mirroring how purge.ts's own `.action()` has no dedicated test file.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir, symlink, utimes, stat, chmod } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -514,6 +514,126 @@ describe('sweepOrphanArtifacts (issue #163)', () => {
       expect(result.reaped.map((e) => e.path)).toEqual([orphanWalPath]);
       expect(existsSync(liveWalPath)).toBe(true); // the live run's WAL, despite the '-'-ending encoding, survives
       expect(existsSync(orphanWalPath)).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('sweepOrphanArtifacts — fenced reap path (issue #207 PR-2)', () => {
+  it('orphan swept normally (run absent): routes through deleteAllForRunFenced (not the legacy per-file path) and is reaped', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const now = new Date();
+      const traceBufferStore = new JsonTraceBufferStore(dir);
+      const runStore = new JsonFileStore(dir);
+
+      const orphanId = '11111111-1111-4111-8111-111111111111';
+      await traceBufferStore.append(orphanId, 'step-a', [{ event: 'x' }]);
+      const walPath = walPathFor(dir, orphanId, 'step-a');
+      const ancient = new Date(now.getTime() - (ONE_HOUR_MS + FIVE_MIN_MS));
+      await utimes(walPath, ancient, ancient);
+
+      const fencedSpy = vi.spyOn(traceBufferStore, 'deleteAllForRunFenced');
+      const legacySpy = vi.spyOn(traceBufferStore, 'deleteAllForRun');
+
+      const liveRunIds = await runStore.listRunIds();
+      const result = await sweepOrphanArtifacts(
+        [traceBufferStore],
+        liveRunIds,
+        { olderThanMs: ONE_HOUR_MS, dryRun: false, now },
+        runStore,
+      );
+
+      expect(result.reaped.map((e) => e.path)).toEqual([walPath]);
+      expect(result.resurrected).toEqual([]);
+      expect(result.failed).toEqual([]);
+      expect(fencedSpy).toHaveBeenCalledTimes(1);
+      expect(legacySpy).not.toHaveBeenCalled();
+      expect(existsSync(walPath)).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('resurrect race: a run re-imported between the sweep snapshot and the reap is SKIPPED (resurrected bucket), never failed — exit code unaffected, file survives', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const now = new Date();
+      const traceBufferStore = new JsonTraceBufferStore(dir);
+      const runStore = new JsonFileStore(dir);
+
+      // Genuinely run-less at snapshot time (listRunIds below sees it as orphaned)...
+      const resurrectedId = '44444444-4444-4444-8444-444444444444';
+      await traceBufferStore.append(resurrectedId, 'step-a', [{ event: 'x' }]);
+      const walPath = walPathFor(dir, resurrectedId, 'step-a');
+      const ancient = new Date(now.getTime() - (ONE_HOUR_MS + FIVE_MIN_MS));
+      await utimes(walPath, ancient, ancient);
+      const liveRunIds = await runStore.listRunIds();
+      expect(liveRunIds.has(resurrectedId)).toBe(false);
+
+      // ...but a save() re-import lands (with that SAME id) before the fenced guard's own read —
+      // simulated by writing the run file directly between the snapshot above and the sweep call
+      // below (the guard's own runStore.get() runs INSIDE the sweep, after this).
+      await runStore.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+        idempotencyKey: undefined,
+      });
+      // Force the re-imported run to have the EXACT id the WAL names (create() mints a fresh
+      // uuid; overwrite the file directly to land on resurrectedId, mirroring how save() would
+      // re-import a specific, already-known id).
+      const created = await runStore.list();
+      const justCreated = created.find((r) => r.workflow_id === 'wf-1')!;
+      await rm(join(dir, `${justCreated.id}.json`));
+      await writeFile(
+        join(dir, `${resurrectedId}.json`),
+        JSON.stringify({ ...justCreated, id: resurrectedId }, null, 2),
+        'utf8',
+      );
+
+      const result = await sweepOrphanArtifacts(
+        [traceBufferStore],
+        liveRunIds, // the SNAPSHOT taken before the re-import — still shows resurrectedId absent
+        { olderThanMs: ONE_HOUR_MS, dryRun: false, now },
+        runStore,
+      );
+
+      expect(result.reaped).toEqual([]);
+      expect(result.failed).toEqual([]);
+      expect(result.resurrected.map((e) => e.path)).toEqual([walPath]);
+      expect(existsSync(walPath)).toBe(true); // the WAL survives — never deleted
+      expect(existsSync(join(dir, `${resurrectedId}.json`))).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a store without deleteAllForRunFenced (or no runStore supplied) keeps the legacy per-file path — unaffected by the fenced adoption', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const now = new Date();
+      const failedAttemptStore = new FailedAttemptStore(dir);
+      const runStore = new JsonFileStore(dir);
+
+      const orphanId = '55555555-5555-4555-8555-555555555555';
+      await failedAttemptStore.append(orphanId, '{}');
+      const sidecarPath = sidecarPathFor(dir, orphanId);
+      const ancient = new Date(now.getTime() - (ONE_HOUR_MS + FIVE_MIN_MS));
+      await utimes(sidecarPath, ancient, ancient);
+
+      const liveRunIds = await runStore.listRunIds();
+      // runStore intentionally OMITTED — the legacy path must still work exactly as before.
+      const result = await sweepOrphanArtifacts([failedAttemptStore], liveRunIds, {
+        olderThanMs: ONE_HOUR_MS,
+        dryRun: false,
+        now,
+      });
+
+      expect(result.reaped.map((e) => e.path)).toEqual([sidecarPath]);
+      expect(result.resurrected).toEqual([]);
+      expect(existsSync(sidecarPath)).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

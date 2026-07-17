@@ -12,6 +12,7 @@ import {
   type AgentTraceEntry,
   type ResponseEnvelope,
   type RunStore,
+  type RunRecord,
 } from '@sensigo/realm';
 import { traceEntrySchema } from './execute-step.js';
 import { sseJsonStringify } from '../sse-json.js';
@@ -23,7 +24,81 @@ export interface HandleAppendTraceStores {
   traceBufferStore?: TraceBufferStore;
 }
 
-export type AppendTraceOkResult = { status: 'ok' } & AppendResult;
+export type AppendTraceOkResult = { status: 'ok' } & AppendResult & {
+    /**
+     * Advisory only, never a gate (#119) — present only when the configured `traceBufferStore`
+     * does NOT declare the fenced trio (issue #207 PR-2): this append was not fenced against a
+     * concurrent settlement, so the entries acknowledged here may end up neither adopted nor
+     * refused (silently orphaned WAL content). Absent entirely once the store declares the trio.
+     */
+    warnings?: string[];
+  };
+
+/** The specific settled/in-flight state for a step, or `undefined` if none apply — the granular
+ *  counterpart to `isStepSettledOrInFlight` (issue #207 PR-2). `append_trace`'s refusal detail
+ *  must name WHICH state applies: agent guidance differs by state (`in_progress` invites a retry
+ *  once `execute_step` finishes; `completed`/`failed`/`skipped` are permanent). Checked in a fixed
+ *  priority order, reused identically pre-CS and inside the `appendFenced` guard so both paths
+ *  agree on the same taxonomy. */
+function stepStateOf(
+  run: RunRecord,
+  stepId: string,
+): 'completed' | 'failed' | 'skipped' | 'in_progress' | undefined {
+  if (run.completed_steps.includes(stepId)) return 'completed';
+  if (run.failed_steps.includes(stepId)) return 'failed';
+  if (run.skipped_steps.includes(stepId)) return 'skipped';
+  if (run.in_progress_steps.includes(stepId)) return 'in_progress';
+  return undefined;
+}
+
+/** The full `append_trace` refusal taxonomy (issue #207 PR-2): every reason a trace append can be
+ *  refused, pre-CS or from inside the `appendFenced` guard, is one of these six — always code
+ *  `STATE_STEP_NOT_ELIGIBLE`, distinguished by `details.step_state`. `in_progress` is the only
+ *  RESOLVABLE state (the claim will eventually settle) so it alone gets `agentAction:
+ *  'resolve_precondition'` — matching `claimStep`'s own `STATE_STEP_ALREADY_CLAIMED` precedent
+ *  (the same state must never yield two different agent actions depending on which tool observed
+ *  it). The other five are permanent from this call's perspective and stay `report_to_user`. */
+type StepEligibilityState =
+  | 'completed'
+  | 'failed'
+  | 'skipped'
+  | 'in_progress'
+  | 'run_terminal'
+  | 'run_not_found';
+
+function stepNotEligibleError(
+  stepId: string,
+  runVersion: number,
+  stepState: StepEligibilityState,
+  extraDetails?: Record<string, unknown>,
+): WorkflowError {
+  const messages: Record<StepEligibilityState, string> = {
+    completed: `Step '${stepId}' has already completed.`,
+    failed: `Step '${stepId}' has already failed.`,
+    skipped: `Step '${stepId}' was skipped.`,
+    in_progress: `Step '${stepId}' is currently being executed by execute_step.`,
+    run_terminal: `Run is terminal — trace entries can no longer be adopted by any step.`,
+    run_not_found: `Run not found at write time — trace entries can no longer be adopted.`,
+  };
+  return new WorkflowError(messages[stepState], {
+    code: 'STATE_STEP_NOT_ELIGIBLE',
+    category: 'STATE',
+    agentAction: stepState === 'in_progress' ? 'resolve_precondition' : 'report_to_user',
+    retryable: false,
+    details: { step_id: stepId, step_state: stepState, run_version: runVersion, ...extraDetails },
+  });
+}
+
+/** Store-constructor names already warned about lacking the fenced trio (issue #207 PR-2) —
+ *  module-level so a long-lived process warns once per store type, not once per call. Exported
+ *  ONLY for test isolation (`resetUnfencedTraceStoreWarnings`) — production code never calls it. */
+const warnedUnfencedStoreNames = new Set<string>();
+
+/** Test-only reset hook (issue #207 PR-2): clears the dedup set so a test can assert the
+ *  console.warn fires fresh, independent of any earlier test's use of a same-named store class. */
+export function resetUnfencedTraceStoreWarnings(): void {
+  warnedUnfencedStoreNames.clear();
+}
 
 /**
  * Business logic for the append_trace tool.
@@ -102,27 +177,14 @@ export async function handleAppendTrace(
     );
   }
 
-  // 5. Check step eligibility — must not be completed, failed, or in-progress.
-  if (run.completed_steps.includes(args.step_id) || run.failed_steps.includes(args.step_id)) {
-    throw new WorkflowError(
-      `Step '${args.step_id}' has already been claimed (completed or failed).`,
-      {
-        code: 'STATE_STEP_NOT_ELIGIBLE',
-        category: 'STATE',
-        agentAction: 'report_to_user',
-        retryable: false,
-        details: { step_id: args.step_id, step_state: 'already_claimed', run_version: run.version },
-      },
-    );
-  }
-  if (run.in_progress_steps.includes(args.step_id)) {
-    throw new WorkflowError(`Step '${args.step_id}' is currently being executed by execute_step.`, {
-      code: 'STATE_STEP_NOT_ELIGIBLE',
-      category: 'STATE',
-      agentAction: 'report_to_user',
-      retryable: false,
-      details: { step_id: args.step_id, step_state: 'in_progress', run_version: run.version },
-    });
+  // 5. Pre-CS fast-fail eligibility check (issue #207 PR-2): granular step_state values aligned
+  // to the guard taxonomy (stepStateOf/stepNotEligibleError, above) — 'skipped' is a NEW check
+  // (the latent omission D3 identified: a skipped step could previously still accept a trace
+  // append). Race-invariant: step existence and execution === 'agent' were already closed over
+  // above: this check only reads the four step-membership arrays off the SAME pre-CS `run` load.
+  const preCsState = stepStateOf(run, args.step_id);
+  if (preCsState !== undefined) {
+    throw stepNotEligibleError(args.step_id, run.version, preCsState);
   }
 
   // Steps 6 + 7: Require buffer store for any append_trace operation.
@@ -135,15 +197,72 @@ export async function handleAppendTrace(
     });
   }
 
-  // 6. Empty entries — return current buffer state without writing.
+  // 6. Empty entries — return current buffer state without writing. Stays on the raw unlocked
+  // path UNCONDITIONALLY (issue #207 PR-2, D3 §2) — writes nothing, so there is no settlement
+  // race to fence against and no advisory to add, regardless of what the store declares.
   if (args.entries.length === 0) {
     const result = await traceBufferStore.append(args.run_id, args.step_id, []);
     return { status: 'ok', ...result };
   }
 
   // 7. Append entries to the buffer.
+  if (typeof traceBufferStore.appendFenced === 'function') {
+    // Capability present (issue #207 PR-2): guard = ONE fresh lock-free runStore.get,
+    // re-verifying the exact same premise the pre-CS check above already established, but at
+    // write time — this is what closes append-trace.ts's Window A (D3 problem statement): a
+    // concurrent execute_step claiming/settling the step between the pre-CS load and the
+    // physical write. The guard performs exactly one store read and nothing else, per the fenced
+    // trio's own contract.
+    const appendFenced = traceBufferStore.appendFenced.bind(traceBufferStore);
+    const guard = async (): Promise<void> => {
+      let freshRun: RunRecord;
+      try {
+        freshRun = await runStore.get(args.run_id);
+      } catch (err) {
+        if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
+          throw stepNotEligibleError(args.step_id, run.version, 'run_not_found');
+        }
+        // Any other failure propagates UNWRAPPED, per the fenced trio's own guard contract —
+        // never assume every guard failure fits this tool's own eligibility taxonomy.
+        throw err;
+      }
+      if (isTerminalPhase(freshRun.run_phase)) {
+        throw stepNotEligibleError(args.step_id, freshRun.version, 'run_terminal', {
+          run_phase: freshRun.run_phase,
+        });
+      }
+      const freshState = stepStateOf(freshRun, args.step_id);
+      if (freshState !== undefined) {
+        throw stepNotEligibleError(args.step_id, freshRun.version, freshState);
+      }
+    };
+    const result = await appendFenced(args.run_id, args.step_id, args.entries, guard);
+    return { status: 'ok', ...result };
+  }
+
+  // Capability absent (issue #207 PR-2): legacy unfenced append() — Window A stays open for this
+  // store. Deduped console.warn (once per store constructor name, not once per call) plus an
+  // envelope advisory on every success response — advisory only, never gates (#119); this branch
+  // is unreachable once the store declares the trio.
+  const storeName = traceBufferStore.constructor.name;
+  if (!warnedUnfencedStoreNames.has(storeName)) {
+    warnedUnfencedStoreNames.add(storeName);
+    console.warn(
+      `[append_trace] trace buffer store '${storeName}' does not declare the fenced trio (issue ` +
+        '#207) — appended entries are not fenced against a concurrent settlement and may end up ' +
+        'neither adopted nor refused. See the response envelope\'s "warnings" field for the ' +
+        'same caveat on every affected call.',
+    );
+  }
   const result = await traceBufferStore.append(args.run_id, args.step_id, args.entries);
-  return { status: 'ok', ...result };
+  return {
+    status: 'ok',
+    ...result,
+    warnings: [
+      'this store does not fence trace appends against concurrent settlement; entries ' +
+        'acknowledged here may not be adopted',
+    ],
+  };
 }
 
 /** Registers the append_trace MCP tool on the server. */

@@ -19,6 +19,7 @@ import {
   type ExtensionRegistry,
   type McpServerConfig,
   type ToolCallRecord,
+  type TraceBufferStore,
 } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
 import type { LlmProvider } from './providers/llm-provider.js';
@@ -51,6 +52,15 @@ export interface AgentDeps {
    * and would otherwise pass tool results/traces unredacted. Never persisted.
    */
   redactionValues?: readonly string[];
+  /**
+   * Trace-buffer WAL store (issue #207 PR-2, D3 §5) — threaded straight into every `executeChain`
+   * call below. Without this, `realm agent`'s driver never adopted/fenced a step's streamed
+   * `append_trace` WAL content at all (the mixed-wiring gap D3 identifies: CLI executors passed
+   * no `traceBufferStore`, so acknowledged appends were neither adopted nor refused when a CLI
+   * runner settled). Constructed in `agent.ts`, beside the concrete `JsonFileStore`. Optional so
+   * an existing caller that omits it keeps today's behavior exactly (no trace adoption at all).
+   */
+  traceBufferStore?: TraceBufferStore;
 }
 
 export interface AgentRunOptions {
@@ -495,6 +505,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         input: stepInput,
         dispatcher: async () => stepInput,
         registry: deps.registry,
+        ...(deps.traceBufferStore !== undefined ? { traceBufferStore: deps.traceBufferStore } : {}),
         ...(toolCallsForMeta !== undefined ? { stepMeta: { toolCalls: toolCallsForMeta } } : {}),
       });
 
