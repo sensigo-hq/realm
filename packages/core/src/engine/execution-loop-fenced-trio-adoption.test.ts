@@ -138,6 +138,13 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
     });
     const traceBufferStore = new InMemoryTraceBufferStore();
     const deleteSpy = vi.spyOn(traceBufferStore, 'delete');
+    // issue #207 correction (item 4a): also spy on deleteFenced — InMemoryTraceBufferStore
+    // declares the fenced trio, so a hypothetically REINTRODUCED capability-block delete that
+    // used deleteFenced instead of the legacy delete would evade both the legacy-delete spy above
+    // AND Guard 4's regex (which deliberately does not match `deleteFenced(`, only `delete(`/
+    // `deleteAllForRun(`) — this assertion is the only thing that would catch that specific
+    // regression.
+    const deleteFencedSpy = vi.spyOn(traceBufferStore, 'deleteFenced');
 
     const env = await executeStep(store, handlerDef, {
       runId: run.id,
@@ -150,6 +157,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
 
     expect(env.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED');
     expect(deleteSpy).not.toHaveBeenCalled();
+    expect(deleteFencedSpy).not.toHaveBeenCalled();
   });
 
   // ── :925-equivalent — pre-claim read envelope ────────────────────────────────────────────────
@@ -180,6 +188,16 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
     const after = await store.get(run.id);
     expect(after.in_progress_steps).not.toContain('step-agent'); // no claim consumed
     expect(after.claims?.['step-agent']).toBeUndefined();
+    // issue #207 correction (item 4b): sharper than the membership checks above — those alone
+    // cannot distinguish "no claim was ever consumed" from "a claim was consumed and then
+    // compensated" (both leave in_progress_steps/claims looking identical afterward). The
+    // version being byte-identical to the pre-claim snapshot, plus the total absence of a
+    // compensating_unclaim audit entry, is what actually proves NO store mutation happened at
+    // all on this path (this is the pre-claim read failure — no claimStep ever ran).
+    expect(after.version).toBe(run.version);
+    expect(after.evidence.some((e) => e.output_summary['compensating_unclaim'] === true)).toBe(
+      false,
+    );
   });
 
   // ── :1041-equivalent — post-claim compensating un-claim ─────────────────────────────────────

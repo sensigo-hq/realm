@@ -364,3 +364,87 @@ describe('store-fs-guard — exact-count allow-list for raw traceBufferStore del
     }
   });
 });
+
+// -----------------------------------------------------------------------------------------------
+// Guard 5: exact-count allow-list for every raw `traceBufferStore.append(` call site (D3 §7(a),
+// restored — issue #207 correction; same conventions as Guard 4)
+// -----------------------------------------------------------------------------------------------
+//
+// Scoped to core + mcp-server ONLY, same stable-receiver-name rationale as Guard 4. A raw
+// (unfenced) `traceBufferStore.append(` call site is a DELIBERATE, residual, unfenced write —
+// every one still standing after issue #207 PR-2 must be enumerated here with a one-line
+// contract-clause justification. A NEW raw call site appearing anywhere in-scope, or the count at
+// an existing site drifting, fails this test.
+const RAW_TRACE_BUFFER_STORE_APPEND = /\btraceBufferStore\??\.append\s*\(/;
+
+/** file (relative to PACKAGES_DIR) → exact expected raw call-site count, each with the one-line
+ *  contract-clause justification issue #207 (correction) requires. */
+const RAW_APPEND_ALLOW_LIST: Record<string, { count: number; reason: string }> = {
+  'mcp-server/src/tools/append-trace.ts': {
+    count: 2,
+    reason:
+      'the empty-entries probe (writes nothing — raw unlocked path, point-in-time semantics, ' +
+      'unconditional regardless of capability, D3 §2) and the capability-absent fallback ' +
+      '(Window A stays open for a non-declaring store; deduped console.warn + envelope advisory ' +
+      "disclose it — see this file's own capability-absent branch comment).",
+  },
+};
+
+function traceBufferStoreAppendScanFiles(): string[] {
+  return [
+    ...walkTsSourceFiles(join(PACKAGES_DIR, 'core', 'src')),
+    ...walkTsSourceFiles(join(PACKAGES_DIR, 'mcp-server', 'src')),
+  ];
+}
+
+function countRawTraceBufferStoreAppends(file: string): number {
+  const lines = readFileSync(file, 'utf8').split('\n');
+  let count = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('//') || trimmed.startsWith('*')) continue;
+    if (RAW_TRACE_BUFFER_STORE_APPEND.test(trimmed)) count++;
+  }
+  return count;
+}
+
+describe('store-fs-guard — exact-count allow-list for raw traceBufferStore.append( call sites (issue #207 correction, D3 §7(a))', () => {
+  it('at least one file is scanned (the scan is wired correctly)', () => {
+    expect(traceBufferStoreAppendScanFiles().length).toBeGreaterThan(0);
+  });
+
+  it('every RAW_APPEND_ALLOW_LIST entry still exists as a file', () => {
+    for (const rel of Object.keys(RAW_APPEND_ALLOW_LIST)) {
+      const full = join(PACKAGES_DIR, rel);
+      expect(statSync(full).isFile(), `allow-listed file no longer exists: ${rel}`).toBe(true);
+    }
+  });
+
+  it('every raw call site is inside the allow-list, at EXACTLY the expected count — no new site, no drifted count', () => {
+    const violations: string[] = [];
+    for (const file of traceBufferStoreAppendScanFiles()) {
+      const rel = relativeToPackages(file);
+      const actual = countRawTraceBufferStoreAppends(file);
+      const expected = RAW_APPEND_ALLOW_LIST[rel]?.count ?? 0;
+      if (actual !== expected) {
+        violations.push(`${rel}: expected ${expected}, found ${actual}`);
+      }
+    }
+    expect(
+      violations,
+      `Raw traceBufferStore.append( call-site count mismatch: ${violations.join('; ')}. A new ` +
+        `(or removed) call site must be reflected in RAW_APPEND_ALLOW_LIST with a one-line ` +
+        `contract-clause justification.`,
+    ).toEqual([]);
+  });
+
+  it('the allow-listed files THEMSELVES still contain their expected raw call sites (sanity — proves the matcher is not just vacuously passing)', () => {
+    for (const [rel, { count }] of Object.entries(RAW_APPEND_ALLOW_LIST)) {
+      const full = join(PACKAGES_DIR, rel);
+      const actual = countRawTraceBufferStoreAppends(full);
+      expect(actual, `expected exactly ${count} raw call site(s) in allow-listed ${rel}`).toBe(
+        count,
+      );
+    }
+  });
+});
