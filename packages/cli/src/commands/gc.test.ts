@@ -556,6 +556,44 @@ describe('sweepOrphanArtifacts — fenced reap path (issue #207 PR-2)', () => {
     }
   });
 
+  it('floor-sibling scoping: of TWO orphan WALs for the SAME runId, only the one past the floor is reaped — the younger sibling survives (pins the dirEntries grouping against regression, issue #207 correction item 4c)', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const now = new Date();
+      const traceBufferStore = new JsonTraceBufferStore(dir);
+      const runStore = new JsonFileStore(dir);
+
+      const orphanId = '22222222-3333-4444-8555-666677778888';
+      await traceBufferStore.append(orphanId, 'step-old', [{ event: 'old' }]);
+      await traceBufferStore.append(orphanId, 'step-young', [{ event: 'young' }]);
+      const oldWalPath = walPathFor(dir, orphanId, 'step-old');
+      const youngWalPath = walPathFor(dir, orphanId, 'step-young');
+
+      const ancient = new Date(now.getTime() - (ONE_HOUR_MS + FIVE_MIN_MS));
+      await utimes(oldWalPath, ancient, ancient);
+      const tooFresh = new Date(now.getTime() - (ONE_HOUR_MS - FIVE_MIN_MS));
+      await utimes(youngWalPath, tooFresh, tooFresh);
+
+      const liveRunIds = await runStore.listRunIds();
+      expect(liveRunIds.has(orphanId)).toBe(false);
+
+      const result = await sweepOrphanArtifacts(
+        [traceBufferStore],
+        liveRunIds,
+        { olderThanMs: ONE_HOUR_MS, dryRun: false, now },
+        runStore,
+      );
+
+      expect(result.reaped.map((e) => e.path)).toEqual([oldWalPath]);
+      expect(result.failed).toEqual([]);
+      expect(result.resurrected).toEqual([]);
+      expect(existsSync(oldWalPath)).toBe(false); // reaped
+      expect(existsSync(youngWalPath)).toBe(true); // survives — too fresh, excluded from dirEntries
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('resurrect race: a run re-imported between the sweep snapshot and the reap is SKIPPED (resurrected bucket), never failed — exit code unaffected, file survives', async () => {
     const dir = await makeTmpRunsDir();
     try {

@@ -48,19 +48,19 @@ All notable changes to this project are documented here.
   pre-claim read failure consumes no claim; a post-claim read failure performs a compensating
   un-claim (built from the engine's own claim record, CAS'd against its version — a concurrent
   actor that already resolved the claim is never stomped). `reclaim`'s WAL clear now moves BEFORE
-  the un-claiming update on a declaring store, version-fenced against the reclaim decision (skips
-  - warns, buffer left intact, if the run changed since); it warns with the destroyed entry count
-    when it proceeds (the #198 delta — previously silent). `purge` maps a busy/resumed run's WAL
-    delete to its existing `blocked` bucket (extends #184's terminal-re-verify to the WAL artifact
-    layer); `gc`'s orphan-artifact sweep re-verifies run absence at destruction time, routing a
-    `save()`-re-import race to a new, exit-code-neutral `resurrected` bucket rather than reaping a
-    file that is no longer actually orphaned.
+  the un-claiming update on a declaring store, version-fenced against the reclaim decision
+  (skips and warns, buffer left intact, if the run changed since); it warns with the destroyed
+  entry count when it proceeds (the #198 delta — previously silent). `purge` maps a busy/resumed
+  run's WAL delete to its existing `blocked` bucket (extends #184's terminal-re-verify to the WAL
+  artifact layer); `gc`'s orphan-artifact sweep re-verifies run absence at destruction time,
+  routing a `save()`-re-import race to a new, exit-code-neutral `resurrected` bucket rather than
+  reaping a file that is no longer actually orphaned.
 
 ### Fixed
 
 - **CLI executors (`realm run`, `realm agent`) now adopt streamed WAL trace (issue #207, PR-2 of
   2).** Both constructed no `traceBufferStore` at all — an agent step's `append_trace` calls
-  under a CLI-driven run were silently neither adopted nor refused. A `execute_step` success
+  under a CLI-driven run were silently neither adopted nor refused. An `execute_step` success
   settlement's own WAL-cleanup failure (e.g. lock contention) no longer produces an error envelope
   on an already-durably-completed step — it degrades to a warning, as the equivalent failure
   cleanup on the failure-settle path already did.
