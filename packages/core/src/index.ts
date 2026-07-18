@@ -58,6 +58,10 @@ export {
   propagateSkips,
   isStepSettledOrInFlight,
 } from './engine/eligibility.js';
+// The unified writer partition (issue #197 PR-2) — the ONE authoritative adoption predicate;
+// see trace-adoption.ts's own module doc for the full contract.
+export { adoptsLine, partitionBufferedEntries } from './engine/trace-adoption.js';
+export type { BufferedEntryPartition } from './engine/trace-adoption.js';
 export {
   TERMINAL_PHASES,
   RESUMABLE_PHASES,

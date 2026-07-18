@@ -10,6 +10,7 @@
 import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { TraceBufferStore } from '../store/trace-buffer-store.js';
+import { storeDeclaresSeal } from '../store/trace-buffer-store.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { classifyClaim, omitClaim, type ClaimState } from './claim-liveness.js';
@@ -77,19 +78,22 @@ function applyReclaim(run: RunRecord, stepName: string, now: Date): RunRecord {
  * that cannot fence the clear at all.
  *
  * Honest disposition (issue #207 PR-2 — this doc previously overclaimed a stronger guarantee than
- * is actually true). It used to read: "nothing is being discarded that any consumer has seen or
- * could ever see" — that is FALSE as of #207 PR-2's persist-gated failure-settle delete
- * (execution-loop.ts: the WAL delete there now only fires once `store.update` has already
- * SUCCEEDED). When that persist instead FAILS, the step is left in_progress with its trace
- * ALREADY READ INTO an evidence write that never landed anywhere durable — reclaim is exactly the
- * recovery path for that wedge, and this clear (fenced or not) destroys that adopted-but-
+ * is actually true; issue #197 PR-2 narrows the claim further, now that preservation has
+ * shipped). It used to read: "nothing is being discarded that any consumer has seen or could ever
+ * see" — that is FALSE as of #207 PR-2's persist-gated failure-settle delete (execution-loop.ts:
+ * the WAL delete there now only fires once `store.update` has already SUCCEEDED). When that
+ * persist instead FAILS, the step is left in_progress with its trace ALREADY READ INTO an
+ * evidence write that never landed anywhere durable — reclaim is exactly the recovery path for
+ * that wedge, and THIS function (the non-declaring-store / non-seal fallback ONLY, as of #197
+ * PR-2 — see `sealStaleWalFenced` below for the seal-capable path) destroys that adopted-but-
  * unpersisted content too, same as it always destroyed pre-claim, never-adopted content. This is
  * a DELIBERATE, WARNED policy (the #198 delta: reclaim always warns with the count it destroys),
  * not a silent loss, and it is bounded: the destroyed content was never durable anywhere a future
  * reader could find it (the failed `store.update` never committed), so this never destroys any
  * consumer's already-durable view — only a write attempt that never took effect. Full
- * preservation (a sidecar copy taken before this destructive clear) is #197's filed follow-up,
- * not this function's job.
+ * preservation (seal-by-rename, not a sidecar copy) SHIPPED in #197 PR-2: sealed on any
+ * seal-declaring store — this function remains only the byte-frozen fallback for a store that
+ * cannot seal at all.
  *
  * Best-effort and non-blocking by design: a failed clear must never fail the reclaim itself (the
  * claim recovery is the important, safety-gated act; WAL hygiene is secondary) — but per the
@@ -199,6 +203,91 @@ function warnFencedClearOutcome(runId: string, stepName: string, result: FencedC
   }
 }
 
+/** Outcome of `sealStaleWalFenced` (issue #197 PR-2) — what `reclaimStep` needs to decide what to
+ *  log; never surfaced to reclaim's own caller beyond the console.warn it drives. */
+interface FencedSealResult {
+  /** `true` iff the version fence refused (the seal attempt was skipped, buffer left intact). */
+  skipped: boolean;
+  /** `true` iff the buffer was actually sealed. */
+  sealed: boolean;
+  /** Set (to the destroyed entry count) iff the per-key seal budget was reached and this call
+   *  fell back to the existing destructive drain (`deleteFenced`) instead. */
+  cappedFallbackCount?: number;
+}
+
+/**
+ * Fenced pre-update SEAL (issue #197 PR-2, deliverable 1g): reclaim ALWAYS preserves ALL of a
+ * stale step's WAL (no partitioning — zero-cooperation preservation, design §3: "reclaim/settle
+ * preservation ⇔ trio ∧ seal, no carriage needed") on any store declaring `seal`, via the exact
+ * SAME version-fence guard `clearStaleWalFenced` uses above (re-verified against
+ * `expectedVersion`, captured at THIS call's own reclaim-decision read — never a fresh get taken
+ * here). `{sealed:false, reason:'capped'}` falls back to the existing destructive drain
+ * (`deleteFenced`, reusing the SAME guard closure — a second, independent version-fence
+ * re-verification, cheap and safe even if slightly redundant) rather than silently evicting an
+ * already-sealed artifact to make room. `{sealed:false, reason:'absent'}` (no live WAL at all) is
+ * a no-op — nothing to preserve or destroy. Any OTHER thrown error (lock contention, genuine I/O
+ * failure) propagates UNCHANGED, exactly like `clearStaleWalFenced`'s own contract.
+ */
+async function sealStaleWalFenced(
+  store: RunStore,
+  traceBufferStore: TraceBufferStore,
+  runId: string,
+  stepName: string,
+  expectedVersion: number,
+): Promise<FencedSealResult> {
+  const guard = async (): Promise<void> => {
+    const fresh = await store.get(runId);
+    if (fresh.version !== expectedVersion) {
+      throw new ReclaimVersionChanged(
+        `reclaim's version fence refused: run '${runId}' changed since the reclaim decision ` +
+          `(expected version ${expectedVersion}, observed ${fresh.version})`,
+      );
+    }
+  };
+  try {
+    const result = await traceBufferStore.sealFenced!(runId, stepName, guard);
+    if (result.sealed) {
+      return { skipped: false, sealed: true };
+    }
+    if (result.reason === 'capped') {
+      const count = await traceBufferStore.deleteFenced!(runId, stepName, guard);
+      return { skipped: false, sealed: false, cappedFallbackCount: count };
+    }
+    // reason === 'absent' — nothing to seal or drain.
+    return { skipped: false, sealed: false };
+  } catch (err) {
+    if (err instanceof ReclaimVersionChanged) {
+      return { skipped: true, sealed: false };
+    }
+    throw err;
+  }
+}
+
+/** Logs the fenced seal's decision-table outcome (issue #197 PR-2) — the sole place this
+ *  console.warn is emitted, called from both reclaimStep call sites. NO fabricated entry counts
+ *  on a successful seal — the sealed artifact's contents are unparsed at reclaim time (design
+ *  §7: "sealed, contents unparsed"); only the capped-fallback drain has an honest count to report,
+ *  exactly as `warnFencedClearOutcome` already does for the non-seal path. */
+function warnFencedSealOutcome(runId: string, stepName: string, result: FencedSealResult): void {
+  if (result.skipped) {
+    console.warn(
+      `⚠ realm: skipped sealing the trace buffer for run '${runId}' step '${stepName}' during ` +
+        'reclaim — the run changed since the reclaim decision (version fence refused); the ' +
+        'buffer is left intact.',
+    );
+  } else if (result.sealed) {
+    console.warn(
+      `stale WAL sealed (contents unparsed) — retrievable via realm run export for run '${runId}' ` +
+        `step '${stepName}'.`,
+    );
+  } else if (result.cappedFallbackCount !== undefined && result.cappedFallbackCount > 0) {
+    console.warn(
+      `reclaim cleared ${result.cappedFallbackCount} buffered trace entries for run '${runId}' ` +
+        `step '${stepName}' (seal budget reached — fell back to the destructive drain).`,
+    );
+  }
+}
+
 /**
  * Reclaims a single in-progress claim on a run. Guards (in order): store capability → terminal
  * run → the open-gate step → membership. Returns idempotent success when the step is already
@@ -274,15 +363,30 @@ export async function reclaimStep(
   // falls back to the byte-frozen legacy order (after the update, best-effort). `fenced` decides
   // which branch each call site below takes; a `deleteFenced`/lock/I-O throw from the fenced path
   // propagates BEFORE any update runs (claim intact, reclaim aborts loudly, retryable).
+  //
+  // issue #197 PR-2 (deliverable 1g): `sealCapable` is checked FIRST — a seal-declaring store
+  // preserves ALL of a stale step's WAL (zero-cooperation, no partitioning) instead of destroying
+  // it; a fenced-trio-only (non-seal) store keeps the #207 destructive drain unchanged; a
+  // non-declaring store keeps the byte-frozen legacy fallback unchanged.
   const traceBufferStore = options?.traceBufferStore;
   const fenced =
     traceBufferStore !== undefined && typeof traceBufferStore.deleteFenced === 'function';
+  const sealCapable = fenced && storeDeclaresSeal(traceBufferStore!);
 
   try {
-    if (fenced) {
+    if (sealCapable) {
+      const sealResult = await sealStaleWalFenced(
+        store,
+        traceBufferStore!,
+        runId,
+        stepName,
+        run.version,
+      );
+      warnFencedSealOutcome(runId, stepName, sealResult);
+    } else if (fenced) {
       const clearResult = await clearStaleWalFenced(
         store,
-        traceBufferStore,
+        traceBufferStore!,
         runId,
         stepName,
         run.version,
@@ -319,12 +423,22 @@ export async function reclaimStep(
     }
     // Still a stale / unknown-age wedge after the concurrent write → re-apply ONCE on the fresh
     // record. A second mismatch propagates (reclaim loses, abandon-style — no retry loop).
-    // issue #207 PR-2: same fenced-clear-before-update shape as the primary path above, but
-    // version-fenced against THIS path's own decision read (`reloaded.version`) — never `run`'s.
-    if (fenced) {
+    // issue #207 PR-2 / #197 PR-2: same seal-or-clear-before-update shape as the primary path
+    // above, but version-fenced against THIS path's own decision read (`reloaded.version`) —
+    // never `run`'s.
+    if (sealCapable) {
+      const sealResult = await sealStaleWalFenced(
+        store,
+        traceBufferStore!,
+        runId,
+        stepName,
+        reloaded.version,
+      );
+      warnFencedSealOutcome(runId, stepName, sealResult);
+    } else if (fenced) {
       const clearResult = await clearStaleWalFenced(
         store,
-        traceBufferStore,
+        traceBufferStore!,
         runId,
         stepName,
         reloaded.version,

@@ -20,8 +20,20 @@ import { existsSync, statSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { Command } from 'commander';
-import type { RunRecord, RunStore, FailedAttemptRecord, TraceBufferStore } from '@sensigo/realm';
+import type {
+  RunRecord,
+  RunStore,
+  FailedAttemptRecord,
+  TraceBufferStore,
+  SealedArtifact,
+} from '@sensigo/realm';
 import { WorkflowError, isTerminalPhase, FsIoError } from '@sensigo/realm';
+
+/** Fixed redaction marker (issue #197 PR-2, design §6) — replaces every `nonce` value belonging
+ *  to a step currently in `in_progress_steps` on a NON-terminal export (the claimant-nonce
+ *  disclosure channel: `get_run_state` never leaks it, but an export of a live run otherwise
+ *  would). Terminal exports are always verbatim — nothing is still claimable once a run is done. */
+const REDACTED_LIVE_CLAIM_NONCE = '[redacted-live-claim]';
 
 /** One artifact `buildExportBundle` could not read (issue #186) — never silently omitted. */
 export interface ExportArtifactError {
@@ -39,9 +51,9 @@ export interface ExportBundle {
    * v1 bundle's completeness is UNKNOWN to a reader — it was written back when export was
    * all-or-nothing (any read failure meant no bundle at all), so v1's mere existence was itself a
    * (weaker) completeness signal, but nothing in a v1 bundle states it explicitly. v2 always
-   * states it explicitly via `complete`.
+   * states it explicitly via `complete`. Bumped 2 → 3 (issue #197 PR-2): adds `sealed`.
    */
-  realm_export_version: 2;
+  realm_export_version: 3;
   /** ISO-8601, stamped by the CLI at assembly time. */
   exported_at: string;
   /** The full RunRecord — steps, evidence, skip_details, claims, etc. */
@@ -56,12 +68,23 @@ export interface ExportBundle {
    *  truncation) — that is a different signal from a read that failed outright. */
   attempts_capped: boolean;
   /** `{ <stepId>: [...] }` — every buffered/WAL entry for the run, across all steps; `{}` if none
-   *  OR if the WAL read failed (see `artifact_errors` — check `complete` first). */
+   *  OR if the WAL read failed (see `artifact_errors` — check `complete` first). On a NON-terminal
+   *  export, any `nonce` field on a line belonging to a step in `run.in_progress_steps` is
+   *  replaced with `"[redacted-live-claim]"` (issue #197 PR-2, design §6 — the claimant-nonce
+   *  disclosure channel); terminal exports are verbatim. */
   wal: Record<string, unknown[]>;
   /**
-   * False iff any artifact below (`attempts`/`wal`) could not be read (issue #186) — a real I/O
-   * failure, not a genuine ENOENT absence (an absent artifact is legitimately `[]`/`{}` and
-   * `complete: true`). The bundle NEVER lies by omission: every readable artifact is still
+   * Every sealed trace artifact for the run, keyed by stepId (issue #197 PR-2, the `seal` rung).
+   * `null` = the configured trace-buffer store does NOT declare `seal` (incapability — there is
+   * nothing to enumerate, ever, on this store). `{}` = the store DOES declare `seal` but this run
+   * genuinely has none (capable, empty). Same redaction rule as `wal` applies to sealed lines
+   * belonging to an in-progress step on a non-terminal export.
+   */
+  sealed: Record<string, SealedArtifact[]> | null;
+  /**
+   * False iff any artifact below (`attempts`/`wal`/`sealed`) could not be read (issue #186) — a
+   * real I/O failure, not a genuine ENOENT absence (an absent artifact is legitimately `[]`/`{}`
+   * and `complete: true`). The bundle NEVER lies by omission: every readable artifact is still
    * written, and the run record itself is always present when `complete` is `false` (a run-record
    * read failure means no bundle is written at all — see `buildExportBundle`).
    */
@@ -87,7 +110,17 @@ export interface ExportStores {
   failedAttemptStore: {
     read(runId: string): Promise<{ records: FailedAttemptRecord[]; capped: boolean }>;
   };
-  traceBufferStore: Pick<TraceBufferStore, 'readAllForRun'>;
+  /**
+   * `listSealedForRun` (issue #197 PR-2) is OPTIONAL on the Pick, not required — its mere
+   * presence as a function is this command's own incapability signal (`sealed: null` when
+   * absent), deliberately NOT the store-layer's `storeDeclaresSeal` predicate: that predicate
+   * additionally requires the full fenced-trio surface, which would force this deliberately
+   * minimal, read-only Pick to widen far beyond what export actually calls. The construction-time
+   * `validateTraceCapabilities` gate (server.ts) is what keeps a real store's declaration
+   * internally consistent; this command only ever needs to know whether the ONE method it calls
+   * exists.
+   */
+  traceBufferStore: Pick<TraceBufferStore, 'readAllForRun' | 'listSealedForRun'>;
 }
 
 /** Extracts an errno/FsIoError code from a thrown value; `'UNKNOWN'` if it carries none. */
@@ -95,6 +128,62 @@ function errnoCodeOf(err: unknown): string {
   if (err instanceof FsIoError) return err.code;
   const code = (err as { code?: unknown } | undefined)?.code;
   return typeof code === 'string' ? code : 'UNKNOWN';
+}
+
+/** True iff `line` is a plain object carrying a genuine (non-`undefined`) `nonce` value — the
+ *  WAL's raw parsed-line shape is `unknown` (readAllForRun's own contract), so this is a runtime
+ *  narrowing check, never a cast. A bare line (no `nonce` at all) is untouched — there is nothing
+ *  to redact for it. */
+function hasNonce(line: unknown): line is { nonce: string } {
+  return (
+    typeof line === 'object' &&
+    line !== null &&
+    'nonce' in line &&
+    (line as { nonce?: unknown }).nonce !== undefined
+  );
+}
+
+/**
+ * Redacts every genuine `nonce` value on a WAL line or sealed-artifact line belonging to a step
+ * in `liveSteps` (issue #197 PR-2, design §6) — the claimant-nonce disclosure channel a
+ * non-terminal export would otherwise open (a run's own `ClaimRecord` never persists its nonce,
+ * so this stateless step-liveness proxy is the only signal available). Steps NOT in `liveSteps`
+ * (settled, or the run has none) pass through completely untouched — including bare lines, which
+ * have no `nonce` to redact in the first place.
+ */
+function redactLiveClaimNonces(
+  wal: Record<string, unknown[]>,
+  sealed: Record<string, SealedArtifact[]> | null,
+  inProgressSteps: readonly string[],
+): { wal: Record<string, unknown[]>; sealed: Record<string, SealedArtifact[]> | null } {
+  const liveSteps = new Set(inProgressSteps);
+  if (liveSteps.size === 0) return { wal, sealed };
+
+  const redactedWal: Record<string, unknown[]> = {};
+  for (const [stepId, lines] of Object.entries(wal)) {
+    redactedWal[stepId] = liveSteps.has(stepId)
+      ? lines.map((line) => (hasNonce(line) ? { ...line, nonce: REDACTED_LIVE_CLAIM_NONCE } : line))
+      : lines;
+  }
+
+  const redactedSealed: Record<string, SealedArtifact[]> | null =
+    sealed === null
+      ? null
+      : Object.fromEntries(
+          Object.entries(sealed).map(([stepId, artifacts]) => [
+            stepId,
+            liveSteps.has(stepId)
+              ? artifacts.map((artifact) => ({
+                  ...artifact,
+                  lines: artifact.lines.map((line) =>
+                    line.nonce !== undefined ? { ...line, nonce: REDACTED_LIVE_CLAIM_NONCE } : line,
+                  ),
+                }))
+              : artifacts,
+          ]),
+        );
+
+  return { wal: redactedWal, sealed: redactedSealed };
 }
 
 /**
@@ -145,18 +234,53 @@ export async function buildExportBundle(
     });
   }
 
+  // issue #197 PR-2: `listSealedForRun` is OPTIONAL on the (deliberately minimal) Pick above —
+  // its mere presence as a function is this command's own incapability signal. `null` (never
+  // touched) = incapable; `{}` (the loop below simply finds nothing to push) = capable, empty; a
+  // read failure defaults to `{}` too (matching `attempts`/`wal`'s own on-failure convention) —
+  // `complete: false` + `artifact_errors` is what actually signals "the read failed", not the
+  // shape of `sealed` itself.
+  let sealed: Record<string, SealedArtifact[]> | null = null;
+  if (typeof stores.traceBufferStore.listSealedForRun === 'function') {
+    sealed = {};
+    try {
+      const artifacts = await stores.traceBufferStore.listSealedForRun(runId);
+      for (const artifact of artifacts) {
+        (sealed[artifact.step_id] ??= []).push(artifact);
+      }
+    } catch (err) {
+      sealed = {};
+      artifactErrors.push({
+        artifact: 'sealed trace artifacts',
+        code: errnoCodeOf(err),
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // issue #197 PR-2 (design §6, the implementation pin): claims never persist their nonce (only
+  // the stateless step-liveness proxy is available), so a NON-terminal export redacts every
+  // `nonce` on a line belonging to a step CURRENTLY in `run.in_progress_steps` — conservative
+  // over-redaction of a dead foreign nonce on a re-driven live step is accepted (verbatim once
+  // the run goes terminal). A terminal export is always verbatim — nothing is still claimable.
+  const nonTerminal = !isTerminalPhase(run.run_phase);
+  const { wal: finalWal, sealed: finalSealed } = nonTerminal
+    ? redactLiveClaimNonces(wal, sealed, run.in_progress_steps)
+    : { wal, sealed };
+
   const bundle: ExportBundle = {
-    realm_export_version: 2,
+    realm_export_version: 3,
     exported_at: now.toISOString(),
     run,
     attempts,
     attempts_capped: attemptsCapped,
-    wal,
+    wal: finalWal,
+    sealed: finalSealed,
     complete: artifactErrors.length === 0,
     artifact_errors: artifactErrors,
   };
 
-  const warning = !isTerminalPhase(run.run_phase)
+  const warning = nonTerminal
     ? `best-effort snapshot: run '${runId}' is still ${run.run_phase}; its artifacts are read at ` +
       `slightly different instants and may be mid-flight`
     : undefined;
@@ -280,9 +404,15 @@ export const exportCommand = new Command('export')
       }
 
       const walStepCount = Object.keys(bundle.wal).length;
+      // issue #197 PR-2: sealed is null (incapable store) vs {} (capable, empty) vs non-empty —
+      // report all three distinctly rather than collapsing null/empty into the same "0".
+      const sealedSummary =
+        bundle.sealed === null
+          ? 'n/a (store does not declare seal)'
+          : `${Object.values(bundle.sealed).reduce((n, arr) => n + arr.length, 0)}`;
       console.log(
         `Exported run '${runId}' to '${target}' (${formatBytes(Buffer.byteLength(json))}).\n` +
-          `  phase: ${bundle.run.run_phase}, attempts: ${bundle.attempts.length}, WAL steps: ${walStepCount}`,
+          `  phase: ${bundle.run.run_phase}, attempts: ${bundle.attempts.length}, WAL steps: ${walStepCount}, sealed artifacts: ${sealedSummary}`,
       );
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));

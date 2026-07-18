@@ -86,6 +86,12 @@ export const agentCommand = new Command('agent')
     '--project <dir>',
     'CONFIG anchor: deployment root whose realm.yaml applies to definitions without a stored trust_root (default: current directory)',
   )
+  .option(
+    '--mint-writer-nonce',
+    'Mint a fresh writer_nonce (UUIDv4) per step-attempt for faithful trace attribution (issue ' +
+      "#197) — opt-in; default OFF (today's behavior). No caller-supplied value is accepted.",
+    false,
+  )
   .action(
     async (opts: {
       workflow?: string;
@@ -98,6 +104,7 @@ export const agentCommand = new Command('agent')
       register?: boolean;
       extensionsModule?: string;
       project?: string;
+      mintWriterNonce?: boolean;
     }) => {
       if (!opts.workflow && !opts.runId) {
         console.error('Error: one of --workflow or --run-id is required');
@@ -192,6 +199,9 @@ export const agentCommand = new Command('agent')
               provider,
               registry: loaded.registry,
               traceBufferStore,
+              // issue #197 PR-2: default OFF; the strict-flip (REALM_REQUIRE_WRITER_NONCE) force-
+              // enables minting even without the flag — resolved once in run-agent.ts's loop.
+              mintWriterNonce: opts.mintWriterNonce === true,
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }
@@ -232,6 +242,9 @@ export const agentCommand = new Command('agent')
               provider,
               registry: loaded.registry,
               traceBufferStore,
+              // issue #197 PR-2: default OFF; the strict-flip (REALM_REQUIRE_WRITER_NONCE) force-
+              // enables minting even without the flag — resolved once in run-agent.ts's loop.
+              mintWriterNonce: opts.mintWriterNonce === true,
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }

@@ -25,6 +25,8 @@ import type {
 import type { RunStore } from '../store/store-interface.js';
 import { persistsField } from '../store/store-fidelity.js';
 import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-store.js';
+import { storeDeclaresSeal, storeDeclaresNonceCarriage } from '../store/trace-buffer-store.js';
+import { partitionBufferedEntries, type BufferedEntryPartition } from './trace-adoption.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import {
   validateInputSchema,
@@ -101,6 +103,17 @@ export interface ExecuteStepOptions {
    * When absent, behaviour is identical to the pre-B-lite path.
    */
   traceBufferStore?: TraceBufferStore;
+  /**
+   * Client-minted, opaque per-step-attempt writer identity (issue #197 PR-2, design §2) — pre-
+   * validated at the tool/CLI layer (shape, presence-on-non-agent-step); the engine never
+   * validates its shape, only uses it as an opaque comparison key. Honored ONLY when the
+   * configured `traceBufferStore` declares `writer_nonce_carriage` (the activation gate,
+   * design §3) — on a lesser store this is IGNORED entirely (the honest #185 adopt-all floor),
+   * since that store's WAL entries are bare too and honoring a real nonce there would self-demote
+   * the claimant's own bare evidence to "foreign". Absent ⇒ ⊥ (bare/anonymous writer class),
+   * today's byte-identical behavior.
+   */
+  writerNonce?: string;
 }
 
 export interface SubmitGateOptions {
@@ -134,6 +147,8 @@ export interface ExecuteChainOptions {
   trace?: AgentTraceEntry[];
   /** @see ExecuteStepOptions.traceBufferStore */
   traceBufferStore?: TraceBufferStore;
+  /** @see ExecuteStepOptions.writerNonce */
+  writerNonce?: string;
 }
 
 function delayMs(ms: number): Promise<void> {
@@ -630,6 +645,40 @@ function buildCompensatingUnclaim(pendingRun: RunRecord, stepName: string, now: 
 }
 
 /**
+ * Guard for the settle-time seal attempt (issue #197 PR-2, deliverable 1f) — ONE lock-free
+ * `store.get` re-verifying the run exists and this step has actually LEFT `in_progress_steps`
+ * (i.e. our own settling `store.update` already landed) — the "purge-guard shape" (mirrors
+ * #184's terminal-re-verify-under-lock precedent). In the normal case this always passes: by the
+ * time either settle site calls `sealFenced`, the settling update has already committed
+ * synchronously just above it. A run genuinely gone (e.g. concurrently purged) surfaces as
+ * `store.get`'s own typed `STATE_RUN_NOT_FOUND` throw — deliberately NOT special-cased here; it
+ * propagates as an ordinary guard THROW, which the caller's uniform "a throw ⇒ warn + skip the
+ * delete" handling already covers correctly (residue-not-loss either way).
+ */
+function buildSettleSealGuard(
+  store: RunStore,
+  runId: string,
+  stepName: string,
+): () => Promise<void> {
+  return async () => {
+    const fresh = await store.get(runId);
+    if (fresh.in_progress_steps.includes(stepName)) {
+      throw new WorkflowError(
+        `Refusing to seal trace buffer for run '${runId}' step '${stepName}': the step is still ` +
+          'in_progress (the settling update has not yet landed) — residue-not-loss, the live WAL ' +
+          'is left intact.',
+        {
+          code: 'STATE_STEP_PENDING',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: true,
+        },
+      );
+    }
+  };
+}
+
+/**
  * Issue #185 Fix 1 (budget-priority): builds the merged, canonicalized trace for an agent step,
  * giving `traceInput` (the `execute_step` conclusion — unambiguously THIS execution's own)
  * priority into the truncation budget over `bufferEntries` (buffer/WAL lines, which may
@@ -959,6 +1008,19 @@ export async function executeStep(
       }
     | undefined;
 
+  // issue #197 PR-2 (design §3, the activation gate): computed once — options.traceBufferStore
+  // is invariant for this whole call. `carriageActive` also gates whether the NEW
+  // adopted_own/adopted_anonymous/preserved_foreign fields are surfaced on the 'ok' envelope
+  // (absent entirely on a bare-floor store, never just zeroed) — see the settle-site comment.
+  const carriageActive =
+    options.traceBufferStore !== undefined && storeDeclaresNonceCarriage(options.traceBufferStore);
+  const effectiveClaimantNonce = carriageActive ? options.writerNonce : undefined;
+  // Post-claim adoption partition (issue #197 PR-2) — lifted to this outer scope because it is
+  // read again at the settle sites (seal-vs-delete decision) and at 'ok' envelope build, both far
+  // below the post-claim block that computes it. `undefined` for a non-agent step (never computed
+  // there) — the settle sites and envelope build both treat that as "nothing to preserve/report".
+  let adoptionPartition: BufferedEntryPartition | undefined;
+
   if (stepDef?.execution === 'agent') {
     // issue #207 PR-2 (D3 §5): wrapped — a rejection here (e.g. lock contention under a fenced
     // trio's serialized reads) happens BEFORE claimStep, so no claim exists to compensate for;
@@ -986,14 +1048,29 @@ export async function executeStep(
       );
     }
 
+    // issue #197 PR-2 (design §3, missing-leg advisory): a caller-supplied nonce this store
+    // cannot carry is IGNORED for adoption purposes (carriageActive is false) — loudly, once per
+    // call, so a minting client discovers the silent floor rather than assuming attribution.
+    if (options.writerNonce !== undefined && !carriageActive) {
+      traceWarnings.push(
+        'writer_nonce ignored: the trace-buffer store does not declare writer_nonce_carriage — ' +
+          'adoption falls back to the honest floor',
+      );
+    }
+
     const hasAnyTrace =
       walEntries.length > 0 || (options.trace !== undefined && options.trace.length > 0);
 
     if (hasAnyTrace) {
+      // issue #197 PR-2 (design §2, ADOPTION_CONGRUENCE): the pre-claim enforce-gate validates
+      // ONLY the adopted subset — a foreign-nonce-only WAL must never gate a (nonced) claimant.
+      // Congruence with the post-claim partition below is mandatory: both call the SAME
+      // `partitionBufferedEntries` helper against the SAME `effectiveClaimantNonce`.
+      const prClaimPartition = partitionBufferedEntries(walEntries, effectiveClaimantNonce);
       // issue #185 Fix 1: budget-priority merge (see buildPriorityMergedTrace's own doc) — this
       // pre-claim pass exists only to feed validateTraceSchema below; its RESULT is discarded
       // (not stored into the outer preNormalizedTrace) once the enforce-gate decision is made.
-      const preClaimNormalized = buildPriorityMergedTrace(walEntries, options.trace);
+      const preClaimNormalized = buildPriorityMergedTrace(prClaimPartition.adopted, options.trace);
 
       // Validate trace schema if configured (unchanged call site).
       if (stepDef.trace_schema !== undefined) {
@@ -1134,10 +1211,20 @@ export async function executeStep(
       );
     }
 
+    // issue #197 PR-2 (design §2): the SAME predicate as the pre-claim pass, now over the
+    // complete post-claim set. Lifted to `adoptionPartition` (outer scope) — read again at the
+    // settle sites (seal-vs-delete) and at 'ok' envelope build, both below this block.
+    adoptionPartition = partitionBufferedEntries(walEntries, effectiveClaimantNonce);
+
+    // issue #197 PR-2 (design §2, the "keying pin"): this condition stays keyed on the FULL
+    // post-claim WAL set, NOT the adopted subset — a foreign-only WAL (adoptionPartition.adopted
+    // empty) with no options.trace must still enter this block so foreign_lines_preserved below
+    // is captured into trace_summary; otherwise that count is silently lost.
     if (walEntries.length > 0 || (options.trace !== undefined && options.trace.length > 0)) {
       // issue #185 Fix 1: same budget-priority merge as the pre-claim pass, now over the
-      // complete post-claim set — this is the value captured into evidence.
-      preNormalizedTrace = buildPriorityMergedTrace(walEntries, options.trace);
+      // complete post-claim ADOPTED subset only — a foreign line never reaches canonical
+      // evidence (issue #197 PR-2, design §2).
+      preNormalizedTrace = buildPriorityMergedTrace(adoptionPartition.adopted, options.trace);
 
       // Carry over the enforce-gate's schema-validation result (computed pre-claim against a
       // possibly-incomplete set) rather than re-validating here — Fix 2 deliberately keeps
@@ -1149,13 +1236,56 @@ export async function executeStep(
         preNormalizedTrace.summary.validation_errors = preClaimSchemaResult.validation_errors;
       }
 
-      // issue #185 Fix 3: the honest label. Any buffer/WAL line adopted here is NOT attributable
-      // to this execution — the agent trace buffer has no single owner, so an adopted line may
-      // originate from a prior attempt (e.g. a crashed run this one resumed) or a concurrent one
-      // racing on the same (run, step). Present only when buffer lines were actually adopted;
-      // an options.trace-only execution carries no caveat.
-      if (walEntries.length > 0) {
-        preNormalizedTrace.summary.buffered_lines_adopted = walEntries.length;
+      // issue #185 Fix 3 / issue #197 PR-2 (design §2/§6): the three-way honest split.
+      // buffered_lines_adopted now counts ONLY the adopted-ANONYMOUS entries (bare-adopted by a
+      // ⊥ claimant) — for all-bare traffic this is numerically IDENTICAL to before #197 (every
+      // adopted line was, and still is, bare). attributed_lines_adopted counts own-nonce
+      // adoptions — NO caveat (design §6 wording, verbatim below). foreign_lines_preserved counts
+      // lines from a different writer, preserved (sealed where supported) but never adopted —
+      // its accompanying pointer warning is the only way an agent learns to retrieve them.
+      if (adoptionPartition.adopted_anonymous > 0) {
+        preNormalizedTrace.summary.buffered_lines_adopted = adoptionPartition.adopted_anonymous;
+      }
+      if (adoptionPartition.adopted_own > 0) {
+        preNormalizedTrace.summary.attributed_lines_adopted = adoptionPartition.adopted_own;
+      }
+      if (adoptionPartition.preserved_foreign > 0) {
+        preNormalizedTrace.summary.foreign_lines_preserved = adoptionPartition.preserved_foreign;
+        traceWarnings.push(
+          `${adoptionPartition.preserved_foreign} buffered line(s) from a different writer were ` +
+            'preserved, not adopted — retrieve via `realm run export`',
+        );
+      }
+
+      // issue #197 PR-2 (design §6, the half-minted advisory): signature heuristics over the RAW
+      // walEntries/foreign set (never the adopted subset — these two cases are both about
+      // content this claimant did NOT adopt), neutral phrasing, values never echoed. Mutually
+      // exclusive by claimant type (nonced vs ⊥), so an if/else-if is exact, not a simplification.
+      if (
+        effectiveClaimantNonce !== undefined &&
+        walEntries.length > 0 &&
+        walEntries.every((e) => e._nonce === undefined)
+      ) {
+        // A nonced claimant found nothing but bare lines — if those are this SAME attempt's own
+        // earlier append() calls, the client minted inconsistently (nonce on execute_step but not
+        // on the preceding append_trace calls, or vice versa).
+        traceWarnings.push(
+          `the ${walEntries.length} buffered line(s) were bare and were preserved, not adopted — ` +
+            'if they are yours from this same attempt, you minted inconsistently (mint on both ' +
+            'calls, or neither)',
+        );
+      } else if (effectiveClaimantNonce === undefined && adoptionPartition.foreign.length > 0) {
+        const distinctForeignNonces = new Set(adoptionPartition.foreign.map((e) => e._nonce));
+        if (distinctForeignNonces.size === 1) {
+          // A bare claimant found every foreign line under exactly ONE other nonce — if that
+          // nonce is this SAME attempt's own (minted on append_trace but the execute_step call
+          // stayed bare), the client minted inconsistently.
+          traceWarnings.push(
+            `${adoptionPartition.foreign.length} line(s) under a different writer_nonce were ` +
+              'preserved, not adopted — if these are yours from this same attempt, you minted ' +
+              'inconsistently',
+          );
+        }
       }
     }
   }
@@ -1656,18 +1786,61 @@ export async function executeStep(
       storeCleanupWarning = `Failed to persist step failure: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`;
     }
     let walCleanupWarning: string | undefined;
-    // issue #207 PR-2 (D3 §5): gate the WAL delete on the preceding store.update having actually
+    // issue #207 PR-2 (D3 §5): gate the WAL cleanup on the preceding store.update having actually
     // SUCCEEDED (persistedRun defined) — a failed persist leaves the step in_progress with its
     // trace already read into an evidence write that never landed anywhere durable; the WAL is
     // the SOLE remaining evidence copy until reclaim recovers the wedge (#186 posture). Reclaim's
     // own drain (reclaim-step.ts) warns with the destroyed entry count when it eventually clears
     // this same buffer.
+    //
+    // issue #197 PR-2 (deliverable 1f): when this step's post-claim read found foreign (preserved,
+    // not adopted) lines AND the store declares `seal`, retire the WAL to a sealed artifact
+    // instead of destroying it — `preserved_foreign === 0` (the overwhelming common case, and the
+    // ONLY case on a non-seal-declaring store, since carriage requires seal by the ladder) takes
+    // the exact same plain `delete()` this always has, below, byte-identical.
     if (persistedRun !== undefined) {
-      try {
-        // Delete WAL after run state is written for failure — entries are now in evidence.
-        await options.traceBufferStore?.delete(options.runId, options.command);
-      } catch (walErr) {
-        walCleanupWarning = `Failed to clean up trace buffer after step failure: ${walErr instanceof Error ? walErr.message : String(walErr)}`;
+      let performPlainDelete = true;
+      if (
+        adoptionPartition !== undefined &&
+        adoptionPartition.preserved_foreign > 0 &&
+        options.traceBufferStore !== undefined &&
+        storeDeclaresSeal(options.traceBufferStore)
+      ) {
+        try {
+          const sealResult = await options.traceBufferStore.sealFenced!(
+            options.runId,
+            options.command,
+            buildSettleSealGuard(store, options.runId, options.command),
+          );
+          if (sealResult.sealed) {
+            performPlainDelete = false;
+            walCleanupWarning =
+              `${adoptionPartition.preserved_foreign} foreign line(s) preserved (sealed) — ` +
+              'retrieve via `realm run export`';
+          } else if (sealResult.reason === 'capped') {
+            // Fall back to the SAME plain delete below (loud + bounded, never a silent eviction
+            // of an already-sealed artifact to make room) — the destroyed-count warning names
+            // exactly what happened; performPlainDelete stays true.
+            walCleanupWarning = 'preservation cap reached — foreign lines destroyed, not preserved';
+          } else {
+            // 'absent' — the live WAL vanished between the post-claim read and this seal attempt
+            // (e.g. a concurrent purge/reclaim) — nothing left to delete either; residue-not-loss.
+            performPlainDelete = false;
+          }
+        } catch (err) {
+          // A THROW (lock contention, genuine I/O failure) ⇒ warn + SKIP the delete
+          // (residue-not-loss; the fence refuses further appends; purge reaps).
+          performPlainDelete = false;
+          walCleanupWarning = `Failed to seal trace buffer after step failure: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+      if (performPlainDelete) {
+        try {
+          // Delete WAL after run state is written for failure — entries are now in evidence.
+          await options.traceBufferStore?.delete(options.runId, options.command);
+        } catch (walErr) {
+          walCleanupWarning = `Failed to clean up trace buffer after step failure: ${walErr instanceof Error ? walErr.message : String(walErr)}`;
+        }
       }
     }
 
@@ -1961,11 +2134,50 @@ export async function executeStep(
   // settlement already committed and is durably visible, so a cleanup failure here (e.g. lock
   // contention) must degrade to a warning, never surface as though the STEP itself failed (this
   // was previously unwrapped and would have thrown straight out of executeStep).
+  //
+  // issue #197 PR-2 (deliverable 1f): same seal-vs-delete decision as the failure-settle site
+  // above — see its comment for the full outcome table. preserved_foreign === 0 (the common case,
+  // and the ONLY case on a non-seal-declaring store) takes the exact same plain delete() this
+  // always has, byte-identical.
   let successWalCleanupWarning: string | undefined;
-  try {
-    await options.traceBufferStore?.delete(options.runId, options.command);
-  } catch (err) {
-    successWalCleanupWarning = `Failed to clean up trace buffer after step completion: ${err instanceof Error ? err.message : String(err)}`;
+  {
+    let performPlainDelete = true;
+    if (
+      adoptionPartition !== undefined &&
+      adoptionPartition.preserved_foreign > 0 &&
+      options.traceBufferStore !== undefined &&
+      storeDeclaresSeal(options.traceBufferStore)
+    ) {
+      try {
+        const sealResult = await options.traceBufferStore.sealFenced!(
+          options.runId,
+          options.command,
+          buildSettleSealGuard(store, options.runId, options.command),
+        );
+        if (sealResult.sealed) {
+          performPlainDelete = false;
+          successWalCleanupWarning =
+            `${adoptionPartition.preserved_foreign} foreign line(s) preserved (sealed) — ` +
+            'retrieve via `realm run export`';
+        } else if (sealResult.reason === 'capped') {
+          successWalCleanupWarning =
+            'preservation cap reached — foreign lines destroyed, not preserved';
+        } else {
+          // 'absent' — residue-not-loss; nothing left to delete either.
+          performPlainDelete = false;
+        }
+      } catch (err) {
+        performPlainDelete = false;
+        successWalCleanupWarning = `Failed to seal trace buffer after step completion: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    if (performPlainDelete) {
+      try {
+        await options.traceBufferStore?.delete(options.runId, options.command);
+      } catch (err) {
+        successWalCleanupWarning = `Failed to clean up trace buffer after step completion: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
   }
 
   // Step 7: Build and return ResponseEnvelope.
@@ -1988,6 +2200,17 @@ export async function executeStep(
     context_hint: orientation,
     run_phase: savedRun.run_phase,
     next_actions: nextActions,
+    // issue #197 PR-2 (deliverable 2e): additive per-partition counts, SET BY THE ENGINE (never
+    // the MCP tool layer, which strips data/evidence and never sees per-line nonces). Gated on
+    // `carriageActive` (store CAPABILITY), not on whether a nonce happened to be provided this
+    // call — "absent for bare-floor stores" means incapable, not merely unused-this-time.
+    ...(carriageActive && adoptionPartition !== undefined
+      ? {
+          adopted_own: adoptionPartition.adopted_own,
+          adopted_anonymous: adoptionPartition.adopted_anonymous,
+          preserved_foreign: adoptionPartition.preserved_foreign,
+        }
+      : {}),
   };
 }
 
@@ -2459,6 +2682,18 @@ async function executeChainInternal(
     branched_via?: string;
     warnings?: string[];
   }>,
+  /**
+   * issue #197 PR-2 (chain-replacement disposition, accepted): a settled DEPTH-0 step (typically
+   * an agent step — never itself recorded in `chainedSteps`, which is auto-steps-only, feeding
+   * the VISIBLE `chained_auto_steps` list) whose own envelope is about to be discarded in favor
+   * of a deeper auto step's envelope would otherwise silently lose its OWN warnings (seal
+   * outcome / half-minted / missing-carriage-leg advisories) — this separate accumulator exists
+   * ONLY to carry those forward; it never touches `chainedSteps`'/`chained_auto_steps`'s shape.
+   * The three NEW adoption counts on that depth-0 envelope are NOT similarly rescued — they
+   * persist authoritatively in the settled step's own `trace_summary` regardless (see
+   * `ResponseEnvelope.adopted_own`'s own doc) — only the warnings are a load-bearing rescue.
+   */
+  depth0Warnings: string[],
 ): Promise<ResponseEnvelope> {
   if (depth > MAX_CHAIN_DEPTH) {
     return {
@@ -2619,12 +2854,29 @@ async function executeChainInternal(
     return result;
   }
 
+  // issue #197 PR-2 (chain-replacement disposition): THIS step's own result is about to be
+  // discarded in favor of the recursive call's — capture its warnings now, before that happens.
+  // Every step past depth 0 in this recursion is guaranteed 'auto' (nextAutoStep's own filter),
+  // so depth === 0 is the ONLY case where a non-auto (agent) step's warnings would otherwise be
+  // lost here (an 'auto' depth-0 step's warnings are already captured above via `chainedSteps`,
+  // so this would double them — the `depth === 0` guard is exact, not merely conservative:
+  // `chainedSteps` only records 'auto' steps, so a depth-0 'auto' step's warnings are recorded
+  // there, never here, avoiding any double-count).
+  if (
+    depth === 0 &&
+    definition.steps[options.command]?.execution !== 'auto' &&
+    result.warnings.length > 0
+  ) {
+    depth0Warnings.push(...result.warnings);
+  }
+
   return executeChainInternal(
     store,
     definition,
     { ...options, command: nextAutoStep, input: {} },
     depth + 1,
     chainedSteps,
+    depth0Warnings,
   );
 }
 
@@ -2686,8 +2938,18 @@ export async function executeChain(
     branched_via?: string;
     warnings?: string[];
   }> = [];
-  const result = await executeChainInternal(store, definition, effectiveOptions, 0, chained);
-  const chainWarnings = chained.flatMap((s) => s.warnings ?? []);
+  // issue #197 PR-2 (chain-replacement disposition) — see executeChainInternal's own doc on this
+  // parameter for the full contract.
+  const depth0Warnings: string[] = [];
+  const result = await executeChainInternal(
+    store,
+    definition,
+    effectiveOptions,
+    0,
+    chained,
+    depth0Warnings,
+  );
+  const chainWarnings = [...depth0Warnings, ...chained.flatMap((s) => s.warnings ?? [])];
   const envelope = {
     ...result,
     command: options.command,

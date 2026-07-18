@@ -16,6 +16,64 @@ import {
 import type { HandleRunStores, FailedAttemptStoreLike } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
 
+/** Maximum `writer_nonce` length (issue #197 PR-2, design §6). */
+const WRITER_NONCE_MAX_LENGTH = 128;
+
+/** Actionable guidance appended to every writer_nonce-related refusal (issue #197 PR-2). */
+export const WRITER_NONCE_GUIDANCE =
+  'writer_nonce must be a non-empty string, ≤128 chars, no leading/trailing whitespace; ' +
+  'recommended: a fresh UUIDv4 per step-attempt.';
+
+/**
+ * Validates a caller-submitted `writer_nonce`'s SHAPE (issue #197 PR-2, design §6) — throws a
+ * typed `WorkflowError` on any violation, never a bare zod/SDK error (the zod schema itself
+ * accepts any string, deliberately UNBOUNDED, so every shape violation routes through this ONE
+ * check). Shared by `append_trace` and `execute_step` — the shape rule lives in exactly one
+ * place; each tool's OWN refusal taxonomy is otherwise free to differ.
+ */
+export function validateWriterNonceShape(nonce: string): void {
+  let reason: string | undefined;
+  if (nonce.length === 0) {
+    reason = 'must not be empty';
+  } else if (nonce !== nonce.trim()) {
+    reason = 'must not have leading or trailing whitespace';
+  } else if (nonce.length > WRITER_NONCE_MAX_LENGTH) {
+    reason = `must be ≤${WRITER_NONCE_MAX_LENGTH} characters`;
+  }
+  if (reason === undefined) return;
+  throw new WorkflowError(`Invalid writer_nonce: ${reason}. ${WRITER_NONCE_GUIDANCE}`, {
+    code: 'VALIDATION_EMPTY_VALUE',
+    category: 'VALIDATION',
+    agentAction: 'provide_input',
+    retryable: false,
+  });
+}
+
+/**
+ * Dormant strict posture (issue #197 PR-2, design §6 — the #169→#170 template): read PER CALL,
+ * NEVER cached at module load (a test flips the env var mid-process). "on" = set to any
+ * non-empty value other than `'0'`/`'false'`. Default (unset) ⇒ zero behavior change anywhere.
+ */
+export function isWriterNonceRequired(): boolean {
+  const v = process.env['REALM_REQUIRE_WRITER_NONCE'];
+  return v !== undefined && v !== '' && v !== '0' && v !== 'false';
+}
+
+/** Refusal for `isWriterNonceRequired()` ⇒ true and a bare (agent-step) call (issue #197 PR-2). */
+export function writerNonceRequiredError(stepId: string, runVersion: number): WorkflowError {
+  return new WorkflowError(
+    'This deployment requires writer_nonce for agent steps (REALM_REQUIRE_WRITER_NONCE is set) ' +
+      `— step '${stepId}' was called without one. ${WRITER_NONCE_GUIDANCE}`,
+    {
+      code: 'VALIDATION_EMPTY_VALUE',
+      category: 'VALIDATION',
+      agentAction: 'provide_input',
+      retryable: false,
+      details: { step_id: stepId, run_version: runVersion },
+    },
+  );
+}
+
 /**
  * Pre-claim validation rejections carry one of these error codes (claimStep runs strictly after all
  * three schema gates, so they never reach failed_steps[] / never bump version — a write-free path).
@@ -115,6 +173,7 @@ export async function handleExecuteStep(
     command: string;
     params?: Record<string, unknown>;
     trace?: AgentTraceEntry[] | undefined;
+    writer_nonce?: string | undefined;
   },
   stores?: HandleRunStores,
 ): Promise<ResponseEnvelope> {
@@ -123,6 +182,42 @@ export async function handleExecuteStep(
   const run = await runStore.get(args.run_id);
   const definition = await workflowStore.get(run.workflow_id);
   const params = args.params ?? {};
+  const stepDef = definition.steps[args.command];
+
+  // issue #197 PR-2 (design §6): shape-validate BEFORE anything else — routes every violation
+  // through ONE typed refusal, never a bare zod/SDK error.
+  if (args.writer_nonce !== undefined) {
+    validateWriterNonceShape(args.writer_nonce);
+  }
+
+  // A writer_nonce PRESENT on a non-agent step is refused (design §6) — mirrors append_trace's
+  // own non-agent taxonomy (STATE_STEP_NOT_ELIGIBLE + step_type detail). A BARE execute_step call
+  // on a non-agent step stays byte-identical — auto/handler steps legally execute through this
+  // tool, and this check only fires when a nonce was actually supplied.
+  if (args.writer_nonce !== undefined && stepDef !== undefined && stepDef.execution !== 'agent') {
+    throw new WorkflowError(
+      `Step '${args.command}' is not an agent step (execution: '${stepDef.execution}') — ` +
+        'writer_nonce is only meaningful on agent steps.',
+      {
+        code: 'STATE_STEP_NOT_ELIGIBLE',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: { step_id: args.command, step_type: stepDef.execution, run_version: run.version },
+      },
+    );
+  }
+
+  // issue #197 PR-2 (design §6, dormant strict posture — default off, zero behavior change):
+  // agent steps only — an auto/handler step's execute_step call never carries a caller-chosen
+  // writer_nonce in the first place.
+  if (
+    isWriterNonceRequired() &&
+    stepDef?.execution === 'agent' &&
+    args.writer_nonce === undefined
+  ) {
+    throw writerNonceRequiredError(args.command, run.version);
+  }
 
   // Per-definition registry (project extensions) — awaited before execution; a throwing
   // provider fails the tool call before any step is claimed. Provider wins over `registry`.
@@ -143,6 +238,7 @@ export async function handleExecuteStep(
     ...(stores?.traceBufferStore !== undefined
       ? { traceBufferStore: stores.traceBufferStore }
       : {}),
+    ...(args.writer_nonce !== undefined ? { writerNonce: args.writer_nonce } : {}),
   });
 
   // P2/P3 observability: on a pre-claim validation rejection, fan a metadata-only record out to the
@@ -164,6 +260,7 @@ export async function handleExecuteStepTool(
     command: string;
     params?: Record<string, unknown>;
     trace?: AgentTraceEntry[] | undefined;
+    writer_nonce?: string | undefined;
   },
   stores?: HandleRunStores,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
@@ -215,12 +312,24 @@ export async function handleExecuteStepTool(
 export function registerExecuteStep(server: McpServer, opts?: HandleRunStores): void {
   server.tool(
     'execute_step',
-    'Execute a workflow step. For agent steps, pass your output in params.',
+    [
+      'Execute a workflow step. For agent steps, pass your output in params.',
+      'Optional: writer_nonce — mint a fresh UUIDv4 per step-attempt (same value on every',
+      "append_trace call for this attempt, a NEW one next attempt) to get this step's own",
+      'buffered trace lines faithfully attributed instead of the honest-but-unattributed floor.',
+      'Mint on BOTH append_trace and execute_step for this attempt, or neither — a guessable or',
+      'reused nonce is worse than omitting one (it lets residue be adopted with no caveat, or',
+      'silently folds a crashed attempt into this one).',
+    ].join(' '),
     {
       run_id: z.string(),
       command: z.string(),
       params: z.record(z.unknown()).optional().default({}),
       trace: z.array(traceEntrySchema).optional(),
+      // issue #197 PR-2 (design §6): UNBOUNDED at the zod layer — every shape violation
+      // (empty/whitespace/too-long) routes through validateWriterNonceShape to ONE typed realm
+      // envelope refusal, never a bare zod/SDK error.
+      writer_nonce: z.string().optional(),
     },
     async (args) => {
       return handleExecuteStepTool(args, opts);

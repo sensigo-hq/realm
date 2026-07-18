@@ -61,6 +61,26 @@ export interface AgentDeps {
    * an existing caller that omits it keeps today's behavior exactly (no trace adoption at all).
    */
   traceBufferStore?: TraceBufferStore;
+  /**
+   * Mint a FRESH `writer_nonce` (UUIDv4) per step-attempt (issue #197 PR-2) — resolved once in
+   * `agent.ts` from `--mint-writer-nonce` OR'd with the `REALM_REQUIRE_WRITER_NONCE` strict-flip
+   * (design §8: the strict posture force-enables minting even without the flag). Default `false`/
+   * absent ⇒ today's byte-identical ⊥ (bare) behavior. Never a caller-fixed value — a fresh
+   * `crypto.randomUUID()` is minted independently for EVERY step-attempt in the loop below.
+   */
+  mintWriterNonce?: boolean;
+}
+
+/**
+ * Dormant strict posture (issue #197 PR-2, design §6 — the #169→#170 template): read PER CALL,
+ * never cached at module load (a test flips the env var mid-process). "on" = set to any
+ * non-empty value other than `'0'`/`'false'`. A strict-flip force-enables minting even without
+ * `--mint-writer-nonce` (design §8).
+ */
+function shouldMintWriterNonce(deps: Pick<AgentDeps, 'mintWriterNonce'>): boolean {
+  const v = process.env['REALM_REQUIRE_WRITER_NONCE'];
+  const required = v !== undefined && v !== '' && v !== '0' && v !== 'false';
+  return deps.mintWriterNonce === true || required;
 }
 
 export interface AgentRunOptions {
@@ -507,6 +527,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         registry: deps.registry,
         ...(deps.traceBufferStore !== undefined ? { traceBufferStore: deps.traceBufferStore } : {}),
         ...(toolCallsForMeta !== undefined ? { stepMeta: { toolCalls: toolCallsForMeta } } : {}),
+        // issue #197 PR-2: a FRESH nonce per step-attempt — resolved per call, never cached, so
+        // the strict-flip (checked inside shouldMintWriterNonce) is honored even if the env var
+        // changes mid-process (tests flip it).
+        ...(shouldMintWriterNonce(deps) ? { writerNonce: crypto.randomUUID() } : {}),
       });
 
       if (result.status === 'error') {

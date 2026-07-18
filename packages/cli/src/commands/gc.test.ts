@@ -520,6 +520,91 @@ describe('sweepOrphanArtifacts (issue #163)', () => {
   });
 });
 
+/** Recomputes the exact on-disk SEALED artifact filename `JsonTraceBufferStore`'s private
+ *  `sealedWalPath` uses (issue #197 PR-2) — test-side only, mirroring `walPathFor` above. */
+function sealedPathFor(dir: string, runId: string, stepId: string, seq: number): string {
+  return join(
+    dir,
+    `sealed-trace-${runId}-${Buffer.from(stepId).toString('base64url')}.${seq}.jsonl`,
+  );
+}
+
+describe('sweepOrphanArtifacts — sealed artifacts (issue #197 PR-2, deliverable 3b: VERIFYING no gc.ts code change was needed)', () => {
+  it('gc reaps a run-less SEALED artifact older than the floor, in --force mode', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const now = new Date();
+      const traceBufferStore = new JsonTraceBufferStore(dir);
+      const runStore = new JsonFileStore(dir);
+
+      // No run file is ever created for this id — it is run-less from the start.
+      const orphanId = '33333333-3333-4333-8333-333333333333';
+      await traceBufferStore.append(orphanId, 'step-a', [{ event: 'x' }]);
+      const sealResult = await traceBufferStore.sealFenced!(orphanId, 'step-a', async () => {});
+      expect(sealResult).toEqual({ sealed: true });
+
+      const sealedPath = sealedPathFor(dir, orphanId, 'step-a', 0);
+      expect(existsSync(sealedPath)).toBe(true);
+      const backdated = new Date(now.getTime() - (ONE_HOUR_MS + FIVE_MIN_MS));
+      await utimes(sealedPath, backdated, backdated);
+
+      const liveRunIds = await runStore.listRunIds();
+      expect(liveRunIds.has(orphanId)).toBe(false);
+
+      const preview = await sweepOrphanArtifacts([traceBufferStore], liveRunIds, {
+        olderThanMs: ONE_HOUR_MS,
+        dryRun: true,
+        now,
+      });
+      expect(preview.reaped.map((e) => e.path)).toContain(sealedPath);
+      expect(existsSync(sealedPath)).toBe(true); // dry-run never mutates
+
+      const result = await sweepOrphanArtifacts([traceBufferStore], liveRunIds, {
+        olderThanMs: ONE_HOUR_MS,
+        dryRun: false,
+        now,
+      });
+
+      expect(result.reaped.map((e) => e.path)).toContain(sealedPath);
+      expect(result.failed).toEqual([]);
+      expect(existsSync(sealedPath)).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a SEALED artifact whose run file EXISTS is never reaped, no matter how old', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const now = new Date();
+      const traceBufferStore = new JsonTraceBufferStore(dir);
+      const runStore = new JsonFileStore(dir);
+
+      const { run } = await runStore.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      await traceBufferStore.append(run.id, 'step-a', [{ event: 'x' }]);
+      await traceBufferStore.sealFenced!(run.id, 'step-a', async () => {});
+
+      const sealedPath = sealedPathFor(dir, run.id, 'step-a', 0);
+      const backdated = new Date(now.getTime() - (ONE_HOUR_MS + FIVE_MIN_MS));
+      await utimes(sealedPath, backdated, backdated);
+
+      const liveRunIds = await runStore.listRunIds();
+      expect(liveRunIds.has(run.id)).toBe(true);
+
+      const result = await sweepOrphanArtifacts([traceBufferStore], liveRunIds, {
+        olderThanMs: ONE_HOUR_MS,
+        dryRun: false,
+        now,
+      });
+
+      expect(result.reaped).toEqual([]);
+      expect(existsSync(sealedPath)).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('sweepOrphanArtifacts — fenced reap path (issue #207 PR-2)', () => {
   it('orphan swept normally (run absent): routes through deleteAllForRunFenced (not the legacy per-file path) and is reaped', async () => {
     const dir = await makeTmpRunsDir();

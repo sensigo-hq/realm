@@ -7,6 +7,7 @@ import {
   WorkflowError,
   buildPreExecutionErrorEnvelope,
   isTerminalPhase,
+  storeDeclaresNonceCarriage,
   type AppendResult,
   type TraceBufferStore,
   type AgentTraceEntry,
@@ -14,7 +15,12 @@ import {
   type RunStore,
   type RunRecord,
 } from '@sensigo/realm';
-import { traceEntrySchema } from './execute-step.js';
+import {
+  traceEntrySchema,
+  validateWriterNonceShape,
+  isWriterNonceRequired,
+  writerNonceRequiredError,
+} from './execute-step.js';
 import { sseJsonStringify } from '../sse-json.js';
 
 export interface HandleAppendTraceStores {
@@ -27,12 +33,22 @@ export interface HandleAppendTraceStores {
 export type AppendTraceOkResult = { status: 'ok' } & AppendResult & {
     /**
      * Advisory only, never a gate (#119). May carry the unfenced-store caveat (issue #207 PR-2,
-     * present only when the configured `traceBufferStore` does NOT declare the fenced trio) and/or
-     * the capacity early-warning (issue #208, present once the post-append fill ratio crosses
-     * `CAPACITY_WARNING_THRESHOLD` — see `capacityWarning`, below). Absent entirely (`undefined`,
-     * never `[]`) when neither applies.
+     * present only when the configured `traceBufferStore` does NOT declare the fenced trio),
+     * the not-persisted caveat (issue #197 PR-2, present only when a `writer_nonce` was supplied
+     * but the store doesn't declare `writer_nonce_carriage`), and/or the capacity early-warning
+     * (issue #208, present once the post-append fill ratio crosses `CAPACITY_WARNING_THRESHOLD`
+     * — see `capacityWarning`, below). Absent entirely (`undefined`, never `[]`) when none apply.
      */
     warnings?: string[];
+    /**
+     * Downgrade detector (issue #197 PR-2, design §6, RFC 7507-shaped): `true` iff a
+     * `writer_nonce` was BOTH supplied on this call AND actually carried by the configured store.
+     * Absent (never `false`) when no nonce was supplied, OR when one was supplied but the store
+     * silently cannot carry it (see the not-persisted warning above instead) — an old client that
+     * never looks at this field is unaffected either way; a minting client can detect the silent
+     * demotion by its absence.
+     */
+    writer_nonce_applied?: true;
   };
 
 /**
@@ -46,26 +62,65 @@ export type AppendTraceOkResult = { status: 'ok' } & AppendResult & {
 const CAPACITY_WARNING_THRESHOLD = 0.8;
 
 /**
- * Pure, store-agnostic capacity-warning helper (issue #208, AC 1/3/4) — every `AppendResult`
- * already carries `buffer_count`/`limit_count`/`buffer_bytes`/`limit_bytes` regardless of which
- * `TraceBufferStore` implementation produced it, so this needs no store-specific knowledge at all
- * (the fix genuinely lives at the tool layer, not in any store). Returns `undefined` strictly
- * below `CAPACITY_WARNING_THRESHOLD`; AT OR ABOVE it (`>=`, deliberately not `>` — hitting the
- * threshold exactly still warns) returns ONE deterministic message naming whichever dimension
- * (entries or bytes) is closer to its own ceiling, the actual numbers and percentage, and the
+ * Pure, store-agnostic capacity-warning helper (issue #208, AC 1/3/4; re-homed on both bounds by
+ * issue #197 PR-2) — every `AppendResult` already carries `buffer_count`/`limit_count`/
+ * `buffer_bytes`/`limit_bytes` (WRITER scope) regardless of which `TraceBufferStore`
+ * implementation produced it, so this needs no store-specific knowledge at all. When a carriage
+ * store ALSO returns the additive `file_*` fields (whole-FILE scope, all writers combined —
+ * `BUFFER_BACKSTOP_*`, 2× the per-writer ceiling), this checks that bound too — naive porting
+ * would arithmetically lose a tier (0.8×400 > 200, so a single writer could never trip the file
+ * bound before its own writer bound already fired, silently making the file check dead code for
+ * exactly the common case it must still cover for multi-writer traffic).
+ *
+ * Returns `undefined` strictly below `CAPACITY_WARNING_THRESHOLD` on EITHER bound; AT OR ABOVE it
+ * on the MORE PRESSING one (`>=`, deliberately not `>` — hitting the threshold exactly still
+ * warns) returns ONE deterministic message naming that scope, whichever dimension (entries or
+ * bytes) within it is closer to its own ceiling, the actual numbers and percentage, and the
  * issue's own actionable guidance.
+ *
+ * Byte-identity note (issue #197 PR-2): for a SINGLE writer (all-bare traffic, or any carriage
+ * store with only one active writer on this key), the file-scope ratio is ALWAYS EXACTLY HALF the
+ * writer-scope ratio (file limit = 2× writer limit, same numerator) — so the writer-scope branch
+ * below is provably always the one that fires, reproducing the EXACT pre-#197 message text. The
+ * shipped #208 tests (which drive `InMemoryTraceBufferStore` — ALWAYS `file_*`-present since
+ * PR-1) exercise precisely this provably-writer-scope-wins path; this claim is verified by running
+ * those tests, not merely by this proof (see the PR-2 report's mutation-probe (f) transcript).
  */
 function capacityWarning(result: AppendResult): string | undefined {
-  const countRatio = result.buffer_count / result.limit_count;
-  const bytesRatio = result.buffer_bytes / result.limit_bytes;
-  const ratio = Math.max(countRatio, bytesRatio);
+  const writerCountRatio = result.buffer_count / result.limit_count;
+  const writerBytesRatio = result.buffer_bytes / result.limit_bytes;
+  const writerRatio = Math.max(writerCountRatio, writerBytesRatio);
+
+  const hasFileScope =
+    result.file_count !== undefined &&
+    result.file_limit_count !== undefined &&
+    result.file_bytes !== undefined &&
+    result.file_limit_bytes !== undefined;
+  const fileCountRatio = hasFileScope ? result.file_count! / result.file_limit_count! : 0;
+  const fileBytesRatio = hasFileScope ? result.file_bytes! / result.file_limit_bytes! : 0;
+  const fileRatio = hasFileScope ? Math.max(fileCountRatio, fileBytesRatio) : 0;
+
+  const ratio = Math.max(writerRatio, fileRatio);
   if (ratio < CAPACITY_WARNING_THRESHOLD) return undefined;
 
-  const binding = countRatio >= bytesRatio ? 'entries' : 'bytes';
+  if (hasFileScope && fileRatio >= writerRatio) {
+    const binding = fileCountRatio >= fileBytesRatio ? 'entries' : 'bytes';
+    const detail =
+      binding === 'entries'
+        ? `${result.file_count}/${result.file_limit_count} entries (${Math.round(fileCountRatio * 100)}%)`
+        : `${result.file_bytes}/${result.file_limit_bytes} bytes (${Math.round(fileBytesRatio * 100)}%)`;
+    return (
+      `trace buffer for this step (whole-file, all writers combined) is at ${detail} of ` +
+      'capacity, approaching the limit — reduce tracing verbosity or call execute_step to ' +
+      'finalize the step before further appends are refused with BUFFER_FULL'
+    );
+  }
+
+  const binding = writerCountRatio >= writerBytesRatio ? 'entries' : 'bytes';
   const detail =
     binding === 'entries'
-      ? `${result.buffer_count}/${result.limit_count} entries (${Math.round(countRatio * 100)}%)`
-      : `${result.buffer_bytes}/${result.limit_bytes} bytes (${Math.round(bytesRatio * 100)}%)`;
+      ? `${result.buffer_count}/${result.limit_count} entries (${Math.round(writerCountRatio * 100)}%)`
+      : `${result.buffer_bytes}/${result.limit_bytes} bytes (${Math.round(writerBytesRatio * 100)}%)`;
 
   return (
     `trace buffer for this step is at ${detail} of capacity, approaching the limit — reduce ` +
@@ -141,6 +196,33 @@ export function resetUnfencedTraceStoreWarnings(): void {
 }
 
 /**
+ * Builds the ok envelope's warnings + `writer_nonce_applied` marker (issue #197 PR-2) — shared by
+ * all three append call sites (empty-probe, fenced, unfenced) so this logic lives in exactly one
+ * place. `extraWarnings` carries whatever warnings that SPECIFIC call site already has (e.g. the
+ * unfenced-store caveat) — capacity and not-persisted are always appended AFTER, matching each
+ * call site's own pre-existing ordering convention.
+ */
+function buildAppendOkResult(
+  result: AppendResult,
+  writerNonce: string | undefined,
+  carriageActive: boolean,
+  extraWarnings: string[],
+): AppendTraceOkResult {
+  const warnings = [...extraWarnings];
+  const capacity = capacityWarning(result);
+  if (capacity !== undefined) warnings.push(capacity);
+  if (writerNonce !== undefined && !carriageActive) {
+    warnings.push('writer_nonce not persisted: attribution unavailable on this store');
+  }
+  return {
+    status: 'ok',
+    ...result,
+    ...(warnings.length > 0 ? { warnings } : {}),
+    ...(writerNonce !== undefined && carriageActive ? { writer_nonce_applied: true as const } : {}),
+  };
+}
+
+/**
  * Business logic for the append_trace tool.
  * Buffers trace entries to the WAL for (runId, stepId). Entries are merged with
  * any entries submitted at execute_step finalization.
@@ -153,6 +235,7 @@ export async function handleAppendTrace(
     run_id: string;
     step_id: string;
     entries: AgentTraceEntry[];
+    writer_nonce?: string | undefined;
   },
   stores?: HandleAppendTraceStores,
 ): Promise<AppendTraceOkResult> {
@@ -237,20 +320,37 @@ export async function handleAppendTrace(
     });
   }
 
+  // issue #197 PR-2 (design §6): shape-validate BEFORE anything else touches the store — routes
+  // every violation through ONE typed refusal, never a bare zod/SDK error.
+  if (args.writer_nonce !== undefined) {
+    validateWriterNonceShape(args.writer_nonce);
+  }
+
+  // issue #197 PR-2 (design §6, dormant strict posture — default off, zero behavior change):
+  // non-agent steps already refused above (step 4), before this check ever runs.
+  if (isWriterNonceRequired() && args.writer_nonce === undefined) {
+    throw writerNonceRequiredError(args.step_id, run.version);
+  }
+
+  // issue #197 PR-2 (FLAG_GATING, design §3 activation gate): a nonce is carried ONLY when this
+  // store genuinely declares writer_nonce_carriage — a non-declaring store must NEVER receive the
+  // nonce argument at all (never merely ignore it silently inside the store call).
+  const carriageActive = storeDeclaresNonceCarriage(traceBufferStore);
+  const nonceOptions =
+    args.writer_nonce !== undefined && carriageActive
+      ? { writerNonce: args.writer_nonce }
+      : undefined;
+
   // 6. Empty entries — return current buffer state without writing. Stays on the raw unlocked
   // path UNCONDITIONALLY (issue #207 PR-2, D3 §2) — writes nothing, so there is no settlement
   // race to fence against and no unfenced-store advisory to add here, regardless of what the
   // store declares. The CAPACITY warning (issue #208) still applies: this is the natural
   // read-your-capacity call — an agent probing at 85% full should see it just as a real append
-  // would show it.
+  // would show it. issue #197 PR-2: the probe passes the nonce too (writer-scope numbers for the
+  // probing writer specifically, not the whole file).
   if (args.entries.length === 0) {
-    const result = await traceBufferStore.append(args.run_id, args.step_id, []);
-    const capacity = capacityWarning(result);
-    return {
-      status: 'ok',
-      ...result,
-      ...(capacity !== undefined ? { warnings: [capacity] } : {}),
-    };
+    const result = await traceBufferStore.append(args.run_id, args.step_id, [], nonceOptions);
+    return buildAppendOkResult(result, args.writer_nonce, carriageActive, []);
   }
 
   // 7. Append entries to the buffer.
@@ -284,13 +384,8 @@ export async function handleAppendTrace(
         throw stepNotEligibleError(args.step_id, freshRun.version, freshState);
       }
     };
-    const result = await appendFenced(args.run_id, args.step_id, args.entries, guard);
-    const capacity = capacityWarning(result);
-    return {
-      status: 'ok',
-      ...result,
-      ...(capacity !== undefined ? { warnings: [capacity] } : {}),
-    };
+    const result = await appendFenced(args.run_id, args.step_id, args.entries, guard, nonceOptions);
+    return buildAppendOkResult(result, args.writer_nonce, carriageActive, []);
   }
 
   // Capability absent (issue #207 PR-2): legacy unfenced append() — Window A stays open for this
@@ -307,19 +402,21 @@ export async function handleAppendTrace(
         'same caveat on every affected call.',
     );
   }
-  const result = await traceBufferStore.append(args.run_id, args.step_id, args.entries);
-  const capacity = capacityWarning(result);
-  return {
-    status: 'ok',
-    ...result,
-    // issue #208: capacity SECOND, after the pre-existing unfenced-store advisory — both may be
-    // present at once (the store's fenced-ness and its fill level are independent facts).
-    warnings: [
-      'this store does not fence trace appends against concurrent settlement; entries ' +
-        'acknowledged here may not be adopted',
-      ...(capacity !== undefined ? [capacity] : []),
-    ],
-  };
+  // issue #197 PR-2: an unfenced store can never satisfy the ladder (carriage requires seal
+  // requires the fenced trio) — carriageActive is always false on this branch, so nonceOptions is
+  // always undefined here and the not-persisted warning fires whenever a nonce was supplied.
+  const result = await traceBufferStore.append(
+    args.run_id,
+    args.step_id,
+    args.entries,
+    nonceOptions,
+  );
+  // issue #208: capacity SECOND, after the pre-existing unfenced-store advisory — both (and the
+  // #197 not-persisted caveat) may be present at once; each is an independent fact.
+  return buildAppendOkResult(result, args.writer_nonce, carriageActive, [
+    'this store does not fence trace appends against concurrent settlement; entries ' +
+      'acknowledged here may not be adopted',
+  ]);
 }
 
 /** Registers the append_trace MCP tool on the server. */
@@ -331,11 +428,21 @@ export function registerAppendTrace(server: McpServer, opts?: HandleAppendTraceS
       'Entries are buffered and merged with any entries submitted at execute_step finalization.',
       'Delivery is best-effort: entries are durable after this call returns but are not canonical until execute_step completes.',
       'Only valid for agent steps that have not yet been claimed (before execute_step is called).',
+      'Optional: writer_nonce — mint a fresh UUIDv4 per step-attempt (the SAME value on every',
+      "append_trace call for this attempt, a NEW one next attempt) to get this attempt's own",
+      'lines faithfully attributed instead of the honest-but-unattributed floor. Mint on BOTH',
+      'append_trace and execute_step for this attempt, or neither — a guessable or reused nonce',
+      'is worse than omitting one (it lets residue be adopted with no caveat, or silently folds a',
+      'crashed attempt into this one).',
     ].join(' '),
     {
       run_id: z.string(),
       step_id: z.string(),
       entries: z.array(traceEntrySchema),
+      // issue #197 PR-2 (design §6): UNBOUNDED at the zod layer — every shape violation
+      // (empty/whitespace/too-long) routes through validateWriterNonceShape to ONE typed realm
+      // envelope refusal, never a bare zod/SDK error.
+      writer_nonce: z.string().optional(),
     },
     async (args) => {
       try {

@@ -11,6 +11,7 @@ import {
   FailedAttemptStore,
   WorkflowError,
   createDefaultRegistry,
+  validateTraceCapabilities,
   type RunStore,
   type TraceBufferStore,
 } from '@sensigo/realm';
@@ -163,6 +164,15 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
       },
     );
   }
+
+  // issue #197 PR-2 (deliverable 2g): validate the store's capability declaration is internally
+  // consistent AT CONSTRUCTION — covers BOTH the derived-local default and the injected path
+  // above (this runs after `traceBufferStore` is finalized regardless of which branch produced
+  // it). A declared-but-inconsistent rung (e.g. `seal` claimed without the fenced trio +
+  // sealFenced + listSealedForRun all actually present) is a construction-time wiring defect —
+  // typed fail-loud here, never a runtime condition discovered later. Undeclared (the honest
+  // floor — trio-alone, or no capabilities at all) is always silent success, never an error.
+  validateTraceCapabilities(traceBufferStore);
 
   registerListWorkflows(server, effectiveOptions);
   registerGetWorkflowProtocol(server, effectiveOptions);
