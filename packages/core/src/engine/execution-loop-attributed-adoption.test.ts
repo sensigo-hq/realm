@@ -493,3 +493,147 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
     expect(deleteSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('execution-loop.ts — half-minted advisory heuristics (issue #197 PR-2 correction, design §6)', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-adoption-half-minted-'));
+    store = new JsonFileStore(dir);
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('heuristic (i) fires: nonced claimant + a WAL containing ONLY bare lines ⇒ the "minted inconsistently" advisory, count matches, no nonce value leaked', async () => {
+    const { run } = await store.create({
+      workflowId: 'attributed-adoption-agent-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    // Full store (seal + carriage) so the partition genuinely runs.
+    const traceBufferStore = new InMemoryTraceBufferStore();
+    // Two BARE lines only — no own-nonce line, no other-writer-nonce line.
+    await traceBufferStore.append(run.id, 'step-agent', [{ event: 'a' }, { event: 'b' }]);
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => ({}),
+      traceBufferStore,
+      writerNonce: 'my-nonce',
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(
+      envelope.warnings.some(
+        (w) =>
+          w.includes('were bare and were preserved, not adopted') &&
+          w.includes('minted inconsistently (mint on both calls, or neither)'),
+      ),
+    ).toBe(true);
+    // The count in the warning text equals the bare-line count (2).
+    expect(envelope.warnings.some((w) => w.includes('the 2 buffered line(s) were bare'))).toBe(
+      true,
+    );
+    // No nonce value (the claimant's own, or otherwise) appears in any warning.
+    expect(envelope.warnings.some((w) => w.includes('my-nonce'))).toBe(false);
+  });
+
+  it('heuristic (ii) fires: bare claimant + a WAL whose foreign lines all carry EXACTLY ONE distinct nonce ⇒ the "minted inconsistently" advisory, foreign nonce VALUE never leaked', async () => {
+    const { run } = await store.create({
+      workflowId: 'attributed-adoption-agent-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const traceBufferStore = new InMemoryTraceBufferStore();
+    // Two lines, BOTH under the SAME foreign nonce — exactly one distinct foreign nonce.
+    await traceBufferStore.append(run.id, 'step-agent', [{ event: 'a' }, { event: 'b' }], {
+      writerNonce: 'the-only-foreign-writer',
+    });
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => ({}),
+      traceBufferStore,
+      // no writerNonce — the ⊥ (bare) claimant
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(
+      envelope.warnings.some(
+        (w) =>
+          w.includes('under a different writer_nonce were preserved, not adopted') &&
+          w.includes('minted inconsistently'),
+      ),
+    ).toBe(true);
+    // Non-disclosure pin: the foreign nonce VALUE never appears anywhere in the envelope.
+    expect(JSON.stringify(envelope)).not.toContain('the-only-foreign-writer');
+  });
+
+  it('heuristic (ii) precision (negative): bare claimant + foreign lines under TWO distinct nonces ⇒ NO "minted inconsistently" warning (the pointer warning from foreign_lines_preserved still fires, asserted independently so the two are not conflated)', async () => {
+    const { run } = await store.create({
+      workflowId: 'attributed-adoption-agent-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const traceBufferStore = new InMemoryTraceBufferStore();
+    await traceBufferStore.append(run.id, 'step-agent', [{ event: 'a' }], {
+      writerNonce: 'writer-a',
+    });
+    await traceBufferStore.append(run.id, 'step-agent', [{ event: 'b' }], {
+      writerNonce: 'writer-b',
+    });
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => ({}),
+      traceBufferStore,
+      // no writerNonce — the ⊥ (bare) claimant
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.warnings.some((w) => w.includes('minted inconsistently'))).toBe(false);
+    // The unrelated pointer warning (from foreign_lines_preserved) still fires — asserted
+    // independently so it is never mistaken for the (absent) half-minted advisory.
+    expect(envelope.preserved_foreign).toBe(2);
+    expect(
+      envelope.warnings.some(
+        (w) => w.includes('preserved, not adopted') && w.includes('realm run export'),
+      ),
+    ).toBe(true);
+  });
+
+  it('heuristic (i) precision (negative): nonced claimant + a WAL with at least one own-nonce line (mixed own+bare) ⇒ NO "minted inconsistently" warning (the every-line-bare condition is load-bearing)', async () => {
+    const { run } = await store.create({
+      workflowId: 'attributed-adoption-agent-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const traceBufferStore = new InMemoryTraceBufferStore();
+    await traceBufferStore.append(run.id, 'step-agent', [{ event: 'own' }], {
+      writerNonce: 'my-nonce',
+    });
+    await traceBufferStore.append(run.id, 'step-agent', [{ event: 'bare' }]);
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => ({}),
+      traceBufferStore,
+      writerNonce: 'my-nonce',
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(envelope.adopted_own).toBe(1);
+    expect(envelope.preserved_foreign).toBe(1);
+    expect(envelope.warnings.some((w) => w.includes('minted inconsistently'))).toBe(false);
+  });
+});
