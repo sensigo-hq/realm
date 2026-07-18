@@ -40,18 +40,41 @@ export interface TraceNormalizationSummary {
   /** Number of Ajv validation errors found. Zero means schema-conformant. Present when schema_applied is true. */
   validation_errors?: number;
   /**
-   * Issue #185 (honest seal): the count of buffer/WAL lines adopted into this canonical trace.
-   * Present ONLY when > 0 — i.e., only when this execution's canonical trace includes lines it
-   * cannot itself attribute: the agent trace buffer is not owned by any one writer, so an
-   * adopted line may have been appended by a PRIOR execution attempt (e.g. a crashed run this
-   * one resumed) or by a CONCURRENT one racing on the same (run, step). The engine records this
-   * as an honest fact rather than silently asserting single authorship over content it cannot
-   * verify the provenance of. Absent (never `0` or `false`) when canonical trace was built
-   * entirely from this execution's own `execute_step` submission — no caveat is warranted there.
-   * Faithful per-writer separation (a client-supplied nonce distinguishing writers) is tracked as
-   * a follow-up; this field is deliberately just an honest count, not an attribution mechanism.
+   * Issue #185 (honest seal); issue #197 PR-2 (narrowed): the count of buffer/WAL lines adopted
+   * into this canonical trace THAT CANNOT BE ATTRIBUTED to this claimant — i.e., adopted under
+   * the ⊥ (bare/anonymous) writer class. Present ONLY when > 0. The agent trace buffer is not
+   * owned by any one writer, so a bare-adopted line may have been appended by a PRIOR execution
+   * attempt (e.g. a crashed run this one resumed) or by a CONCURRENT one racing on the same
+   * (run, step). The engine records this as an honest fact rather than silently asserting single
+   * authorship over content it cannot verify the provenance of. Absent (never `0` or `false`)
+   * when canonical trace was built entirely from this execution's own `execute_step` submission,
+   * or entirely from own-nonce-attributed lines (see `attributed_lines_adopted` below) — no
+   * caveat is warranted there. For all-bare traffic (no client ever mints a `writer_nonce`) this
+   * field is numerically IDENTICAL to its pre-#197 meaning — every buffered line was, and still
+   * is, bare-adopted. Faithful per-writer separation shipped in #197: see
+   * `attributed_lines_adopted` (own-nonce adoption, no caveat) and `foreign_lines_preserved`
+   * (a different writer's lines, preserved not adopted) below.
    */
   buffered_lines_adopted?: number;
+  /**
+   * Issue #197 PR-2 (design §2/§6): count of buffer/WAL lines adopted under the SAME nonce this
+   * claimant presented at claim time. Present ONLY when > 0. Unlike `buffered_lines_adopted`,
+   * this carries NO caveat — wording (verbatim, never varied): "writer continuity verified (same
+   * nonce as presented at claim); strength conditional on nonce secrecy." NEVER worded as
+   * "attribution is faithful" — a leaked/guessed nonce lets a different writer's lines pass this
+   * same check, so the guarantee is conditional on the nonce actually staying secret to its
+   * minter, not an unconditional identity proof.
+   */
+  attributed_lines_adopted?: number;
+  /**
+   * Issue #197 PR-2 (design §2/§4): count of buffer/WAL lines found at this claimant's read that
+   * belong to a DIFFERENT writer (nonce mismatch, including a bare claimant seeing nonced lines
+   * or vice versa) — PRESERVED (sealed, on a store that supports it), never adopted into
+   * canonical evidence, never merged, never gating this claimant's `trace_schema` enforce check.
+   * Present ONLY when > 0. Retrieve the preserved content via `realm run export`. Foreign nonce
+   * VALUES never appear anywhere in this record or any envelope — only this count.
+   */
+  foreign_lines_preserved?: number;
 }
 
 /** Diagnostic metadata captured during step execution. Written once; read by inspect. */

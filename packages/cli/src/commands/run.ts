@@ -15,6 +15,16 @@ import type { WorkflowDefinition, StepDefinition, ExtensionRegistry } from '@sen
 import type { StepDispatcher } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 
+/**
+ * Dormant strict posture (issue #197 PR-2, design §6 — the #169→#170 template): read PER CALL,
+ * never cached at module load. "on" = set to any non-empty value other than `'0'`/`'false'`. A
+ * strict-flip force-enables minting even without `--mint-writer-nonce` (design §8).
+ */
+function isWriterNonceRequired(): boolean {
+  const v = process.env['REALM_REQUIRE_WRITER_NONCE'];
+  return v !== undefined && v !== '' && v !== '0' && v !== 'false';
+}
+
 export const runCommand = new Command('run')
   .argument('<path>', 'Path to workflow directory or workflow.yaml file')
   .option('--params <json>', 'Initial run parameters as JSON string', '{}')
@@ -26,12 +36,25 @@ export const runCommand = new Command('run')
     '--project <dir>',
     'CONFIG anchor: deployment root whose realm.yaml applies to definitions without a stored trust_root (default: current directory)',
   )
+  .option(
+    '--mint-writer-nonce',
+    'Mint a fresh writer_nonce (UUIDv4) per step-attempt for faithful trace attribution (issue ' +
+      "#197) — opt-in; default OFF (today's behavior). No caller-supplied value is accepted.",
+    false,
+  )
   .description('Run a workflow interactively (development mode)')
   .action(
     async (
       inputPath: string,
-      options: { params: string; extensionsModule?: string; project?: string },
+      options: {
+        params: string;
+        extensionsModule?: string;
+        project?: string;
+        mintWriterNonce?: boolean;
+      },
     ) => {
+      // issue #197 PR-2 (design §8): the strict-flip force-enables minting even without the flag.
+      const mintWriterNonce = options.mintWriterNonce === true || isWriterNonceRequired();
       const filePath =
         inputPath.endsWith('.yaml') || inputPath.endsWith('.yml')
           ? inputPath
@@ -171,6 +194,9 @@ export const runCommand = new Command('run')
             dispatcher,
             registry,
             traceBufferStore,
+            // issue #197 PR-2: a FRESH nonce per step-attempt (never a caller-fixed value —
+            // reusing one across attempts converts the honest caveat into false self-attribution).
+            ...(mintWriterNonce ? { writerNonce: crypto.randomUUID() } : {}),
           });
 
           if (result.status === 'ok') {

@@ -472,7 +472,7 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('call-order recorder: deleteFenced fires BEFORE the update on BOTH the primary and the CAS-retry path (forced first-update STATE_SNAPSHOT_MISMATCH), and warns with the destroyed count', async () => {
+  it('call-order recorder: sealFenced fires BEFORE the update on BOTH the primary and the CAS-retry path (forced first-update STATE_SNAPSHOT_MISMATCH), and warns with the seal outcome (issue #197 PR-2: InMemoryTraceBufferStore now declares seal, so reclaim PRESERVES rather than destroys — see the sibling non-seal-fallback test below for the deleteFenced-drain path this test exercised before #197 PR-1 shipped seal capability)', async () => {
     const { run } = await store.create({
       workflowId: 'reclaim-agent-wf',
       workflowVersion: 1,
@@ -501,6 +501,71 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
       calls.push(`update#${updateCallNum}`);
       return originalUpdate(rec);
     });
+    const originalSealFenced = traceBufferStore.sealFenced!.bind(traceBufferStore);
+    vi.spyOn(traceBufferStore, 'sealFenced').mockImplementation(async (...args) => {
+      calls.push('sealFenced');
+      return originalSealFenced(...args);
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await reclaimStep(store, run.id, 'step-agent', { traceBufferStore });
+      expect(result.outcome).toBe('reclaimed');
+      // Strict seal-before-update ordering, independently on EACH attempt.
+      expect(calls).toEqual(['sealFenced', 'update#1(forced-reject)', 'sealFenced', 'update#2']);
+      // The live WAL is gone — sealed on the FIRST call (before the forced-reject update); the
+      // second call's own attempt finds the live WAL already absent (nothing left to re-seal).
+      expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(0);
+      const sealedArtifacts = await traceBufferStore.listSealedForRun!(run.id);
+      expect(sealedArtifacts).toHaveLength(1);
+      expect(sealedArtifacts[0]?.lines.flatMap((l) => l.entries.map((e) => e.event))).toEqual([
+        'dead_attempt_line',
+      ]);
+      // Seal-outcome warn (issue #197 PR-2: NO fabricated entry count — contents unparsed).
+      expect(
+        warnSpy.mock.calls.some(([msg]) =>
+          String(msg).includes('stale WAL sealed (contents unparsed)'),
+        ),
+      ).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('non-seal fallback stays byte-frozen: a store declaring the fenced trio WITHOUT seal still drains via deleteFenced exactly as before #197 PR-1 shipped seal capability', async () => {
+    const { run } = await store.create({
+      workflowId: 'reclaim-agent-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const claimed = await store.claimStep(run.id, 'step-agent', agentReclaimWf);
+    await store.update({ ...claimed, claims: { 'step-agent': { deadline: pastIso() } } });
+
+    // Trio-only stub — deliberately WITHOUT sealFenced/listSealedForRun/traceCapabilities, so
+    // storeDeclaresSeal is false and reclaim must keep taking the deleteFenced drain path.
+    const buffers = new Map<string, { event: string }[]>();
+    const key = `${run.id}:step-agent`;
+    buffers.set(key, [{ event: 'dead_attempt_line' }]);
+    const traceBufferStore: TraceBufferStore = {
+      append: async () => {
+        throw new Error('not used');
+      },
+      read: async () => [],
+      delete: async () => {
+        throw new Error('not used — this store declares the trio');
+      },
+      deleteAllForRun: async () => {},
+      readAllForRun: async () => ({}),
+      deleteFenced: async (_runId, _stepId, guard) => {
+        await guard();
+        const existing = buffers.get(key) ?? [];
+        buffers.delete(key);
+        return existing.length;
+      },
+    };
+
+    const calls: string[] = [];
     const originalDeleteFenced = traceBufferStore.deleteFenced!.bind(traceBufferStore);
     vi.spyOn(traceBufferStore, 'deleteFenced').mockImplementation(async (...args) => {
       calls.push('deleteFenced');
@@ -511,17 +576,8 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
     try {
       const result = await reclaimStep(store, run.id, 'step-agent', { traceBufferStore });
       expect(result.outcome).toBe('reclaimed');
-      // Strict clear-before-update ordering, independently on EACH attempt.
-      expect(calls).toEqual([
-        'deleteFenced',
-        'update#1(forced-reject)',
-        'deleteFenced',
-        'update#2',
-      ]);
-      // The buffer was actually cleared (first deleteFenced call, before the forced-reject
-      // update, already drained it) — the second call is an idempotent no-op (already absent).
-      expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(0);
-      // Drain-warn with count (the #198 delta): warns with the destroyed entry count > 0.
+      expect(calls).toEqual(['deleteFenced']);
+      expect(buffers.has(key)).toBe(false);
       expect(
         warnSpy.mock.calls.some(([msg]) =>
           String(msg).includes('reclaim cleared 1 buffered trace entries'),

@@ -105,4 +105,24 @@ export interface ResponseEnvelope {
    * after start_run or after an agent step that triggers subsequent auto steps.
    */
   chained_auto_steps?: Array<{ step: string; run_phase: string; branched_via?: string }>;
+  /**
+   * Per-partition adoption counts (issue #197 PR-2, design §6) — mirrors the settled step's own
+   * `trace_summary.attributed_lines_adopted` / `buffered_lines_adopted` / `foreign_lines_preserved`
+   * (see run-record.ts) at the moment the adoption partition actually ran. SET BY THE ENGINE at
+   * envelope build (the MCP tool layer strips `data`/`evidence` before returning and never itself
+   * sees per-line nonces). Present ONLY when the adoption partition ran for the step this envelope
+   * settles — absent for a bare-floor store (no `writer_nonce_carriage`), a non-agent step, or an
+   * error/blocked envelope. **Chain-replacement disposition (issue #197 PR-2):** when a settled
+   * agent step's `executeChain` call continues into a subsequently-eligible auto step, the
+   * RETURNED envelope is that deeper step's own — these three counts may be ABSENT there (they
+   * persist authoritatively in the settled step's own `trace_summary` regardless of what this
+   * envelope reports); the accompanying warnings (seal outcome / half-minted advisory / missing
+   * carriage leg) are re-surfaced into the returned envelope's `warnings` via the existing
+   * chain-wide warning re-accumulation even when these counts are not.
+   */
+  adopted_own?: number;
+  /** @see adopted_own — the ⊥ (bare) counterpart; mirrors `trace_summary.buffered_lines_adopted`. */
+  adopted_anonymous?: number;
+  /** @see adopted_own — mirrors `trace_summary.foreign_lines_preserved`. */
+  preserved_foreign?: number;
 }

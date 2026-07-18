@@ -67,6 +67,52 @@ All notable changes to this project are documented here.
   rung — never a silent omission (mirroring the existing `fenceForm: 'native-predicate'` skip
   precedent). **Nothing in this PR mints or reads a nonce at any real call site, and no engine/
   MCP-tool/CLI behavior changes** — that adoption is PR-2.
+- **Attributed adoption: the writer-nonce ladder wired everywhere (issue #197, PR-2 of 2 — the
+  adoption this program exists for).** `append_trace` and `execute_step` gain an optional
+  `writer_nonce` argument (opaque, client-minted, 1–128 chars, no leading/trailing whitespace —
+  every shape violation routes through one typed `VALIDATION_EMPTY_VALUE` refusal, never a bare
+  zod/SDK error). A new core module, `trace-adoption.ts`, exports the ONE authoritative predicate
+  (`adoptsLine`/`partitionBufferedEntries`: `adopted(line) ⇔ line.nonce ≡ claimant.nonce, absent ≡
+absent`) — used identically by the pre-claim `trace_schema` enforce-gate and the post-claim
+  adoption split (ADOPTION_CONGRUENCE: a foreign-nonce-only WAL can never gate a nonced claimant).
+  The claimant's nonce is honored ONLY when the configured `traceBufferStore` declares
+  `writer_nonce_carriage` (the activation gate) — on a lesser store it is IGNORED entirely (the
+  honest #185 adopt-all floor) plus a loud advisory naming the missing leg. Three-way honest split
+  on `trace_summary`: `buffered_lines_adopted` (⊥-adopted, existing caveat, narrowed to bare-only —
+  numerically unchanged for all-bare traffic), new `attributed_lines_adopted` (own-nonce adopted,
+  NO caveat — "writer continuity verified, strength conditional on nonce secrecy", never "faithful"),
+  new `foreign_lines_preserved` (a different writer's lines, preserved not adopted, with a pointer
+  to `realm run export` — foreign nonce VALUES never appear in any warning/envelope). Mirrored as
+  additive `adopted_own`/`adopted_anonymous`/`preserved_foreign` on the `execute_step`
+  `ResponseEnvelope`, set by the engine (the MCP layer never sees per-line nonces); a half-minted
+  advisory fires when a nonced claimant finds only bare lines, or a bare claimant finds every
+  foreign line under one shared nonce (signature heuristics — no same-attempt rescue, ever).
+  `append_trace` gains a downgrade-detector marker, `writer_nonce_applied: true`, present only when
+  a nonce was both supplied and actually carried. At settle time (success and failure), a step
+  whose post-claim read found foreign lines now SEALS the WAL (via PR-1's `sealFenced`) instead of
+  destroying it, on any seal-declaring store — `preserved_foreign === 0` (the common case, and the
+  only case on a non-seal store) keeps today's plain `delete()`, byte-identical; the run record
+  carries detection counts only, never the seal outcome (that rides the envelope warning only).
+  Reclaim now preserves too: on a seal-declaring store, both fenced call sites `sealFenced` the
+  ENTIRE stale WAL (zero-cooperation, no partitioning) instead of draining it, with the existing
+  version fence unchanged; a non-seal (trio-only) store keeps the #207 destructive drain, byte-frozen.
+  `realm run`/`realm agent` gain `--mint-writer-nonce` (mints a fresh UUIDv4 per step-attempt; no
+  caller-fixed value is ever accepted). `realm run export`'s bundle bumps to
+  `realm_export_version: 3`, adding `sealed: Record<stepId, SealedArtifact[]> | null` (`null` =
+  the store doesn't declare `seal`; `{}` = declares it but this run has none) via the new
+  `listSealedForRun`; a non-terminal export redacts every `nonce` value belonging to a step
+  currently in `in_progress_steps` with a fixed `"[redacted-live-claim]"` marker (claims never
+  persist their own nonce, so this stateless step-liveness proxy is the only disclosure control
+  available — terminal exports are always verbatim). `purge`/`gc` needed NO code changes — PR-1
+  already routed sealed artifacts through `deleteAllForRun`/`listOrphans`; verified with new tests,
+  not just trusted. A new dormant strict posture, `REALM_REQUIRE_WRITER_NONCE` (env, read per call,
+  default off), refuses a bare agent-step call on `append_trace`/`execute_step` and force-enables
+  CLI minting when set — zero behavior change while unset. `get_workflow_protocol` gains one
+  affordance line teaching cooperating agents to mint a nonce (opt-in, mirroring `append_trace`'s
+  own posture). **Zero-cooperation byte-identity holds for all-bare traffic through every changed
+  path** (modulo additive fields appearing only when a nonce was provided) — the sole deliberate
+  carve-out is reclaim, which now seals rather than drains an all-bare WAL on a seal-declaring
+  store (preserve-ALL is the point, not a violation).
 
 ### Changed
 

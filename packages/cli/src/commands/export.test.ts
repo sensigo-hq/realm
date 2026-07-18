@@ -94,7 +94,7 @@ describe('buildExportBundle', () => {
       );
 
       expect(warning).toBeUndefined(); // terminal — no best-effort warning
-      expect(bundle.realm_export_version).toBe(2);
+      expect(bundle.realm_export_version).toBe(3);
       expect(bundle.exported_at).toBe(now.toISOString());
       expect(bundle.run).toEqual(run);
       expect(bundle.attempts).toHaveLength(1);
@@ -498,6 +498,217 @@ describe('buildExportBundle', () => {
 
       const after = await readdir(dir);
       expect(after.sort()).toEqual(before.sort()); // no new file, no temp, nothing removed
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('sealed trace artifacts (issue #197 PR-2)', () => {
+  it('sealed is null when the configured traceBufferStore does not declare listSealedForRun (incapability)', async () => {
+    const { dir, runStore, failedAttemptStore } = await makeStores();
+    try {
+      const run = makeRun({ run_phase: 'completed', terminal_state: true });
+      await injectRun(dir, run);
+
+      const incapableTraceBufferStore = { readAllForRun: async () => ({}) };
+
+      const { bundle } = await buildExportBundle(run.id, {
+        runStore,
+        failedAttemptStore,
+        traceBufferStore: incapableTraceBufferStore,
+      });
+
+      expect(bundle.sealed).toBeNull();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('sealed is {} (not null) when the store declares seal but this run genuinely has no sealed artifacts', async () => {
+    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    try {
+      const run = makeRun({ run_phase: 'completed', terminal_state: true });
+      await injectRun(dir, run);
+
+      const { bundle } = await buildExportBundle(run.id, {
+        runStore,
+        failedAttemptStore,
+        traceBufferStore,
+      });
+
+      expect(bundle.sealed).toEqual({});
+      expect(bundle.sealed).not.toBeNull();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('sealed is populated, grouped by step_id, when sealed artifacts genuinely exist', async () => {
+    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    try {
+      const run = makeRun({ run_phase: 'completed', terminal_state: true });
+      await injectRun(dir, run);
+      await traceBufferStore.append(run.id, 'step-a', [{ event: 'stale' }]);
+      await traceBufferStore.sealFenced!(run.id, 'step-a', async () => {});
+
+      const { bundle } = await buildExportBundle(run.id, {
+        runStore,
+        failedAttemptStore,
+        traceBufferStore,
+      });
+
+      expect(bundle.sealed).not.toBeNull();
+      expect(Object.keys(bundle.sealed!)).toEqual(['step-a']);
+      expect(bundle.sealed!['step-a']).toHaveLength(1);
+      expect(
+        bundle.sealed!['step-a']![0]!.lines.flatMap((l) => l.entries.map((e) => e.event)),
+      ).toEqual(['stale']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a listSealedForRun failure joins artifact_errors + complete: false (the #186 posture)', async () => {
+    const { dir, runStore, failedAttemptStore } = await makeStores();
+    try {
+      const run = makeRun({ run_phase: 'completed', terminal_state: true });
+      await injectRun(dir, run);
+
+      const brokenTraceBufferStore = {
+        readAllForRun: async () => ({}),
+        listSealedForRun: async () => {
+          throw new FsIoError(
+            'readFile',
+            '/fake/sealed.jsonl',
+            Object.assign(new Error('sealed-boom'), { code: 'EIO' }),
+          );
+        },
+      };
+
+      const { bundle } = await buildExportBundle(run.id, {
+        runStore,
+        failedAttemptStore,
+        traceBufferStore: brokenTraceBufferStore,
+      });
+
+      expect(bundle.complete).toBe(false);
+      expect(bundle.sealed).toEqual({});
+      expect(bundle.artifact_errors).toContainEqual({
+        artifact: 'sealed trace artifacts',
+        code: 'EIO',
+        message: expect.stringContaining('sealed-boom'),
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('non-disclosure redaction (issue #197 PR-2, design §6)', () => {
+  it('non-terminal export redacts nonce values on WAL lines belonging to an in-progress step', async () => {
+    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    try {
+      const run = makeRun({
+        run_phase: 'running',
+        terminal_state: false,
+        in_progress_steps: ['step-a'],
+      });
+      await injectRun(dir, run);
+      await traceBufferStore.append(run.id, 'step-a', [{ event: 'nonced' }], {
+        writerNonce: 'live-nonce-value',
+      });
+      await traceBufferStore.append(run.id, 'step-a', [{ event: 'bare' }]);
+
+      const { bundle } = await buildExportBundle(run.id, {
+        runStore,
+        failedAttemptStore,
+        traceBufferStore,
+      });
+
+      const lines = bundle.wal['step-a'] as Array<{ nonce?: string; entries: { event: string }[] }>;
+      const noncedLine = lines.find((l) => l.entries.some((e) => e.event === 'nonced'))!;
+      const bareLine = lines.find((l) => l.entries.some((e) => e.event === 'bare'))!;
+      expect(noncedLine.nonce).toBe('[redacted-live-claim]');
+      expect(bareLine).not.toHaveProperty('nonce'); // bare — nothing to redact
+      expect(JSON.stringify(bundle)).not.toContain('live-nonce-value');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a step NOT in in_progress_steps (already settled) is verbatim even on a non-terminal export', async () => {
+    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    try {
+      const run = makeRun({
+        run_phase: 'running',
+        terminal_state: false,
+        in_progress_steps: ['step-b'], // step-a is NOT live
+      });
+      await injectRun(dir, run);
+      await traceBufferStore.append(run.id, 'step-a', [{ event: 'settled' }], {
+        writerNonce: 'settled-nonce-value',
+      });
+
+      const { bundle } = await buildExportBundle(run.id, {
+        runStore,
+        failedAttemptStore,
+        traceBufferStore,
+      });
+
+      const lines = bundle.wal['step-a'] as Array<{ nonce?: string }>;
+      expect(lines[0]?.nonce).toBe('settled-nonce-value');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('terminal export is verbatim — no redaction even for a nonce that WOULD match a (now-irrelevant) in_progress_steps entry', async () => {
+    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    try {
+      const run = makeRun({ run_phase: 'completed', terminal_state: true, in_progress_steps: [] });
+      await injectRun(dir, run);
+      await traceBufferStore.append(run.id, 'step-a', [{ event: 'nonced' }], {
+        writerNonce: 'terminal-nonce-value',
+      });
+
+      const { bundle } = await buildExportBundle(run.id, {
+        runStore,
+        failedAttemptStore,
+        traceBufferStore,
+      });
+
+      const lines = bundle.wal['step-a'] as Array<{ nonce?: string }>;
+      expect(lines[0]?.nonce).toBe('terminal-nonce-value');
+      expect(JSON.stringify(bundle)).toContain('terminal-nonce-value');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('non-terminal export redacts sealed-artifact nonces for a live step too', async () => {
+    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    try {
+      const run = makeRun({
+        run_phase: 'running',
+        terminal_state: false,
+        in_progress_steps: ['step-a'],
+      });
+      await injectRun(dir, run);
+      await traceBufferStore.append(run.id, 'step-a', [{ event: 'stale' }], {
+        writerNonce: 'sealed-live-nonce',
+      });
+      await traceBufferStore.sealFenced!(run.id, 'step-a', async () => {});
+
+      const { bundle } = await buildExportBundle(run.id, {
+        runStore,
+        failedAttemptStore,
+        traceBufferStore,
+      });
+
+      const artifact = bundle.sealed!['step-a']![0]!;
+      expect(artifact.lines[0]?.nonce).toBe('[redacted-live-claim]');
+      expect(JSON.stringify(bundle)).not.toContain('sealed-live-nonce');
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

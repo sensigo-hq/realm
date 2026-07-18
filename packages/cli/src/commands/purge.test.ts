@@ -900,3 +900,33 @@ describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
     }
   });
 });
+
+describe('purgeRuns — sealed artifacts (issue #197 PR-2, deliverable 3b: VERIFYING no purge.ts code change was needed)', () => {
+  it('purge of a terminal run with a sealed artifact removes it too, alongside the live-WAL/anchor cleanup', async () => {
+    const { dir, runStore } = await makeStores();
+    try {
+      const run = makeRun({
+        id: 'sealed-purge-target',
+        run_phase: 'completed',
+        terminal_state: true,
+      });
+      await injectRun(dir, run);
+      const traceBufferStore = new JsonTraceBufferStore(dir);
+      await traceBufferStore.append(run.id, 'step-agent', [{ event: 'stale' }]);
+      const sealResult = await traceBufferStore.sealFenced!(run.id, 'step-agent', async () => {});
+      expect(sealResult).toEqual({ sealed: true });
+      // Confirm the sealed artifact exists on disk BEFORE purging (the premise this test proves).
+      expect((await traceBufferStore.listSealedForRun!(run.id)).length).toBe(1);
+
+      const result = await purgeRuns({ runId: 'sealed-purge-target', dryRun: false }, runStore, [
+        traceBufferStore,
+      ]);
+
+      expect(result.purged).toEqual(['sealed-purge-target']);
+      expect(existsSync(join(dir, `${run.id}.json`))).toBe(false); // anchor gone
+      expect(await traceBufferStore.listSealedForRun!(run.id)).toEqual([]); // sealed artifact gone too
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
