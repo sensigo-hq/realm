@@ -2,15 +2,22 @@
 // #107). append/read/delete are exercised indirectly elsewhere (execution-loop finalization); this
 // file did not previously have dedicated coverage, so a handful of sanity tests are included too.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, readdir, writeFile, appendFile } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, writeFile, appendFile, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { storeDeclaresSeal, storeDeclaresNonceCarriage } from '@sensigo/realm';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 
 /** Recomputes the exact on-disk WAL filename `walPath` uses — test-side only. */
 function walFileName(runId: string, stepId: string): string {
   return `trace-buffer-${runId}-${Buffer.from(stepId).toString('base64url')}.jsonl`;
+}
+
+/** Recomputes the exact on-disk SEALED artifact filename `sealedWalPath` uses (issue #197 PR-1)
+ *  — test-side only. */
+function sealedFileName(runId: string, stepId: string, seq: number): string {
+  return `sealed-trace-${runId}-${Buffer.from(stepId).toString('base64url')}.${seq}.jsonl`;
 }
 
 describe('JsonTraceBufferStore', () => {
@@ -273,6 +280,205 @@ describe('JsonTraceBufferStore', () => {
       await writeFile(join(dir, `${ORPHAN}.attempts.jsonl`), 'x');
       const orphans = await store.listOrphans(new Set());
       expect(orphans).toEqual([]);
+    });
+
+    it('a sealed artifact whose run is NOT live is also reported as an orphan (issue #197 PR-1)', async () => {
+      await store.append(ORPHAN, 'step-a', [{ event: 'x' }]);
+      const sealed = await store.sealFenced(ORPHAN, 'step-a', async () => {});
+      expect(sealed).toEqual({ sealed: true });
+
+      const orphans = await store.listOrphans(new Set());
+
+      expect(orphans).toHaveLength(1);
+      expect(orphans[0]?.runId).toBe(ORPHAN);
+      expect(orphans[0]?.path).toBe(join(dir, sealedFileName(ORPHAN, 'step-a', 0)));
+    });
+
+    it('a sealed artifact whose run IS live is not reported', async () => {
+      await store.append(LIVE, 'step-a', [{ event: 'x' }]);
+      await store.sealFenced(LIVE, 'step-a', async () => {});
+
+      const orphans = await store.listOrphans(new Set([LIVE]));
+
+      expect(orphans).toEqual([]);
+    });
+  });
+
+  describe('capability declaration (issue #197 PR-1)', () => {
+    it('declares BOTH the seal and writer_nonce_carriage rungs, and both predicates hold', () => {
+      expect(store.traceCapabilities).toEqual(new Set(['seal', 'writer_nonce_carriage']));
+      expect(storeDeclaresSeal(store)).toBe(true);
+      expect(storeDeclaresNonceCarriage(store)).toBe(true);
+    });
+
+    it('traceCapabilities is immutable across reads (same reference, content-identical)', () => {
+      const first = store.traceCapabilities;
+      const second = store.traceCapabilities;
+      expect(first).toBe(second);
+    });
+  });
+
+  describe('filename collision (issue #197 PR-1 — sealed vs live-WAL matchers)', () => {
+    it('a sealed artifact filename never matches the live-WAL matcher, and vice versa', async () => {
+      await store.append('run-1', 'step-a', [{ event: 'a' }]);
+      await store.sealFenced('run-1', 'step-a', async () => {});
+
+      const files = await readdir(dir);
+      const liveMatches = files.filter(
+        (f) => f.startsWith('trace-buffer-') && f.endsWith('.jsonl'),
+      );
+      const sealedMatches = files.filter(
+        (f) => f.startsWith('sealed-trace-') && f.endsWith('.jsonl'),
+      );
+
+      // The live WAL was moved (sealed), so it no longer exists as a live-matcher hit; the sealed
+      // artifact exists and matches ONLY the sealed prefix, never both.
+      expect(liveMatches).toEqual([]);
+      expect(sealedMatches).toEqual([sealedFileName('run-1', 'step-a', 0)]);
+      for (const f of sealedMatches) {
+        expect(f.startsWith('trace-buffer-')).toBe(false);
+      }
+    });
+  });
+
+  describe('sealFenced (issue #197 PR-1, the seal rung)', () => {
+    it('seals a live WAL: the live file is gone, a sealed artifact exists with the same lines', async () => {
+      await store.append('run-1', 'step-a', [{ event: 'a1' }]);
+      await store.append('run-1', 'step-a', [{ event: 'a2' }]);
+
+      const result = await store.sealFenced('run-1', 'step-a', async () => {});
+
+      expect(result).toEqual({ sealed: true });
+      expect(existsSync(join(dir, walFileName('run-1', 'step-a')))).toBe(false);
+      const sealedArtifacts = await store.listSealedForRun('run-1');
+      expect(sealedArtifacts).toHaveLength(1);
+      expect(sealedArtifacts[0]?.seq).toBe(0);
+      expect(sealedArtifacts[0]?.lines.flatMap((l) => l.entries)).toEqual([
+        { event: 'a1' },
+        { event: 'a2' },
+      ]);
+    });
+
+    it('returns {sealed:false, reason:"absent"} when no live WAL exists for this key', async () => {
+      const result = await store.sealFenced('run-1', 'never-appended', async () => {});
+      expect(result).toEqual({ sealed: false, reason: 'absent' });
+    });
+
+    it('repeated seals of the same key get ascending seq numbers', async () => {
+      await store.append('run-1', 'step-a', [{ event: 'a1' }]);
+      await store.sealFenced('run-1', 'step-a', async () => {});
+      await store.append('run-1', 'step-a', [{ event: 'a2' }]);
+      await store.sealFenced('run-1', 'step-a', async () => {});
+
+      const sealedArtifacts = await store.listSealedForRun('run-1');
+      expect(sealedArtifacts.map((a) => a.seq).sort()).toEqual([0, 1]);
+    });
+
+    it('returns {sealed:false, reason:"capped"} once SEALED_ARTIFACTS_LIMIT_PER_STEP is reached', async () => {
+      for (let i = 0; i < 8; i++) {
+        await store.append('run-1', 'step-a', [{ event: `a${i}` }]);
+        const result = await store.sealFenced('run-1', 'step-a', async () => {});
+        expect(result).toEqual({ sealed: true });
+      }
+      await store.append('run-1', 'step-a', [{ event: 'one-too-many' }]);
+      const result = await store.sealFenced('run-1', 'step-a', async () => {});
+      expect(result).toEqual({ sealed: false, reason: 'capped' });
+    });
+
+    it('no-clobber: a pre-existing file at seq 0 is never overwritten — the seal bumps to seq 1 and the sentinel bytes survive byte-for-byte (issue #197 PR-1)', async () => {
+      const sentinelPath = join(dir, sealedFileName('run-1', 'step-a', 0));
+      const sentinelBytes = 'SENTINEL-DO-NOT-CLOBBER- -bytes\n';
+      await writeFile(sentinelPath, sentinelBytes);
+
+      await store.append('run-1', 'step-a', [{ event: 'a' }]);
+      const result = await store.sealFenced('run-1', 'step-a', async () => {});
+
+      expect(result).toEqual({ sealed: true });
+      const sentinelAfter = await readFile(sentinelPath, 'utf8');
+      expect(sentinelAfter).toBe(sentinelBytes); // byte-for-byte untouched
+
+      const sealedArtifacts = await store.listSealedForRun('run-1');
+      const bumpedArtifact = sealedArtifacts.find((a) => a.step_id === 'step-a' && a.seq === 1);
+      expect(bumpedArtifact).toBeDefined(); // the real seal landed at seq 1, not seq 0
+      expect(bumpedArtifact?.lines.flatMap((l) => l.entries)).toEqual([{ event: 'a' }]);
+    });
+
+    it('the guard runs even when the result is "absent" (guard-in-CS, not conditional on presence)', async () => {
+      let guardCalls = 0;
+      await store.sealFenced('run-1', 'never-appended', async () => {
+        guardCalls++;
+      });
+      expect(guardCalls).toBe(1);
+    });
+
+    it('a refusing guard rejects the whole call — no seal happens', async () => {
+      await store.append('run-1', 'step-a', [{ event: 'a' }]);
+      await expect(
+        store.sealFenced('run-1', 'step-a', async () => {
+          throw new Error('refused');
+        }),
+      ).rejects.toThrow('refused');
+      expect(existsSync(join(dir, walFileName('run-1', 'step-a')))).toBe(true); // untouched
+    });
+  });
+
+  describe('writer nonce carriage + per-writer/file budgets (issue #197 PR-1)', () => {
+    it('append/appendFenced accept an options.writerNonce and read() re-attaches it as _nonce', async () => {
+      await store.append('run-1', 'step-a', [{ event: 'nonced' }], { writerNonce: 'nonce-x' });
+      await store.append('run-1', 'step-a', [{ event: 'bare' }]);
+
+      const entries = await store.read('run-1', 'step-a');
+
+      const nonced = entries.find((e) => e.event === 'nonced');
+      const bare = entries.find((e) => e.event === 'bare');
+      expect(nonced?._nonce).toBe('nonce-x');
+      expect(bare).not.toHaveProperty('_nonce'); // never fabricated for a bare line
+    });
+
+    it('AppendResult reports separate writer-scope (buffer_*) and file-scope (file_*) numbers', async () => {
+      await store.append('run-1', 'step-a', [{ event: 'a' }, { event: 'b' }], {
+        writerNonce: 'nonce-x',
+      });
+      const result = await store.append('run-1', 'step-a', [{ event: 'c' }]); // bare, second writer
+
+      expect(result.buffer_count).toBe(1); // this (bare) writer's own share only
+      expect(result.file_count).toBe(3); // whole file, both writers combined
+      expect(result.file_limit_count).toBeGreaterThan(result.limit_count); // backstop > per-writer
+    });
+
+    it('a lone bare writer is byte-identical to the pre-#197 whole-file numbers (compat law)', async () => {
+      const r1 = await store.append('run-1', 'step-a', [{ event: 'a' }]);
+      const r2 = await store.append('run-1', 'step-a', [{ event: 'b' }]);
+
+      expect(r1.buffer_count).toBe(r1.file_count);
+      expect(r1.buffer_bytes).toBe(r1.file_bytes);
+      expect(r2.buffer_count).toBe(r2.file_count);
+      expect(r2.buffer_bytes).toBe(r2.file_bytes);
+    });
+  });
+
+  describe('sealed artifacts join deleteAllForRun (issue #197 PR-1)', () => {
+    it('deleteAllForRun removes sealed artifacts for the run alongside live WAL files', async () => {
+      await store.append('run-1', 'step-a', [{ event: 'a' }]);
+      await store.sealFenced('run-1', 'step-a', async () => {});
+      await store.append('run-1', 'step-b', [{ event: 'b' }]); // stays live, unset
+
+      await store.deleteAllForRun('run-1');
+
+      expect(await store.listSealedForRun('run-1')).toEqual([]);
+      expect(existsSync(join(dir, walFileName('run-1', 'step-b')))).toBe(false);
+    });
+
+    it('leaves a different run’s sealed artifacts untouched', async () => {
+      await store.append('run-1', 'step-a', [{ event: 'a' }]);
+      await store.sealFenced('run-1', 'step-a', async () => {});
+      await store.append('run-2', 'step-a', [{ event: 'b' }]);
+      await store.sealFenced('run-2', 'step-a', async () => {});
+
+      await store.deleteAllForRun('run-1');
+
+      expect(await store.listSealedForRun('run-1')).toEqual([]);
+      expect(await store.listSealedForRun('run-2')).toHaveLength(1);
     });
   });
 });

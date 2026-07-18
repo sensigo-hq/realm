@@ -6,7 +6,7 @@
 // conformance tests co-located (this directory already depends on both @sensigo/realm and
 // @sensigo/realm-mcp) is simpler than splitting across packages for no benefit.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -19,7 +19,91 @@ const LAWS: FencedTraceBufferLaw[] = [
   'CS_OCCUPANCY',
   'PER_KEY_INDEPENDENCE',
   'NO_SILENT_LOSS',
+  // issue #197 PR-1: JsonTraceBufferStore declares both capability-ladder rungs — every one of
+  // these five laws runs real (non-skip) cases here, INCLUDING the byte-exactness (bytesOracle)
+  // and raw-byte (rawWalAccess) sub-cases the in-memory store's wiring test above leaves skipped
+  // (a physical file's on-disk bytes ARE an independent ground truth to check against, unlike an
+  // in-memory structure's own accounting).
+  'CARRIAGE_ROUND_TRIP',
+  'SEAL',
+  'SEAL_BUDGET',
+  'PER_WRITER_BUDGET',
+  'VERBATIM',
 ];
+
+/** Recomputes the exact on-disk WAL filename `JsonTraceBufferStore`'s private `walPath` uses —
+ *  test-side only, mirroring the same helper in json-trace-buffer-store.test.ts. */
+function walFileName(runId: string, stepId: string): string {
+  return `trace-buffer-${runId}-${Buffer.from(stepId).toString('base64url')}.jsonl`;
+}
+
+/** Recomputes the exact on-disk sealed-artifact filename `JsonTraceBufferStore`'s private
+ *  `sealedWalPath` uses (issue #197 PR-1) — test-side only. */
+function sealedFileName(runId: string, stepId: string, seq: number): string {
+  return `sealed-trace-${runId}-${Buffer.from(stepId).toString('base64url')}.${seq}.jsonl`;
+}
+
+/** Reads `path`, returning `undefined` on ENOENT (mirrors `readIfExists`'s absence convention) —
+ *  test-side raw-bytes access, independent of the store's own internal `readWal`. */
+async function readRawIfExists(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw err;
+  }
+}
+
+/**
+ * Independently computes writer-partitioned count + bytes DIRECTLY from the raw on-disk WAL file
+ * (issue #197 PR-1) — a genuinely separate code path from the store's own internal `readWal` +
+ * `partitionStats` (fresh `readFile`, raw per-line text sliced straight from disk content rather
+ * than re-serializing a parsed object), so this can catch a drift between what the store REPORTS
+ * and what is ACTUALLY persisted. Mirrors the store's own byte-attribution rule (there is no more
+ * primitive "ground truth" for "this writer's own bytes" than "sum of its own lines' bytes" and
+ * "⊥ = the whole-file residual" — that rule IS the definition, not an incidental implementation
+ * detail this oracle could sidestep).
+ */
+async function bytesOracle(
+  dir: string,
+  runId: string,
+  stepId: string,
+  writerNonce: string | undefined,
+): Promise<{ count: number; bytes: number }> {
+  const content = await readRawIfExists(join(dir, walFileName(runId, stepId)));
+  if (content === undefined) return { count: 0, bytes: 0 };
+
+  const fileBytes = Buffer.byteLength(content);
+  let noncedBytes = 0;
+  let bareCount = 0;
+  let ownCount = 0;
+  let ownBytes = 0;
+
+  for (const raw of content.split('\n')) {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) continue;
+    let parsed: { entries: unknown[]; nonce?: string };
+    try {
+      parsed = JSON.parse(trimmed) as { entries: unknown[]; nonce?: string };
+    } catch {
+      continue; // torn line — never attributable to any nonced partition (excluded here too)
+    }
+    const lineBytes = Buffer.byteLength(trimmed + '\n');
+    if (parsed.nonce !== undefined) {
+      noncedBytes += lineBytes;
+      if (writerNonce !== undefined && parsed.nonce === writerNonce) {
+        ownCount += parsed.entries.length;
+        ownBytes += lineBytes;
+      }
+    } else if (writerNonce === undefined) {
+      bareCount += parsed.entries.length;
+    }
+  }
+
+  return writerNonce !== undefined
+    ? { count: ownCount, bytes: ownBytes }
+    : { count: bareCount, bytes: fileBytes - noncedBytes };
+}
 
 /**
  * A deliberately generous lock profile for this TCK's own store instance (issue #207) — the
@@ -49,6 +133,14 @@ async function makeAdapter(): Promise<{
       makeKey: () => ({ runId: randomUUID(), stepId: 'fenced-tck-step' }),
       fenceForm: 'guard-in-cs',
       lockProfile: GENEROUS_LOCK_PROFILE,
+      // issue #197 PR-1: a physical file's on-disk bytes are an independent ground truth (unlike
+      // the in-memory store's own accounting) — see each helper's own doc above.
+      bytesOracle: (runId, stepId, writerNonce) => bytesOracle(dir, runId, stepId, writerNonce),
+      rawWalAccess: {
+        readLiveRaw: (runId, stepId) => readRawIfExists(join(dir, walFileName(runId, stepId))),
+        readSealedRaw: (runId, stepId, seq) =>
+          readRawIfExists(join(dir, sealedFileName(runId, stepId, seq))),
+      },
     },
     cleanup: () => rm(dir, { recursive: true, force: true }),
   };

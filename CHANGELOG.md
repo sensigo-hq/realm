@@ -39,6 +39,34 @@ All notable changes to this project are documented here.
   outright. Purely advisory (never gates, never changes `status`) and store-agnostic (reads only
   `AppendResult`'s already-returned fields; works identically regardless of which
   `TraceBufferStore` implementation is injected).
+- **`TraceBufferStore` capability ladder + sealed-WAL preservation + writer-nonce carriage (issue
+  #197, PR-1 of 2 — store layer only, behaviorally INERT in production until PR-2 wires it into any
+  call site).** Two new OPTIONAL, independently-declarable capability-ladder rungs a fenced-trio
+  store may additionally implement — `traceCapabilities?: ReadonlySet<'seal' | 'writer_nonce_carriage'>`
+  — with one authoritative predicate module (`storeDeclaresSeal`, `storeDeclaresNonceCarriage`,
+  `validateTraceCapabilities`) as the only way any caller may check them: `writer_nonce_carriage`
+  requires `seal` requires the fenced trio; the trio alone stays fully legal (undeclared is always
+  the honest floor, never an error). `sealFenced(runId, stepId, guard)` atomically retires a live
+  WAL to a new sealed artifact under the SAME per-key critical section the fenced trio uses — a
+  no-clobber `link`-then-`unlink` move (never `rename`, which would silently overwrite), bytes moved
+  verbatim, bounded by a new `SEALED_ARTIFACTS_LIMIT_PER_STEP` (falls back to the existing
+  destructive drain on cap); `listSealedForRun(runId)` reads them back. `append`/`appendFenced` grow
+  a trailing `options?: {writerNonce?: string}` — an opaque, client-minted writer identity carried
+  through to `read()`'s already-existing `BufferedEntry._nonce` (never fabricated for a genuinely
+  bare line). New per-WRITER budget enforcement (today's `BUFFER_LIMIT_COUNT`/`BUFFER_LIMIT_BYTES`,
+  values unchanged, now documented as per-writer) alongside a new, additive whole-FILE backstop
+  (`BUFFER_BACKSTOP_COUNT`/`BUFFER_BACKSTOP_BYTES`, 2×) — a `BUFFER_FULL` refusal's `details` now
+  carries a structured `scope`/`binding_dimension`/count+bytes triples/file-scope occupancy
+  evidence shape. **Compat law: for all-bare traffic every existing `AppendResult` field is
+  numerically byte-identical to before this capability existed** (the file backstop is
+  arithmetically unreachable with a single writer — emergent, not special-cased); new `file_*`
+  fields are additive-only. Both in-repo stores (`JsonTraceBufferStore`, `InMemoryTraceBufferStore`)
+  now declare both rungs. The fenced-trio conformance TCK (`@sensigo/realm-testing`) grows five new
+  laws (`CARRIAGE_ROUND_TRIP`, `SEAL`, `SEAL_BUDGET`, `PER_WRITER_BUDGET`, `VERBATIM`), each
+  producing an explicit, visible documented-skip for a store that doesn't declare the relevant
+  rung — never a silent omission (mirroring the existing `fenceForm: 'native-predicate'` skip
+  precedent). **Nothing in this PR mints or reads a nonce at any real call site, and no engine/
+  MCP-tool/CLI behavior changes** — that adoption is PR-2.
 
 ### Changed
 
