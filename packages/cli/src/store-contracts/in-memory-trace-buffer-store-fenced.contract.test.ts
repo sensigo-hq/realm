@@ -17,6 +17,18 @@ const LAWS: FencedTraceBufferLaw[] = [
   'CS_OCCUPANCY',
   'PER_KEY_INDEPENDENCE',
   'NO_SILENT_LOSS',
+  // issue #197 PR-1: InMemoryTraceBufferStore declares both capability-ladder rungs (`seal` and
+  // `writer_nonce_carriage`), so every one of these five laws has real (non-skip) cases here —
+  // the PER_WRITER_BUDGET byte-exactness and VERBATIM raw-byte sub-cases are the ONLY ones that
+  // render as a visible skip (no `bytesOracle`/`rawWalAccess` supplied below — see their own doc:
+  // "bytes" for an in-memory structure has no independent ground truth to check against the way a
+  // physical file's on-disk size does, so a pseudo-oracle here would just re-derive the same
+  // formula and verify nothing new).
+  'CARRIAGE_ROUND_TRIP',
+  'SEAL',
+  'SEAL_BUDGET',
+  'PER_WRITER_BUDGET',
+  'VERBATIM',
 ];
 
 function makeKey(): { runId: string; stepId: string } {

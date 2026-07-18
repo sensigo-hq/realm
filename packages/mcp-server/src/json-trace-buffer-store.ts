@@ -7,6 +7,11 @@ import {
   type TraceBufferStore,
   type BufferedEntry,
   type AppendResult,
+  type AppendOptions,
+  type TraceCapability,
+  type SealResult,
+  type SealedWalLine,
+  type SealedArtifact,
   type PerRunArtifactStore,
   type OrphanSweepableStore,
   type OrphanArtifact,
@@ -15,20 +20,27 @@ import {
   BUFFER_LIMIT_BYTES,
   FINAL_LIMIT_ENTRIES,
   FINAL_LIMIT_BYTES,
+  BUFFER_BACKSTOP_COUNT,
+  BUFFER_BACKSTOP_BYTES,
+  SEALED_ARTIFACTS_LIMIT_PER_STEP,
+  checkBufferBudget,
+  bufferFullError,
+  flattenWalBatches,
   readIfExists,
   deleteIfExists,
   statIfExists,
   toArtifactDeleteFailedError,
+  linkNoClobberThenUnlink,
+  errnoCode,
   FsIoError,
 } from '@sensigo/realm';
 import type { AgentTraceEntry } from '@sensigo/realm';
 import { WorkflowError } from '@sensigo/realm';
 
-/** Line format stored in the JSONL WAL file. */
-interface WalLine {
-  ts: number;
-  entries: AgentTraceEntry[];
-}
+/** Line format stored in the JSONL WAL file — literally `SealedWalLine` (issue #197 PR-1: a
+ *  sealed artifact is exactly "the WAL, moved", so both the live and sealed representations share
+ *  one shape rather than two structurally-identical types). */
+type WalLine = SealedWalLine;
 
 /** WAL filename shape: `trace-buffer-<runId>-<base64url(stepId)>.jsonl`. `runId` is a
  *  server-generated UUIDv4 — always exactly 36 characters (8-4-4-4-12 hex, RFC 4122 string
@@ -38,6 +50,35 @@ interface WalLine {
 const WAL_PREFIX = 'trace-buffer-';
 const WAL_SUFFIX = '.jsonl';
 const RUN_ID_LENGTH = 36;
+
+/** Sealed-artifact filename shape (issue #197 PR-1, the `seal` rung — design §4):
+ *  `sealed-trace-<runId>-<base64url(stepId)>.<seq>.jsonl`. Distinct, non-overlapping prefix from
+ *  `WAL_PREFIX` (`'sealed-trace-'` vs `'trace-buffer-'` — neither is a prefix of the other, so no
+ *  filename can ever satisfy both matchers — see the collision test in the co-located spec). The
+ *  `.`-delimited `seq` is unambiguous against the rest of the name: neither a UUID nor the
+ *  base64url alphabet ever contains a literal `.`, so the LAST `.` in the middle segment is always
+ *  the seq separator, never part of the runId or step segment. */
+const SEALED_PREFIX = 'sealed-trace-';
+
+/** Parses a sealed-artifact filename back into its constituent parts, mirroring
+ *  `runIdFromWalPath`'s fixed-length-36 discipline for the runId portion. Returns `undefined` for
+ *  anything that doesn't match the shape this store itself ever writes (defensive — never throws,
+ *  never guesses) rather than a malformed/foreign file being mis-parsed. */
+function parseSealedFilename(
+  name: string,
+): { runId: string; safeStepId: string; seq: number } | undefined {
+  if (!name.startsWith(SEALED_PREFIX) || !name.endsWith(WAL_SUFFIX)) return undefined;
+  const middle = name.slice(SEALED_PREFIX.length, -WAL_SUFFIX.length); // "<runId>-<safeStepId>.<seq>"
+  const lastDot = middle.lastIndexOf('.');
+  if (lastDot === -1) return undefined;
+  const beforeSeq = middle.slice(0, lastDot);
+  const seqStr = middle.slice(lastDot + 1);
+  if (!/^\d+$/.test(seqStr)) return undefined;
+  if (beforeSeq.length <= RUN_ID_LENGTH || beforeSeq[RUN_ID_LENGTH] !== '-') return undefined;
+  const runId = beforeSeq.slice(0, RUN_ID_LENGTH);
+  const safeStepId = beforeSeq.slice(RUN_ID_LENGTH + 1);
+  return { runId, safeStepId, seq: Number(seqStr) };
+}
 
 /** A `proper-lockfile` retry policy: either a bare retry count (its own simple default backoff)
  *  or an explicit `retry`-module-compatible options object. */
@@ -115,10 +156,21 @@ function lockBusyError(walPath: string): WorkflowError {
  * the SAME per-(runId, stepId) critical section (a `proper-lockfile` lock on the WAL path)
  * `appendFenced`/`deleteFenced`/`deleteAllForRunFenced` use — see `lockWal` and the interface's
  * own doc for the full contract.
+ *
+ * Issue #197 PR-1 additionally declares BOTH capability-ladder rungs (`seal` and
+ * `writer_nonce_carriage`, `traceCapabilities`). `sealFenced` retires a live WAL file to a sealed
+ * artifact (`sealed-trace-<runId>-<base64url(stepId)>.<seq>.jsonl`) via the SAME `lockWal`
+ * chokepoint every other operation uses — see `sealFenced`'s own doc for the no-clobber move
+ * mechanics.
  */
 export class JsonTraceBufferStore
   implements TraceBufferStore, PerRunArtifactStore, OrphanSweepableStore
 {
+  readonly traceCapabilities: ReadonlySet<TraceCapability> = new Set([
+    'seal',
+    'writer_nonce_carriage',
+  ]);
+
   private readonly runsDir: string;
   private readonly lockProfile: TraceBufferLockProfile;
 
@@ -130,6 +182,13 @@ export class JsonTraceBufferStore
   private walPath(runId: string, stepId: string): string {
     const safeStepId = Buffer.from(stepId).toString('base64url');
     return join(this.runsDir, `trace-buffer-${runId}-${safeStepId}.jsonl`);
+  }
+
+  /** Builds the on-disk path for one sealed artifact — see `SEALED_PREFIX`'s doc for the shape
+   *  and why it never collides with a live WAL path. */
+  private sealedWalPath(runId: string, stepId: string, seq: number): string {
+    const safeStepId = Buffer.from(stepId).toString('base64url');
+    return join(this.runsDir, `${SEALED_PREFIX}${runId}-${safeStepId}.${seq}.jsonl`);
   }
 
   /**
@@ -205,12 +264,61 @@ export class JsonTraceBufferStore
   }
 
   /**
+   * Count + bytes for exactly the batches belonging to `writerNonce` (issue #197 PR-1, design §5's
+   * byte-attribution rule) — `undefined` = ⊥, the bare/anonymous writer class.
+   *
+   * A NONCED writer's stats are computed DIRECTLY: sum the `entries.length` and re-serialized
+   * byte size of exactly its own successfully-parsed lines. `JSON.stringify` of a parsed
+   * `WalLine` reproduces its ORIGINAL on-disk bytes exactly — this file only ever writes lines via
+   * `JSON.stringify({ts, entries[, nonce]})`, and V8 preserves string-key insertion order through
+   * parse→re-stringify, so re-serializing a parsed line is bit-for-bit identical to how it was
+   * actually written.
+   *
+   * ⊥'s stats are a RESIDUAL, not a direct sum: `bytes = fileBytes - Σ(every DISTINCT nonced
+   * partition's own bytes)`. This is what makes ⊥ "inherit all unattributable bytes" — a
+   * torn/unparseable line's raw bytes are captured in `fileBytes` (computed from the whole raw
+   * file content, not from re-stringifying parsed lines) but can never be subtracted out as part
+   * of any nonced partition (it never parsed into one), so they remain in ⊥'s residual exactly as
+   * they always silently were before this capability existed. For an all-bare file (no nonced
+   * lines at all), the residual is arithmetically the WHOLE file — byte-identical to the pre-#197
+   * formula, emergent rather than special-cased.
+   */
+  private partitionStats(
+    lines: readonly WalLine[],
+    fileBytes: number,
+    writerNonce: string | undefined,
+  ): { count: number; bytes: number } {
+    if (writerNonce !== undefined) {
+      const own = lines.filter((l) => l.nonce === writerNonce);
+      const count = own.reduce((acc, l) => acc + l.entries.length, 0);
+      const bytes = own.reduce((acc, l) => acc + Buffer.byteLength(JSON.stringify(l) + '\n'), 0);
+      return { count, bytes };
+    }
+    const noncedLines = lines.filter((l) => l.nonce !== undefined);
+    const noncedBytes = noncedLines.reduce(
+      (acc, l) => acc + Buffer.byteLength(JSON.stringify(l) + '\n'),
+      0,
+    );
+    const bareCount = lines
+      .filter((l) => l.nonce === undefined)
+      .reduce((acc, l) => acc + l.entries.length, 0);
+    return { count: bareCount, bytes: fileBytes - noncedBytes };
+  }
+
+  /**
    * The actual write logic, shared by `append` and `appendFenced` (issue #207) so BUFFER_FULL /
    * normalization / `AppendResult` shape live in exactly one place. Assumes the caller already
-   * holds the per-path critical section.
+   * holds the per-path critical section. `writerNonce` (issue #197 PR-1) is `undefined` for a bare
+   * call — the byte-identical legacy path (this file's own `newLine` shape omits the `nonce` key
+   * entirely when so, exactly matching the pre-#197 JSONL bytes for all-bare traffic).
    */
-  private async appendWithinCS(walPath: string, entries: AgentTraceEntry[]): Promise<AppendResult> {
-    const { count: existingCount, bytes: existingBytes } = await this.readWal(walPath);
+  private async appendWithinCS(
+    walPath: string,
+    entries: AgentTraceEntry[],
+    writerNonce: string | undefined,
+  ): Promise<AppendResult> {
+    const { count: fileCountBefore, bytes: fileBytesBefore, lines } = await this.readWal(walPath);
+    const writerBefore = this.partitionStats(lines, fileBytesBefore, writerNonce);
 
     const normalized = entries
       .map((e) => normalizeEntryForBuffer(e))
@@ -218,57 +326,86 @@ export class JsonTraceBufferStore
 
     if (normalized.length === 0) {
       return {
-        buffer_count: existingCount,
-        buffer_bytes: existingBytes,
+        buffer_count: writerBefore.count,
+        buffer_bytes: writerBefore.bytes,
         limit_count: BUFFER_LIMIT_COUNT,
         limit_bytes: BUFFER_LIMIT_BYTES,
         final_limit_entries: FINAL_LIMIT_ENTRIES,
         final_limit_bytes: FINAL_LIMIT_BYTES,
+        file_count: fileCountBefore,
+        file_bytes: fileBytesBefore,
+        file_limit_count: BUFFER_BACKSTOP_COUNT,
+        file_limit_bytes: BUFFER_BACKSTOP_BYTES,
       };
     }
 
-    const newLine = JSON.stringify({ ts: Date.now(), entries: normalized });
+    const newLineObj: WalLine =
+      writerNonce !== undefined
+        ? { ts: Date.now(), entries: normalized, nonce: writerNonce }
+        : { ts: Date.now(), entries: normalized };
+    const newLine = JSON.stringify(newLineObj);
     const newBytes = Buffer.byteLength(newLine + '\n');
 
-    if (
-      existingCount + normalized.length > BUFFER_LIMIT_COUNT ||
-      existingBytes + newBytes > BUFFER_LIMIT_BYTES
-    ) {
-      throw new WorkflowError('Trace buffer full for step', {
-        code: 'BUFFER_FULL',
-        category: 'ENGINE',
-        agentAction: 'provide_input',
-        retryable: false,
-        details: { buffer_count: existingCount, buffer_bytes: existingBytes },
-      });
+    // JSONL is genuinely additive (unlike the in-memory store's whole-array restringify): the
+    // file-scope and this-writer's-own "after" numbers are simply "before" plus this one new
+    // line's own contribution — see `partitionStats`'s doc for why this holds for ⊥ too.
+    const writerCountAfter = writerBefore.count + normalized.length;
+    const writerBytesAfter = writerBefore.bytes + newBytes;
+    const fileCountAfter = fileCountBefore + normalized.length;
+    const fileBytesAfter = fileBytesBefore + newBytes;
+
+    const overflow = checkBufferBudget({
+      writerCountBefore: writerBefore.count,
+      writerBytesBefore: writerBefore.bytes,
+      writerCountAfter,
+      writerBytesAfter,
+      fileCountBefore,
+      fileBytesBefore,
+      fileCountAfter,
+      fileBytesAfter,
+    });
+    if (overflow) {
+      throw bufferFullError(overflow);
     }
 
     await appendFile(walPath, newLine + '\n', 'utf8');
 
-    const updatedCount = existingCount + normalized.length;
-    const updatedBytes = existingBytes + newBytes;
     return {
-      buffer_count: updatedCount,
-      buffer_bytes: updatedBytes,
+      buffer_count: writerCountAfter,
+      buffer_bytes: writerBytesAfter,
       limit_count: BUFFER_LIMIT_COUNT,
       limit_bytes: BUFFER_LIMIT_BYTES,
       final_limit_entries: FINAL_LIMIT_ENTRIES,
       final_limit_bytes: FINAL_LIMIT_BYTES,
+      file_count: fileCountAfter,
+      file_bytes: fileBytesAfter,
+      file_limit_count: BUFFER_BACKSTOP_COUNT,
+      file_limit_bytes: BUFFER_BACKSTOP_BYTES,
     };
   }
 
-  async append(runId: string, stepId: string, entries: AgentTraceEntry[]): Promise<AppendResult> {
+  async append(
+    runId: string,
+    stepId: string,
+    entries: AgentTraceEntry[],
+    options?: AppendOptions,
+  ): Promise<AppendResult> {
     const walPath = this.walPath(runId, stepId);
 
     if (entries.length === 0) {
-      const { count, bytes } = await this.readWal(walPath);
+      const { count: fileCount, bytes: fileBytes, lines } = await this.readWal(walPath);
+      const writer = this.partitionStats(lines, fileBytes, options?.writerNonce);
       return {
-        buffer_count: count,
-        buffer_bytes: bytes,
+        buffer_count: writer.count,
+        buffer_bytes: writer.bytes,
         limit_count: BUFFER_LIMIT_COUNT,
         limit_bytes: BUFFER_LIMIT_BYTES,
         final_limit_entries: FINAL_LIMIT_ENTRIES,
         final_limit_bytes: FINAL_LIMIT_BYTES,
+        file_count: fileCount,
+        file_bytes: fileBytes,
+        file_limit_count: BUFFER_BACKSTOP_COUNT,
+        file_limit_bytes: BUFFER_BACKSTOP_BYTES,
       };
     }
 
@@ -281,7 +418,7 @@ export class JsonTraceBufferStore
     let release: (() => Promise<void>) | undefined;
     try {
       release = await this.lockWal(walPath, APPEND_RETRIES);
-      return await this.appendWithinCS(walPath, entries);
+      return await this.appendWithinCS(walPath, entries, options?.writerNonce);
     } finally {
       if (release !== undefined) {
         await release();
@@ -302,25 +439,27 @@ export class JsonTraceBufferStore
     stepId: string,
     entries: AgentTraceEntry[],
     guard: () => Promise<void>,
+    options?: AppendOptions,
   ): Promise<AppendResult> {
     const walPath = this.walPath(runId, stepId);
     const release = await this.lockWal(walPath, APPEND_RETRIES);
     try {
       await guard();
-      return await this.appendWithinCS(walPath, entries);
+      return await this.appendWithinCS(walPath, entries, options?.writerNonce);
     } finally {
       await release();
     }
   }
 
+  /** `_nonce` is re-attached per-line ONLY when that line actually carried one — via the SAME
+   *  `flattenWalBatches` core helper the in-memory store uses, so "never fabricate `_nonce` for a
+   *  bare line" is enforced from exactly one shared code path rather than reimplemented twice. */
   async read(runId: string, stepId: string): Promise<BufferedEntry[]> {
     const walPath = this.walPath(runId, stepId);
     const release = await this.lockWal(walPath);
     try {
       const { lines } = await this.readWal(walPath);
-      return lines.flatMap((line) =>
-        line.entries.map((entry) => ({ ...entry, _internalTs: line.ts })),
-      );
+      return flattenWalBatches(lines);
     } finally {
       await release();
     }
@@ -368,6 +507,113 @@ export class JsonTraceBufferStore
     }
   }
 
+  /**
+   * `guard` runs INSIDE the SAME per-path critical section every other operation on this key
+   * uses (issue #197 PR-1, the `seal` rung — design §4: "no second locking path"), immediately
+   * before the seal-move. Atomically retires the live WAL file to a new sealed artifact via the
+   * no-clobber `link`-then-`unlink` primitive (`linkNoClobberThenUnlink`) — plain `rename()` is
+   * FORBIDDEN here, since it would silently overwrite an existing sealed artifact at the same
+   * `seq`.
+   *
+   * `seq` is probed by the link attempt ITSELF (no pre-listing, no separate TOCTOU-prone scan):
+   * starting at 0, an `EEXIST` on the link means that `seq` is already taken by an earlier seal —
+   * bump and retry, bounded by `SEALED_ARTIFACTS_LIMIT_PER_STEP`. Exhausting the bound without
+   * success returns `{sealed: false, reason: 'capped'}` — the caller falls back to the existing
+   * destructive drain (`deleteFenced`), never a silent eviction of an already-sealed artifact.
+   *
+   * `{sealed: false, reason: 'absent'}` when no live WAL file exists for this key AT ALL (checked
+   * via `statIfExists` — #183's ENOENT-is-absence discipline) — nothing to seal is success, not a
+   * failure. A present-but-empty file (e.g. `append()`'s legacy placeholder) is NOT "absent" — it
+   * gets sealed like any other live WAL (a harmless, if pointless, empty sealed artifact).
+   */
+  async sealFenced(runId: string, stepId: string, guard: () => Promise<void>): Promise<SealResult> {
+    const walPath = this.walPath(runId, stepId);
+    const release = await this.lockWal(walPath);
+    try {
+      await guard();
+
+      const stat = await statIfExists(walPath);
+      if (stat === undefined) {
+        return { sealed: false, reason: 'absent' };
+      }
+
+      for (let seq = 0; seq < SEALED_ARTIFACTS_LIMIT_PER_STEP; seq++) {
+        const sealedPath = this.sealedWalPath(runId, stepId, seq);
+        try {
+          await linkNoClobberThenUnlink(walPath, sealedPath);
+          return { sealed: true };
+        } catch (err) {
+          if (errnoCode(err) === 'EEXIST') continue; // this seq already taken — bump and retry
+          throw err;
+        }
+      }
+      return { sealed: false, reason: 'capped' };
+    } finally {
+      await release();
+    }
+  }
+
+  /**
+   * Lock-free point-in-time read of every sealed artifact for `runId`, across all its steps
+   * (issue #197 PR-1, the `seal` rung) — matches `readAllForRun`'s deliberately-unlocked posture.
+   * Parses each sealed file torn-tolerant, per-line, exactly like `readWal`/`readAllForRun` (a
+   * sealed artifact's raw bytes moved verbatim from the live WAL, including any trailing torn
+   * line it already had at seal time — this is a READ concern, not something sealing fixes).
+   */
+  async listSealedForRun(runId: string): Promise<SealedArtifact[]> {
+    let entries: string[];
+    try {
+      entries = await readdir(this.runsDir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw err;
+    }
+
+    // Unlike `listOrphans` (which must DISCOVER an unknown runId from an arbitrary filename, and
+    // so needs `parseSealedFilename`'s fixed-length-36 recovery), `runId` here is already KNOWN —
+    // filtering by literal prefix is both sufficient and correct regardless of whether `runId`
+    // happens to be UUID-shaped (real server-generated runIds always are; test doubles need not
+    // be). Only the step + seq portion (genuinely unknown) needs parsing out of each match.
+    const prefix = `${SEALED_PREFIX}${runId}-`;
+    const matching = entries.filter((f) => f.startsWith(prefix) && f.endsWith(WAL_SUFFIX)).sort();
+
+    const result: SealedArtifact[] = [];
+    for (const file of matching) {
+      const afterPrefix = file.slice(prefix.length, -WAL_SUFFIX.length); // "<safeStepId>.<seq>"
+      const lastDot = afterPrefix.lastIndexOf('.');
+      if (lastDot === -1) continue;
+      const safeStepId = afterPrefix.slice(0, lastDot);
+      const seqStr = afterPrefix.slice(lastDot + 1);
+      if (!/^\d+$/.test(seqStr)) continue;
+      const seq = Number(seqStr);
+
+      let stepId: string;
+      try {
+        stepId = Buffer.from(safeStepId, 'base64url').toString('utf8');
+      } catch {
+        continue; // malformed filename — skip this one artifact, not the whole listing
+      }
+
+      // issue #183: readIfExists discriminates ENOENT (vanished between readdir and this read —
+      // a benign race) from a genuine I/O failure (now throws).
+      const content = await readIfExists(join(this.runsDir, file));
+      if (content === undefined) continue;
+
+      const lines: SealedWalLine[] = [];
+      for (const raw of content.split('\n')) {
+        const trimmed = raw.trim();
+        if (trimmed.length === 0) continue;
+        try {
+          lines.push(JSON.parse(trimmed) as SealedWalLine);
+        } catch {
+          console.warn(`⚠ realm: skipping unparseable sealed-trace WAL line in '${file}'`);
+        }
+      }
+      result.push({ step_id: stepId, seq, lines });
+    }
+    return result;
+  }
+
   /** Resolves the candidate WAL files for `runId`, sorted deterministically — shared by
    *  `deleteAllForRun` and `deleteAllForRunFenced` (issue #207). */
   private async matchingWalFiles(
@@ -394,10 +640,36 @@ export class JsonTraceBufferStore
     return [...files].filter((f) => f.startsWith(prefix) && f.endsWith('.jsonl')).sort();
   }
 
+  /** Resolves the candidate SEALED artifact files for `runId`, sorted deterministically — the
+   *  same shared-`dirEntries`-or-own-`readdir` shape as `matchingWalFiles` (issue #197 PR-1: a
+   *  sealed artifact is retained only until its owning run itself is purged — design §4). */
+  private async matchingSealedFiles(
+    runId: string,
+    dirEntries: readonly string[] | undefined,
+  ): Promise<string[]> {
+    const prefix = `${SEALED_PREFIX}${runId}-`;
+    let files: readonly string[];
+    if (dirEntries !== undefined) {
+      files = dirEntries;
+    } else {
+      try {
+        files = await readdir(this.runsDir);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          files = [];
+        } else {
+          throw toArtifactDeleteFailedError(runId, 'JsonTraceBufferStore', [], this.runsDir, err);
+        }
+      }
+    }
+    return [...files].filter((f) => f.startsWith(prefix) && f.endsWith(WAL_SUFFIX)).sort();
+  }
+
   /**
    * Deletes every orphaned WAL file for `runId` (issue #107). Now serialized per-file on the same
    * critical section `appendFenced`/`deleteFenced` use (issue #207) — declaring the fenced trio
-   * commits this legacy method too.
+   * commits this legacy method too. Issue #197 PR-1: sealed artifacts for this run join the same
+   * sweep (`matchingSealedFiles`) — a sealed artifact outlives its step but not its run.
    *
    * @param dirEntries Optional pre-scanned `readdir(runsDir)` listing supplied by a batch purge —
    *   when present, this method filters it in-memory instead of re-scanning the directory itself
@@ -405,7 +677,10 @@ export class JsonTraceBufferStore
    *   omitted, exactly as before.
    */
   async deleteAllForRun(runId: string, dirEntries?: readonly string[]): Promise<void> {
-    const matching = await this.matchingWalFiles(runId, dirEntries);
+    const matching = [
+      ...(await this.matchingWalFiles(runId, dirEntries)),
+      ...(await this.matchingSealedFiles(runId, dirEntries)),
+    ];
 
     const deleted: string[] = [];
     for (const file of matching) {
@@ -447,13 +722,19 @@ export class JsonTraceBufferStore
    * outcome). The guard call itself sits OUTSIDE the try/catch scope that performs this wrapping
    * (see the loop body below) — so a guard that happens to throw an `FsIoError` (e.g. its own
    * lock-free `runStore.get` hitting EACCES) is never mistaken for `deleteIfExists`'s own failure.
+   *
+   * Issue #197 PR-1: sealed artifacts for this run join the same fenced sweep, same as the
+   * unfenced `deleteAllForRun` above.
    */
   async deleteAllForRunFenced(
     runId: string,
     guard: () => Promise<void>,
     dirEntries?: readonly string[],
   ): Promise<void> {
-    const matching = await this.matchingWalFiles(runId, dirEntries);
+    const matching = [
+      ...(await this.matchingWalFiles(runId, dirEntries)),
+      ...(await this.matchingSealedFiles(runId, dirEntries)),
+    ];
 
     if (matching.length === 0) {
       await guard();
@@ -585,17 +866,28 @@ export class JsonTraceBufferStore
 
     const orphans: OrphanArtifact[] = [];
     for (const name of entries) {
-      if (!name.startsWith(WAL_PREFIX) || !name.endsWith(WAL_SUFFIX)) continue;
+      let runId: string | undefined;
 
-      // Everything between the fixed prefix and suffix is "<uuid>-<b64url step>" — slice the
-      // UUID off by its KNOWN length, then require the very next character to be the '-'
-      // separator `walPath` always writes. A name that's too short, or missing that separator
-      // at exactly this position, is malformed (never produced by this store) — skip it rather
-      // than guess.
-      const afterPrefix = name.slice(WAL_PREFIX.length, -WAL_SUFFIX.length);
-      if (afterPrefix.length <= RUN_ID_LENGTH || afterPrefix[RUN_ID_LENGTH] !== '-') continue;
-      const runId = afterPrefix.slice(0, RUN_ID_LENGTH);
-      if (liveRunIds.has(runId)) continue;
+      if (name.startsWith(WAL_PREFIX) && name.endsWith(WAL_SUFFIX)) {
+        // Everything between the fixed prefix and suffix is "<uuid>-<b64url step>" — slice the
+        // UUID off by its KNOWN length, then require the very next character to be the '-'
+        // separator `walPath` always writes. A name that's too short, or missing that separator
+        // at exactly this position, is malformed (never produced by this store) — skip it rather
+        // than guess.
+        const afterPrefix = name.slice(WAL_PREFIX.length, -WAL_SUFFIX.length);
+        if (afterPrefix.length > RUN_ID_LENGTH && afterPrefix[RUN_ID_LENGTH] === '-') {
+          runId = afterPrefix.slice(0, RUN_ID_LENGTH);
+        }
+      } else if (name.startsWith(SEALED_PREFIX) && name.endsWith(WAL_SUFFIX)) {
+        // issue #197 PR-1: a sealed artifact is an orphan candidate too — same run-liveness rule,
+        // parsed via `parseSealedFilename` instead (distinct, non-overlapping prefix — see its
+        // doc — so this branch and the one above are mutually exclusive for any given `name`).
+        runId = parseSealedFilename(name)?.runId;
+      } else {
+        continue;
+      }
+
+      if (runId === undefined || liveRunIds.has(runId)) continue;
 
       const path = join(this.runsDir, name);
       // #183 discipline: statIfExists returns undefined only on ENOENT (a benign vanished-

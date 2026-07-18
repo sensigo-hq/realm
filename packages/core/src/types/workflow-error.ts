@@ -97,6 +97,12 @@ export type ErrorCode =
   | 'RESOURCE_NOT_ACCESSIBLE'
   // TRACE BUFFER
   | 'BUFFER_FULL'
+  // issue #197 PR-1: validateTraceCapabilities' typed fail-loud when a TraceBufferStore declares
+  // a capability-ladder rung ('seal'/'writer_nonce_carriage') whose required methods are NOT
+  // actually all present (declared-but-inconsistent) — a construction-time wiring defect, never
+  // a runtime condition. Undeclared is always silent success (the honest floor); this code is
+  // reserved for the declared-but-lying case only.
+  | 'TRACE_CAPABILITY_INCONSISTENT'
   // MCP
   | 'MCP_CONNECTION_FAILED'
   | 'MCP_TOOL_NOT_FOUND'

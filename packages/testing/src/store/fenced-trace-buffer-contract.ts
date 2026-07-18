@@ -17,15 +17,35 @@ import {
   FsIoError,
   type TraceBufferStore,
   type AgentTraceEntry,
+  type TraceCapability,
+  storeDeclaresSeal,
+  storeDeclaresNonceCarriage,
+  validateTraceCapabilities,
+  BUFFER_LIMIT_COUNT,
+  BUFFER_BACKSTOP_COUNT,
+  SEALED_ARTIFACTS_LIMIT_PER_STEP,
 } from '@sensigo/realm';
 
-/** One of the five laws every fenced-trio-declaring `TraceBufferStore` must satisfy (issue #207). */
+/**
+ * One of the laws every fenced-trio-declaring `TraceBufferStore` must satisfy. The original five
+ * (issue #207) cover the fenced trio itself; the remaining five (issue #197 PR-1) cover the
+ * optional capability-ladder rungs a trio-declaring store MAY additionally declare (`seal` and
+ * `writer_nonce_carriage`) — each of those five produces an explicit, VISIBLE documented-skip case
+ * (never a silent omission) for a store that does not declare the relevant rung, mirroring the
+ * `fenceForm: 'native-predicate'` skip precedent already established for the latch-based trio
+ * laws below.
+ */
 export type FencedTraceBufferLaw =
   | 'STRUCTURAL'
   | 'FENCE_REFUSES'
   | 'CS_OCCUPANCY'
   | 'PER_KEY_INDEPENDENCE'
-  | 'NO_SILENT_LOSS';
+  | 'NO_SILENT_LOSS'
+  | 'CARRIAGE_ROUND_TRIP'
+  | 'SEAL'
+  | 'SEAL_BUDGET'
+  | 'PER_WRITER_BUDGET'
+  | 'VERBATIM';
 
 /**
  * A single, framework-agnostic contract case. `run()` throws (rejects) on failure — any test
@@ -66,6 +86,35 @@ export interface FencedTraceBufferContractAdapter {
    *  documentation — the TCK itself does not need to act on this value; it exists so a wiring
    *  test can assert (and a reader can see) that a genuinely generous profile is in use. */
   lockProfile?: unknown;
+
+  /**
+   * Per-adapter byte oracle for `PER_WRITER_BUDGET` (issue #197 PR-1) — since the in-memory and fs
+   * stores compute "bytes" via genuinely different formulas (whole-array restringify vs
+   * JSONL-additive), this TCK can only assert exact ENTRY COUNTS store-agnostically; exact BYTE
+   * equality needs each adapter to supply its own oracle, computed however that concrete store's
+   * own `AppendResult.buffer_bytes`/`file_bytes` are actually derived. Optional — a store without
+   * this hook still runs every count-based `PER_WRITER_BUDGET` assertion; only the byte-exactness
+   * sub-assertion is skipped (visibly, never silently) for that adapter.
+   */
+  bytesOracle?: (
+    runId: string,
+    stepId: string,
+    writerNonce: string | undefined,
+  ) => Promise<{ count: number; bytes: number }>;
+
+  /**
+   * fs-scoped raw on-disk byte access for `VERBATIM` (issue #197 PR-1) — reads the RAW bytes of a
+   * live WAL path and of one sealed artifact (`seq`), so the law can assert a seal moves bytes
+   * byte-for-byte (no parse/re-copy/truncation/dedup). `undefined` from either function means "no
+   * file at that path" (mirrors `readIfExists`'s absence convention). Optional — a store without
+   * this hook (e.g. the in-memory store, which has no on-disk representation at all) skips ONLY
+   * the raw-byte-exactness case; the shape-tolerant sibling case still runs unconditionally for
+   * every `seal`-declaring store.
+   */
+  rawWalAccess?: {
+    readLiveRaw: (runId: string, stepId: string) => Promise<string | undefined>;
+    readSealedRaw: (runId: string, stepId: string, seq: number) => Promise<string | undefined>;
+  };
 }
 
 const REFUSAL_CODE = 'STATE_RUN_BUSY';
@@ -86,6 +135,59 @@ function refusingGuard(): () => Promise<void> {
 
 function passingGuard(): () => Promise<void> {
   return async () => {};
+}
+
+/**
+ * A minimal, otherwise-legal `TraceBufferStore` STUB (issue #197 PR-1) — implements only the four
+ * mandatory legacy methods (never actually called by these cases) plus a HAND-SET
+ * `traceCapabilities`, deliberately WITHOUT any of the fenced-trio/seal methods regardless of what
+ * `caps` declares. Used exclusively to exercise `validateTraceCapabilities` against a
+ * declared-but-inconsistent shape — never mixed with the real adapter store, which always
+ * satisfies its OWN declaration (see the "internally consistent" STRUCTURAL case instead).
+ */
+function minimalStubStore(caps: ReadonlySet<TraceCapability> | undefined): TraceBufferStore {
+  return {
+    ...(caps !== undefined ? { traceCapabilities: caps } : {}),
+    append: async () => ({
+      buffer_count: 0,
+      buffer_bytes: 0,
+      limit_count: 0,
+      limit_bytes: 0,
+      final_limit_entries: 0,
+      final_limit_bytes: 0,
+    }),
+    read: async () => [],
+    delete: async () => {},
+    deleteAllForRun: async () => {},
+    readAllForRun: async () => ({}),
+  };
+}
+
+/** Runs a SYNCHRONOUS throwing function and returns what it threw, or `undefined` if it didn't —
+ *  `validateTraceCapabilities` is synchronous, so this avoids an unnecessary async try/catch at
+ *  every call site above. */
+function catchSync(fn: () => void): unknown {
+  try {
+    fn();
+    return undefined;
+  } catch (err) {
+    return err;
+  }
+}
+
+/** Asserts `err` is exactly the typed `TRACE_CAPABILITY_INCONSISTENT` `WorkflowError`
+ *  `validateTraceCapabilities` throws for a declared-but-inconsistent rung, naming `capability` in
+ *  its `details` — never some other error shape. */
+function assertCapabilityInconsistent(err: unknown, capability: TraceCapability): void {
+  if (
+    !(err instanceof WorkflowError) ||
+    err.code !== 'TRACE_CAPABILITY_INCONSISTENT' ||
+    err.details.capability !== capability
+  ) {
+    throw new Error(
+      `expected a typed WorkflowError(TRACE_CAPABILITY_INCONSISTENT, details.capability=${capability}), got: ${err instanceof Error ? err.message : err}`,
+    );
+  }
 }
 
 function eventsOf(entries: readonly AgentTraceEntry[]): string[] {
@@ -447,6 +549,422 @@ function buildNoSilentLossCase(
   };
 }
 
+/** A visible, non-silent documented-skip case for a law that a store's declared capabilities
+ *  don't reach — mirrors the `fenceForm: 'native-predicate'` skip precedent for the latch-based
+ *  trio laws. `reason` names exactly why (e.g. "store does not declare 'seal'"). */
+function skipCase(
+  law: FencedTraceBufferLaw,
+  name: string,
+  reason: string,
+): FencedTraceBufferContractCase {
+  return {
+    law,
+    name: `SKIPPED — ${reason}: ${name}`,
+    run: async () => {
+      // Intentional no-op — see the case name for why.
+    },
+  };
+}
+
+// ── CARRIAGE_ROUND_TRIP (issue #197 PR-1, the writer_nonce_carriage rung) ────────────────────────
+function buildCarriageRoundTripCases(
+  adapter: FencedTraceBufferContractAdapter,
+): FencedTraceBufferContractCase[] {
+  const { store } = adapter;
+  if (!storeDeclaresNonceCarriage(store)) {
+    return [
+      skipCase(
+        'CARRIAGE_ROUND_TRIP',
+        "nonce round-trip via options.writerNonce and read()'s _nonce",
+        "store does not declare 'writer_nonce_carriage'",
+      ),
+    ];
+  }
+  return [
+    {
+      law: 'CARRIAGE_ROUND_TRIP',
+      name: 'a nonced append round-trips _nonce on read(); a bare append NEVER has _nonce fabricated',
+      run: async () => {
+        const { runId, stepId } = adapter.makeKey();
+        const NONCE = 'carriage-tck-nonce-1';
+        await store.append(runId, stepId, [{ event: 'nonced' }], { writerNonce: NONCE });
+        await store.append(runId, stepId, [{ event: 'bare' }]);
+
+        const entries = await store.read(runId, stepId);
+        const nonced = entries.find((e) => e.event === 'nonced');
+        const bare = entries.find((e) => e.event === 'bare');
+
+        if (nonced?._nonce !== NONCE) {
+          throw new Error(
+            `expected the nonced entry's _nonce to round-trip as '${NONCE}', got: ${nonced?._nonce}`,
+          );
+        }
+        if (bare !== undefined && Object.prototype.hasOwnProperty.call(bare, '_nonce')) {
+          throw new Error(
+            `expected the bare entry to have NO _nonce property at all (never fabricated), got: ${JSON.stringify(bare)}`,
+          );
+        }
+      },
+    },
+  ];
+}
+
+// ── SEAL + SEAL_BUDGET (issue #197 PR-1, the seal rung) ──────────────────────────────────────────
+function buildSealCases(
+  adapter: FencedTraceBufferContractAdapter,
+): FencedTraceBufferContractCase[] {
+  const { store } = adapter;
+  if (!storeDeclaresSeal(store)) {
+    return [
+      skipCase(
+        'SEAL',
+        'sealFenced retires a live WAL to a sealed artifact',
+        "store does not declare 'seal'",
+      ),
+      skipCase(
+        'SEAL_BUDGET',
+        'repeated seals up to SEALED_ARTIFACTS_LIMIT_PER_STEP, then capped',
+        "store does not declare 'seal'",
+      ),
+    ];
+  }
+
+  const cases: FencedTraceBufferContractCase[] = [];
+
+  cases.push({
+    law: 'SEAL',
+    name: 'sealFenced on an absent key returns {sealed:false, reason:"absent"}; the guard still runs',
+    run: async () => {
+      const { runId, stepId } = adapter.makeKey();
+      let guardCalls = 0;
+      const result = await store.sealFenced!(runId, stepId, async () => {
+        guardCalls++;
+      });
+      if (!(result.sealed === false && result.reason === 'absent')) {
+        throw new Error(`expected {sealed:false, reason:'absent'}, got: ${JSON.stringify(result)}`);
+      }
+      if (guardCalls < 1) {
+        throw new Error('expected the guard to run at least once even for an absent key');
+      }
+    },
+  });
+
+  cases.push({
+    law: 'SEAL',
+    name: 'sealFenced retires the live WAL: read() goes empty, listSealedForRun reports the same lines',
+    run: async () => {
+      const { runId, stepId } = adapter.makeKey();
+      await store.append(runId, stepId, [{ event: 'a1' }]);
+      await store.append(runId, stepId, [{ event: 'a2' }]);
+
+      const result = await store.sealFenced!(runId, stepId, passingGuard());
+      if (result.sealed !== true) {
+        throw new Error(`expected {sealed:true}, got: ${JSON.stringify(result)}`);
+      }
+
+      const afterLive = await store.read(runId, stepId);
+      if (afterLive.length !== 0) {
+        throw new Error(
+          `expected the live WAL empty after sealing, got ${afterLive.length} entries`,
+        );
+      }
+
+      const sealedArtifacts = await store.listSealedForRun!(runId);
+      const thisKeyArtifacts = sealedArtifacts.filter((a) => a.step_id === stepId);
+      if (thisKeyArtifacts.length !== 1) {
+        throw new Error(
+          `expected exactly 1 sealed artifact for this key, got ${thisKeyArtifacts.length}`,
+        );
+      }
+      const sealedEvents = thisKeyArtifacts[0]!.lines.flatMap((l) => l.entries.map((e) => e.event));
+      if (JSON.stringify(sealedEvents) !== JSON.stringify(['a1', 'a2'])) {
+        throw new Error(
+          `expected sealed lines to preserve ['a1','a2'] in order, got ${JSON.stringify(sealedEvents)}`,
+        );
+      }
+    },
+  });
+
+  cases.push({
+    law: 'SEAL',
+    name: 'a refusing guard rejects sealFenced — nothing is moved (live content survives, no new sealed artifact)',
+    run: async () => {
+      const { runId, stepId } = adapter.makeKey();
+      await store.append(runId, stepId, [{ event: 'a' }]);
+      const before = await store.listSealedForRun!(runId);
+
+      let caught: unknown;
+      try {
+        await store.sealFenced!(runId, stepId, refusingGuard());
+      } catch (err) {
+        caught = err;
+      }
+      if (!(caught instanceof WorkflowError) || caught.code !== REFUSAL_CODE) {
+        throw new Error(`expected a typed WorkflowError(${REFUSAL_CODE}), got: ${caught}`);
+      }
+
+      const afterLive = await store.read(runId, stepId);
+      if (afterLive.length !== 1) {
+        throw new Error(
+          `expected the live WAL untouched after a refused seal, got ${afterLive.length} entries`,
+        );
+      }
+      const after = await store.listSealedForRun!(runId);
+      if (after.length !== before.length) {
+        throw new Error('expected no new sealed artifact after a refused seal');
+      }
+    },
+  });
+
+  cases.push({
+    law: 'SEAL',
+    name: 'deleteAllForRun retires sealed artifacts for the run too, not just the live WAL',
+    run: async () => {
+      const { runId, stepId } = adapter.makeKey();
+      await store.append(runId, stepId, [{ event: 'a' }]);
+      await store.sealFenced!(runId, stepId, passingGuard());
+      const beforeCount = (await store.listSealedForRun!(runId)).length;
+      if (beforeCount < 1) {
+        throw new Error(
+          'setup invariant violated: expected at least one sealed artifact before deleteAllForRun',
+        );
+      }
+
+      await store.deleteAllForRun(runId);
+
+      const after = await store.listSealedForRun!(runId);
+      if (after.length !== 0) {
+        throw new Error(
+          `expected deleteAllForRun to also remove sealed artifacts, got ${after.length} remaining`,
+        );
+      }
+    },
+  });
+
+  cases.push({
+    law: 'SEAL_BUDGET',
+    name: 'repeated seals of the same key succeed up to SEALED_ARTIFACTS_LIMIT_PER_STEP, then return {sealed:false, reason:"capped"} without evicting or losing data',
+    run: async () => {
+      const { runId, stepId } = adapter.makeKey();
+      for (let i = 0; i < SEALED_ARTIFACTS_LIMIT_PER_STEP; i++) {
+        await store.append(runId, stepId, [{ event: `e${i}` }]);
+        const result = await store.sealFenced!(runId, stepId, passingGuard());
+        if (result.sealed !== true) {
+          throw new Error(`expected seal #${i} to succeed, got: ${JSON.stringify(result)}`);
+        }
+      }
+      const atCap = (await store.listSealedForRun!(runId)).filter((a) => a.step_id === stepId);
+      if (atCap.length !== SEALED_ARTIFACTS_LIMIT_PER_STEP) {
+        throw new Error(
+          `expected exactly SEALED_ARTIFACTS_LIMIT_PER_STEP (${SEALED_ARTIFACTS_LIMIT_PER_STEP}) sealed artifacts, got ${atCap.length}`,
+        );
+      }
+
+      await store.append(runId, stepId, [{ event: 'one-too-many' }]);
+      const capped = await store.sealFenced!(runId, stepId, passingGuard());
+      if (!(capped.sealed === false && capped.reason === 'capped')) {
+        throw new Error(`expected {sealed:false, reason:'capped'}, got: ${JSON.stringify(capped)}`);
+      }
+
+      // No silent eviction: still exactly the same N sealed artifacts, and the live content that
+      // failed to seal is still readable (the caller's fallback path — destructive drain — remains
+      // available; this law only asserts nothing was silently lost yet).
+      const stillAtCap = (await store.listSealedForRun!(runId)).filter((a) => a.step_id === stepId);
+      if (stillAtCap.length !== SEALED_ARTIFACTS_LIMIT_PER_STEP) {
+        throw new Error(
+          `expected the cap to hold at exactly ${SEALED_ARTIFACTS_LIMIT_PER_STEP} (no eviction), got ${stillAtCap.length}`,
+        );
+      }
+      const liveAfterCapped = await store.read(runId, stepId);
+      if (liveAfterCapped.length !== 1 || liveAfterCapped[0]?.event !== 'one-too-many') {
+        throw new Error(
+          'expected the un-sealable live content to remain readable (fallback-eligible), got: ' +
+            JSON.stringify(liveAfterCapped),
+        );
+      }
+    },
+  });
+
+  return cases;
+}
+
+// ── PER_WRITER_BUDGET (issue #197 PR-1, design §5) ────────────────────────────────────────────────
+function buildPerWriterBudgetCases(
+  adapter: FencedTraceBufferContractAdapter,
+): FencedTraceBufferContractCase[] {
+  const { store } = adapter;
+  const batch = (n: number, label: string): AgentTraceEntry[] =>
+    Array.from({ length: n }, (_, i) => ({ event: `${label}-${i}` }));
+
+  const cases: FencedTraceBufferContractCase[] = [];
+
+  cases.push({
+    law: 'PER_WRITER_BUDGET',
+    name: "theft-fixed: one writer's near-full own partition does not steal another writer's independent budget on the SAME key",
+    run: async () => {
+      const { runId, stepId } = adapter.makeKey();
+      const NEAR_LIMIT = BUFFER_LIMIT_COUNT - 1;
+      await store.append(runId, stepId, batch(NEAR_LIMIT, 'w1'), { writerNonce: 'w1' });
+      const r2 = await store.append(runId, stepId, batch(NEAR_LIMIT, 'w2'), { writerNonce: 'w2' });
+      // A "theft" bug (partitioning by whole-file instead of by writer) would see w1's NEAR_LIMIT
+      // already committed and refuse w2's own NEAR_LIMIT-sized append (combined > BUFFER_LIMIT_COUNT
+      // if mistakenly compared against the PER-WRITER ceiling) — a conforming store must not.
+      if (r2.buffer_count !== NEAR_LIMIT) {
+        throw new Error(
+          `expected writer 'w2' to independently commit its own ${NEAR_LIMIT} entries regardless ` +
+            `of writer 'w1's own near-full partition on the same key, got buffer_count=${r2.buffer_count}`,
+        );
+      }
+    },
+  });
+
+  cases.push({
+    law: 'PER_WRITER_BUDGET',
+    name: 'the whole-file backstop binds across combined writers even when no single writer exceeds its own per-writer ceiling',
+    run: async () => {
+      const { runId, stepId } = adapter.makeKey();
+      const THIRD = Math.floor(BUFFER_BACKSTOP_COUNT / 3) + 10; // 3× exceeds the backstop; each alone is well under BUFFER_LIMIT_COUNT
+      await store.append(runId, stepId, batch(THIRD, 'a'), { writerNonce: 'a' });
+      await store.append(runId, stepId, batch(THIRD, 'b'), { writerNonce: 'b' });
+
+      let caught: unknown;
+      try {
+        await store.append(runId, stepId, batch(THIRD, 'c'), { writerNonce: 'c' });
+      } catch (err) {
+        caught = err;
+      }
+      if (!(caught instanceof WorkflowError) || caught.code !== 'BUFFER_FULL') {
+        throw new Error(
+          `expected a BUFFER_FULL WorkflowError once the combined file exceeds the backstop, got: ${caught}`,
+        );
+      }
+      const details = caught.details as { scope?: string };
+      if (details.scope !== 'file') {
+        throw new Error(
+          `expected details.scope === 'file' for a whole-file-backstop refusal, got: ${JSON.stringify(details)}`,
+        );
+      }
+    },
+  });
+
+  if (adapter.bytesOracle !== undefined) {
+    cases.push({
+      law: 'PER_WRITER_BUDGET',
+      name: "byte-exactness (adapter-supplied oracle): AppendResult's writer/file byte numbers match the oracle's own independent computation",
+      run: async () => {
+        const { runId, stepId } = adapter.makeKey();
+        const NONCE = 'byte-oracle-writer';
+        const result = await store.append(runId, stepId, [{ event: 'e1' }, { event: 'e2' }], {
+          writerNonce: NONCE,
+        });
+        const oracle = await adapter.bytesOracle!(runId, stepId, NONCE);
+        if (result.buffer_bytes !== oracle.bytes || result.buffer_count !== oracle.count) {
+          throw new Error(
+            `expected AppendResult writer-scope {count:${oracle.count}, bytes:${oracle.bytes}} per the ` +
+              `oracle, got {count:${result.buffer_count}, bytes:${result.buffer_bytes}}`,
+          );
+        }
+      },
+    });
+  } else {
+    cases.push(
+      skipCase(
+        'PER_WRITER_BUDGET',
+        'byte-exactness against an adapter-supplied oracle',
+        'adapter did not supply bytesOracle (count-based assertions above still ran)',
+      ),
+    );
+  }
+
+  return cases;
+}
+
+// ── VERBATIM (issue #197 PR-1, the seal rung's byte-fidelity guarantee) ──────────────────────────
+function buildVerbatimCases(
+  adapter: FencedTraceBufferContractAdapter,
+): FencedTraceBufferContractCase[] {
+  const { store } = adapter;
+  if (!storeDeclaresSeal(store)) {
+    return [
+      skipCase(
+        'VERBATIM',
+        'a seal moves bytes/shape without loss',
+        "store does not declare 'seal'",
+      ),
+    ];
+  }
+
+  const cases: FencedTraceBufferContractCase[] = [];
+
+  // Shape-tolerant sibling — runs UNCONDITIONALLY for every seal-declaring store (in-memory has no
+  // on-disk representation at all, so only logical content/order can be asserted for it).
+  cases.push({
+    law: 'VERBATIM',
+    name: 'shape-tolerant: sealed content preserves every entry, in order, with no duplication or loss',
+    run: async () => {
+      const { runId, stepId } = adapter.makeKey();
+      const B: AgentTraceEntry[] = [{ event: 'v0' }, { event: 'v1' }, { event: 'v2' }];
+      await store.append(runId, stepId, B);
+      await store.sealFenced!(runId, stepId, passingGuard());
+
+      const sealedArtifacts = (await store.listSealedForRun!(runId)).filter(
+        (a) => a.step_id === stepId,
+      );
+      const events = sealedArtifacts.flatMap((a) =>
+        a.lines.flatMap((l) => l.entries.map((e) => e.event)),
+      );
+      if (JSON.stringify(events) !== JSON.stringify(['v0', 'v1', 'v2'])) {
+        throw new Error(
+          `expected sealed content ['v0','v1','v2'] in order, got ${JSON.stringify(events)}`,
+        );
+      }
+    },
+  });
+
+  if (adapter.rawWalAccess !== undefined) {
+    cases.push({
+      law: 'VERBATIM',
+      name: 'fs-scoped: a seal moves the live WAL bytes to the sealed artifact byte-for-byte (no parse/re-copy)',
+      run: async () => {
+        const { runId, stepId } = adapter.makeKey();
+        await store.append(runId, stepId, [{ event: 'raw1' }, { event: 'raw2' }]);
+        const rawBefore = await adapter.rawWalAccess!.readLiveRaw(runId, stepId);
+        if (rawBefore === undefined) {
+          throw new Error('expected the live WAL to exist (raw bytes) before sealing');
+        }
+
+        const result = await store.sealFenced!(runId, stepId, passingGuard());
+        if (result.sealed !== true) {
+          throw new Error(`expected {sealed:true}, got: ${JSON.stringify(result)}`);
+        }
+
+        const rawAfter = await adapter.rawWalAccess!.readSealedRaw(runId, stepId, 0);
+        if (rawAfter === undefined) {
+          throw new Error(
+            'expected the sealed artifact to exist (raw bytes) at seq 0 after sealing',
+          );
+        }
+        if (rawAfter !== rawBefore) {
+          throw new Error(
+            'expected the sealed artifact bytes to be byte-for-byte identical to the pre-seal live ' +
+              `WAL bytes, got a difference (before=${JSON.stringify(rawBefore)}, after=${JSON.stringify(rawAfter)})`,
+          );
+        }
+      },
+    });
+  } else {
+    cases.push(
+      skipCase(
+        'VERBATIM',
+        'byte-for-byte raw comparison against an adapter-supplied rawWalAccess hook',
+        'adapter did not supply rawWalAccess (the shape-tolerant sibling case above still ran)',
+      ),
+    );
+  }
+
+  return cases;
+}
+
 /**
  * Builds the contract cases for `adapter`. See each law's own doc above (the `build*Case`
  * functions) for what it asserts. For `fenceForm: 'native-predicate'` adapters, `CS_OCCUPANCY`,
@@ -475,6 +993,77 @@ export function fencedTraceBufferContract(
       if (anyDeclared && !allDeclared) {
         throw new Error(
           `store declares a SUBSET of the fenced trio (must be all-or-nothing): ${JSON.stringify(has)}`,
+        );
+      }
+    },
+  });
+
+  // issue #197 PR-1: the capability-ladder STRUCTURAL cases below. The first three exercise
+  // `validateTraceCapabilities` against hand-built STUB stores (never the real adapter store) —
+  // this is deliberately a MECHANISM test: PR-1 ships `validateTraceCapabilities` itself, but
+  // invoking it at real injection seams is PR-2's job, so there is no real call site yet whose
+  // behavior this could observe indirectly.
+  cases.push({
+    law: 'STRUCTURAL',
+    name: 'validateTraceCapabilities: declaring writer_nonce_carriage without seal methods throws TRACE_CAPABILITY_INCONSISTENT',
+    run: async () => {
+      const stub = minimalStubStore(new Set<TraceCapability>(['writer_nonce_carriage']));
+      const err = catchSync(() => validateTraceCapabilities(stub));
+      assertCapabilityInconsistent(err, 'writer_nonce_carriage');
+    },
+  });
+
+  cases.push({
+    law: 'STRUCTURAL',
+    name: 'validateTraceCapabilities: declaring seal without the fenced trio + sealFenced/listSealedForRun throws TRACE_CAPABILITY_INCONSISTENT',
+    run: async () => {
+      const stub = minimalStubStore(new Set<TraceCapability>(['seal'])); // no fenced trio, no sealFenced
+      const err = catchSync(() => validateTraceCapabilities(stub));
+      assertCapabilityInconsistent(err, 'seal');
+    },
+  });
+
+  cases.push({
+    law: 'STRUCTURAL',
+    name: 'validateTraceCapabilities: an undeclared store (no traceCapabilities at all) is a silent no-op — trio-alone stays legal',
+    run: async () => {
+      const stub = minimalStubStore(undefined);
+      const err = catchSync(() => validateTraceCapabilities(stub));
+      if (err !== undefined) {
+        throw new Error(`expected no throw for an undeclared store, got: ${err}`);
+      }
+    },
+  });
+
+  cases.push({
+    law: 'STRUCTURAL',
+    name: "traceCapabilities is immutable: two reads of the REAL adapter store's declaration are content-identical",
+    run: async () => {
+      const first = store.traceCapabilities;
+      const second = store.traceCapabilities;
+      const firstArr = [...(first ?? [])].sort();
+      const secondArr = [...(second ?? [])].sort();
+      if (JSON.stringify(firstArr) !== JSON.stringify(secondArr)) {
+        throw new Error(
+          `expected two reads of traceCapabilities to be content-identical, got ${JSON.stringify(firstArr)} then ${JSON.stringify(secondArr)}`,
+        );
+      }
+    },
+  });
+
+  cases.push({
+    law: 'STRUCTURAL',
+    name: "the REAL adapter store's own declaration is internally consistent (ladder holds for what it actually declares)",
+    run: async () => {
+      const caps = store.traceCapabilities;
+      if (caps?.has('seal') === true && !storeDeclaresSeal(store)) {
+        throw new Error(
+          "adapter store declares 'seal' but storeDeclaresSeal(store) is false — declared but inconsistent",
+        );
+      }
+      if (caps?.has('writer_nonce_carriage') === true && !storeDeclaresNonceCarriage(store)) {
+        throw new Error(
+          "adapter store declares 'writer_nonce_carriage' but storeDeclaresNonceCarriage(store) is false — declared but inconsistent",
         );
       }
     },
@@ -716,6 +1305,15 @@ export function fencedTraceBufferContract(
     cases.push(buildPerKeyIndependenceCase(adapter));
     cases.push(buildNoSilentLossCase(adapter));
   }
+
+  // ── Capability-ladder laws (issue #197 PR-1): CARRIAGE_ROUND_TRIP, SEAL, SEAL_BUDGET,
+  // PER_WRITER_BUDGET, VERBATIM. Each produces a visible documented-skip (never a silent
+  // omission) for a store that doesn't declare the relevant rung — see each build*Cases
+  // function's own doc.
+  cases.push(...buildCarriageRoundTripCases(adapter));
+  cases.push(...buildSealCases(adapter));
+  cases.push(...buildPerWriterBudgetCases(adapter));
+  cases.push(...buildVerbatimCases(adapter));
 
   return cases;
 }

@@ -14,7 +14,7 @@
 // file-locking (an antivirus scan, an open handle from another process) can make a delete/read
 // transiently fail where POSIX would succeed immediately. No retry/delay on POSIX: a genuine
 // EACCES there is not transient, and retrying would only slow down a real permission failure.
-import { unlink, readFile, stat } from 'node:fs/promises';
+import { unlink, readFile, stat, link } from 'node:fs/promises';
 import type { Stats } from 'node:fs';
 import { WorkflowError } from '../types/workflow-error.js';
 
@@ -30,7 +30,11 @@ const RETRYABLE_ARTIFACT_ERRNO = new Set(['EBUSY', 'EIO']);
  *  stays the conservative `false` — never advertise a retry that might not help. */
 const NON_RETRYABLE_ARTIFACT_ERRNO = new Set(['EACCES', 'EISDIR', 'EPERM', 'EROFS']);
 
-function errnoCode(err: unknown): string | undefined {
+/** Exported so callers outside this module (e.g. a store's `sealFenced`) can classify a thrown
+ *  error's errno themselves — most usefully to detect `'EEXIST'` on {@link linkNoClobberThenUnlink}
+ *  without this module needing to know anything about what a caller does with that fact (issue
+ *  #197 PR-1: the seq-bump-and-retry decision belongs to the store, not to this primitive). */
+export function errnoCode(err: unknown): string | undefined {
   return (err as NodeJS.ErrnoException | undefined)?.code;
 }
 
@@ -176,4 +180,34 @@ export function toArtifactDeleteFailedError(
   const code = err instanceof FsIoError ? err.code : (errnoCode(err) ?? 'UNKNOWN');
   const message = err instanceof Error ? err.message : String(err);
   return artifactDeleteFailedError(runId, store, deleted, [{ artifact, code, message }]);
+}
+
+/**
+ * No-clobber "move" of `src` to `dest` (issue #197 PR-1, the `seal` rung's seal-by-rename — design
+ * §4). Plain POSIX `rename()` is FORBIDDEN for this use: it silently overwrites an existing `dest`,
+ * which is exactly the destructive behavior a seal must never risk (a seq collision must be
+ * detected, never silently clobbered). Implemented as the standard POSIX no-clobber trick instead:
+ *
+ *   1. `link(src, dest)` — creates a second directory entry for `src`'s existing inode at `dest`.
+ *      This step is ATOMIC and CANNOT overwrite an existing `dest`: if `dest` already exists,
+ *      `link` fails with `EEXIST` and `src` is left completely untouched (raw bytes, wherever they
+ *      already were). This is also the intended SEQ-PROBE mechanism (design §4) — a caller doing
+ *      the link-attempt-IS-the-probe pattern retries with the next `seq` on `EEXIST`, with no
+ *      separate pre-listing/TOCTOU window.
+ *   2. `deleteIfExists(src)` — removes the original directory entry, leaving `dest` as the sole
+ *      remaining reference to the SAME inode (same bytes, byte-for-byte, never re-copied/parsed).
+ *
+ * `EEXIST` from step 1 propagates RAW (undecorated, not wrapped in {@link FsIoError}) so a caller
+ * can distinguish "seq already taken — bump and retry" from every other failure via
+ * `errnoCode(err) === 'EEXIST'`. Any other errno from step 1, or any errno from step 2, is a
+ * genuine I/O failure and throws {@link FsIoError} per the module's usual discipline.
+ */
+export async function linkNoClobberThenUnlink(src: string, dest: string): Promise<void> {
+  try {
+    await withWin32Retry(() => link(src, dest));
+  } catch (err) {
+    if (errnoCode(err) === 'EEXIST') throw err;
+    throw new FsIoError('link', src, err);
+  }
+  await deleteIfExists(src);
 }

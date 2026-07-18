@@ -166,16 +166,28 @@ describe('store-fs-guard — no raw unlink outside fs-io.ts / the atomic-write.t
 // coupling the two guards' internals together).
 const WIRED_STORES = ['JsonTraceBufferStore', 'FailedAttemptStore', 'JsonFileStore'];
 
-/** Every `.test.ts` file anywhere in the repo that calls `perRunArtifactStoreContract(`,
- *  cross-referenced against which WIRED store class name(s) it also imports/references — a
- *  same-file co-occurrence proxy for "this store was actually run through the TCK" (source-text,
- *  not type-reflection, matching this repo's established anti-recurrence convention). */
+/** This guard's OWN file — excluded from its own scan below (issue #197 PR-1, design §12: fixing
+ *  the self-scan false positive that was DISCOVERED but deliberately left unfixed during issue
+ *  #207, per Guard 3's own doc below). Without this, the guard trivially "covers" every store
+ *  forever: this file's own doc comments and the `WIRED_STORES` array literal contain both the
+ *  store class name strings AND the literal substring `perRunArtifactStoreContract(` (inside the
+ *  string-literal argument to `.includes(...)` a few lines below), so scanning this file always
+ *  finds a false co-occurrence regardless of whether any REAL wiring test exists — the same
+ *  self-exclusion technique Guard 3 already uses for the analogous fenced-TCK scan. */
+const THIS_GUARD_FILE_ISSUE_183 = fileURLToPath(import.meta.url);
+
+/** Every `.test.ts` file anywhere in the repo (other than this guard's own file) that calls
+ *  `perRunArtifactStoreContract(`, cross-referenced against which WIRED store class name(s) it
+ *  also imports/references — a same-file co-occurrence proxy for "this store was actually run
+ *  through the TCK" (source-text, not type-reflection, matching this repo's established
+ *  anti-recurrence convention). */
 function tckCoveredStores(): Set<string> {
   const covered = new Set<string>();
   const packages = ['core', 'cli', 'mcp-server', 'testing'];
   for (const pkg of packages) {
     const root = join(PACKAGES_DIR, pkg, 'src');
     for (const file of walkTestFiles(root)) {
+      if (file === THIS_GUARD_FILE_ISSUE_183) continue;
       const src = readFileSync(file, 'utf8');
       if (!src.includes('perRunArtifactStoreContract(')) continue;
       for (const storeName of WIRED_STORES) {
@@ -217,10 +229,10 @@ const WIRED_FENCED_STORES = ['JsonTraceBufferStore', 'InMemoryTraceBufferStore']
  *  `WIRED_FENCED_STORES` array literal itself contain both the store class name strings AND the
  *  literal substring `fencedTraceBufferContract(` (inside the string-literal argument to
  *  `.includes(...)` a few lines below), so scanning this file would always find a false
- *  co-occurrence regardless of whether any REAL wiring test exists. Confirmed this same
- *  self-referential gap already existed, unnoticed, in Guard 2's `tckCoveredStores` above (it
- *  scans its own file too, for the same reason) — not fixed there (out of this task's scope,
- *  pre-existing and unrelated to issue #207), but not repeated here. */
+ *  co-occurrence regardless of whether any REAL wiring test exists. This same self-referential gap
+ *  existed, unnoticed, in Guard 2's `tckCoveredStores` above too — left unfixed at the time (out of
+ *  issue #207's scope) but FIXED in issue #197 PR-1 (design §12 scheduled it with this PR; see
+ *  `THIS_GUARD_FILE_ISSUE_183` above, the same technique applied there). */
 const THIS_GUARD_FILE = fileURLToPath(import.meta.url);
 
 /** Every `.test.ts` file anywhere in the repo (other than this guard's own file) that calls

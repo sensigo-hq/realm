@@ -19,6 +19,8 @@ export {
   isRetryableArtifactErrno,
   artifactDeleteFailedError,
   toArtifactDeleteFailedError,
+  errnoCode,
+  linkNoClobberThenUnlink,
 } from './store/fs-io.js';
 export type { ArtifactDeleteFailure } from './store/fs-io.js';
 export { hashParams, canonicalJson } from './store/params-hash.js';
@@ -202,7 +204,17 @@ export { countResults } from './handlers/primitives/count-results.js';
 export { compareStrings } from './handlers/primitives/compare-strings.js';
 
 // Trace buffer store (B-lite)
-export type { TraceBufferStore, BufferedEntry, AppendResult } from './store/trace-buffer-store.js';
+export type {
+  TraceBufferStore,
+  BufferedEntry,
+  AppendResult,
+  AppendOptions,
+  TraceCapability,
+  SealResult,
+  SealedWalLine,
+  SealedArtifact,
+  BufferFullDetails,
+} from './store/trace-buffer-store.js';
 export {
   InMemoryTraceBufferStore,
   normalizeEntryForBuffer,
@@ -210,4 +222,13 @@ export {
   BUFFER_LIMIT_BYTES,
   FINAL_LIMIT_ENTRIES,
   FINAL_LIMIT_BYTES,
+  BUFFER_BACKSTOP_COUNT,
+  BUFFER_BACKSTOP_BYTES,
+  SEALED_ARTIFACTS_LIMIT_PER_STEP,
+  storeDeclaresSeal,
+  storeDeclaresNonceCarriage,
+  validateTraceCapabilities,
+  checkBufferBudget,
+  bufferFullError,
+  flattenWalBatches,
 } from './store/trace-buffer-store.js';
