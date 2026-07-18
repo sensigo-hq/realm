@@ -455,6 +455,72 @@ describe('JsonTraceBufferStore', () => {
       expect(r2.buffer_count).toBe(r2.file_count);
       expect(r2.buffer_bytes).toBe(r2.file_bytes);
     });
+
+    it('all-bare + torn line ⇒ ⊥ reports the whole file (byte-attribution rule pinned, correction)', async () => {
+      // The ⊥ (bare) partition's byte count is a RESIDUAL (whole-file bytes minus every nonced
+      // partition's own bytes) — never a direct sum over parsed bare lines — precisely so a
+      // torn/unparseable line's raw bytes (which never parse into ANY partition) still land
+      // somewhere: on ⊥, by construction of the subtraction, rather than vanishing. With no
+      // nonced partition at all here, the residual is arithmetically the WHOLE raw file — this
+      // pins that a torn line's bytes are not silently dropped from ⊥'s own count.
+      await store.append('run-1', 'step-a', [{ event: 'bare' }]);
+      const path = join(dir, walFileName('run-1', 'step-a'));
+      await appendFile(path, '{ this is not valid json\n', 'utf8');
+
+      // Independent ground truth: raw on-disk bytes, measured directly — never derived from the
+      // store's own return values.
+      const rawContent = await readFile(path, 'utf8');
+      const rawBytes = Buffer.byteLength(rawContent);
+
+      const probe = await store.append('run-1', 'step-a', []); // empty-entries probe, bare (⊥)
+
+      expect(probe.buffer_bytes).toBe(probe.file_bytes);
+      expect(probe.buffer_bytes).toBe(rawBytes);
+      expect(probe.file_bytes).toBe(rawBytes);
+    });
+
+    it('mixed (nonced + bare) + torn line ⇒ torn bytes belong to ⊥, never the nonced writer (correction)', async () => {
+      await store.append('run-1', 'step-a', [{ event: 'nonced' }], { writerNonce: 'N' });
+      await store.append('run-1', 'step-a', [{ event: 'bare' }]);
+      const path = join(dir, walFileName('run-1', 'step-a'));
+      await appendFile(path, '{ this is not valid json\n', 'utf8');
+
+      const rawContent = await readFile(path, 'utf8');
+      const rawBytes = Buffer.byteLength(rawContent);
+
+      // Recover the nonced line's EXACT on-disk shape (including its real `ts`, never guessed) so
+      // its expected serialized size can be computed independently of the store's own bookkeeping.
+      const parsedLines = rawContent
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0)
+        .map((l) => {
+          try {
+            return JSON.parse(l) as { ts: number; entries: unknown[]; nonce?: string };
+          } catch {
+            return undefined;
+          }
+        });
+      const noncedLine = parsedLines.find((l) => l?.nonce === 'N');
+      expect(noncedLine).toBeDefined();
+      const expectedNoncedBytes = Buffer.byteLength(
+        JSON.stringify({
+          ts: noncedLine!.ts,
+          entries: noncedLine!.entries,
+          nonce: noncedLine!.nonce,
+        }) + '\n',
+      );
+
+      const noncedProbe = await store.append('run-1', 'step-a', [], { writerNonce: 'N' });
+      expect(noncedProbe.buffer_bytes).toBe(expectedNoncedBytes); // exactly its own line, nothing borrowed from ⊥
+      expect(noncedProbe.file_bytes).toBe(rawBytes);
+
+      const bareProbe = await store.append('run-1', 'step-a', []); // ⊥
+      // ⊥ = whole file minus the nonced partition's own bytes ⇒ its own bare line PLUS the torn
+      // line's bytes (never attributable to the nonced writer).
+      expect(bareProbe.buffer_bytes).toBe(rawBytes - expectedNoncedBytes);
+      expect(bareProbe.file_bytes).toBe(rawBytes);
+    });
   });
 
   describe('sealed artifacts join deleteAllForRun (issue #197 PR-1)', () => {
