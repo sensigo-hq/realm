@@ -352,7 +352,12 @@ describe('finalizer drain — failure handling (non-fatal, drain continues)', ()
           depends_on: [],
           handler: 'domain_ok',
           timeout_seconds: 0.05,
-          retry: { max_attempts: 2, base_delay_ms: 5, total_timeout_seconds: 0.01 },
+          // S6 correction: raised from 0.01 (a ~10ms real-timer budget the review flagged as the
+          // same flake class the reliability.test.ts redesigns targeted) to 0.15 — still smaller
+          // than the domain step's own 0.05s timeout_seconds (so the property this test proves —
+          // a cap PRESENT on the domain step — is unchanged), but with real headroom against the
+          // domain_ok handler's near-instant resolution.
+          retry: { max_attempts: 2, base_delay_ms: 5, total_timeout_seconds: 0.15 },
         },
         fin_slow: {
           description:

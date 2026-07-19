@@ -41,6 +41,7 @@ import {
   shouldEnforceTimeout,
   DEFAULT_EXECUTION_TIMEOUT_SECONDS,
   resolveCapMs,
+  sleepWouldExceedCap,
 } from './claim-liveness.js';
 import { computeBackoff } from './backoff.js';
 import {
@@ -1719,7 +1720,7 @@ export async function executeStep(
       // exact-fit sleep is doomed too — never sleep into a wall). dispatchError already holds the
       // ACTUAL last error (e.g. a 429 with retry_after in its details); the post-loop wrap gate
       // below decides whether/how to wrap it — this site only decides whether to sleep at all.
-      if (capMs !== undefined && Date.now() - capStart + waitMs >= capMs) {
+      if (capMs !== undefined && sleepWouldExceedCap(Date.now() - capStart, waitMs, capMs)) {
         capExhausted = true;
         break;
       }

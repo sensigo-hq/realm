@@ -69,7 +69,15 @@ export const RECLAIM_FLOOR_SECONDS = 900; // 15 min
  * drift apart — see the congruence-by-construction test in claim-liveness.test.ts.
  */
 export function worstCaseScheduleSeconds(retry: RetryConfig, perAttemptSec: number): number {
-  const n = retry.max_attempts;
+  // issue #140 correction (B1): the loader ADMITS an absent `max_attempts` (only validates its
+  // shape IF present — see yaml-loader.ts's retry-block walk; W1's own comment says so), so a
+  // loader-legal `retry: {backoff: fixed, base_delay_ms: 1000}` step reaches here with
+  // `retry.max_attempts === undefined` despite the TYPE declaring it required. An unguarded read
+  // is a NaN cascade: NaN capMs arms every guard, NaN effectiveMs instant-timeouts attempt 1 via
+  // setTimeout's own NaN→0 coercion, and `new Date(NaN).toISOString()` THROWS inside
+  // computeClaimDeadline (called from claimStep) — every execute_step on such a step would crash.
+  // Mirror execution-loop's own `retryConfig?.max_attempts ?? 1` default idiom exactly.
+  const n = retry.max_attempts ?? 1;
   let backoffSec = 0;
   for (let a = 1; a < n; a++) backoffSec += computeBackoff(retry, a) / 1000;
   return n * perAttemptSec + backoffSec;
@@ -92,6 +100,19 @@ export function resolveCapMs(retry: RetryConfig, timeoutMs: number): number {
 }
 
 /**
+ * Pure predicate for the engine's site-(c) sleep guard (issue #140 correction, S2): whether
+ * sleeping `waitMs` more, on top of `elapsedMs` already spent, would meet or exceed the total-time
+ * cap `capMs`. `>=`, not `>` — an exact-fit sleep is doomed too (never sleep into a wall). Module
+ * export ONLY (not re-exported from `packages/core/src/index.ts`) — this exists purely so the
+ * boundary itself can be unit-pinned without depending on real-timer elapsed-time precision (a
+ * real clock is never observed to read EXACTLY `capMs - waitMs`, so a test driving this through
+ * `executeStep` cannot discriminate `>=` from `>` at the boundary — seeing this in isolation can).
+ */
+export function sleepWouldExceedCap(elapsedMs: number, waitMs: number, capMs: number): boolean {
+  return elapsedMs + waitMs >= capMs;
+}
+
+/**
  * Computes the claim deadline for `stepName` at claim time. A CONCRETE deadline is returned ONLY
  * for a reliably time-boundable claim: an `execution: 'auto'` (handler-driven) step in a workflow
  * with NO `execution: 'finalizer'` steps (so no finalizer drain can legitimately extend the claim
@@ -108,15 +129,22 @@ export function resolveCapMs(retry: RetryConfig, timeoutMs: number): number {
  * single-attempt formula `max(RECLAIM_FLOOR, perAttemptSec + MARGIN)`, so non-retry steps'
  * horizons are byte-unchanged.
  *
- * Issue #140 AMENDMENT: since every retry-configured `execution: 'auto'` step is now DEFAULT-
- * CAPPED at exactly this same worst-case schedule (see `resolveCapMs`), the engine's runtime
- * enforcement now tracks this DETECTION horizon's own declared-schedule assumption — the prior
- * "does not attempt to model `retry_after`" caveat is RETIRED here: a runtime `retry_after`
- * (rate-limit 429 override) that would push a step's wall-clock materially past this horizon now
- * hits the engine's own cap first (`STEP_RETRY_EXHAUSTED`, `exhausted_by: 'total_timeout'`) rather
- * than silently sleeping past it. The horizon itself remains a best-effort, floored, advisory bound
- * for the DETECTION label (Phase 1 gates no action on it) — only the runtime ENFORCEMENT side
- * changed; this function's formula did not.
+ * Issue #140 AMENDMENT + correction (B2): the horizon now consumes the SAME resolved cap the
+ * engine enforces — `(explicit total_timeout_seconds ?? worstCaseScheduleSeconds) + margin`,
+ * via `resolveCapMs` (record §3: `(cap ?? worstCase) + margin`). This is NOT merely "the runtime
+ * enforcement side changed; this function's formula did not" (an earlier, INCORRECT claim this
+ * paragraph made) — the horizon's own formula changed too, and had to: a step declaring an
+ * EXPLICIT `total_timeout_seconds` ABOVE its worst-case schedule (the legitimate long-wait
+ * opt-in this feature exists to support) would otherwise sleep past a horizon computed from the
+ * worst-case schedule ALONE, well before its declared cap — a premature `claim_stale` mid-
+ * legitimate-sleep, exactly the silent-duplicate hazard this program closes. Consuming
+ * `resolveCapMs` closes it: retry-no-cap still reduces to the worst-case schedule (unchanged,
+ * every pre-existing pin stays byte-identical), no-retry still reduces to `perAttemptSec`
+ * (unchanged), and retry-WITH-an-explicit-cap now widens the horizon to `cap + margin` — the
+ * record's mandate. The prior "does not attempt to model `retry_after`" caveat remains retired
+ * for the DEFAULT-cap population for the same reason as before (enforcement now tracks the
+ * declared schedule there too); it is now ALSO honestly retired for the explicit-cap population,
+ * which this correction is what actually makes true.
  */
 export function computeClaimDeadline(
   definition: WorkflowDefinition,
@@ -128,8 +156,14 @@ export function computeClaimDeadline(
   const hasFinalizers = Object.values(definition.steps).some((s) => s.execution === 'finalizer');
   if (step.execution !== 'auto' || hasFinalizers) return null;
   const perAttemptSec = step.timeout_seconds ?? DEFAULT_EXECUTION_TIMEOUT_SECONDS;
+  // B2: consume the resolved cap (explicit total_timeout_seconds, when declared, else the shared
+  // worst-case formula) — NOT worstCaseScheduleSeconds directly — so an explicit cap ABOVE the
+  // worst-case schedule widens the horizon instead of leaving it silently short. resolveCapMs
+  // returns MILLISECONDS; this function works in SECONDS throughout, hence the /1000.
   const worstCaseSec =
-    step.retry !== undefined ? worstCaseScheduleSeconds(step.retry, perAttemptSec) : perAttemptSec;
+    step.retry !== undefined
+      ? resolveCapMs(step.retry, perAttemptSec * 1000) / 1000
+      : perAttemptSec;
   const horizonSeconds = Math.max(RECLAIM_FLOOR_SECONDS, worstCaseSec + RECLAIM_MARGIN_SECONDS);
   return new Date(now.getTime() + horizonSeconds * 1000).toISOString();
 }

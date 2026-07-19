@@ -38,16 +38,16 @@ All notable changes to this project are documented here.
   `retry.total_timeout_seconds` is now DEFAULT-CAPPED at the shared worst-case-schedule formula
   (`max_attempts × the step's own per-attempt timeout + the declared backoffs between attempts`) —
   the same formula the claim-reclaim horizon already used. The default cap equals the step's own
-  declared schedule, so the horizon number is unchanged and the cap binds only when a runtime wait
-  (a rate-limit `retry_after`) pushes an attempt's actual wall-clock MATERIALLY past that declared
-  schedule. **This is a deliberate, disclosed behavior change:** a retry-configured step whose
-  runtime waits exceed its own declared schedule now settles as an honest
-  `STEP_RETRY_EXHAUSTED (exhausted_by: 'total_timeout')` instead of sleeping past its claim
-  horizon — closing the silent-duplicate hazard where a `claim_stale`-labeled, still-legitimately-
-  sleeping step could become eligible for a premature `realm run reclaim --all --force` re-drive.
-  The `claim-liveness.ts` `computeClaimDeadline` JSDoc's prior "does not attempt to model
-  `retry_after`" caveat is retired accordingly — runtime enforcement now tracks the same
-  declared-schedule assumption the detection horizon always used.
+  declared schedule, so the horizon number is unchanged **for the default-cap population**, and
+  the cap binds only when a runtime wait (a rate-limit `retry_after`) pushes an attempt's actual
+  wall-clock MATERIALLY past that declared schedule. A step declaring an EXPLICIT
+  `retry.total_timeout_seconds` instead widens the horizon to `cap + margin` (record §3) — so a
+  legitimate long-wait opt-in is never mislabeled `claim_stale` mid-sleep. **This is a deliberate,
+  disclosed behavior change:** a retry-configured step whose runtime waits exceed its own declared
+  schedule now settles as an honest `STEP_RETRY_EXHAUSTED (exhausted_by: 'total_timeout')` instead
+  of sleeping past its claim horizon — closing the silent-duplicate hazard where a
+  `claim_stale`-labeled, still-legitimately-sleeping step could become eligible for a premature
+  `realm run reclaim --all --force` re-drive.
 - The `idempotent` step hint now documents (and the loader's `IDEMPOTENT_INERT_IN_FINALIZER`
   warning now states, variant-aware on whether `retry.on_timeout` is also declared) that it gates
   TWO separate opt-in mechanisms — the pre-existing bounded-time auto-reclaim allow-list (inert in
@@ -70,7 +70,10 @@ All notable changes to this project are documented here.
 - Runtime `retry_after` sleeps are now bounded for every retry-configured `execution: 'auto'` step
   (default cap = the declared worst-case schedule; an explicit `retry.total_timeout_seconds`
   overrides it) — previously, an uncapped retry-configured step could sleep an arbitrarily long
-  rate-limit `retry_after` well past its own claim-liveness horizon.
+  rate-limit `retry_after` well past its own claim-liveness horizon. The `claim-liveness.ts`
+  `computeClaimDeadline` JSDoc's prior "does not attempt to model `retry_after`" caveat is retired
+  accordingly — runtime enforcement now tracks the same declared-schedule assumption the detection
+  horizon always used.
 
 ---
 

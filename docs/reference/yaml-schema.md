@@ -673,6 +673,10 @@ fetch_document:
 > attempt). This is a stronger claim than `idempotent` alone, which only guarantees safe
 > SEQUENTIAL re-application; declare both explicitly, the engine never infers one from the other.
 
+> **Version skew:** on an engine older than #140, `on_timeout` and `total_timeout_seconds` are
+> unrecognized retry sub-keys and are silently ignored, so a declared cap goes unenforced — this
+> fails safe: retry semantics are otherwise unchanged, only the bound is missing.
+
 ---
 
 ## Services

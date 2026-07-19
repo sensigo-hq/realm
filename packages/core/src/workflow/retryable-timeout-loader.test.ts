@@ -37,6 +37,14 @@ steps:
       );
     });
 
+    // S5(b) correction: augmented (never deleted) — the original negative-only assertion had a
+    // self-catching sentinel bug: if loadWorkflowFromString stopped throwing entirely, the
+    // `throw new Error('expected throw')` line itself would be caught below, and 'expected throw'
+    // does not match /rung|capability ladder/i either — the negative assertion would falsely PASS
+    // even though the loader silently stopped rejecting the workflow. The added POSITIVE
+    // `toContain` of the actual shipped teaching sentence closes that gap (a non-throw now fails
+    // on the positive assertion, not just fails to fail the negative one). The negative regex is
+    // also widened (never narrowed) to catch more of the #197 vocabulary family.
     it('teaching text is declared-never-inferred and does NOT use issue #197 capability/rung vocabulary', () => {
       try {
         loadWorkflowFromString(`
@@ -55,7 +63,10 @@ steps:
         throw new Error('expected throw');
       } catch (err) {
         const message = (err as WorkflowError).message;
-        expect(message).not.toMatch(/rung|capability ladder/i);
+        expect(message).not.toMatch(/rung|capabilit|carriage|seal|trio/i);
+        expect(message).toContain(
+          "'retry.on_timeout: true' requires 'idempotent: true' declared on the step",
+        );
       }
     });
 
@@ -289,6 +300,34 @@ steps:
       max_attempts: 3
       on_timeout: true
       total_timeout_seconds: 50
+`);
+      const w2 = warnings.find((w) => w.code === 'TOTAL_TIMEOUT_BELOW_ATTEMPT');
+      expect(w2).toBeDefined();
+    });
+
+    // S5(a) correction: the test above always declares an EXPLICIT timeout_seconds, so it can
+    // never exercise the `explicitTimeoutSeconds ?? DEFAULT_EXECUTION_TIMEOUT_SECONDS` fallback
+    // branch of W2(b)'s effective-per-attempt computation — a mutation dropping that `??` would
+    // survive it undetected (effectivePerAttemptSeconds would silently read `undefined`, and
+    // `1800 <= undefined` is `false` in JS, so W2 simply wouldn't fire — but the explicit
+    // timeout_seconds:50 case above never routes through that branch to notice). This fixture
+    // declares NO timeout_seconds at all, forcing the fallback to DEFAULT_EXECUTION_TIMEOUT_SECONDS
+    // (3600s); max_attempts:2 keeps W1 out of the way.
+    it('(b) fallback branch: fires via the DEFAULT_EXECUTION_TIMEOUT_SECONDS fallback when timeout_seconds is absent entirely', () => {
+      const { warnings } = loadWorkflowFromStringWithDiagnostics(`
+id: w2b-fallback-wf
+name: W2b Fallback
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+    idempotent: true
+    retry:
+      max_attempts: 2
+      on_timeout: true
+      total_timeout_seconds: 1800
 `);
       const w2 = warnings.find((w) => w.code === 'TOTAL_TIMEOUT_BELOW_ATTEMPT');
       expect(w2).toBeDefined();

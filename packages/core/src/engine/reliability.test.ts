@@ -13,6 +13,7 @@ import { MockAdapter } from '../adapters/mock-adapter.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
 import { DEFAULT_EXECUTION_TIMEOUT_SECONDS } from './claim-liveness.js';
+import { loadWorkflowFromString } from '../workflow/yaml-loader.js';
 
 // Workflow with a single step that times out at 0.05s and allows 2 retry attempts.
 const timeoutDef: WorkflowDefinition = {
@@ -1008,6 +1009,122 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
     expect(elapsedMs).toBeLessThan(500); // the 200ms backoff was never actually slept
   });
 
+  // S1 correction (restores the record §2 "uniform wrap (unopted-capped clip-abort included)"
+  // property's witness — the review verified a wrap-gate mutant exempting unopted STEP_TIMEOUT
+  // survives the ENTIRE suite without this test, since the sibling test above was redesigned to
+  // route through site (c) instead). HAND-BUILT unopted def, total_timeout_seconds: 0 — robustly
+  // (no knife-edge) already-exhausted from the start: remaining = 0 − elapsed is <= 0 for ANY
+  // elapsed. Attempt 1 clips to effectiveMs = 0 ⇒ instant STEP_TIMEOUT ⇒ site (b) sets
+  // capExhausted ⇒ wraps, uniformly, with NO on_timeout and NO idempotent declared at all.
+  it('S1 — unopted clipped-STEP_TIMEOUT wrap witness: a hand-built unopted def with total_timeout_seconds:0 clips attempt 1 to effectiveMs=0 and wraps uniformly', async () => {
+    const def: WorkflowDefinition = {
+      id: 'unopted-clip-wrap-witness-wf',
+      name: 'Unopted Clip Wrap Witness',
+      version: 1,
+      steps: {
+        'step-one': {
+          description: 'No on_timeout, no idempotent — cap already exhausted from the start',
+          execution: 'auto',
+          depends_on: [],
+          timeout_seconds: 1,
+          retry: { max_attempts: 3, total_timeout_seconds: 0 },
+        },
+      },
+    };
+    const store = new JsonFileStore(dir);
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+
+    let calls = 0;
+    const dispatcher: StepDispatcher = () => {
+      calls++;
+      return new Promise<Record<string, unknown>>(() => undefined); // slow/hanging — the clipped 0ms timer wins
+    };
+
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher,
+    });
+
+    expect(calls).toBe(1);
+    // Structured assertions only — no message-parsing beyond the wrap phrase itself.
+    expect(envelope.errors[0]).toContain('failed after 1 attempts');
+    expect(envelope.error_code).toBe('STEP_RETRY_EXHAUSTED');
+    // The wrap stores the inner error's MESSAGE, not a code — there is no last_error_code field.
+    expect(envelope.error_details?.['lastError']).toContain('timed out');
+    expect(envelope.error_details?.['exhausted_by']).toBe('total_timeout');
+    const lastEvidence = envelope.evidence[envelope.evidence.length - 1];
+    expect(lastEvidence?.effective_timeout_seconds).toBe(0);
+    expect(lastEvidence?.clipped_to_ms).toBe(0);
+  });
+
+  // The test above cannot discriminate the clip floor (max(0, remainingMs())): the capStart→clip
+  // stretch is synchronous, so remainingMs() reads ~0 with or without the floor either way. This
+  // dedicated pin mocks Date.now so capStart reads T0 and the attempt-1 clip computation reads
+  // T0+10ms (simulating 10ms of clock drift/GC-pause between the two) — WITH the floor,
+  // effectiveMs clips to 0 (max(0, -10) = 0); WITHOUT it (probe: `max(0, remainingMs())` →
+  // `remainingMs()`), effectiveMs would read -10ms ⇒ effective_timeout_seconds === -0.01 ⇒ RED.
+  // Date-mocking leaves the real setTimeout the fixture needs untouched (only Date.now is spied).
+  //
+  // The mock is keyed on the CALLER's stack, not raw call order: JsonFileStore.claimStep acquires
+  // a proper-lockfile lock BEFORE execution-loop.ts's own Date.now() calls even begin (that
+  // library calls Date.now() internally for its own mtime-precision probing), so a naive
+  // call-order queue (mockReturnValueOnce ×2) silently intercepts THOSE calls instead of
+  // capStart/effectiveMs — discovered live while writing this pin. Filtering on
+  // `stack.includes('execution-loop.ts')` targets exactly the two calls this pin cares about
+  // (capStart, then the attempt-1 effectiveMs computation) regardless of how many lock-internal
+  // calls precede or follow them.
+  it('S1 floor pin: the clip floor prevents a negative effective_timeout_seconds under a simulated clock-drift window between capStart and attempt 1', async () => {
+    const def: WorkflowDefinition = {
+      id: 'clip-floor-pin-wf',
+      name: 'Clip Floor Pin',
+      version: 1,
+      steps: {
+        'step-one': {
+          description: 'Cap=0; Date.now mocked to simulate a 10ms drift before attempt 1 clips',
+          execution: 'auto',
+          depends_on: [],
+          timeout_seconds: 1,
+          retry: { max_attempts: 3, total_timeout_seconds: 0 },
+        },
+      },
+    };
+    const store = new JsonFileStore(dir);
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+
+    const realNow = Date.now.bind(Date);
+    let executionLoopCallCount = 0;
+    const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+      const isFromExecutionLoop = (new Error().stack ?? '').includes('execution-loop.ts');
+      if (!isFromExecutionLoop) return realNow(); // proper-lockfile's own internal calls, untouched
+      executionLoopCallCount++;
+      if (executionLoopCallCount === 1) return 1_000_000; // capStart reads T0
+      if (executionLoopCallCount === 2) return 1_000_010; // attempt-1's effectiveMs reads T0+10ms
+      return realNow(); // site (b) and beyond — real epoch dwarfs T0, capExhausted still ends up true
+    });
+
+    try {
+      let calls = 0;
+      const dispatcher: StepDispatcher = () => {
+        calls++;
+        return new Promise<Record<string, unknown>>(() => undefined);
+      };
+
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: {},
+        dispatcher,
+      });
+
+      expect(calls).toBe(1);
+      expect(envelope.evidence[0]?.effective_timeout_seconds).toBe(0);
+    } finally {
+      dateNowSpy.mockRestore();
+    }
+  });
+
   it('sleep-guard-surfaces-429: a huge retry_after is never actually slept — the cap breaks BEFORE the sleep, bounding elapsed wall-clock time', async () => {
     const def: WorkflowDefinition = {
       id: 'sleep-guard-429-wf',
@@ -1351,5 +1468,44 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
     } finally {
       setTimeoutSpy.mockRestore();
     }
+  });
+
+  it('B1 engine pin: a YAML-LOADED auto step whose retry block lacks max_attempts settles normally — no NaN-cascade instant STEP_TIMEOUT, no wrap', async () => {
+    // The loader ADMITS an absent max_attempts (only validates its shape IF present) — this
+    // fixture is loaded through the REAL loader path (not hand-built) to prove the state is
+    // genuinely reachable via authored YAML, not just a contrived object. Generous timeout_seconds
+    // so an instant (NaN-driven) STEP_TIMEOUT would be unmistakable against a dispatcher that
+    // resolves in ~10ms.
+    const def = loadWorkflowFromString(`
+id: no-max-attempts-wf
+name: No Max Attempts
+version: 1
+steps:
+  step-one:
+    description: Retries without max_attempts declared
+    execution: auto
+    timeout_seconds: 300
+    retry:
+      backoff: fixed
+      base_delay_ms: 1000
+`);
+    const store = new JsonFileStore(dir);
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+
+    let calls = 0;
+    const dispatcher: StepDispatcher = () => {
+      calls++;
+      return new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 10));
+    };
+
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(calls).toBe(1);
   });
 });
