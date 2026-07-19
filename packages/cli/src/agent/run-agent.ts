@@ -374,10 +374,6 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
 
       const stepName = eligible[0]!;
       const stepDef: StepDefinition = definition.steps[stepName]!;
-      // issue #217 conjunct (vi) ground truth — captured ONCE per step, before any attempt.
-      // See the repair-gate comment below for why this (not `result.command`) is the correct
-      // discriminator for "did a DEEPER chained step actually produce this error?".
-      const versionBeforeStep = currentRun.version;
 
       // issue #217: the in-drive schema-feedback repair loop. `stepInput`/`toolCallsForMeta`/
       // `result` are re-assigned on every attempt inside the `for` loop below; `repairsUsed`/
@@ -395,6 +391,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
 
       for (;;) {
         toolCallsForMeta = undefined;
+        // issue #217 conjunct (vi) ground truth — captured FRESH at the top of EVERY attempt
+        // (including the first), never once per step: a per-step capture is stale across the
+        // whole provider LLM call, so any concurrent writer (a second drive, a gate `respond`, a
+        // parallel-step settle) landing during that call would silently forfeit a legitimate
+        // repair. See the repair-gate comment below for the full discriminator rationale. Cost:
+        // one extra store read per attempt — accepted.
+        const versionBeforeAttempt = (await deps.store.get(runId)).version;
 
         if (stepDef.execution === 'agent') {
           // Resolve template-expanded prompt via buildNextActions so {{ context.resources.* }}
@@ -626,12 +629,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // The corrected, structurally-sound discriminator: a pre-claim validation rejection is
         // write-free (no run-record version bump — see execute-step.ts:77-80 / execution-loop.ts's
         // Step 2b/2c, both before claimStep). So if `result.run_version` has advanced past
-        // `versionBeforeStep` (captured before this step's first attempt), something committed to
-        // the run BEFORE this error occurred — i.e. THIS step's own claim+settle, followed by a
-        // DEEPER chained step's pre-claim rejection — so the error cannot be this step's own output/
-        // input. `result.run_version === versionBeforeStep` preserves the exact same protective
-        // intent as the record's conjunct (vi): never repair a step whose own attempt didn't
-        // actually produce the error. See run-agent.test.ts's "chained-auto no-false-repair" test.
+        // `versionBeforeAttempt` (captured fresh at the top of each repair attempt), something
+        // committed to the run BEFORE this error occurred — e.g. THIS step's own claim+settle,
+        // followed by a DEEPER chained step's pre-claim rejection — so the error cannot be this
+        // step's own output/input. A concurrent external writer bumping the run mid-attempt also
+        // lands here — the gate then fails CLOSED (repair forfeited, today's failure path). See
+        // run-agent.test.ts's "chained-auto no-false-repair" and concurrent-writer tests.
+        //
+        // #220 must keep rejected attempts write-free w.r.t. the run record (or report the
+        // pre-write version in the envelope), else repairs 2..N silently vanish — see test 3's pin.
         if (
           result.status === 'error' &&
           (result.error_code === 'VALIDATION_OUTPUT_SCHEMA' ||
@@ -639,7 +645,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           stepDef.execution === 'agent' &&
           (toolCallsForMeta === undefined || toolCallsForMeta.length === 0) &&
           repairsUsed < schemaRetries &&
-          result.run_version === versionBeforeStep
+          result.run_version === versionBeforeAttempt
         ) {
           repairsUsed++;
           const record = buildFailedAttemptRecord({

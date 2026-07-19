@@ -3,11 +3,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { InvalidArgumentError } from 'commander';
 import { runAgent } from './run-agent.js';
 import type { AgentDeps } from './run-agent.js';
-import type { WorkflowDefinition, ToolCallRecord, TraceBufferStore } from '@sensigo/realm';
+import type {
+  WorkflowDefinition,
+  ToolCallRecord,
+  TraceBufferStore,
+  RunRecord,
+} from '@sensigo/realm';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   createDefaultRegistry,
   ExtensionRegistry,
+  findEligibleSteps,
 } from '@sensigo/realm';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js';
@@ -750,6 +756,30 @@ const throwingTraceBufferStore = {
   },
 } as unknown as TraceBufferStore;
 
+/**
+ * issue #217 correction, deliverable 3a — concurrency witness store. Simulates a concurrent
+ * EXTERNAL writer (a second drive, a gate `respond`, a parallel-step settle) bumping the run's
+ * version WHILE a repair attempt is in flight. `armed` is flipped externally by the test's
+ * console.error spy the instant the FIRST 'repairing' line prints. The very NEXT `get(runId)`
+ * call — from ANY caller sharing this store instance (the drive's own per-attempt baseline read
+ * under the fix, or the engine's internal pre-claim read either way) — performs exactly ONE
+ * `super.update({...await super.get(runId)})` (a genuine version bump, no other field touched)
+ * BEFORE returning the (now-bumped) record, modeling a real external write racing in. Bumps only
+ * once (`bumped` latches), so later `get()` calls just pass through.
+ */
+class ConcurrentWriterStore extends InMemoryStore {
+  armed = false;
+  private bumped = false;
+  override async get(runId: string): Promise<RunRecord> {
+    if (this.armed && !this.bumped) {
+      this.bumped = true;
+      const current = await super.get(runId);
+      await super.update({ ...current });
+    }
+    return super.get(runId);
+  }
+}
+
 describe('runAgent — schema-feedback repair loop (issue #217)', () => {
   it('test 1: repair-success — 2 provider calls; attempt-2 prompt carries the summary, never the raw AJV leak (enum.allowedValues)', async () => {
     const def = agentWorkflow({
@@ -786,6 +816,42 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     // (iii) never leaks a sentinel from a VALUE position of the invalid output either (future-
     // proofing — non-verbose Ajv never echoes data values, so (ii) is the real discriminator).
     expect(secondPrompt).not.toContain('WRONG_VALUE_MARKER_XYZ');
+  });
+
+  it('test 1b: positive visibility witness — the per-repair stderr line is actually emitted (every existing assertion up to now only checked its ABSENCE on non-repair paths)', async () => {
+    const def = agentWorkflow({
+      output_schema: {
+        type: 'object',
+        properties: { status: { type: 'string', enum: ['SENTINEL_ALLOWED_ZZZ'] } },
+        required: ['status'],
+      },
+    });
+    const provider = new (class extends LlmProvider {
+      callStep = vi
+        .fn()
+        .mockResolvedValueOnce({ status: 'WRONG_VALUE_MARKER_XYZ' })
+        .mockResolvedValueOnce({ status: 'SENTINEL_ALLOWED_ZZZ' });
+    })();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+      },
+      { definition: def, params: {} },
+    );
+
+    expect(result).toBe('completed');
+    // Exactly one repair happens (1 rejection, then valid) — exactly one console.error call on
+    // this clean success path (no other error branch is reachable here).
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls[0]?.[0]).toContain(
+      '⚠ output rejected (VALIDATION_OUTPUT_SCHEMA); repairing (attempt 1/2)',
+    );
+    errorSpy.mockRestore();
   });
 
   it('test 2: LATEST-only feedback — attempt-3 prompt carries ONLY rejection-2, never rejection-1, and exactly one feedback-block header', async () => {
@@ -856,6 +922,45 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     expect(after.completed_steps).not.toContain('draft');
     expect(after.in_progress_steps).not.toContain('draft');
     expect(after.failed_steps).not.toContain('draft');
+    // Pins the actual re-drivability contract (not its structural shadow via the three fields
+    // above): the step is genuinely eligible again, so `realm agent --run-id` can re-drive it.
+    expect(findEligibleSteps(def, after)).toContain('draft');
+    errorSpy.mockRestore();
+  });
+
+  it('test 3a: concurrent-writer repair-survival — a run-version bump from an external writer landing mid-attempt does not silently forfeit a legitimate repair (per-attempt baseline)', async () => {
+    const schema = {
+      type: 'object',
+      properties: { alpha: { type: 'string' } },
+      required: ['alpha'],
+    };
+    const def = agentWorkflow({ output_schema: schema });
+    const store = new ConcurrentWriterStore();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      const line = typeof args[0] === 'string' ? args[0] : '';
+      if (line.includes('repairing')) {
+        store.armed = true;
+      }
+    });
+    const provider = new (class extends LlmProvider {
+      callStep = vi
+        .fn()
+        .mockResolvedValueOnce({}) // rejection 1: missing 'alpha'
+        .mockResolvedValueOnce({}) // rejection 2: still missing 'alpha' (post-bump attempt)
+        .mockResolvedValueOnce({ alpha: 'x' }); // valid
+    })();
+
+    const result = await runAgent(
+      { store, workflowStore: makeWorkflowStore(def), provider, registry: createDefaultRegistry() },
+      { definition: def, params: {} },
+    );
+
+    // Under the shipped per-STEP capture this survives only 2 calls (repair 2 is falsely
+    // forfeited — see the report's red-on-shipped transcript). Under the per-ATTEMPT fix, the
+    // attempt-2 loop-top baseline get absorbs the external bump, so repair 2 fires and the drive
+    // completes.
+    expect(result).toBe('completed');
+    expect(provider.callStep).toHaveBeenCalledTimes(3);
     errorSpy.mockRestore();
   });
 
@@ -992,7 +1097,11 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
       expect(() => opt.parseArg('abc', undefined)).toThrow(InvalidArgumentError);
       expect(() => opt.parseArg('-1', undefined)).toThrow(InvalidArgumentError);
       expect(opt.parseArg('5', undefined)).toBe(5);
-      expect(agentCommand.opts()['schemaRetries']).toBe(2);
+      // issue #217 correction: `agentCommand.opts()` reads the SHARED singleton's last-parsed
+      // state, which the two parseAsync sub-tests above already mutated (order-coupled) — read
+      // the Option's own static `defaultValue` instead, which is set once at Command construction
+      // and never mutated by parsing.
+      expect(opt.defaultValue).toBe(2);
     });
   });
 
