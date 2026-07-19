@@ -5,7 +5,7 @@
 // adapters are constructed from the deployment manifest (realm.yaml); the loader registry
 // (with its drift identity attached) flows directly into the run. Gate-notifier config is
 // sourced from `manifest.notifiers.slack_gate` (the nine SLACK_* env reads are deleted).
-import { Command } from 'commander';
+import { Command, InvalidArgumentError } from 'commander';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadWorkflowFromFile, JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
@@ -59,6 +59,21 @@ export function buildManifestGateHandler(
   return createSlackGateHandler(config);
 }
 
+/**
+ * Commander argParser for `--schema-retries` (issue #217). Commander does NOT run the argParser
+ * on the option's own default value — only on a user-supplied string — so an out-of-range default
+ * can never reach here; this only guards user input. Rejects loudly (InvalidArgumentError, commander
+ * ^14 idiom) on anything that isn't a non-negative integer — do NOT copy listen.ts's silent
+ * `parseInt` (which truncates '3abc' to 3 instead of rejecting it).
+ */
+function parseSchemaRetries(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new InvalidArgumentError('--schema-retries must be a non-negative integer.');
+  }
+  return n;
+}
+
 export const agentCommand = new Command('agent')
   .description('Run a workflow autonomously using an LLM provider')
   .option('--workflow <path>', 'Path to workflow directory or workflow.yaml file')
@@ -92,6 +107,14 @@ export const agentCommand = new Command('agent')
       "#197) — opt-in; default OFF (today's behavior). No caller-supplied value is accepted.",
     false,
   )
+  .option(
+    '--schema-retries <n>',
+    "Number of in-drive repair attempts when an agent step's output is rejected by " +
+      'output_schema/input_schema validation (issue #217) — the drive re-prompts the same step ' +
+      "with the validator's errors appended. 0 disables (today's behavior).",
+    parseSchemaRetries,
+    2,
+  )
   .action(
     async (opts: {
       workflow?: string;
@@ -105,6 +128,7 @@ export const agentCommand = new Command('agent')
       extensionsModule?: string;
       project?: string;
       mintWriterNonce?: boolean;
+      schemaRetries: number;
     }) => {
       if (!opts.workflow && !opts.runId) {
         console.error('Error: one of --workflow or --run-id is required');
@@ -202,6 +226,9 @@ export const agentCommand = new Command('agent')
               // issue #197 PR-2: default OFF; the strict-flip (REALM_REQUIRE_WRITER_NONCE) force-
               // enables minting even without the flag — resolved once in run-agent.ts's loop.
               mintWriterNonce: opts.mintWriterNonce === true,
+              // issue #217: default 2, threaded exactly like mintWriterNonce above. Commander
+              // always supplies a value (the option's own default), so this is never undefined.
+              schemaRetries: opts.schemaRetries,
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }
@@ -245,6 +272,9 @@ export const agentCommand = new Command('agent')
               // issue #197 PR-2: default OFF; the strict-flip (REALM_REQUIRE_WRITER_NONCE) force-
               // enables minting even without the flag — resolved once in run-agent.ts's loop.
               mintWriterNonce: opts.mintWriterNonce === true,
+              // issue #217: default 2, threaded exactly like mintWriterNonce above. Commander
+              // always supplies a value (the option's own default), so this is never undefined.
+              schemaRetries: opts.schemaRetries,
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }

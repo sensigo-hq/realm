@@ -11,6 +11,7 @@ import {
   findCapabilityBlockedSteps,
   unmetCapabilities,
   capabilityWarning,
+  buildFailedAttemptRecord,
   WorkflowError,
   type RunStore,
   type WorkflowDefinition,
@@ -20,6 +21,7 @@ import {
   type McpServerConfig,
   type ToolCallRecord,
   type TraceBufferStore,
+  type ValidationErrorSummaryEntry,
 } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
 import type { LlmProvider } from './providers/llm-provider.js';
@@ -69,6 +71,16 @@ export interface AgentDeps {
    * `crypto.randomUUID()` is minted independently for EVERY step-attempt in the loop below.
    */
   mintWriterNonce?: boolean;
+  /**
+   * Budget for issue #217's in-drive schema-feedback repair loop: how many times the drive
+   * re-prompts an `execution: 'agent'` step after its output/input is rejected by
+   * output_schema/input_schema validation, appending the validator's errors to the prompt.
+   * Threaded exactly like `mintWriterNonce` above (agent.ts's `--schema-retries` flag → both
+   * runAgent call sites → this field). Default `2` when omitted (mirrors the CLI flag's own
+   * default) — `0` disables the loop entirely, reproducing today's single-attempt behavior
+   * byte-for-byte.
+   */
+  schemaRetries?: number;
 }
 
 /**
@@ -178,6 +190,25 @@ async function pollUntilGateResolved(
 }
 
 /**
+ * Renders one whitelisted Ajv-error summary entry (issue #217, core's
+ * `buildFailedAttemptRecord(...).validation_error_summary`) as a single human-readable line for
+ * the schema-repair prompt trailer. Key NAMES only — the summary entry already strips value
+ * echoes (see failed-attempt-record.ts's `summarizeAjvErrors`), so nothing rendered here can leak
+ * a submitted or schema-declared VALUE (e.g. `enum.allowedValues`).
+ */
+function renderValidationSummaryEntry(entry: ValidationErrorSummaryEntry): string {
+  const path = entry.instancePath !== '' ? entry.instancePath : '(root)';
+  let line = `- ${path}: ${entry.message} [${entry.keyword}]`;
+  if (entry.additional_property !== undefined) {
+    line += ` (additional property: '${entry.additional_property}')`;
+  }
+  if (entry.missing_property !== undefined) {
+    line += ` (missing property: '${entry.missing_property}')`;
+  }
+  return line;
+}
+
+/**
  * Runs a workflow to completion using the provided dependencies.
  * Returns 'completed' when the run finishes normally; 'failed' otherwise.
  * Throws on setup failures (e.g. workflow file not found, provider error).
@@ -191,6 +222,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // tool-execution errors serialized by the provider loop get these values masked
   // alongside process.env values.
   setAdditionalRedactionValues(deps.redactionValues ?? []);
+
+  // issue #217: resolved once per run (not per call, unlike shouldMintWriterNonce — there is no
+  // env-var strict-flip counterpart here). `0` disables the repair loop entirely.
+  const schemaRetries = deps.schemaRetries ?? 2;
 
   // Load or use provided definition.
   const definition: WorkflowDefinition =
@@ -340,198 +375,301 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       const stepName = eligible[0]!;
       const stepDef: StepDefinition = definition.steps[stepName]!;
 
-      let stepInput: Record<string, unknown>;
+      // issue #217: the in-drive schema-feedback repair loop. `stepInput`/`toolCallsForMeta`/
+      // `result` are re-assigned on every attempt inside the `for` loop below; `repairsUsed`/
+      // `lastRejection` persist ACROSS attempts within this one step, and are fresh (0/undefined)
+      // for every new step. The loop body is exactly the former single-pass step-execution region
+      // (the agent/auto branch bodies + the executeChain call) — an auto step's
+      // `execution !== 'agent'` means the repair gate's conjunct (iii) can never hold for it, so
+      // it structurally can never iterate more than once: the loop is a no-op wrapper for every
+      // pre-existing (non-repair) case.
+      let stepInput: Record<string, unknown> = {};
       let toolCallsForMeta: ToolCallRecord[] | undefined;
+      let result: Awaited<ReturnType<typeof executeChain>>;
+      let repairsUsed = 0;
+      let lastRejection: { kind: 'output' | 'input'; summary: string } | undefined;
 
-      if (stepDef.execution === 'agent') {
-        // Resolve template-expanded prompt via buildNextActions so {{ context.resources.* }}
-        // references are substituted before the LLM call.
-        const nextActions = buildNextActions(definition, currentRun);
-        const nextAction =
-          nextActions.find(
-            (a) =>
-              a.instruction !== null &&
-              (a.instruction.call_with['command'] as string | undefined) === stepName,
-          ) ?? nextActions[0];
+      for (;;) {
+        toolCallsForMeta = undefined;
+        // issue #217 conjunct (vi) ground truth — captured FRESH at the top of EVERY attempt
+        // (including the first), never once per step: a per-step capture is stale across the
+        // whole provider LLM call, so any concurrent writer (a second drive, a gate `respond`, a
+        // parallel-step settle) landing during that call would silently forfeit a legitimate
+        // repair. See the repair-gate comment below for the full discriminator rationale. Cost:
+        // one extra store read per attempt — accepted.
+        const versionBeforeAttempt = (await deps.store.get(runId)).version;
 
-        const prompt = nextAction?.prompt ?? stepDef.description;
-        // #robust-anthropic-provider Part 1: route the schema the ENGINE validates output against
-        // (output_schema, execution-loop.ts validateOutputSchema) ahead of the execute_step-param
-        // schema (input_schema / nextAction.input_schema) the provider was fed until now. Both-
-        // declared-and-divergent degrades to a clean recoverable VALIDATION_*_SCHEMA error downstream,
-        // not a parse-strand — see the Part 6 loader warning for the authoring-time signal.
-        const inputSchema =
-          (stepDef.output_schema as Record<string, unknown> | undefined) ??
-          (nextAction?.input_schema as Record<string, unknown> | undefined) ??
-          (stepDef.input_schema as Record<string, unknown> | undefined);
-        const agentProfileInstructions =
-          stepDef.agent_profile !== undefined
-            ? definition.resolved_profiles?.[stepDef.agent_profile]?.content
-            : undefined;
+        if (stepDef.execution === 'agent') {
+          // Resolve template-expanded prompt via buildNextActions so {{ context.resources.* }}
+          // references are substituted before the LLM call. Pure w.r.t. `definition`/`currentRun`,
+          // both unchanged across repair attempts (pre-claim validation is write-free — nothing is
+          // ever persisted on a rejected attempt, per execute-step.ts) — safe to recompute per
+          // iteration.
+          const nextActions = buildNextActions(definition, currentRun);
+          const nextAction =
+            nextActions.find(
+              (a) =>
+                a.instruction !== null &&
+                (a.instruction.call_with['command'] as string | undefined) === stepName,
+            ) ?? nextActions[0];
 
-        const descPreview = stepDef.description.slice(0, 80);
-        console.log(`\n→ [agent] ${stepName}`);
-        console.log(`  ${descPreview}${stepDef.description.length > 80 ? '…' : ''}`);
+          // PRISTINE original prompt — never mutated across repair attempts. The prompt actually
+          // sent to the provider (`promptForAttempt` below) is always derived FRESH from this,
+          // plus at most the LATEST rejection's feedback — never accumulated, never stale.
+          const prompt = nextAction?.prompt ?? stepDef.description;
+          const promptForAttempt =
+            lastRejection !== undefined
+              ? `${prompt}\n\nYour previous output was rejected by the ${lastRejection.kind} schema validator:\n${lastRejection.summary}\nEmit corrected JSON only, matching the schema exactly.`
+              : prompt;
+          // #robust-anthropic-provider Part 1: route the schema the ENGINE validates output against
+          // (output_schema, execution-loop.ts validateOutputSchema) ahead of the execute_step-param
+          // schema (input_schema / nextAction.input_schema) the provider was fed until now. Both-
+          // declared-and-divergent degrades to a clean recoverable VALIDATION_*_SCHEMA error downstream,
+          // not a parse-strand — see the Part 6 loader warning for the authoring-time signal.
+          const inputSchema =
+            (stepDef.output_schema as Record<string, unknown> | undefined) ??
+            (nextAction?.input_schema as Record<string, unknown> | undefined) ??
+            (stepDef.input_schema as Record<string, unknown> | undefined);
+          const agentProfileInstructions =
+            stepDef.agent_profile !== undefined
+              ? definition.resolved_profiles?.[stepDef.agent_profile]?.content
+              : undefined;
 
-        if (stepDef.tools && stepDef.tools.length > 0 && mcpClient) {
-          // Tools path: build tool definitions, call callStepWithTools.
-          const byServer = new Map<string, string[]>();
-          for (const entry of stepDef.tools) {
-            const [serverId, toolName] = entry.split(':') as [string, string];
-            if (!byServer.has(serverId)) byServer.set(serverId, []);
-            byServer.get(serverId)!.push(toolName);
+          if (repairsUsed === 0) {
+            const descPreview = stepDef.description.slice(0, 80);
+            console.log(`\n→ [agent] ${stepName}`);
+            console.log(`  ${descPreview}${stepDef.description.length > 80 ? '…' : ''}`);
           }
 
-          let toolsResult;
-          try {
-            const toolDefs: ToolDefinition[] = [];
-            const barenameOwner = new Map<string, string>(); // bareName → serverId of first registration
-            for (const [serverId, allowList] of byServer) {
-              const mcpTools = await mcpClient.getTools(serverId, allowList);
-
-              const returnedNames = new Set(mcpTools.map((t) => t.name));
-              for (const name of allowList) {
-                if (!returnedNames.has(name)) {
-                  throw new WorkflowError(
-                    `Step '${stepName}' declares tool '${serverId}:${name}' which is not exposed by MCP server '${serverId}'. ` +
-                      `Check the tool name against the server's published tool list.`,
-                    {
-                      code: 'MCP_TOOL_NOT_FOUND',
-                      category: 'ENGINE',
-                      agentAction: 'stop',
-                      retryable: false,
-                    },
-                  );
-                }
-              }
-
-              for (const mcpTool of mcpTools) {
-                const firstOwner = barenameOwner.get(mcpTool.name);
-                if (firstOwner !== undefined) {
-                  throw new WorkflowError(
-                    `Tool name collision in step '${stepName}': '${mcpTool.name}' is exposed by both '${firstOwner}' and '${serverId}'. ` +
-                      `Tool names must be unique across all connected servers within a step.`,
-                    {
-                      code: 'MCP_TOOL_NAME_COLLISION',
-                      category: 'ENGINE',
-                      agentAction: 'stop',
-                      retryable: false,
-                    },
-                  );
-                }
-                barenameOwner.set(mcpTool.name, serverId);
-                toolDefs.push({
-                  id: `${serverId}:${mcpTool.name}`,
-                  serverId,
-                  name: mcpTool.name,
-                  description: mcpTool.description,
-                  inputSchema: mcpTool.inputSchema,
-                });
-              }
+          if (stepDef.tools && stepDef.tools.length > 0 && mcpClient) {
+            // Tools path: build tool definitions, call callStepWithTools. Rebuilt every attempt
+            // (issue #217) — safe: repair only ever follows a ZERO-toolCall attempt, so no budget
+            // was spent and nothing can duplicate.
+            const byServer = new Map<string, string[]>();
+            for (const entry of stepDef.tools) {
+              const [serverId, toolName] = entry.split(':') as [string, string];
+              if (!byServer.has(serverId)) byServer.set(serverId, []);
+              byServer.get(serverId)!.push(toolName);
             }
 
-            const baseExecutor: ToolExecutor = async (namespacedName, args) => {
-              const [serverId, toolName] = namespacedName.split(':') as [string, string];
-              return mcpClient!.call(serverId, toolName, args);
-            };
-
-            // Wrap the executor to enforce max_fan_out when set.
-            // Counts calls to start_run and start_run_batch (regardless of server prefix).
-            let fanOutCallCount = 0;
-            const maxFanOut = stepDef.max_fan_out;
-            const executor: ToolExecutor = async (namespacedName, args) => {
-              const toolName = namespacedName.includes(':')
-                ? namespacedName.split(':')[1]!
-                : namespacedName;
-              if (toolName === 'start_run' || toolName === 'start_run_batch') {
-                fanOutCallCount += 1;
-                if (maxFanOut !== undefined && fanOutCallCount > maxFanOut) {
-                  throw new WorkflowError(
-                    `max_fan_out of ${maxFanOut} reached for step '${stepName}'. ` +
-                      `No further start_run or start_run_batch calls are permitted in this step.`,
-                    {
-                      code: 'VALIDATION_BATCH_TOO_LARGE',
-                      category: 'VALIDATION',
-                      agentAction: 'provide_input',
-                      retryable: false,
-                    },
-                  );
-                }
-              }
-              return baseExecutor(namespacedName, args);
-            };
-
-            if (!isToolCapable(deps.provider)) {
-              throw new Error(
-                'invariant: provider lost tool capability between startup and step execution',
-              );
-            }
-            // #robust-anthropic-provider Part 1: same output-over-input precedence as the callStep
-            // path above.
-            const toolsEffectiveOutputSchema =
-              (stepDef.output_schema as Record<string, unknown> | undefined) ??
-              (stepDef.input_schema as Record<string, unknown> | undefined);
-            toolsResult = await deps.provider.callStepWithTools(prompt, toolDefs, executor, {
-              ...(toolsEffectiveOutputSchema !== undefined
-                ? { inputSchema: toolsEffectiveOutputSchema }
-                : {}),
-              maxToolCalls: stepDef.max_tool_calls ?? 20,
-              ...(stepDef.max_fan_out !== undefined ? { maxFanOut: stepDef.max_fan_out } : {}),
-              toolTimeoutMs: (stepDef.tool_timeout ?? 30) * 1000,
-              ...(agentProfileInstructions !== undefined ? { agentProfileInstructions } : {}),
-            });
-          } catch (err) {
-            console.error(
-              `\n✗ Step '${stepName}' (tools) failed: ${err instanceof Error ? err.message : String(err)}`,
-            );
-            return 'failed';
-          }
-          stepInput = toolsResult.output;
-          toolCallsForMeta = toolsResult.toolCalls;
-        } else {
-          // Retry the LLM call once on failure before giving up.
-          let callError: unknown;
-          stepInput = {};
-          for (let attempt = 0; attempt < 2; attempt++) {
+            let toolsResult;
             try {
-              stepInput = await deps.provider.callStep(
-                prompt,
-                inputSchema,
-                agentProfileInstructions,
+              const toolDefs: ToolDefinition[] = [];
+              const barenameOwner = new Map<string, string>(); // bareName → serverId of first registration
+              for (const [serverId, allowList] of byServer) {
+                const mcpTools = await mcpClient.getTools(serverId, allowList);
+
+                const returnedNames = new Set(mcpTools.map((t) => t.name));
+                for (const name of allowList) {
+                  if (!returnedNames.has(name)) {
+                    throw new WorkflowError(
+                      `Step '${stepName}' declares tool '${serverId}:${name}' which is not exposed by MCP server '${serverId}'. ` +
+                        `Check the tool name against the server's published tool list.`,
+                      {
+                        code: 'MCP_TOOL_NOT_FOUND',
+                        category: 'ENGINE',
+                        agentAction: 'stop',
+                        retryable: false,
+                      },
+                    );
+                  }
+                }
+
+                for (const mcpTool of mcpTools) {
+                  const firstOwner = barenameOwner.get(mcpTool.name);
+                  if (firstOwner !== undefined) {
+                    throw new WorkflowError(
+                      `Tool name collision in step '${stepName}': '${mcpTool.name}' is exposed by both '${firstOwner}' and '${serverId}'. ` +
+                        `Tool names must be unique across all connected servers within a step.`,
+                      {
+                        code: 'MCP_TOOL_NAME_COLLISION',
+                        category: 'ENGINE',
+                        agentAction: 'stop',
+                        retryable: false,
+                      },
+                    );
+                  }
+                  barenameOwner.set(mcpTool.name, serverId);
+                  toolDefs.push({
+                    id: `${serverId}:${mcpTool.name}`,
+                    serverId,
+                    name: mcpTool.name,
+                    description: mcpTool.description,
+                    inputSchema: mcpTool.inputSchema,
+                  });
+                }
+              }
+
+              const baseExecutor: ToolExecutor = async (namespacedName, args) => {
+                const [serverId, toolName] = namespacedName.split(':') as [string, string];
+                return mcpClient!.call(serverId, toolName, args);
+              };
+
+              // Wrap the executor to enforce max_fan_out when set.
+              // Counts calls to start_run and start_run_batch (regardless of server prefix).
+              let fanOutCallCount = 0;
+              const maxFanOut = stepDef.max_fan_out;
+              const executor: ToolExecutor = async (namespacedName, args) => {
+                const toolName = namespacedName.includes(':')
+                  ? namespacedName.split(':')[1]!
+                  : namespacedName;
+                if (toolName === 'start_run' || toolName === 'start_run_batch') {
+                  fanOutCallCount += 1;
+                  if (maxFanOut !== undefined && fanOutCallCount > maxFanOut) {
+                    throw new WorkflowError(
+                      `max_fan_out of ${maxFanOut} reached for step '${stepName}'. ` +
+                        `No further start_run or start_run_batch calls are permitted in this step.`,
+                      {
+                        code: 'VALIDATION_BATCH_TOO_LARGE',
+                        category: 'VALIDATION',
+                        agentAction: 'provide_input',
+                        retryable: false,
+                      },
+                    );
+                  }
+                }
+                return baseExecutor(namespacedName, args);
+              };
+
+              if (!isToolCapable(deps.provider)) {
+                throw new Error(
+                  'invariant: provider lost tool capability between startup and step execution',
+                );
+              }
+              // #robust-anthropic-provider Part 1: same output-over-input precedence as the callStep
+              // path above.
+              const toolsEffectiveOutputSchema =
+                (stepDef.output_schema as Record<string, unknown> | undefined) ??
+                (stepDef.input_schema as Record<string, unknown> | undefined);
+              toolsResult = await deps.provider.callStepWithTools(
+                promptForAttempt,
+                toolDefs,
+                executor,
+                {
+                  ...(toolsEffectiveOutputSchema !== undefined
+                    ? { inputSchema: toolsEffectiveOutputSchema }
+                    : {}),
+                  maxToolCalls: stepDef.max_tool_calls ?? 20,
+                  ...(stepDef.max_fan_out !== undefined ? { maxFanOut: stepDef.max_fan_out } : {}),
+                  toolTimeoutMs: (stepDef.tool_timeout ?? 30) * 1000,
+                  ...(agentProfileInstructions !== undefined ? { agentProfileInstructions } : {}),
+                },
               );
-              callError = undefined;
-              break;
             } catch (err) {
-              callError = err;
-              console.warn(
-                `  ⚠  LLM call attempt ${attempt + 1} failed: ${err instanceof Error ? err.message : String(err)}`,
+              console.error(
+                `\n✗ Step '${stepName}' (tools) failed: ${err instanceof Error ? err.message : String(err)}`,
               );
+              return 'failed';
+            }
+            stepInput = toolsResult.output;
+            toolCallsForMeta = toolsResult.toolCalls;
+          } else {
+            // Retry the LLM call once on failure before giving up.
+            let callError: unknown;
+            stepInput = {};
+            for (let attempt = 0; attempt < 2; attempt++) {
+              try {
+                stepInput = await deps.provider.callStep(
+                  promptForAttempt,
+                  inputSchema,
+                  agentProfileInstructions,
+                );
+                callError = undefined;
+                break;
+              } catch (err) {
+                callError = err;
+                console.warn(
+                  `  ⚠  LLM call attempt ${attempt + 1} failed: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
+            }
+            if (callError !== undefined) {
+              console.error(`\n✗ Step '${stepName}' LLM call failed after 2 attempts`);
+              return 'failed';
             }
           }
-          if (callError !== undefined) {
-            console.error(`\n✗ Step '${stepName}' LLM call failed after 2 attempts`);
-            return 'failed';
-          }
+        } else {
+          // Auto step — the engine dispatches to the service adapter directly.
+          console.log(`→ [auto] ${stepName}`);
+          stepInput = {};
         }
-      } else {
-        // Auto step — the engine dispatches to the service adapter directly.
-        console.log(`→ [auto] ${stepName}`);
-        stepInput = {};
-      }
 
-      const result = await executeChain(deps.store, definition, {
-        runId,
-        command: stepName,
-        input: stepInput,
-        dispatcher: async () => stepInput,
-        registry: deps.registry,
-        ...(deps.traceBufferStore !== undefined ? { traceBufferStore: deps.traceBufferStore } : {}),
-        ...(toolCallsForMeta !== undefined ? { stepMeta: { toolCalls: toolCallsForMeta } } : {}),
-        // issue #197 PR-2: a FRESH nonce per step-attempt — resolved per call, never cached, so
-        // the strict-flip (checked inside shouldMintWriterNonce) is honored even if the env var
-        // changes mid-process (tests flip it).
-        ...(shouldMintWriterNonce(deps) ? { writerNonce: crypto.randomUUID() } : {}),
-      });
+        result = await executeChain(deps.store, definition, {
+          runId,
+          command: stepName,
+          input: stepInput,
+          dispatcher: async () => stepInput,
+          registry: deps.registry,
+          ...(deps.traceBufferStore !== undefined
+            ? { traceBufferStore: deps.traceBufferStore }
+            : {}),
+          ...(toolCallsForMeta !== undefined ? { stepMeta: { toolCalls: toolCallsForMeta } } : {}),
+          // issue #197 PR-2: a FRESH nonce per step-attempt — resolved per call, never cached, so
+          // the strict-flip (checked inside shouldMintWriterNonce) is honored even if the env var
+          // changes mid-process (tests flip it). Also fresh per issue #217 repair attempt, since
+          // this call sits inside the repair loop.
+          ...(shouldMintWriterNonce(deps) ? { writerNonce: crypto.randomUUID() } : {}),
+        });
+
+        // issue #217: the in-drive schema-feedback repair gate. Fires ONLY when ALL SIX conjuncts
+        // hold — see plans/issue-217/design-v2.md §Mechanism for the rationale on (i)-(v).
+        //
+        // Conjunct (vi) — CORRECTED from the design record's literal `result.command === stepName`
+        // (flagged as a divergence in the implementation report): the record's premise was that
+        // executeChain "returns the DEEPER step's own envelope" on a chain-replacement error,
+        // citing execution-loop.ts:2855-2859/:3015 (executeChainInternal's recursive early-return,
+        // which DOES set `command` to the deeper step). But run-agent.ts calls the PUBLIC
+        // `executeChain` wrapper, not executeChainInternal directly — and that wrapper
+        // unconditionally overwrites the returned envelope's `command` back to the TOP-LEVEL
+        // requested command on every call (execution-loop.ts:3094, `command: options.command`),
+        // confirmed empirically against the built engine. So `result.command` always equals
+        // `stepName` here and can never discriminate a deeper chained step's error from this step's
+        // own — the literal conjunct is vacuously true and provides zero protection.
+        //
+        // The corrected, structurally-sound discriminator: a pre-claim validation rejection is
+        // write-free (no run-record version bump — see execute-step.ts:77-80 / execution-loop.ts's
+        // Step 2b/2c, both before claimStep). So if `result.run_version` has advanced past
+        // `versionBeforeAttempt` (captured fresh at the top of each repair attempt), something
+        // committed to the run BEFORE this error occurred — e.g. THIS step's own claim+settle,
+        // followed by a DEEPER chained step's pre-claim rejection — so the error cannot be this
+        // step's own output/input. A concurrent external writer bumping the run mid-attempt also
+        // lands here — the gate then fails CLOSED (repair forfeited, today's failure path). See
+        // run-agent.test.ts's "chained-auto no-false-repair" and concurrent-writer tests.
+        //
+        // #220 must keep rejected attempts write-free w.r.t. the run record (or report the
+        // pre-write version in the envelope), else repairs 2..N silently vanish — see test 3's pin.
+        if (
+          result.status === 'error' &&
+          (result.error_code === 'VALIDATION_OUTPUT_SCHEMA' ||
+            result.error_code === 'VALIDATION_INPUT_SCHEMA') &&
+          stepDef.execution === 'agent' &&
+          (toolCallsForMeta === undefined || toolCallsForMeta.length === 0) &&
+          repairsUsed < schemaRetries &&
+          result.run_version === versionBeforeAttempt
+        ) {
+          repairsUsed++;
+          const record = buildFailedAttemptRecord({
+            run_id: runId,
+            workflow_id: definition.id,
+            step_id: stepName,
+            ts: new Date().toISOString(),
+            error_code: result.error_code,
+            ajv_errors: (result.error_details?.['errors'] as unknown[]) ?? [],
+            params: stepInput,
+            trace_entry_count: 0,
+          });
+          lastRejection = {
+            kind: result.error_code === 'VALIDATION_OUTPUT_SCHEMA' ? 'output' : 'input',
+            summary: record.validation_error_summary.map(renderValidationSummaryEntry).join('\n'),
+          };
+          console.error(
+            `  ⚠ output rejected (${result.error_code}); repairing (attempt ${repairsUsed}/${schemaRetries})`,
+          );
+          continue;
+        }
+
+        break;
+      }
 
       if (result.status === 'error') {
         // #134: a NOT-REGISTERED handler/adapter settles RECOVERABLY — the run is NOT failed, the step
@@ -541,6 +679,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         const isCapabilityBlock =
           result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
           result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED';
+        // issue #217: append the repair count ONLY when at least one repair actually ran — never
+        // "after 0 schema-repair attempts".
+        const repairSuffix = repairsUsed > 0 ? ` after ${repairsUsed} schema-repair attempts` : '';
         if (isCapabilityBlock) {
           currentRun = await deps.store.get(runId);
           const block = findCapabilityBlockedSteps(currentRun).find((b) => b.step === stepName);
@@ -555,7 +696,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               `The run is NOT failed — add ${need} and re-attach (\`realm agent --run-id ${runId}\`).`,
           );
         } else {
-          console.error(`\n✗ Step '${stepName}' failed: ${result.errors.join(', ')}`);
+          console.error(
+            `\n✗ Step '${stepName}' failed: ${result.errors.join(', ')}${repairSuffix}`,
+          );
         }
         return 'failed';
       }
