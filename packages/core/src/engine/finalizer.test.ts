@@ -333,6 +333,60 @@ describe('finalizer drain — failure handling (non-fatal, drain continues)', ()
     expect(run.completed_steps).toContain('fin_ok');
   });
 
+  // issue #140 drain-outside-cap pin: the DOMAIN step's total-time cap (capMs/capStart/capExhausted)
+  // is local to that single executeStep call — buildFinalizedSeal's OWN finalizer-timeout wrap
+  // (:2610-ish, outside cap scope per the design record) must apply in FULL, never truncated to
+  // whatever thin budget the domain step's cap had left. Finalizers themselves cannot even declare
+  // `retry:` (loader-prohibited), so this is purely about the DOMAIN step's cap not leaking across
+  // the terminal-drain boundary into a SEPARATE step's SEPARATE timeout.
+  it('drain-outside-cap: a finalizer with an adequate timeout_seconds completes in full, unaffected by the domain step’s (tiny, unconsumed) total-time cap', async () => {
+    registry.register('handler', 'h_slow', slowHandler('h_slow', order));
+    const def: WorkflowDefinition = {
+      id: 'fin-drain-outside-cap',
+      name: 'Finalizer Drain Outside Cap',
+      version: 1,
+      steps: {
+        work: {
+          description: 'domain step — declares a tiny total_timeout_seconds but succeeds instantly',
+          execution: 'auto',
+          depends_on: [],
+          handler: 'domain_ok',
+          timeout_seconds: 0.05,
+          // S6 correction: raised from 0.01 (a ~10ms real-timer budget the review flagged as the
+          // same flake class the reliability.test.ts redesigns targeted) to 0.15 — with real
+          // headroom against the domain_ok handler's near-instant resolution. The load-bearing
+          // bounds are against the FINALIZER's own numbers, not the domain step's: this cap
+          // (0.15s) must stay BELOW h_slow's 0.20s runtime (a cap leaking into the finalizer's
+          // timeout resolution would truncate it below 200ms ⇒ fin_slow times out ⇒ this test
+          // reds) and below fin_slow's own 0.35s timeout_seconds (else the leaked bound would
+          // never bind at all, and the test would prove nothing).
+          retry: { max_attempts: 2, base_delay_ms: 5, total_timeout_seconds: 0.15 },
+        },
+        fin_slow: {
+          description:
+            'finalizer with an adequate (350ms) timeout — comfortably more than h_slow’s 200ms',
+          execution: 'finalizer',
+          on_outcome: 'always',
+          handler: 'h_slow',
+          timeout_seconds: 0.35,
+        },
+      },
+    };
+    // domain_ok succeeds on attempt 1, immediately — the domain step's cap never actually binds;
+    // what this test proves is that its mere PRESENCE (capMs/capStart local to that one
+    // executeStep call) cannot leak forward into buildFinalizedSeal's own, separate timeout wrap.
+    const runId = await driveComplete(def);
+    const run = await store.get(runId);
+    expect(run.run_phase).toBe('completed');
+    // The finalizer COMPLETED (its own 350ms budget applied in full) — had the domain step's
+    // near-zero leftover cap somehow leaked into the finalizer's own timeout resolution, this
+    // would instead show up in failed_steps with a "timed out" evidence error.
+    expect(run.completed_steps).toContain('fin_slow');
+    expect(run.failed_steps).not.toContain('fin_slow');
+    const snap = run.evidence.find((e) => e.step_id === 'fin_slow');
+    expect(snap?.error).toBeUndefined();
+  });
+
   it('a finalizer that TIMES OUT is recorded failed and the drain continues', async () => {
     registry.register('handler', 'h_slow', slowHandler('h_slow', order));
     registry.register('handler', 'h_ok', okHandler('h_ok', order));

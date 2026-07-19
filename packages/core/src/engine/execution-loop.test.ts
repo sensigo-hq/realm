@@ -1131,6 +1131,53 @@ describe('executeStep', () => {
       expect(updatedRun.aborted_at?.abort_message).toBe('Ticket is closed');
     });
 
+    // Issue #140 correction (S4): the review's novel probe N2 reverted the handler-abort return
+    // path's `warnings` from `mergeWarnings(traceWarnings)` back to a hardcoded `[]`, and the
+    // ENTIRE suite stayed green — this settle path had zero discriminating tests for the
+    // programmatic-gate advisory. This is that witness: `retry.on_timeout: true` is armed WITHOUT
+    // `idempotent: true` (the advisory's own trigger, pushed at loop entry regardless of how the
+    // step eventually settles), and the step's handler aborts — the advisory must still surface
+    // in this settle path's `warnings`.
+    it('issue #140 S4: a handler-abort settle still carries the programmatic-gate advisory when on_timeout is armed without idempotent', async () => {
+      const advisoryAbortDef: WorkflowDefinition = {
+        id: 'abort-with-advisory-wf',
+        name: 'Abort With Advisory',
+        version: 1,
+        steps: {
+          validate: {
+            description: 'Aborts; on_timeout armed but idempotent absent',
+            execution: 'auto',
+            depends_on: [],
+            handler: 'my_handler',
+            retry: { max_attempts: 2, on_timeout: true },
+          },
+        },
+      };
+      const handler: StepHandler = {
+        id: 'my_handler',
+        execute: vi.fn().mockResolvedValue({ abort: { message: 'Aborting' } }),
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'my_handler', handler);
+
+      const { run: run } = await store.create({
+        workflowId: 'abort-with-advisory-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, advisoryAbortDef, {
+        runId: run.id,
+        command: 'validate',
+        input: {},
+        dispatcher: echoDispatcher,
+        registry,
+      });
+
+      expect(envelope.status).toBe('ok'); // handler-abort settles 'ok' (pre-existing behavior)
+      expect(envelope.warnings.some((w) => w.includes('on_timeout ignored'))).toBe(true);
+    });
+
     it('abort skips downstream steps', async () => {
       const twoStepHandlerDef: WorkflowDefinition = {
         id: 'two-step-handler-wf',

@@ -648,17 +648,34 @@ gate:
 fetch_document:
   execution: auto
   uses_service: source
+  idempotent: true
+  timeout_seconds: 30
   retry:
     max_attempts: 3
     backoff: exponential
     base_delay_ms: 1000
+    on_timeout: true
+    total_timeout_seconds: 120
 ```
 
-| Field           | Type                                 | Description                         |
-| --------------- | ------------------------------------ | ----------------------------------- |
-| `max_attempts`  | integer                              | Total attempts including the first. |
-| `backoff`       | `linear` \| `exponential` \| `fixed` | Delay growth strategy.              |
-| `base_delay_ms` | integer                              | Base delay in milliseconds.         |
+| Field                   | Type                                 | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `max_attempts`          | integer                              | Total attempts including the first.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `backoff`               | `linear` \| `exponential` \| `fixed` | Delay growth strategy.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `base_delay_ms`         | integer                              | Base delay in milliseconds.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `max_delay_ms`          | integer                              | Cap on the computed backoff delay.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `on_timeout`            | boolean                              | **(issue #140)** Opt in to retrying this step's own `STEP_TIMEOUT` in place, consuming a normal attempt. Requires the step to also declare `idempotent: true` — a hard error at load otherwise, since a timeout-retry can run concurrently with the still-in-flight original attempt. Only meaningful on `execution: auto` steps. Absent/false: a timeout stays terminal (unchanged from pre-#140 behavior).                                                                                                                                                                                                                                                                                       |
+| `total_timeout_seconds` | integer                              | **(issue #140)** Total wall-clock budget, in seconds, across every attempt (a Temporal-`ScheduleToClose`-style cap). Standalone-legal — does not require `on_timeout`. **When absent, every retry-configured `execution: auto` step is capped by DEFAULT at `max_attempts × its own per-attempt timeout + the declared backoffs between attempts`** — so the default cap equals the step's own declared schedule and only binds when a runtime wait (e.g. a rate-limit `retry_after`) pushes an attempt materially past it. When the cap is reached, the step settles as `STEP_RETRY_EXHAUSTED` (`exhausted_by: 'total_timeout'`) instead of sleeping past it. Inert (warns) on a non-`auto` step. |
+
+> **Timeout-retry concurrency contract:** `on_timeout: true` is an attestation that the step's
+> handler/adapter is safe to execute concurrently with itself — including a PARTIAL prior
+> application (a committed prefix left by the aborted-but-still-possibly-in-flight original
+> attempt). This is a stronger claim than `idempotent` alone, which only guarantees safe
+> SEQUENTIAL re-application; declare both explicitly, the engine never infers one from the other.
+
+> **Version skew:** on an engine older than #140, `on_timeout` and `total_timeout_seconds` are
+> unrecognized retry sub-keys and are silently ignored, so a declared cap goes unenforced — this
+> fails safe: retry semantics are otherwise unchanged, only the bound is missing.
 
 ---
 

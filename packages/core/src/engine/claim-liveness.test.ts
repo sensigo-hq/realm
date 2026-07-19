@@ -1,5 +1,8 @@
 // Unit tests for the per-claim liveness clock + 3-state classification (issue #101).
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   computeClaimDeadline,
   classifyClaim,
@@ -9,8 +12,11 @@ import {
   RECLAIM_MARGIN_SECONDS,
   DEFAULT_EXECUTION_TIMEOUT_SECONDS,
   shouldEnforceTimeout,
+  worstCaseScheduleSeconds,
+  resolveCapMs,
+  sleepWouldExceedCap,
 } from './claim-liveness.js';
-import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import type { WorkflowDefinition, RetryConfig } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
 
 const NOW = new Date('2026-07-07T12:00:00.000Z');
@@ -133,6 +139,52 @@ describe('computeClaimDeadline', () => {
     const expected = NOW.getTime() + 1266 * 1000;
     expect(new Date(deadline!).getTime()).toBe(expected);
   });
+
+  it('B1 horizon pin — a retry block with NO max_attempts RETURNS (never throws) exactly max(FLOOR, perAttempt + MARGIN)', () => {
+    // The loader ADMITS an absent max_attempts (W1's own comment says so) — the shipped
+    // `const n = retry.max_attempts;` (no `?? 1` guard) makes n undefined here, cascading to
+    // NaN capMs/horizonSeconds and `new Date(NaN).toISOString()` THROWING. n=1 default: worstCase
+    // = 1*2000 + 0 (no backoff gaps at n=1) = 2000; horizon = max(900, 2000+60) = 2060 —
+    // deliberately NOT floor-dominated, so this pin is a genuine formula check, not just a
+    // no-throw check.
+    const def = wf({
+      work: {
+        description: 'w',
+        execution: 'auto',
+        depends_on: [],
+        timeout_seconds: 2000,
+        retry: { backoff: 'fixed', base_delay_ms: 5000 } as RetryConfig, // max_attempts absent
+      },
+    });
+    expect(() => computeClaimDeadline(def, 'work', NOW)).not.toThrow();
+    const deadline = computeClaimDeadline(def, 'work', NOW);
+    expect(new Date(deadline!).getTime()).toBe(NOW.getTime() + 2060 * 1000);
+  });
+
+  it('B2 — an EXPLICIT total_timeout_seconds ABOVE the worst-case schedule widens the horizon to cap + margin (not the bare worst-case schedule)', () => {
+    // n=3, perAttempt=300s, fixed backoff 1000ms (2 gaps): worstCase = 3*300 + 2*1 = 902s (clears
+    // RECLAIM_FLOOR_SECONDS=900, so this isn't floor-masked either). An explicit cap of 7200s is
+    // ABOVE that 902s schedule — the legitimate long-wait opt-in this feature exists to support.
+    // Pre-B2-fix, computeClaimDeadline called worstCaseScheduleSeconds directly, ignoring the
+    // cap entirely: horizon would read max(900, 902+60) = 962 — a premature claim_stale horizon
+    // for a step that legitimately intends to wait up to 7200s. Post-fix: max(900, 7200+60) = 7260.
+    const def = wf({
+      work: {
+        description: 'w',
+        execution: 'auto',
+        depends_on: [],
+        timeout_seconds: 300,
+        retry: {
+          max_attempts: 3,
+          backoff: 'fixed',
+          base_delay_ms: 1000,
+          total_timeout_seconds: 7200,
+        },
+      },
+    });
+    const deadline = computeClaimDeadline(def, 'work', NOW);
+    expect(new Date(deadline!).getTime()).toBe(NOW.getTime() + 7260 * 1000);
+  });
 });
 
 describe('classifyClaim', () => {
@@ -204,5 +256,144 @@ describe('shouldEnforceTimeout (issue A3 — enforcement predicate)', () => {
     // computeClaimDeadline above. An auto step must stay enforced regardless of any finalizer
     // elsewhere in its workflow — this is the Design Reviewer's blocking-fix, documented as a test.
     expect(shouldEnforceTimeout({ description: 'w', execution: 'auto' })).toBe(true);
+  });
+});
+
+describe('worstCaseScheduleSeconds (issue #140 — the shared formula)', () => {
+  it('n=1 (no meaningful retry): reduces to exactly perAttemptSec, no backoff', () => {
+    const retry: RetryConfig = { max_attempts: 1 };
+    expect(worstCaseScheduleSeconds(retry, 300)).toBe(300);
+  });
+
+  it('fixed backoff: n×perAttempt + (n-1)×base_delay_ms — matches computeClaimDeadline’s own pre-existing pin', () => {
+    // Same numbers as the "auto step with retry" computeClaimDeadline test above: n=5,
+    // perAttempt=300s, fixed backoff 1000ms ⇒ worstCase = 5*300 + 4*1 = 1504.
+    const retry: RetryConfig = { max_attempts: 5, backoff: 'fixed', base_delay_ms: 1000 };
+    expect(worstCaseScheduleSeconds(retry, 300)).toBe(1504);
+  });
+
+  it('exponential backoff with a max_delay_ms cap: matches computeClaimDeadline’s own pre-existing pin', () => {
+    // n=4, perAttempt=300s: 4*300=1200. Backoffs a=1,2,3: uncapped 1000/2000/4000ms, a=3 capped to
+    // 3000ms ⇒ 1000+2000+3000=6000ms=6s. worstCase = 1206.
+    const retry: RetryConfig = {
+      max_attempts: 4,
+      backoff: 'exponential',
+      base_delay_ms: 1000,
+      max_delay_ms: 3000,
+    };
+    expect(worstCaseScheduleSeconds(retry, 300)).toBe(1206);
+  });
+});
+
+describe('resolveCapMs (issue #140 — the engine total-time cap resolver)', () => {
+  it('explicit total_timeout_seconds overrides the default formula', () => {
+    const retry: RetryConfig = { max_attempts: 5, total_timeout_seconds: 42 };
+    // Explicit wins even though the formula would produce something totally different.
+    expect(resolveCapMs(retry, 300_000)).toBe(42_000);
+  });
+
+  it('total_timeout_seconds: 0 is honored as a PRESENT cap via `!== undefined`, never truthiness', () => {
+    // A hand-built definition (E2 forbids 0 in authored YAML) — the resolver itself must not use
+    // `||`/truthiness, which would incorrectly fall through to the default formula for 0.
+    const retry: RetryConfig = { max_attempts: 3, total_timeout_seconds: 0 };
+    expect(resolveCapMs(retry, 1000)).toBe(0);
+  });
+
+  it('absent total_timeout_seconds falls back to the shared worst-case formula, seconds-in/ms-out', () => {
+    const retry: RetryConfig = { max_attempts: 3, backoff: 'fixed', base_delay_ms: 10_000 };
+    // timeoutMs=50_000ms (50s) per attempt: worstCase = 3*50 + 2*10 = 170s = 170_000ms.
+    expect(resolveCapMs(retry, 50_000)).toBe(170_000);
+  });
+
+  it('B1 — retry without max_attempts defaults to n=1 (no NaN cascade): default cap === perAttempt ms exactly', () => {
+    // max_attempts absent — loader-legal (only validated if present), type-illegal (RetryConfig
+    // declares it required), hence the cast. n=1 ⇒ zero backoff terms ⇒ cap === perAttemptMs.
+    const retry = { backoff: 'fixed', base_delay_ms: 1000 } as RetryConfig;
+    expect(resolveCapMs(retry, 5000)).toBe(5000);
+  });
+
+  it('congruence-by-construction: resolveCapMs and computeClaimDeadline derive from the EXACT same formula — a divergent inline copy would break this equality', () => {
+    // Fixture worst case clears RECLAIM_FLOOR_SECONDS (900) so the horizon's max(FLOOR, ...) picks
+    // the worst-case branch, not the floor — otherwise the floor would mask any divergence.
+    const retry: RetryConfig = {
+      max_attempts: 4,
+      backoff: 'exponential',
+      base_delay_ms: 1000,
+      max_delay_ms: 3000,
+    };
+    const perAttemptSec = 300;
+    const def = wf({
+      work: {
+        description: 'w',
+        execution: 'auto',
+        depends_on: [],
+        timeout_seconds: perAttemptSec,
+        retry,
+      },
+    });
+    const deadline = computeClaimDeadline(def, 'work', NOW);
+    const horizonSeconds = (new Date(deadline!).getTime() - NOW.getTime()) / 1000;
+    expect(horizonSeconds).toBeGreaterThan(RECLAIM_FLOOR_SECONDS); // confirms the fixture clears the floor
+
+    const engineDefaultCapSeconds = resolveCapMs(retry, perAttemptSec * 1000) / 1000;
+    // This is also the amendment's "default-cap horizon identity" pin (issue #140 §6): for a
+    // step with no explicit total_timeout_seconds, horizon === today's worstCase + MARGIN exactly.
+    expect(engineDefaultCapSeconds + RECLAIM_MARGIN_SECONDS).toBe(horizonSeconds);
+  });
+
+  it('B2 congruence-by-construction WITH an explicit cap set: resolveCapMs and computeClaimDeadline still derive from the exact same formula', () => {
+    // The test above (no explicit cap) cannot see a B2-class divergence: with no cap, BOTH
+    // resolveCapMs and (pre-fix) computeClaimDeadline reduce to the SAME worstCaseScheduleSeconds
+    // call, so they agree even when computeClaimDeadline ignores resolveCapMs entirely. Only a
+    // fixture with an EXPLICIT total_timeout_seconds can distinguish "consumes resolveCapMs" from
+    // "calls worstCaseScheduleSeconds directly" — this is that fixture.
+    const retry: RetryConfig = {
+      max_attempts: 3,
+      backoff: 'fixed',
+      base_delay_ms: 1000,
+      total_timeout_seconds: 7200,
+    };
+    const perAttemptSec = 300;
+    const def = wf({
+      work: {
+        description: 'w',
+        execution: 'auto',
+        depends_on: [],
+        timeout_seconds: perAttemptSec,
+        retry,
+      },
+    });
+    const deadline = computeClaimDeadline(def, 'work', NOW);
+    const horizonSeconds = (new Date(deadline!).getTime() - NOW.getTime()) / 1000;
+    const engineCapSeconds = resolveCapMs(retry, perAttemptSec * 1000) / 1000;
+    expect(engineCapSeconds + RECLAIM_MARGIN_SECONDS).toBe(horizonSeconds);
+  });
+});
+
+describe('sleepWouldExceedCap (issue #140 correction, S2 — the site-(c) sleep-guard predicate, extracted so its `>=` boundary is pinnable without real-timer precision)', () => {
+  it('elapsed + wait === cap ⇒ true (the exact-fit boundary — reds under a `>` regression)', () => {
+    expect(sleepWouldExceedCap(70, 30, 100)).toBe(true);
+  });
+
+  it('elapsed + wait === cap − 1 ⇒ false (one ms of genuine headroom)', () => {
+    expect(sleepWouldExceedCap(70, 29, 100)).toBe(false);
+  });
+});
+
+describe('sleepWouldExceedCap — call-site congruence pin (issue #140 correction 2, review novel probe N1)', () => {
+  // The unit pins above test only the HELPER — no engine-level test (with real timers) can
+  // discriminate `>=` from `>` at site (c)'s own call site, so replacing that call with an inline
+  // divergent predicate (e.g. `Date.now() - capStart + waitMs > capMs`) survives the ENTIRE
+  // suite. Source-text guard, same discipline as the #107/#184 purge WIRED/EXCLUDED guard
+  // (packages/cli/src/commands/purge-guard.test.ts): read execution-loop.ts's own source and
+  // assert the CALL shape is present. The regex anchors on `sleepWouldExceedCap(` immediately
+  // followed by `Date.now()` — the plain import line (`sleepWouldExceedCap,`) has no `(`
+  // immediately after the identifier, so it can never match; only the real call at site (c) can.
+  // Kills both an inline-divergence mutant (the call disappears) and an accidental removal of the
+  // call itself (the import would still be there, but unused/uncalled).
+  it("execution-loop.ts's site (c) calls sleepWouldExceedCap(Date.now() - capStart, ...) — not an inline, divergent predicate", () => {
+    const executionLoopPath = join(dirname(fileURLToPath(import.meta.url)), 'execution-loop.ts');
+    const src = readFileSync(executionLoopPath, 'utf8');
+    expect(src).toMatch(/sleepWouldExceedCap\(\s*Date\.now\(\)/);
   });
 });

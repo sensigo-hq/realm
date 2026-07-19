@@ -151,13 +151,35 @@ export interface EvidenceSnapshot {
    */
   trace_summary?: TraceNormalizationSummary;
   /**
-   * The timeout (in seconds) actually enforced on this step's dispatch (issue A3): the
-   * authored timeout_seconds if declared, else DEFAULT_EXECUTION_TIMEOUT_SECONDS. Present ONLY
-   * when shouldEnforceTimeout(step) was true (execution: auto) — additive-optional, so absent
-   * on every pre-existing snapshot and on agent/guard/finalizer steps, which are never bounded
-   * by withTimeout.
+   * The timeout (in seconds) actually enforced on THIS ATTEMPT's dispatch (issue A3; issue #140
+   * amends the semantics — see below): the authored timeout_seconds if declared, else
+   * DEFAULT_EXECUTION_TIMEOUT_SECONDS. Present ONLY when shouldEnforceTimeout(step) was true
+   * (execution: auto) — additive-optional, so absent on every pre-existing snapshot and on
+   * agent/guard/finalizer steps, which are never bounded by withTimeout.
+   *
+   * Issue #140: on a retry-configured step this is now a PER-ATTEMPT value, not a single
+   * step-wide constant — a later attempt's value can be SMALLER than an earlier attempt's once
+   * the step's total-time cap (`clipped_to_ms` below) starts biting. On a step with no `retry:`
+   * block (or one whose cap hasn't bitten yet) every attempt's value is identical to the
+   * step's own declared/default timeout, byte-unchanged from pre-#140 behavior.
    */
   effective_timeout_seconds?: number;
+  /**
+   * Issue #140: present ONLY on an attempt whose effective timeout was CLIPPED below the step's
+   * own declared/default `timeout_seconds` by its total-time cap (`retry.total_timeout_seconds`,
+   * explicit or the amended default) — the actual millisecond bound this attempt was clipped to.
+   * Absent on an uncapped attempt or one the cap hasn't started biting on yet.
+   */
+  clipped_to_ms?: number;
+  /**
+   * Issue #140: present ONLY on the FINAL attempt's snapshot of a step that stopped retrying
+   * because either its attempt budget or its total-time cap ran out — `'attempts'` when
+   * `attemptsUsed === maxAttempts` drove the stop, `'total_timeout'` when the cap did (wins the
+   * both-true tie). Durable even when the settle path does NOT wrap the error into
+   * `STEP_RETRY_EXHAUSTED` (the issue #134 recoverable-incapability carve-out never wraps) — this
+   * evidence stamp is then the only record of *why* the step stopped.
+   */
+  exhausted_by?: 'attempts' | 'total_timeout';
 }
 
 export interface PendingGate {

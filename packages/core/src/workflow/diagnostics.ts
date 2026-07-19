@@ -18,7 +18,12 @@ export type WarningCode =
   | 'IDEMPOTENT_INERT_IN_FINALIZER'
   | 'DUAL_SCHEMA_DECLARED'
   | 'RETRY_NO_TIMEOUT'
-  | 'EXTENSION_SENTINEL';
+  | 'EXTENSION_SENTINEL'
+  // issue #140 (retryable timeout + total-time cap):
+  | 'UNKNOWN_RETRY_KEY'
+  | 'ON_TIMEOUT_SINGLE_ATTEMPT'
+  | 'TOTAL_TIMEOUT_BELOW_ATTEMPT'
+  | 'TOTAL_TIMEOUT_NON_AUTO';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text (matching, for the
@@ -53,6 +58,10 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   DUAL_SCHEMA_DECLARED: 'warn',
   RETRY_NO_TIMEOUT: 'warn',
   EXTENSION_SENTINEL: 'warn',
+  UNKNOWN_RETRY_KEY: 'warn',
+  ON_TIMEOUT_SINGLE_ATTEMPT: 'warn',
+  TOTAL_TIMEOUT_BELOW_ATTEMPT: 'warn',
+  TOTAL_TIMEOUT_NON_AUTO: 'warn',
 };
 
 /**
@@ -113,10 +122,10 @@ function closestKey(key: string, allowList: readonly string[]): string | undefin
 
 /** Builds the templated "unknown key" message text (everything after the `⚠ ` prefix). */
 function renderUnknownKeyMessage(
-  scope: 'workflow' | 'step',
   target: string,
   key: string,
   didYouMean: string | undefined,
+  noun: string,
 ): string {
   // Punctuation deliberately differs by form, matching the design's own literal examples exactly:
   // the no-suggestion form ends with a period (byte-identical to the pre-#169 text); the
@@ -124,7 +133,7 @@ function renderUnknownKeyMessage(
   if (didYouMean !== undefined) {
     return `${target}: unknown key '${key}' — ignored (did you mean '${didYouMean}'?)`;
   }
-  return `${target}: unknown key '${key}' — ignored (not a recognized ${scope} field).`;
+  return `${target}: unknown key '${key}' — ignored (not a recognized ${noun} field).`;
 }
 
 /**
@@ -136,18 +145,31 @@ function renderUnknownKeyMessage(
 export function findUnknownKeys(
   obj: Record<string, unknown>,
   allowList: readonly string[],
-  ctx: { scope: 'workflow' | 'step'; code: WarningCode; id?: string; step?: string },
+  ctx: {
+    scope: 'workflow' | 'step';
+    code: WarningCode;
+    id?: string;
+    step?: string;
+    /**
+     * Overrides the "not a recognized ___ field" noun independently of `scope` — e.g.
+     * UNKNOWN_RETRY_KEY keeps `scope: 'step'` (the LoaderWarning's own scope union has no 'retry'
+     * value) but reads "not a recognized retry field", not "step field". Defaults to `scope`,
+     * byte-identical to pre-#140 behavior for every other unknown-key code.
+     */
+    noun?: string;
+  },
 ): LoaderWarning[] {
   const warnings: LoaderWarning[] = [];
   const target =
     ctx.scope === 'workflow' ? `workflow '${ctx.id ?? '<unknown>'}'` : `step '${ctx.step}'`;
+  const noun = ctx.noun ?? ctx.scope;
   for (const key of Object.keys(obj)) {
     if (allowList.includes(key)) continue;
     const did_you_mean = closestKey(key, allowList);
     const warning: LoaderWarning = {
       code: ctx.code,
       severity: resolveSeverity(ctx.code),
-      message: renderUnknownKeyMessage(ctx.scope, target, key, did_you_mean),
+      message: renderUnknownKeyMessage(target, key, did_you_mean, noun),
       scope: ctx.scope,
       key,
     };
@@ -163,6 +185,7 @@ const UNKNOWN_KEY_CODES = new Set<WarningCode>([
   'UNKNOWN_WORKFLOW_KEY',
   'UNKNOWN_STEP_KEY',
   'UNKNOWN_CREATE_WORKFLOW_KEY',
+  'UNKNOWN_RETRY_KEY',
 ]);
 
 /**
@@ -170,12 +193,14 @@ const UNKNOWN_KEY_CODES = new Set<WarningCode>([
  * yaml-loader.ts, and the CLI's `printLoaderWarnings` helper) renders through this, never by
  * hand-rolling a `⚠ ` string itself.
  *
- * The three unknown-key codes are templated fresh from the structured fields (so the
+ * The four unknown-key codes are templated fresh from the structured fields (so the
  * `did_you_mean` suggestion is appended only when present) and always carry the `⚠ ` prefix —
- * byte-identical to the pre-#169 console.warn text. Every other code (IDEMPOTENT_INERT_IN_FINALIZER,
- * DUAL_SCHEMA_DECLARED, RETRY_NO_TIMEOUT, EXTENSION_SENTINEL) returns `message` verbatim: these
- * are free-text warnings whose exact current prefix (or lack of one) is preserved byte-for-byte
- * by whatever constructed them, not re-derived here.
+ * byte-identical to the pre-#169 console.warn text (UNKNOWN_RETRY_KEY, issue #140, follows the
+ * same rendering exactly, just with a 'retry' noun instead of 'step'/'workflow'). Every other code
+ * (IDEMPOTENT_INERT_IN_FINALIZER, DUAL_SCHEMA_DECLARED, RETRY_NO_TIMEOUT, EXTENSION_SENTINEL,
+ * ON_TIMEOUT_SINGLE_ATTEMPT, TOTAL_TIMEOUT_BELOW_ATTEMPT, TOTAL_TIMEOUT_NON_AUTO) returns
+ * `message` verbatim: these are free-text warnings whose exact current prefix (or lack of one) is
+ * preserved byte-for-byte by whatever constructed them, not re-derived here.
  */
 export function renderLoaderWarning(w: LoaderWarning): string {
   if (UNKNOWN_KEY_CODES.has(w.code)) {

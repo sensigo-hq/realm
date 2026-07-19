@@ -119,6 +119,30 @@ describe('renderLoaderWarning — golden format', () => {
     );
   });
 
+  it('UNKNOWN_RETRY_KEY (issue #140) renders with the "retry" noun, not "step" or "workflow"', () => {
+    const warnings = findUnknownKeys({ rogue_field: 1 }, ['max_attempts', 'on_timeout'], {
+      scope: 'step',
+      code: 'UNKNOWN_RETRY_KEY',
+      step: 'my-step',
+      noun: 'retry',
+    });
+    expect(renderLoaderWarning(warnings[0]!)).toBe(
+      "⚠ step 'my-step': unknown key 'rogue_field' — ignored (not a recognized retry field).",
+    );
+  });
+
+  it('UNKNOWN_RETRY_KEY did_you_mean still resolves against the passed-in retry allow-list', () => {
+    const warnings = findUnknownKeys({ on_timout: true }, ['on_timeout', 'max_attempts'], {
+      scope: 'step',
+      code: 'UNKNOWN_RETRY_KEY',
+      step: 'my-step',
+      noun: 'retry',
+    });
+    expect(renderLoaderWarning(warnings[0]!)).toBe(
+      "⚠ step 'my-step': unknown key 'on_timout' — ignored (did you mean 'on_timeout'?)",
+    );
+  });
+
   it('UNKNOWN_CREATE_WORKFLOW_KEY renders the same templated shape as UNKNOWN_STEP_KEY', () => {
     const warnings = findUnknownKeys({ rogue_field: 1 }, ['id', 'description'], {
       scope: 'step',

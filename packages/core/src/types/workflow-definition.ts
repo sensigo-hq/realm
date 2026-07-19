@@ -79,7 +79,63 @@ export interface RetryConfig {
   base_delay_ms?: number;
   /** Cap on the computed backoff delay. When set, no single delay exceeds this value. */
   max_delay_ms?: number;
+  /**
+   * Opt in to retrying this step's own `STEP_TIMEOUT` in place, consuming a normal retry attempt
+   * (issue #140). Legal ONLY when the step also declares `idempotent: true` (E1 — hard error at
+   * load otherwise; the engine independently re-checks the same conjunct at dispatch time). A
+   * timeout-retry can run CONCURRENTLY with the still-in-flight original attempt (the aborted
+   * transport request may still be executing remotely) — `on_timeout: true` is the author's
+   * explicit attestation that any number of concurrent executions, including a PARTIAL PRIOR
+   * APPLICATION (a committed prefix left by that still-in-flight attempt), are harmless. This
+   * claims MORE than `idempotent`'s base (sequential re-apply) guarantee — declare both
+   * explicitly; the engine infers neither from the other. Absent/false ⇒ a timeout stays
+   * terminal (`retryable: false`), byte-identical to pre-#140 behavior.
+   */
+  on_timeout?: boolean;
+  /**
+   * Total wall-clock budget, in seconds, across every attempt of this step (issue #140,
+   * Temporal-ScheduleToClose-style) — bounds `max_attempts × per-attempt-timeout` (plus the
+   * declared backoffs and any runtime rate-limit `retry_after` sleep) from growing unbounded.
+   * Standalone-legal: does NOT require `on_timeout`. **AMENDED default:** when absent, every
+   * retry-configured `execution: 'auto'` step is capped at the shared worst-case-schedule
+   * formula (`max_attempts × the step's own per-attempt timeout + the declared backoffs between
+   * attempts` — the same formula the claim horizon uses) — so the default cap always equals the
+   * step's own declared schedule and binds only when a runtime wait pushes an attempt's actual
+   * wall-clock MATERIALLY past that schedule (event-loop scheduling overhead is charged to the
+   * budget too — negligible at production scales; a step with no `retry:` block has no cap, as
+   * there is nothing to bound). When the cap is reached mid-schedule, the step settles as
+   * `STEP_RETRY_EXHAUSTED` with `exhausted_by: 'total_timeout'` instead of sleeping past it.
+   * Positive integer (E2) — same convention as `timeout_seconds`. Inert on a non-`execution:
+   * 'auto'` step (W5 warns) — the cap only bounds `auto` dispatch, which is the only dispatch
+   * ever wrapped in a timeout.
+   */
+  total_timeout_seconds?: number;
 }
+
+/**
+ * Every key RetryConfig declares. Used by the YAML loader (issue #140) to warn when a `retry:`
+ * block declares a key that isn't recognized (misspelling, or a stale field) — same non-breaking
+ * posture as KNOWN_STEP_KEYS/KNOWN_WORKFLOW_KEYS (issue #144/#169).
+ */
+export const KNOWN_RETRY_KEYS = [
+  'max_attempts',
+  'backoff',
+  'base_delay_ms',
+  'max_delay_ms',
+  'on_timeout',
+  'total_timeout_seconds',
+] as const;
+
+// Compile-time drift guard: KNOWN_RETRY_KEYS must be an exact partition of RetryConfig's keys —
+// see the KNOWN_STEP_KEYS guard above for why this has to be a type-level check.
+type _RetryKeysMissing = Exclude<keyof RetryConfig, (typeof KNOWN_RETRY_KEYS)[number]>;
+type _RetryKeysExtra = Exclude<(typeof KNOWN_RETRY_KEYS)[number], keyof RetryConfig>;
+const _retryKeysMissingCheck: _RetryKeysMissing extends never
+  ? true
+  : ['KNOWN_RETRY_KEYS is missing a RetryConfig key', _RetryKeysMissing] = true;
+const _retryKeysExtraCheck: _RetryKeysExtra extends never
+  ? true
+  : ['KNOWN_RETRY_KEYS has a key RetryConfig does not declare', _RetryKeysExtra] = true;
 
 /**
  * Controls when a step becomes eligible based on its dependencies' outcomes.
@@ -157,13 +213,21 @@ export interface StepDefinition {
    */
   on_outcome?: FinalizerTrigger | FinalizerTrigger[];
   /**
-   * Advisory hint (issue #101 Phase 2) that this step's handler is safe to re-execute. It is
-   * READ-ONLY and WIDEN-ONLY: it does NOTHING to normal execution and NEVER forces an outcome — it
-   * solely adds the step to the opt-in bounded-time auto-reclaim allow-list (`realm run reclaim
-   * --all`). A concrete `claims[S].deadline` is still required for auto-reclaim, so this is only
-   * meaningful on `execution: 'auto'` steps in a workflow with NO finalizer steps (those write
-   * `deadline: null` → `claim_unknown_age` → never cron-reclaimable). Absent ⇒ false. Deliberately
-   * NOT `orphan_policy` (which would force a fail-seal); `idempotent` only ever *permits* auto-reclaim.
+   * Advisory hint (issue #101 Phase 2) that this step's handler is safe to re-execute
+   * SEQUENTIALLY. It is READ-ONLY and WIDEN-ONLY: declared alone it does nothing to normal
+   * execution and never forces an outcome — it only *permits* two separate opt-in mechanisms,
+   * each gated by its OWN explicit declaration:
+   *   1. The bounded-time auto-reclaim allow-list (`realm run reclaim --all`). A concrete
+   *      `claims[S].deadline` is still required, so this function is inert on a step in a
+   *      workflow WITH finalizer steps (those write `deadline: null` → `claim_unknown_age` →
+   *      never cron-reclaimable; use `realm run reclaim --step <id> --force` there instead).
+   *   2. Since issue #140, `retry.on_timeout: true` — required there (E1, hard error otherwise)
+   *      before a timed-out attempt may be retried in place. A timeout-retry can run
+   *      CONCURRENTLY with the still-in-flight original attempt, so `on_timeout` claims MORE than
+   *      this hint's base sequential-reapply guarantee — declare both explicitly. Unlike function
+   *      1, this GATE function is live in every workflow, finalizer-bearing or not.
+   * Absent ⇒ false. Deliberately NOT `orphan_policy` (which would force a fail-seal); `idempotent`
+   * only ever *permits*, never forces, either mechanism.
    */
   idempotent?: boolean;
   uses_service?: string;

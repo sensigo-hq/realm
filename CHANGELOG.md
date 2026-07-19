@@ -4,6 +4,79 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Declaration-gated in-place timeout-retry with a clipping total-time cap (issue #140).**
+  `retry.on_timeout: true` opts a step into retrying its own `STEP_TIMEOUT` in place, consuming a
+  normal retry attempt — legal ONLY when the step also declares `idempotent: true` (a hard error
+  at load otherwise, `on_timeout` requires `idempotent`; the engine independently re-checks the
+  same conjunct at dispatch time as a programmatic-gate advisory for hand-built definitions that
+  bypass the loader). This is a STRONGER attestation than `idempotent`'s existing sequential-reapply
+  guarantee: a timeout-retry can run concurrently with the still-in-flight original attempt (the
+  aborted transport request may still be executing remotely), so `on_timeout` declares that any
+  number of concurrent executions — including a partial prior application (a committed prefix) —
+  are harmless. `retry.total_timeout_seconds` (standalone-legal, does not require `on_timeout`)
+  bounds the total wall-clock across every attempt (Temporal-`ScheduleToClose`-style); when the cap
+  is reached mid-schedule, the step settles as `STEP_RETRY_EXHAUSTED` with a structured
+  `exhausted_by: 'total_timeout'` (vs. `'attempts'`) discriminator, both in the dispatch-failure
+  envelope's `error_details` and on the final attempt's evidence snapshot (durable even on the
+  issue #134 recoverable-incapability settle path, which never wraps the error). Per-attempt
+  evidence gains `effective_timeout_seconds` (now per-attempt, not step-wide) and `clipped_to_ms`
+  (present on any attempt whose bound was reduced by the cap). New exported helpers
+  `resolveCapMs`/`worstCaseScheduleSeconds` (core); the latter is now the single formula shared by
+  the engine's cap and the claim-liveness horizon (`computeClaimDeadline`), so the two can never
+  independently drift apart. New loader diagnostics: `UNKNOWN_RETRY_KEY` (unrecognized `retry:`
+  key), `ON_TIMEOUT_SINGLE_ATTEMPT` (`on_timeout` with an effective `max_attempts` of 1),
+  `TOTAL_TIMEOUT_BELOW_ATTEMPT` (a declared cap that can never cover even a single attempt),
+  `TOTAL_TIMEOUT_NON_AUTO` (the cap is inert off `execution: 'auto'` dispatch). Semver: minor-additive.
+
+### Changed
+
+- **AMENDED default (issue #140):** a retry-configured `execution: 'auto'` step with no explicit
+  `retry.total_timeout_seconds` is now DEFAULT-CAPPED at the shared worst-case-schedule formula
+  (`max_attempts × the step's own per-attempt timeout + the declared backoffs between attempts`) —
+  the same formula the claim-reclaim horizon already used. The default cap equals the step's own
+  declared schedule, so the horizon number is unchanged **for the default-cap population**, and
+  the cap binds only when a runtime wait (a rate-limit `retry_after`) pushes an attempt's actual
+  wall-clock MATERIALLY past that declared schedule. A step declaring an EXPLICIT
+  `retry.total_timeout_seconds` instead widens the horizon to `cap + margin` (record §3) — so a
+  legitimate long-wait opt-in is never mislabeled `claim_stale` mid-sleep. **This is a deliberate,
+  disclosed behavior change:** a retry-configured step whose runtime waits exceed its own declared
+  schedule now settles as an honest `STEP_RETRY_EXHAUSTED (exhausted_by: 'total_timeout')` instead
+  of sleeping past its claim horizon — closing the silent-duplicate hazard where a
+  `claim_stale`-labeled, still-legitimately-sleeping step could become eligible for a premature
+  `realm run reclaim --all --force` re-drive.
+- The `idempotent` step hint now documents (and the loader's `IDEMPOTENT_INERT_IN_FINALIZER`
+  warning now states, variant-aware on whether `retry.on_timeout` is also declared) that it gates
+  TWO separate opt-in mechanisms — the pre-existing bounded-time auto-reclaim allow-list (inert in
+  a finalizer-bearing workflow) and, since #140, `retry.on_timeout`'s concurrency-safety gate
+  (live in every workflow, finalizer-bearing or not).
+- The zombie-stacking caveat (an abandoned, abort-ignoring handler call left running behind a
+  retried attempt) is sharpened: a synchronous handler can never stack one (it monopolizes the
+  event loop); an asynchronous handler that ignores its abort signal can stack up to
+  `max_attempts − 1` behind the currently-live attempt — now reachable from `on_timeout` alone,
+  not only from a normal retryable error racing a slow-but-not-yet-timed-out prior attempt. The
+  zombie count stays cap-bounded (the total-time cap bounds the ENGINE's own retry loop; it
+  cannot reach into a remote server still processing an already-abandoned request).
+- The agent protocol's `wait_and_proceed` prose (`generator.ts`) now notes `STEP_RETRY_EXHAUSTED`
+  surfaces "on exhaustion of attempts or total-time budget" (was "on exhaustion").
+- `RETRY_NO_TIMEOUT`'s advisory text now also names the compounding total-time-budget exposure
+  (previously described only the per-attempt bound).
+
+### Fixed
+
+- Runtime `retry_after` sleeps are now bounded for every retry-configured `execution: 'auto'` step
+  (default cap = the declared worst-case schedule; an explicit `retry.total_timeout_seconds`
+  overrides it) — previously, an uncapped retry-configured step could sleep an arbitrarily long
+  rate-limit `retry_after` well past its own claim-liveness horizon. The `claim-liveness.ts`
+  `computeClaimDeadline` JSDoc's prior "does not attempt to model `retry_after`" caveat is retired
+  accordingly — runtime enforcement now tracks the same declared-schedule assumption the detection
+  horizon always used.
+
+---
+
 ## [0.27.0] — 2026-07-18
 
 ### Added

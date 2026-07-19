@@ -187,6 +187,48 @@ describe('recoverable incapability (#134) — Part A', () => {
     expect(after.capability_blocks?.['validate']).toBeDefined();
   });
 
+  // Test 2b — issue #140: carve-out-beats-capExhausted. A tiny (hand-built, E2-forbidden-in-YAML)
+  // total_timeout_seconds:0 makes the cap ALREADY exhausted from the very first attempt
+  // (robustly — remainingMs()=0-elapsed is always <=0, no real-timer knife-edge at all) —
+  // proving the #134 recoverable-incapability carve-out guards the CAP disjunct of the wrap gate
+  // just as it already guards the attempts disjunct (Test 2 above), and that site (a)'s
+  // attempt-1-always-proceeds guard held (the dispatcher/registry lookup WAS attempted).
+  it('carve-out-beats-capExhausted: tiny-cap + not-registered settles recoverably, never wraps into STEP_RETRY_EXHAUSTED', async () => {
+    const cappedDef: WorkflowDefinition = {
+      ...handlerDef,
+      steps: {
+        validate: {
+          ...handlerDef.steps['validate']!,
+          retry: { max_attempts: 3, total_timeout_seconds: 0 },
+        },
+      },
+    };
+    const { run } = await store.create({
+      workflowId: 'handler-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const env = await executeStep(store, cappedDef, {
+      runId: run.id,
+      command: 'validate',
+      input: {},
+      dispatcher: echo,
+      registry: new ExtensionRegistry(), // empty — not-registered, capExhausted from the start
+    });
+
+    expect(env.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED'); // NOT wrapped to STEP_RETRY_EXHAUSTED
+    expect(env.errors[0]).not.toContain('after 1 attempts');
+    const after = await store.get(run.id);
+    expect(after.failed_steps).not.toContain('validate'); // recoverable, not terminal-burned
+    expect(after.terminal_state).toBe(false);
+    expect(after.capability_blocks?.['validate']).toBeDefined();
+    // The evidence stamp is durable even though the carve-out never wraps the error itself —
+    // the ONLY record of "why" the step stopped retrying in the recoverable-settle path.
+    expect(after.evidence.find((e) => e.step_id === 'validate')?.exhausted_by).toBe(
+      'total_timeout',
+    );
+  });
+
   // Test 3 — genuine failures stay TERMINAL (the mutation guard: widening the Step-5 predicate to
   // include ENGINE_HANDLER_FAILED / ADAPTER_* would redden these).
   it('handler ran-and-threw stays terminal (ENGINE_HANDLER_FAILED)', async () => {
