@@ -1,8 +1,9 @@
 // run-agent.test.ts — Tests for runAgent() and MCP tool dispatch.
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { InvalidArgumentError } from 'commander';
 import { runAgent } from './run-agent.js';
 import type { AgentDeps } from './run-agent.js';
-import type { WorkflowDefinition, ToolCallRecord } from '@sensigo/realm';
+import type { WorkflowDefinition, ToolCallRecord, TraceBufferStore } from '@sensigo/realm';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   createDefaultRegistry,
@@ -11,6 +12,7 @@ import {
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { McpClient, McpTool } from './mcp/mcp-extensions.js';
+import { agentCommand } from '../commands/agent.js';
 
 // ---------------------------------------------------------------------------
 // MCP tools integration tests
@@ -682,5 +684,445 @@ describe('runAgent — effective output schema routing (#robust-anthropic-provid
     const optsArg = provider.callStepWithTools.mock.calls[0]?.[3] as { inputSchema?: unknown };
     // output_schema wins over input_schema — the effective schema fed to the provider.
     expect(optsArg.inputSchema).toEqual(outputSchema);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #217 — in-drive schema-feedback repair loop
+// ---------------------------------------------------------------------------
+
+/** A single agent step, `execution: 'agent'`, description 'Draft' — schema declared via override. */
+function agentWorkflow(
+  overrides: Partial<WorkflowDefinition['steps'][string]> = {},
+): WorkflowDefinition {
+  return {
+    id: 'repair-wf',
+    name: 'Repair WF',
+    version: 1,
+    schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+    steps: {
+      draft: {
+        description: 'Draft',
+        execution: 'agent',
+        ...overrides,
+      },
+    },
+  };
+}
+
+/** A single tools-path agent step declaring both input_schema (loader-required alongside `tools`)
+ *  and output_schema (the schema actually exercised by these tests). */
+function toolsWorkflow(): WorkflowDefinition {
+  return {
+    id: 'tools-repair-wf',
+    name: 'Tools Repair WF',
+    version: 1,
+    schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+    mcp_servers: [{ id: 'github', command: 'npx', args: ['-y', 'mcp-github'] }],
+    steps: {
+      draft: {
+        description: 'Draft',
+        execution: 'agent',
+        tools: ['github:get_pull_request'],
+        input_schema: { type: 'object', properties: { note: { type: 'string' } } },
+        output_schema: {
+          type: 'object',
+          properties: { category: { type: 'string', enum: ['ok'] } },
+          required: ['category'],
+        },
+      },
+    },
+  };
+}
+
+/**
+ * A trace-buffer store whose `read()` always throws a generic (non-WorkflowError) — reproduces a
+ * genuinely PRE-claim, non-validation ENGINE_STORE_FAILED envelope (test 7). execution-loop.ts
+ * reads the WAL before claimStep for an agent step, so this failure occurs before any run-record
+ * version bump — cleanly isolating conjunct (ii) from the run_version-based conjunct (vi): a
+ * POST-claim non-validation failure (e.g. a settle-time `store.update()` throw) would ALSO
+ * independently fail (vi) (its envelope's run_version differs from the pre-claim baseline,
+ * confirmed empirically), which would mask conjunct (ii) in probe (a).
+ */
+const throwingTraceBufferStore = {
+  read: async () => {
+    throw new Error('simulated trace-buffer read failure');
+  },
+} as unknown as TraceBufferStore;
+
+describe('runAgent — schema-feedback repair loop (issue #217)', () => {
+  it('test 1: repair-success — 2 provider calls; attempt-2 prompt carries the summary, never the raw AJV leak (enum.allowedValues)', async () => {
+    const def = agentWorkflow({
+      output_schema: {
+        type: 'object',
+        properties: { status: { type: 'string', enum: ['SENTINEL_ALLOWED_ZZZ'] } },
+        required: ['status'],
+      },
+    });
+    const provider = new (class extends LlmProvider {
+      callStep = vi
+        .fn()
+        .mockResolvedValueOnce({ status: 'WRONG_VALUE_MARKER_XYZ' })
+        .mockResolvedValueOnce({ status: 'SENTINEL_ALLOWED_ZZZ' });
+    })();
+
+    const result = await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+      },
+      { definition: def, params: {} },
+    );
+
+    expect(result).toBe('completed');
+    expect(provider.callStep).toHaveBeenCalledTimes(2);
+    const secondPrompt = provider.callStep.mock.calls[1]?.[0] as string;
+    // (i) carries the enum failure message.
+    expect(secondPrompt).toContain('must be equal to one of the allowed values');
+    // (ii) never leaks the allowed value — the raw AJV array would via params.allowedValues.
+    expect(secondPrompt).not.toContain('SENTINEL_ALLOWED_ZZZ');
+    // (iii) never leaks a sentinel from a VALUE position of the invalid output either (future-
+    // proofing — non-verbose Ajv never echoes data values, so (ii) is the real discriminator).
+    expect(secondPrompt).not.toContain('WRONG_VALUE_MARKER_XYZ');
+  });
+
+  it('test 2: LATEST-only feedback — attempt-3 prompt carries ONLY rejection-2, never rejection-1, and exactly one feedback-block header', async () => {
+    const schema = {
+      type: 'object',
+      properties: { alpha: { type: 'string' }, beta: { type: 'number' } },
+      required: ['alpha', 'beta'],
+    };
+    const def = agentWorkflow({ output_schema: schema });
+    const provider = new (class extends LlmProvider {
+      callStep = vi
+        .fn()
+        .mockResolvedValueOnce({ beta: 5 }) // rejection 1: required-miss on 'alpha'
+        .mockResolvedValueOnce({ alpha: 'x', beta: 'not-a-number' }) // rejection 2: type-miss at /beta
+        .mockResolvedValueOnce({ alpha: 'x', beta: 5 }); // valid
+    })();
+
+    const result = await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+      },
+      { definition: def, params: {} },
+    );
+
+    expect(result).toBe('completed');
+    expect(provider.callStep).toHaveBeenCalledTimes(3);
+    const thirdPrompt = provider.callStep.mock.calls[2]?.[0] as string;
+    expect(thirdPrompt).toContain('/beta'); // rejection-2-unique marker present
+    expect(thirdPrompt).not.toContain("'alpha'"); // rejection-1-unique marker absent
+    const headerMatches = thirdPrompt.match(/rejected by the output schema validator:/g) ?? [];
+    expect(headerMatches).toHaveLength(1); // exactly one feedback-block header
+  });
+
+  it("test 3: exhaustion — N+1 provider calls, 'failed', message notes the repair count; run stays non-terminal + step still eligible (today's engine posture — #220 will terminalize persistent rejection; delete this pin when it ships)", async () => {
+    const schema = {
+      type: 'object',
+      properties: { alpha: { type: 'string' } },
+      required: ['alpha'],
+    };
+    const def = agentWorkflow({ output_schema: schema });
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({}); // always invalid — missing 'alpha' every time
+    })();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new InMemoryStore();
+    const { run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: def.version,
+      params: {},
+    });
+
+    const result = await runAgent(
+      { store, workflowStore: makeWorkflowStore(def), provider, registry: createDefaultRegistry() },
+      { existingRunId: run.id, definition: def, params: {} },
+    );
+
+    expect(result).toBe('failed');
+    expect(provider.callStep).toHaveBeenCalledTimes(3); // 1 + 2 repairs (default schemaRetries=2)
+    const printed = errorSpy.mock.calls.flat().join('\n');
+    expect(printed).toContain('after 2 schema-repair attempts');
+
+    // #220 will terminalize persistent rejection — delete this pin when it ships
+    const after = await store.get(run.id);
+    expect(after.terminal_state).toBe(false);
+    expect(after.completed_steps).not.toContain('draft');
+    expect(after.in_progress_steps).not.toContain('draft');
+    expect(after.failed_steps).not.toContain('draft');
+    errorSpy.mockRestore();
+  });
+
+  it('test 4: VALIDATION_INPUT_SCHEMA variant — repair fires for an agent step declaring only input_schema', async () => {
+    const schema = {
+      type: 'object',
+      properties: { alpha: { type: 'string' } },
+      required: ['alpha'],
+    };
+    const def = agentWorkflow({ input_schema: schema });
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValueOnce({}).mockResolvedValueOnce({ alpha: 'x' });
+    })();
+
+    const result = await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+      },
+      { definition: def, params: {} },
+    );
+
+    expect(result).toBe('completed');
+    expect(provider.callStep).toHaveBeenCalledTimes(2);
+    const secondPrompt = provider.callStep.mock.calls[1]?.[0] as string;
+    expect(secondPrompt).toContain('rejected by the input schema validator');
+  });
+
+  it('test 5: auto-step never repairs — exactly one executeChain submission (one auto-banner print), no repair message', async () => {
+    const def: WorkflowDefinition = {
+      id: 'auto-repair-wf',
+      name: 'Auto Repair WF',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        finalize: {
+          description: 'Finalize',
+          execution: 'auto',
+          input_schema: {
+            type: 'object',
+            properties: { alpha: { type: 'string' } },
+            required: ['alpha'],
+          },
+        },
+      },
+    };
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn();
+    })();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+      },
+      { definition: def, params: {} },
+    );
+
+    expect(result).toBe('failed');
+    expect(provider.callStep).not.toHaveBeenCalled();
+    const autoLines = logSpy.mock.calls
+      .flat()
+      .filter((l) => typeof l === 'string' && l.includes('→ [auto] finalize'));
+    expect(autoLines).toHaveLength(1);
+    const printed = errorSpy.mock.calls.flat().join('\n');
+    expect(printed).not.toContain('repairing');
+    expect(printed).not.toContain('schema-repair');
+
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it('test 6a: --schema-retries 0 — exactly 1 provider call, byte-identical today-behavior (no repair)', async () => {
+    const schema = {
+      type: 'object',
+      properties: { alpha: { type: 'string' } },
+      required: ['alpha'],
+    };
+    const def = agentWorkflow({ output_schema: schema });
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({}); // always invalid
+    })();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+        schemaRetries: 0,
+      },
+      { definition: def, params: {} },
+    );
+
+    expect(result).toBe('failed');
+    expect(provider.callStep).toHaveBeenCalledTimes(1);
+    const printed = errorSpy.mock.calls.flat().join('\n');
+    expect(printed).not.toContain('schema-repair');
+    errorSpy.mockRestore();
+  });
+
+  describe('test 6b: --schema-retries argParser', () => {
+    beforeEach(() => {
+      vi.spyOn(process, 'exit').mockImplementation((() => {}) as () => never);
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("rejects a non-numeric value loudly ('abc')", async () => {
+      await agentCommand
+        .parseAsync(['node', 'realm', '--workflow', 'x', '--schema-retries', 'abc'])
+        .catch(() => {});
+      expect(process.exit).toHaveBeenCalledWith(1);
+    });
+
+    it("rejects a negative value loudly ('-1')", async () => {
+      await agentCommand
+        .parseAsync(['node', 'realm', '--workflow', 'x', '--schema-retries', '-1'])
+        .catch(() => {});
+      expect(process.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('the parseArg itself throws InvalidArgumentError for non-numeric/negative input, and defaults to the numeric 2', () => {
+      const opt = agentCommand.options.find((o) => o.long === '--schema-retries')!;
+      expect(() => opt.parseArg('abc', undefined)).toThrow(InvalidArgumentError);
+      expect(() => opt.parseArg('-1', undefined)).toThrow(InvalidArgumentError);
+      expect(opt.parseArg('5', undefined)).toBe(5);
+      expect(agentCommand.opts()['schemaRetries']).toBe(2);
+    });
+  });
+
+  it('test 7: non-validation error on an agent step ⇒ no repair (exactly 1 provider call)', async () => {
+    const def = agentWorkflow(); // no schema at all — any output would settle
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({ anything: true });
+    })();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+        traceBufferStore: throwingTraceBufferStore,
+      },
+      { definition: def, params: {} },
+    );
+
+    expect(result).toBe('failed');
+    expect(provider.callStep).toHaveBeenCalledTimes(1);
+    const printed = errorSpy.mock.calls.flat().join('\n');
+    expect(printed).not.toContain('repairing');
+    expect(printed).not.toContain('schema-repair');
+    errorSpy.mockRestore();
+  });
+
+  it('test 8a: tools path, zero toolCalls on the invalid attempt ⇒ repair fires and succeeds', async () => {
+    const def = toolsWorkflow();
+    const provider = new (class extends ToolCapableLlmProvider {
+      callStepWithTools = vi
+        .fn()
+        .mockResolvedValueOnce({ output: { category: 'WRONG' }, toolCalls: [] })
+        .mockResolvedValueOnce({ output: { category: 'ok' }, toolCalls: [] });
+    })();
+    const mockClient = makeMockMcpClient();
+
+    const result = await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+        mcpClientFactory: () => mockClient,
+      },
+      { definition: def, params: {} },
+    );
+
+    expect(result).toBe('completed');
+    expect(provider.callStepWithTools).toHaveBeenCalledTimes(2);
+  });
+
+  it("test 8b: tools path, toolCalls>0 on the invalid attempt ⇒ NO repair (today's failure path)", async () => {
+    const def = toolsWorkflow();
+    const toolCalls: ToolCallRecord[] = [
+      {
+        tool: 'get_pull_request',
+        server_id: 'github',
+        args: {},
+        result: 'x',
+        duration_ms: 1,
+        started_at: '2026-01-01T00:00:00.000Z',
+      },
+    ];
+    const provider = new (class extends ToolCapableLlmProvider {
+      callStepWithTools = vi.fn().mockResolvedValue({ output: { category: 'WRONG' }, toolCalls });
+    })();
+    const mockClient = makeMockMcpClient();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+        mcpClientFactory: () => mockClient,
+      },
+      { definition: def, params: {} },
+    );
+
+    expect(result).toBe('failed');
+    expect(provider.callStepWithTools).toHaveBeenCalledTimes(1);
+    const printed = errorSpy.mock.calls.flat().join('\n');
+    expect(printed).not.toContain('schema-repair');
+    errorSpy.mockRestore();
+  });
+
+  it('test 10: chained-auto no-false-repair — an agent step chaining into an auto step with a required-prop input_schema does not falsely repair the already-settled agent step', async () => {
+    const def: WorkflowDefinition = {
+      id: 'chained-auto-wf',
+      name: 'Chained Auto WF',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        draft: { description: 'Draft', execution: 'agent' },
+        finalize: {
+          description: 'Finalize',
+          execution: 'auto',
+          depends_on: ['draft'],
+          input_schema: {
+            type: 'object',
+            properties: { alpha: { type: 'string' } },
+            required: ['alpha'],
+          },
+        },
+      },
+    };
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({ ok: true });
+    })();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+      },
+      { definition: def, params: {} },
+    );
+
+    expect(result).toBe('failed');
+    expect(provider.callStep).toHaveBeenCalledTimes(1);
+    const printed = errorSpy.mock.calls.flat().join('\n');
+    expect(printed).not.toContain('repairing');
+    expect(printed).not.toContain('schema-repair');
+    errorSpy.mockRestore();
   });
 });

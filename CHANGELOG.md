@@ -4,6 +4,31 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **In-drive schema-feedback repair loop for `realm agent` (issue #217).** When an `execution:
+'agent'` step's output is rejected by `output_schema`/`input_schema` validation
+  (`VALIDATION_OUTPUT_SCHEMA`/`VALIDATION_INPUT_SCHEMA`), the drive now re-prompts the SAME step
+  with the validator's errors appended — a PRISTINE copy of the original prompt plus the LATEST
+  rejection's whitelisted summary only (never accumulated, never the raw Ajv error array, which
+  can carry schema-declared values like `enum.allowedValues`). New `--schema-retries <n>` flag on
+  `realm agent` (default `2`, non-negative integer, `0` disables and reproduces today's
+  single-attempt behavior byte-for-byte); one stderr line is printed per repair attempt, and the
+  eventual failure message gains an "after N schema-repair attempts" suffix once at least one
+  repair ran. Applies to both the plain `callStep` path and the MCP tools path (tools-path repair
+  is scoped to a ZERO-toolCall attempt only — a repair after a tool actually ran is out of scope
+  for this pass; see the `ToolCapableLlmProvider.callStepWithTools` JSDoc for the provider
+  contract this relies on). Auto steps and the MCP protocol path are entirely unaffected — zero
+  engine change. New core export-adjacent addition: `summarizeAjvErrors` (in
+  `buildFailedAttemptRecord`'s `validation_error_summary`) now carries two additional
+  keyword-conditional, key-name-only fields, `additional_property`/`missing_property`, feeding the
+  repair prompt's summary without ever leaking a submitted or schema-declared value. Semver:
+  minor-additive.
+
+---
+
 ## [0.28.0] — 2026-07-19
 
 ### Added

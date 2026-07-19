@@ -38,6 +38,14 @@ export abstract class LlmProvider {
  * Extend this class if your provider can drive tool-enabled workflow steps.
  */
 export abstract class ToolCapableLlmProvider extends LlmProvider {
+  /**
+   * issue #217 provider contract: every executor invocation MUST produce an entry in
+   * `toolCalls`, including failed/timed-out calls — the drive's schema-repair gate relies on
+   * `toolCalls.length === 0 ⇒ executor never invoked`. A custom `--provider-module` that violates
+   * this (e.g. swallows a failed call without recording it) is a trusted-injector residual — the
+   * repair gate would then wrongly treat a tool-using attempt as tool-free and repair it (cross-
+   * ref #224).
+   */
   abstract callStepWithTools(
     prompt: string,
     tools: ToolDefinition[],

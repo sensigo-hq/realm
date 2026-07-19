@@ -229,16 +229,17 @@ realm agent \
   --params '{"key":"value"}'
 ```
 
-| Option                     | Default          | Description                                                                                                                                            |
-| -------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--workflow <path>`        | (required)       | Path to `workflow.yaml` or its containing directory                                                                                                    |
-| `--params <json>`          | `{}`             | Run params as a JSON string                                                                                                                            |
-| `--provider <name>`        | auto             | LLM provider. Values: `openai`, `anthropic`. Auto-detected from whichever API key is set.                                                              |
-| `--model <name>`           | provider default | Model name override. Default: `gpt-4o` for OpenAI, `claude-sonnet-4-5` for Anthropic.                                                                  |
-| `--base-url <url>`         | —                | Base URL for OpenAI-compatible endpoints (DeepSeek, Qwen, Groq, etc.). Only valid with `--provider openai` or when `OPENAI_API_KEY` is set.            |
-| `--provider-module <path>` | —                | Path to a custom provider module. Cannot be combined with `--provider`, `--model`, or `--base-url`. See [Custom providers](#custom-providers) below.   |
-| `--register`               | off              | Persist the workflow to `~/.realm/workflows/` so `realm run inspect` resolves it by ID                                                                 |
-| `--run-id <id>`            | —                | Attach to an existing run instead of creating a new one. Mutually exclusive with `--workflow`. The run must exist and must not be in a terminal state. |
+| Option                     | Default          | Description                                                                                                                                                                                               |
+| -------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--workflow <path>`        | (required)       | Path to `workflow.yaml` or its containing directory                                                                                                                                                       |
+| `--params <json>`          | `{}`             | Run params as a JSON string                                                                                                                                                                               |
+| `--provider <name>`        | auto             | LLM provider. Values: `openai`, `anthropic`. Auto-detected from whichever API key is set.                                                                                                                 |
+| `--model <name>`           | provider default | Model name override. Default: `gpt-4o` for OpenAI, `claude-sonnet-4-5` for Anthropic.                                                                                                                     |
+| `--base-url <url>`         | —                | Base URL for OpenAI-compatible endpoints (DeepSeek, Qwen, Groq, etc.). Only valid with `--provider openai` or when `OPENAI_API_KEY` is set.                                                               |
+| `--provider-module <path>` | —                | Path to a custom provider module. Cannot be combined with `--provider`, `--model`, or `--base-url`. See [Custom providers](#custom-providers) below.                                                      |
+| `--register`               | off              | Persist the workflow to `~/.realm/workflows/` so `realm run inspect` resolves it by ID                                                                                                                    |
+| `--run-id <id>`            | —                | Attach to an existing run instead of creating a new one. Mutually exclusive with `--workflow`. The run must exist and must not be in a terminal state.                                                    |
+| `--schema-retries <n>`     | `2`              | In-drive repair attempts when an agent step's output/input is rejected by schema validation (issue #217) — the drive re-prompts with the validator's errors appended. Non-negative integer; `0` disables. |
 
 **LLM key:** set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in your shell or `.env` file. The
 CLI loads `.env` automatically on startup.

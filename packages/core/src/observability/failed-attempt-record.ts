@@ -34,6 +34,18 @@ export interface ValidationErrorSummaryEntry {
   schemaPath: string;
   keyword: string;
   message: string;
+  /**
+   * issue #217: present ONLY for `additionalProperties` keyword errors — the offending key NAME
+   * from `params.additionalProperty` (never a value). Truncated to MAX_FIELD_CHARS like every
+   * other field here.
+   */
+  additional_property?: string;
+  /**
+   * issue #217: present ONLY for `required` keyword errors — the missing key NAME (schema-
+   * derived, from `params.missingProperty`; never a submitted value). Truncated to
+   * MAX_FIELD_CHARS like every other field here.
+   */
+  missing_property?: string;
 }
 
 /** Metadata-only record describing a failed agent-step validation attempt. */
@@ -85,9 +97,13 @@ function safeStringify(value: unknown): string {
 }
 
 /**
- * Map raw Ajv errors to the whitelisted summary. Drops `params`/`data` (Ajv embeds offending VALUES
- * there — a leak vector). Skips non-object entries, caps at the first 10, truncates path/message
- * fields to 200 chars. Never throws.
+ * Map raw Ajv errors to the whitelisted summary. Drops `params`/`data` WHOLESALE (Ajv embeds
+ * offending/schema VALUES there — a leak vector, e.g. `enum.allowedValues`) EXCEPT for two
+ * keyword-conditional KEY-NAME-ONLY fields (issue #217) that carry no value: `additional_property`
+ * (from `params.additionalProperty` on an `additionalProperties` error) and `missing_property`
+ * (from `params.missingProperty` on a `required` error) — both gated on keyword AND a string-typed
+ * params field, so no other keyword's `params` is ever touched. Skips non-object entries, caps at
+ * the first 10, truncates path/message/the two new fields to 200 chars. Never throws.
  */
 function summarizeAjvErrors(ajvErrors: unknown[]): ValidationErrorSummaryEntry[] {
   if (!Array.isArray(ajvErrors)) return [];
@@ -96,11 +112,30 @@ function summarizeAjvErrors(ajvErrors: unknown[]): ValidationErrorSummaryEntry[]
     if (out.length >= MAX_SUMMARY_ENTRIES) break;
     if (entry === null || typeof entry !== 'object') continue;
     const e = entry as Record<string, unknown>;
+    const keyword = truncate(asString(e['keyword']), MAX_FIELD_CHARS);
+    const params =
+      e['params'] !== null && typeof e['params'] === 'object'
+        ? (e['params'] as Record<string, unknown>)
+        : undefined;
+    const additionalProperty =
+      keyword === 'additionalProperties' && typeof params?.['additionalProperty'] === 'string'
+        ? params['additionalProperty']
+        : undefined;
+    const missingProperty =
+      keyword === 'required' && typeof params?.['missingProperty'] === 'string'
+        ? params['missingProperty']
+        : undefined;
     out.push({
       instancePath: truncate(asString(e['instancePath']), MAX_FIELD_CHARS),
       schemaPath: truncate(asString(e['schemaPath']), MAX_FIELD_CHARS),
-      keyword: truncate(asString(e['keyword']), MAX_FIELD_CHARS),
+      keyword,
       message: truncate(asString(e['message']), MAX_FIELD_CHARS),
+      ...(additionalProperty !== undefined
+        ? { additional_property: truncate(additionalProperty, MAX_FIELD_CHARS) }
+        : {}),
+      ...(missingProperty !== undefined
+        ? { missing_property: truncate(missingProperty, MAX_FIELD_CHARS) }
+        : {}),
     });
   }
   return out;

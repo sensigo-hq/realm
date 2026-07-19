@@ -119,6 +119,76 @@ describe('buildFailedAttemptRecord', () => {
     expect(rec.submitted_keys).toEqual(['ticket_body']);
   });
 
+  // issue #217: keyword-conditional key-name-only fields feeding the CLI schema-repair prompt.
+  it('populates additional_property for an additionalProperties error, missing_property for a required error, and neither for other keywords', () => {
+    const rec = buildFailedAttemptRecord(
+      baseInput({
+        ajv_errors: [
+          {
+            instancePath: '',
+            schemaPath: '#/additionalProperties',
+            keyword: 'additionalProperties',
+            message: 'must NOT have additional properties',
+            params: { additionalProperty: 'extra_field' },
+          },
+          {
+            instancePath: '',
+            schemaPath: '#/required',
+            keyword: 'required',
+            message: "must have required property 'status'",
+            params: { missingProperty: 'status' },
+          },
+          {
+            instancePath: '/status',
+            schemaPath: '#/properties/status/enum',
+            keyword: 'enum',
+            message: 'must be equal to one of the allowed values',
+            params: { allowedValues: ['open', 'closed'] },
+          },
+        ],
+      }),
+    );
+    expect(rec.validation_error_summary[0]).toMatchObject({
+      keyword: 'additionalProperties',
+      additional_property: 'extra_field',
+    });
+    expect(rec.validation_error_summary[0]!.missing_property).toBeUndefined();
+    expect(rec.validation_error_summary[1]).toMatchObject({
+      keyword: 'required',
+      missing_property: 'status',
+    });
+    expect(rec.validation_error_summary[1]!.additional_property).toBeUndefined();
+    // enum entry gets neither new field — no key present at all (exactOptionalPropertyTypes).
+    expect('additional_property' in rec.validation_error_summary[2]!).toBe(false);
+    expect('missing_property' in rec.validation_error_summary[2]!).toBe(false);
+  });
+
+  it('truncates additional_property/missing_property at MAX_FIELD_CHARS (200)', () => {
+    const longKey = 'k'.repeat(500);
+    const rec = buildFailedAttemptRecord(
+      baseInput({
+        ajv_errors: [
+          {
+            instancePath: '',
+            schemaPath: '#/additionalProperties',
+            keyword: 'additionalProperties',
+            message: 'must NOT have additional properties',
+            params: { additionalProperty: longKey },
+          },
+          {
+            instancePath: '',
+            schemaPath: '#/required',
+            keyword: 'required',
+            message: 'must have required property',
+            params: { missingProperty: longKey },
+          },
+        ],
+      }),
+    );
+    expect(rec.validation_error_summary[0]!.additional_property).toHaveLength(200);
+    expect(rec.validation_error_summary[1]!.missing_property).toHaveLength(200);
+  });
+
   it('is defensive: non-array ajv_errors yields an empty summary, no throw', () => {
     expect(() =>
       buildFailedAttemptRecord(baseInput({ ajv_errors: 'not-an-array' as unknown as unknown[] })),
