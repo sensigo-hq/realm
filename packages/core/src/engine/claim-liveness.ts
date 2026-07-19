@@ -10,7 +10,11 @@
 // WITHOUT needing the workflow definition (it reads the stored deadline). Recovery is a
 // deliberate per-step act (`reclaimStep` / `realm run reclaim`), never a background sweep.
 import type { RunRecord, ClaimRecord } from '../types/run-record.js';
-import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
+import type {
+  WorkflowDefinition,
+  StepDefinition,
+  RetryConfig,
+} from '../types/workflow-definition.js';
 import { computeBackoff } from './backoff.js';
 
 /**
@@ -55,6 +59,39 @@ export const RECLAIM_MARGIN_SECONDS = 60; // 1 min
 export const RECLAIM_FLOOR_SECONDS = 900; // 15 min
 
 /**
+ * Computes the worst-case wall-clock (SECONDS) across every attempt of a retry-configured step:
+ * `max_attempts × perAttemptSec` + the sum of the DECLARED backoff delays between attempts (n-1 of
+ * them, for attemptNum 1..n-1 — matches the retry loop's own schedule in execution-loop.ts;
+ * computeBackoff returns ms). Pure — the declared schedule only; does not model a runtime
+ * rate-limit `retry_after` override (execution-loop.ts applies that separately). This is the
+ * SHARED formula (issue #140) consumed by BOTH `computeClaimDeadline` below (the claim DETECTION
+ * horizon) and `resolveCapMs` (the engine's ENFORCEMENT cap) so the two can never independently
+ * drift apart — see the congruence-by-construction test in claim-liveness.test.ts.
+ */
+export function worstCaseScheduleSeconds(retry: RetryConfig, perAttemptSec: number): number {
+  const n = retry.max_attempts;
+  let backoffSec = 0;
+  for (let a = 1; a < n; a++) backoffSec += computeBackoff(retry, a) / 1000;
+  return n * perAttemptSec + backoffSec;
+}
+
+/**
+ * Resolves the total-time cap (MILLISECONDS) enforced across every attempt of a retry-configured
+ * `execution: 'auto'` step (issue #140, AMENDED default): the explicit `retry.total_timeout_seconds`
+ * when declared — `!== undefined`, NEVER truthiness, so a hand-built `total_timeout_seconds: 0` is
+ * honored as a present (already-exhausted) cap rather than falling through to the default — else
+ * the shared `worstCaseScheduleSeconds` formula above. The default equals the step's own declared
+ * schedule, so the cap binds only when a runtime wait pushes an attempt's actual wall-clock
+ * MATERIALLY past it. Call only when enforcement applies and `retryConfig` is defined
+ * (execution-loop.ts gates the call on `enforceTimeout && retryConfig !== undefined`) — `timeoutMs`
+ * is guaranteed defined in that case. Seconds-in (`total_timeout_seconds`, `timeoutMs / 1000`),
+ * MILLISECONDS-out — the same convention `timeoutMs` itself uses.
+ */
+export function resolveCapMs(retry: RetryConfig, timeoutMs: number): number {
+  return (retry.total_timeout_seconds ?? worstCaseScheduleSeconds(retry, timeoutMs / 1000)) * 1000;
+}
+
+/**
  * Computes the claim deadline for `stepName` at claim time. A CONCRETE deadline is returned ONLY
  * for a reliably time-boundable claim: an `execution: 'auto'` (handler-driven) step in a workflow
  * with NO `execution: 'finalizer'` steps (so no finalizer drain can legitimately extend the claim
@@ -63,16 +100,23 @@ export const RECLAIM_FLOOR_SECONDS = 900; // 15 min
  * any step in a finalizer-bearing workflow may hold its claim through the terminal drain.
  *
  * The horizon is the WORST-CASE wall-clock across every retry attempt (issue #101 follow-up —
- * Design Reviewer finding #4 from the A3 debate): a single-attempt bound understates a retrying
- * step's real claim span (`max_attempts × per-attempt-timeout + the declared backoffs between
- * attempts`), so a legitimately-retrying step could be labeled `claim_stale` — and, if
- * `idempotent`, become eligible for a premature `realm run reclaim --all --force` re-drive —
- * while still on an early attempt. For `n = 1` (no `retry:`, or `max_attempts: 1`) this reduces
- * EXACTLY to the prior single-attempt formula `max(RECLAIM_FLOOR, perAttemptSec + MARGIN)`, so
- * non-retry steps' horizons are byte-unchanged. This uses the DECLARED backoff schedule only — a
- * runtime `retry_after` (rate-limit 429 override, applied in execution-loop.ts) is not knowable at
- * claim time; the horizon stays a best-effort, floored, advisory bound (Phase 1 gates no action on
- * this label) and does not attempt to model `retry_after`.
+ * Design Reviewer finding #4 from the A3 debate), via the shared `worstCaseScheduleSeconds`
+ * formula above: a single-attempt bound understates a retrying step's real claim span, so a
+ * legitimately-retrying step could be labeled `claim_stale` — and, if `idempotent`, become
+ * eligible for a premature `realm run reclaim --all --force` re-drive — while still on an early
+ * attempt. For `n = 1` (no `retry:`, or `max_attempts: 1`) this reduces EXACTLY to the prior
+ * single-attempt formula `max(RECLAIM_FLOOR, perAttemptSec + MARGIN)`, so non-retry steps'
+ * horizons are byte-unchanged.
+ *
+ * Issue #140 AMENDMENT: since every retry-configured `execution: 'auto'` step is now DEFAULT-
+ * CAPPED at exactly this same worst-case schedule (see `resolveCapMs`), the engine's runtime
+ * enforcement now tracks this DETECTION horizon's own declared-schedule assumption — the prior
+ * "does not attempt to model `retry_after`" caveat is RETIRED here: a runtime `retry_after`
+ * (rate-limit 429 override) that would push a step's wall-clock materially past this horizon now
+ * hits the engine's own cap first (`STEP_RETRY_EXHAUSTED`, `exhausted_by: 'total_timeout'`) rather
+ * than silently sleeping past it. The horizon itself remains a best-effort, floored, advisory bound
+ * for the DETECTION label (Phase 1 gates no action on it) — only the runtime ENFORCEMENT side
+ * changed; this function's formula did not.
  */
 export function computeClaimDeadline(
   definition: WorkflowDefinition,
@@ -83,15 +127,9 @@ export function computeClaimDeadline(
   if (step === undefined) return null;
   const hasFinalizers = Object.values(definition.steps).some((s) => s.execution === 'finalizer');
   if (step.execution !== 'auto' || hasFinalizers) return null;
-  const n = step.retry?.max_attempts ?? 1;
   const perAttemptSec = step.timeout_seconds ?? DEFAULT_EXECUTION_TIMEOUT_SECONDS;
-  // Backoffs occur BETWEEN attempts: n-1 of them, for attemptNum 1..n-1 (matches the retry loop's
-  // schedule in execution-loop.ts). computeBackoff returns ms; the horizon is seconds.
-  let backoffSec = 0;
-  if (step.retry !== undefined) {
-    for (let a = 1; a < n; a++) backoffSec += computeBackoff(step.retry, a) / 1000;
-  }
-  const worstCaseSec = n * perAttemptSec + backoffSec;
+  const worstCaseSec =
+    step.retry !== undefined ? worstCaseScheduleSeconds(step.retry, perAttemptSec) : perAttemptSec;
   const horizonSeconds = Math.max(RECLAIM_FLOOR_SECONDS, worstCaseSec + RECLAIM_MARGIN_SECONDS);
   return new Date(now.getTime() + horizonSeconds * 1000).toISOString();
 }

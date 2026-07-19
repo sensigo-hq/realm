@@ -103,7 +103,7 @@ steps:
     );
   });
 
-  it('WARNS (does not reject) when idempotent: true is inert in a finalizer-bearing workflow', () => {
+  it('WARNS (does not reject) when idempotent: true cannot enable auto-reclaim in a finalizer-bearing workflow', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const def = loadWorkflowFromString(`
 id: idem-wf
@@ -124,8 +124,64 @@ steps:
     // Loaded (not rejected), idempotent preserved, but a warning was emitted.
     expect(def.steps['work']!.idempotent).toBe(true);
     const out = warn.mock.calls.flat().join('\n');
-    expect(out).toContain('inert in a finalizer-bearing workflow');
+    // Issue #140 C5 reword: the reclaim function's inertness, not a blanket "idempotent is inert".
+    expect(out).toContain('cannot enable auto-reclaim in a finalizer-bearing workflow');
     expect(out).toContain('work');
     warn.mockRestore();
+  });
+
+  describe('issue #140 C5 — variant-aware reword of IDEMPOTENT_INERT_IN_FINALIZER', () => {
+    it('WITHOUT on_timeout: the message says nothing about the on_timeout gate', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      loadWorkflowFromString(`
+id: idem-wf-no-on-timeout
+name: Idem No On Timeout
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+    idempotent: true
+  cleanup:
+    description: Finalizer
+    execution: finalizer
+    on_outcome: always
+    handler: hc
+`);
+      const out = warn.mock.calls.flat().join('\n');
+      expect(out).toContain("'idempotent: true' cannot enable auto-reclaim in a finalizer-bearing");
+      expect(out).not.toContain('on_timeout');
+      warn.mockRestore();
+    });
+
+    it('WITH on_timeout: the message ALSO states the gate role is unaffected — timeout retries remain active', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      loadWorkflowFromString(`
+id: idem-wf-with-on-timeout
+name: Idem With On Timeout
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+    idempotent: true
+    retry:
+      max_attempts: 3
+      on_timeout: true
+  cleanup:
+    description: Finalizer
+    execution: finalizer
+    on_outcome: always
+    handler: hc
+`);
+      const out = warn.mock.calls.flat().join('\n');
+      expect(out).toContain("'idempotent: true' cannot enable auto-reclaim in a finalizer-bearing");
+      expect(out).toContain(
+        "Its 'retry.on_timeout' gate role is unaffected — timeout retries remain active.",
+      );
+      warn.mockRestore();
+    });
   });
 });

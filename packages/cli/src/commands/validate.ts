@@ -33,6 +33,13 @@ import { printLoaderWarnings, rejectOnErrorSeverity, failsStrict } from '../lib/
  * RETRY_NO_TIMEOUT LoaderWarning per such step (issue #169: folded into the validate accumulator
  * — printed via printLoaderWarnings alongside every other warning — instead of printed directly,
  * so `--strict` and the dormant boundary-reject can see it too).
+ *
+ * Issue #140 text update: the per-attempt bound this warns about is now ALSO the basis of the
+ * step's default total-time cap (`retry.total_timeout_seconds`, when not overridden) — so the
+ * "each attempt" wording alone would understate the exposure on a multi-attempt retry (the
+ * default cap compounds it: `max_attempts × the default timeout` before the step's own cap even
+ * fires). The message is worded to cover both axes without requiring the reader to already know
+ * about the cap.
  */
 function findRetryWithoutExplicitTimeout(definition: WorkflowDefinition): LoaderWarning[] {
   const warnings: LoaderWarning[] = [];
@@ -49,8 +56,11 @@ function findRetryWithoutExplicitTimeout(definition: WorkflowDefinition): Loader
         step: stepName,
         message:
           `⚠  Step '${stepName}': declares 'retry' but no 'timeout_seconds' — each attempt is ` +
-          `bounded by the default execution timeout (${DEFAULT_EXECUTION_TIMEOUT_SECONDS}s). ` +
-          `Consider an explicit 'timeout_seconds' if attempts should fail faster.`,
+          `bounded by the default execution timeout (${DEFAULT_EXECUTION_TIMEOUT_SECONDS}s), and ` +
+          `(absent an explicit 'retry.total_timeout_seconds') the step's overall retry budget ` +
+          `defaults to that same per-attempt bound compounded across every attempt plus backoffs. ` +
+          `Consider an explicit 'timeout_seconds' if attempts should fail faster, or an explicit ` +
+          `'retry.total_timeout_seconds' to bound the overall budget independently.`,
       });
     }
   }

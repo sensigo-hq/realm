@@ -9,8 +9,10 @@ import {
   RECLAIM_MARGIN_SECONDS,
   DEFAULT_EXECUTION_TIMEOUT_SECONDS,
   shouldEnforceTimeout,
+  worstCaseScheduleSeconds,
+  resolveCapMs,
 } from './claim-liveness.js';
-import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import type { WorkflowDefinition, RetryConfig } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
 
 const NOW = new Date('2026-07-07T12:00:00.000Z');
@@ -204,5 +206,81 @@ describe('shouldEnforceTimeout (issue A3 — enforcement predicate)', () => {
     // computeClaimDeadline above. An auto step must stay enforced regardless of any finalizer
     // elsewhere in its workflow — this is the Design Reviewer's blocking-fix, documented as a test.
     expect(shouldEnforceTimeout({ description: 'w', execution: 'auto' })).toBe(true);
+  });
+});
+
+describe('worstCaseScheduleSeconds (issue #140 — the shared formula)', () => {
+  it('n=1 (no meaningful retry): reduces to exactly perAttemptSec, no backoff', () => {
+    const retry: RetryConfig = { max_attempts: 1 };
+    expect(worstCaseScheduleSeconds(retry, 300)).toBe(300);
+  });
+
+  it('fixed backoff: n×perAttempt + (n-1)×base_delay_ms — matches computeClaimDeadline’s own pre-existing pin', () => {
+    // Same numbers as the "auto step with retry" computeClaimDeadline test above: n=5,
+    // perAttempt=300s, fixed backoff 1000ms ⇒ worstCase = 5*300 + 4*1 = 1504.
+    const retry: RetryConfig = { max_attempts: 5, backoff: 'fixed', base_delay_ms: 1000 };
+    expect(worstCaseScheduleSeconds(retry, 300)).toBe(1504);
+  });
+
+  it('exponential backoff with a max_delay_ms cap: matches computeClaimDeadline’s own pre-existing pin', () => {
+    // n=4, perAttempt=300s: 4*300=1200. Backoffs a=1,2,3: uncapped 1000/2000/4000ms, a=3 capped to
+    // 3000ms ⇒ 1000+2000+3000=6000ms=6s. worstCase = 1206.
+    const retry: RetryConfig = {
+      max_attempts: 4,
+      backoff: 'exponential',
+      base_delay_ms: 1000,
+      max_delay_ms: 3000,
+    };
+    expect(worstCaseScheduleSeconds(retry, 300)).toBe(1206);
+  });
+});
+
+describe('resolveCapMs (issue #140 — the engine total-time cap resolver)', () => {
+  it('explicit total_timeout_seconds overrides the default formula', () => {
+    const retry: RetryConfig = { max_attempts: 5, total_timeout_seconds: 42 };
+    // Explicit wins even though the formula would produce something totally different.
+    expect(resolveCapMs(retry, 300_000)).toBe(42_000);
+  });
+
+  it('total_timeout_seconds: 0 is honored as a PRESENT cap via `!== undefined`, never truthiness', () => {
+    // A hand-built definition (E2 forbids 0 in authored YAML) — the resolver itself must not use
+    // `||`/truthiness, which would incorrectly fall through to the default formula for 0.
+    const retry: RetryConfig = { max_attempts: 3, total_timeout_seconds: 0 };
+    expect(resolveCapMs(retry, 1000)).toBe(0);
+  });
+
+  it('absent total_timeout_seconds falls back to the shared worst-case formula, seconds-in/ms-out', () => {
+    const retry: RetryConfig = { max_attempts: 3, backoff: 'fixed', base_delay_ms: 10_000 };
+    // timeoutMs=50_000ms (50s) per attempt: worstCase = 3*50 + 2*10 = 170s = 170_000ms.
+    expect(resolveCapMs(retry, 50_000)).toBe(170_000);
+  });
+
+  it('congruence-by-construction: resolveCapMs and computeClaimDeadline derive from the EXACT same formula — a divergent inline copy would break this equality', () => {
+    // Fixture worst case clears RECLAIM_FLOOR_SECONDS (900) so the horizon's max(FLOOR, ...) picks
+    // the worst-case branch, not the floor — otherwise the floor would mask any divergence.
+    const retry: RetryConfig = {
+      max_attempts: 4,
+      backoff: 'exponential',
+      base_delay_ms: 1000,
+      max_delay_ms: 3000,
+    };
+    const perAttemptSec = 300;
+    const def = wf({
+      work: {
+        description: 'w',
+        execution: 'auto',
+        depends_on: [],
+        timeout_seconds: perAttemptSec,
+        retry,
+      },
+    });
+    const deadline = computeClaimDeadline(def, 'work', NOW);
+    const horizonSeconds = (new Date(deadline!).getTime() - NOW.getTime()) / 1000;
+    expect(horizonSeconds).toBeGreaterThan(RECLAIM_FLOOR_SECONDS); // confirms the fixture clears the floor
+
+    const engineDefaultCapSeconds = resolveCapMs(retry, perAttemptSec * 1000) / 1000;
+    // This is also the amendment's "default-cap horizon identity" pin (issue #140 §6): for a
+    // step with no explicit total_timeout_seconds, horizon === today's worstCase + MARGIN exactly.
+    expect(engineDefaultCapSeconds + RECLAIM_MARGIN_SECONDS).toBe(horizonSeconds);
   });
 });

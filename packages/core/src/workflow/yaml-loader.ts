@@ -9,7 +9,11 @@ import type {
   TemplateDefinition,
   TriggerRule,
 } from '../types/workflow-definition.js';
-import { KNOWN_STEP_KEYS, KNOWN_WORKFLOW_KEYS } from '../types/workflow-definition.js';
+import {
+  KNOWN_STEP_KEYS,
+  KNOWN_WORKFLOW_KEYS,
+  KNOWN_RETRY_KEYS,
+} from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import {
   findUnknownKeys,
@@ -21,6 +25,7 @@ import { resolveTemplates } from './template-resolver.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
 import { splitComparison, isPathShaped } from '../engine/comparison-expr.js';
+import { DEFAULT_EXECUTION_TIMEOUT_SECONDS } from '../engine/claim-liveness.js';
 
 type ConditionSurface = 'when' | 'abort_unless' | 'preconditions';
 
@@ -761,18 +766,33 @@ function parseWorkflowString(
       errors.push(`Step '${stepName}': 'idempotent' is only valid on execution: auto steps`);
     }
     // WARN (do not reject): an idempotent auto step in a finalizer-bearing workflow gets
-    // `deadline: null` (issue #101), so the flag is inert — `realm run reclaim --all` can never
-    // select it. The author should know it stays per-step-manual-reclaim-only.
+    // `deadline: null` (issue #101), so the RECLAIM function is inert — `realm run reclaim --all`
+    // can never select it. The author should know it stays per-step-manual-reclaim-only.
+    //
+    // Issue #140 C5 (variant-aware reword): `idempotent` now has a SECOND function — gating
+    // `retry.on_timeout` — and that GATE function is live in every workflow, finalizer-bearing or
+    // not (shouldEnforceTimeout has no finalizer conjunct). A single unconditional message would
+    // either keep a falsehood (claiming idempotent is wholly inert when on_timeout is ALSO
+    // declared) or gratuitously mention a gate the author never declared (idempotent-alone case)
+    // — so the message is keyed on `step.retry?.on_timeout`, pinned by both-variant loader tests.
     if (step['idempotent'] === true && step['execution'] === 'auto' && hasFinalizerStep) {
+      const stepRetry =
+        typeof step['retry'] === 'object' && step['retry'] !== null
+          ? (step['retry'] as Record<string, unknown>)
+          : undefined;
+      const onTimeoutDeclared = stepRetry?.['on_timeout'] === true;
       warnings.push({
         code: 'IDEMPOTENT_INERT_IN_FINALIZER',
         severity: resolveSeverity('IDEMPOTENT_INERT_IN_FINALIZER'),
         scope: 'step',
         step: stepName,
         message:
-          `Step '${stepName}': 'idempotent: true' is inert in a finalizer-bearing workflow (its claim ` +
-          `carries no deadline, so 'realm run reclaim --all' can never select it). Recover it with ` +
-          `'realm run reclaim --step ${stepName} --force'.`,
+          `Step '${stepName}': 'idempotent: true' cannot enable auto-reclaim in a finalizer-bearing ` +
+          `workflow (its claim carries no deadline, so 'realm run reclaim --all' can never select ` +
+          `it). Recover it with 'realm run reclaim <run-id> --step ${stepName} --force'.` +
+          (onTimeoutDeclared
+            ? ` Its 'retry.on_timeout' gate role is unaffected — timeout retries remain active.`
+            : ''),
       });
     }
 
@@ -843,6 +863,19 @@ function parseWorkflowString(
         errors.push(`Step '${stepName}': 'retry' must be an object`);
       } else {
         const retry = step['retry'] as Record<string, unknown>;
+
+        // WARN (do not reject) on an unknown retry-block key — same non-breaking posture as the
+        // step/workflow-level checks (issue #140). Noun overridden to 'retry' (not 'step') since
+        // this is a nested block, not the step itself.
+        warnings.push(
+          ...findUnknownKeys(retry, KNOWN_RETRY_KEYS, {
+            scope: 'step',
+            code: 'UNKNOWN_RETRY_KEY',
+            step: stepName,
+            noun: 'retry',
+          }),
+        );
+
         if (
           'backoff' in retry &&
           retry['backoff'] !== 'fixed' &&
@@ -870,6 +903,106 @@ function parseWorkflowString(
           (typeof retry['max_delay_ms'] !== 'number' || (retry['max_delay_ms'] as number) < 0)
         ) {
           errors.push(`Step '${stepName}': 'retry.max_delay_ms' must be a non-negative number`);
+        }
+
+        // --- issue #140: on_timeout / total_timeout_seconds --------------------------------
+
+        // E3: on_timeout must be a boolean (kills the 'on_timeout: "true"' silent-inert case).
+        if ('on_timeout' in retry && typeof retry['on_timeout'] !== 'boolean') {
+          errors.push(`Step '${stepName}': 'retry.on_timeout' must be a boolean`);
+        }
+
+        // E2: total_timeout_seconds must be a positive integer — same convention as
+        // timeout_seconds (0 is rejected here at load; a hand-built definition bypassing the
+        // loader may still set 0 and have the engine's resolveCapMs honor it as a present cap).
+        if (
+          'total_timeout_seconds' in retry &&
+          (!Number.isInteger(retry['total_timeout_seconds']) ||
+            (retry['total_timeout_seconds'] as number) <= 0)
+        ) {
+          errors.push(
+            `Step '${stepName}': 'retry.total_timeout_seconds' must be a positive integer`,
+          );
+        }
+
+        // E1: on_timeout: true requires idempotent: true — declared, never inferred. Strict
+        // `=== true` on both loci, provably matching the engine's own conjunct.
+        if (retry['on_timeout'] === true && step['idempotent'] !== true) {
+          errors.push(
+            `Step '${stepName}': 'retry.on_timeout: true' requires 'idempotent: true' declared ` +
+              `on the step — a timeout-retry can run concurrently with the still-in-flight ` +
+              `original attempt, so the step must explicitly attest that any partial prior ` +
+              `application is harmless to re-apply. Declare 'idempotent: true' or remove ` +
+              `'on_timeout'.`,
+          );
+        }
+
+        // W5 (CAP-ONLY advisory — the on_timeout half of this is already an E1 hard error, so
+        // it never reaches here as a warning): the total-time cap only bounds `execution: 'auto'`
+        // dispatch — inert on any other step type that legally declares `retry:` today.
+        if (step['execution'] !== 'auto' && retry['total_timeout_seconds'] !== undefined) {
+          warnings.push({
+            code: 'TOTAL_TIMEOUT_NON_AUTO',
+            severity: resolveSeverity('TOTAL_TIMEOUT_NON_AUTO'),
+            scope: 'step',
+            step: stepName,
+            message:
+              `Step '${stepName}': 'retry.total_timeout_seconds' is inert on execution: ` +
+              `'${String(step['execution'])}' steps — the cap only bounds 'execution: auto' ` +
+              `dispatch, which is the only dispatch ever wrapped in a timeout.`,
+          });
+        }
+
+        // W1: on_timeout with an effective max_attempts of 1 (explicit OR absent, since the
+        // loader admits an absent max_attempts and the engine then defaults it to 1) — there is
+        // no second attempt for the opt-in to retry into.
+        const effectiveMaxAttempts =
+          typeof retry['max_attempts'] === 'number' ? retry['max_attempts'] : 1;
+        if (retry['on_timeout'] === true && effectiveMaxAttempts === 1) {
+          warnings.push({
+            code: 'ON_TIMEOUT_SINGLE_ATTEMPT',
+            severity: resolveSeverity('ON_TIMEOUT_SINGLE_ATTEMPT'),
+            scope: 'step',
+            step: stepName,
+            message:
+              `Step '${stepName}': 'retry.on_timeout: true' has no effect with an effective ` +
+              `'max_attempts' of 1 — there is no second attempt to retry into.`,
+          });
+        }
+
+        // W2: the cap can never cover even a single full-length attempt — (a) an EXPLICIT cap
+        // below an EXPLICIT timeout_seconds, or (b) on_timeout: true with a cap at-or-below the
+        // effective per-attempt timeout (retry-defeating: the opt-in can never yield a viable
+        // second attempt). Both conditions require an EXPLICIT total_timeout_seconds — the
+        // AMENDED default cap (the worst-case schedule) is, by construction, never below a
+        // single attempt for max_attempts ≥ 2, so this never fires on the bare 3600s-default
+        // population.
+        const explicitCapSeconds =
+          typeof retry['total_timeout_seconds'] === 'number'
+            ? retry['total_timeout_seconds']
+            : undefined;
+        if (explicitCapSeconds !== undefined) {
+          const explicitTimeoutSeconds =
+            typeof step['timeout_seconds'] === 'number' ? step['timeout_seconds'] : undefined;
+          const effectivePerAttemptSeconds =
+            explicitTimeoutSeconds ?? DEFAULT_EXECUTION_TIMEOUT_SECONDS;
+          const belowExplicitAttempt =
+            explicitTimeoutSeconds !== undefined && explicitCapSeconds < explicitTimeoutSeconds;
+          const capTooTightForRetry =
+            retry['on_timeout'] === true && explicitCapSeconds <= effectivePerAttemptSeconds;
+          if (belowExplicitAttempt || capTooTightForRetry) {
+            warnings.push({
+              code: 'TOTAL_TIMEOUT_BELOW_ATTEMPT',
+              severity: resolveSeverity('TOTAL_TIMEOUT_BELOW_ATTEMPT'),
+              scope: 'step',
+              step: stepName,
+              message:
+                `Step '${stepName}': 'retry.total_timeout_seconds: ${explicitCapSeconds}' is at ` +
+                `or below its own effective per-attempt timeout (${effectivePerAttemptSeconds}s) ` +
+                `— the cap can never cover a single full-length attempt, so a retry can never ` +
+                `occur before the cap fires.`,
+            });
+          }
         }
       }
     }

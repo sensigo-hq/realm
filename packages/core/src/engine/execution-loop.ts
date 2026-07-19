@@ -40,6 +40,7 @@ import {
   omitClaim,
   shouldEnforceTimeout,
   DEFAULT_EXECUTION_TIMEOUT_SECONDS,
+  resolveCapMs,
 } from './claim-liveness.js';
 import { computeBackoff } from './backoff.js';
 import {
@@ -176,7 +177,9 @@ function withTimeout<T>(
           category: 'ENGINE',
           agentAction: 'report_to_user',
           retryable: false,
-          details: { stepName, timeout_ms: ms },
+          // issue #140: details gain `stepId` alongside the pre-existing `stepName` — additive,
+          // never removes stepName (byte-identical shape for any existing consumer of that key).
+          details: { stepName, stepId: stepName, timeout_ms: ms },
         }),
       );
     }, ms);
@@ -1384,15 +1387,63 @@ export async function executeStep(
   // A3: every `execution: 'auto'` step is bounded — authored timeout_seconds if declared, else the
   // generous DEFAULT_EXECUTION_TIMEOUT_SECONDS default. Resolved ONCE here (before the retry loop
   // below), not per-attempt. Agent/guard steps (shouldEnforceTimeout false) are untouched: agent
-  // dispatch stays the instant-return no-op it always was, never wrapped in withTimeout.
-  // effectiveTimeoutSeconds is the single source of truth; timeoutMs is derived from it so the
-  // two can never diverge. It is also surfaced onto the evidence snapshot below.
+  // dispatch stays the instant-return no-op it always was, never wrapped in withTimeout — this
+  // A3 invariant is preserved verbatim by issue #140 below (the finalizer-drain withTimeout at
+  // buildFinalizedSeal is a separate, DRAIN_CEILING-bounded wrap, outside this cap's scope).
+  // effectiveTimeoutSeconds is the single source of truth for the step's OWN declared/default
+  // per-attempt bound; timeoutMs is derived from it so the two can never diverge.
+  //
+  // Issue #140 (retryable timeout + total-time cap): capMs/capStart/capExhausted resolve ONCE
+  // here too (same as timeoutMs), gated on `enforceTimeout && retryConfig !== undefined` — every
+  // retry-configured auto step now gets a default total-time cap (resolveCapMs), whether or not it
+  // opts into `retry.on_timeout`. What is NOT resolved once anymore is the PER-ATTEMPT bound
+  // actually passed to withTimeout: each attempt clips to whatever budget remains (see
+  // `effectiveMs` inside the loop below) — a later attempt's evidence `effective_timeout_seconds`
+  // can therefore be SMALLER than this outer `effectiveTimeoutSeconds` once the cap starts biting.
+  //
+  // Zombie-stacking split (A3 caveat, sharpened by #140's `on_timeout` in-place retry): a timeout
+  // frees the RUNNER, not the work — `withTimeout` races the dispatch against a timer and moves on
+  // the instant the timer wins, but does not stop a handler/adapter that ignores the abort signal
+  // (or a remote server still processing an already-aborted request). Whether an abandoned call
+  // can STACK behind a subsequent retry attempt splits on the handler's own shape: a SYNCHRONOUS
+  // (blocking) handler can never stack one — it monopolizes the event loop, so nothing else
+  // (including the next attempt's own dispatch) can even begin until it returns or the process is
+  // killed. An ASYNCHRONOUS handler that ignores its abort signal CAN stack: each timed-out-and-
+  // retried attempt leaves its own abandoned promise running, so up to `max_attempts − 1` zombies
+  // can accumulate behind the one currently-live attempt (attempts 1..max_attempts−1 each
+  // potentially zombie-and-retry; the final attempt is the "+1" that is never itself abandoned by
+  // this loop). This was always true pre-#140 for a step whose retry consumed a NORMAL retryable
+  // error mid-flight of a slow-but-not-yet-timed-out prior attempt; #140 sharpens it because
+  // `on_timeout` now lets a STEP_TIMEOUT itself mint a retry, so a maximally adversarial handler
+  // can produce the full max_attempts−1 zombie count from timeouts alone. The zombie count stays
+  // cap-BOUNDED (the total-time cap bounds how many attempts the ENGINE'S retry loop can mint —
+  // it does not, and cannot, reach into an already-abandoned zombie running on a remote server
+  // outside realm's control).
   const enforceTimeout = stepDef !== undefined && shouldEnforceTimeout(stepDef);
   const effectiveTimeoutSeconds = enforceTimeout
     ? (stepDef!.timeout_seconds ?? DEFAULT_EXECUTION_TIMEOUT_SECONDS)
     : undefined;
   const timeoutMs =
     effectiveTimeoutSeconds !== undefined ? effectiveTimeoutSeconds * 1000 : undefined;
+  const capMs =
+    enforceTimeout && retryConfig !== undefined ? resolveCapMs(retryConfig, timeoutMs!) : undefined;
+  const capStart = Date.now(); // wall-clock — the SAME clock the claim horizon is measured against
+  let capExhausted = false;
+  const remainingMs = () => capMs! - (Date.now() - capStart);
+
+  // Programmatic-gate advisory (#119-preserving): the loader refuses `on_timeout: true` without
+  // `idempotent: true` at load (E1) — but a hand-built WorkflowDefinition (a custom embedder, or a
+  // test) can bypass the loader entirely. Surface the same rule here, at the engine surface, as a
+  // pure advisory (never gates, never changes behavior — the willRetry conjunct below already
+  // requires `idempotent === true` independently). Threaded through `traceWarnings` so it reaches
+  // every settle path this function has, INCLUDING the handler-abort return path below (which
+  // otherwise hardcodes `warnings: []`).
+  if (stepDef !== undefined && retryConfig?.on_timeout === true && stepDef.idempotent !== true) {
+    traceWarnings.push(
+      `retry.on_timeout ignored: step '${options.command}' is not declared idempotent — declare ` +
+        `both 'idempotent: true' and 'retry.on_timeout: true'; YAML workflows are refused at load.`,
+    );
+  }
 
   // Create a stable rate-limiter registry for all retry attempts of this step.
   // Shared state ensures that a pause() triggered on attempt N is still in effect
@@ -1408,11 +1459,37 @@ export async function executeStep(
   let currentWarn: string | undefined;
 
   for (let attemptNum = 1; attemptNum <= maxAttempts; attemptNum++) {
+    // SITE (a) — issue #140, loop-top, BEFORE attemptsUsed is assigned: attempt 1 ALWAYS
+    // proceeds regardless of capMs (the `attemptNum > 1` conjunct) — this guard exists solely for
+    // the clock-anomaly window between `capStart` above and here (a suspend/resume or NTP forward
+    // jump), never to gate the very first attempt.
+    if (capMs !== undefined && attemptNum > 1 && remainingMs() <= 0) {
+      capExhausted = true;
+      break;
+    }
     attemptsUsed = attemptNum;
     const startedAt = new Date();
     let attemptOutput: Record<string, unknown> = {};
     let attemptError: WorkflowError | null = null;
     let resolvedParams: Record<string, unknown> | undefined;
+
+    // Per-attempt effective timeout (issue #140): uniform full-clip to whatever cap budget
+    // remains. Clip floor `max(0, remainingMs())` ensures a clock anomaly (see SITE (a) above)
+    // never passes a negative ms to withTimeout. capMs undefined ⇒ effectiveMs === timeoutMs,
+    // byte-identical to pre-#140 behavior (every non-retry-configured, or unopted-uncapped-by-
+    // total_timeout_seconds-being-absent-pre-amendment, auto step). `clippedToMs` records the
+    // per-attempt evidence value ONLY when the cap actually reduced the bound below the step's
+    // own declared/default timeout — never on an uncapped or not-yet-biting attempt.
+    const effectiveMs =
+      timeoutMs !== undefined
+        ? capMs !== undefined
+          ? Math.min(timeoutMs, Math.max(0, remainingMs()))
+          : timeoutMs
+        : undefined;
+    const clippedToMs =
+      capMs !== undefined && effectiveMs !== undefined && effectiveMs < timeoutMs!
+        ? effectiveMs
+        : undefined;
 
     try {
       const makeCall = (
@@ -1459,8 +1536,8 @@ export async function executeStep(
         }
       };
       const callResult =
-        timeoutMs !== undefined
-          ? await withTimeout((signal) => makeCall(signal), timeoutMs, options.command)
+        effectiveMs !== undefined
+          ? await withTimeout((signal) => makeCall(signal), effectiveMs, options.command)
           : await makeCall();
 
       // Handle graceful abort from a handler returning { abort: { message } }.
@@ -1528,7 +1605,9 @@ export async function executeStep(
           status: 'ok',
           data: {},
           evidence: [abortEvidence],
-          warnings: [],
+          // Issue #140: was hardcoded `[]` — now threads traceWarnings (e.g. the programmatic
+          // on_timeout/idempotent gate advisory above) so it survives this settle path too.
+          warnings: mergeWarnings(traceWarnings),
           errors: [],
           context_hint: `Handler step '${options.command}' aborted the run: ${abortMessage}`,
           run_phase: (persistedAbortRun ?? abortedRun).run_phase,
@@ -1580,7 +1659,11 @@ export async function executeStep(
       ...(options.stepMeta?.toolCalls !== undefined
         ? { toolCalls: options.stepMeta.toolCalls }
         : {}),
-      ...(effectiveTimeoutSeconds !== undefined ? { effectiveTimeoutSeconds } : {}),
+      // issue #140: PER-ATTEMPT value (may be smaller than the outer effectiveTimeoutSeconds once
+      // the cap starts clipping) — byte-identical to the pre-#140 outer value whenever capMs is
+      // undefined or hasn't bitten yet.
+      ...(effectiveMs !== undefined ? { effectiveTimeoutSeconds: effectiveMs / 1000 } : {}),
+      ...(clippedToMs !== undefined ? { clippedToMs } : {}),
       // Gate trace to agent steps only — drop silently for auto/adapter/handler steps.
       // When pre-normalized (WAL merge + schema validation ran), pass the pre-normalized
       // result to avoid double normalization. Also handle WAL-only case (options.trace may
@@ -1602,26 +1685,72 @@ export async function executeStep(
     }
 
     dispatchError = attemptError;
+    // SITE (b) — issue #140, post-attempt, AFTER dispatchError is set, BEFORE willRetry: the
+    // primary capExhausted setter (site (a) above only catches the loop-top clock-anomaly window;
+    // site (c) below re-checks once more right before an actual sleep). Fires on ANY dispatch
+    // error once the cap is spent, not just STEP_TIMEOUT — the cap bounds the step's total
+    // budget, regardless of which error exhausted it.
+    if (capMs !== undefined && remainingMs() <= 0) {
+      capExhausted = true;
+    }
     const willRetry =
-      retryConfig !== undefined && attemptError.retryable && attemptNum < maxAttempts;
+      (retryConfig !== undefined && attemptError.retryable && attemptNum < maxAttempts) ||
+      // issue #140 (AMENDED): a STEP_TIMEOUT may ALSO retry in place when the step opted in via
+      // `retry.on_timeout: true` AND attested `idempotent: true` (the concurrency-safety gate).
+      // ALL SIX conjuncts are required; `capMs !== undefined` enforces opted⇒capped
+      // structurally — this disjunct is inert off the enforced auto class even for a hand-built
+      // definition bypassing the loader's E1 gate on a non-auto step, since capMs is undefined
+      // there (shouldEnforceTimeout false ⇒ enforceTimeout false ⇒ capMs undefined) — see R11 in
+      // the design record.
+      (attemptError.code === 'STEP_TIMEOUT' &&
+        capMs !== undefined &&
+        retryConfig?.on_timeout === true &&
+        stepDef!.idempotent === true &&
+        !capExhausted &&
+        attemptNum < maxAttempts);
     if (willRetry) {
-      const baseBackoff = computeBackoff(retryConfig, attemptNum);
+      const baseBackoff = computeBackoff(retryConfig!, attemptNum);
       const retryAfterMs =
         attemptError instanceof WorkflowError && attemptError.retry_after !== undefined
           ? attemptError.retry_after * 1000
           : 0;
-      await delayMs(Math.max(baseBackoff, retryAfterMs));
+      const waitMs = Math.max(baseBackoff, retryAfterMs);
+      // SITE (c) — issue #140, sleep guard, BEFORE every backoff/retry_after sleep (`>=`: an
+      // exact-fit sleep is doomed too — never sleep into a wall). dispatchError already holds the
+      // ACTUAL last error (e.g. a 429 with retry_after in its details); the post-loop wrap gate
+      // below decides whether/how to wrap it — this site only decides whether to sleep at all.
+      if (capMs !== undefined && Date.now() - capStart + waitMs >= capMs) {
+        capExhausted = true;
+        break;
+      }
+      await delayMs(waitMs);
     } else {
       break;
     }
   }
 
-  if (dispatchError !== null && retryConfig !== undefined && attemptsUsed === maxAttempts) {
+  if (
+    dispatchError !== null &&
+    retryConfig !== undefined &&
+    (attemptsUsed === maxAttempts || capExhausted)
+  ) {
     const lastError = dispatchError;
+    // issue #140: stamp the discriminator on the LAST evidence snapshot regardless of whether the
+    // #134 carve-out below actually wraps dispatchError — the carve-out's recoverable settle path
+    // (Step 5) never wraps, so this evidence stamp is the ONLY durable record of *why* the step
+    // stopped retrying in that case. `exhausted_by: 'total_timeout'` wins the both-true tie (a
+    // step whose LAST attempt both used its final slot and drained the cap is reported as
+    // cap-caused — the more actionable of the two labels for an operator).
+    const lastSnap = allEvidence[allEvidence.length - 1];
+    if (lastSnap !== undefined) {
+      lastSnap.exhausted_by = capExhausted ? 'total_timeout' : 'attempts';
+    }
     // #134: do NOT wrap a recoverable-incapability error (a max_attempts:1 not-registered failure
     // hits attemptsUsed === maxAttempts). The STEP_RETRY_EXHAUSTED wrap discards the inner code, which
     // would rob Step 5 of the discriminator it needs to settle recoverably. Leave dispatchError as the
-    // original not-registered error; all other codes wrap unchanged.
+    // original not-registered error; all other codes wrap unchanged. This carve-out guards BOTH
+    // disjuncts above (attempts-exhaustion and cap-exhaustion alike) — a capped-but-not-registered
+    // step never wraps into STEP_RETRY_EXHAUSTED either.
     const isRecoverableIncapability =
       lastError instanceof WorkflowError &&
       (lastError.code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
@@ -1638,6 +1767,7 @@ export async function executeStep(
             stepName: options.command,
             attempts: attemptsUsed,
             lastError: lastError.message,
+            exhausted_by: capExhausted ? 'total_timeout' : 'attempts',
             ...(lastError.retry_after !== undefined ? { retry_after: lastError.retry_after } : {}),
           },
         },
@@ -1887,6 +2017,14 @@ export async function executeStep(
       warnings: mergeWarnings(traceWarnings, storeCleanupWarning ?? walCleanupWarning),
       errors: [dispatchError.message],
       agent_action: effectiveAction,
+      // issue #140 (D3 §2, discriminator OBSERVABLE): additive-optional — lets a caller
+      // discriminate `STEP_RETRY_EXHAUSTED`'s `exhausted_by` (or any other terminal code) without
+      // parsing `errors[0]`'s message text. Mirrors the errorEnvelope()/buildPreExecutionErrorEnvelope
+      // pattern used elsewhere in this file.
+      error_code: dispatchError.code,
+      ...(Object.keys(dispatchError.details).length > 0
+        ? { error_details: dispatchError.details }
+        : {}),
       ...(dispatchError.retry_after !== undefined
         ? { retry_after: dispatchError.retry_after }
         : {}),

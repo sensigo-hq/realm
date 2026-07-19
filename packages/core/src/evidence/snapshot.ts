@@ -37,10 +37,20 @@ export interface CaptureEvidenceParams {
   /** Agent-submitted reasoning extracted from _debug. Not hashed. */
   debugOutput?: unknown;
   /**
-   * The timeout (in seconds) actually enforced on this step's dispatch (issue A3). Pass only
+   * The timeout (in seconds) actually enforced on THIS ATTEMPT's dispatch (issue A3). Pass only
    * when shouldEnforceTimeout(step) was true for this step; omit otherwise (additive-optional).
+   * Issue #140: on a retry-configured step this is now a PER-ATTEMPT value the caller re-derives
+   * every attempt (it may shrink across attempts once the step's total-time cap starts clipping)
+   * — see EvidenceSnapshot.effective_timeout_seconds for the full amended contract.
    */
   effectiveTimeoutSeconds?: number;
+  /**
+   * Issue #140: the millisecond bound THIS attempt was clipped to by the step's total-time cap.
+   * Pass only when the cap actually reduced this attempt's bound below the step's own
+   * declared/default timeout; omit otherwise (additive-optional) — see
+   * EvidenceSnapshot.clipped_to_ms.
+   */
+  clippedToMs?: number;
 }
 
 /** Builds an EvidenceSnapshot from step execution parameters, including a SHA-256 content hash.
@@ -93,6 +103,7 @@ export function captureEvidence(params: CaptureEvidenceParams): EvidenceSnapshot
     ...(params.effectiveTimeoutSeconds !== undefined
       ? { effective_timeout_seconds: params.effectiveTimeoutSeconds }
       : {}),
+    ...(params.clippedToMs !== undefined ? { clipped_to_ms: params.clippedToMs } : {}),
     ...traceEntry,
   };
 }
