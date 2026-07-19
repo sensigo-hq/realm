@@ -1,5 +1,8 @@
 // Unit tests for the per-claim liveness clock + 3-state classification (issue #101).
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   computeClaimDeadline,
   classifyClaim,
@@ -374,5 +377,23 @@ describe('sleepWouldExceedCap (issue #140 correction, S2 — the site-(c) sleep-
 
   it('elapsed + wait === cap − 1 ⇒ false (one ms of genuine headroom)', () => {
     expect(sleepWouldExceedCap(70, 29, 100)).toBe(false);
+  });
+});
+
+describe('sleepWouldExceedCap — call-site congruence pin (issue #140 correction 2, review novel probe N1)', () => {
+  // The unit pins above test only the HELPER — no engine-level test (with real timers) can
+  // discriminate `>=` from `>` at site (c)'s own call site, so replacing that call with an inline
+  // divergent predicate (e.g. `Date.now() - capStart + waitMs > capMs`) survives the ENTIRE
+  // suite. Source-text guard, same discipline as the #107/#184 purge WIRED/EXCLUDED guard
+  // (packages/cli/src/commands/purge-guard.test.ts): read execution-loop.ts's own source and
+  // assert the CALL shape is present. The regex anchors on `sleepWouldExceedCap(` immediately
+  // followed by `Date.now()` — the plain import line (`sleepWouldExceedCap,`) has no `(`
+  // immediately after the identifier, so it can never match; only the real call at site (c) can.
+  // Kills both an inline-divergence mutant (the call disappears) and an accidental removal of the
+  // call itself (the import would still be there, but unused/uncalled).
+  it("execution-loop.ts's site (c) calls sleepWouldExceedCap(Date.now() - capStart, ...) — not an inline, divergent predicate", () => {
+    const executionLoopPath = join(dirname(fileURLToPath(import.meta.url)), 'execution-loop.ts');
+    const src = readFileSync(executionLoopPath, 'utf8');
+    expect(src).toMatch(/sleepWouldExceedCap\(\s*Date\.now\(\)/);
   });
 });

@@ -1120,6 +1120,12 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
 
       expect(calls).toBe(1);
       expect(envelope.evidence[0]?.effective_timeout_seconds).toBe(0);
+      // Rename-defang guard (correction 2): the `stack.includes('execution-loop.ts')` filter
+      // above silently stops discriminating anything if that file is ever renamed or split — every
+      // call would then fall through to realNow(), the mock would never fire, and this pin would
+      // stay green while proving nothing. Asserting the counter directly makes that failure mode
+      // loud: if the filter stops matching, executionLoopCallCount stays at 0, red here.
+      expect(executionLoopCallCount).toBeGreaterThanOrEqual(2);
     } finally {
       dateNowSpy.mockRestore();
     }
@@ -1345,9 +1351,15 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
 
   it('boundary: the sleep guard fires at (>=) an exact-fit wait, never sleeping into the wall', async () => {
     // total_timeout_seconds:0.1 (100ms), base_delay_ms:100 (fixed) — the computed backoff wait
-    // (100ms) alone meets the cap (100ms) with ~0ms already elapsed (a synchronous throw, no
-    // timeout involved) — `elapsed + waitMs >= capMs` must fire at this boundary; a strict `>`
-    // would NOT (100 > 100 is false), incorrectly permitting a sleep that exactly hits the wall.
+    // (100ms) alone comes close to the cap (100ms). CORRECTION (review N1): with REAL timers,
+    // elapsed since capStart is never exactly 0ms by the time this check runs — the claim,
+    // dispatch, and evidence-capture machinery in between always cost at least ~1ms — so
+    // `elapsed + waitMs` typically reads >= 101, which a strict `>` ALSO satisfies. This test
+    // therefore does NOT discriminate `>=` from `>` at the boundary (it only proves the guard
+    // fires SOMEWHERE near the cap); the actual `>=`-vs-`>` boundary is discriminated by
+    // `sleepWouldExceedCap`'s own unit pins (claim-liveness.test.ts) plus the source-text call
+    // pin (claim-liveness.test.ts) that proves site (c) actually calls that helper rather than an
+    // inline, divergent predicate.
     const def: WorkflowDefinition = {
       id: 'boundary-sleep-guard-wf',
       name: 'Boundary Sleep Guard',
