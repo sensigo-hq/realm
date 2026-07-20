@@ -1,5 +1,7 @@
 // Tests for listRuns business logic.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { listRuns, formatGateAge } from './list.js';
 import type { RunStore, RunRecord } from '@sensigo/realm';
 
@@ -396,5 +398,85 @@ describe('formatGateAge', () => {
     const openedAt = new Date(0).toISOString();
     const now = new Date((3 * 24 * 60 + 5 * 60) * 60 * 1000); // 3d 5h later
     expect(formatGateAge(openedAt, now)).toBe('3d 5h');
+  });
+});
+
+describe('--stuck age-gating (issue #221 — classifyRunHealth-backed)', () => {
+  it('hides a YOUNG (<24h) claimless running run by default, but flags a 47-day-old one', async () => {
+    const young = makeRun({
+      id: 'run-young',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date().toISOString(),
+    });
+    const old = makeRun({
+      id: 'run-old-idle',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date(Date.now() - 47 * 86_400_000).toISOString(),
+    });
+    const result = await listRuns(undefined, makeStore([young, old]), undefined, true);
+    expect(result).not.toContain('run-young');
+    expect(result).toContain('run-old-idle');
+  });
+
+  it("--older-than 0m restores today's breadth (flags a claimless running run regardless of age)", async () => {
+    const young = makeRun({
+      id: 'run-young2',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date().toISOString(),
+    });
+    const result = await listRuns(undefined, makeStore([young]), undefined, true, 0);
+    expect(result).toContain('run-young2');
+  });
+
+  it('prints the active idle threshold in the header', async () => {
+    const old = makeRun({
+      id: 'run-old-idle2',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date(Date.now() - 47 * 86_400_000).toISOString(),
+    });
+    const result = await listRuns(undefined, makeStore([old]), undefined, true);
+    expect(result).toContain('threshold 24h');
+  });
+
+  it('prints the active threshold on the no-stuck-runs message too', async () => {
+    const young = makeRun({
+      id: 'run-young3',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date().toISOString(),
+    });
+    const result = await listRuns(undefined, makeStore([young]), undefined, true);
+    expect(result).toContain('No stuck runs found');
+    expect(result).toContain('threshold 24h');
+  });
+
+  it('a custom --older-than threshold is honored (e.g. 1h flags a 2h-idle claimless run)', async () => {
+    const twoHoursIdle = makeRun({
+      id: 'run-2h-idle',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+    });
+    const result = await listRuns(undefined, makeStore([twoHoursIdle]), undefined, true, 3_600_000);
+    expect(result).toContain('run-2h-idle');
+    expect(result).toContain('threshold 1h');
+  });
+});
+
+describe('list.ts source-text negative pin (issue #221 [S5])', () => {
+  it('isStuckRun and wedgedNonGatedClaims are DELETED, never resurrected — classifyRunHealth is the only detector', () => {
+    const source = readFileSync(fileURLToPath(new URL('./list.ts', import.meta.url)), 'utf8');
+    expect(source).not.toContain('isStuckRun');
+    expect(source).not.toContain('wedgedNonGatedClaims');
   });
 });

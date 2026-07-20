@@ -6,8 +6,45 @@
 // default, `--force` to act — ONLY claims that are provably safe: author-declared `idempotent`,
 // carrying a concrete past-deadline (`claim_stale`), non-gated. Everything else stays per-step-only.
 import { Command } from 'commander';
-import type { RunRecord, StepDefinition, InProgressClaimInfo } from '@sensigo/realm';
+import type { RunRecord, StepDefinition, InProgressClaimInfo, ReclaimResult } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
+
+/**
+ * Pure outcome→(glyph, message) renderer (issue #221 [M4]) — the SINGLE source of both reclaim
+ * CLI messages, shared by batch mode (`--all`) and per-step mode. Extracted (the `isAutoReclaimable`
+ * precedent above) because the `.action` handler hard-wires a real `JsonFileStore` and is not
+ * unit-reachable; this function IS. `✓` marks the one MUTATING outcome (`reclaimed`); every other
+ * outcome — including the new `no_active_claim` — gets the NEUTRAL glyph `•` (the house
+ * informational bullet: gc.ts:463, purge.ts:419, reclaim.ts's own dry-run listing above). The
+ * `no_active_claim` message text is EXACT (never "still eligible" — unverifiable without the
+ * definition, which this command does not load).
+ */
+export function renderReclaimOutcome(
+  result: Pick<ReclaimResult, 'step' | 'outcome' | 'priorState'>,
+): { glyph: string; message: string } {
+  switch (result.outcome) {
+    case 'reclaimed':
+      return {
+        glyph: '✓',
+        message: `Reclaimed '${result.step}' (was ${result.priorState}). It is eligible again — the next driver will re-drive it.`,
+      };
+    case 'taken_over':
+      return {
+        glyph: '•',
+        message: `'${result.step}' was re-claimed by a live driver during reclaim — left untouched (not stomped).`,
+      };
+    case 'already_settled':
+      return {
+        glyph: '•',
+        message: `'${result.step}' is already settled — no active claim to reclaim.`,
+      };
+    case 'no_active_claim':
+      return {
+        glyph: '•',
+        message: `no active claim on '${result.step}' and it is not settled — nothing to reclaim. If its dependencies are satisfied, driving the run will execute it.`,
+      };
+  }
+}
 
 /**
  * The SAFETY-CRITICAL selection rule for `--all` auto-reclaim (issue #101 Phase 2, §3).
@@ -166,7 +203,8 @@ export const reclaimCommand = new Command('reclaim')
           try {
             const result = await reclaimStep(store, rid, claim.step, { traceBufferStore });
             if (result.outcome === 'reclaimed') reclaimed += 1;
-            console.log(`  ✓ ${rid} / ${claim.step}: ${result.outcome} (was ${result.priorState})`);
+            const { glyph, message } = renderReclaimOutcome(result);
+            console.log(`  ${glyph} ${rid}: ${message}`);
           } catch (err) {
             // continue-on-error: one CAS mismatch/failure must not abort the batch.
             console.error(
@@ -220,20 +258,7 @@ export const reclaimCommand = new Command('reclaim')
               `its side effects may repeat.`,
           );
           const result = await reclaimStep(store, runId, opts.step, { traceBufferStore });
-          if (result.outcome === 'reclaimed') {
-            console.log(
-              `Reclaimed '${opts.step}' (was ${result.priorState}). It is eligible again — the next ` +
-                `driver (or 'realm run agent --run-id ${runId}') will re-drive it.`,
-            );
-          } else if (result.outcome === 'already_settled') {
-            console.log(
-              `'${opts.step}' is not an active claim (already settled or reclaimed). No change.`,
-            );
-          } else {
-            console.log(
-              `'${opts.step}' was re-claimed by a live driver during reclaim — left untouched (not stomped).`,
-            );
-          }
+          console.log(renderReclaimOutcome(result).message);
           return;
         }
 

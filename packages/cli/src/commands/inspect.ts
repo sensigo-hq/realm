@@ -6,10 +6,12 @@
 // import, no createRequire), never the extensions loader.
 import chalk from 'chalk';
 import { Command } from 'commander';
+import { classifyRunHealth } from '@sensigo/realm';
 import type {
   RunStore,
   RunRecord,
   WorkflowRegistrar,
+  WorkflowDefinition,
   EvidenceSnapshot,
   StepDiagnostics,
   ExtensionIdentityEntry,
@@ -205,14 +207,18 @@ export async function inspectRun(
 ): Promise<string> {
   const run: RunRecord = await store.get(runId);
 
-  // Try to load workflow definition; gracefully handle missing definition.
+  // Try to load workflow definition; gracefully handle missing definition. `definition` is
+  // hoisted (issue #221) so classifyRunHealth below can reuse it when resolved — the try/catch
+  // logic itself is otherwise UNCHANGED.
   let workflowLabel: string;
   let definitionMissing = false;
   let trustRoot: string | undefined;
+  let definition: WorkflowDefinition | undefined;
   try {
     const def = await workflowStore.get(run.workflow_id);
     workflowLabel = `${def.id} v${def.version}`;
     trustRoot = def.trust_root;
+    definition = def;
   } catch {
     workflowLabel = run.workflow_id;
     definitionMissing = true;
@@ -244,6 +250,20 @@ export async function inspectRun(
   }
   lines.push(`Created: ${run.created_at}`);
   lines.push(`Updated: ${run.updated_at}`);
+
+  // issue #221: typed run-health findings — the SAME shared classifyRunHealth predicate every
+  // surface (get_run_state, reclaim, list --stuck) derives from. Definition-aware when resolved
+  // above (adds eligible_steps evidence to any never_claimed_idle finding); tolerates
+  // definitionMissing (classification still runs, just without that evidence).
+  const runHealth = classifyRunHealth(run, definition !== undefined ? { definition } : {});
+  if (runHealth.length > 0) {
+    lines.push('');
+    lines.push(`Run Health (${runHealth.length} finding(s)):`);
+    for (const f of runHealth) {
+      const stepLabel = f.step !== undefined ? ` [${f.step}]` : '';
+      lines.push(`  ${chalk.yellow(f.kind)}${stepLabel}: ${f.reason}`);
+    }
+  }
 
   if (definitionMissing) {
     lines.push('');

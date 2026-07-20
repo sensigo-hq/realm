@@ -693,3 +693,40 @@ describe('inspectRun — skip_details surfacing (issue #111)', () => {
     expect(result).not.toContain('reason unavailable');
   });
 });
+
+describe('run_health rendering (issue #221)', () => {
+  it('renders a run_health finding after the Updated line', async () => {
+    const run = makeRun([], {
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: ['step_a'],
+      claims: { step_a: { deadline: new Date(Date.now() - 60_000).toISOString() } },
+    });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    const updatedIdx = result.indexOf('Updated:');
+    const runHealthIdx = result.indexOf('Run Health');
+    expect(updatedIdx).toBeGreaterThan(-1);
+    expect(runHealthIdx).toBeGreaterThan(updatedIdx); // renders AFTER the Updated line
+    expect(result).toContain('stale_claim');
+    expect(result).toContain('[step_a]');
+  });
+
+  it('tolerates a missing workflow definition when rendering run_health', async () => {
+    const run = makeRun([], {
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: ['step_a'],
+      claims: { step_a: { deadline: new Date(Date.now() - 60_000).toISOString() } },
+    });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(undefined));
+    expect(result).toContain('workflow definition not found');
+    expect(result).toContain('Run Health');
+    expect(result).toContain('stale_claim');
+  });
+
+  it('renders nothing extra when there are no run_health findings', async () => {
+    const run = makeRun([], { run_phase: 'completed', terminal_state: true });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).not.toContain('Run Health');
+  });
+});

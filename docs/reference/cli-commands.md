@@ -322,16 +322,26 @@ Lists all runs, sorted by most recent first.
 realm run list
 realm run list --workflow <workflow-id>   # filter by workflow
 realm run list --status <phase>           # filter by run phase
-realm run list --stuck                    # only advanced-but-parked runs (running, no claimed step)
+realm run list --stuck                    # only wedged/idle runs (typed run-health classification)
+realm run list --stuck --older-than 6h    # override the idle-age threshold (default 24h)
 ```
 
 Valid `--status` values: `running`, `gate_waiting`, `completed`, `failed`, `abandoned`.
 
 When filtering by `gate_waiting`, each line also shows the gate step name and gate age (time since the gate opened).
 
-`--stuck` (mutually exclusive with `--status`) shows only runs in phase `running` with no claimed
-step (`in_progress_steps` empty) — the stuck-run incident signature — and appends each run's idle
-age. See [Operating & recovering runs](operating-runs.md).
+`--stuck` (mutually exclusive with `--status`) shows only runs `classifyRunHealth` (issue #221)
+flags — the SAME shared predicate `get_run_state`/`reclaim`/`inspect` derive from: a stale or
+unknown-age claim, a wedged non-gated sibling on a `gate_waiting` run, a capability block, or a
+`running` run with no claimed step that has been idle for at least the active threshold (default
+24h — printed in the header as `(threshold 24h)`). The never-claimed check is **age-gated**: a
+run simply between agent drives is no longer flagged the instant its last claim settles (a
+disclosed behavior change from the prior unconditional check — see the CHANGELOG). Each flagged
+line appends its idle age plus finding labels. `--older-than <duration>` overrides the idle-age
+threshold (e.g. `30m`, `6h`, `7d`; requires `--stuck`); `--older-than 0m` restores the old
+unconditional breadth (bare `0` is rejected — use `0m`). This is a different flag from `realm run
+reclaim --older-than`, which is a deadline-margin add-on for `--all` auto-reclaim selection, not
+an idle-age threshold. See [Operating & recovering runs](operating-runs.md).
 
 Output per run: `run-id  workflow-id vN  run_phase  timestamp  N step(s)`
 

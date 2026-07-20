@@ -76,7 +76,13 @@ describe('get_run_state — capability_blocks field-fidelity gate (issue #188)',
   });
 
   it('stays silent when the store DOES declare it persists capability_blocks', async () => {
-    const store = makeGetOnlyStore(makeRun(), ['capability_blocks']);
+    // issue #221: makeRun()'s default updated_at is far in the past — a claimless 'running' run
+    // that old would now legitimately carry a never_claimed_idle run_health finding (and its
+    // warnings-line companion). Pin a RECENT updated_at so this test keeps asserting ONLY fidelity
+    // silence, not run-health silence (a materially different, still-untested claim).
+    const store = makeGetOnlyStore(makeRun({ updated_at: new Date().toISOString() }), [
+      'capability_blocks',
+    ]);
     const summary = await handleGetRunState({ run_id: 'r1' }, { runStore: store });
     expect(summary.warnings).toBeUndefined();
   });

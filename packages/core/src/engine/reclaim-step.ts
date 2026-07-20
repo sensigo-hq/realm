@@ -18,18 +18,69 @@ import { classifyClaim, omitClaim, type ClaimState } from './claim-liveness.js';
 export type ReclaimOutcome =
   /** The claim was moved out of `in_progress_steps` this call → the step is eligible again. */
   | 'reclaimed'
-  /** The step already left `in_progress_steps` (settled, or reclaimed elsewhere) → idempotent no-op. */
+  /** The step is in completed/failed/skipped_steps → genuinely settled → idempotent no-op. */
   | 'already_settled'
   /** A live driver re-claimed the step FRESH under a CAS race (now healthy) → not stomped (Sig-6). */
-  | 'taken_over';
+  | 'taken_over'
+  /**
+   * issue #221, B2-corrected: no active claim on the step AND it is not in the settled set
+   * (completed/failed/skipped). Replaces the pre-#221 conflation of this case with
+   * `already_settled` — "never claimed" is provably FALSE in general (a previously-reclaimed step,
+   * or a capability-blocked step, WAS touched), so this outcome asserts only the narrow, always-
+   * true fact for this region: no active claim, not settled. See `detail` below for the two cases
+   * where positive evidence narrows it further.
+   */
+  | 'no_active_claim';
 
 export interface ReclaimResult {
   run: RunRecord;
   step: string;
   outcome: ReclaimOutcome;
+  /**
+   * issue #221: optional, evidence-EARNED refinement of `no_active_claim` — never inferred from
+   * absence. `'previously_reclaimed'` when a reclaim-audit evidence entry for this step is found
+   * (`applyReclaim`'s own marker: `output_summary.reclaimed === true`); `'capability_blocked'`
+   * when `run.capability_blocks[step]` is present. Omitted when neither positive marker is found
+   * (a genuinely never-claimed step). Never set for any outcome other than `no_active_claim`.
+   */
+  detail?: 'previously_reclaimed' | 'capability_blocked';
   /** The claim state observed at the initial read (for the caller's warning/audit output). */
   priorState: ClaimState;
   priorDeadline: string | null;
+}
+
+/**
+ * issue #221, B2-corrected discriminator: distinguishes a genuinely-settled step from a step with
+ * no active claim that was never provably settled — reused at BOTH membership sites (the direct
+ * guard in `reclaimStep` below, and its CAS-retry re-evaluation). `detail` is earned ONLY from
+ * positive evidence in `record`, never inferred from absence: a capability block takes precedence
+ * over reclaim-audit evidence when (rare) both happen to be present, since it is the more
+ * actionable, more-recent-in-time signal. Pure, read-only.
+ */
+function classifyNoActiveClaim(
+  record: RunRecord,
+  stepName: string,
+): {
+  outcome: 'already_settled' | 'no_active_claim';
+  detail?: 'previously_reclaimed' | 'capability_blocked';
+} {
+  if (
+    record.completed_steps.includes(stepName) ||
+    record.failed_steps.includes(stepName) ||
+    record.skipped_steps.includes(stepName)
+  ) {
+    return { outcome: 'already_settled' };
+  }
+  if (record.capability_blocks?.[stepName] !== undefined) {
+    return { outcome: 'no_active_claim', detail: 'capability_blocked' };
+  }
+  const reclaimedBefore = record.evidence.some(
+    (e) => e.step_id === stepName && e.output_summary?.['reclaimed'] === true,
+  );
+  if (reclaimedBefore) {
+    return { outcome: 'no_active_claim', detail: 'previously_reclaimed' };
+  }
+  return { outcome: 'no_active_claim' };
 }
 
 export interface ReclaimStepOptions {
@@ -353,9 +404,17 @@ export async function reclaimStep(
   const priorState = classifyClaim(priorClaim, now);
   const priorDeadline = priorClaim?.deadline ?? null;
 
-  // Guard — membership: not in_progress → already settled/reclaimed → idempotent success.
+  // Guard — membership: not in_progress → discriminate settled vs no-active-claim (issue #221, B2).
   if (!run.in_progress_steps.includes(stepName)) {
-    return { run, step: stepName, outcome: 'already_settled', priorState, priorDeadline };
+    const { outcome, detail } = classifyNoActiveClaim(run, stepName);
+    return {
+      run,
+      step: stepName,
+      outcome,
+      ...(detail !== undefined ? { detail } : {}),
+      priorState,
+      priorDeadline,
+    };
   }
 
   // issue #207 PR-2: a declaring store's clear moves BEFORE the un-claiming update, version-fenced
@@ -408,11 +467,17 @@ export async function reclaimStep(
     const reloaded = await store.get(runId);
 
     if (!reloaded.in_progress_steps.includes(stepName)) {
-      // A live driver settled it, or another reclaim already removed it → idempotent, no re-remove.
+      // A live driver settled it, or another reclaim already removed it → idempotent, no
+      // re-remove. Discriminate + earn `detail` against `reloaded` — NEVER `run` (issue #221, B2:
+      // the settle-set / evidence / capability_blocks facts that matter here are whatever is TRUE
+      // NOW, after the concurrent write that caused this CAS mismatch, not at the stale decision
+      // read).
+      const { outcome, detail } = classifyNoActiveClaim(reloaded, stepName);
       return {
         run: reloaded,
         step: stepName,
-        outcome: 'already_settled',
+        outcome,
+        ...(detail !== undefined ? { detail } : {}),
         priorState,
         priorDeadline,
       };

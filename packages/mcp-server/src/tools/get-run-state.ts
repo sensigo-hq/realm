@@ -10,12 +10,15 @@ import {
   findEligibleSteps,
   classifyInProgressClaims,
   findCapabilityBlockedSteps,
+  classifyRunHealth,
   persistsField,
   type RunPhase,
   type NextAction,
   type ClaimState,
   type SkipDetail,
   type RunStore,
+  type WorkflowDefinition,
+  type RunHealthFinding,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 
@@ -113,11 +116,27 @@ export interface RunStateSummary {
    */
   skip_details?: Record<string, SkipDetail>;
   /**
-   * Honest store-fidelity diagnostics (issue #188) — present only when non-empty. Advisory only,
-   * never a throw: surfaces when the configured run store does NOT declare it persists a
-   * load-bearing `RunRecord` field this response depends on, so a consumer knows a field reading
-   * as absent/empty may be a store limitation rather than genuine absence (e.g. `capability_blocks`
-   * reading `[]` could mean "no blocks" OR "this store doesn't persist blocks at all").
+   * Typed run-health findings (issue #221) — present only when non-empty. Computed by
+   * `classifyRunHealth`, the SAME shared predicate every operator/agent surface (`get_run_state`,
+   * `reclaim`, `realm run list --stuck`, `realm run inspect`) derives from, so none can silently
+   * drift from another about what "wedged" or "idle" means. This is the CANONICAL SUPERSET of
+   * `stuck_claims`/`capability_blocks` above — those two legacy arrays are KEPT for backward
+   * compatibility (existing consumers), but a new consumer should prefer `run_health`. Never
+   * alters `next_actions_status` (fine-maps-to-coarse, never the reverse — the systemd invariant):
+   * a wedge is surfaced here even when the aggregate status cannot show it (notably a
+   * `gate_waiting` run, whose status MUST stay `awaiting_human`).
+   */
+  run_health?: RunHealthFinding[];
+  /**
+   * Advisory diagnostics for this response (issue #119: WARN-never-gate — never a throw, never a
+   * behavior change). Independent sources, any subset may be present:
+   *  - Store-fidelity caveats (issue #188): the configured run store does NOT declare it persists
+   *    a load-bearing field this response depends on (`capability_blocks`) or the per-claim
+   *    liveness clock (`claims`, via `persistsClaims`) — so a field reading absent/empty may be a
+   *    store limitation rather than genuine absence (absence ≡ Unknown, never healthy-false).
+   *  - A run-health presence line (issue #221): fires whenever `run_health` above is non-empty, so
+   *    a consumer reading only `warnings` (not `run_health`) still learns something needs
+   *    attention.
    */
   warnings?: string[];
 }
@@ -143,26 +162,41 @@ export async function handleGetRunState(
   // blocked step look identical to "no blocks" ([] either way). Advisory only: this NEVER changes
   // capabilityBlocks/nextActionsStatus above, it only tells the consumer the read may be a store
   // limitation rather than a real absence.
-  const fidelityWarnings: string[] = [];
+  const warnings: string[] = [];
   if (!persistsField(runStore, 'capability_blocks')) {
-    fidelityWarnings.push(
+    warnings.push(
       "this run store does not persist 'capability_blocks' — capability-block state is " +
         'unavailable and not authoritative (an empty result may mean "no blocks" or "this ' +
         'store cannot report blocks at all").',
+    );
+  }
+  // issue #221: same pattern, for the per-claim liveness clock — NOT a LoadBearingRunRecordField
+  // (persistsField would be the wrong gate; `claims` is keyed off the store's own `persistsClaims`
+  // boolean instead, per RunStore's own contract). Absence ≡ Unknown, never healthy-false: a store
+  // that cannot report claim liveness makes stale_claim/wedged_gate_sibling findings (and the
+  // legacy stuck_claims array) unavailable, not falsely empty.
+  if (runStore.persistsClaims !== true) {
+    warnings.push(
+      "this run store does not persist 'claims' — claim-liveness state is unavailable and not " +
+        'authoritative (an empty result may mean "no wedge" or "this store cannot report claim ' +
+        'liveness at all").',
     );
   }
 
   // Compute next_actions + diagnostic status (read-only). Precedence:
   // terminal → skipped_terminal; gate open → awaiting_human; no/unresolved workflow →
   // workflow_unresolved; else buildNextActions/findEligibleSteps → ok | auto_pending.
+  // `definition` is hoisted (issue #221) so classifyRunHealth below can reuse it when resolved —
+  // scoping/resolution logic here is otherwise UNCHANGED.
   let nextActions: NextAction[] = [];
   let nextActionsStatus: NextActionsStatus;
+  let definition: WorkflowDefinition | undefined;
   if (run.terminal_state) {
     nextActionsStatus = 'skipped_terminal';
   } else if (run.pending_gate !== undefined) {
     nextActionsStatus = 'awaiting_human';
   } else {
-    const definition =
+    definition =
       stores?.workflowStore !== undefined
         ? await stores.workflowStore.get(run.workflow_id).catch(() => undefined)
         : undefined;
@@ -215,6 +249,21 @@ export async function handleGetRunState(
         .filter((c) => c.state !== 'healthy' && c.step !== run.pending_gate?.step_name)
         .map((c) => ({ step: c.step, state: c.state }));
 
+  // issue #221: the SAME shared classifyRunHealth predicate every surface (get_run_state,
+  // reclaim, list --stuck, inspect) derives from — computed definition-aware when the workflow
+  // resolved above (adds eligible_steps evidence to any never_claimed_idle finding),
+  // definition-free otherwise (gate / workflow_unresolved paths). Terminal guard mirrors
+  // stuck_claims/capability_blocks: a sealed run surfaces nothing. `next_actions_status` above is
+  // computed and finalized BEFORE this line runs — nothing below this point may write back to it.
+  const runHealth: RunHealthFinding[] = run.terminal_state
+    ? []
+    : classifyRunHealth(run, definition !== undefined ? { definition } : {});
+  if (runHealth.length > 0) {
+    warnings.push(
+      `this run has ${runHealth.length} active run-health finding(s) — see 'run_health' for detail.`,
+    );
+  }
+
   return {
     run_id: run.id,
     workflow_id: run.workflow_id,
@@ -246,7 +295,8 @@ export async function handleGetRunState(
     ...(run.skip_details !== undefined && Object.keys(run.skip_details).length > 0
       ? { skip_details: run.skip_details }
       : {}),
-    ...(fidelityWarnings.length > 0 ? { warnings: fidelityWarnings } : {}),
+    ...(runHealth.length > 0 ? { run_health: runHealth } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 
