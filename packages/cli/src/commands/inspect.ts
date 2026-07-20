@@ -6,10 +6,18 @@
 // import, no createRequire), never the extensions loader.
 import chalk from 'chalk';
 import { Command } from 'commander';
+import { classifyRunHealth } from '@sensigo/realm';
+// issue #221 correction: the CLI's first command→command import (sanctioned — harmless
+// module-level Command construction; `listCommand` is a standalone Commander object never
+// auto-registered anywhere by being imported). Reused so inspect's never_claimed_idle age
+// rendering matches `realm run list --stuck`'s own `idle: <age>` humanization exactly, rather
+// than re-implementing a second formatter.
+import { formatGateAge } from './list.js';
 import type {
   RunStore,
   RunRecord,
   WorkflowRegistrar,
+  WorkflowDefinition,
   EvidenceSnapshot,
   StepDiagnostics,
   ExtensionIdentityEntry,
@@ -205,14 +213,18 @@ export async function inspectRun(
 ): Promise<string> {
   const run: RunRecord = await store.get(runId);
 
-  // Try to load workflow definition; gracefully handle missing definition.
+  // Try to load workflow definition; gracefully handle missing definition. `definition` is
+  // hoisted (issue #221) so classifyRunHealth below can reuse it when resolved — the try/catch
+  // logic itself is otherwise UNCHANGED.
   let workflowLabel: string;
   let definitionMissing = false;
   let trustRoot: string | undefined;
+  let definition: WorkflowDefinition | undefined;
   try {
     const def = await workflowStore.get(run.workflow_id);
     workflowLabel = `${def.id} v${def.version}`;
     trustRoot = def.trust_root;
+    definition = def;
   } catch {
     workflowLabel = run.workflow_id;
     definitionMissing = true;
@@ -244,6 +256,32 @@ export async function inspectRun(
   }
   lines.push(`Created: ${run.created_at}`);
   lines.push(`Updated: ${run.updated_at}`);
+
+  // issue #221: typed run-health findings — the SAME shared classifyRunHealth predicate the three
+  // READ surfaces (get_run_state, list --stuck, inspect) derive from. Definition-aware when
+  // resolved above (adds eligible_steps evidence to any never_claimed_idle finding); tolerates
+  // definitionMissing (classification still runs, just without that evidence).
+  //
+  // Note: `realm run reclaim` is a separate, independent consumer of the underlying record facts
+  // (settle sets, capability_blocks, reclaim-audit evidence) — it does NOT call this function; see
+  // its own classifyNoActiveClaim discriminator in reclaim-step.ts.
+  const runHealth = classifyRunHealth(run, definition !== undefined ? { definition } : {});
+  if (runHealth.length > 0) {
+    lines.push('');
+    lines.push(`Run Health (${runHealth.length} finding(s)):`);
+    for (const f of runHealth) {
+      const stepLabel = f.step !== undefined ? ` [${f.step}]` : '';
+      // issue #221 correction: never_claimed_idle's reason text ends "…, idle" with no duration —
+      // append the humanized age (matches list --stuck's own `idle: <age>` rendering). Other kinds'
+      // reason text is already complete on its own. `eligible_steps` evidence stays data-only (a
+      // named residual in the record) — deliberately NOT rendered here.
+      const idleSuffix =
+        f.kind === 'never_claimed_idle' && f.since !== undefined
+          ? ` ${formatGateAge(f.since)}`
+          : '';
+      lines.push(`  ${chalk.yellow(f.kind)}${stepLabel}: ${f.reason}${idleSuffix}`);
+    }
+  }
 
   if (definitionMissing) {
     lines.push('');

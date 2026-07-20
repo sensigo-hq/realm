@@ -4,7 +4,7 @@
 // not hand-asserted. The whole point of Phase 2 is that only idempotent ∧ concrete-past-deadline ∧
 // non-gated claims are ever auto-reclaimed.
 import { describe, it, expect } from 'vitest';
-import { isAutoReclaimable } from './reclaim.js';
+import { isAutoReclaimable, renderReclaimOutcome } from './reclaim.js';
 import { classifyInProgressClaims } from '@sensigo/realm';
 import type { RunRecord, StepDefinition, PendingGate } from '@sensigo/realm';
 
@@ -121,5 +121,53 @@ describe('isAutoReclaimable — the Phase-2 --all selection rule', () => {
     // It remains recoverable ONLY via per-step `realm run reclaim --step <S> --force`.
     const run = makeRun({ in_progress_steps: ['domain'], claims: { domain: { deadline: null } } });
     expect(selectable(run, 'domain', idempotentAuto)).toBe(false);
+  });
+});
+
+describe('renderReclaimOutcome — pure outcome→(glyph, message) renderer (issue #221 [M4])', () => {
+  it('reclaimed ⇒ the MUTATING glyph ✓', () => {
+    const { glyph, message } = renderReclaimOutcome({
+      step: 'work',
+      outcome: 'reclaimed',
+      priorState: 'claim_stale',
+    });
+    expect(glyph).toBe('✓');
+    expect(message).toContain("Reclaimed 'work'");
+    expect(message).toContain('claim_stale');
+  });
+
+  it('taken_over ⇒ the NEUTRAL glyph •', () => {
+    const { glyph, message } = renderReclaimOutcome({
+      step: 'work',
+      outcome: 'taken_over',
+      priorState: 'claim_stale',
+    });
+    expect(glyph).toBe('•');
+    expect(message).toContain("'work'");
+    expect(message).toContain('not stomped');
+  });
+
+  it('already_settled ⇒ the NEUTRAL glyph •', () => {
+    const { glyph, message } = renderReclaimOutcome({
+      step: 'work',
+      outcome: 'already_settled',
+      priorState: 'claim_unknown_age',
+    });
+    expect(glyph).toBe('•');
+    expect(message).toContain("'work'");
+    expect(message).toContain('already settled');
+  });
+
+  it('no_active_claim ⇒ the NEUTRAL glyph • + the EXACT required message text (never "still eligible")', () => {
+    const { glyph, message } = renderReclaimOutcome({
+      step: 'work',
+      outcome: 'no_active_claim',
+      priorState: 'claim_unknown_age',
+    });
+    expect(glyph).toBe('•');
+    expect(message).toBe(
+      "no active claim on 'work' and it is not settled — nothing to reclaim. If its dependencies are satisfied, driving the run will execute it.",
+    );
+    expect(message).not.toContain('still eligible');
   });
 });

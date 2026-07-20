@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { inspectRun } from './inspect.js';
 import { computeExtensionIdentity, sha256HexOf } from '../extensions/extension-identity.js';
 import type {
@@ -691,5 +692,89 @@ describe('inspectRun — skip_details surfacing (issue #111)', () => {
     const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
     expect(result).toContain('Skipped: (none)');
     expect(result).not.toContain('reason unavailable');
+  });
+});
+
+describe('run_health rendering (issue #221)', () => {
+  it('renders a run_health finding after the Updated line', async () => {
+    const run = makeRun([], {
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: ['step_a'],
+      claims: { step_a: { deadline: new Date(Date.now() - 60_000).toISOString() } },
+    });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    const updatedIdx = result.indexOf('Updated:');
+    const runHealthIdx = result.indexOf('Run Health');
+    expect(updatedIdx).toBeGreaterThan(-1);
+    expect(runHealthIdx).toBeGreaterThan(updatedIdx); // renders AFTER the Updated line
+    expect(result).toContain('stale_claim');
+    expect(result).toContain('[step_a]');
+  });
+
+  it('tolerates a missing workflow definition when rendering run_health', async () => {
+    const run = makeRun([], {
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: ['step_a'],
+      claims: { step_a: { deadline: new Date(Date.now() - 60_000).toISOString() } },
+    });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(undefined));
+    expect(result).toContain('workflow definition not found');
+    expect(result).toContain('Run Health');
+    expect(result).toContain('stale_claim');
+  });
+
+  it('renders nothing extra when there are no run_health findings', async () => {
+    const run = makeRun([], { run_phase: 'completed', terminal_state: true });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).not.toContain('Run Health');
+  });
+
+  // issue #221 correction — novel probe N1 (threshold-coherence, S1): inspect takes NO
+  // idleThresholdMs override by design (agents don't tune detectors). inspect's fixtures above are
+  // all stale_claim (no idle_threshold_ms in their evidence at all), so the object-shaped pin
+  // get-run-state-run-health.test.ts uses is unconstructible here — a source-text pin plus a
+  // behavioral bracket around the DEFAULT threshold is the honest substitute.
+  it('source-text pin: inspect.ts never references idleThresholdMs (no override by design)', () => {
+    const source = readFileSync(fileURLToPath(new URL('./inspect.ts', import.meta.url)), 'utf8');
+    expect(source).not.toContain('idleThresholdMs');
+  });
+
+  it('behavioral bracket: a claimless running run idle 2h holds (no Run Health); idle 25h fires (never_claimed_idle)', async () => {
+    const young = makeRun([], {
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+    });
+    const youngResult = await inspectRun(
+      'run_test1',
+      makeRunStore(young),
+      makeWorkflowStore(basicDef),
+    );
+    expect(youngResult).not.toContain('Run Health');
+
+    const old = makeRun([], {
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date(Date.now() - 25 * 3_600_000).toISOString(),
+    });
+    const oldResult = await inspectRun('run_test1', makeRunStore(old), makeWorkflowStore(basicDef));
+    expect(oldResult).toContain('never_claimed_idle');
+  });
+
+  it('never_claimed_idle appends the humanized idle duration (issue #221 correction — the reason text no longer dead-ends "…, idle" with nothing after it)', async () => {
+    const run = makeRun([], {
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date(Date.now() - (25 * 60 + 5) * 60_000).toISOString(), // 25h 5m ago
+    });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    // formatGateAge renders 25h5m-ago as "1d 1h" — the reason text must not just say "idle" bare.
+    expect(result).toContain('parked with no claimed step, idle 1d 1h');
+    expect(result).not.toContain('idle\n'); // never a bare dead-end
   });
 });

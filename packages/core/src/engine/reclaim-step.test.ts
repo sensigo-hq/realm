@@ -127,16 +127,137 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
     expect(after.in_progress_steps).not.toContain('sibling');
   });
 
-  it('is idempotent on a step that is not in_progress (already settled/reclaimed)', async () => {
+  it('is idempotent on a step that was never claimed (issue #221: this IS the never-claimed case — no active claim, not settled, no positive evidence of any prior touch)', async () => {
     const { run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,
       params: {},
     });
     const result = await reclaimStep(store, run.id, 'work');
-    expect(result.outcome).toBe('already_settled');
+    expect(result.outcome).toBe('no_active_claim');
+    expect(result.detail).toBeUndefined();
     const after = await store.get(run.id);
     expect(after.version).toBe(run.version); // no mutation
+  });
+
+  it('a step already in completed_steps ⇒ already_settled (issue #221, direct path — genuinely settled)', async () => {
+    const { run } = await store.create({
+      workflowId: 'reclaim-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await store.update({ ...run, completed_steps: ['work'] });
+    const result = await reclaimStep(store, run.id, 'work');
+    expect(result.outcome).toBe('already_settled');
+    expect(result.detail).toBeUndefined();
+  });
+
+  // issue #221 correction — novel probe N2: the other two settle-set disjuncts (failed_steps,
+  // skipped_steps) were never independently witnessed — only completed_steps was. Deleting either
+  // disjunct survives the whole suite otherwise, and the consequence is a real honesty regression:
+  // the CLI's no_active_claim message ("it is not settled") would be asserted about a step that
+  // genuinely IS settled (failed or skipped).
+  it('a step already in failed_steps ⇒ already_settled (issue #221, settle-arm witness)', async () => {
+    const { run } = await store.create({
+      workflowId: 'reclaim-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await store.update({ ...run, failed_steps: ['work'] });
+    const result = await reclaimStep(store, run.id, 'work');
+    expect(result.outcome).toBe('already_settled');
+    expect(result.detail).toBeUndefined();
+  });
+
+  it('a step already in skipped_steps ⇒ already_settled (issue #221, settle-arm witness)', async () => {
+    const { run } = await store.create({
+      workflowId: 'reclaim-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await store.update({ ...run, skipped_steps: ['work'] });
+    const result = await reclaimStep(store, run.id, 'work');
+    expect(result.outcome).toBe('already_settled');
+    expect(result.detail).toBeUndefined();
+  });
+
+  it('a step reclaimed once, then reclaimed again ⇒ no_active_claim + detail previously_reclaimed (issue #221 — exercises the RE-reclaim flow)', async () => {
+    const { run } = await store.create({
+      workflowId: 'reclaim-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const claimed = await store.claimStep(run.id, 'work', autoWf);
+    await store.update({ ...claimed, claims: { work: { deadline: pastIso() } } });
+
+    const first = await reclaimStep(store, run.id, 'work');
+    expect(first.outcome).toBe('reclaimed');
+
+    // Reclaimed once, never re-claimed since — a second reclaim call finds no active claim, but
+    // the audit evidence from the FIRST reclaim is positive proof this step WAS touched.
+    const second = await reclaimStep(store, run.id, 'work');
+    expect(second.outcome).toBe('no_active_claim');
+    expect(second.detail).toBe('previously_reclaimed');
+  });
+
+  it('a capability-blocked step ⇒ no_active_claim + detail capability_blocked (issue #221)', async () => {
+    const { run } = await store.create({
+      workflowId: 'reclaim-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await store.update({
+      ...run,
+      capability_blocks: {
+        work: {
+          requirement: { kind: 'handler', name: 'h_work' },
+          code: 'ENGINE_HANDLER_NOT_REGISTERED',
+          at: new Date().toISOString(),
+        },
+      },
+    });
+    const result = await reclaimStep(store, run.id, 'work');
+    expect(result.outcome).toBe('no_active_claim');
+    expect(result.detail).toBe('capability_blocked');
+  });
+
+  // issue #221 correction: the both-markers precedence was an undisclosed judgment call in the
+  // original round (classifyNoActiveClaim checks capability_blocks BEFORE reclaim-audit evidence)
+  // — now explicitly pinned. Direct-guard path: both a reclaim-audit evidence entry (from a prior
+  // genuine reclaim) AND a capability_blocks marker are present on the SAME step simultaneously
+  // (a plausible real sequence: reclaimed once, re-driven, then hit a capability block) ⇒
+  // capability_blocked wins as the more specific, more-actionable-now signal.
+  it('both markers present (reclaim-audit evidence AND capability_blocks) ⇒ no_active_claim + detail capability_blocked (capability wins — MA-ratified precedence)', async () => {
+    const { run } = await store.create({
+      workflowId: 'reclaim-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await store.update({
+      ...run,
+      evidence: [
+        {
+          step_id: 'work',
+          started_at: pastIso(),
+          completed_at: pastIso(),
+          duration_ms: 0,
+          input_summary: {},
+          output_summary: { reclaimed: true, reason: 'manual reclaim' },
+          status: 'success',
+          evidence_hash: 'x',
+        },
+      ],
+      capability_blocks: {
+        work: {
+          requirement: { kind: 'handler', name: 'h_work' },
+          code: 'ENGINE_HANDLER_NOT_REGISTERED',
+          at: new Date().toISOString(),
+        },
+      },
+    });
+    const result = await reclaimStep(store, run.id, 'work');
+    expect(result.outcome).toBe('no_active_claim');
+    expect(result.detail).toBe('capability_blocked');
   });
 
   it('loud-fails when the store does not persist claims', async () => {
@@ -250,6 +371,32 @@ describe('reclaimStep — CAS mismatch re-evaluation (Sig-6)', () => {
     expect(updateCalls).toHaveLength(1); // re-applied once on the reloaded record
     expect(updateCalls[0]!.in_progress_steps).not.toContain('work');
     expect(updateCalls[0]!.in_progress_steps).toContain('sibling'); // sibling preserved
+  });
+
+  it('CAS-retry path (issue #221): reloaded lacks the step but carries reclaim-audit evidence ⇒ no_active_claim + previously_reclaimed (discriminated against `reloaded`, never `run`)', async () => {
+    const initial = makeRun({ in_progress_steps: ['work'], claims: { work: staleClaim } });
+    const reloaded = makeRun({
+      in_progress_steps: [], // a concurrent reclaim already removed the claim
+      evidence: [
+        {
+          step_id: 'work',
+          started_at: pastIso(),
+          completed_at: pastIso(),
+          duration_ms: 0,
+          input_summary: {},
+          output_summary: { reclaimed: true, reason: 'manual reclaim' },
+          status: 'success',
+          evidence_hash: 'x',
+        },
+      ],
+      version: 6,
+    });
+    const { store, updateCalls } = scriptedStore([initial, reloaded], [1]);
+
+    const result = await reclaimStep(store, 'r1', 'work');
+    expect(result.outcome).toBe('no_active_claim');
+    expect(result.detail).toBe('previously_reclaimed');
+    expect(updateCalls).toHaveLength(0); // idempotent — no re-remove
   });
 });
 

@@ -27,6 +27,60 @@ All notable changes to this project are documented here.
   repair prompt's summary without ever leaking a submitted or schema-declared value. Semver:
   minor-additive.
 
+- **Typed run-health classification with honest per-surface reporting (issue #221).** New
+  `classifyRunHealth` (core, `packages/core/src/engine/run-health.ts`) is the SINGLE shared
+  predicate the three READ surfaces — `get_run_state`, `realm run list --stuck`, and `realm run
+inspect` — now all derive from, so none of them can silently drift from another about what
+  "wedged" or "idle" means. (`realm run reclaim` reads the SAME underlying record facts — settle
+  sets, `capability_blocks`, reclaim-audit evidence — via its own independent discriminator; see
+  the Changed entry below.) Pure, read-only, definition-optional, `now`-injectable. Classifies a run into zero
+  or more typed `RunHealthFinding`s (`never_claimed_idle` | `stale_claim` | `wedged_gate_sibling` |
+  `capability_block`); a new `never_claimed_idle` kind closes the gap the issue reported — an
+  advanced-but-parked run (no claimed step, idle past a threshold) is now surfaced everywhere, not
+  just by `list --stuck`. Default age threshold: `DEFAULT_IDLE_THRESHOLD_MS` (24h, exported,
+  engine-minted — detection never requires an operator-supplied threshold). `get_run_state` gains
+  an additive `run_health?: RunHealthFinding[]` field (present only when non-empty) plus a single
+  advisory `warnings[]` line when findings exist; the pre-existing `stuck_claims`/
+  `capability_blocks` arrays are kept for backward compatibility, with `run_health` documented as
+  their canonical superset. `get_run_state` also gains a claims-field store-fidelity caveat
+  (mirrors the existing issue #188 `capability_blocks` caveat) — when the configured run store
+  does not declare `persistsClaims: true`, a warning names claim-liveness state as unavailable
+  rather than silently reading as healthy. `next_actions_status` is completely unaffected by this
+  change (fine-maps-to-coarse, never the reverse). `realm run inspect` renders findings after the
+  `Updated:` line. Semver: minor-additive.
+
+### Changed
+
+- **`realm run reclaim`'s outcome for a step with no active claim (issue #221).** New
+  `ReclaimOutcome` member `'no_active_claim'` replaces the previous conflation of "never claimed"
+  with `already_settled` for any step not currently in `in_progress_steps` and not in
+  completed/failed/skipped — that conflation was misleading (a previously-reclaimed or
+  capability-blocked step WAS touched, so calling it "settled" reads like a resolution when it is
+  an idempotent no-op). `already_settled` is now reserved for the genuinely-settled case
+  (completed/failed/skipped). An optional, evidence-earned `detail` field
+  (`'previously_reclaimed'` | `'capability_blocked'`) further narrows `no_active_claim` when
+  positive evidence supports it — never inferred from absence. The single-step CLI message for
+  this outcome is now honest: "no active claim on 'X' and it is not settled — nothing to reclaim.
+  If its dependencies are satisfied, driving the run will execute it." (never "still eligible" —
+  unverifiable without the definition, which single-step reclaim does not load). Batch mode
+  (`--all`) now prints the neutral `•` glyph (rather than `✓`) for every non-mutating outcome,
+  reserving `✓` for the one outcome that actually mutated the run (`reclaimed`).
+- **`realm run list --stuck`'s never-claimed detection is now age-gated (issue #221, disclosed
+  behavior change).** Previously, `--stuck` flagged EVERY `running` run with no currently-claimed
+  step — including a healthy run simply between agent drives (agent claims are call-scoped, so
+  this branch matched a normal at-rest state, not just a genuine wedge). `--stuck` now adopts
+  `classifyRunHealth`'s `never_claimed_idle` kind, which requires the run to have been idle for at
+  least `DEFAULT_IDLE_THRESHOLD_MS` (24h) before flagging it — the reference surface was itself
+  over-broad; the fix is a typed, discriminating classification rather than every surface
+  converging on the old boolean. A new `--older-than <duration>` option overrides the threshold
+  (reuses the shared `parseDuration` CLI leaf, e.g. `--older-than 6h`); `--older-than 0m` restores
+  today's unconditional breadth (bare `0` is rejected — use `0m`). `--older-than` requires
+  `--stuck`. The claim-based (`stale_claim`/`wedged_gate_sibling`) and capability-based
+  (`capability_block`) detections are UNCHANGED and age-independent — only the never-claimed branch
+  is newly age-gated. `list --stuck` now prints the active threshold (e.g. `(threshold 24h)`).
+  This issue's own future narrowing (cause-attribution/sidecar enrichment) supersedes #219's AC-1
+  ("bare `--stuck` behaves as today") with this rationale.
+
 ---
 
 ## [0.28.0] — 2026-07-19

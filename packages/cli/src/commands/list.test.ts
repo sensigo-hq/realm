@@ -1,5 +1,8 @@
 // Tests for listRuns business logic.
 import { describe, it, expect } from 'vitest';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { listRuns, formatGateAge } from './list.js';
 import type { RunStore, RunRecord } from '@sensigo/realm';
 
@@ -396,5 +399,169 @@ describe('formatGateAge', () => {
     const openedAt = new Date(0).toISOString();
     const now = new Date((3 * 24 * 60 + 5 * 60) * 60 * 1000); // 3d 5h later
     expect(formatGateAge(openedAt, now)).toBe('3d 5h');
+  });
+});
+
+describe("--stuck label format: TWO-GROUP join (issue #221 correction — restores main's format)", () => {
+  it('a run with BOTH a claim finding and a capability finding renders them as two separate, independently double-space-prefixed groups — never one flattened comma-joined list', async () => {
+    const both = makeRun({
+      id: 'run-bothclasses',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: ['sibling'],
+      claims: { sibling: { deadline: new Date(Date.now() - 60_000).toISOString() } },
+      capability_blocks: {
+        enrich: {
+          requirement: { kind: 'adapter', name: 'shopify' },
+          code: 'ENGINE_ADAPTER_NOT_REGISTERED',
+          at: new Date().toISOString(),
+        },
+      },
+    });
+    const result = await listRuns(undefined, makeStore([both]), undefined, true);
+    expect(result).toContain('run-bothclasses');
+    // The claim group's OWN leading '  ' immediately followed by the capability group's OWN
+    // leading '  ' — main's two-group shape. A single flattened list would instead read
+    // "sibling=claim_stale, enrich: ..." (comma, one leading '  ' total) — this exact substring
+    // discriminates the two formats.
+    expect(result).toContain("sibling=claim_stale  enrich: needs adapter 'shopify'");
+    expect(result).not.toContain('sibling=claim_stale, enrich:');
+  });
+});
+
+describe('--stuck age-gating (issue #221 — classifyRunHealth-backed)', () => {
+  it('hides a YOUNG (<24h) claimless running run by default, but flags a 47-day-old one', async () => {
+    const young = makeRun({
+      id: 'run-young',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date().toISOString(),
+    });
+    const old = makeRun({
+      id: 'run-old-idle',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date(Date.now() - 47 * 86_400_000).toISOString(),
+    });
+    const result = await listRuns(undefined, makeStore([young, old]), undefined, true);
+    expect(result).not.toContain('run-young');
+    expect(result).toContain('run-old-idle');
+  });
+
+  it("--older-than 0m restores today's breadth (flags a claimless running run regardless of age)", async () => {
+    const young = makeRun({
+      id: 'run-young2',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date().toISOString(),
+    });
+    const result = await listRuns(undefined, makeStore([young]), undefined, true, 0);
+    expect(result).toContain('run-young2');
+  });
+
+  it('prints the active idle threshold in the header', async () => {
+    const old = makeRun({
+      id: 'run-old-idle2',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date(Date.now() - 47 * 86_400_000).toISOString(),
+    });
+    const result = await listRuns(undefined, makeStore([old]), undefined, true);
+    expect(result).toContain('threshold 24h');
+  });
+
+  it('prints the active threshold on the no-stuck-runs message too', async () => {
+    const young = makeRun({
+      id: 'run-young3',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date().toISOString(),
+    });
+    const result = await listRuns(undefined, makeStore([young]), undefined, true);
+    expect(result).toContain('No stuck runs found');
+    expect(result).toContain('threshold 24h');
+  });
+
+  it('a custom --older-than threshold is honored (e.g. 1h flags a 2h-idle claimless run)', async () => {
+    const twoHoursIdle = makeRun({
+      id: 'run-2h-idle',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      updated_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+    });
+    const result = await listRuns(undefined, makeStore([twoHoursIdle]), undefined, true, 3_600_000);
+    expect(result).toContain('run-2h-idle');
+    expect(result).toContain('threshold 1h');
+  });
+});
+
+describe('list.ts source-text negative pin (issue #221 [S5])', () => {
+  it('isStuckRun and wedgedNonGatedClaims are DELETED, never resurrected — classifyRunHealth is the only detector', () => {
+    const source = readFileSync(fileURLToPath(new URL('./list.ts', import.meta.url)), 'utf8');
+    expect(source).not.toContain('isStuckRun');
+    expect(source).not.toContain('wedgedNonGatedClaims');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #221 correction — false-unity negative pin (the purge-guard.test.ts cross-package scan
+// precedent). The original round's prose claimed `realm run reclaim` "derives from"
+// classifyRunHealth in SEVEN locations — false: the design record (§2, fold B2) deliberately gave
+// reclaim its own independent discriminator, `classifyNoActiveClaim`, which reads the same
+// underlying record facts WITHOUT calling classifyRunHealth. All seven locations were corrected;
+// this test guards against the false-unity claim silently regressing back in — a future edit that
+// re-introduces "reclaim ... derives from classifyRunHealth" prose anywhere in a non-test source
+// file, in ANY package, fails loudly here instead of drifting undetected.
+// ---------------------------------------------------------------------------
+
+// packages/cli/src/commands → packages/
+const PACKAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const SCANNED_PACKAGES = ['core', 'cli', 'mcp-server', 'testing'];
+
+/** Every non-test, non-declaration .ts source file under a package's src/ (the purge-guard.test.ts
+ *  precedent — deliberately excludes .test.ts: a test file freely discussing the relationship
+ *  between reclaim and classifyRunHealth is not itself a shipped documentation claim). */
+function nonTestSourceFiles(pkg: string): string[] {
+  const root = join(PACKAGES_DIR, pkg, 'src');
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (entry.endsWith('.ts') && !entry.endsWith('.test.ts') && !entry.endsWith('.d.ts')) {
+        out.push(full);
+      }
+    }
+  };
+  walk(root);
+  return out;
+}
+
+describe('false-unity negative pin: no source file pairs "reclaim" with a derives-from-classifyRunHealth claim (issue #221 correction)', () => {
+  it('scans every non-test source file across every package', () => {
+    const WINDOW = 200; // chars either side of each classifyRunHealth occurrence
+    const violations: string[] = [];
+    for (const pkg of SCANNED_PACKAGES) {
+      for (const file of nonTestSourceFiles(pkg)) {
+        const content = readFileSync(file, 'utf8');
+        let idx = content.indexOf('classifyRunHealth');
+        while (idx !== -1) {
+          const windowText = content
+            .slice(Math.max(0, idx - WINDOW), Math.min(content.length, idx + WINDOW))
+            .toLowerCase();
+          if (windowText.includes('reclaim') && /derives?\s+from/.test(windowText)) {
+            violations.push(`${file} (offset ${idx})`);
+          }
+          idx = content.indexOf('classifyRunHealth', idx + 1);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
   });
 });

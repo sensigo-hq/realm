@@ -1,8 +1,9 @@
 // list command — displays all runs in the store, sorted by most recent first.
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { classifyInProgressClaims, findCapabilityBlockedSteps } from '@sensigo/realm';
-import type { RunStore, RunRecord, RunPhase } from '@sensigo/realm';
+import { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS } from '@sensigo/realm';
+import type { RunStore, RunRecord, RunPhase, RunHealthFinding } from '@sensigo/realm';
+import { parseDuration } from '../lib/parse-duration.js';
 
 /** Returns a chalk-coloured phase label. */
 function colorState(run: RunRecord): string {
@@ -35,70 +36,91 @@ export function formatGateAge(openedAt: string, now: Date = new Date()): string 
 const VALID_PHASES: RunPhase[] = ['running', 'gate_waiting', 'completed', 'failed', 'abandoned'];
 
 /**
- * Non-healthy in-progress claims that are NOT the open-gate step (issue #101). The gated step is
- * NEVER a wedge target — it is legitimately pinned while its gate is open. For a `running` run
- * (no gate) this is every non-healthy in-progress claim.
+ * Formats a threshold duration for the `--stuck` header, e.g. `24h`, `30d`, `10m`, `0m`. Whole-
+ * unit only — matches the granularity `parseDuration`/`--older-than` itself accepts (d|h|m), so
+ * every value this can ever be called with round-trips exactly.
  */
-function wedgedNonGatedClaims(run: RunRecord): ReturnType<typeof classifyInProgressClaims> {
-  return classifyInProgressClaims(run).filter(
-    (c) => c.state !== 'healthy' && c.step !== run.pending_gate?.step_name,
-  );
+function formatThreshold(ms: number): string {
+  if (ms === 0) return '0m';
+  if (ms % 86_400_000 === 0 && ms >= 2 * 86_400_000) return `${ms / 86_400_000}d`;
+  if (ms % 3_600_000 === 0) return `${ms / 3_600_000}h`;
+  return `${Math.round(ms / 60_000)}m`;
 }
 
 /**
- * A run is "stuck" for `--stuck` when it is:
- *  - non-terminal with a capability-blocked step (a not-registered handler/adapter parked the step,
- *    still eligible) — surfaced regardless of phase or a healthy in-progress sibling, since the plain
- *    in_progress/claim checks below miss a block masked by a live sibling on another branch (#134); or
- *  - `running` and advanced-but-parked (no claimed step) OR claimed-but-idle (a stale/unknown-age
- *    claim) — the Phase-1 behavior, unchanged; or
- *  - `gate_waiting` with a crashed NON-gated sibling claim on another fan-out branch — a wedge that
- *    is otherwise invisible while the gate is open, and self-resolves once it closes (#101).
+ * Renders one finding's `--stuck` label — EXCLUSIVELY from the finding's own kind/evidence, never
+ * by re-deriving from the run record (issue #221 [S4]: line format otherwise UNCHANGED except
+ * appended labels — this is what keeps CS1's reapers parsing the same shape). `never_claimed_idle`
+ * has no step-scoped label of its own (its presence is already implied by the run showing up in
+ * the list at all, with `idle:` shown) — returns `undefined`, filtered out by the caller.
  */
-function isStuckRun(run: RunRecord): boolean {
-  if (!run.terminal_state && findCapabilityBlockedSteps(run).length > 0) return true;
-  if (run.run_phase === 'running') {
-    return (
-      run.in_progress_steps.length === 0 ||
-      classifyInProgressClaims(run).some((c) => c.state !== 'healthy')
-    );
+function renderFindingLabel(f: RunHealthFinding): string | undefined {
+  switch (f.kind) {
+    case 'stale_claim':
+    case 'wedged_gate_sibling':
+      return `${f.step}=${f.reason}`;
+    case 'capability_block': {
+      const req = f.evidence?.['requirement'] as { kind: string; name: string } | undefined;
+      return req !== undefined ? `${f.step}: needs ${req.kind} '${req.name}'` : undefined;
+    }
+    case 'never_claimed_idle':
+      return undefined;
   }
-  if (run.run_phase === 'gate_waiting') {
-    return wedgedNonGatedClaims(run).length > 0;
-  }
-  return false;
 }
 
 /**
  * Lists runs from the store, sorted by updated_at descending.
- * @param workflowId    Optional filter — only show runs from this workflow.
- * @param store         Store holding run records.
- * @param statusFilter  Optional filter — only show runs with this run_phase.
- * @returns             Formatted output string.
+ * @param workflowId      Optional filter — only show runs from this workflow.
+ * @param store           Store holding run records.
+ * @param statusFilter    Optional filter — only show runs with this run_phase.
+ * @param stuck           Show only runs with a typed run-health finding (issue #221).
+ * @param idleThresholdMs Override for the `never_claimed_idle` age gate (issue #221's
+ *                        `--older-than`). Defaults to `DEFAULT_IDLE_THRESHOLD_MS` (24h). `0`
+ *                        restores today's unconditional breadth.
+ * @returns               Formatted output string.
  */
 export async function listRuns(
   workflowId: string | undefined,
   store: RunStore,
   statusFilter?: RunPhase,
   stuck?: boolean,
+  idleThresholdMs?: number,
 ): Promise<string> {
   const runs = await store.list(workflowId);
+  const effectiveIdleThresholdMs = idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
 
   let filtered = runs;
+  const findingsByRun = new Map<string, RunHealthFinding[]>();
   if (stuck === true) {
-    filtered = runs.filter(isStuckRun);
+    filtered = runs.filter((r) => {
+      // issue #221: classifyRunHealth is the SAME shared predicate get_run_state/inspect (the
+      // OTHER two READ surfaces) derive from — no drift. Definition-free (list has no workflow
+      // context to load).
+      //
+      // Note: `realm run reclaim` is a separate, independent consumer of the underlying record
+      // facts (settle sets, capability_blocks, reclaim-audit evidence) — it does NOT call this
+      // function; see its own classifyNoActiveClaim discriminator in reclaim-step.ts.
+      const findings = classifyRunHealth(r, { idleThresholdMs: effectiveIdleThresholdMs });
+      if (findings.length > 0) findingsByRun.set(r.id, findings);
+      return findings.length > 0;
+    });
   } else if (statusFilter !== undefined) {
     filtered = runs.filter((r) => r.run_phase === statusFilter);
   }
 
   if (filtered.length === 0) {
     const scope = workflowId !== undefined ? ` for workflow '${workflowId}'` : '';
-    return stuck === true ? `No stuck runs found${scope}.` : `No runs found${scope}.`;
+    return stuck === true
+      ? `No stuck runs found${scope} (threshold ${formatThreshold(effectiveIdleThresholdMs)}).`
+      : `No runs found${scope}.`;
   }
 
   filtered.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
 
   const lines: string[] = [];
+  if (stuck === true) {
+    lines.push(`Stuck runs (threshold ${formatThreshold(effectiveIdleThresholdMs)}):`);
+  }
   for (const run of filtered) {
     const state = colorState(run);
     const updated = new Date(run.updated_at).toLocaleString();
@@ -109,18 +131,26 @@ export async function listRuns(
     if (stuck === true) {
       // Show how long the run has been parked (idle age since last update).
       line += `  idle: ${formatGateAge(run.updated_at)}`;
-      // Label each non-healthy claim with its state — excluding the open-gate step, which is never
-      // a wedge (a gate_waiting run flagged here carries a crashed NON-gated sibling, #101).
-      const wedged = wedgedNonGatedClaims(run);
-      if (wedged.length > 0) {
-        line += `  ${wedged.map((c) => `${c.step}=${c.state}`).join(', ')}`;
+      // issue #221 correction: restore main's TWO-GROUP join (an undisclosed deviation in the
+      // original round) — claim-based labels first, capability labels second (classifyRunHealth
+      // already emits findings in that order), each group internally ', '-joined, each appended
+      // with its OWN leading '  ' only when non-empty. The S4 rail is "line format otherwise
+      // UNCHANGED" — a single flattened, comma-joined list (the original round's shape) is a
+      // different wire format than main's, which CS1's reapers parse.
+      const findings = findingsByRun.get(run.id) ?? [];
+      const claimLabels = findings
+        .filter((f) => f.kind === 'stale_claim' || f.kind === 'wedged_gate_sibling')
+        .map(renderFindingLabel)
+        .filter((l): l is string => l !== undefined);
+      if (claimLabels.length > 0) {
+        line += `  ${claimLabels.join(', ')}`;
       }
-      // #134: name the missing capability so the operator knows what to provision before re-attaching.
-      const blocked = run.terminal_state ? [] : findCapabilityBlockedSteps(run);
-      if (blocked.length > 0) {
-        line += `  ${blocked
-          .map((b) => `${b.step}: needs ${b.requirement.kind} '${b.requirement.name}'`)
-          .join(', ')}`;
+      const capabilityLabels = findings
+        .filter((f) => f.kind === 'capability_block')
+        .map(renderFindingLabel)
+        .filter((l): l is string => l !== undefined);
+      if (capabilityLabels.length > 0) {
+        line += `  ${capabilityLabels.join(', ')}`;
       }
     } else if (run.run_phase === 'gate_waiting' && run.pending_gate !== undefined) {
       const age = formatGateAge(run.pending_gate.opened_at);
@@ -136,32 +166,61 @@ export const listCommand = new Command('list')
   .description('List all runs, sorted by most recent first')
   .option('--workflow <id>', 'Filter by workflow ID')
   .option('--status <phase>', `Filter by run phase (${VALID_PHASES.join(', ')})`)
-  .option('--stuck', 'Show only advanced-but-parked runs (running with no claimed step)')
-  .action(async (opts: { workflow?: string; status?: string; stuck?: boolean }) => {
-    const { JsonFileStore } = await import('@sensigo/realm');
-    const store = new JsonFileStore();
+  .option('--stuck', 'Show only wedged/idle runs (typed run-health classification — issue #221)')
+  .option(
+    '--older-than <duration>',
+    'With --stuck: idle-age threshold for the never-claimed-idle check (e.g. 24h, 7d); default ' +
+      "24h. '0m' restores today's breadth (flags every claimless running run regardless of age; " +
+      "bare '0' is rejected — use '0m'). Distinct from 'realm run reclaim --older-than', which is " +
+      'a deadline-margin add-on for auto-reclaim selection, not an idle-age threshold.',
+  )
+  .action(
+    async (opts: { workflow?: string; status?: string; stuck?: boolean; olderThan?: string }) => {
+      const { JsonFileStore } = await import('@sensigo/realm');
+      const store = new JsonFileStore();
 
-    if (opts.stuck === true && opts.status !== undefined) {
-      console.error('--stuck cannot be combined with --status.');
-      process.exit(1);
-    }
-
-    let statusFilter: RunPhase | undefined;
-    if (opts.status !== undefined) {
-      if (!VALID_PHASES.includes(opts.status as RunPhase)) {
-        console.error(
-          `Invalid --status value '${opts.status}'. Valid values: ${VALID_PHASES.join(', ')}`,
-        );
+      if (opts.stuck === true && opts.status !== undefined) {
+        console.error('--stuck cannot be combined with --status.');
         process.exit(1);
       }
-      statusFilter = opts.status as RunPhase;
-    }
+      if (opts.olderThan !== undefined && opts.stuck !== true) {
+        console.error('--older-than is only valid with --stuck.');
+        process.exit(1);
+      }
 
-    try {
-      const output = await listRuns(opts.workflow, store, statusFilter, opts.stuck);
-      console.log(output);
-    } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
-      process.exit(1);
-    }
-  });
+      let idleThresholdMs: number | undefined;
+      if (opts.olderThan !== undefined) {
+        try {
+          idleThresholdMs = parseDuration(opts.olderThan);
+        } catch (err) {
+          console.error(err instanceof Error ? err.message : String(err));
+          process.exit(1);
+        }
+      }
+
+      let statusFilter: RunPhase | undefined;
+      if (opts.status !== undefined) {
+        if (!VALID_PHASES.includes(opts.status as RunPhase)) {
+          console.error(
+            `Invalid --status value '${opts.status}'. Valid values: ${VALID_PHASES.join(', ')}`,
+          );
+          process.exit(1);
+        }
+        statusFilter = opts.status as RunPhase;
+      }
+
+      try {
+        const output = await listRuns(
+          opts.workflow,
+          store,
+          statusFilter,
+          opts.stuck,
+          idleThresholdMs,
+        );
+        console.log(output);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    },
+  );
