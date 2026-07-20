@@ -888,13 +888,13 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     expect(headerMatches).toHaveLength(1); // exactly one feedback-block header
   });
 
-  it("test 3: exhaustion — N+1 provider calls, 'failed', message notes the repair count; run stays non-terminal + step still eligible (today's engine posture — #220 will terminalize persistent rejection; delete this pin when it ships)", async () => {
+  it('test 3 REPLACEMENT (issue #220 SHIPPED): persistent rejection across TWO FULL default drives (3 attempts/drive × 2 = 6 = the default exhaustion threshold) terminalizes with VALIDATION_EXHAUSTED — the fixture declares NO validation_exhaustion key at all, pinning AUTO-ENROLLMENT at the default threshold (a default-mode-off mutant reds; deleted-and-replaced per the design record, not reddened — the original #220-pending pin predicted exactly this break)', async () => {
     const schema = {
       type: 'object',
       properties: { alpha: { type: 'string' } },
       required: ['alpha'],
     };
-    const def = agentWorkflow({ output_schema: schema });
+    const def = agentWorkflow({ output_schema: schema }); // NO validation_exhaustion key
     const provider = new (class extends LlmProvider {
       callStep = vi.fn().mockResolvedValue({}); // always invalid — missing 'alpha' every time
     })();
@@ -906,25 +906,115 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
       params: {},
     });
 
-    const result = await runAgent(
+    // Drive 1: 1 + 2 repairs = 3 attempts (rejections 1-3 of the default threshold of 6).
+    const result1 = await runAgent(
       { store, workflowStore: makeWorkflowStore(def), provider, registry: createDefaultRegistry() },
       { existingRunId: run.id, definition: def, params: {} },
     );
+    expect(result1).toBe('failed');
+    const afterDrive1 = await store.get(run.id);
+    expect(afterDrive1.terminal_state).toBe(false); // 3 < 6 — not yet at threshold
+    expect(afterDrive1.validation_rejections?.['draft']).toBe(3);
+    expect(findEligibleSteps(def, afterDrive1)).toContain('draft'); // still re-drivable
+
+    // Drive 2: 3 MORE attempts (rejections 4-6) — the 6th reaches the default threshold and
+    // terminalizes the step with VALIDATION_EXHAUSTED instead of returning control at attempt 3.
+    const result2 = await runAgent(
+      { store, workflowStore: makeWorkflowStore(def), provider, registry: createDefaultRegistry() },
+      { existingRunId: run.id, definition: def, params: {} },
+    );
+    expect(result2).toBe('failed');
+    expect(provider.callStep).toHaveBeenCalledTimes(6);
+
+    const after = await store.get(run.id);
+    expect(after.terminal_state).toBe(true);
+    expect(after.run_phase).toBe('failed');
+    expect(after.failed_steps).toContain('draft');
+    expect(after.validation_rejections?.['draft']).toBe(6);
+    errorSpy.mockRestore();
+  });
+
+  it("issue #220 deliverable 7 — coherence warn (pin (i)): schemaRetries exceeding the effective exhaustion threshold prints one stderr warning at the step's first attempt; the defaults (schemaRetries=2, threshold=6) print none", async () => {
+    const schema = {
+      type: 'object',
+      properties: { alpha: { type: 'string' } },
+      required: ['alpha'],
+    };
+
+    // Case 1: schemaRetries 7 (budget 8 attempts) vs a per-step threshold of 6 ⇒ warns.
+    const defLowThreshold = agentWorkflow({
+      output_schema: schema,
+      validation_exhaustion: { threshold: 6 },
+    });
+    const providerAlwaysValid = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({ alpha: 'x' });
+    })();
+    const errorSpyWarn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(defLowThreshold),
+        provider: providerAlwaysValid,
+        registry: createDefaultRegistry(),
+        schemaRetries: 7,
+      },
+      { definition: defLowThreshold, params: {} },
+    );
+    const printedWarn = errorSpyWarn.mock.calls.flat().join('\n');
+    expect(printedWarn).toContain('--schema-retries');
+    expect(printedWarn).toContain('validation-exhaustion threshold');
+    errorSpyWarn.mockRestore();
+
+    // Case 2: defaults (schemaRetries=2, threshold=6 via DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD)
+    // ⇒ no warning (2 + 1 = 3 ≤ 6).
+    const defDefault = agentWorkflow({ output_schema: schema });
+    const errorSpyNoWarn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(defDefault),
+        provider: providerAlwaysValid,
+        registry: createDefaultRegistry(),
+      },
+      { definition: defDefault, params: {} },
+    );
+    const printedNoWarn = errorSpyNoWarn.mock.calls.flat().join('\n');
+    expect(printedNoWarn).not.toContain('validation-exhaustion threshold');
+    errorSpyNoWarn.mockRestore();
+  });
+
+  it('issue #220 pin (h) — mid-loop truncation fails closed: a per-step threshold of 2 with the default schemaRetries (2) terminalizes at attempt 2 with the DISTINCT VALIDATION_EXHAUSTED code, and the repair loop breaks there — no repair is attempted on it', async () => {
+    const schema = {
+      type: 'object',
+      properties: { alpha: { type: 'string' } },
+      required: ['alpha'],
+    };
+    const def = agentWorkflow({
+      output_schema: schema,
+      validation_exhaustion: { threshold: 2 },
+    });
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({}); // always invalid — missing 'alpha' every time
+    })();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new InMemoryStore();
+
+    const result = await runAgent(
+      { store, workflowStore: makeWorkflowStore(def), provider, registry: createDefaultRegistry() },
+      { definition: def, params: {} },
+    );
 
     expect(result).toBe('failed');
-    expect(provider.callStep).toHaveBeenCalledTimes(3); // 1 + 2 repairs (default schemaRetries=2)
+    // Attempt 1 rejects at count 1 (< threshold 2) — an ORDINARY repairable VALIDATION_OUTPUT_SCHEMA,
+    // so the gate legitimately repairs once. Attempt 2 rejects at count 2 (=== threshold) —
+    // terminalizes as VALIDATION_EXHAUSTED, a DISTINCT code the repair gate's own conjunct
+    // (error_code ∈ {VALIDATION_OUTPUT_SCHEMA, VALIDATION_INPUT_SCHEMA}) never matches, so the
+    // loop breaks THERE instead of attempting a 3rd repair on an already-terminalized step. Only
+    // 2 provider calls total — NOT schemaRetries+1 (3) — and only ONE "repairing" line, not two.
+    expect(provider.callStep).toHaveBeenCalledTimes(2);
     const printed = errorSpy.mock.calls.flat().join('\n');
-    expect(printed).toContain('after 2 schema-repair attempts');
-
-    // #220 will terminalize persistent rejection — delete this pin when it ships
-    const after = await store.get(run.id);
-    expect(after.terminal_state).toBe(false);
-    expect(after.completed_steps).not.toContain('draft');
-    expect(after.in_progress_steps).not.toContain('draft');
-    expect(after.failed_steps).not.toContain('draft');
-    // Pins the actual re-drivability contract (not its structural shadow via the three fields
-    // above): the step is genuinely eligible again, so `realm agent --run-id` can re-drive it.
-    expect(findEligibleSteps(def, after)).toContain('draft');
+    expect(printed.match(/repairing/g) ?? []).toHaveLength(1); // exactly one repair, not a second
+    expect(printed).toContain('after 1 schema-repair attempts'); // never "after 2"
     errorSpy.mockRestore();
   });
 

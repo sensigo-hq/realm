@@ -75,14 +75,25 @@ export function writerNonceRequiredError(stepId: string, runVersion: number): Wo
 }
 
 /**
- * Pre-claim validation rejections carry one of these error codes (claimStep runs strictly after all
- * three schema gates, so they never reach failed_steps[] / never bump version — a write-free path).
+ * Pre-claim validation rejections carry one of these error codes. Historical framing (pre-#220):
+ * claimStep runs strictly after all three schema gates, so a rejection never reached
+ * failed_steps[] / never bumped the run version — a write-free path. **Issue #220 changes this
+ * for the two COUNTED codes**: `VALIDATION_INPUT_SCHEMA`/`VALIDATION_OUTPUT_SCHEMA` on an agent
+ * step now persist a bounded rejection counter via a real CAS write (`countRejection` in
+ * execution-loop.ts) — the rejection's own ENVELOPE still reports the PRE-write version
+ * (bump-and-report), so callers observing only the envelope see no behavior change, but the run
+ * record itself is no longer untouched. `VALIDATION_TRACE_SCHEMA` remains genuinely write-free (an
+ * uncounted v1 residual — see execution-loop.ts's countRejection doc). `VALIDATION_EXHAUSTED`
+ * (issue #220) is the terminal rejection itself — a real step failure that claims, fails, and
+ * bumps the version exactly like any other dispatch failure; it is included here because it is
+ * the single most diagnostic sidecar record a persistently-invalid agent step can produce.
  * Failed agent attempts on these codes are surfaced as stderr telemetry below.
  */
 const VALIDATION_TELEMETRY_CODES = new Set([
   'VALIDATION_INPUT_SCHEMA',
   'VALIDATION_OUTPUT_SCHEMA',
   'VALIDATION_TRACE_SCHEMA',
+  'VALIDATION_EXHAUSTED',
 ]);
 
 /**
@@ -109,7 +120,13 @@ async function emitFailedAttemptTelemetry(
     if (result.status !== 'error') return;
     const code = result.error_code;
     if (code === undefined || !VALIDATION_TELEMETRY_CODES.has(code)) return;
-    const ajvErrors = result.error_details?.['errors'];
+    // issue #220: VALIDATION_EXHAUSTED carries its ajv errors under `last_ajv_errors` (the last
+    // counted rejection's own errors, threaded through by countRejection) — every other code here
+    // carries them under the pre-existing `errors` key.
+    const ajvErrors =
+      code === 'VALIDATION_EXHAUSTED'
+        ? result.error_details?.['last_ajv_errors']
+        : result.error_details?.['errors'];
     record = buildFailedAttemptRecord({
       run_id: args.run_id,
       workflow_id: workflowId,

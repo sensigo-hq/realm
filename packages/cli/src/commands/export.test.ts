@@ -80,7 +80,14 @@ describe('buildExportBundle', () => {
   it('terminal run, full artifacts: bundle matches run/attempts/WAL exactly, across multiple WAL steps', async () => {
     const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
     try {
-      const run = makeRun({ run_phase: 'abandoned', terminal_state: true });
+      const run = makeRun({
+        run_phase: 'abandoned',
+        terminal_state: true,
+        // issue #220 (R-EXTRAS): the counter rides the run record verbatim — no export-side
+        // handling needed. Included here so the round-trip is proven explicitly, not just
+        // implied by the whole-record `toEqual` below.
+        validation_rejections: { 'step-a': 3 },
+      });
       await injectRun(dir, run);
       await appendSidecarLine(failedAttemptStore, run.id);
       await traceBufferStore.append(run.id, 'step-a', [{ event: 'orphaned-a' }]);
@@ -97,6 +104,8 @@ describe('buildExportBundle', () => {
       expect(bundle.realm_export_version).toBe(3);
       expect(bundle.exported_at).toBe(now.toISOString());
       expect(bundle.run).toEqual(run);
+      // issue #220 (R-EXTRAS): the export bundle round-trips validation_rejections.
+      expect(bundle.run.validation_rejections).toEqual({ 'step-a': 3 });
       expect(bundle.attempts).toHaveLength(1);
       expect(bundle.attempts[0]?.step_id).toBe('classify');
       expect(Object.keys(bundle.wal).sort()).toEqual(['step-a', 'step-b']);

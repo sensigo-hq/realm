@@ -193,6 +193,17 @@ function withTimeout<T>(
 const MAX_INPUT_MAP_DEPTH = 10;
 
 /**
+ * Issue #220: default per-step threshold for bounded validation-rejection exhaustion — the
+ * multiple-of-(schemaRetries+1) alignment formula at k=2 (two full default `realm agent` repair
+ * drives, schemaRetries defaulting to 2 ⇒ 3 attempts/drive ⇒ termination lands at drive
+ * boundaries at defaults). Exported so `realm agent`'s drive-time coherence warn (run-agent.ts)
+ * and a per-step `validation_exhaustion.threshold` override (yaml-loader.ts) share ONE source of
+ * truth. Every countable agent step (see `countRejection` below) is auto-enrolled at this
+ * threshold — there is no reachable default-off posture in PR-1.
+ */
+export const DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD = 6;
+
+/**
  * Resolves an input_map declaration into a concrete params object.
  * Falls back to options.input when input_map is absent.
  */
@@ -969,24 +980,167 @@ export async function executeStep(
 
   let inputTokenEstimate = Math.ceil(JSON.stringify(effectiveInput).length / 4);
 
+  // issue #220: bounded validation-rejection exhaustion — locals shared by countRejection below
+  // and by both its call sites (Step 2b/2c) and the trace enforce-gate further down. `exhaustion`
+  // stays null unless/until a counted rejection's JUST-persisted count reaches its threshold;
+  // once armed, EVERY subsequent validation return in this call YIELDS instead of returning.
+  let exhaustion: WorkflowError | null = null;
+  let counted = false; // at-most-once arm per invocation
+  let persisted: number | undefined; // the count actually PERSISTED this invocation, if any
+  const countWarnings: string[] = [];
+
+  /**
+   * issue #220 (design record §2) — the single chokepoint every counted rejection passes through.
+   * Counts ONLY `{VALIDATION_INPUT_SCHEMA, VALIDATION_OUTPUT_SCHEMA}` on `execution: 'agent'`
+   * steps (CLOSED set: for agent steps, Step 2b/2c validates `options.input`, which is
+   * model-authored by construction — every counted rejection is model-attributable bytes.
+   * `VALIDATION_TRACE_SCHEMA` is EXCLUDED v1 — a WAL-merged trace may carry preserved foreign
+   * lines (#185/#197), so counting it would poison a step on someone else's bytes; the
+   * nonce-refusal class is pre-engine today [structurally thrown in the MCP wrapper before this
+   * function ever runs] — re-adjudicate this exclusion if that gate ever moves into core).
+   * Read-modify-write from the Step-1 `run` through `store.update()`'s CAS, with the write's
+   * return value DISCARDED — the envelope keeps building from the stale Step-1 `run`
+   * (bump-and-report; this is the #217 repair-gate contract's own ordering guarantee — see
+   * run-agent.ts's cross-ref comment at the repair gate). CAS failure retries ONCE on a fresh
+   * `get()` (the extension-identity precedent above), re-checking countability on the FRESH
+   * record [P-B1]: an unguarded retry could write onto a terminal/claimed/gate-waiting record,
+   * worst case CAS-failing a concurrent VALID submission's settle into a human-judged claim
+   * wedge. Any further failure — or a failed countability re-check — drops and swallows
+   * (undercount-safe); envelope delivery is unconditional regardless of what this function does.
+   */
+  async function countRejection(err: WorkflowError): Promise<void> {
+    if (counted) return; // at-most-once per invocation
+    if (stepDef?.execution !== 'agent') return; // non-agent steps are never counted
+    if (err.code !== 'VALIDATION_INPUT_SCHEMA' && err.code !== 'VALIDATION_OUTPUT_SCHEMA') return;
+    counted = true;
+
+    const threshold =
+      stepDef.validation_exhaustion?.threshold ?? DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD;
+    const attempted = (run.validation_rejections?.[options.command] ?? 0) + 1;
+
+    try {
+      // FIRST CAS — expected version = the Step-1 read. Return value DISCARDED: the envelope
+      // built at the call site keeps using the stale `run`, never this write's result.
+      await store.update({
+        ...run,
+        validation_rejections: {
+          ...(run.validation_rejections ?? {}),
+          [options.command]: attempted,
+        },
+      });
+      persisted = attempted;
+    } catch {
+      // CAS loser — retry ONCE on fresh state, WITH a countability re-check on the fresh record.
+      try {
+        const fresh = await store.get(options.runId);
+        if (
+          !fresh.terminal_state &&
+          fresh.pending_gate === undefined &&
+          findEligibleSteps(definition, fresh).includes(options.command)
+        ) {
+          const freshN = (fresh.validation_rejections?.[options.command] ?? 0) + 1;
+          // CAS on fresh.version closes the re-check's own TOCTOU: a claim landing after the
+          // re-check above but before this write fails THIS write too (caught below).
+          await store.update({
+            ...fresh,
+            validation_rejections: {
+              ...(fresh.validation_rejections ?? {}),
+              [options.command]: freshN,
+            },
+          });
+          persisted = freshN;
+        } else {
+          persisted = undefined; // drop-and-swallow (undercount-safe)
+        }
+      } catch {
+        persisted = undefined; // double-CAS-failure swallow
+      }
+    }
+
+    // [design record §2, P-S4] fires on the drop path AND the double-failure path alike — nothing
+    // was persisted THIS invocation either way.
+    if (persisted === undefined) {
+      countWarnings.push(`rejection count not persisted — record remains at ${attempted - 1}`);
+    }
+    // [design record §1, softened per the final gate] a store round-tripping everything but not
+    // declaring this field yet is not called broken definitively — "MAY be unavailable", not "is".
+    if (!persistsField(store, 'validation_rejections')) {
+      countWarnings.push(
+        'rejection counting not declared durable on this store — exhaustion terminalization MAY ' +
+          'be unavailable',
+      );
+    }
+    // Countdown observable (Temporal-style) — `rejections` is the JUST-PERSISTED count when one
+    // exists, else the attempted (unpersisted) value, so a caller always sees SOME number.
+    err.details['rejections'] = persisted ?? attempted;
+    err.details['threshold'] = threshold;
+
+    if (persisted !== undefined && persisted >= threshold) {
+      exhaustion = new WorkflowError(
+        `Step '${options.command}' exhausted its validation-rejection budget (${persisted}/${threshold})`,
+        {
+          code: 'VALIDATION_EXHAUSTED',
+          category: 'VALIDATION',
+          agentAction: 'stop',
+          retryable: false,
+          details: {
+            step_id: options.command,
+            rejections: persisted,
+            threshold,
+            last_error: err.message,
+            last_ajv_errors: err.details['errors'],
+          },
+        },
+      );
+    }
+  }
+
   // Step 2b: Validate input schema.
   if (stepDef?.input_schema !== undefined) {
     try {
       validateInputSchema(effectiveInput, stepDef.input_schema, options.command);
     } catch (err) {
-      return makeErrorEnvelope(options, run, err as WorkflowError, definition);
+      await countRejection(err as WorkflowError);
+      if (exhaustion === null) {
+        return makeErrorEnvelope(
+          options,
+          run,
+          err as WorkflowError,
+          definition,
+          countWarnings.length > 0 ? countWarnings : undefined,
+        );
+      }
+      // FALL THROUGH — exhaustion armed; Step 2c below is gated on `exhaustion === null` (skipped
+      // whole), and every downstream gate yields toward terminalization instead of returning.
     }
   }
 
-  // Step 2c: Validate output schema (agent steps only).
+  // Step 2c: Validate output schema (agent steps only). issue #220: the WHOLE block is gated on
+  // `exhaustion === null` — once armed by Step 2b above, 2c does not run at all (no validation,
+  // no catch), matching W5's own conjunct set exactly [P-S1]: a both-schemas step must never
+  // double-count or report the wrong last_error.
   // For agent steps dispatch is a pass-through, so options.input IS the agent's
   // submitted output. Validating here (pre-claim) is equivalent to
   // "post-generation, pre-commit" — the standard output guardrail position.
-  if (stepDef?.execution === 'agent' && stepDef.output_schema !== undefined) {
+  if (
+    exhaustion === null &&
+    stepDef?.execution === 'agent' &&
+    stepDef.output_schema !== undefined
+  ) {
     try {
       validateOutputSchema(effectiveInput, stepDef.output_schema, options.command);
     } catch (err) {
-      return makeErrorEnvelope(options, run, err as WorkflowError, definition);
+      await countRejection(err as WorkflowError);
+      if (exhaustion === null) {
+        return makeErrorEnvelope(
+          options,
+          run,
+          err as WorkflowError,
+          definition,
+          countWarnings.length > 0 ? countWarnings : undefined,
+        );
+      }
+      // FALL THROUGH — exhaustion armed.
     }
   }
 
@@ -998,6 +1152,12 @@ export async function executeStep(
   // never be adopted, then be silently destroyed when the WAL is deleted at settlement (issue
   // #185 Finding 2). A rare line landing in exactly that window bypasses THIS enforce check —
   // documented, accepted (see the post-claim block).
+  //
+  // issue #220 carve-out: the ABOVE "stays pre-claim so an invalid trace doesn't consume a claim"
+  // guarantee is for the COMMON case only — when validation exhaustion is already armed by an
+  // earlier Step 2b/2c rejection, the enforce-gate below deliberately YIELDS its return instead
+  // (still never deletes/consumes the WAL) so a persistently-invalid-trace agent under `enforce`
+  // can be terminalized rather than wedging forever purely on this unrelated gate.
   //
   // walEntries is declared at this outer scope because it is REASSIGNED to the post-claim read
   // below and referenced at the captureEvidence call site further down this function.
@@ -1094,7 +1254,29 @@ export async function executeStep(
             };
           } catch (err) {
             // On enforce rejection: do NOT delete the WAL — agent retries with WAL preserved.
-            return makeErrorEnvelope(options, run, err as WorkflowError, definition);
+            if (exhaustion === null) {
+              return makeErrorEnvelope(options, run, err as WorkflowError, definition);
+            }
+            // issue #220: exhaustion is already armed by an earlier Step 2b/2c rejection — the
+            // enforce-gate YIELDS its return (rather than returning) so a persistently-invalid
+            // trace under `enforce` can still be terminalized instead of wedging forever on this
+            // unrelated gate (the exact class #220 exists to kill). Re-run the WARN-shape pass
+            // (never enforce) purely so `preClaimSchemaResult`/the summary still reflect what
+            // actually happened to the trace; `validateTraceSchema('warn', ...)` never throws.
+            const warnResult = validateTraceSchema(
+              preClaimNormalized.entries,
+              stepDef.trace_schema,
+              options.command,
+              'warn',
+            );
+            preClaimSchemaResult = {
+              schema_applied: true,
+              validation_mode: 'warn',
+              validation_errors: warnResult.errorCount,
+            };
+            if (warnResult.errorCount > 0) {
+              traceWarnings.push(warnResult.warning);
+            }
           }
         } else {
           const result = validateTraceSchema(
@@ -1459,278 +1641,337 @@ export async function executeStep(
   const allEvidence: EvidenceSnapshot[] = [];
   let currentWarn: string | undefined;
 
-  for (let attemptNum = 1; attemptNum <= maxAttempts; attemptNum++) {
-    // SITE (a) — issue #140, loop-top, BEFORE attemptsUsed is assigned: attempt 1 ALWAYS
-    // proceeds regardless of capMs (the `attemptNum > 1` conjunct) — this guard exists solely for
-    // the clock-anomaly window between `capStart` above and here (a suspend/resume or NTP forward
-    // jump), never to gate the very first attempt.
-    if (capMs !== undefined && attemptNum > 1 && remainingMs() <= 0) {
-      capExhausted = true;
-      break;
-    }
-    attemptsUsed = attemptNum;
-    const startedAt = new Date();
-    let attemptOutput: Record<string, unknown> = {};
-    let attemptError: WorkflowError | null = null;
-    let resolvedParams: Record<string, unknown> | undefined;
+  // issue #220: once exhaustion is armed by an earlier Step 2b/2c/enforce-gate rejection, bypass
+  // the ENTIRE dispatch loop below AND the retry-wrap block that follows it — claimStep's own
+  // under-lock re-check (STATE_STEP_NOT_ELIGIBLE) is the safety net that cleanly aborts
+  // terminalization if a concurrent valid submission or abandon beat this invocation to the claim
+  // (see the claim's own catch above). Without this bypass, a hand-built max_attempts:0 definition
+  // would wrap VALIDATION_EXHAUSTED into STEP_RETRY_EXHAUSTED, destroying the discriminator.
+  const bypassDispatch = exhaustion !== null;
 
-    // Per-attempt effective timeout (issue #140): uniform full-clip to whatever cap budget
-    // remains. Clip floor `max(0, remainingMs())` ensures a clock anomaly (see SITE (a) above)
-    // never passes a negative ms to withTimeout. capMs undefined ⇒ effectiveMs === timeoutMs,
-    // byte-identical to pre-#140 behavior (every non-retry-configured, or unopted-uncapped-by-
-    // total_timeout_seconds-being-absent-pre-amendment, auto step). `clippedToMs` records the
-    // per-attempt evidence value ONLY when the cap actually reduced the bound below the step's
-    // own declared/default timeout — never on an uncapped or not-yet-biting attempt.
-    const effectiveMs =
-      timeoutMs !== undefined
-        ? capMs !== undefined
-          ? Math.min(timeoutMs, Math.max(0, remainingMs()))
-          : timeoutMs
-        : undefined;
-    const clippedToMs =
-      capMs !== undefined && effectiveMs !== undefined && effectiveMs < timeoutMs!
-        ? effectiveMs
-        : undefined;
+  if (!bypassDispatch) {
+    for (let attemptNum = 1; attemptNum <= maxAttempts; attemptNum++) {
+      // SITE (a) — issue #140, loop-top, BEFORE attemptsUsed is assigned: attempt 1 ALWAYS
+      // proceeds regardless of capMs (the `attemptNum > 1` conjunct) — this guard exists solely for
+      // the clock-anomaly window between `capStart` above and here (a suspend/resume or NTP forward
+      // jump), never to gate the very first attempt.
+      if (capMs !== undefined && attemptNum > 1 && remainingMs() <= 0) {
+        capExhausted = true;
+        break;
+      }
+      attemptsUsed = attemptNum;
+      const startedAt = new Date();
+      let attemptOutput: Record<string, unknown> = {};
+      let attemptError: WorkflowError | null = null;
+      let resolvedParams: Record<string, unknown> | undefined;
 
-    try {
-      const makeCall = (
-        signal?: AbortSignal,
-      ): Promise<{
-        output: Record<string, unknown>;
-        resolvedParams: Record<string, unknown> | undefined;
-        handlerAbort?: { message: string };
-        handlerWarn?: string;
-      }> => {
-        if (stepDef?.execution === 'auto' && stepDef.uses_service !== undefined) {
-          return callAdapter(
-            stepDef,
-            definition,
-            effectiveOptions,
-            pendingRun,
-            rateLimiterRegistry,
-            signal,
-          );
-        } else if (stepDef?.execution === 'auto' && stepDef.handler !== undefined) {
-          return callHandler(stepDef, effectiveOptions, pendingRun, evidenceByStep, signal).then(
-            (result) => {
-              if (result.kind === 'abort') {
-                return {
-                  output: {},
-                  resolvedParams: undefined,
-                  handlerAbort: { message: result.message },
-                };
-              }
-              if (result.kind === 'warn') {
-                return {
-                  output: result.output,
-                  resolvedParams: result.resolvedParams,
-                  handlerWarn: result.message,
-                };
-              }
-              return { output: result.output, resolvedParams: result.resolvedParams };
+      // Per-attempt effective timeout (issue #140): uniform full-clip to whatever cap budget
+      // remains. Clip floor `max(0, remainingMs())` ensures a clock anomaly (see SITE (a) above)
+      // never passes a negative ms to withTimeout. capMs undefined ⇒ effectiveMs === timeoutMs,
+      // byte-identical to pre-#140 behavior (every non-retry-configured, or unopted-uncapped-by-
+      // total_timeout_seconds-being-absent-pre-amendment, auto step). `clippedToMs` records the
+      // per-attempt evidence value ONLY when the cap actually reduced the bound below the step's
+      // own declared/default timeout — never on an uncapped or not-yet-biting attempt.
+      const effectiveMs =
+        timeoutMs !== undefined
+          ? capMs !== undefined
+            ? Math.min(timeoutMs, Math.max(0, remainingMs()))
+            : timeoutMs
+          : undefined;
+      const clippedToMs =
+        capMs !== undefined && effectiveMs !== undefined && effectiveMs < timeoutMs!
+          ? effectiveMs
+          : undefined;
+
+      try {
+        const makeCall = (
+          signal?: AbortSignal,
+        ): Promise<{
+          output: Record<string, unknown>;
+          resolvedParams: Record<string, unknown> | undefined;
+          handlerAbort?: { message: string };
+          handlerWarn?: string;
+        }> => {
+          if (stepDef?.execution === 'auto' && stepDef.uses_service !== undefined) {
+            return callAdapter(
+              stepDef,
+              definition,
+              effectiveOptions,
+              pendingRun,
+              rateLimiterRegistry,
+              signal,
+            );
+          } else if (stepDef?.execution === 'auto' && stepDef.handler !== undefined) {
+            return callHandler(stepDef, effectiveOptions, pendingRun, evidenceByStep, signal).then(
+              (result) => {
+                if (result.kind === 'abort') {
+                  return {
+                    output: {},
+                    resolvedParams: undefined,
+                    handlerAbort: { message: result.message },
+                  };
+                }
+                if (result.kind === 'warn') {
+                  return {
+                    output: result.output,
+                    resolvedParams: result.resolvedParams,
+                    handlerWarn: result.message,
+                  };
+                }
+                return { output: result.output, resolvedParams: result.resolvedParams };
+              },
+            );
+          } else {
+            return options
+              .dispatcher(options.command, effectiveInput, pendingRun, signal)
+              .then((result) => ({ output: result, resolvedParams: undefined }));
+          }
+        };
+        const callResult =
+          effectiveMs !== undefined
+            ? await withTimeout((signal) => makeCall(signal), effectiveMs, options.command)
+            : await makeCall();
+
+        // Handle graceful abort from a handler returning { abort: { message } }.
+        if (callResult.handlerAbort !== undefined) {
+          const abortMessage = callResult.handlerAbort.message;
+          const now = new Date();
+          const abortEvidence: EvidenceSnapshot = {
+            ...captureEvidence({
+              stepId: options.command,
+              startedAt: now,
+              completedAt: now,
+              input: effectiveInput,
+              output: { aborted: true, abort_message: abortMessage },
+              error: abortMessage,
+              ...(debugOutput !== undefined ? { debugOutput } : {}),
+            }),
+            status: 'skipped',
+          };
+          const withHandlerSkipped: RunRecord = {
+            ...pendingRun,
+            in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== options.command),
+            // Delete the claim clock in the SAME mutation that removes the step (issue #101).
+            claims: omitClaim(pendingRun.claims, options.command),
+            evidence: [...pendingRun.evidence, abortEvidence],
+            skipped_steps: [...pendingRun.skipped_steps, options.command],
+          };
+          // #111: merge is load-bearing — it preserves any cascade details propagateSkips derives
+          // for OTHER now-unreachable steps alongside this step's own handler_abort tag.
+          const handlerAbortPropagated = propagateSkips(withHandlerSkipped, definition);
+          const withAllSkipped: RunRecord = {
+            ...withHandlerSkipped,
+            skipped_steps: handlerAbortPropagated.skipped,
+            skip_details: {
+              ...handlerAbortPropagated.details,
+              [options.command]: { kind: 'handler_abort' },
             },
+          };
+          const abortDraft: RunRecord = {
+            ...withAllSkipped,
+            terminal_state: true,
+            terminal_reason: `Handler '${options.command}' aborted the run: ${abortMessage}`,
+            aborted_at: {
+              step_id: options.command,
+              abort_message: abortMessage,
+            },
+          };
+          // NEW: a handler-abort now drains the abort/always finalizers before sealing
+          // (previously it sealed-and-returned immediately). Single seal write below.
+          const abortedRun = await buildFinalizedSeal(
+            definition,
+            abortDraft,
+            'abort',
+            options.registry,
           );
+          let persistedAbortRun: RunRecord | undefined;
+          try {
+            persistedAbortRun = await store.update(abortedRun);
+          } catch {
+            // Persist failed — return the in-memory run version.
+          }
+          return {
+            command: options.command,
+            run_id: options.runId,
+            run_version: (persistedAbortRun ?? abortedRun).version,
+            status: 'ok',
+            data: {},
+            evidence: [abortEvidence],
+            // Issue #140: was hardcoded `[]` — now threads traceWarnings (e.g. the programmatic
+            // on_timeout/idempotent gate advisory above) so it survives this settle path too.
+            warnings: mergeWarnings(traceWarnings),
+            errors: [],
+            context_hint: `Handler step '${options.command}' aborted the run: ${abortMessage}`,
+            run_phase: (persistedAbortRun ?? abortedRun).run_phase,
+            next_actions: [],
+          };
+        }
+
+        attemptOutput = callResult.output;
+        resolvedParams = callResult.resolvedParams;
+        currentWarn = callResult.handlerWarn;
+        if (resolvedParams !== undefined) {
+          inputTokenEstimate = Math.ceil(JSON.stringify(resolvedParams).length / 4);
+        }
+      } catch (err) {
+        if (err instanceof WorkflowError) {
+          attemptError = err;
         } else {
-          return options
-            .dispatcher(options.command, effectiveInput, pendingRun, signal)
-            .then((result) => ({ output: result, resolvedParams: undefined }));
-        }
-      };
-      const callResult =
-        effectiveMs !== undefined
-          ? await withTimeout((signal) => makeCall(signal), effectiveMs, options.command)
-          : await makeCall();
-
-      // Handle graceful abort from a handler returning { abort: { message } }.
-      if (callResult.handlerAbort !== undefined) {
-        const abortMessage = callResult.handlerAbort.message;
-        const now = new Date();
-        const abortEvidence: EvidenceSnapshot = {
-          ...captureEvidence({
+          const message = err instanceof Error ? err.message : String(err);
+          attemptError = new WorkflowError(`Dispatcher failed: ${message}`, {
+            code: 'ENGINE_INTERNAL',
+            category: 'ENGINE',
+            agentAction: 'stop',
+            retryable: false,
             stepId: options.command,
-            startedAt: now,
-            completedAt: now,
-            input: effectiveInput,
-            output: { aborted: true, abort_message: abortMessage },
-            error: abortMessage,
-            ...(debugOutput !== undefined ? { debugOutput } : {}),
-          }),
-          status: 'skipped',
-        };
-        const withHandlerSkipped: RunRecord = {
-          ...pendingRun,
-          in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== options.command),
-          // Delete the claim clock in the SAME mutation that removes the step (issue #101).
-          claims: omitClaim(pendingRun.claims, options.command),
-          evidence: [...pendingRun.evidence, abortEvidence],
-          skipped_steps: [...pendingRun.skipped_steps, options.command],
-        };
-        // #111: merge is load-bearing — it preserves any cascade details propagateSkips derives
-        // for OTHER now-unreachable steps alongside this step's own handler_abort tag.
-        const handlerAbortPropagated = propagateSkips(withHandlerSkipped, definition);
-        const withAllSkipped: RunRecord = {
-          ...withHandlerSkipped,
-          skipped_steps: handlerAbortPropagated.skipped,
-          skip_details: {
-            ...handlerAbortPropagated.details,
-            [options.command]: { kind: 'handler_abort' },
-          },
-        };
-        const abortDraft: RunRecord = {
-          ...withAllSkipped,
-          terminal_state: true,
-          terminal_reason: `Handler '${options.command}' aborted the run: ${abortMessage}`,
-          aborted_at: {
-            step_id: options.command,
-            abort_message: abortMessage,
-          },
-        };
-        // NEW: a handler-abort now drains the abort/always finalizers before sealing
-        // (previously it sealed-and-returned immediately). Single seal write below.
-        const abortedRun = await buildFinalizedSeal(
-          definition,
-          abortDraft,
-          'abort',
-          options.registry,
-        );
-        let persistedAbortRun: RunRecord | undefined;
-        try {
-          persistedAbortRun = await store.update(abortedRun);
-        } catch {
-          // Persist failed — return the in-memory run version.
+          });
         }
-        return {
-          command: options.command,
-          run_id: options.runId,
-          run_version: (persistedAbortRun ?? abortedRun).version,
-          status: 'ok',
-          data: {},
-          evidence: [abortEvidence],
-          // Issue #140: was hardcoded `[]` — now threads traceWarnings (e.g. the programmatic
-          // on_timeout/idempotent gate advisory above) so it survives this settle path too.
-          warnings: mergeWarnings(traceWarnings),
-          errors: [],
-          context_hint: `Handler step '${options.command}' aborted the run: ${abortMessage}`,
-          run_phase: (persistedAbortRun ?? abortedRun).run_phase,
-          next_actions: [],
-        };
       }
 
-      attemptOutput = callResult.output;
-      resolvedParams = callResult.resolvedParams;
-      currentWarn = callResult.handlerWarn;
-      if (resolvedParams !== undefined) {
-        inputTokenEstimate = Math.ceil(JSON.stringify(resolvedParams).length / 4);
+      const completedAt = new Date();
+      const profile = stepDef?.agent_profile;
+      const profileData =
+        profile !== undefined ? definition.resolved_profiles?.[profile] : undefined;
+      const baseSnap = captureEvidence({
+        stepId: options.command,
+        startedAt,
+        completedAt,
+        input: effectiveInput,
+        output: attemptOutput,
+        ...(attemptError !== null ? { error: attemptError.message } : {}),
+        diagnostics: {
+          input_token_estimate: inputTokenEstimate,
+          precondition_trace: preconditionTrace,
+          // issue #220: success-settle stamp — a free diagnostic proving this step needed N prior
+          // rejections before finally succeeding ("succeeded after N rejections"). Only stamped on
+          // a SUCCESS settle. `run` here is the Step-1 read, so this reflects rejections accrued
+          // in PRIOR invocations only — a rejection in THIS invocation never reaches this call site
+          // (countRejection only runs from the Step 2b/2c catch, which always either returns or
+          // falls through toward terminalization, never toward dispatch).
+          ...(attemptError === null && (run.validation_rejections?.[options.command] ?? 0) > 0
+            ? { validation_rejections: run.validation_rejections![options.command] }
+            : {}),
+        },
+        ...(profileData !== undefined
+          ? { agentProfile: profile!, agentProfileHash: profileData.content_hash }
+          : {}),
+        ...(resolvedParams !== undefined ? { resolvedParams } : {}),
+        ...(currentWarn !== undefined ? { warn: currentWarn } : {}),
+        ...(debugOutput !== undefined ? { debugOutput } : {}),
+        ...(options.stepMeta?.toolCalls !== undefined
+          ? { toolCalls: options.stepMeta.toolCalls }
+          : {}),
+        // issue #140: PER-ATTEMPT value (may be smaller than the outer effectiveTimeoutSeconds once
+        // the cap starts clipping) — byte-identical to the pre-#140 outer value whenever capMs is
+        // undefined or hasn't bitten yet.
+        ...(effectiveMs !== undefined ? { effectiveTimeoutSeconds: effectiveMs / 1000 } : {}),
+        ...(clippedToMs !== undefined ? { clippedToMs } : {}),
+        // Gate trace to agent steps only — drop silently for auto/adapter/handler steps.
+        // When pre-normalized (WAL merge + schema validation ran), pass the pre-normalized
+        // result to avoid double normalization. Also handle WAL-only case (options.trace may
+        // be undefined while walEntries contributed entries via preNormalizedTrace).
+        ...(stepDef?.execution === 'agent' && (options.trace !== undefined || walEntries.length > 0)
+          ? preNormalizedTrace !== undefined
+            ? { normalizedTrace: preNormalizedTrace }
+            : { trace: options.trace ?? [] }
+          : {}),
+      });
+      const snap: EvidenceSnapshot =
+        retryConfig !== undefined ? { ...baseSnap, attempt: attemptNum } : baseSnap;
+      allEvidence.push(snap);
+
+      if (attemptError === null) {
+        output = attemptOutput;
+        dispatchError = null;
+        break;
       }
-    } catch (err) {
-      if (err instanceof WorkflowError) {
-        attemptError = err;
+
+      dispatchError = attemptError;
+      // SITE (b) — issue #140, post-attempt, AFTER dispatchError is set, BEFORE willRetry: the
+      // primary capExhausted setter (site (a) above only catches the loop-top clock-anomaly window;
+      // site (c) below re-checks once more right before an actual sleep). Fires on ANY dispatch
+      // error once the cap is spent, not just STEP_TIMEOUT — the cap bounds the step's total
+      // budget, regardless of which error exhausted it.
+      if (capMs !== undefined && remainingMs() <= 0) {
+        capExhausted = true;
+      }
+      const willRetry =
+        (retryConfig !== undefined && attemptError.retryable && attemptNum < maxAttempts) ||
+        // issue #140 (AMENDED): a STEP_TIMEOUT may ALSO retry in place when the step opted in via
+        // `retry.on_timeout: true` AND attested `idempotent: true` (the concurrency-safety gate).
+        // ALL SIX conjuncts are required; `capMs !== undefined` enforces opted⇒capped
+        // structurally — this disjunct is inert off the enforced auto class even for a hand-built
+        // definition bypassing the loader's E1 gate on a non-auto step, since capMs is undefined
+        // there (shouldEnforceTimeout false ⇒ enforceTimeout false ⇒ capMs undefined) — see R11 in
+        // the design record.
+        (attemptError.code === 'STEP_TIMEOUT' &&
+          capMs !== undefined &&
+          retryConfig?.on_timeout === true &&
+          stepDef!.idempotent === true &&
+          !capExhausted &&
+          attemptNum < maxAttempts);
+      if (willRetry) {
+        const baseBackoff = computeBackoff(retryConfig!, attemptNum);
+        const retryAfterMs =
+          attemptError instanceof WorkflowError && attemptError.retry_after !== undefined
+            ? attemptError.retry_after * 1000
+            : 0;
+        const waitMs = Math.max(baseBackoff, retryAfterMs);
+        // SITE (c) — issue #140, sleep guard, BEFORE every backoff/retry_after sleep (`>=`: an
+        // exact-fit sleep is doomed too — never sleep into a wall). dispatchError already holds the
+        // ACTUAL last error (e.g. a 429 with retry_after in its details); the post-loop wrap gate
+        // below decides whether/how to wrap it — this site only decides whether to sleep at all.
+        if (capMs !== undefined && sleepWouldExceedCap(Date.now() - capStart, waitMs, capMs)) {
+          capExhausted = true;
+          break;
+        }
+        await delayMs(waitMs);
       } else {
-        const message = err instanceof Error ? err.message : String(err);
-        attemptError = new WorkflowError(`Dispatcher failed: ${message}`, {
-          code: 'ENGINE_INTERNAL',
-          category: 'ENGINE',
-          agentAction: 'stop',
-          retryable: false,
-          stepId: options.command,
-        });
+        break;
       }
     }
+  } // end issue #220 `if (!bypassDispatch)` — the dispatch loop
 
-    const completedAt = new Date();
-    const profile = stepDef?.agent_profile;
-    const profileData = profile !== undefined ? definition.resolved_profiles?.[profile] : undefined;
-    const baseSnap = captureEvidence({
+  if (bypassDispatch) {
+    // issue #220: terminalize. `dispatchError` is PRE-SET to the minted VALIDATION_EXHAUSTED error
+    // HERE, BEFORE the retry-wrap block below — that block's own `!bypassDispatch` guard is what
+    // then keeps it from being wrapped: without dispatchError being non-null at this exact point,
+    // a hand-built `max_attempts: 0` definition's retry-wrap condition
+    // (`attemptsUsed(0) === maxAttempts(0)`) would trivially hold and wrap the terminal code into
+    // STEP_RETRY_EXHAUSTED, robbing Step 5 of the discriminator it needs. ONE synthesized evidence
+    // snapshot mirrors the real dispatch-loop capture at its own `captureEvidence` call site
+    // VERBATIM — including the normalizedTrace/trace spread — so the WAL delete at Step 5 never
+    // destroys adopted post-claim lines unrecorded (issue #185 Finding 2 would otherwise be
+    // reintroduced inside this feature).
+    dispatchError = exhaustion;
+    const exhaustedAt = new Date();
+    const exhaustedSnap: EvidenceSnapshot = captureEvidence({
       stepId: options.command,
-      startedAt,
-      completedAt,
+      startedAt: exhaustedAt,
+      completedAt: exhaustedAt,
       input: effectiveInput,
-      output: attemptOutput,
-      ...(attemptError !== null ? { error: attemptError.message } : {}),
+      output: {},
+      error: exhaustion!.message,
       diagnostics: {
         input_token_estimate: inputTokenEstimate,
         precondition_trace: preconditionTrace,
+        validation_rejections: exhaustion!.details['rejections'] as number,
       },
-      ...(profileData !== undefined
-        ? { agentProfile: profile!, agentProfileHash: profileData.content_hash }
-        : {}),
-      ...(resolvedParams !== undefined ? { resolvedParams } : {}),
-      ...(currentWarn !== undefined ? { warn: currentWarn } : {}),
       ...(debugOutput !== undefined ? { debugOutput } : {}),
-      ...(options.stepMeta?.toolCalls !== undefined
-        ? { toolCalls: options.stepMeta.toolCalls }
-        : {}),
-      // issue #140: PER-ATTEMPT value (may be smaller than the outer effectiveTimeoutSeconds once
-      // the cap starts clipping) — byte-identical to the pre-#140 outer value whenever capMs is
-      // undefined or hasn't bitten yet.
-      ...(effectiveMs !== undefined ? { effectiveTimeoutSeconds: effectiveMs / 1000 } : {}),
-      ...(clippedToMs !== undefined ? { clippedToMs } : {}),
-      // Gate trace to agent steps only — drop silently for auto/adapter/handler steps.
-      // When pre-normalized (WAL merge + schema validation ran), pass the pre-normalized
-      // result to avoid double normalization. Also handle WAL-only case (options.trace may
-      // be undefined while walEntries contributed entries via preNormalizedTrace).
+      // Gate trace to agent steps only — drop silently for auto/adapter/handler steps. Mirrors
+      // the real dispatch-loop capture's own trace-spread conjunct exactly (execution-loop.ts's
+      // per-attempt captureEvidence call, further above).
       ...(stepDef?.execution === 'agent' && (options.trace !== undefined || walEntries.length > 0)
         ? preNormalizedTrace !== undefined
           ? { normalizedTrace: preNormalizedTrace }
           : { trace: options.trace ?? [] }
         : {}),
     });
-    const snap: EvidenceSnapshot =
-      retryConfig !== undefined ? { ...baseSnap, attempt: attemptNum } : baseSnap;
-    allEvidence.push(snap);
-
-    if (attemptError === null) {
-      output = attemptOutput;
-      dispatchError = null;
-      break;
-    }
-
-    dispatchError = attemptError;
-    // SITE (b) — issue #140, post-attempt, AFTER dispatchError is set, BEFORE willRetry: the
-    // primary capExhausted setter (site (a) above only catches the loop-top clock-anomaly window;
-    // site (c) below re-checks once more right before an actual sleep). Fires on ANY dispatch
-    // error once the cap is spent, not just STEP_TIMEOUT — the cap bounds the step's total
-    // budget, regardless of which error exhausted it.
-    if (capMs !== undefined && remainingMs() <= 0) {
-      capExhausted = true;
-    }
-    const willRetry =
-      (retryConfig !== undefined && attemptError.retryable && attemptNum < maxAttempts) ||
-      // issue #140 (AMENDED): a STEP_TIMEOUT may ALSO retry in place when the step opted in via
-      // `retry.on_timeout: true` AND attested `idempotent: true` (the concurrency-safety gate).
-      // ALL SIX conjuncts are required; `capMs !== undefined` enforces opted⇒capped
-      // structurally — this disjunct is inert off the enforced auto class even for a hand-built
-      // definition bypassing the loader's E1 gate on a non-auto step, since capMs is undefined
-      // there (shouldEnforceTimeout false ⇒ enforceTimeout false ⇒ capMs undefined) — see R11 in
-      // the design record.
-      (attemptError.code === 'STEP_TIMEOUT' &&
-        capMs !== undefined &&
-        retryConfig?.on_timeout === true &&
-        stepDef!.idempotent === true &&
-        !capExhausted &&
-        attemptNum < maxAttempts);
-    if (willRetry) {
-      const baseBackoff = computeBackoff(retryConfig!, attemptNum);
-      const retryAfterMs =
-        attemptError instanceof WorkflowError && attemptError.retry_after !== undefined
-          ? attemptError.retry_after * 1000
-          : 0;
-      const waitMs = Math.max(baseBackoff, retryAfterMs);
-      // SITE (c) — issue #140, sleep guard, BEFORE every backoff/retry_after sleep (`>=`: an
-      // exact-fit sleep is doomed too — never sleep into a wall). dispatchError already holds the
-      // ACTUAL last error (e.g. a 429 with retry_after in its details); the post-loop wrap gate
-      // below decides whether/how to wrap it — this site only decides whether to sleep at all.
-      if (capMs !== undefined && sleepWouldExceedCap(Date.now() - capStart, waitMs, capMs)) {
-        capExhausted = true;
-        break;
-      }
-      await delayMs(waitMs);
-    } else {
-      break;
-    }
+    allEvidence.push(exhaustedSnap);
   }
 
   if (
+    !bypassDispatch &&
     dispatchError !== null &&
     retryConfig !== undefined &&
     (attemptsUsed === maxAttempts || capExhausted)

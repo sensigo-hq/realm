@@ -4,6 +4,53 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Bounded validation-rejection exhaustion, PR-1 (issue #220).** A persistently schema-rejected
+  `execution: 'agent'` step is no longer an unbounded wedge: `RunRecord.validation_rejections?:
+Record<string, number>` (additive, joins the #188 `LoadBearingRunRecordField` closed set) counts
+  the two model-attributable rejection codes (`VALIDATION_INPUT_SCHEMA`/`VALIDATION_OUTPUT_SCHEMA`)
+  per step, pooled across writers, never reset. `countRejection` (the engine's single counting
+  chokepoint) persists the count via a bump-and-report CAS write — the rejection's own envelope
+  keeps reporting the pre-write version, so the #217 in-drive repair gate's `run_version`
+  comparison stays sound across repeated repairs. At `count ≥ threshold`
+  (`DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD = 6`, exported; per-step override via
+  `validation_exhaustion: { threshold }`, integer ≥ 1) the engine mints a NEW `VALIDATION_EXHAUSTED`
+  error and falls through to a REAL step failure — claims, fails, drains `on_outcome: fail`
+  finalizers when the run completes, seals, exactly like any other dispatch failure. On a later
+  SUCCESS settle with an accrued count > 0, the settle evidence is stamped
+  `diagnostics.validation_rejections: N` ("succeeded after N rejections"). `VALIDATION_EXHAUSTED`
+  joins the MCP `execute_step` telemetry set (its `ajv_errors` sourced from
+  `error_details.last_ajv_errors`). `realm agent` warns once per step, at drive time, when
+  `--schema-retries`'s own repair budget exceeds the step's effective exhaustion threshold
+  (operator intent would otherwise be silently truncated mid-loop). Advisory-only elsewhere (#119):
+  a store not declaring `validation_rejections` draws a softened durability caveat on every counted
+  rejection; `create_workflow` draws a targeted "register-time only" warning for a submitted
+  `validation_exhaustion` key (dynamic workflows are still auto-enrolled at the default posture).
+  `$settlement` is reserved as a step name NOW (both the YAML loader and `create_workflow`) ahead
+  of a later PR's namespace mint — the PR-ordering interlock that prevents an inter-PR gap from
+  registering a step name that would become load-refused the instant the mint ships. PR-2
+  (fail-open `mode`/`default_output`) and PR-3 (the `$settlement` mint) are separate, later
+  changes — this PR is counting + terminalization only.
+
+### Changed
+
+- **AUTO-ENROLLMENT (issue #220): every `execution: 'agent'` step with a countable schema now
+  terminalizes after 6 persistent rejections by default — there is no reachable per-step opt-out
+  in PR-1.** This is deliberate: an unbounded, silently-write-free rejection wedge is strictly
+  worse than an honest, finalizer-visible failure (the #138/#140 precedent). Override the default
+  via `validation_exhaustion: { threshold: N }` (`N ≥ 1`; `1` disables in-drive schema-repair,
+  since the very first rejection already meets it).
+- **`create_workflow`'s step-id reservation gains a pre-existing gap fix (issue #220): `run` and
+  `context` are now refused as step ids, mirroring the YAML loader's own long-standing reservation
+  (`create_workflow` never enforced either before this change).** `$settlement` joins both
+  reservations as a new refusal on a name that was previously loader-legal (see the PR-ordering
+  interlock note above).
+
+---
+
 ## [0.29.0] — 2026-07-20
 
 ### Added

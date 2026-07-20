@@ -87,6 +87,15 @@ export interface StepDiagnostics {
     passed: boolean;
     resolved_value: unknown;
   }>;
+  /**
+   * Issue #220: stamped on a SUCCESS settle evidence snapshot when the step's accrued
+   * `RunRecord.validation_rejections` count was > 0 at settle time ("succeeded after N
+   * rejections") — free diagnostic, never gates anything. Also present on the synthesized
+   * evidence snapshot a `VALIDATION_EXHAUSTED` terminalization mints (the just-persisted count).
+   * Optional-additive: absent on every pre-#220 snapshot and on any snapshot for a step that was
+   * never rejected.
+   */
+  validation_rejections?: number;
 }
 
 export interface EvidenceSnapshot {
@@ -402,4 +411,17 @@ export interface RunRecord {
    * derived phase regardless of `failed_steps` / `terminal_reason` (mirrors `aborted_at`).
    */
   abandoned_at?: string;
+  /**
+   * Issue #220 (bounded validation exhaustion): per-step count of COUNTED validation rejections
+   * — the closed set `{VALIDATION_INPUT_SCHEMA, VALIDATION_OUTPUT_SCHEMA}` on `execution: 'agent'`
+   * steps only (`VALIDATION_TRACE_SCHEMA` and any non-agent rejection are never counted here; see
+   * `countRejection` in execution-loop.ts for the full mechanism). Keyed by step name, POOLED
+   * across concurrent writers/nonces (deliberate — the wedge-cure goal is run-level, not
+   * per-writer fairness). NEVER reset: a settled step's count is a permanent, structurally-costless
+   * fact about this run (settled steps simply leave the eligible set — see the #221 derivation
+   * note, TD-R12, for the reader-side "meaningful only against unsettled state" caveat).
+   * Additive-optional (the `claims`/`capability_blocks` precedent): absent on legacy records and
+   * on any run with zero counted rejections so far.
+   */
+  validation_rejections?: Record<string, number>;
 }

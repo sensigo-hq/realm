@@ -55,6 +55,10 @@ export type ErrorCode =
   | 'VALIDATION_INPUT_SCHEMA'
   | 'VALIDATION_OUTPUT_SCHEMA'
   | 'VALIDATION_TRACE_SCHEMA'
+  // issue #220: a persistently-rejected agent step's bounded rejection count reached its
+  // threshold — a REAL terminal step failure (kept separate from #140's `exhausted_by` taxonomy:
+  // disjoint lifecycles — this is a validation-rejection count, not a retry/timeout budget).
+  | 'VALIDATION_EXHAUSTED'
   | 'VALIDATION_WORKFLOW_SCHEMA'
   | 'VALIDATION_HASH_MISMATCH'
   | 'VALIDATION_QUOTE_NOT_FOUND'

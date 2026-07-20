@@ -326,7 +326,11 @@ describe('executeStep', () => {
     expect(dispatchCalled).not.toHaveBeenCalled();
     expect(envelope.agent_action).toBe('provide_input');
     // The step was never claimed — it is still eligible and appears in next_actions
-    // so the agent can immediately correct and re-submit it.
+    // so the agent can immediately correct and re-submit it. issue #220: true while this step's
+    // accrued rejection count stays below its exhaustion threshold (default 6) — this single
+    // rejection is call 1 of 6 by default, so this premise holds here; it stops holding once the
+    // count reaches the threshold, at which point the step terminalizes instead (see
+    // validation-exhaustion.test.ts).
     expect(envelope.next_actions).toHaveLength(1);
 
     const runAfter = await store.get(run.id);
@@ -423,7 +427,8 @@ describe('executeStep', () => {
       params: {},
     });
 
-    // First call with invalid input — should fail
+    // First call with invalid input — should fail. issue #220: this is rejection 1 of a default
+    // threshold of 6 — well under exhaustion, so today's re-submittable behavior below holds.
     const first = await executeStep(store, schemaDefinition, {
       runId: run.id,
       command: 'step-one',
@@ -432,7 +437,9 @@ describe('executeStep', () => {
     });
     expect(first.status).toBe('error');
 
-    // Second call with valid input — step was never claimed, so it can be re-submitted
+    // Second call with valid input — step was never claimed, so it can be re-submitted (true
+    // while under the exhaustion threshold — issue #220; see validation-exhaustion.test.ts for
+    // the terminalizing case once the threshold is reached).
     const second = await executeStep(store, schemaDefinition, {
       runId: run.id,
       command: 'step-one',

@@ -28,6 +28,7 @@ export class InMemoryStore implements RunStore {
     'capability_blocks',
     'workflow_context_snapshots',
     'extension_identity',
+    'validation_rejections',
   ]);
 
   async create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {

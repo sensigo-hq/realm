@@ -59,6 +59,7 @@ const SAMPLE_VALUES: {
   capability_blocks: Record<string, CapabilityBlock>;
   workflow_context_snapshots: Record<string, WorkflowContextSnapshot>;
   extension_identity: ExtensionIdentityEntry[];
+  validation_rejections: Record<string, number>;
 } = {
   capability_blocks: {
     'tck-step': {
@@ -90,6 +91,7 @@ const SAMPLE_VALUES: {
       coverage: 'dir_tree_v1',
     },
   ],
+  validation_rejections: { 'tck-step': 3 },
 };
 
 /**

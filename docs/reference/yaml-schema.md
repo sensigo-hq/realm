@@ -343,7 +343,7 @@ steps:
 
 Start a shadow run with `params: { mode: "shadow" }`. Steps annotated with `when: "run.params.mode == 'live'"` are skipped. The run reaches terminal state cleanly — `propagateSkips` handles skip propagation once their dependencies settle.
 
-**Limitations:** `when:` supports a single expression only. A step that needs both a shadow guard and a data condition cannot express both in one `when:` clause — use `depends_on` with `trigger_rule` or a preceding guard step instead. The step name `run` is reserved and cannot be used as a step identifier.
+**Limitations:** `when:` supports a single expression only. A step that needs both a shadow guard and a data condition cannot express both in one `when:` clause — use `depends_on` with `trigger_rule` or a preceding guard step instead. The step names `run`, `context`, and `$settlement` are reserved and cannot be used as step identifiers (`$settlement` reserved as of issue #220, ahead of a future namespace mint under that name — reserving it now closes the gap where an inter-release workflow could register a step that would become load-refused the instant the mint ships).
 
 ---
 
@@ -680,6 +680,48 @@ fetch_document:
 > **Non-auto steps (issue #218):** any `retry:` sub-key on an `agent`/`guard` step draws an
 > advisory (`RETRY_INERT_NON_AUTO`), since the built-in dispatch path never throws for those steps
 > and so never consumes the block.
+
+---
+
+## `validation_exhaustion` (bounded schema-rejection exhaustion)
+
+```yaml
+draft:
+  execution: agent
+  output_schema: { type: object, required: [category], properties: { category: { type: string } } }
+  validation_exhaustion:
+    threshold: 3
+```
+
+Every `execution: 'agent'` step whose submitted output/input is rejected against `output_schema`/
+`input_schema` (`VALIDATION_OUTPUT_SCHEMA`/`VALIDATION_INPUT_SCHEMA`) accrues a persistent,
+per-step rejection count on the run record (`RunRecord.validation_rejections`, pooled across
+concurrent writers, never reset). Once the count reaches a threshold — `6` by default
+(`DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD`, exported), or the value declared here — the step
+terminalizes with a real `VALIDATION_EXHAUSTED` failure: it claims, fails, drains `on_outcome:
+fail` finalizers when the run completes, and seals exactly like any other dispatch failure. This
+is deliberate (issue #220): a persistently-rejected agent step is otherwise an unbounded,
+write-free wedge — `run_phase` never reaches `failed` and finalizer machinery never fires. **Every
+countable agent step is auto-enrolled at the default threshold — there is no way to disable
+exhaustion in PR-1**, only to retune it.
+
+| Field       | Type    | Description                                                                                                                                                                                                                           |
+| ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `threshold` | integer | Overrides the default threshold (6) for this step. Must be a positive integer. `1` is legal and documented as disabling in-drive schema-repair (`realm agent`'s `--schema-retries`), since the very first rejection already meets it. |
+
+Only valid on `execution: 'agent'` steps — the countable rejection classes are agent-only by
+construction. `mode`/`default_output` sub-keys are **not yet supported** (a later PR's surface);
+declaring them today draws an unknown-key warning, never a rejection.
+
+> **`realm agent` coherence warning:** when `--schema-retries`'s own in-drive repair budget
+> (`schemaRetries + 1` attempts) exceeds a step's effective exhaustion threshold, the drive prints
+> one warning at that step's first attempt — the repair loop would otherwise keep retrying past
+> the point the engine has already terminalized the step.
+
+> **`create_workflow` (dynamic workflows):** `validation_exhaustion` is register-time only — a
+> dynamically-created workflow cannot declare it, and draws a targeted warning naming the
+> disposition if submitted. Every dynamic agent step with a countable schema is still auto-enrolled
+> at the default threshold; there is no reachable override or opt-out for a dynamic workflow.
 
 ---
 

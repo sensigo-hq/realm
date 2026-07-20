@@ -138,6 +138,9 @@ const SERVICE_ENTRY_JSON_SCHEMA = {
 
 const VALID_EXECUTIONS = new Set(['auto', 'agent', 'guard', 'finalizer']);
 const VALID_FINALIZER_TRIGGERS = new Set(['complete', 'fail', 'abort', 'always']);
+// issue #220 (PR-1 subset): the ONLY validation_exhaustion sub-key this PR recognizes. `mode`/
+// `default_output` are a future PR's surface — declaring them now warns as unknown, never rejects.
+const KNOWN_VALIDATION_EXHAUSTION_KEYS = ['threshold'];
 const VALID_SERVICE_METHODS = new Set(['fetch', 'create', 'update', 'delete']);
 const VALID_TRIGGER_RULES = new Set<TriggerRule>([
   'all_success',
@@ -635,7 +638,10 @@ function parseWorkflowString(
       }),
     );
 
-    if (stepName === 'run' || stepName === 'context') {
+    // issue #220 §4c PR ordering interlock: `$settlement` is reserved NOW (PR-1) even though the
+    // namespace it names is not minted until a later PR — else the inter-PR gap could register a
+    // `$settlement`-named step that becomes a load-refused fossil the instant the mint ships.
+    if (stepName === 'run' || stepName === 'context' || stepName === '$settlement') {
       errors.push(`Step name '${stepName}' is reserved and cannot be used as a step identifier`);
     }
 
@@ -799,6 +805,50 @@ function parseWorkflowString(
     // output_schema is only valid on execution: agent steps.
     if (step['output_schema'] !== undefined && step['execution'] !== 'agent') {
       errors.push(`Step '${stepName}': 'output_schema' is only valid on execution: agent steps`);
+    }
+
+    // issue #220 (PR-1 subset): validation_exhaustion is only valid on execution: agent steps —
+    // the countable rejection set (VALIDATION_INPUT_SCHEMA/VALIDATION_OUTPUT_SCHEMA) is agent-only
+    // by construction (execution-loop.ts's countRejection). PR-1 supports ONLY `{ threshold? }` —
+    // `mode`/`default_output` are a future PR's surface; declaring them here WARNS (never
+    // rejects) as an unknown sub-key, the loader's warn-don't-reject posture (#144/#169/#170).
+    if (step['validation_exhaustion'] !== undefined) {
+      if (step['execution'] !== 'agent') {
+        errors.push(
+          `Step '${stepName}': 'validation_exhaustion' is only valid on execution: agent steps`,
+        );
+      } else if (
+        typeof step['validation_exhaustion'] !== 'object' ||
+        step['validation_exhaustion'] === null
+      ) {
+        errors.push(`Step '${stepName}': 'validation_exhaustion' must be an object`);
+      } else {
+        const exhaustionBlock = step['validation_exhaustion'] as Record<string, unknown>;
+
+        // WARN (do not reject) on an unknown validation_exhaustion sub-key — the retry-block-style
+        // pattern (issue #140's UNKNOWN_RETRY_KEY), reusing the existing UNKNOWN_STEP_KEY code
+        // with the noun overridden (PR-1 mints no new WarningCode for this nested block).
+        warnings.push(
+          ...findUnknownKeys(exhaustionBlock, KNOWN_VALIDATION_EXHAUSTION_KEYS, {
+            scope: 'step',
+            code: 'UNKNOWN_STEP_KEY',
+            step: stepName,
+            noun: 'validation_exhaustion',
+          }),
+        );
+
+        if (
+          'threshold' in exhaustionBlock &&
+          (!Number.isInteger(exhaustionBlock['threshold']) ||
+            (exhaustionBlock['threshold'] as number) < 1)
+        ) {
+          errors.push(
+            `Step '${stepName}': 'validation_exhaustion.threshold' must be a positive integer ` +
+              `(1 is legal — it disables in-drive schema-repair, since the first rejection ` +
+              `already meets it)`,
+          );
+        }
+      }
     }
 
     // WARN (do not reject): an agent step declaring BOTH input_schema and output_schema has its

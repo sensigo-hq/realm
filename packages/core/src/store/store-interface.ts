@@ -17,11 +17,17 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
  *  - `extension_identity` — read by the execution loop's drift-evidence append (issue #119) and
  *    `realm inspect --check-drift`; a store that drops it resets the drift baseline every
  *    execution, so drift can never accumulate or be detected.
+ *  - `validation_rejections` — read by `countRejection`'s exhaustion-threshold gate (issue #220,
+ *    execution-loop.ts) on every counted rejection; a store that drops it resets the count to
+ *    zero every write, so a persistently-invalid agent step never reaches the threshold and the
+ *    exhaustion terminalization this field exists for silently never fires (the wedge #220 kills
+ *    quietly resurrects on such a store).
  */
 export type LoadBearingRunRecordField =
   | 'capability_blocks'
   | 'workflow_context_snapshots'
-  | 'extension_identity';
+  | 'extension_identity'
+  | 'validation_rejections';
 
 export interface CreateRunOptions {
   workflowId: string;
