@@ -93,8 +93,13 @@ export async function listRuns(
   const findingsByRun = new Map<string, RunHealthFinding[]>();
   if (stuck === true) {
     filtered = runs.filter((r) => {
-      // issue #221: classifyRunHealth is the SAME shared predicate get_run_state/reclaim/inspect
-      // derive from — no drift. Definition-free (list has no workflow context to load).
+      // issue #221: classifyRunHealth is the SAME shared predicate get_run_state/inspect (the
+      // OTHER two READ surfaces) derive from — no drift. Definition-free (list has no workflow
+      // context to load).
+      //
+      // Note: `realm run reclaim` is a separate, independent consumer of the underlying record
+      // facts (settle sets, capability_blocks, reclaim-audit evidence) — it does NOT call this
+      // function; see its own classifyNoActiveClaim discriminator in reclaim-step.ts.
       const findings = classifyRunHealth(r, { idleThresholdMs: effectiveIdleThresholdMs });
       if (findings.length > 0) findingsByRun.set(r.id, findings);
       return findings.length > 0;
@@ -126,11 +131,26 @@ export async function listRuns(
     if (stuck === true) {
       // Show how long the run has been parked (idle age since last update).
       line += `  idle: ${formatGateAge(run.updated_at)}`;
-      const labels = (findingsByRun.get(run.id) ?? [])
+      // issue #221 correction: restore main's TWO-GROUP join (an undisclosed deviation in the
+      // original round) — claim-based labels first, capability labels second (classifyRunHealth
+      // already emits findings in that order), each group internally ', '-joined, each appended
+      // with its OWN leading '  ' only when non-empty. The S4 rail is "line format otherwise
+      // UNCHANGED" — a single flattened, comma-joined list (the original round's shape) is a
+      // different wire format than main's, which CS1's reapers parse.
+      const findings = findingsByRun.get(run.id) ?? [];
+      const claimLabels = findings
+        .filter((f) => f.kind === 'stale_claim' || f.kind === 'wedged_gate_sibling')
         .map(renderFindingLabel)
         .filter((l): l is string => l !== undefined);
-      if (labels.length > 0) {
-        line += `  ${labels.join(', ')}`;
+      if (claimLabels.length > 0) {
+        line += `  ${claimLabels.join(', ')}`;
+      }
+      const capabilityLabels = findings
+        .filter((f) => f.kind === 'capability_block')
+        .map(renderFindingLabel)
+        .filter((l): l is string => l !== undefined);
+      if (capabilityLabels.length > 0) {
+        line += `  ${capabilityLabels.join(', ')}`;
       }
     } else if (run.run_phase === 'gate_waiting' && run.pending_gate !== undefined) {
       const age = formatGateAge(run.pending_gate.opened_at);

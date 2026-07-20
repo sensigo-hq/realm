@@ -1,10 +1,17 @@
 // run-health.ts — typed run-health classification with honest per-surface reporting (issue #221).
 //
-// classifyRunHealth is the SINGLE shared predicate every operator/agent surface (get_run_state,
-// reclaim's CLI messaging, `realm run list --stuck`, `realm run inspect`) derives from — so no
-// surface can silently drift from another about what "wedged" or "idle" means (the issue's own
-// AC-4: "all three surfaces derive from ONE shared predicate — no drift"). Pure, read-only,
-// definition-optional, `now`-injectable (deterministic tests, no fake timers, no real sleeps).
+// classifyRunHealth is the SINGLE shared predicate the three READ surfaces — get_run_state,
+// `realm run list --stuck`, and `realm run inspect` — derive from, so none of them can silently
+// drift from another about what "wedged" or "idle" means (the issue's own AC-4: "all... surfaces
+// derive from ONE shared predicate — no drift"). Pure, read-only, definition-optional,
+// `now`-injectable (deterministic tests, no fake timers, no real sleeps).
+//
+// `realm run reclaim` is NOT a fourth consumer of this function (record §2, fold B2) — it answers
+// a different question (settled vs. no-active-claim on an already-touched step, not health
+// findings on an in-progress/parked run) via its own independent discriminator,
+// `classifyNoActiveClaim` in reclaim-step.ts, which reads the same underlying record facts
+// (settle-set membership, capability_blocks, reclaim-audit evidence) without calling this
+// function at all.
 //
 // Branch-conditioning table (design record §1, fold B1 — the detectors are CALL-SITE-conditioned,
 // not internal to any one detector):

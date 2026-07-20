@@ -1,6 +1,7 @@
 // Tests for listRuns business logic.
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listRuns, formatGateAge } from './list.js';
 import type { RunStore, RunRecord } from '@sensigo/realm';
@@ -401,6 +402,33 @@ describe('formatGateAge', () => {
   });
 });
 
+describe("--stuck label format: TWO-GROUP join (issue #221 correction — restores main's format)", () => {
+  it('a run with BOTH a claim finding and a capability finding renders them as two separate, independently double-space-prefixed groups — never one flattened comma-joined list', async () => {
+    const both = makeRun({
+      id: 'run-bothclasses',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: ['sibling'],
+      claims: { sibling: { deadline: new Date(Date.now() - 60_000).toISOString() } },
+      capability_blocks: {
+        enrich: {
+          requirement: { kind: 'adapter', name: 'shopify' },
+          code: 'ENGINE_ADAPTER_NOT_REGISTERED',
+          at: new Date().toISOString(),
+        },
+      },
+    });
+    const result = await listRuns(undefined, makeStore([both]), undefined, true);
+    expect(result).toContain('run-bothclasses');
+    // The claim group's OWN leading '  ' immediately followed by the capability group's OWN
+    // leading '  ' — main's two-group shape. A single flattened list would instead read
+    // "sibling=claim_stale, enrich: ..." (comma, one leading '  ' total) — this exact substring
+    // discriminates the two formats.
+    expect(result).toContain("sibling=claim_stale  enrich: needs adapter 'shopify'");
+    expect(result).not.toContain('sibling=claim_stale, enrich:');
+  });
+});
+
 describe('--stuck age-gating (issue #221 — classifyRunHealth-backed)', () => {
   it('hides a YOUNG (<24h) claimless running run by default, but flags a 47-day-old one', async () => {
     const young = makeRun({
@@ -478,5 +506,62 @@ describe('list.ts source-text negative pin (issue #221 [S5])', () => {
     const source = readFileSync(fileURLToPath(new URL('./list.ts', import.meta.url)), 'utf8');
     expect(source).not.toContain('isStuckRun');
     expect(source).not.toContain('wedgedNonGatedClaims');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #221 correction — false-unity negative pin (the purge-guard.test.ts cross-package scan
+// precedent). The original round's prose claimed `realm run reclaim` "derives from"
+// classifyRunHealth in SEVEN locations — false: the design record (§2, fold B2) deliberately gave
+// reclaim its own independent discriminator, `classifyNoActiveClaim`, which reads the same
+// underlying record facts WITHOUT calling classifyRunHealth. All seven locations were corrected;
+// this test guards against the false-unity claim silently regressing back in — a future edit that
+// re-introduces "reclaim ... derives from classifyRunHealth" prose anywhere in a non-test source
+// file, in ANY package, fails loudly here instead of drifting undetected.
+// ---------------------------------------------------------------------------
+
+// packages/cli/src/commands → packages/
+const PACKAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const SCANNED_PACKAGES = ['core', 'cli', 'mcp-server', 'testing'];
+
+/** Every non-test, non-declaration .ts source file under a package's src/ (the purge-guard.test.ts
+ *  precedent — deliberately excludes .test.ts: a test file freely discussing the relationship
+ *  between reclaim and classifyRunHealth is not itself a shipped documentation claim). */
+function nonTestSourceFiles(pkg: string): string[] {
+  const root = join(PACKAGES_DIR, pkg, 'src');
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (entry.endsWith('.ts') && !entry.endsWith('.test.ts') && !entry.endsWith('.d.ts')) {
+        out.push(full);
+      }
+    }
+  };
+  walk(root);
+  return out;
+}
+
+describe('false-unity negative pin: no source file pairs "reclaim" with a derives-from-classifyRunHealth claim (issue #221 correction)', () => {
+  it('scans every non-test source file across every package', () => {
+    const WINDOW = 200; // chars either side of each classifyRunHealth occurrence
+    const violations: string[] = [];
+    for (const pkg of SCANNED_PACKAGES) {
+      for (const file of nonTestSourceFiles(pkg)) {
+        const content = readFileSync(file, 'utf8');
+        let idx = content.indexOf('classifyRunHealth');
+        while (idx !== -1) {
+          const windowText = content
+            .slice(Math.max(0, idx - WINDOW), Math.min(content.length, idx + WINDOW))
+            .toLowerCase();
+          if (windowText.includes('reclaim') && /derives?\s+from/.test(windowText)) {
+            violations.push(`${file} (offset ${idx})`);
+          }
+          idx = content.indexOf('classifyRunHealth', idx + 1);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
   });
 });

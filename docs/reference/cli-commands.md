@@ -331,8 +331,10 @@ Valid `--status` values: `running`, `gate_waiting`, `completed`, `failed`, `aban
 When filtering by `gate_waiting`, each line also shows the gate step name and gate age (time since the gate opened).
 
 `--stuck` (mutually exclusive with `--status`) shows only runs `classifyRunHealth` (issue #221)
-flags — the SAME shared predicate `get_run_state`/`reclaim`/`inspect` derive from: a stale or
-unknown-age claim, a wedged non-gated sibling on a `gate_waiting` run, a capability block, or a
+flags — the SAME shared predicate `get_run_state`/`inspect` (the other two READ surfaces) derive
+from (`reclaim` reads the same underlying record facts via its own independent discriminator; it
+does not call this function): a stale or unknown-age claim, a wedged non-gated sibling on a
+`gate_waiting` run, a capability block, or a
 `running` run with no claimed step that has been idle for at least the active threshold (default
 24h — printed in the header as `(threshold 24h)`). The never-claimed check is **age-gated**: a
 run simply between agent drives is no longer flagged the instant its last claim settles (a

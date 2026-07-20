@@ -29,9 +29,11 @@ All notable changes to this project are documented here.
 
 - **Typed run-health classification with honest per-surface reporting (issue #221).** New
   `classifyRunHealth` (core, `packages/core/src/engine/run-health.ts`) is the SINGLE shared
-  predicate `get_run_state`, `realm run reclaim`, `realm run list --stuck`, and `realm run inspect`
-  now all derive from — so no surface can silently drift from another about what "wedged" or
-  "idle" means. Pure, read-only, definition-optional, `now`-injectable. Classifies a run into zero
+  predicate the three READ surfaces — `get_run_state`, `realm run list --stuck`, and `realm run
+inspect` — now all derive from, so none of them can silently drift from another about what
+  "wedged" or "idle" means. (`realm run reclaim` reads the SAME underlying record facts — settle
+  sets, `capability_blocks`, reclaim-audit evidence — via its own independent discriminator; see
+  the Changed entry below.) Pure, read-only, definition-optional, `now`-injectable. Classifies a run into zero
   or more typed `RunHealthFinding`s (`never_claimed_idle` | `stale_claim` | `wedged_gate_sibling` |
   `capability_block`); a new `never_claimed_idle` kind closes the gap the issue reported — an
   advanced-but-parked run (no claimed step, idle past a threshold) is now surfaced everywhere, not

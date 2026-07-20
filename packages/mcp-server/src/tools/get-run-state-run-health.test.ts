@@ -7,7 +7,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import {
+  JsonWorkflowStore,
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+  DEFAULT_IDLE_THRESHOLD_MS,
+} from '@sensigo/realm';
 import type { RunRecord, RunStore, WorkflowDefinition } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
 
@@ -91,6 +95,10 @@ describe('get_run_state — run_health (issue #221)', () => {
     expect(summary.run_health).toBeDefined();
     expect(summary.run_health).toHaveLength(1);
     expect(summary.run_health![0]).toMatchObject({ kind: 'never_claimed_idle' });
+    // issue #221 correction — novel probe N1: pin the threshold-coherence rule (S1) directly, not
+    // just the finding's presence. get_run_state takes NO idleThresholdMs override by design
+    // (agents don't tune detectors) — this fails loudly if that ever silently changes.
+    expect(summary.run_health![0]?.evidence?.['idle_threshold_ms']).toBe(DEFAULT_IDLE_THRESHOLD_MS);
     expect(summary.warnings).toHaveLength(1);
     expect(summary.warnings![0]).toContain('run-health finding');
   });

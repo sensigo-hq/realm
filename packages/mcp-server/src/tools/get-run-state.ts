@@ -117,14 +117,16 @@ export interface RunStateSummary {
   skip_details?: Record<string, SkipDetail>;
   /**
    * Typed run-health findings (issue #221) — present only when non-empty. Computed by
-   * `classifyRunHealth`, the SAME shared predicate every operator/agent surface (`get_run_state`,
-   * `reclaim`, `realm run list --stuck`, `realm run inspect`) derives from, so none can silently
-   * drift from another about what "wedged" or "idle" means. This is the CANONICAL SUPERSET of
-   * `stuck_claims`/`capability_blocks` above — those two legacy arrays are KEPT for backward
-   * compatibility (existing consumers), but a new consumer should prefer `run_health`. Never
-   * alters `next_actions_status` (fine-maps-to-coarse, never the reverse — the systemd invariant):
-   * a wedge is surfaced here even when the aggregate status cannot show it (notably a
-   * `gate_waiting` run, whose status MUST stay `awaiting_human`).
+   * `classifyRunHealth`, the SAME shared predicate the three READ surfaces (`get_run_state`,
+   * `realm run list --stuck`, `realm run inspect`) derive from, so none of them can silently drift
+   * from another about what "wedged" or "idle" means. (`realm run reclaim` reads the SAME
+   * underlying record facts — settle sets, capability_blocks, reclaim-audit evidence — via its
+   * own independent discriminator, `classifyNoActiveClaim`; it does not call this function.) This
+   * is the CANONICAL SUPERSET of `stuck_claims`/`capability_blocks` above — those two legacy
+   * arrays are KEPT for backward compatibility (existing consumers), but a new consumer should
+   * prefer `run_health`. Never alters `next_actions_status` (fine-maps-to-coarse, never the
+   * reverse — the systemd invariant): a wedge is surfaced here even when the aggregate status
+   * cannot show it (notably a `gate_waiting` run, whose status MUST stay `awaiting_human`).
    */
   run_health?: RunHealthFinding[];
   /**
@@ -249,12 +251,12 @@ export async function handleGetRunState(
         .filter((c) => c.state !== 'healthy' && c.step !== run.pending_gate?.step_name)
         .map((c) => ({ step: c.step, state: c.state }));
 
-  // issue #221: the SAME shared classifyRunHealth predicate every surface (get_run_state,
-  // reclaim, list --stuck, inspect) derives from — computed definition-aware when the workflow
-  // resolved above (adds eligible_steps evidence to any never_claimed_idle finding),
-  // definition-free otherwise (gate / workflow_unresolved paths). Terminal guard mirrors
-  // stuck_claims/capability_blocks: a sealed run surfaces nothing. `next_actions_status` above is
-  // computed and finalized BEFORE this line runs — nothing below this point may write back to it.
+  // issue #221: the SAME shared classifyRunHealth predicate the three READ surfaces (get_run_state,
+  // list --stuck, inspect) derive from — computed definition-aware when the workflow resolved
+  // above (adds eligible_steps evidence to any never_claimed_idle finding), definition-free
+  // otherwise (gate / workflow_unresolved paths). Terminal guard mirrors stuck_claims/
+  // capability_blocks: a sealed run surfaces nothing. `next_actions_status` above is computed and
+  // finalized BEFORE this line runs — nothing below this point may write back to it.
   const runHealth: RunHealthFinding[] = run.terminal_state
     ? []
     : classifyRunHealth(run, definition !== undefined ? { definition } : {});
