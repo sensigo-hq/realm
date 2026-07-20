@@ -677,6 +677,10 @@ fetch_document:
 > unrecognized retry sub-keys and are silently ignored, so a declared cap goes unenforced — this
 > fails safe: retry semantics are otherwise unchanged, only the bound is missing.
 
+> **Non-auto steps (issue #218):** any `retry:` sub-key on an `agent`/`guard` step draws an
+> advisory (`RETRY_INERT_NON_AUTO`), since the built-in dispatch path never throws for those steps
+> and so never consumes the block.
+
 ---
 
 ## Services

@@ -23,7 +23,10 @@ export type WarningCode =
   | 'UNKNOWN_RETRY_KEY'
   | 'ON_TIMEOUT_SINGLE_ATTEMPT'
   | 'TOTAL_TIMEOUT_BELOW_ATTEMPT'
-  | 'TOTAL_TIMEOUT_NON_AUTO';
+  | 'TOTAL_TIMEOUT_NON_AUTO'
+  // issue #218 (extends the #140 W5 family: bare retry sub-keys, not just the cap, on a
+  // non-auto step):
+  | 'RETRY_INERT_NON_AUTO';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text (matching, for the
@@ -62,6 +65,7 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   ON_TIMEOUT_SINGLE_ATTEMPT: 'warn',
   TOTAL_TIMEOUT_BELOW_ATTEMPT: 'warn',
   TOTAL_TIMEOUT_NON_AUTO: 'warn',
+  RETRY_INERT_NON_AUTO: 'warn',
 };
 
 /**
@@ -198,8 +202,9 @@ const UNKNOWN_KEY_CODES = new Set<WarningCode>([
  * byte-identical to the pre-#169 console.warn text (UNKNOWN_RETRY_KEY, issue #140, follows the
  * same rendering exactly, just with a 'retry' noun instead of 'step'/'workflow'). Every other code
  * (IDEMPOTENT_INERT_IN_FINALIZER, DUAL_SCHEMA_DECLARED, RETRY_NO_TIMEOUT, EXTENSION_SENTINEL,
- * ON_TIMEOUT_SINGLE_ATTEMPT, TOTAL_TIMEOUT_BELOW_ATTEMPT, TOTAL_TIMEOUT_NON_AUTO) returns
- * `message` verbatim: these are free-text warnings whose exact current prefix (or lack of one) is
+ * ON_TIMEOUT_SINGLE_ATTEMPT, TOTAL_TIMEOUT_BELOW_ATTEMPT, TOTAL_TIMEOUT_NON_AUTO,
+ * RETRY_INERT_NON_AUTO) returns `message` verbatim: these are free-text warnings whose exact
+ * current prefix (or lack of one) is
  * preserved byte-for-byte by whatever constructed them, not re-derived here.
  */
 export function renderLoaderWarning(w: LoaderWarning): string {

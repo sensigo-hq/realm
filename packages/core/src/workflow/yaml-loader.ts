@@ -953,6 +953,36 @@ function parseWorkflowString(
           });
         }
 
+        // issue #218 (extends the W5 family): the BARE-KEYS advisory — no explicit
+        // total_timeout_seconds (that shape is W5's, above), but retry: is present on a step the
+        // built-in dispatch path never wraps in a throwing retry loop at all. Complementary to
+        // W5's own `!== undefined` conjunct on the SAME `execution !== 'auto'` gate, so for any
+        // non-auto retry block that reaches this point (finalizer+retry and invalid-cap shapes
+        // already hard-errored above; on_timeout: true already hard-errored via E1 unless
+        // idempotent is also declared, which is itself rejected by the pre-existing
+        // idempotent-non-auto check) exactly ONE of {W5, RETRY_INERT_NON_AUTO} ever fires — never
+        // both, never neither.
+        if (step['execution'] !== 'auto' && retry['total_timeout_seconds'] === undefined) {
+          const isAgent = step['execution'] === 'agent';
+          const message = isAgent
+            ? `Step '${stepName}': 'retry' is inert on execution: 'agent' steps — the built-in ` +
+              `dispatch path never throws for agent steps, so this block can never mint a second ` +
+              `attempt here (for schema-repair budgets, use the CLI drive's '--schema-retries' ` +
+              `flag instead). An embedder-supplied throwing dispatcher may still consume this ` +
+              `config — a deliberate public-API capability, not an invalid one.`
+            : `Step '${stepName}': 'retry' is inert on execution: '${String(step['execution'])}' ` +
+              `steps — the built-in dispatch path never throws for these steps, so this block can ` +
+              `never mint a second attempt here. An embedder-supplied throwing dispatcher may ` +
+              `still consume this config — a deliberate public-API capability, not an invalid one.`;
+          warnings.push({
+            code: 'RETRY_INERT_NON_AUTO',
+            severity: resolveSeverity('RETRY_INERT_NON_AUTO'),
+            scope: 'step',
+            step: stepName,
+            message,
+          });
+        }
+
         // W1: on_timeout with an effective max_attempts of 1 (explicit OR absent, since the
         // loader admits an absent max_attempts and the engine then defaults it to 1) — there is
         // no second attempt for the opt-in to retry into.

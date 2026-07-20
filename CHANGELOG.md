@@ -8,6 +8,14 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **`RETRY_INERT_NON_AUTO` loader advisory for bare `retry:` sub-keys on a non-auto step (issue
+  #218).** Extends #140's W5 (`TOTAL_TIMEOUT_NON_AUTO`, cap-only) family: a `retry:` block with no
+  `total_timeout_seconds` on an `agent`/`guard` step now also draws a warning — the built-in
+  dispatch path never throws for these steps, so `max_attempts`/`backoff`/`base_delay_ms` are
+  otherwise silent dead config. Mutually exclusive with W5 by construction (exactly one of the two
+  fires for any non-auto retry block that loads). Advisory only (#119) — `create_workflow` stays
+  lenient; `validate --strict`/`register --strict` fail on it via the existing #169 accumulators.
+
 - **In-drive schema-feedback repair loop for `realm agent` (issue #217).** When an `execution:
 'agent'` step's output is rejected by `output_schema`/`input_schema` validation
   (`VALIDATION_OUTPUT_SCHEMA`/`VALIDATION_INPUT_SCHEMA`), the drive now re-prompts the SAME step
