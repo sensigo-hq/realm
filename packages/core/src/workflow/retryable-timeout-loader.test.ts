@@ -4,7 +4,13 @@
 import { describe, it, expect } from 'vitest';
 import { loadWorkflowFromString, loadWorkflowFromStringWithDiagnostics } from './yaml-loader.js';
 import { WorkflowError } from '../types/workflow-error.js';
-import { DEFAULT_POLICY, type WarningCode } from './diagnostics.js';
+import {
+  DEFAULT_POLICY,
+  resolveSeverity,
+  renderLoaderWarning,
+  type WarningCode,
+  type LoaderWarning,
+} from './diagnostics.js';
 
 function expectThrows(yaml: string, substring: string): void {
   expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
@@ -526,5 +532,172 @@ steps:
       const neverReintroduced: _Check = true;
       expect(neverReintroduced).toBe(true);
     });
+  });
+});
+
+describe('yaml-loader — issue #218 RETRY_INERT_NON_AUTO (bare retry sub-keys on a non-auto step)', () => {
+  it('1. agent step, bare retry ⇒ advisory fires, message contains --schema-retries AND the embedder caveat', () => {
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(`
+id: retry-inert-agent-wf
+name: Retry Inert Agent
+version: 1
+steps:
+  work:
+    description: Work
+    execution: agent
+    retry:
+      max_attempts: 3
+      backoff: fixed
+      base_delay_ms: 10
+`);
+    const w = warnings.find((warning) => warning.code === 'RETRY_INERT_NON_AUTO');
+    expect(w).toBeDefined();
+    expect(w?.message).toContain("execution: 'agent'");
+    expect(w?.message).toContain('--schema-retries');
+    expect(w?.message).toContain('embedder-supplied throwing dispatcher');
+  });
+
+  it('2. guard step, same block ⇒ fires, message does NOT contain --schema-retries', () => {
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(`
+id: retry-inert-guard-wf
+name: Retry Inert Guard
+version: 1
+steps:
+  work:
+    description: Work
+    execution: guard
+    abort_unless: ["work.ok == true"]
+    retry:
+      max_attempts: 3
+      backoff: fixed
+      base_delay_ms: 10
+`);
+    const w = warnings.find((warning) => warning.code === 'RETRY_INERT_NON_AUTO');
+    expect(w).toBeDefined();
+    expect(w?.message).toContain("execution: 'guard'");
+    expect(w?.message).not.toContain('--schema-retries');
+    expect(w?.message).toContain('embedder-supplied throwing dispatcher');
+  });
+
+  it("3. finalizer step, same block ⇒ load HARD-ERRORS with \"'retry' is not valid on execution: finalizer steps\" and no advisory is observable (composition pin; mirrors finalizer-loader.test.ts:99-106) — the issue's AC2 finalizer clause is satisfied by this PRE-EXISTING STRONGER rejection, not by the new advisory", () => {
+    expectThrows(
+      `
+id: retry-inert-finalizer-wf
+name: Retry Inert Finalizer
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+  cleanup:
+    description: Cleanup finalizer
+    execution: finalizer
+    on_outcome: always
+    handler: do_cleanup
+    retry:
+      max_attempts: 3
+      backoff: fixed
+      base_delay_ms: 10
+`,
+      "'retry' is not valid on execution: finalizer steps",
+    );
+  });
+
+  it('4. auto step, same block ⇒ NO RETRY_INERT_NON_AUTO (and no W5)', () => {
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(`
+id: retry-inert-auto-wf
+name: Retry Inert Auto
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+    retry:
+      max_attempts: 3
+      backoff: fixed
+      base_delay_ms: 10
+`);
+    expect(warnings.find((w) => w.code === 'RETRY_INERT_NON_AUTO')).toBeUndefined();
+    expect(warnings.find((w) => w.code === 'TOTAL_TIMEOUT_NON_AUTO')).toBeUndefined();
+  });
+
+  describe('5. mutual-exclusivity pin, both directions', () => {
+    it('non-auto + explicit cap ⇒ W5 fires AND RETRY_INERT_NON_AUTO does NOT', () => {
+      const { warnings } = loadWorkflowFromStringWithDiagnostics(`
+id: mutex-cap-wf
+name: Mutex Cap
+version: 1
+steps:
+  work:
+    description: Work
+    execution: agent
+    retry:
+      max_attempts: 3
+      backoff: fixed
+      base_delay_ms: 10
+      total_timeout_seconds: 60
+`);
+      expect(warnings.find((w) => w.code === 'TOTAL_TIMEOUT_NON_AUTO')).toBeDefined();
+      expect(warnings.find((w) => w.code === 'RETRY_INERT_NON_AUTO')).toBeUndefined();
+    });
+
+    it('non-auto + bare keys ⇒ RETRY_INERT_NON_AUTO fires AND W5 does NOT', () => {
+      const { warnings } = loadWorkflowFromStringWithDiagnostics(`
+id: mutex-bare-wf
+name: Mutex Bare
+version: 1
+steps:
+  work:
+    description: Work
+    execution: agent
+    retry:
+      max_attempts: 3
+      backoff: fixed
+      base_delay_ms: 10
+`);
+      expect(warnings.find((w) => w.code === 'RETRY_INERT_NON_AUTO')).toBeDefined();
+      expect(warnings.find((w) => w.code === 'TOTAL_TIMEOUT_NON_AUTO')).toBeUndefined();
+    });
+  });
+
+  it('6. strict-severity proof at the LOADER level: the code appears in warnings[] and resolveSeverity honors a policy override to error (the same array + policy mechanism validate/register --strict count on, already pinned code-agnostically by cli/src/commands/validate-strict.test.ts — no new CLI test added here)', () => {
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(`
+id: strict-wf
+name: Strict
+version: 1
+steps:
+  work:
+    description: Work
+    execution: agent
+    retry:
+      max_attempts: 3
+      backoff: fixed
+      base_delay_ms: 10
+`);
+    const w = warnings.find((warning) => warning.code === 'RETRY_INERT_NON_AUTO');
+    expect(w).toBeDefined();
+    expect(w?.severity).toBe('warn');
+    const strictPolicy: Record<WarningCode, 'warn' | 'error'> = {
+      ...DEFAULT_POLICY,
+      RETRY_INERT_NON_AUTO: 'error',
+    };
+    expect(resolveSeverity('RETRY_INERT_NON_AUTO', strictPolicy)).toBe('error');
+    // create_workflow: NO test possible and none required — create_workflow never runs the YAML
+    // loader at all (its envelope is findUnknownKeys-only; its stepSchema has no `retry` field, so
+    // `retry` is dropped as UNKNOWN_CREATE_WORKFLOW_KEY before this code could ever run) — the
+    // issue's AC3 "create_workflow stays lenient" holds BY CONSTRUCTION. See the report.
+  });
+
+  it('7. renderer golden test: RETRY_INERT_NON_AUTO renders message verbatim (the #169 renderLoaderWarning family pattern — no ⚠ prefix added, byte-identical to whatever constructed it)', () => {
+    const warning: LoaderWarning = {
+      code: 'RETRY_INERT_NON_AUTO',
+      severity: 'warn',
+      scope: 'step',
+      step: 'work',
+      message: "Step 'work': 'retry' is inert on execution: 'agent' steps.",
+    };
+    expect(renderLoaderWarning(warning)).toBe(warning.message);
   });
 });

@@ -77,7 +77,7 @@ steps:
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it('does NOT warn on a step with retry but execution: agent (enforcement never applies)', async () => {
+  it('does NOT warn with the A3 text on a step with retry but execution: agent (A3 enforcement never applies there) — issue #218 correction: this exact fixture now legitimately draws the UNRELATED RETRY_INERT_NON_AUTO advisory instead, so the negative assertion is narrowed to the A3-specific text rather than "no warnSpy calls at all"', async () => {
     const wfPath = join(dir, 'workflow.yaml');
     writeFileSync(
       wfPath,
@@ -100,7 +100,12 @@ steps:
 
     await validateCommand.parseAsync([wfPath], { from: 'user' });
 
-    expect(warnSpy).not.toHaveBeenCalled();
+    const warned = warnSpy.mock.calls.flat().map(String).join(' ');
+    expect(warned).not.toContain("declares 'retry' but no 'timeout_seconds'");
+    // issue #218: the new advisory legitimately fires on this exact fixture (bare retry on a
+    // non-auto step) — pinned here so this test keeps testing what it always tested (A3's
+    // absence) without silently going vacuous now that warnSpy IS called for an unrelated reason.
+    expect(warned).toContain("'retry' is inert on execution: 'agent' steps");
   });
 
   it('does NOT warn on an auto step with no retry at all', async () => {
