@@ -26,14 +26,17 @@ export type WarningCode =
   | 'TOTAL_TIMEOUT_NON_AUTO'
   // issue #218 (extends the #140 W5 family: bare retry sub-keys, not just the cap, on a
   // non-auto step):
-  | 'RETRY_INERT_NON_AUTO';
+  | 'RETRY_INERT_NON_AUTO'
+  // issue #220 PR-2 (declared fail-open validation_exhaustion.mode/default_output):
+  | 'UNKNOWN_VALIDATION_EXHAUSTION_KEY'
+  | 'DEAD_VALIDATION_EXHAUSTION_CONFIG';
 
 /**
- * A single structured diagnostic. `message` is the full human-readable text (matching, for the
- * three unknown-key codes, exactly what `renderLoaderWarning` would independently reconstruct
- * from the structured fields — kept in sync by construction, not by convention: see
- * `findUnknownKeys` below). `scope`/`id`/`step`/`key`/`did_you_mean` are populated only by the
- * unknown-key family; other codes carry just `code`/`severity`/`message`.
+ * A single structured diagnostic. `message` is the full human-readable text (matching, for every
+ * unknown-key code, exactly what `renderLoaderWarning` would independently reconstruct from the
+ * structured fields — kept in sync by construction, not by convention: see `findUnknownKeys`
+ * below). `scope`/`id`/`step`/`key`/`did_you_mean` are populated only by the unknown-key family;
+ * other codes carry just `code`/`severity`/`message`.
  */
 export interface LoaderWarning {
   code: WarningCode;
@@ -66,6 +69,8 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   TOTAL_TIMEOUT_BELOW_ATTEMPT: 'warn',
   TOTAL_TIMEOUT_NON_AUTO: 'warn',
   RETRY_INERT_NON_AUTO: 'warn',
+  UNKNOWN_VALIDATION_EXHAUSTION_KEY: 'warn',
+  DEAD_VALIDATION_EXHAUSTION_CONFIG: 'warn',
 };
 
 /**
@@ -190,6 +195,7 @@ const UNKNOWN_KEY_CODES = new Set<WarningCode>([
   'UNKNOWN_STEP_KEY',
   'UNKNOWN_CREATE_WORKFLOW_KEY',
   'UNKNOWN_RETRY_KEY',
+  'UNKNOWN_VALIDATION_EXHAUSTION_KEY',
 ]);
 
 /**
@@ -197,15 +203,16 @@ const UNKNOWN_KEY_CODES = new Set<WarningCode>([
  * yaml-loader.ts, and the CLI's `printLoaderWarnings` helper) renders through this, never by
  * hand-rolling a `⚠ ` string itself.
  *
- * The four unknown-key codes are templated fresh from the structured fields (so the
- * `did_you_mean` suggestion is appended only when present) and always carry the `⚠ ` prefix —
- * byte-identical to the pre-#169 console.warn text (UNKNOWN_RETRY_KEY, issue #140, follows the
- * same rendering exactly, just with a 'retry' noun instead of 'step'/'workflow'). Every other code
+ * Every code in `UNKNOWN_KEY_CODES` is templated fresh from the structured fields (so the
+ * `did_you_mean` suggestion is appended only when present) and always carries the `⚠ ` prefix —
+ * byte-identical to the pre-#169 console.warn text (UNKNOWN_RETRY_KEY, issue #140, and
+ * UNKNOWN_VALIDATION_EXHAUSTION_KEY, issue #220, both follow the same rendering exactly, just with
+ * a different noun instead of 'step'/'workflow'). Every other code
  * (IDEMPOTENT_INERT_IN_FINALIZER, DUAL_SCHEMA_DECLARED, RETRY_NO_TIMEOUT, EXTENSION_SENTINEL,
  * ON_TIMEOUT_SINGLE_ATTEMPT, TOTAL_TIMEOUT_BELOW_ATTEMPT, TOTAL_TIMEOUT_NON_AUTO,
- * RETRY_INERT_NON_AUTO) returns `message` verbatim: these are free-text warnings whose exact
- * current prefix (or lack of one) is
- * preserved byte-for-byte by whatever constructed them, not re-derived here.
+ * RETRY_INERT_NON_AUTO, DEAD_VALIDATION_EXHAUSTION_CONFIG) returns `message` verbatim: these are
+ * free-text warnings whose exact current prefix (or lack of one) is preserved byte-for-byte by
+ * whatever constructed them, not re-derived here.
  */
 export function renderLoaderWarning(w: LoaderWarning): string {
   if (UNKNOWN_KEY_CODES.has(w.code)) {

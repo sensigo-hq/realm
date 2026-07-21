@@ -60,6 +60,7 @@ const SAMPLE_VALUES: {
   workflow_context_snapshots: Record<string, WorkflowContextSnapshot>;
   extension_identity: ExtensionIdentityEntry[];
   validation_rejections: Record<string, number>;
+  defaulted_steps: string[];
 } = {
   capability_blocks: {
     'tck-step': {
@@ -92,6 +93,7 @@ const SAMPLE_VALUES: {
     },
   ],
   validation_rejections: { 'tck-step': 3 },
+  defaulted_steps: ['tck-step'],
 };
 
 /**

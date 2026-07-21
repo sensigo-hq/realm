@@ -8,6 +8,7 @@ import type {
   WorkflowDefinition,
   TemplateDefinition,
   TriggerRule,
+  JsonSchema,
 } from '../types/workflow-definition.js';
 import {
   KNOWN_STEP_KEYS,
@@ -26,6 +27,7 @@ import type { ExtensionRegistry } from '../extensions/registry.js';
 import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
 import { splitComparison, isPathShaped } from '../engine/comparison-expr.js';
 import { DEFAULT_EXECUTION_TIMEOUT_SECONDS } from '../engine/claim-liveness.js';
+import { validateOutputSchema } from '../validation/input-schema.js';
 
 type ConditionSurface = 'when' | 'abort_unless' | 'preconditions';
 
@@ -138,9 +140,8 @@ const SERVICE_ENTRY_JSON_SCHEMA = {
 
 const VALID_EXECUTIONS = new Set(['auto', 'agent', 'guard', 'finalizer']);
 const VALID_FINALIZER_TRIGGERS = new Set(['complete', 'fail', 'abort', 'always']);
-// issue #220 (PR-1 subset): the ONLY validation_exhaustion sub-key this PR recognizes. `mode`/
-// `default_output` are a future PR's surface — declaring them now warns as unknown, never rejects.
-const KNOWN_VALIDATION_EXHAUSTION_KEYS = ['threshold'];
+// issue #220 (PR-2): the full set of recognized validation_exhaustion sub-keys.
+const KNOWN_VALIDATION_EXHAUSTION_KEYS = ['threshold', 'mode', 'default_output'];
 const VALID_SERVICE_METHODS = new Set(['fetch', 'create', 'update', 'delete']);
 const VALID_TRIGGER_RULES = new Set<TriggerRule>([
   'all_success',
@@ -807,11 +808,15 @@ function parseWorkflowString(
       errors.push(`Step '${stepName}': 'output_schema' is only valid on execution: agent steps`);
     }
 
-    // issue #220 (PR-1 subset): validation_exhaustion is only valid on execution: agent steps —
-    // the countable rejection set (VALIDATION_INPUT_SCHEMA/VALIDATION_OUTPUT_SCHEMA) is agent-only
-    // by construction (execution-loop.ts's countRejection). PR-1 supports ONLY `{ threshold? }` —
-    // `mode`/`default_output` are a future PR's surface; declaring them here WARNS (never
-    // rejects) as an unknown sub-key, the loader's warn-don't-reject posture (#144/#169/#170).
+    // issue #220 (PR-2): validation_exhaustion is only valid on execution: agent steps — the
+    // countable rejection set (VALIDATION_INPUT_SCHEMA/VALIDATION_OUTPUT_SCHEMA) is agent-only by
+    // construction (execution-loop.ts's countRejection). Full rule table: `mode` value validated
+    // (REFUSE on an unrecognized value — unvalidatable posture, fail-closed); `mode: 'default'`
+    // requires `default_output` (REFUSE — nothing to substitute) which in turn requires the step's
+    // own `output_schema` (REFUSE — B5, an unvalidatable default) against which `default_output` is
+    // then AJV-proven AT LOAD TIME (REFUSE — B10, reusing the runtime validator so load-time and
+    // runtime verdicts can never diverge); `default_output` present without `mode: 'default'` WARNS
+    // as dead config (never rejects — it's simply inert); an unknown sub-key WARNS.
     if (step['validation_exhaustion'] !== undefined) {
       if (step['execution'] !== 'agent') {
         errors.push(
@@ -826,12 +831,13 @@ function parseWorkflowString(
         const exhaustionBlock = step['validation_exhaustion'] as Record<string, unknown>;
 
         // WARN (do not reject) on an unknown validation_exhaustion sub-key — the retry-block-style
-        // pattern (issue #140's UNKNOWN_RETRY_KEY), reusing the existing UNKNOWN_STEP_KEY code
-        // with the noun overridden (PR-1 mints no new WarningCode for this nested block).
+        // pattern (issue #140's UNKNOWN_RETRY_KEY), its OWN code (issue #220 PR-2 mints
+        // UNKNOWN_VALIDATION_EXHAUSTION_KEY, replacing PR-1's UNKNOWN_STEP_KEY noun-override —
+        // closes the #170-flip incoherence against the structurally identical retry-key family).
         warnings.push(
           ...findUnknownKeys(exhaustionBlock, KNOWN_VALIDATION_EXHAUSTION_KEYS, {
             scope: 'step',
-            code: 'UNKNOWN_STEP_KEY',
+            code: 'UNKNOWN_VALIDATION_EXHAUSTION_KEY',
             step: stepName,
             noun: 'validation_exhaustion',
           }),
@@ -847,6 +853,71 @@ function parseWorkflowString(
               `(1 is legal — it disables in-drive schema-repair, since the first rejection ` +
               `already meets it)`,
           );
+        }
+
+        const modeValue = exhaustionBlock['mode'];
+        if (modeValue !== undefined && modeValue !== 'fail' && modeValue !== 'default') {
+          errors.push(
+            `Step '${stepName}': 'validation_exhaustion.mode' must be 'fail' or 'default' ` +
+              `(got: ${JSON.stringify(modeValue)})`,
+          );
+        }
+
+        const hasDefaultOutput = 'default_output' in exhaustionBlock;
+        if (modeValue === 'default') {
+          if (!hasDefaultOutput) {
+            errors.push(
+              `Step '${stepName}': 'validation_exhaustion.mode: default' requires ` +
+                `'default_output' (nothing to substitute on exhaustion)`,
+            );
+          } else if (step['output_schema'] === undefined) {
+            errors.push(
+              `Step '${stepName}': 'validation_exhaustion.default_output' requires the step to ` +
+                `declare 'output_schema' (an undeclared schema makes the default unvalidatable)`,
+            );
+          } else {
+            // B10 — load-time AJV proof: REUSE the runtime validator so the load-time verdict can
+            // never diverge from the runtime verdict for the exact same (default_output,
+            // output_schema) pair. This is the loader's first load-time Ajv compile of an
+            // output_schema (today output_schema is only compiled at runtime), so the catch below
+            // legitimately sees TWO different populations: a VALIDATION_OUTPUT_SCHEMA
+            // WorkflowError (default_output fails the schema) and a raw Ajv schema-compilation
+            // Error (a structurally malformed output_schema) — both fail-closed to a load refusal,
+            // but they carry their detail DIFFERENTLY: a WorkflowError has `.details.errors`; a raw
+            // Error has NO `.details` at all (reading `.details.errors` on it throws a TypeError
+            // that would escape the loader mid-walk — verified empirically). Discriminate.
+            try {
+              validateOutputSchema(
+                exhaustionBlock['default_output'] as Record<string, unknown>,
+                step['output_schema'] as JsonSchema,
+                stepName,
+              );
+            } catch (err) {
+              const detail =
+                err instanceof WorkflowError
+                  ? JSON.stringify(err.details['errors'])
+                  : err instanceof Error
+                    ? err.message
+                    : String(err);
+              errors.push(
+                `Step '${stepName}': 'validation_exhaustion.default_output' does not validate ` +
+                  `against the step's own 'output_schema': ${detail}`,
+              );
+            }
+          }
+        } else if (hasDefaultOutput) {
+          // default_output present without mode: 'default' (mode: 'fail' or absent) — inert, not
+          // an error: WARN as dead config rather than silently ignoring it.
+          warnings.push({
+            code: 'DEAD_VALIDATION_EXHAUSTION_CONFIG',
+            severity: resolveSeverity('DEAD_VALIDATION_EXHAUSTION_CONFIG'),
+            scope: 'step',
+            step: stepName,
+            message:
+              `Step '${stepName}': 'validation_exhaustion.default_output' is ignored without ` +
+              `'mode: default' — set 'validation_exhaustion.mode: default' to enable it, or ` +
+              `remove 'default_output'.`,
+          });
         }
       }
     }

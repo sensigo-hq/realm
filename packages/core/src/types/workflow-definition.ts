@@ -293,16 +293,33 @@ export interface StepDefinition {
   timeout_seconds?: number;
   retry?: RetryConfig;
   /**
-   * Issue #220 (PR-1 subset — `mode`/`default_output` are NOT yet supported; a future PR extends
-   * this shape): bounds the run of persistent schema-rejections on this step. Only valid on
-   * `execution: 'agent'` steps (the countable set — VALIDATION_INPUT_SCHEMA/
-   * VALIDATION_OUTPUT_SCHEMA — is agent-only). `threshold` overrides
-   * `DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD` (6) for THIS step; must be a positive integer
-   * (`1` is legal and documented as disabling in-drive schema-repair, since the very first
-   * rejection then already meets the threshold). Absent ⇒ every countable agent step is
-   * auto-enrolled at the default threshold — there is no reachable per-step opt-out in PR-1.
+   * Issue #220 (PR-1 counting/terminalization + PR-2 declared fail-open): bounds the run of
+   * persistent schema-rejections on this step. Only valid on `execution: 'agent'` steps (the
+   * countable set — VALIDATION_INPUT_SCHEMA/VALIDATION_OUTPUT_SCHEMA — is agent-only).
+   * `threshold` overrides `DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD` (6) for THIS step; must be a
+   * positive integer (`1` is legal and documented as disabling in-drive schema-repair, since the
+   * very first rejection then already meets the threshold). Absent ⇒ every countable agent step
+   * is auto-enrolled at the default threshold — there is no reachable per-step opt-out.
+   *
+   * `mode` (PR-2): `'fail'` (default when absent) terminalizes the step with `VALIDATION_EXHAUSTED`
+   * on exhaustion, byte-unchanged from PR-1. `'default'` instead SETTLES the step successfully with
+   * `default_output` once the threshold is reached — bounded, declared, and disclosed (never a
+   * silent fallback): the run proceeds as if the agent had submitted `default_output` itself.
+   *
+   * `default_output` (PR-2): REQUIRED when `mode: 'default'`; ignored (and warned as dead config)
+   * otherwise. Only legal when the step also declares `output_schema` (an undeclared schema makes
+   * the substitute unvalidatable — refused at load) — `default_output` is then AJV-validated
+   * against that `output_schema` AT LOAD TIME, so a fallback that would itself fail runtime
+   * validation is refused before the workflow ever registers. Typed `unknown` here; every runtime
+   * sink narrows it via `default_output as Record<string, unknown>` — provably safe because the
+   * load-time proof already rejected any value that doesn't validate against the (object-typed)
+   * `output_schema`.
    */
-  validation_exhaustion?: { threshold?: number };
+  validation_exhaustion?: {
+    threshold?: number;
+    mode?: 'fail' | 'default';
+    default_output?: unknown;
+  };
   /** Plain-English instructions for the agent at this step. */
   instructions?: string;
   /**

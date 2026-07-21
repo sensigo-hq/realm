@@ -125,4 +125,24 @@ export interface ResponseEnvelope {
   adopted_anonymous?: number;
   /** @see adopted_own — mirrors `trace_summary.foreign_lines_preserved`. */
   preserved_foreign?: number;
+  /**
+   * Issue #220 PR-2 (declared fail-open, pin g). `true` ONLY on the terminal success envelope of
+   * the step that just settled via its declared `validation_exhaustion.default_output`
+   * substitution (mirrors the settling evidence snapshot's `diagnostics.settled_by_default`).
+   * SURVIVES the MCP tool wrapper's strip (`execute-step.ts`/`submit-human-response.ts` only strip
+   * `data`+`evidence`, every other top-level field passes through — the #197 partition-fields
+   * precedent). Absent (never `false`) on every other envelope, INCLUDING the `confirm_required`
+   * gate-open envelope for a `human_confirmed` step at exhaustion (the step is not yet settled
+   * there — see the gate's own `warnings` for the disclosure) and `submitHumanResponse`'s envelope
+   * (a separate function with no access to the settling snapshot; see `defaulted_steps` below for
+   * that surface's disclosure instead).
+   */
+  settled_by_default?: boolean;
+  /**
+   * Issue #220 PR-2 (run-level disclosure, pin r). Mirrors `RunRecord.defaulted_steps` — present
+   * only on a TERMINAL `complete` envelope whose sealed run record carries a non-empty
+   * `defaulted_steps` (read off the stamped pre-persist seal record, never the round-tripped
+   * persisted record, so a non-persisting store can't silently drop it from this envelope too).
+   */
+  defaulted_steps?: string[];
 }

@@ -628,6 +628,34 @@ function mergeWarnings(
 }
 
 /**
+ * Pure helper (issue #220 PR-2, D6): scans `sealDraft`'s evidence for entries stamped
+ * `diagnostics.settled_by_default === true` and, if any exist, returns the record with
+ * `defaulted_steps` set to their distinct step names (declaration order of first occurrence) —
+ * else returns the SAME record reference unchanged, so a run with no default-settle anywhere is
+ * byte-identical to pre-PR-2 behavior (the damage-rail this preserves). Pure, no I/O.
+ *
+ * Applied by WRAPPING the `buildFinalizedSeal` call inside the TERMINAL branch of each seal
+ * ternary — `buildFinalizedSeal` itself stays byte-untouched (a chokepoint insertion was
+ * considered and rejected in the design record: it reaches fail/abort seals too and would be a
+ * fragile two-touch above the damage-rail fast-path). Callers must pass ONLY a sealed record from
+ * the `'complete'` branch — never a non-terminal draft, and never a fail/abort seal — so
+ * `defaulted_steps` never leaks onto a persisted non-terminal record that a later FAIL seal
+ * inherits (the FM-5 residual this guards).
+ */
+function stampDefaultedSteps(sealDraft: RunRecord): RunRecord {
+  const steps: string[] = [];
+  const seen = new Set<string>();
+  for (const snap of sealDraft.evidence) {
+    if (snap.diagnostics?.settled_by_default === true && !seen.has(snap.step_id)) {
+      seen.add(snap.step_id);
+      steps.push(snap.step_id);
+    }
+  }
+  if (steps.length === 0) return sealDraft;
+  return { ...sealDraft, defaulted_steps: steps };
+}
+
+/**
  * Compensating un-claim (issue #207 PR-2, D3 §5): built from `pendingRun` — the record OUR OWN
  * `claimStep` call returned, never a fresh get — removing the step from `in_progress_steps` AND
  * `claims[step]` in the SAME mutation (the settle-site invariant every other settle path in this
@@ -1639,6 +1667,12 @@ export async function executeStep(
 
   let output: Record<string, unknown> = {};
   let dispatchError: WorkflowError | null = null;
+  // issue #220 PR-2: true iff THIS invocation settles the step via its declared default_output
+  // substitution (exhaustion armed above AND the step opted into mode: 'default') — computed once,
+  // function-scoped (not inside the `if (bypassDispatch)` block below, which closes long before
+  // D5's Step-6 envelope build reads this local) so it survives to every downstream read site.
+  const settledByDefault =
+    exhaustion !== null && stepDef?.validation_exhaustion?.mode === 'default';
   let attemptsUsed = 0;
   const allEvidence: EvidenceSnapshot[] = [];
   let currentWarn: string | undefined;
@@ -1934,7 +1968,66 @@ export async function executeStep(
     }
   } // end issue #220 `if (!bypassDispatch)` — the dispatch loop
 
-  if (bypassDispatch) {
+  if (bypassDispatch && settledByDefault) {
+    // issue #220 PR-2 (D4): declared fail-open. The step opted into `validation_exhaustion.mode:
+    // 'default'` and its schema-rejection budget is exhausted — SETTLE the step SUCCESSFULLY with
+    // the declared `default_output` instead of terminalizing. `dispatchError` stays `null` here
+    // (deliberately NOT set) so every existing downstream success path runs UNMODIFIED: Step 5
+    // (dispatch-failure handling) is skipped, Step 5b's gate fires for `human_confirmed` steps on
+    // the default_output preview (pin z falls out of this structurally — D7), and Step 6's
+    // complete-settle records the step in `completed_steps`. Step 6 does NOT read the `output`
+    // local at all — the step's durable output travels via the EVIDENCE SNAPSHOT's
+    // `output_summary` (what `buildEvidenceByStep`/eligibility read for downstream steps) — so
+    // this branch does exactly two things and no more: (1) set `output` for the envelope/gate
+    // preview; (2) push ONE synthesized SUCCESS evidence snapshot mirroring the dispatch-loop's
+    // own success `captureEvidence` call (the same one PR-1's FAILURE snapshot above was modeled
+    // on, for the success shape instead).
+    const defaultOutput = stepDef!.validation_exhaustion!.default_output as Record<string, unknown>;
+    output = defaultOutput;
+    const settledAt = new Date();
+    const defaultProfile = stepDef?.agent_profile;
+    const defaultProfileData =
+      defaultProfile !== undefined ? definition.resolved_profiles?.[defaultProfile] : undefined;
+    const defaultSnap: EvidenceSnapshot = captureEvidence({
+      stepId: options.command,
+      startedAt: settledAt,
+      completedAt: settledAt,
+      input: effectiveInput,
+      output: defaultOutput,
+      diagnostics: {
+        input_token_estimate: inputTokenEstimate,
+        precondition_trace: preconditionTrace,
+        settled_by_default: true,
+        validation_rejections: exhaustion!.details['rejections'] as number,
+      },
+      ...(defaultProfileData !== undefined
+        ? { agentProfile: defaultProfile!, agentProfileHash: defaultProfileData.content_hash }
+        : {}),
+      ...(options.stepMeta?.toolCalls !== undefined
+        ? { toolCalls: options.stepMeta.toolCalls }
+        : {}),
+      ...(debugOutput !== undefined ? { debugOutput } : {}),
+      // Gate trace to agent steps only — drop silently for auto/adapter/handler steps. Mirrors
+      // the real dispatch-loop capture's own trace-spread conjunct exactly.
+      ...(stepDef?.execution === 'agent' && (options.trace !== undefined || walEntries.length > 0)
+        ? preNormalizedTrace !== undefined
+          ? { normalizedTrace: preNormalizedTrace }
+          : { trace: options.trace ?? [] }
+        : {}),
+    });
+    allEvidence.push(defaultSnap);
+    // Human-readable disclosure (record §4 — the fourth default-settle disclosure element the
+    // record enumerates) + the store-honesty advisory (§5c nuance 1: `countWarnings` are normally
+    // delivered ONLY on counted-rejection RETURN envelopes and DROPPED on the fall-through
+    // terminalization path — deliberately re-threaded here, for the default-settle success
+    // envelope only, so an undeclared-but-persisting store's advisory is not silently lost).
+    traceWarnings.push(
+      `Step '${options.command}' settled with its declared default_output after ` +
+        `${exhaustion!.details['rejections'] as number} schema rejection(s) ` +
+        `(validation_exhaustion.mode: 'default')`,
+    );
+    traceWarnings.push(...countWarnings);
+  } else if (bypassDispatch) {
     // issue #220: terminalize. `dispatchError` is PRE-SET to the minted VALIDATION_EXHAUSTED error
     // HERE, BEFORE the retry-wrap block below — that block's own `!bypassDispatch` guard is what
     // then keeps it from being wrapped: without dispatchError being non-null at this exact point,
@@ -2492,9 +2585,23 @@ export async function executeStep(
     ...(isComplete ? { terminal_reason: `Workflow completed.` } : {}),
   };
   // On the terminal transition, drain the complete/always finalizers before the single seal.
+  // issue #220 PR-2 (D6): stamp defaulted_steps onto the SEALED terminal record only — the
+  // non-terminal branch (`completeDraft`) is never stamped (FM-5 guard: it must never leak onto a
+  // record a later FAIL seal inherits).
   const finalRun: RunRecord = isComplete
-    ? await buildFinalizedSeal(definition, completeDraft, 'complete', options.registry)
+    ? stampDefaultedSteps(
+        await buildFinalizedSeal(definition, completeDraft, 'complete', options.registry),
+      )
     : completeDraft;
+  // issue #220 PR-2 (D6 write-site consumer): when the stamped seal record's defaulted_steps is
+  // non-empty but this store doesn't declare it durable, disclose the gap explicitly rather than
+  // silently losing the run-level marker on round-trip.
+  const defaultedStepsDurabilityWarning =
+    finalRun.defaulted_steps !== undefined &&
+    finalRun.defaulted_steps.length > 0 &&
+    !persistsField(store, 'defaulted_steps')
+      ? 'run-level defaultedness marker (defaulted_steps) not durable on this store'
+      : undefined;
 
   let savedRun: RunRecord;
   try {
@@ -2590,7 +2697,12 @@ export async function executeStep(
     status: 'ok',
     data: output,
     evidence: allEvidence,
-    warnings: mergeWarnings(traceWarnings, currentWarn, successWalCleanupWarning),
+    warnings: mergeWarnings(
+      traceWarnings,
+      currentWarn,
+      successWalCleanupWarning,
+      defaultedStepsDurabilityWarning,
+    ),
     errors: [],
     context_hint: orientation,
     run_phase: savedRun.run_phase,
@@ -2606,6 +2718,13 @@ export async function executeStep(
           preserved_foreign: adoptionPartition.preserved_foreign,
         }
       : {}),
+    // issue #220 PR-2 (D5/D6): settled_by_default set true on EXACTLY this success envelope, when
+    // THIS invocation settled via the declared default_output substitution. defaulted_steps read
+    // off `finalRun` — the STAMPED PRE-PERSIST seal record — never off the round-tripped
+    // `savedRun`, since a non-persisting store would silently drop the field from that round-trip
+    // and the qualifier must state the run's TRUE defaultedness.
+    ...(settledByDefault ? { settled_by_default: true } : {}),
+    ...(finalRun.defaulted_steps?.length ? { defaulted_steps: finalRun.defaulted_steps } : {}),
   };
 }
 
@@ -2751,9 +2870,20 @@ export async function submitHumanResponse(
     ...(isComplete ? { terminal_reason: `Workflow completed.` } : {}),
   };
   // On the gate-completion terminal transition, drain complete/always finalizers before seal.
+  // issue #220 PR-2 (D6): stamp defaulted_steps onto the SEALED terminal record only (never the
+  // non-terminal `gateDraft` — the FM-5 guard).
   const finalRun: RunRecord = isComplete
-    ? await buildFinalizedSeal(definition, gateDraft, 'complete', options.registry)
+    ? stampDefaultedSteps(
+        await buildFinalizedSeal(definition, gateDraft, 'complete', options.registry),
+      )
     : gateDraft;
+  // issue #220 PR-2 (D6 write-site consumer): see the Step-6 twin above.
+  const defaultedStepsDurabilityWarning =
+    finalRun.defaulted_steps !== undefined &&
+    finalRun.defaulted_steps.length > 0 &&
+    !persistsField(store, 'defaulted_steps')
+      ? 'run-level defaultedness marker (defaulted_steps) not durable on this store'
+      : undefined;
 
   let savedRun: RunRecord;
   try {
@@ -2792,11 +2922,17 @@ export async function submitHumanResponse(
     status: 'ok',
     data,
     evidence: [],
-    warnings: [],
+    // issue #220 PR-2 (D5): submitHumanResponse is a SEPARATE function with no D4
+    // `settledByDefault` local in scope — it does NOT set the per-settle `settled_by_default`
+    // envelope flag (do NOT add an evidence scan to recompute it). Its disclosure surface is the
+    // run-level `defaulted_steps` marker below, plus whatever the gate-open envelope already
+    // warned the human with.
+    warnings: mergeWarnings([], defaultedStepsDurabilityWarning),
     errors: [],
     context_hint: orientation,
     run_phase: savedRun.run_phase,
     next_actions: nextActions,
+    ...(finalRun.defaulted_steps?.length ? { defaulted_steps: finalRun.defaulted_steps } : {}),
   };
 }
 
@@ -3164,10 +3300,24 @@ async function executeChainInternal(
           ? 'complete'
           : 'fail'
       : undefined;
+    // issue #220 PR-2 (D6): stamp defaulted_steps ONLY on the 'complete' seal — a guard that FAILS
+    // or ABORTS the run does not get the qualifier (the FM-5 guard: never on a non-complete
+    // terminal, and never on the non-terminal `guardResult` passthrough).
     const guardSealed =
-      guardOutcome !== undefined
-        ? await buildFinalizedSeal(definition, guardResult, guardOutcome, options.registry)
-        : guardResult;
+      guardOutcome === 'complete'
+        ? stampDefaultedSteps(
+            await buildFinalizedSeal(definition, guardResult, guardOutcome, options.registry),
+          )
+        : guardOutcome !== undefined
+          ? await buildFinalizedSeal(definition, guardResult, guardOutcome, options.registry)
+          : guardResult;
+    // issue #220 PR-2 (D6 write-site consumer): see the Step-6 twin above.
+    const guardDefaultedStepsDurabilityWarning =
+      guardSealed.defaulted_steps !== undefined &&
+      guardSealed.defaulted_steps.length > 0 &&
+      !persistsField(store, 'defaulted_steps')
+        ? 'run-level defaultedness marker (defaulted_steps) not durable on this store'
+        : undefined;
 
     // Persist the guard step result.
     let persistedGuardRun: RunRecord;
@@ -3212,11 +3362,16 @@ async function executeChainInternal(
         data: {},
         // The guard's own evidence entry, captured before the finalizer drain appended any.
         evidence: guardOwnEvidence,
-        warnings: [],
+        warnings: mergeWarnings([], guardDefaultedStepsDurabilityWarning),
         errors: [],
         context_hint: contextHint,
         run_phase: persistedGuardRun.run_phase,
         next_actions: [],
+        // issue #220 PR-2 (D6): read off `guardSealed` — the stamped PRE-PERSIST record — never
+        // the round-tripped `persistedGuardRun`, so a non-persisting store can't silently drop it.
+        ...(guardSealed.defaulted_steps?.length
+          ? { defaulted_steps: guardSealed.defaulted_steps }
+          : {}),
       };
     }
 
