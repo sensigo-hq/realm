@@ -1,7 +1,7 @@
 // replay command — re-evaluates preconditions with modified step outputs (read-only simulation).
 import { Command } from 'commander';
 import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
-import { checkPreconditions } from '@sensigo/realm';
+import { checkPreconditions, buildSettlementNamespace } from '@sensigo/realm';
 import { formatPrecondColumn } from './replay-format.js';
 import type { ReplayStore } from '../store/replay-store.js';
 
@@ -87,6 +87,15 @@ export function replayRun(
     if (snap.kind === 'gate_response') continue;
     evidenceByStep[snap.step_id] = snap.output_summary;
   }
+  // issue #220 §4c (PR-3, D5/M7): mint `$settlement` via the SAME shared helper core's
+  // buildEvidenceByStep uses, so a $settlement-referencing precondition's replay verdict can
+  // never structurally diverge from the live engine's. Set BEFORE the clone loop below — that
+  // loop's own structuredClone(...) then deep-copies this object into replayEvidenceByStep as an
+  // INDEPENDENT copy for free (mint ONCE, clone generically — never call
+  // buildSettlementNamespace a second time, and never assign the same object reference to both
+  // maps: a shared reference would let a `--with` override's deepSet mutate the "original"
+  // baseline too, corrupting preconditions_original).
+  evidenceByStep['$settlement'] = buildSettlementNamespace(run);
 
   // Build replay evidence as a deep clone, then apply overrides.
   // structuredClone prevents nested object mutations from affecting the original evidence map.

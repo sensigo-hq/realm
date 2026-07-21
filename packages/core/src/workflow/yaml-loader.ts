@@ -64,11 +64,25 @@ function validateConditionLeaf(
   }
 
   if (split.kind === 'path') {
-    // A precondition is always a comparison; a bare path is not a valid precondition.
+    // A precondition is always a comparison; a bare path is not a valid precondition. This check
+    // stays FIRST (before the `$settlement` branch below) — a bare `$settlement.<dep>.<field>` on
+    // `preconditions` is refused HERE, for the pre-existing "must be a comparison" reason, not the
+    // $settlement one-hop reason (issue #220 §4c pin kk: the precondition witness for a
+    // $settlement leaf must use the comparison spelling).
     if (surface === 'preconditions') {
       errors.push(
         `Step '${stepName}': precondition '${leaf}' must be a comparison (e.g. "step.field >= 1").`,
       );
+      return;
+    }
+    // issue #220 §4c (PR-3): `$settlement.<dep>.<field>` handling lives HERE, in
+    // validateConditionLeaf, branching on the LHS first segment — NOT in isPathShaped (a
+    // documented generic zero-dependency splitter; embedding `$settlement` there would widen its
+    // contract for every caller) and NOT as an arm on validateWhenReference (invoked only under
+    // `surface === 'when'` — an arm there would never fire for abort_unless/preconditions). This
+    // fires on ALL THREE surfaces since it runs BEFORE the generic isPathShaped check below.
+    if (split.path.split('.')[0] === '$settlement') {
+      validateSettlementReference(split.path, surface, leaf, stepName, dependsOn, errors);
       return;
     }
     if (!isPathShaped(split.path)) {
@@ -82,6 +96,10 @@ function validateConditionLeaf(
   }
 
   // comparison
+  if (split.lhsPath.split('.')[0] === '$settlement') {
+    validateSettlementReference(split.lhsPath, surface, leaf, stepName, dependsOn, errors);
+    return;
+  }
   if (!isPathShaped(split.lhsPath)) {
     errors.push(
       `Step '${stepName}': '${surface}' leaf '${leaf}' must have a path on the left-hand side (got '${split.lhsPath}').`,
@@ -89,6 +107,58 @@ function validateConditionLeaf(
     return;
   }
   if (surface === 'when') validateWhenReference(split.lhsPath, stepName, dependsOn, errors);
+}
+
+/**
+ * issue #220 §4c (PR-3): validates a `$settlement.<dep>.<field>` reference reached from ANY of
+ * the three condition surfaces (when/abort_unless/preconditions) — unlike the legacy
+ * depends_on/run.params check ({@link validateWhenReference}, `when`-only), this fires on all
+ * three because it is invoked directly from {@link validateConditionLeaf}, before the
+ * `surface === 'when'` gate. The caller must NOT fall through to the generic `isPathShaped` check
+ * afterward (which rejects `$` outright) — this function's callers always `return` immediately.
+ */
+function validateSettlementReference(
+  path: string,
+  surface: ConditionSurface,
+  leaf: string,
+  stepName: string,
+  dependsOn: string[],
+  errors: string[],
+): void {
+  // Path-shape: a NARROWING for this ONE prefix only (never a general `$` allowance) — the
+  // remainder after `$settlement` must itself be path-shaped. Rejects `$foo`, a bare `$`, and
+  // garbage remainders like `$settlement.a b`.
+  //
+  // issue #220 PR-3 ReDoS correction (CodeQL HIGH, CWE-1333): the inner character class must NOT
+  // include `.` — `[A-Za-z0-9_.-]` let a `.` be consumed either by the inner `*` or by the next
+  // outer-group iteration's leading `\.`, an ambiguous nested quantifier causing catastrophic
+  // backtracking on inputs like `$settlement.a.a.a…!`. With `.` removed from the inner class
+  // (`[A-Za-z0-9_-]`), each `.` can ONLY start a new group — the parse is unambiguous, linear-time,
+  // no backtracking. Accepts every valid `$settlement.<dep>.<field>` path identically; stricter
+  // only on pathological consecutive dots (`$settlement.dep..field`), which is more correct.
+  if (!/^\$settlement(\.[A-Za-z_][A-Za-z0-9_-]*)*$/.test(path)) {
+    errors.push(
+      `Step '${stepName}': '${surface}' leaf '${leaf}' has an invalid '$settlement' reference ` +
+        `'${path}' — expected '$settlement.<dep>.<field>'.`,
+    );
+    return;
+  }
+  // One-hop (§4c-S4): the SECOND segment must be a DIRECT dependency of this step.
+  const dep = path.split('.')[1];
+  if (dep === undefined) {
+    errors.push(
+      `Step '${stepName}': '${surface}' leaf '${leaf}' references '$settlement' with no ` +
+        `dependency segment — expected '$settlement.<dep>.<field>' where '<dep>' is a direct dependency.`,
+    );
+    return;
+  }
+  if (!dependsOn.includes(dep)) {
+    errors.push(
+      `Step '${stepName}': '${surface}' references '$settlement.${dep}' — '${dep}' is not in ` +
+        `its depends_on [${dependsOn.join(', ')}]. '$settlement' paths must reference a direct ` +
+        `dependency (one-hop rule).`,
+    );
+  }
 }
 
 /**
@@ -627,6 +697,17 @@ function parseWorkflowString(
       continue;
     }
     const step = stepRaw as Record<string, unknown>;
+
+    // issue #220 §4c (PR-3): HOISTED out of the `when`-only block below (was block-local there) so
+    // ALL THREE condition surfaces (when/abort_unless/preconditions) can thread the real
+    // depends_on list into validateConditionLeaf's `$settlement` one-hop check. Previously
+    // abort_unless/preconditions passed a literal `[]` (no reference validation existed for them
+    // at all); the legacy when-only depends_on/run.params check (validateWhenReference) is
+    // UNCHANGED — it still fires ONLY for `surface === 'when'`. This is a LIFT, not a new
+    // computation — byte-identical to the previous block-local `dependsOn` for `when`'s own use.
+    const dependsOn = Array.isArray(step['depends_on'])
+      ? (step['depends_on'] as unknown[]).filter((d): d is string => typeof d === 'string')
+      : [];
 
     // WARN (do not reject) on an unknown step key — runs after template resolution above, so a
     // template-expanded step's keys are checked too. Same non-breaking posture as the
@@ -1258,9 +1339,6 @@ function parseWorkflowString(
     // Validate when: string | string[] of single-comparison/bare-path leaves (implicit AND).
     if ('when' in step && step['when'] !== undefined) {
       const rawWhen = step['when'];
-      const dependsOn = Array.isArray(step['depends_on'])
-        ? (step['depends_on'] as unknown[]).filter((d): d is string => typeof d === 'string')
-        : [];
       if (typeof rawWhen === 'string') {
         if (rawWhen.trim() === '') {
           errors.push(`Step '${stepName}': 'when' must be a non-empty string`);
@@ -1284,14 +1362,16 @@ function parseWorkflowString(
       }
     }
 
-    // Validate abort_unless leaf shape (guard steps only; reference check is when-only).
+    // Validate abort_unless leaf shape (guard steps only; the LEGACY depends_on/run.params
+    // reference check is when-only — but issue #220 §4c's `$settlement` one-hop check fires here
+    // too, via the hoisted `dependsOn`, SCOPED to `$settlement.`-prefixed paths only).
     if (step['abort_unless'] !== undefined && step['execution'] === 'guard') {
       const rawAbort = step['abort_unless'];
       if (typeof rawAbort === 'string') {
         if (rawAbort.trim() === '') {
           errors.push(`Step '${stepName}': 'abort_unless' must be a non-empty string`);
         } else {
-          validateConditionLeaf('abort_unless', rawAbort, stepName, [], errors);
+          validateConditionLeaf('abort_unless', rawAbort, stepName, dependsOn, errors);
         }
       } else if (Array.isArray(rawAbort)) {
         if (rawAbort.length === 0) {
@@ -1303,7 +1383,7 @@ function parseWorkflowString(
                 `Step '${stepName}': 'abort_unless' array entries must be non-empty strings`,
               );
             } else {
-              validateConditionLeaf('abort_unless', leaf, stepName, [], errors);
+              validateConditionLeaf('abort_unless', leaf, stepName, dependsOn, errors);
             }
           }
         }
@@ -1312,7 +1392,9 @@ function parseWorkflowString(
       }
     }
 
-    // Validate preconditions leaf shape (each must be a single comparison).
+    // Validate preconditions leaf shape (each must be a single comparison). Reference check is
+    // `$settlement`-scoped only (issue #220 §4c) — a non-`$settlement` precondition has no
+    // depends_on/run.params check (unchanged from before this PR).
     if (step['preconditions'] !== undefined) {
       const rawPre = step['preconditions'];
       if (!Array.isArray(rawPre)) {
@@ -1322,7 +1404,7 @@ function parseWorkflowString(
           if (typeof leaf !== 'string' || leaf.trim() === '') {
             errors.push(`Step '${stepName}': 'preconditions' entries must be non-empty strings`);
           } else {
-            validateConditionLeaf('preconditions', leaf, stepName, [], errors);
+            validateConditionLeaf('preconditions', leaf, stepName, dependsOn, errors);
           }
         }
       }

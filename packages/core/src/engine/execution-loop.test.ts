@@ -1893,6 +1893,59 @@ describe('executeStep', () => {
       expect(updatedRun.pending_gate).toBeUndefined();
     });
 
+    // issue #220 §4c (PR-3, pin jj): the unresolved-placeholder regex widened to admit a
+    // `$`-leading reference — a typo'd $settlement path in a gate message must be DETECTED as
+    // unresolved, not silently left unmatched (renderTemplate itself already leaves the
+    // placeholder text verbatim when unresolved; this is a detection-side widening).
+    it('pin (jj): gate.message with an unresolvable $settlement reference is detected as an unresolved placeholder', async () => {
+      const gateMessageSettlementWf: WorkflowDefinition = {
+        id: 'gate-msg-settlement-wf',
+        name: 'Gate Message Settlement',
+        version: 1,
+        steps: {
+          step1: {
+            description: 'Prior step — never settles a field named bogus_field',
+            execution: 'auto',
+            depends_on: [],
+          },
+          gate_step: {
+            description: 'Gate step referencing an unresolvable $settlement field',
+            execution: 'auto',
+            trust: 'human_confirmed',
+            depends_on: ['step1'],
+            gate: {
+              choices: ['approve', 'reject'],
+              message: 'Defaulted: {{ $settlement.step1.bogus_field }}',
+            },
+          },
+        },
+      };
+      const { run: run } = await store.create({
+        workflowId: 'gate-msg-settlement-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      await executeStep(store, gateMessageSettlementWf, {
+        runId: run.id,
+        command: 'step1',
+        input: {},
+        dispatcher: async () => ({}),
+      });
+
+      const envelope = await executeStep(store, gateMessageSettlementWf, {
+        runId: run.id,
+        command: 'gate_step',
+        input: {},
+        dispatcher: async () => ({}),
+      });
+
+      expect(envelope.status).toBe('error');
+      expect(envelope.errors[0]).toContain('gate.message has unresolvable references');
+      expect(envelope.errors[0]).toContain('$settlement.step1.bogus_field');
+      const updatedRun = await store.get(run.id);
+      expect(updatedRun.pending_gate).toBeUndefined();
+    });
+
     it('happy path: gate.message with self-reference resolves and populates gate.display and resolved_message', async () => {
       const gateMessageWf: WorkflowDefinition = {
         id: 'gate-msg-happy-wf',

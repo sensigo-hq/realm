@@ -6,7 +6,7 @@ import type {
   StepDefinition,
   TriggerRule,
 } from '../types/workflow-definition.js';
-import type { RunRecord, SkipDetail } from '../types/run-record.js';
+import type { RunRecord, SkipDetail, StepDiagnostics } from '../types/run-record.js';
 import type { RunPhase } from '../types/run-record.js';
 import { resolvePath } from './render-template.js';
 import { splitComparison, type ComparisonOp } from './comparison-expr.js';
@@ -294,7 +294,82 @@ export function buildEvidenceByStep(run: RunRecord): Record<string, Record<strin
       evidenceByStep[snap.step_id] = snap.output_summary;
     }
   }
+  // issue #220 §4c (PR-3): mint the `$settlement` evaluation-root namespace AFTER the per-step
+  // loop above — so the engine's own key wins over any hostile pre-upgrade evidence snapshot
+  // that happens to carry `step_id === '$settlement'` (pin ii; `$settlement` has been a reserved,
+  // load-refused step name since PR-1, so no LEGITIMATE run can ever produce one, but a synthetic
+  // or pre-reservation record could). This single assignment is the ONE chokepoint through which
+  // every evaluation surface (when/guards/preconditions/input_map/gate contexts/handler
+  // context.resources/template rendering) inherits the namespace — see buildSettlementNamespace's
+  // own doc for the mint's domain/materialization/perf contract.
+  evidenceByStep['$settlement'] = buildSettlementNamespace(run);
   return evidenceByStep;
+}
+
+/**
+ * Builds the `$settlement` evaluation-root namespace (issue #220 §4c, PR-3) — one entry per
+ * SETTLED step (`completed_steps ∪ failed_steps` — membership-gated, §4c-pass S3), each carrying
+ * that step's fallback-provenance: `{ settled_by_default, validation_rejections }`, derived from
+ * its last non-gate_response evidence snapshot's `diagnostics` (issue #220 PR-2 fields).
+ *
+ * **DOMAIN — membership-gated, NOT evidence-derived.** `run.evidence` over-includes steps that
+ * are NOT settled: a compensating-unclaim AUDIT snapshot, a guard-ABORT snapshot (the step lands
+ * in `skipped_steps`, never completed/failed), a gate-open preview snapshot for a still-pending
+ * gate. Keying on the evidence array directly would fabricate a `settled_by_default: false` entry
+ * for every one of those — so this function iterates `completed_steps ∪ failed_steps` ONLY.
+ * Skipped steps get NO entry; absence is never a third status.
+ *
+ * **DATA SOURCE — the step's LAST snapshot with `kind !== 'gate_response'`, never simply "the
+ * last snapshot".** For a `human_confirmed` × `mode: 'default'` step, the settling EXECUTION
+ * snapshot (`diagnostics.settled_by_default: true`) is immediately followed, chronologically LAST,
+ * by a `gate_response` snapshot that carries NO `diagnostics` at all (the human's choice, not a
+ * re-execution). Reading "the last snapshot" unconditionally would read the gate_response, find no
+ * `diagnostics`, and materialize `settled_by_default: false` — silently ERASING the very
+ * disclosure PR-2 exists to deliver. This is the single most subtle load-bearing rule in this
+ * function; do not "simplify" it to a plain last-write-wins scan.
+ *
+ * **MATERIALIZATION — explicit, and OPTIONAL-CHAIN THE DIAGNOSTICS OBJECT, not just the field.**
+ * Every settled GUARD step (`pass` → `completed_steps`, `resolution_error` → `failed_steps`) and
+ * every settled FINALIZER step pushes its settle snapshot via `captureEvidence` WITHOUT a
+ * `diagnostics` param at all (the param is optional) — both classes are squarely IN this
+ * function's domain (any workflow with an `abort_unless` guard hits this). A raw
+ * `diag.settled_by_default ?? false` THROWS a `TypeError` on those (the property access happens
+ * BEFORE `??` ever runs), crashing every evaluation surface on any run containing a guard or
+ * finalizer step. `diag?.settled_by_default ?? false` is required: `?.` covers the missing
+ * DIAGNOSTICS OBJECT, `?? false`/`?? 0` covers the missing FIELD (present-but-not-default settles
+ * never set `settled_by_default` at all — it is absent, never `false` — so the fallback does real
+ * work even when `diag` itself exists).
+ *
+ * **PERFORMANCE — one O(E) pass, never a per-step reverse-scan.** This function (transitively,
+ * via `buildEvidenceByStep`) runs on every eligibility pass AND repeatedly inside
+ * `propagateSkips`'s `while (changed)` loop — a `[...run.evidence].reverse().find(...)` per
+ * settled step would make the whole call O(steps × evidence), quadratic on the hot path. Instead:
+ * one pass over `run.evidence` records the last non-gate_response `diagnostics` per `step_id`
+ * (last-write-wins, since evidence is append-ordered), then the domain is projected onto that map.
+ *
+ * Pure, no I/O. Exported (beside `buildEvidenceByStep`) so `replay.ts` can mint an IDENTICAL
+ * namespace from the live run record — the shared helper is what makes replay's verdict
+ * structurally unable to diverge from the live engine's for a `$settlement`-referencing
+ * precondition (issue #220 §4c-M7).
+ */
+export function buildSettlementNamespace(
+  run: RunRecord,
+): Record<string, { settled_by_default: boolean; validation_rejections: number }> {
+  const lastDiag: Record<string, StepDiagnostics | undefined> = {};
+  for (const snap of run.evidence) {
+    if (snap.kind !== 'gate_response') {
+      lastDiag[snap.step_id] = snap.diagnostics;
+    }
+  }
+  const result: Record<string, { settled_by_default: boolean; validation_rejections: number }> = {};
+  for (const step of [...run.completed_steps, ...run.failed_steps]) {
+    const diag = lastDiag[step];
+    result[step] = {
+      settled_by_default: diag?.settled_by_default ?? false,
+      validation_rejections: diag?.validation_rejections ?? 0,
+    };
+  }
+  return result;
 }
 
 /**

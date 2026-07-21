@@ -2433,7 +2433,12 @@ export async function executeStep(
         }
         throw err;
       }
-      const unresolved = [...raw.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)].map((m) => m[1]);
+      // issue #220 §4c (PR-3, D4): widened to admit a `$`-leading reference (e.g.
+      // `{{ $settlement.step.field }}`) so a typo'd $settlement path in a gate message is
+      // DETECTED as an unresolved placeholder here, not silently left unmatched by this regex
+      // (renderTemplate itself already leaves an unresolved ref's placeholder text verbatim in
+      // `raw` — this is purely a detection-side widening, no change to render behavior).
+      const unresolved = [...raw.matchAll(/\{\{\s*([\w.$-]+)\s*\}\}/g)].map((m) => m[1]);
       if (unresolved.length > 0) {
         return makeErrorEnvelope(
           options,

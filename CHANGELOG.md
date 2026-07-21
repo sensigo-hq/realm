@@ -59,6 +59,25 @@ Record<string, number>` (additive, joins the #188 `LoadBearingRunRecordField` cl
   disclosure-integrity advisory, alongside the existing read-site-consumer class) — a store that
   doesn't declare it durable draws an explicit warning rather than silently losing the marker.
 
+- **The `$settlement` evaluation-root namespace, PR-3 (issue #220) — the final piece.** Exposes
+  PR-2's fallback-provenance disclosure to every workflow evaluation surface: for each step that
+  has SETTLED (`completed_steps ∪ failed_steps`), `$settlement.<step>.settled_by_default` and
+  `$settlement.<step>.validation_rejections` let an author branch on whether a dependency
+  default-settled — `when: ["$settlement.<dep>.settled_by_default == false"]`,
+  `abort_unless: [...]` on a guard, a `precondition`, or (via the nested
+  `context.resources.$settlement.<dep>.…` spelling) `input_map`/gate messages/template filters.
+  Minted by a new pure exported helper, `buildSettlementNamespace(run)`
+  (`packages/core/src/engine/eligibility.ts`), called from the ONE core chokepoint
+  (`buildEvidenceByStep`) so every engine surface inherits it for free, and separately from
+  `realm replay` (which builds its own evidence map) so a replayed precondition can never diverge
+  from the live verdict. A `$settlement.<dep>` reference where `<dep>` is not a direct dependency
+  of the referencing step is **load-refused** on `when`/`abort_unless`/`preconditions` (the same
+  one-hop rule `when` already enforces for ordinary step references) — see the new `$settlement`
+  section in `docs/reference/yaml-schema.md` for the full per-root spelling table and the named
+  residual (a bad FIELD name, as opposed to a bad dependency name, is not load-refused anywhere;
+  `input_map`/templates resolve it to `undefined` silently, matching their existing behavior for
+  any other unresolvable reference).
+
 ### Changed
 
 - **AUTO-ENROLLMENT (issue #220): every `execution: 'agent'` step with a countable schema now
@@ -84,6 +103,12 @@ Record<string, number>` (additive, joins the #188 `LoadBearingRunRecordField` cl
 string[]` (mirrors `RunRecord.defaulted_steps` on a terminal `complete` envelope).** Both are
   absent on every envelope for a workflow that doesn't use `mode: 'default'` — no observable change
   for existing consumers.
+- **`buildEvidenceByStep` (a PUBLIC core export, issue #220 PR-3) now always includes a
+  `$settlement` key in its returned map — any external consumer iterating its keys as step ids
+  will now also see `$settlement`.** No workflow BEHAVIOUR changes: a workflow that never
+  references `$settlement` evaluates identically to before (the added key is inert unless
+  referenced) — but the public-export OUTPUT SHAPE does gain the key on every call, hence the
+  `Changed` grade rather than a claim of byte-identical output.
 
 ---
 
