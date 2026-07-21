@@ -128,7 +128,15 @@ function validateSettlementReference(
   // Path-shape: a NARROWING for this ONE prefix only (never a general `$` allowance) — the
   // remainder after `$settlement` must itself be path-shaped. Rejects `$foo`, a bare `$`, and
   // garbage remainders like `$settlement.a b`.
-  if (!/^\$settlement(\.[A-Za-z_][A-Za-z0-9_.-]*)*$/.test(path)) {
+  //
+  // issue #220 PR-3 ReDoS correction (CodeQL HIGH, CWE-1333): the inner character class must NOT
+  // include `.` — `[A-Za-z0-9_.-]` let a `.` be consumed either by the inner `*` or by the next
+  // outer-group iteration's leading `\.`, an ambiguous nested quantifier causing catastrophic
+  // backtracking on inputs like `$settlement.a.a.a…!`. With `.` removed from the inner class
+  // (`[A-Za-z0-9_-]`), each `.` can ONLY start a new group — the parse is unambiguous, linear-time,
+  // no backtracking. Accepts every valid `$settlement.<dep>.<field>` path identically; stricter
+  // only on pathological consecutive dots (`$settlement.dep..field`), which is more correct.
+  if (!/^\$settlement(\.[A-Za-z_][A-Za-z0-9_-]*)*$/.test(path)) {
     errors.push(
       `Step '${stepName}': '${surface}' leaf '${leaf}' has an invalid '$settlement' reference ` +
         `'${path}' — expected '$settlement.<dep>.<field>'.`,

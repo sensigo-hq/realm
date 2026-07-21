@@ -89,6 +89,39 @@ steps:
         "invalid '$settlement' reference",
       );
     });
+
+    // issue #220 PR-3 ReDoS correction (CodeQL HIGH, CWE-1333): the vulnerable regex's inner
+    // character class included `.`, so a `.` could be consumed either by the inner `*` or by the
+    // next outer-group's leading `\.` — an ambiguous nested quantifier. One directly observable
+    // symptom of that ambiguity: the vulnerable regex ACCEPTED consecutive dots
+    // (`$settlement.dep..field`), since the inner `*` could swallow the second `.` as an ordinary
+    // character. The fixed regex (no `.` in the inner class) rejects them — a NON-FLAKY
+    // structural pin on the exact property the fix changes, with no timing dependency. `dep` here
+    // is a REAL dependency, so the one-hop check would otherwise pass — isolating the assertion to
+    // the path-shape check alone. A mutant that re-adds `.` to the inner class
+    // (`[A-Za-z0-9_.-]`) makes this input pass path-shape → this test reds.
+    it('$settlement.dep..field (consecutive dots) is refused at the path-shape check — the structural property that removes the ReDoS', () => {
+      expectThrows(
+        `
+id: settlement-dd-consecutive-dots-wf
+name: Settlement DD Consecutive Dots
+version: 1
+steps:
+  dep:
+    description: Dep
+    execution: auto
+    handler: h
+    depends_on: []
+  b:
+    description: B
+    execution: auto
+    handler: h
+    depends_on: [dep]
+    when: ["$settlement.dep..field"]
+`,
+        "invalid '$settlement' reference",
+      );
+    });
   });
 
   describe('(kk) one-hop load-refusal fires on ALL THREE surfaces', () => {
