@@ -195,6 +195,51 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
   });
 
   describe('(r) V-D6 run-level disclosure: defaulted_steps', () => {
+    it("control: a plain successful step with NO default-settled evidence reaches a terminal COMPLETE seal with defaulted_steps ABSENT (undefined), never an empty array — pins stampDefaultedSteps' byte-identity damage-rail (its `if (steps.length === 0) return sealDraft` early-return)", async () => {
+      // Deliberately a workflow with NO `validation_exhaustion` at all — the step submits VALID
+      // output on its first attempt (no exhaustion, no default-settle branch ever runs), so the
+      // evidence set stampDefaultedSteps scans at the Step-6 'complete' seal contains ZERO
+      // `diagnostics.settled_by_default` entries. This is the control the other (r) tests lack:
+      // every existing `defaulted_steps).toBeUndefined()` assertion elsewhere in this file is
+      // either on a FAIL-sealed record (never wrapped by stampDefaultedSteps at all) or a
+      // non-terminal Step-6 envelope (finalRun === the un-stamped completeDraft) — neither one
+      // actually calls stampDefaultedSteps with a zero-settled-by-default evidence set. This test
+      // does: a mutant that deletes stampDefaultedSteps' empty-check (so it unconditionally
+      // returns `{ ...sealDraft, defaulted_steps: steps }` with `steps === []`) would make
+      // `after.defaulted_steps` equal `[]` instead of `undefined` here — a plain `toBeUndefined()`
+      // catches that (`[]` is defined, and `expect([]).toBeUndefined()` fails).
+      const plainDef: WorkflowDefinition = {
+        id: 'vx-plain-wf',
+        name: 'VX Plain WF',
+        version: 1,
+        steps: {
+          draft: {
+            description: 'Draft',
+            execution: 'agent',
+            output_schema: OUTPUT_SCHEMA,
+          },
+        },
+      };
+      const { run } = await store.create({
+        workflowId: plainDef.id,
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const envelope = await executeStep(store, plainDef, {
+        runId: run.id,
+        command: 'draft',
+        input: VALID_OUTPUT,
+        dispatcher: echoDispatcher,
+      });
+
+      expect(envelope.status).toBe('ok');
+      const after = await store.get(run.id);
+      expect(after.terminal_state).toBe(true); // single-step workflow ⇒ Step-6 DOES seal 'complete'
+      expect(envelope.defaulted_steps).toBeUndefined();
+      expect(after.defaulted_steps).toBeUndefined(); // NOT [] — stampDefaultedSteps' early-return
+    });
+
     it('(a) a mid-workflow default-settled step with a LATER terminal step ⇒ the terminal ok envelope carries defaulted_steps containing that step', async () => {
       const def = makeDefaultDef({}, { finish: { description: 'Finish', execution: 'auto' } });
       const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
