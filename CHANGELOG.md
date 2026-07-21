@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
+## [0.30.0] — 2026-07-21
 
 ### Added
 
@@ -109,6 +109,20 @@ string[]` (mirrors `RunRecord.defaulted_steps` on a terminal `complete` envelope
   references `$settlement` evaluates identically to before (the added key is inert unless
   referenced) — but the public-export OUTPUT SHAPE does gain the key on every call, hence the
   `Changed` grade rather than a claim of byte-identical output.
+
+### Security
+
+- **`js-yaml` bumped 4.2.0 → 4.3.0 — fixes a HIGH-severity denial-of-service in the workflow YAML
+  parser ([GHSA-52cp-r559-cp3m](https://github.com/advisories/GHSA-52cp-r559-cp3m) / CVE-2026-59869,
+  CVSS 7.5).** A crafted chain of YAML merge keys (`<<: *anchor`, each mapping merging the previous)
+  could force quadratic CPU on linearly-sized input. 4.3.0 backports the `maxTotalMergeKeys` guard
+  (default 10000) — a pure resource bound, not a parsing-semantics change: every legitimate workflow
+  parses identically (realm authors no merge keys anywhere), while a pathological chain now throws a
+  catchable error surfaced as `RESOURCE_FORMAT_INVALID`. Within the existing `^4.2.0` range
+  (lockfile-only; no `package.json` change). realm's real-world exposure was LOW — every byte reaching
+  the parser is operator-trusted (workflow files, the deployment manifest); no agent/network/registry
+  path routes through `js-yaml` (the MCP surface is zod/JSON end-to-end) — but the fix is free,
+  behaviour-neutral, and clears the release audit gate (production `npm audit` now reports 0 high).
 
 ---
 
