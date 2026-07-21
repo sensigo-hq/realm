@@ -91,11 +91,20 @@ export interface StepDiagnostics {
    * Issue #220: stamped on a SUCCESS settle evidence snapshot when the step's accrued
    * `RunRecord.validation_rejections` count was > 0 at settle time ("succeeded after N
    * rejections") — free diagnostic, never gates anything. Also present on the synthesized
-   * evidence snapshot a `VALIDATION_EXHAUSTED` terminalization mints (the just-persisted count).
-   * Optional-additive: absent on every pre-#220 snapshot and on any snapshot for a step that was
-   * never rejected.
+   * evidence snapshot a `VALIDATION_EXHAUSTED` terminalization mints (the just-persisted count),
+   * and on the synthesized SUCCESS snapshot a declared default-settle mints (issue #220 PR-2 —
+   * see `settled_by_default` below). Optional-additive: absent on every pre-#220 snapshot and on
+   * any snapshot for a step that was never rejected.
    */
   validation_rejections?: number;
+  /**
+   * Issue #220 PR-2 (declared fail-open): `true` on the ONE synthesized SUCCESS evidence snapshot
+   * minted when a step's exhausted schema-rejection budget is settled via its declared
+   * `validation_exhaustion.default_output` rather than by the agent's own submission. Never present
+   * on any other snapshot (absent, never `false`) — a step that succeeded on its own submission,
+   * even one that previously accrued rejections, carries only `validation_rejections` here.
+   */
+  settled_by_default?: boolean;
 }
 
 export interface EvidenceSnapshot {
@@ -424,4 +433,15 @@ export interface RunRecord {
    * on any run with zero counted rejections so far.
    */
   validation_rejections?: Record<string, number>;
+  /**
+   * Issue #220 PR-2 (run-level disclosure, pin r): names of steps that settled via their declared
+   * `validation_exhaustion.default_output` substitution rather than the agent's own submission —
+   * a run-level convenience aggregate over the per-step `EvidenceSnapshot.diagnostics
+   * .settled_by_default` truth. Present only when non-empty; stamped ONLY on the terminal
+   * `'complete'`-sealed record by `stampDefaultedSteps` (see execution-loop.ts) — a run that later
+   * FAILS after a mid-workflow default-settle does NOT carry this field (the per-step evidence
+   * snapshot remains the durable per-step truth regardless; this is a named residual, not a false
+   * statement — see the design record). Additive-optional (the `validation_rejections` precedent).
+   */
+  defaulted_steps?: string[];
 }

@@ -35,6 +35,30 @@ Record<string, number>` (additive, joins the #188 `LoadBearingRunRecordField` cl
   (fail-open `mode`/`default_output`) and PR-3 (the `$settlement` mint) are separate, later
   changes — this PR is counting + terminalization only.
 
+- **Declared fail-open for bounded validation-rejection exhaustion, PR-2 (issue #220).**
+  `validation_exhaustion` gains `mode?: 'fail' | 'default'` and `default_output?: unknown` —
+  **strictly opt-in; every existing workflow keeps PR-1's `mode: 'fail'` behavior byte-for-byte,
+  with zero change to counting, terminalization, or #217's repair gate.** An author opting a step
+  into `mode: 'default'` must also declare `output_schema` and a `default_output` that validates
+  against it — enforced at LOAD TIME by reusing the exact runtime AJV validator
+  (`validateOutputSchema`), so a fallback that would itself fail runtime validation is refused
+  before the workflow ever registers. On exhaustion, the engine SETTLES the step successfully with
+  `default_output` instead of failing the run: the settle evidence is stamped
+  `diagnostics.settled_by_default: true` alongside `diagnostics.validation_rejections: N`; the
+  success `ResponseEnvelope` carries a matching top-level `settled_by_default: true` and a
+  human-readable disclosure line in `warnings` (both survive the MCP tool wrapper's strip). A
+  `human_confirmed`/`human_reviewed` step opens its gate on the `default_output` preview instead
+  (fail-safe — the human sees the substitution before it settles; a `reject` choice still settles
+  the step with that output — a rejecting human does not "un-default"). `RunRecord` gains an
+  additive-optional `defaulted_steps?: string[]` — a run-level convenience list of every step that
+  settled via its declared default in this run, stamped onto the sealed record ONLY on the
+  `'complete'` terminal transition (a run that later fails after a mid-workflow default-settle
+  does not carry this field on its `'fail'`-sealed record; the per-step evidence stamp is the
+  durable per-step truth regardless). `defaulted_steps` joins the #188
+  `LoadBearingRunRecordField` closed set under a new membership class (a write-site
+  disclosure-integrity advisory, alongside the existing read-site-consumer class) — a store that
+  doesn't declare it durable draws an explicit warning rather than silently losing the marker.
+
 ### Changed
 
 - **AUTO-ENROLLMENT (issue #220): every `execution: 'agent'` step with a countable schema now
@@ -48,6 +72,18 @@ Record<string, number>` (additive, joins the #188 `LoadBearingRunRecordField` cl
   (`create_workflow` never enforced either before this change).** `$settlement` joins both
   reservations as a new refusal on a name that was previously loader-legal (see the PR-ordering
   interlock note above).
+- **Two new loader `WarningCode`s for `validation_exhaustion`, PR-2 (issue #220):
+  `UNKNOWN_VALIDATION_EXHAUSTION_KEY` replaces PR-1's reuse of `UNKNOWN_STEP_KEY` for an
+  unrecognized sub-key (closes an incoherence against the structurally identical retry-key
+  family, which stays `warn`); `DEAD_VALIDATION_EXHAUSTION_CONFIG` warns when `default_output` is
+  declared without `mode: 'default'` (inert, not an error).** Both default to `warn` — no existing
+  workflow's load behavior changes.
+- **`ResponseEnvelope` gains two additive-optional top-level fields (issue #220 PR-2):
+  `settled_by_default?: boolean` (set only on the success envelope of a step that just settled via
+  its declared default, never on a gate-open or human-response envelope) and `defaulted_steps?:
+string[]` (mirrors `RunRecord.defaulted_steps` on a terminal `complete` envelope).** Both are
+  absent on every envelope for a workflow that doesn't use `mode: 'default'` — no observable change
+  for existing consumers.
 
 ---
 

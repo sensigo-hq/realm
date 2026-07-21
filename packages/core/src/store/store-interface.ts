@@ -3,11 +3,16 @@ import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
 /**
- * The load-bearing `RunRecord` fields whose ABSENCE the engine interprets (control flow / the
- * drift-detection pillar) — a store that drops one silently corrupts behavior, so it must
- * DECLARE which it round-trips (issue #188). This is a CLOSED set — only fields with a real,
- * verified read-site consumer (see `RunStore.persistedRunRecordFields`'s own doc for the
- * consumer list), not an open-ended "everything RunRecord might ever carry":
+ * The load-bearing `RunRecord` fields the engine treats specially enough that a store must
+ * DECLARE which it round-trips (issue #188). This is a CLOSED set — a field qualifies via EITHER
+ * (a) a real, verified READ-SITE consumer whose absence corrupts control flow (see
+ * `RunStore.persistedRunRecordFields`'s own doc for the consumer list) — the first four below —
+ * OR (b) a WRITE-SITE disclosure-integrity advisory, whose non-durability is surfaced LOUDLY
+ * (a runtime warning) rather than silently dropped — `defaulted_steps` (issue #220 PR-2), which
+ * has no read-site consumer in-repo today (reading it is PR-3's `$settlement` namespace) but whose
+ * silent loss on a non-declaring store would misrepresent a run's true defaultedness to any
+ * external consumer inspecting the persisted record directly. Not an open-ended "everything
+ * RunRecord might ever carry":
  *  - `capability_blocks` — read by `findCapabilityBlockedSteps` (capability.ts), which returns
  *    `[]` on `undefined`; a store that drops it makes a genuinely-blocked step silently look
  *    unblocked to `get_run_state` / `list` / `run-agent`.
@@ -22,12 +27,18 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
  *    zero every write, so a persistently-invalid agent step never reaches the threshold and the
  *    exhaustion terminalization this field exists for silently never fires (the wedge #220 kills
  *    quietly resurrects on such a store).
+ *  - `defaulted_steps` — a run-level convenience aggregate of steps that settled via their
+ *    declared `validation_exhaustion.default_output` (issue #220 PR-2). No read-site consumer
+ *    in-repo (PR-3's `$settlement` namespace reads per-step evidence instead); a store that drops
+ *    it loses only the run-level convenience marker — the per-step evidence truth is unaffected —
+ *    but the engine surfaces that loss as an explicit envelope warning rather than staying silent.
  */
 export type LoadBearingRunRecordField =
   | 'capability_blocks'
   | 'workflow_context_snapshots'
   | 'extension_identity'
-  | 'validation_rejections';
+  | 'validation_rejections'
+  | 'defaulted_steps';
 
 export interface CreateRunOptions {
   workflowId: string;

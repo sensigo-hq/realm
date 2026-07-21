@@ -120,6 +120,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     'workflow_context_snapshots',
     'extension_identity',
     'validation_rejections',
+    'defaulted_steps',
   ]);
 
   constructor(runsDir?: string) {
