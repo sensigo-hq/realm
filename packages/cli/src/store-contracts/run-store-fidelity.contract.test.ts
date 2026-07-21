@@ -33,6 +33,7 @@ describe('JsonFileStore — RunStore fidelity TCK conformance (issue #188)', () 
       expect(store.persistedRunRecordFields?.has('capability_blocks')).toBe(true);
       expect(store.persistedRunRecordFields?.has('workflow_context_snapshots')).toBe(true);
       expect(store.persistedRunRecordFields?.has('extension_identity')).toBe(true);
+      expect(store.persistedRunRecordFields?.has('validation_rejections')).toBe(true);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

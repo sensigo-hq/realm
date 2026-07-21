@@ -48,6 +48,7 @@ export {
   executeChain,
   buildNextActions,
   buildPreExecutionErrorEnvelope,
+  DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
 } from './engine/execution-loop.js';
 export type { SubmitGateOptions, ExecuteChainOptions } from './engine/execution-loop.js';
 export {

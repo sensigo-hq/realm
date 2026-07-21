@@ -13,6 +13,7 @@ import {
   capabilityWarning,
   buildFailedAttemptRecord,
   WorkflowError,
+  DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
   type RunStore,
   type WorkflowDefinition,
   type StepDefinition,
@@ -402,9 +403,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         if (stepDef.execution === 'agent') {
           // Resolve template-expanded prompt via buildNextActions so {{ context.resources.* }}
           // references are substituted before the LLM call. Pure w.r.t. `definition`/`currentRun`,
-          // both unchanged across repair attempts (pre-claim validation is write-free — nothing is
-          // ever persisted on a rejected attempt, per execute-step.ts) — safe to recompute per
-          // iteration.
+          // both unchanged across repair attempts — a rejected attempt no longer leaves
+          // `currentRun` itself stale relative to what's persisted (issue #220: countRejection DOES
+          // persist a bounded rejection counter on a counted rejection — "nothing is ever
+          // persisted on a rejected attempt" is FALSE as of #220), but `currentRun`/`definition`
+          // are still safe to recompute per iteration here regardless, since neither is read from
+          // again until the NEXT step (this step's own next_actions/prompt derivation never
+          // consults `validation_rejections`).
           const nextActions = buildNextActions(definition, currentRun);
           const nextAction =
             nextActions.find(
@@ -439,6 +444,22 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             const descPreview = stepDef.description.slice(0, 80);
             console.log(`\n→ [agent] ${stepName}`);
             console.log(`  ${descPreview}${stepDef.description.length > 80 ? '…' : ''}`);
+
+            // issue #220 deliverable 7 — drive-time coherence warn: once per step (gated on the
+            // same `repairsUsed === 0` this banner uses), warn when the repair budget itself
+            // (schemaRetries + 1 attempts) exceeds the engine's own exhaustion threshold for this
+            // step — operator intent would be silently truncated mid-loop (the drive keeps
+            // repairing past the point the engine terminalizes the step with VALIDATION_EXHAUSTED).
+            const exhaustionThreshold =
+              stepDef.validation_exhaustion?.threshold ?? DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD;
+            if (schemaRetries + 1 > exhaustionThreshold) {
+              console.error(
+                `  ⚠ --schema-retries ${schemaRetries} (repair budget ${schemaRetries + 1} attempts) ` +
+                  `exceeds step '${stepName}''s validation-exhaustion threshold ` +
+                  `(${exhaustionThreshold}) — the engine will terminalize this step before the ` +
+                  `repair loop's own budget is exhausted.`,
+              );
+            }
           }
 
           if (stepDef.tools && stepDef.tools.length > 0 && mcpClient) {
@@ -636,8 +657,14 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // lands here — the gate then fails CLOSED (repair forfeited, today's failure path). See
         // run-agent.test.ts's "chained-auto no-false-repair" and concurrent-writer tests.
         //
-        // #220 must keep rejected attempts write-free w.r.t. the run record (or report the
-        // pre-write version in the envelope), else repairs 2..N silently vanish — see test 3's pin.
+        // issue #220 (SHIPPED): countRejection now persists a bounded rejection counter via a
+        // real CAS write on a counted rejection — rejected attempts are NO LONGER write-free w.r.t.
+        // the run record. What keeps this conjunct sound anyway is bump-and-report: the write's
+        // return value is discarded, and the rejection's own ENVELOPE keeps reporting the
+        // PRE-write version (the Step-1 `run`), so `result.run_version` still equals
+        // `versionBeforeAttempt` here across repairs 2..N. Pin (a) (bump-and-report) guards this
+        // invariant — see execution-loop.ts's countRejection for the mechanism, and
+        // packages/core/src/engine/validation-exhaustion.test.ts's pin (a) for the pin.
         if (
           result.status === 'error' &&
           (result.error_code === 'VALIDATION_OUTPUT_SCHEMA' ||

@@ -292,6 +292,17 @@ export interface StepDefinition {
   trust?: TrustLevel;
   timeout_seconds?: number;
   retry?: RetryConfig;
+  /**
+   * Issue #220 (PR-1 subset — `mode`/`default_output` are NOT yet supported; a future PR extends
+   * this shape): bounds the run of persistent schema-rejections on this step. Only valid on
+   * `execution: 'agent'` steps (the countable set — VALIDATION_INPUT_SCHEMA/
+   * VALIDATION_OUTPUT_SCHEMA — is agent-only). `threshold` overrides
+   * `DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD` (6) for THIS step; must be a positive integer
+   * (`1` is legal and documented as disabling in-drive schema-repair, since the very first
+   * rejection then already meets the threshold). Absent ⇒ every countable agent step is
+   * auto-enrolled at the default threshold — there is no reachable per-step opt-out in PR-1.
+   */
+  validation_exhaustion?: { threshold?: number };
   /** Plain-English instructions for the agent at this step. */
   instructions?: string;
   /**
@@ -402,6 +413,7 @@ export const KNOWN_STEP_KEYS = [
   'trust',
   'timeout_seconds',
   'retry',
+  'validation_exhaustion',
   'instructions',
   'prompt',
   'display',

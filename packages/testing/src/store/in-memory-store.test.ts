@@ -58,6 +58,7 @@ const ALL_FIELDS: LoadBearingRunRecordField[] = [
   'capability_blocks',
   'workflow_context_snapshots',
   'extension_identity',
+  'validation_rejections',
 ];
 
 describe('InMemoryStore — RunStore fidelity TCK conformance (issue #188)', () => {

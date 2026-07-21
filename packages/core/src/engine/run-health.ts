@@ -42,9 +42,13 @@
 //      caller still classifies correctly on age alone.
 //
 // Honest-admission rule (Celery-corrected, record §1): `never_claimed_idle`'s reason text NEVER
-// claims rejection — "parked with no claimed step, idle", never "rejected" or "stuck". A rejection
-// COUNT would require sidecar evidence this function structurally cannot see (classification here
-// is write-free by construction) — that is #219's future enrichment slot, not this one's.
+// claims rejection — "parked with no claimed step, idle", never "rejected" or "stuck". Rescoped
+// (issue #220): the two COUNTED validation-rejection codes (VALIDATION_INPUT_SCHEMA/
+// VALIDATION_OUTPUT_SCHEMA) are now record-carried since #220 (`RunRecord.validation_rejections`)
+// — but this function still does not render that count; surfacing it is #219's future enrichment
+// slot, not this one's. A TRACE-rejection count (VALIDATION_TRACE_SCHEMA, uncounted v1 — see
+// execution-loop.ts's countRejection doc) still requires sidecar evidence this function
+// structurally cannot see (classification here is write-free by construction).
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { classifyInProgressClaims } from './claim-liveness.js';

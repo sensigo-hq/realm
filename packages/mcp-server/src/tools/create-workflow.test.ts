@@ -133,6 +133,57 @@ describe('handleCreateWorkflow', () => {
     expect(result.errors.some((e) => e.includes('invalid'))).toBe(true);
   });
 
+  describe('issue #220 §4c — reserved step ids (the create_workflow half of pin (cc))', () => {
+    it("'run' is refused as a step id (the pre-existing gap fix — create_workflow never enforced this before)", async () => {
+      const result = await handleCreateWorkflow(
+        { steps: [{ id: 'run', description: 'Bad step' }] },
+        stores,
+      );
+      expect(result.status).toBe('error');
+      expect(result.errors.some((e) => e.includes("Step id 'run' is reserved"))).toBe(true);
+    });
+
+    it("'context' is refused as a step id (the pre-existing gap fix)", async () => {
+      const result = await handleCreateWorkflow(
+        { steps: [{ id: 'context', description: 'Bad step' }] },
+        stores,
+      );
+      expect(result.status).toBe('error');
+      expect(result.errors.some((e) => e.includes("Step id 'context' is reserved"))).toBe(true);
+    });
+
+    it("'$settlement' is refused as a step id (the PR-ordering interlock — reserved ahead of its later mint)", async () => {
+      const result = await handleCreateWorkflow(
+        { steps: [{ id: '$settlement', description: 'Bad step' }] },
+        stores,
+      );
+      expect(result.status).toBe('error');
+      expect(result.errors.some((e) => e.includes("Step id '$settlement' is reserved"))).toBe(true);
+    });
+  });
+
+  it('issue #220 §3b [P-S6] — a submitted validation_exhaustion key draws the TARGETED register-time-only message, not the generic unknown-key text (pin (s))', async () => {
+    const result = await handleCreateWorkflow(
+      {
+        steps: [
+          {
+            id: 'step-a',
+            description: 'A step',
+            validation_exhaustion: { threshold: 3 },
+          } as unknown as import('./create-workflow.js').CreateWorkflowStep,
+        ],
+      },
+      stores,
+    );
+    expect(result.status).toBe('ok'); // advisory only — never rejects
+    const warning = result.warnings.find((w) => w.includes('validation_exhaustion'));
+    expect(warning).toBeDefined();
+    expect(warning).toContain('register-time only');
+    expect(warning).toContain('dynamic workflows use the default exhaustion posture');
+    // Never the generic "not a recognized field" phrasing other unknown keys get.
+    expect(warning).not.toContain('not a recognized');
+  });
+
   it('validation — depends_on with multiple predecessors returns error', async () => {
     const result = await handleCreateWorkflow(
       {

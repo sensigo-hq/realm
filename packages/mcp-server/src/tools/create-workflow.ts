@@ -130,6 +130,17 @@ function validateArgs(args: CreateWorkflowArgs): string[] {
     }
   }
 
+  // Rule 3b (issue #220 §4c): reserved step ids — a PRE-EXISTING GAP fixed in the same edit that
+  // reserves `$settlement` (the PR ordering interlock: the namespace ships in a later PR, but the
+  // reservation must ship NOW, else the inter-PR gap can register a `$settlement`-named step that
+  // becomes load-refused the instant the mint ships). `run`/`context` mirror the YAML loader's own
+  // reservation (yaml-loader.ts) — create_workflow never enforced these two at all before this fix.
+  for (const step of args.steps) {
+    if (step.id === 'run' || step.id === 'context' || step.id === '$settlement') {
+      errors.push(`Step id '${step.id}' is reserved and cannot be used as a step identifier`);
+    }
+  }
+
   // Rule 4: descriptions must be non-empty.
   for (const step of args.steps) {
     if (step.description.trim() === '') {
@@ -282,13 +293,26 @@ export async function handleCreateWorkflow(
   // the single source of truth, no hand-maintained list). Distinct code (UNKNOWN_CREATE_WORKFLOW_KEY)
   // from the loader's UNKNOWN_STEP_KEY — #170 never flips it, so create_workflow stays lenient for
   // agents forever. The workflow is still created either way; this only ever warns, never rejects.
-  const stepDiagnostics: LoaderWarning[] = args.steps.flatMap((step) =>
-    findUnknownKeys(step as unknown as Record<string, unknown>, Object.keys(stepSchema.shape), {
-      scope: 'step',
-      code: 'UNKNOWN_CREATE_WORKFLOW_KEY',
-      step: step.id,
-    }),
-  );
+  const stepDiagnostics: LoaderWarning[] = args.steps
+    .flatMap((step) =>
+      findUnknownKeys(step as unknown as Record<string, unknown>, Object.keys(stepSchema.shape), {
+        scope: 'step',
+        code: 'UNKNOWN_CREATE_WORKFLOW_KEY',
+        step: step.id,
+      }),
+    )
+    // issue #220 §3b [P-S6]: `validation_exhaustion` gets its OWN targeted message — the generic
+    // "not a recognized field" text doesn't teach the actual disposition (register-time-only; a
+    // dynamic workflow is auto-enrolled at the default fail-at-6 posture with no reachable
+    // override). Every other unknown key keeps the generic message unchanged.
+    .map((w) =>
+      w.key === 'validation_exhaustion'
+        ? {
+            ...w,
+            message: `Step '${w.step}': 'validation_exhaustion' is register-time only — dynamic workflows use the default exhaustion posture.`,
+          }
+        : w,
+    );
 
   const result = await handleStartRun(
     { workflow_id: workflowId, params: {} },

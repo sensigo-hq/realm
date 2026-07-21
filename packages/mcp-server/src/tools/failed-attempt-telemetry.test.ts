@@ -9,6 +9,7 @@ import {
   JsonWorkflowStore,
   FailedAttemptStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { handleExecuteStep, handleExecuteStepTool } from './execute-step.js';
@@ -190,9 +191,13 @@ describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
     // Metadata-only: no raw PII value persisted.
     expect(JSON.stringify(records[0])).not.toContain('jane@example.com');
 
-    // Pure side-channel: the run record is untouched (pre-claim, write-free).
+    // issue #220 blast radius (sanctioned, record P-M3): this rejection is now COUNTED — a
+    // persisted CAS write bumps validation_rejections (and the version), even though the
+    // rejection's own ENVELOPE still reports the pre-write version (bump-and-report, pin (a)).
+    // The side-channel INTENT this test guards survives unchanged: the run's DAG state
+    // (failed_steps) is still untouched — only the new counter moved.
     const after = await runStore.get(run.id);
-    expect(after.version).toBe(versionBefore);
+    expect(after.version).toBe(versionBefore + 1);
     expect(after.failed_steps).not.toContain('classify');
     // stderr sink still fired too (both sinks independent).
     expect(errSpy).toHaveBeenCalled();
@@ -232,5 +237,52 @@ describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
       .map((c) => String(c[0]))
       .filter((s) => s.includes('agent_step_attempt_failed'));
     expect(emitted.length).toBeGreaterThan(0);
+  });
+});
+
+describe('execute_step failed-attempt telemetry — VALIDATION_EXHAUSTED (issue #220, pin (t))', () => {
+  let runStore: JsonFileStore;
+  let workflowStore: JsonWorkflowStore;
+  let failedAttemptStore: FailedAttemptStore;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    const runsDir = await mkdtemp(join(tmpdir(), 'fat4-run-'));
+    runStore = new JsonFileStore(runsDir);
+    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'fat4-wf-')));
+    failedAttemptStore = new FailedAttemptStore(runsDir);
+    await workflowStore.register(wf);
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    errSpy.mockRestore();
+  });
+
+  it('the terminalizing call reaches the failed-attempt sidecar with ajv_errors sourced from last_ajv_errors', async () => {
+    const { run } = await runStore.create({
+      workflowId: 'classify-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await runStore.update({
+      ...run,
+      validation_rejections: { classify: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
+    });
+
+    const result = await handleExecuteStep(
+      { run_id: run.id, command: 'classify', params: { ticket_body: 'jane@example.com' } },
+      { runStore, workflowStore, failedAttemptStore },
+    );
+    expect(result.status).toBe('error');
+    expect(result.error_code).toBe('VALIDATION_EXHAUSTED');
+
+    const { records } = await failedAttemptStore.read(run.id);
+    expect(records).toHaveLength(1);
+    expect(records[0]!.step_id).toBe('classify');
+    expect(records[0]!.error_code).toBe('VALIDATION_EXHAUSTED');
+    // last_ajv_errors sourcing: the summary is non-empty (built FROM error_details.last_ajv_errors,
+    // not the — absent on this code — `errors` key).
+    expect(records[0]!.validation_error_summary.length).toBeGreaterThan(0);
   });
 });
