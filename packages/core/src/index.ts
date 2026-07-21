@@ -56,6 +56,7 @@ export {
   isWorkflowComplete,
   deriveRunPhase,
   buildEvidenceByStep,
+  buildSettlementNamespace,
   propagateSkips,
   isStepSettledOrInFlight,
 } from './engine/eligibility.js';

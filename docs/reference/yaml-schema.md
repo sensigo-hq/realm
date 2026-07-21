@@ -710,8 +710,25 @@ exhaustion in PR-1**, only to retune it.
 | `threshold` | integer | Overrides the default threshold (6) for this step. Must be a positive integer. `1` is legal and documented as disabling in-drive schema-repair (`realm agent`'s `--schema-retries`), since the very first rejection already meets it. |
 
 Only valid on `execution: 'agent'` steps — the countable rejection classes are agent-only by
-construction. `mode`/`default_output` sub-keys are **not yet supported** (a later PR's surface);
-declaring them today draws an unknown-key warning, never a rejection.
+construction.
+
+`mode` (`'fail'` | `'default'`) and `default_output` (issue #220 PR-2) let a step declare a
+**bounded, validated, disclosed fallback** instead of failing on exhaustion: `mode: 'default'`
+requires `default_output` and requires the step to declare `output_schema` (against which
+`default_output` is AJV-validated **at load time**, using the exact same validator the runtime
+uses — a fallback that would itself fail runtime validation is refused before the workflow ever
+registers). On exhaustion the engine settles the step SUCCESSFULLY with `default_output` instead
+of failing the run. See `$settlement` below for how a downstream step can branch on whether this
+happened.
+
+```yaml
+draft:
+  execution: agent
+  output_schema: { type: object, required: [category], properties: { category: { type: string } } }
+  validation_exhaustion:
+    mode: default
+    default_output: { category: 'uncategorized', source: 'fallback' }
+```
 
 > **`realm agent` coherence warning:** when `--schema-retries`'s own in-drive repair budget
 > (`schemaRetries + 1` attempts) exceeds a step's effective exhaustion threshold, the drive prints
@@ -722,6 +739,82 @@ declaring them today draws an unknown-key warning, never a rejection.
 > dynamically-created workflow cannot declare it, and draws a targeted warning naming the
 > disposition if submitted. Every dynamic agent step with a countable schema is still auto-enrolled
 > at the default threshold; there is no reachable override or opt-out for a dynamic workflow.
+
+---
+
+## `$settlement` namespace (fallback-provenance branching)
+
+Issue #220 PR-3. `$settlement` is a reserved, engine-minted evaluation-root namespace exposing —
+for every step that has SETTLED (completed or failed) — whether it settled via its own submission
+or via a declared `validation_exhaustion.mode: 'default'` fallback:
+
+```
+$settlement.<step>.settled_by_default   →  boolean
+$settlement.<step>.validation_rejections →  integer (count of schema rejections before settling)
+```
+
+An entry exists **only** for a step in `completed_steps ∪ failed_steps` — a skipped step, a
+still-in-progress step, or a step whose only evidence is a non-settling snapshot (e.g. an
+in-flight gate preview) has **no** `$settlement` entry at all; absence is never a third status.
+For a settled step that never used `mode: 'default'`, `settled_by_default` is explicitly `false`
+(never merely absent) and `validation_rejections` is `0` if it never accrued any.
+
+### Per-root spelling
+
+`$settlement` is available on every evaluation surface, but the ROOT it hangs off differs, exactly
+like every other evidence reference on that surface:
+
+| Surface                                          | Spelling                                                  |
+| ------------------------------------------------ | --------------------------------------------------------- |
+| `when`                                           | `$settlement.<step>.settled_by_default`                   |
+| `abort_unless` (guard steps)                     | `$settlement.<step>.settled_by_default`                   |
+| `preconditions`                                  | `$settlement.<step>.settled_by_default`                   |
+| `input_map`                                      | `context.resources.$settlement.<step>.settled_by_default` |
+| Template filters (`{{ }}`, incl. `gate.message`) | `context.resources.$settlement.<step>.settled_by_default` |
+
+```yaml
+route:
+  execution: auto
+  depends_on: [classify]
+  when: ['$settlement.classify.settled_by_default == false']
+
+approve:
+  execution: guard
+  depends_on: [classify]
+  abort_unless: ['$settlement.classify.settled_by_default == false']
+
+notify:
+  execution: agent
+  depends_on: [classify]
+  input_map:
+    was_fallback: 'context.resources.$settlement.classify.settled_by_default'
+```
+
+### One-hop rule (load-time enforced on `when`/`abort_unless`/`preconditions`)
+
+`<step>` in a `$settlement.<step>.…` reference must be a **direct** dependency of the referencing
+step (the same one-hop rule `when` already enforces for ordinary step references) — a
+`$settlement.<step>` where `<step>` is not in `depends_on` is **load-refused**, on all three of
+`when`/`abort_unless`/`preconditions`. `input_map` and template filters do **not** get this
+check — see the residual below.
+
+### Per-surface consequence disparity (a bad FIELD name, e.g. a typo'd `settled_by_defalut`)
+
+Only the `<step>` segment is load-time-validated (the one-hop rule above); a typo in the FIELD
+segment is never load-refused anywhere, and its RUNTIME consequence differs by surface:
+
+| Surface                 | Consequence of an unresolvable field                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| `when`                  | The leaf resolves `undefined` → traced as `lhs_present: false` in `skip_details` (visible) |
+| `abort_unless` (guard)  | Unresolvable path → `resolution_error` → the guard step FAILS the run                      |
+| `preconditions`         | Unresolvable path → the precondition never passes → the step blocks forever                |
+| `input_map` / templates | Resolves to `undefined` **silently** — no trace, no refusal                                |
+
+**Named residual:** `input_map` has no load-time reference validation at all (this predates
+`$settlement` and is unchanged by it) — a typo'd `$settlement` path there is indistinguishable,
+at load time, from a correctly-spelled one that simply hasn't settled yet. This is a known,
+accepted gap, not a bug; do not expect `input_map` to catch a `$settlement` typo the way `when`
+does.
 
 ---
 

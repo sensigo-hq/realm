@@ -22,7 +22,18 @@ function makeRun(evidence: EvidenceSnapshot[]): RunRecord {
     id: 'run_test1',
     workflow_id: 'test-workflow',
     workflow_version: 1,
-    state: 'completed',
+    // issue #220 §4c (PR-3): replayRun now also mints `$settlement` via
+    // buildSettlementNamespace(run), which iterates completed_steps/failed_steps — this fixture
+    // predates the DAG step-set model (it carried a stale `state` field the real RunRecord type
+    // no longer has, and never set these arrays at all; nothing runtime-read them before this
+    // PR). Empty arrays here preserve every existing test's behavior exactly (no step in this
+    // fixture is "settled", so buildSettlementNamespace returns {} — zero observable change to
+    // any assertion in this file).
+    completed_steps: [],
+    in_progress_steps: [],
+    failed_steps: [],
+    skipped_steps: [],
+    run_phase: 'completed',
     version: 1,
     params: {},
     evidence,
@@ -174,6 +185,114 @@ describe('replayRun', () => {
 
     // Original evidence must not have been mutated.
     expect(originalOutput.result.accepted_count).toBe(3);
+  });
+
+  // issue #220 §4c (PR-3, pin ee): replay parity — replayRun mints $settlement via the SAME
+  // shared helper (buildSettlementNamespace) the live engine's buildEvidenceByStep uses, so a
+  // $settlement-referencing precondition's replay verdict can never structurally diverge from
+  // what the live run actually decided. Replay evaluates ONLY preconditions (never when/guards),
+  // so the fixture below uses a precondition — a MINT-DEPENDENT-TRUE fixture (a both-absent
+  // vacuous pass is impossible: step1 genuinely default-settled, so $settlement.step1
+  // .settled_by_default is genuinely `true` in the live record).
+  describe('pin (ee): $settlement replay parity', () => {
+    function makeSettlementRun(): RunRecord {
+      return {
+        id: 'run_settlement1',
+        workflow_id: 'settlement-workflow',
+        workflow_version: 1,
+        completed_steps: ['step1'],
+        in_progress_steps: [],
+        failed_steps: [],
+        skipped_steps: [],
+        run_phase: 'completed',
+        version: 3,
+        params: {},
+        evidence: [
+          {
+            step_id: 'step1',
+            started_at: '2024-01-01T00:00:00.000Z',
+            completed_at: '2024-01-01T00:00:01.000Z',
+            duration_ms: 100,
+            input_summary: {},
+            output_summary: { category: 'fallback' },
+            status: 'success',
+            evidence_hash: 'abc123',
+            diagnostics: {
+              input_token_estimate: 0,
+              precondition_trace: [],
+              settled_by_default: true,
+              validation_rejections: 6,
+            },
+          },
+        ],
+        created_at: '2024-01-01T00:00:00.000Z',
+        updated_at: '2024-01-01T00:00:01.000Z',
+        terminal_state: true,
+      };
+    }
+
+    // NOTE on polarity: this precondition is deliberately `== true`, NOT `== false`. A
+    // `== false` polarity would be a COINCIDENTAL-PASS trap here: precondition.ts's absent-LHS
+    // rule always resolves an unresolvable path to `false` (never true) — so with the mint
+    // missing entirely, `$settlement.step1.settled_by_default == false` would ALSO evaluate to
+    // `false` (LHS undefined ⇒ false, matching the assertion below by ACCIDENT), and a
+    // replay-missing-mint mutant would pass this suite vacuously. `== true` is the only polarity
+    // where "mint present, genuinely true" (passes) and "mint absent, undefined LHS" (always
+    // fails) actually disagree — verified via an explicit mutation probe during this PR's review.
+    const settlementDef: WorkflowDefinition = {
+      id: 'settlement-workflow',
+      name: 'Settlement Workflow',
+      version: 1,
+      steps: {
+        step1: { description: 'Step1', execution: 'agent' },
+        step2: {
+          description: 'Step2',
+          execution: 'auto',
+          preconditions: ['$settlement.step1.settled_by_default == true'],
+        },
+      },
+    };
+
+    it('MINT-DEPENDENT-TRUE: replay reproduces the live verdict for a $settlement-referencing precondition (a both-absent vacuous pass is impossible — step1 genuinely default-settled)', () => {
+      const run = makeSettlementRun();
+      const results = replayRun(run, settlementDef, []);
+      const step2Row = results.find((r) => r.step_id === 'step2')!;
+      // Live truth: settled_by_default === true ⇒ the precondition ("== true") PASSES.
+      expect(step2Row.preconditions_original).toBe(true);
+      // No override supplied — replay must reproduce the SAME verdict (mint parity).
+      expect(step2Row.preconditions_replay).toBe(true);
+      expect(step2Row.changed).toBe(false);
+    });
+
+    it('--with $settlement.step1.settled_by_default=false overrides ON TOP of the mint, flipping the REPLAY verdict only', () => {
+      const run = makeSettlementRun();
+      const results = replayRun(run, settlementDef, [
+        { step: '$settlement', field: 'step1.settled_by_default', value: false },
+      ]);
+      const step2Row = results.find((r) => r.step_id === 'step2')!;
+      expect(step2Row.preconditions_original).toBe(true); // untouched by the override
+      expect(step2Row.preconditions_replay).toBe(false); // override flips it
+      expect(step2Row.changed).toBe(true);
+    });
+
+    it('ALIASING FOOTGUN: the override does NOT mutate the ORIGINAL verdict — preconditions_original stays reflective of the genuinely-minted true, not corrupted by the clone override (a shared-reference mutant would flip this too)', () => {
+      const run = makeSettlementRun();
+      const results = replayRun(run, settlementDef, [
+        { step: '$settlement', field: 'step1.settled_by_default', value: false },
+      ]);
+      const step2Row = results.find((r) => r.step_id === 'step2')!;
+      // The internal evidenceByStep map is never exposed by replayRun — this IS the observable
+      // surface for the aliasing footgun (issue #220 §4c prompt-audit F2).
+      expect(step2Row.preconditions_original).toBe(true);
+    });
+
+    it('a replay-missing-mint regression (no override, no $settlement key at all) would show up as an undefined-LHS precondition failure — sanity: a step with NO preconditions is always unchanged regardless', () => {
+      const run = makeSettlementRun();
+      const results = replayRun(run, settlementDef, []);
+      const step1Row = results.find((r) => r.step_id === 'step1')!;
+      expect(step1Row.has_preconditions).toBe(false);
+      expect(step1Row.changed).toBe(false);
+    });
   });
 });
 

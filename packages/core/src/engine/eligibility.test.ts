@@ -14,10 +14,11 @@ import {
   propagateSkips,
   isWorkflowComplete,
   buildEvidenceByStep,
+  buildSettlementNamespace,
 } from './eligibility.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
-import type { RunRecord, PendingGate } from '../types/run-record.js';
+import type { RunRecord, PendingGate, EvidenceSnapshot } from '../types/run-record.js';
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -1475,5 +1476,156 @@ describe('finalizer steps — held out of the DAG', () => {
         }),
       ),
     ).toBe('failed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildSettlementNamespace + the `$settlement` mint (issue #220 §4c, PR-3)
+// ---------------------------------------------------------------------------
+
+describe('buildSettlementNamespace — the $settlement mint (issue #220 §4c)', () => {
+  function snap(overrides: { step_id: string } & Partial<EvidenceSnapshot>): EvidenceSnapshot {
+    return {
+      started_at: '2024-01-01T00:00:00.000Z',
+      completed_at: '2024-01-01T00:00:01.000Z',
+      duration_ms: 100,
+      input_summary: {},
+      output_summary: {},
+      status: 'success',
+      evidence_hash: 'abc',
+      ...overrides,
+    };
+  }
+
+  it('(ff) membership-gated presence: a clean-settled dep gets a PRESENT entry with settled_by_default === false', () => {
+    const run = makeRun({
+      completed_steps: ['clean_step'],
+      evidence: [snap({ step_id: 'clean_step' })], // no diagnostics at all
+    });
+    const result = buildSettlementNamespace(run);
+    expect(result['clean_step']).toEqual({ settled_by_default: false, validation_rejections: 0 });
+  });
+
+  it('(ff) membership-gated presence: an UNSETTLED step with evidence (compensating-unclaim audit / guard-abort) gets NO entry — an evidence-derived-domain mutant would fabricate one', () => {
+    const run = makeRun({
+      completed_steps: [], // 'audited_step' is NOT here — it never actually settled
+      failed_steps: [],
+      skipped_steps: ['aborted_guard'], // guard-abort lands in skipped_steps, never completed/failed
+      evidence: [
+        snap({ step_id: 'audited_step' }), // a compensating-unclaim AUDIT snapshot
+        snap({ step_id: 'aborted_guard' }), // guard-abort evidence
+      ],
+    });
+    const result = buildSettlementNamespace(run);
+    expect(result['audited_step']).toBeUndefined();
+    expect(result['aborted_guard']).toBeUndefined();
+    expect(Object.keys(result)).toHaveLength(0);
+  });
+
+  it('(ff) a SKIPPED dep (when_false) gets NO entry, even with zero evidence at all', () => {
+    const run = makeRun({ skipped_steps: ['skipped_step'], evidence: [] });
+    expect(buildSettlementNamespace(run)['skipped_step']).toBeUndefined();
+  });
+
+  it('(hh) explicit-false materialization: a settled step whose diagnostics OBJECT exists but omits settled_by_default entirely still gets EXPLICIT false, never undefined (a passthrough mutant reds this — `toBe(false)` fails against `undefined`)', () => {
+    const run = makeRun({
+      completed_steps: ['normal_step'],
+      evidence: [
+        snap({
+          step_id: 'normal_step',
+          diagnostics: { input_token_estimate: 0, precondition_trace: [] }, // no settled_by_default key
+        }),
+      ],
+    });
+    const entry = buildSettlementNamespace(run)['normal_step'];
+    expect(entry).toBeDefined();
+    expect(entry!.settled_by_default).toBe(false);
+    expect(entry!.validation_rejections).toBe(0);
+  });
+
+  it('(4b) BLOCKING no-throw: a settled GUARD step (pass, no diagnostics object) + a settled guard (resolution_error, no diagnostics) + a settled FINALIZER (no diagnostics) all materialize false/0 without throwing', () => {
+    const run = makeRun({
+      completed_steps: ['guard_pass', 'finalizer_ok'],
+      failed_steps: ['guard_resolution_error'],
+      evidence: [
+        // Mirrors executeGuardStep's 'pass' captureEvidence call EXACTLY — no diagnostics param.
+        snap({ step_id: 'guard_pass', output_summary: { conditions: [], aborted: false } }),
+        // Mirrors executeGuardStep's 'resolution_error' captureEvidence call — no diagnostics.
+        snap({
+          step_id: 'guard_resolution_error',
+          status: 'error',
+          error: 'Guard resolution error',
+          output_summary: { error: 'Unresolvable path: x' },
+        }),
+        // Mirrors buildFinalizedSeal's success captureEvidence call — no diagnostics.
+        snap({ step_id: 'finalizer_ok', output_summary: {} }),
+      ],
+    });
+    expect(() => buildSettlementNamespace(run)).not.toThrow();
+    const result = buildSettlementNamespace(run);
+    expect(result['guard_pass']).toEqual({ settled_by_default: false, validation_rejections: 0 });
+    expect(result['guard_resolution_error']).toEqual({
+      settled_by_default: false,
+      validation_rejections: 0,
+    });
+    expect(result['finalizer_ok']).toEqual({ settled_by_default: false, validation_rejections: 0 });
+  });
+
+  it('THE gate-response inversion: for a step with an EXECUTION snapshot (settled_by_default: true) followed chronologically by a gate_response snapshot (no diagnostics), the mint reads the EXECUTION snapshot — NOT "the last snapshot"', () => {
+    const run = makeRun({
+      completed_steps: ['gated_default_step'],
+      evidence: [
+        snap({
+          step_id: 'gated_default_step',
+          output_summary: { category: 'fallback' },
+          diagnostics: {
+            input_token_estimate: 0,
+            precondition_trace: [],
+            settled_by_default: true,
+            validation_rejections: 6,
+          },
+        }),
+        // Chronologically LAST — a gate_response snapshot recording the human's choice, no diagnostics.
+        {
+          ...snap({ step_id: 'gated_default_step', output_summary: { choice: 'approve' } }),
+          kind: 'gate_response' as const,
+        },
+      ],
+    });
+    const entry = buildSettlementNamespace(run)['gated_default_step'];
+    expect(entry?.settled_by_default).toBe(true);
+    expect(entry?.validation_rejections).toBe(6);
+  });
+
+  it('(ii) hostile-evidence-id mint-wins: buildEvidenceByStep\'s $settlement key is the MINTED namespace, never a hostile snapshot literally step_id === "$settlement"', () => {
+    const run = makeRun({
+      completed_steps: ['$settlement', 'real_step'],
+      evidence: [
+        // A synthetic pre-reservation record carrying a snapshot literally named '$settlement'.
+        snap({ step_id: '$settlement', output_summary: { hostile: true } }),
+        snap({
+          step_id: 'real_step',
+          diagnostics: {
+            input_token_estimate: 0,
+            precondition_trace: [],
+            settled_by_default: true,
+            validation_rejections: 3,
+          },
+        }),
+      ],
+    });
+    const evidenceByStep = buildEvidenceByStep(run);
+    expect(evidenceByStep['$settlement']).not.toEqual({ hostile: true });
+    expect(evidenceByStep['$settlement']).toHaveProperty('real_step');
+    expect((evidenceByStep['$settlement'] as Record<string, unknown>)['real_step']).toEqual({
+      settled_by_default: true,
+      validation_rejections: 3,
+    });
+  });
+
+  it('a run with zero settled steps mints an empty $settlement object (never absent, never throws)', () => {
+    const run = makeRun({});
+    const evidenceByStep = buildEvidenceByStep(run);
+    expect(evidenceByStep['$settlement']).toEqual({});
   });
 });

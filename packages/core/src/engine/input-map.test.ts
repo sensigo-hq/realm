@@ -234,6 +234,74 @@ describe('input_map', () => {
     );
   });
 
+  // issue #220 §4c (PR-3, pin gg): input_map forwarding round-trips the raw boolean via the
+  // NESTED `context.resources.$settlement.<dep>.<field>` spelling — no code change was needed
+  // for this (resolvePath treats `$settlement` as one ordinary literal segment), so this test is
+  // purely a pin, not a feature test.
+  it('pin (gg): input_map forwards $settlement.<dep>.settled_by_default via the NESTED context.resources spelling', async () => {
+    const def: WorkflowDefinition = {
+      id: 'imap-settlement-wf',
+      name: 'InputMap Settlement',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        step1: {
+          description: 'Agent step with a declared default',
+          execution: 'agent',
+          output_schema: {
+            type: 'object',
+            required: ['category'],
+            properties: { category: { type: 'string' } },
+          },
+          validation_exhaustion: {
+            mode: 'default',
+            default_output: { category: 'fallback' },
+          },
+        },
+        step2: {
+          description: 'Auto step forwarding $settlement.step1 via input_map',
+          execution: 'auto',
+          depends_on: ['step1'],
+          uses_service: 'svc',
+          input_map: { was_fallback: 'context.resources.$settlement.step1.settled_by_default' },
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { step2: { status: 200, data: {} } });
+    const fetchSpy = vi.spyOn(adapter, 'fetch');
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const { run } = await store.create({
+      workflowId: 'imap-settlement-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await store.update({ ...run, validation_rejections: { step1: 5 } }); // threshold - 1
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'step1',
+      input: {}, // fails output_schema — the 6th rejection exhausts and default-settles
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'step2',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'step2',
+      { was_fallback: true },
+      expect.any(Object),
+      expect.any(AbortSignal),
+    );
+  });
+
   it('input_map step records resolved_params in evidence snapshot', async () => {
     const def: WorkflowDefinition = {
       id: 'imap-wf',
