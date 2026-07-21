@@ -664,7 +664,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // PRE-write version (the Step-1 `run`), so `result.run_version` still equals
         // `versionBeforeAttempt` here across repairs 2..N. Pin (a) (bump-and-report) guards this
         // invariant — see execution-loop.ts's countRejection for the mechanism, and
-        // run-agent.test.ts's "test (a)" for the pin.
+        // packages/core/src/engine/validation-exhaustion.test.ts's pin (a) for the pin.
         if (
           result.status === 'error' &&
           (result.error_code === 'VALIDATION_OUTPUT_SCHEMA' ||

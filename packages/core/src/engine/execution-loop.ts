@@ -1081,6 +1081,8 @@ export async function executeStep(
         {
           code: 'VALIDATION_EXHAUSTED',
           category: 'VALIDATION',
+          // observationally inert on this path (Step-5 terminal translation supplies 'stop');
+          // kept for error-catalog coherence
           agentAction: 'stop',
           retryable: false,
           details: {
@@ -1945,6 +1947,13 @@ export async function executeStep(
     // reintroduced inside this feature).
     dispatchError = exhaustion;
     const exhaustedAt = new Date();
+    // issue #220 correction (deliverable 1 — snapshot completeness): these two derivation lines
+    // replicate the dispatch-loop's own `profile`/`profileData` consts VERBATIM (that block's
+    // own locals are out of scope here, but `stepDef`/`definition` — the two inputs they're
+    // derived from — are both still in scope at this bypass block).
+    const exhaustedProfile = stepDef?.agent_profile;
+    const exhaustedProfileData =
+      exhaustedProfile !== undefined ? definition.resolved_profiles?.[exhaustedProfile] : undefined;
     const exhaustedSnap: EvidenceSnapshot = captureEvidence({
       stepId: options.command,
       startedAt: exhaustedAt,
@@ -1957,6 +1966,12 @@ export async function executeStep(
         precondition_trace: preconditionTrace,
         validation_rejections: exhaustion!.details['rejections'] as number,
       },
+      ...(exhaustedProfileData !== undefined
+        ? { agentProfile: exhaustedProfile!, agentProfileHash: exhaustedProfileData.content_hash }
+        : {}),
+      ...(options.stepMeta?.toolCalls !== undefined
+        ? { toolCalls: options.stepMeta.toolCalls }
+        : {}),
       ...(debugOutput !== undefined ? { debugOutput } : {}),
       // Gate trace to agent steps only — drop silently for auto/adapter/handler steps. Mirrors
       // the real dispatch-loop capture's own trace-spread conjunct exactly (execution-loop.ts's

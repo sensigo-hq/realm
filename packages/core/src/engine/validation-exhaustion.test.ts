@@ -256,12 +256,22 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
       validation_rejections: { draft: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
     });
 
+    const toolCalls = [
+      {
+        server_id: 'github',
+        tool: 'get_pull_request',
+        args: { pr: 1 },
+        result: 'PR data',
+        duration_ms: 50,
+      },
+    ];
     const envelope = await executeStep(store, def, {
       runId: run.id,
       command: 'draft',
       input: INVALID_OUTPUT,
       trace: [{ event: 'thinking', data: { note: 'considering' } }],
       dispatcher: echoDispatcher,
+      stepMeta: { toolCalls },
     });
 
     expect(envelope.status).toBe('error');
@@ -277,6 +287,48 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     expect(exhaustedEvidence?.diagnostics?.validation_rejections).toBe(
       DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
     );
+    // issue #220 correction, deliverable 1/verification (d) — snapshot completeness: an
+    // exhausted step must not silently drop agent-supplied toolCalls.
+    expect(exhaustedEvidence?.tool_calls).toHaveLength(1);
+    expect(exhaustedEvidence?.tool_calls?.[0]?.tool).toBe('get_pull_request');
+  });
+
+  it('(e) correction — WAL-variant: an exhausting call with a BARE WAL line (no options.trace at all) still carries the WAL-originated line on the failure evidence — the discriminating witness a submitted-trace-only fixture cannot provide', async () => {
+    const def = makeDef();
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    await store.update({
+      ...run,
+      validation_rejections: { draft: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
+    });
+    // The test-(o) store wiring (declares writer_nonce_carriage), but appended BARE (no nonce
+    // option) and called with NO writerNonce — a nonced/mismatched config would instead route
+    // the line to preserved-foreign/attributed, not bare-adoption, which is what this test needs
+    // to discriminate (see deliverable 2's own note on this).
+    const traceBufferStore = new InMemoryTraceBufferStore();
+    await traceBufferStore.append(run.id, 'draft', [{ event: 'wal-thinking' }]);
+
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'draft',
+      input: INVALID_OUTPUT,
+      // Deliberately NO `trace:` — the WAL line is the ONLY source of trace content here.
+      dispatcher: echoDispatcher,
+      traceBufferStore,
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(envelope.error_code).toBe('VALIDATION_EXHAUSTED');
+    const after = await store.get(run.id);
+    const exhaustedEvidence = after.evidence.find(
+      (e) => e.step_id === 'draft' && e.status === 'error',
+    );
+    expect(exhaustedEvidence).toBeDefined();
+    expect(exhaustedEvidence?.trace).toBeDefined();
+    expect(exhaustedEvidence?.trace?.length).toBe(1);
+    expect(exhaustedEvidence?.trace?.[0]?.event).toBe('wal-thinking');
+    // Set only on the bare-adoption path (#185/#197) — a second, independent witness of the
+    // same fact.
+    expect(exhaustedEvidence?.trace_summary?.buffered_lines_adopted).toBeGreaterThanOrEqual(1);
   });
 
   it('(f) wrap-block guard: a hand-built max_attempts:0 definition (bypassing the loader) still terminalizes as VALIDATION_EXHAUSTED, never wrapped into STEP_RETRY_EXHAUSTED', async () => {
@@ -299,6 +351,15 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     expect(envelope.status).toBe('error');
     expect(envelope.error_code).toBe('VALIDATION_EXHAUSTED');
     expect(envelope.error_code).not.toBe('STEP_RETRY_EXHAUSTED');
+    // issue #220 correction, deliverable 3 — agent_action honesty pin: this run is
+    // single-step-terminal, so Step 5's `resolvePostDispatchAgentAction(dispatchError, true)`
+    // returns 'stop' UNCONDITIONALLY (error-resolution.ts:31 — the terminal branch never even
+    // reads `dispatchError.agentAction`). This pin guards that TERMINAL-TRANSLATION behavior (an
+    // exhausted run correctly tells the agent to stop) — NOT the mint's own `agentAction: 'stop'`
+    // field, which is observationally inert on this specific path (see the mint-site comment in
+    // execution-loop.ts). A mint-site mutant will NOT redden this assertion; only a mutation to
+    // the terminal-branch translation itself will.
+    expect(envelope.agent_action).toBe('stop');
   });
 
   it('(j) success-settle stamp: reject twice then succeed ⇒ the settle evidence carries diagnostics.validation_rejections === 2', async () => {
