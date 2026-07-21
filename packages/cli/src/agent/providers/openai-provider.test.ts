@@ -172,9 +172,14 @@ describe('OpenAIProvider.callStepWithTools', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 3. max_tool_calls reached → final extraction fails schema → throws ENGINE_STEP_FAILED
+  // 3. issue #224 (D4 §4): performFinalExtraction no longer gates on schema conformance — that's
+  // the engine Ajv validators' job (and the in-conversation correction loop's, before this point
+  // is ever reached). A parseable-but-schema-invalid final answer is now RETURNED as best-effort,
+  // never thrown — this UNIFIES OpenAI onto Anthropic's pre-existing posture (see the twin test
+  // in anthropic-provider.test.ts, "final extraction produces no usable object"). Only a genuine
+  // PARSE failure (no usable object at all) still throws — see test 3b below.
   // -----------------------------------------------------------------------
-  it('max_tool_calls reached → final extraction fails schema → throws ENGINE_STEP_FAILED', async () => {
+  it('max_tool_calls reached, parseable-but-schema-invalid final answer → RETURNS best-effort, never throws', async () => {
     const schema = { required: ['answer', 'confidence'] };
     const executor = vi.fn().mockResolvedValue('data');
     mockCreate
@@ -182,11 +187,26 @@ describe('OpenAIProvider.callStepWithTools', () => {
       .mockResolvedValueOnce(makeTextResponse('{"answer":"yes"}')); // 'confidence' missing
 
     const provider = new OpenAIProvider('gpt-4o');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      maxToolCalls: 1,
+      inputSchema: schema,
+    });
+
+    expect(result.output).toEqual({ answer: 'yes' });
+  });
+
+  // -----------------------------------------------------------------------
+  // 3b. The one remaining throw class — a genuinely unparseable final answer.
+  // -----------------------------------------------------------------------
+  it('max_tool_calls reached, no usable JSON object at all → throws ENGINE_STEP_FAILED', async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolCallResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(makeTextResponse('I was unable to determine a final answer.'));
+
+    const provider = new OpenAIProvider('gpt-4o');
     const err = await provider
-      .callStepWithTools('prompt', [oneTool()], executor, {
-        maxToolCalls: 1,
-        inputSchema: schema,
-      })
+      .callStepWithTools('prompt', [oneTool()], executor, { maxToolCalls: 1 })
       .catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(WorkflowError);
@@ -485,6 +505,221 @@ describe('OpenAIProvider.callStepWithTools', () => {
 
     expect(result.output).toEqual({ done: true });
     expect(executor).toHaveBeenCalledTimes(2);
+  });
+});
+
+// =========================================================================
+// issue #224 — in-conversation full-AJV correction (OpenAI-chat is IN SCOPE)
+// =========================================================================
+describe('OpenAIProvider.callStepWithTools — issue #224 in-conversation AJV correction', () => {
+  beforeEach(() => mockCreate.mockReset());
+
+  const strictSchema = {
+    type: 'object',
+    required: ['category'],
+    properties: { category: { type: 'string', enum: ['billing', 'support'] } },
+    additionalProperties: false,
+  };
+
+  // -----------------------------------------------------------------------
+  // Primary (D4): right keys, WRONG TYPE — corrected in-conversation, tool results retained,
+  // ZERO re-execution, settles without ever reaching a drive error branch.
+  // -----------------------------------------------------------------------
+  it('primary: right-keys-wrong-type output is corrected IN-CONVERSATION — tool executes exactly once, no re-execution', async () => {
+    const executor = vi.fn().mockResolvedValue({ content: 'file data' });
+    mockCreate
+      .mockResolvedValueOnce(makeToolCallResponse([{ id: 'call_1', name: 'get_file' }]))
+      // Right key, WRONG TYPE (number instead of the required string/enum).
+      .mockResolvedValueOnce(makeTextResponse('{"category": 42}'))
+      // Corrected — valid.
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing"}'));
+
+    const provider = new OpenAIProvider('gpt-4o');
+    const result = await provider.callStepWithTools(
+      'prompt',
+      [oneTool('github:get_file')],
+      executor,
+      { validationOutputSchema: strictSchema },
+    );
+
+    expect(result.output).toEqual({ category: 'billing' });
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.correctionCount).toBe(1);
+  });
+
+  it("probe-equivalent control: a wrong-type output with NO validation*Schema configured is accepted as-is (today's pre-#224 behavior for a plugin that ignores the new fields)", async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolCallResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(makeTextResponse('{"category": 42}'));
+
+    const provider = new OpenAIProvider('gpt-4o');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {});
+
+    expect(result.output).toEqual({ category: 42 });
+    expect(result.correctionCount).toBeUndefined();
+  });
+
+  // -----------------------------------------------------------------------
+  // Leak pin (D5, AC-2): the correction message contains the whitelisted summary + enum
+  // allowedValues, and NEVER the offending value.
+  // -----------------------------------------------------------------------
+  it('leak pin (AC-2): the correction message contains the enum allowedValues but NEVER the offending sentinel value', async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolCallResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(makeTextResponse('{"category": "OFFENDING_SENTINEL_XYZ"}'))
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing"}'));
+
+    const provider = new OpenAIProvider('gpt-4o');
+    await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      validationOutputSchema: strictSchema,
+    });
+
+    // Third call's messages: [system, user:prompt, assistant:tool_calls, tool:result,
+    // assistant:wrong-type-text, user:correction] — the FIRST string-content user message is the
+    // original prompt, not the correction; take the LAST match.
+    const thirdCallMsgs = mockCreate.mock.calls[2][0].messages as Array<{
+      role: string;
+      content: unknown;
+    }>;
+    const stringUserMsgs = thirdCallMsgs.filter(
+      (m) => m.role === 'user' && typeof m.content === 'string',
+    );
+    const text = String(stringUserMsgs.at(-1)?.content ?? '');
+    expect(text).toContain('did not match the required JSON schema');
+    expect(text).toContain('billing');
+    expect(text).toContain('support');
+    expect(text).not.toContain('OFFENDING_SENTINEL_XYZ');
+  });
+
+  // -----------------------------------------------------------------------
+  // Observability (D6): one breadcrumb per correction; correctionCount reflects the total.
+  // -----------------------------------------------------------------------
+  it('observability (D6): emits one stderr breadcrumb per correction and surfaces correctionCount', async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolCallResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(makeTextResponse('{"category": 1}'))
+      .mockResolvedValueOnce(makeTextResponse('{"category": 2}'))
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing"}'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const provider = new OpenAIProvider('gpt-4o');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      validationOutputSchema: strictSchema,
+    });
+
+    expect(result.correctionCount).toBe(2);
+    const breadcrumbs = errorSpy.mock.calls
+      .map((c) => String(c[0]))
+      .filter((s) => s.includes('output rejected (in-conversation)'));
+    expect(breadcrumbs).toHaveLength(2);
+    expect(breadcrumbs[0]).toContain('correcting (1)');
+    expect(breadcrumbs[1]).toContain('correcting (2)');
+    errorSpy.mockRestore();
+  });
+
+  // -----------------------------------------------------------------------
+  // Both-schemas (D2): sequential AND, never allOf-combine.
+  // -----------------------------------------------------------------------
+  it('both-schemas (D2): valid under output_schema but INVALID under input_schema is rejected in-conversation (sequential AND)', async () => {
+    const localOutputSchema = {
+      type: 'object',
+      required: ['category'],
+      properties: { category: { type: 'string' } },
+    };
+    const localInputSchema = {
+      type: 'object',
+      required: ['category', 'confirmed'],
+      properties: { category: { type: 'string' }, confirmed: { type: 'boolean' } },
+    };
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolCallResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing"}'))
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing", "confirmed": true}'));
+
+    const provider = new OpenAIProvider('gpt-4o');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      validationInputSchema: localInputSchema,
+      validationOutputSchema: localOutputSchema,
+    });
+
+    expect(result.correctionCount).toBe(1);
+    expect(result.output).toEqual({ category: 'billing', confirmed: true });
+  });
+
+  // -----------------------------------------------------------------------
+  // _debug strip (D3): a _debug-bearing output that is valid-after-strip passes with ZERO
+  // corrections.
+  // -----------------------------------------------------------------------
+  it('_debug strip (D3): a _debug-bearing output valid-after-strip passes with ZERO corrections', async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolCallResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(
+        makeTextResponse('{"category": "billing", "_debug": "model reasoning trace"}'),
+      );
+
+    const provider = new OpenAIProvider('gpt-4o');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      validationOutputSchema: strictSchema,
+    });
+
+    expect(result.output).toEqual({ category: 'billing', _debug: 'model reasoning trace' });
+    expect(result.correctionCount).toBeUndefined();
+  });
+
+  // -----------------------------------------------------------------------
+  // Budget-exhaustion terminal (D4 §4) — pinned again here explicitly under the #224 describe
+  // block (already covered by the rewritten test 3/3b above).
+  // -----------------------------------------------------------------------
+  it('budget-exhaustion terminal: a still schema-invalid final answer is RETURNED, never thrown', async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolCallResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(makeTextResponse('{"category": 999}'));
+
+    const provider = new OpenAIProvider('gpt-4o');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      maxToolCalls: 1,
+      validationOutputSchema: strictSchema,
+    });
+
+    expect(result.output).toEqual({ category: 999 });
+  });
+
+  // -----------------------------------------------------------------------
+  // Contract (D7): every executor invocation — success, error, AND timeout — yields a toolCalls
+  // entry (llm-provider.ts's shipped JSDoc clause, now enforced by a test).
+  // -----------------------------------------------------------------------
+  it('contract (D7): every executor invocation (success, error, timeout) yields a toolCalls entry', async () => {
+    const hangingExecutor = vi
+      .fn()
+      .mockResolvedValueOnce('ok')
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockReturnValueOnce(new Promise<unknown>(() => {}));
+    mockCreate
+      .mockResolvedValueOnce(
+        makeToolCallResponse([
+          { id: 't1', name: 'op' },
+          { id: 't2', name: 'op' },
+          { id: 't3', name: 'op' },
+        ]),
+      )
+      .mockResolvedValueOnce(makeTextResponse('{"done":true}'));
+
+    const provider = new OpenAIProvider('gpt-4o');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], hangingExecutor, {
+      toolTimeoutMs: 1,
+    });
+
+    expect(result.toolCalls).toHaveLength(3);
+    expect(result.toolCalls[0]?.error).toBeUndefined();
+    expect(result.toolCalls[1]?.error).toBe('boom');
+    expect(result.toolCalls[2]?.error).toBeDefined();
   });
 });
 

@@ -1,6 +1,6 @@
 // openai-provider.ts — OpenAI LLM provider implementation for realm agent.
 // Requires openai >= 4.0.0 as an optional peer dependency (npm install openai).
-import { WorkflowError } from '@sensigo/realm';
+import { WorkflowError, validateAgentSubmission, type JsonSchema } from '@sensigo/realm';
 import { ToolCapableLlmProvider, type ProviderCapabilities } from './llm-provider.js';
 import type {
   ToolCallRecord,
@@ -13,9 +13,10 @@ import {
   serializeToolResult,
   parseNamespacedId,
   extractJsonObject,
-  validateSchema,
   rejectAfter,
   buildSystemPrompt,
+  summarizeAgentValidationErrors,
+  renderValidationSummaryEntry,
 } from './agent-utils.js';
 
 /**
@@ -117,6 +118,8 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     executor: ToolExecutor,
     options: {
       inputSchema?: Record<string, unknown>;
+      validationInputSchema?: Record<string, unknown>;
+      validationOutputSchema?: Record<string, unknown>;
       maxToolCalls?: number;
       maxFanOut?: number;
       toolTimeoutMs?: number;
@@ -172,7 +175,16 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     let fan_out_count = 0;
     let fan_out_budget_exhausted = false;
     let tool_call_count = 0;
+    // issue #224 (D6): in-conversation schema corrections draw on the SAME shared `maxToolCalls`
+    // budget as tool calls (deliberate — see the design record's shared-budget rationale), with
+    // ZERO `tool_call_records` entry each, so a step can starve its own tool budget invisibly.
+    // This counter + the per-correction stderr breadcrumb below are the chosen mitigation
+    // (visibility, not budget separation).
+    let correction_count = 0;
     const tool_call_records: ToolCallRecord[] = [];
+    /** Attaches `correctionCount` to a result only when at least one correction happened. */
+    const withCorrectionCount = (result: StepWithToolsResult): StepWithToolsResult =>
+      correction_count > 0 ? { ...result, correctionCount: correction_count } : result;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const history: any[] = [
@@ -209,8 +221,17 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       );
       const text: string = (final.choices[0].message.content as string | null) ?? '';
       const parsed = extractJsonObject(text);
-      if (parsed && validateSchema(parsed, options.inputSchema)) {
-        return { output: parsed, toolCalls: tool_call_records };
+      // issue #224 (D4, §4 budget-exhaustion terminal): RETURN the best-effort output
+      // UNCONDITIONALLY here — never gate this return on schema conformance (this UNIFIES OpenAI
+      // onto Anthropic's pre-existing posture; see anthropic-provider.ts's twin comment for the
+      // full #220-terminalization rationale). A still-invalid output routes back through the
+      // engine's Step 2c `countRejection`, so issue #220 counts the rejection and terminalizes at
+      // threshold (or default-substitutes for a `mode:'default'` step) — throwing here instead
+      // would be caught at run-agent.ts:579-584 and return 'failed' WITHOUT ever calling
+      // executeChain, leaving the run record uncounted and re-executing every tool call on
+      // re-attach. Only a genuine PARSE failure (no usable object at all) still throws.
+      if (parsed !== null) {
+        return withCorrectionCount({ output: parsed, toolCalls: tool_call_records });
       }
       throw new WorkflowError('max_tool_calls reached; final extraction failed', {
         code: 'ENGINE_STEP_FAILED',
@@ -305,16 +326,45 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         }
       } else {
         // No tool calls — attempt to parse the final answer.
+        // issue #224 (D4, the primary edit): the required-keys-only `validateSchema` pre-check is
+        // REPLACED with the full-AJV `validateAgentSubmission` (core) — right-keys-wrong-type/
+        // enum/nested-shape output is now caught and corrected IN-CONVERSATION (tool results
+        // retained, nothing re-executes), instead of passing through to die at the engine's drive.
         const text: string = (message.content as string | null) ?? '';
         const parsed = extractJsonObject(text);
-        if (parsed && validateSchema(parsed, options.inputSchema)) {
-          return { output: parsed, toolCalls: tool_call_records };
+        const verdict =
+          parsed !== null
+            ? validateAgentSubmission(
+                parsed,
+                {
+                  ...(options.validationInputSchema !== undefined
+                    ? { inputSchema: options.validationInputSchema as JsonSchema }
+                    : {}),
+                  ...(options.validationOutputSchema !== undefined
+                    ? { outputSchema: options.validationOutputSchema as JsonSchema }
+                    : {}),
+                },
+                'callStepWithTools',
+              )
+            : undefined;
+        if (parsed !== null && verdict?.valid === true) {
+          return withCorrectionCount({ output: parsed, toolCalls: tool_call_records });
         }
-        // Schema mismatch — append correction message and continue the loop.
+        // Invalid (schema-invalid OR unparseable) — append a leak-safe correction and keep
+        // looping. D5: names/paths/keywords + expected types + enum/const allowedValues, NEVER
+        // the offending value. D6: one breadcrumb per correction.
+        correction_count++;
+        const summary =
+          verdict !== undefined
+            ? summarizeAgentValidationErrors(verdict.rawErrors)
+                .map(renderValidationSummaryEntry)
+                .join('\n')
+            : 'no valid JSON object could be extracted from the response';
+        console.error(`  ⚠ output rejected (in-conversation); correcting (${correction_count})`);
         history.push({ role: 'assistant', content: text });
         history.push({
           role: 'user',
-          content: 'Your response did not match the required JSON schema. Try again.',
+          content: `Your response did not match the required JSON schema: ${summary}. Try again.`,
         });
         tool_call_count++; // schema correction consumes a slot
         if (tool_call_count >= maxCalls) {

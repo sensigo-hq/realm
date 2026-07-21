@@ -691,6 +691,253 @@ describe('AnthropicProvider.callStepWithTools', () => {
 });
 
 // =========================================================================
+// issue #224 — in-conversation full-AJV correction
+// =========================================================================
+describe('AnthropicProvider.callStepWithTools — issue #224 in-conversation AJV correction', () => {
+  beforeEach(() => mockCreate.mockReset());
+
+  const strictSchema = {
+    type: 'object',
+    required: ['category'],
+    properties: { category: { type: 'string', enum: ['billing', 'support'] } },
+    additionalProperties: false,
+  };
+
+  // -----------------------------------------------------------------------
+  // Primary (D4): right keys, WRONG TYPE — corrected in-conversation, tool results retained,
+  // ZERO re-execution, settles without ever reaching a drive error branch.
+  // -----------------------------------------------------------------------
+  it('primary: right-keys-wrong-type output is corrected IN-CONVERSATION — tool executes exactly once, no re-execution', async () => {
+    const executor = vi.fn().mockResolvedValue({ content: 'file data' });
+    mockCreate
+      .mockResolvedValueOnce(
+        makeToolUseResponse([{ id: 'toolu_01', name: 'get_file', input: { path: 'x' } }]),
+      )
+      // Right key, WRONG TYPE (number instead of the required string/enum).
+      .mockResolvedValueOnce(makeTextResponse('{"category": 42}'))
+      // Corrected — valid.
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing"}'));
+
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStepWithTools(
+      'prompt',
+      [oneTool('github:get_file')],
+      executor,
+      {
+        validationOutputSchema: strictSchema,
+      },
+    );
+
+    expect(result.output).toEqual({ category: 'billing' });
+    // Tool results retained, NOTHING re-executed — exactly one executor call, one record.
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.correctionCount).toBe(1);
+  });
+
+  it("probe-equivalent control: a wrong-type output with NO validation*Schema configured is accepted as-is (today's pre-#224 behavior for a plugin that ignores the new fields)", async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolUseResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(makeTextResponse('{"category": 42}'));
+
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {});
+
+    expect(result.output).toEqual({ category: 42 });
+    expect(result.correctionCount).toBeUndefined();
+  });
+
+  // -----------------------------------------------------------------------
+  // Leak pin (D5, AC-2): the correction message contains the whitelisted summary + enum
+  // allowedValues, and NEVER the offending value.
+  // -----------------------------------------------------------------------
+  it('leak pin (AC-2): the correction message contains the enum allowedValues but NEVER the offending sentinel value', async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolUseResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(makeTextResponse('{"category": "OFFENDING_SENTINEL_XYZ"}'))
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing"}'));
+
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      validationOutputSchema: strictSchema,
+    });
+
+    // The correction message is the LAST 'user' turn in the THIRD call's history (call index 2:
+    // [user:prompt(string), assistant:[tool_use], user:[tool_result], assistant:response.content,
+    // user:correctionMessage(string)]) — the FIRST string-content user message is the original
+    // prompt itself, not the correction, so take the last match, not the first.
+    const thirdCallMsgs = mockCreate.mock.calls[2][0].messages as Array<{
+      role: string;
+      content: unknown;
+    }>;
+    const stringUserMsgs = thirdCallMsgs.filter(
+      (m) => m.role === 'user' && typeof m.content === 'string',
+    );
+    const correctionMsg = stringUserMsgs.at(-1);
+    const text = String(correctionMsg?.content ?? '');
+    expect(text).toContain('did not match the required JSON schema');
+    expect(text).toContain('billing'); // allowedValues (schema constant) present
+    expect(text).toContain('support'); // allowedValues (schema constant) present
+    expect(text).not.toContain('OFFENDING_SENTINEL_XYZ'); // the submitted value — NEVER leaked
+  });
+
+  // -----------------------------------------------------------------------
+  // Observability (D6): one breadcrumb per correction; correctionCount reflects the total.
+  // -----------------------------------------------------------------------
+  it('observability (D6): emits one stderr breadcrumb per correction and surfaces correctionCount', async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolUseResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(makeTextResponse('{"category": 1}'))
+      .mockResolvedValueOnce(makeTextResponse('{"category": 2}'))
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing"}'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      validationOutputSchema: strictSchema,
+    });
+
+    expect(result.correctionCount).toBe(2);
+    const breadcrumbs = errorSpy.mock.calls
+      .map((c) => String(c[0]))
+      .filter((s) => s.includes('output rejected (in-conversation)'));
+    expect(breadcrumbs).toHaveLength(2);
+    expect(breadcrumbs[0]).toContain('correcting (1)');
+    expect(breadcrumbs[1]).toContain('correcting (2)');
+    errorSpy.mockRestore();
+  });
+
+  // -----------------------------------------------------------------------
+  // Both-schemas (D2): sequential AND, never allOf-combine.
+  // -----------------------------------------------------------------------
+  it('both-schemas (D2): valid under output_schema but INVALID under input_schema is rejected in-conversation (sequential AND)', async () => {
+    // Deliberately NO additionalProperties:false anywhere in THIS test's schemas (unlike the
+    // shared `strictSchema` used elsewhere in this file) — a submission can satisfy BOTH
+    // simultaneously (an extra 'confirmed' field is harmless under output_schema; an extra
+    // 'category' field is harmless under input_schema), so this test can drive the loop to a
+    // genuine successful completion without constructing an unsatisfiable schema pair.
+    const localOutputSchema = {
+      type: 'object',
+      required: ['category'],
+      properties: { category: { type: 'string' } },
+    };
+    const localInputSchema = {
+      type: 'object',
+      required: ['category', 'confirmed'],
+      properties: { category: { type: 'string' }, confirmed: { type: 'boolean' } },
+    };
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolUseResponse([{ id: 'c1', name: 'op' }]))
+      // Valid under output_schema (has 'category', a string) but missing the input_schema-
+      // required 'confirmed' — rejected by the input-first check.
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing"}'))
+      // Satisfies BOTH schemas.
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing", "confirmed": true}'));
+
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      validationInputSchema: localInputSchema,
+      validationOutputSchema: localOutputSchema,
+    });
+
+    // Corrected once — proves the first (output-valid/input-invalid) submission was REJECTED.
+    expect(result.correctionCount).toBe(1);
+    expect(result.output).toEqual({ category: 'billing', confirmed: true });
+  });
+
+  // -----------------------------------------------------------------------
+  // _debug strip (D3): a _debug-bearing output that is valid-after-strip passes with ZERO
+  // corrections.
+  // -----------------------------------------------------------------------
+  it('_debug strip (D3): a _debug-bearing output valid-after-strip passes with ZERO corrections', async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolUseResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(
+        makeTextResponse('{"category": "billing", "_debug": "model reasoning trace"}'),
+      );
+
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      validationOutputSchema: strictSchema,
+    });
+
+    expect(result.output).toEqual({ category: 'billing', _debug: 'model reasoning trace' });
+    expect(result.correctionCount).toBeUndefined();
+  });
+
+  it('_debug strip (D3) negative control: dropping the strip would over-reject (genuinely invalid without _debug still rejects with it present)', async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolUseResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(makeTextResponse('{"category": 42, "_debug": "trace"}'))
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing"}'));
+
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      validationOutputSchema: strictSchema,
+    });
+
+    expect(result.correctionCount).toBe(1); // genuinely invalid (wrong type) — still corrected
+  });
+
+  // -----------------------------------------------------------------------
+  // Budget-exhaustion terminal (D4 §4): performFinalExtraction RETURNS best-effort on
+  // schema-invalid, never throws (already covered by test 3's rewrite above) — pinned again here
+  // explicitly under the #224 describe block for discoverability.
+  // -----------------------------------------------------------------------
+  it('budget-exhaustion terminal: a still schema-invalid final answer is RETURNED, never thrown', async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolUseResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(makeTextResponse('{"category": 999}'));
+
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      maxToolCalls: 1,
+      validationOutputSchema: strictSchema,
+    });
+
+    expect(result.output).toEqual({ category: 999 }); // best-effort, still invalid — NOT thrown
+  });
+
+  // -----------------------------------------------------------------------
+  // Contract (D7): every executor invocation — success, error, AND timeout — yields a toolCalls
+  // entry (llm-provider.ts's shipped JSDoc clause, now enforced by a test).
+  // -----------------------------------------------------------------------
+  it('contract (D7): every executor invocation (success, error, timeout) yields a toolCalls entry', async () => {
+    const hangingExecutor = vi
+      .fn()
+      .mockResolvedValueOnce('ok') // success
+      .mockRejectedValueOnce(new Error('boom')) // error
+      .mockReturnValueOnce(new Promise<unknown>(() => {})); // hangs → timeout
+    mockCreate
+      .mockResolvedValueOnce(
+        makeToolUseResponse([
+          { id: 't1', name: 'op' },
+          { id: 't2', name: 'op' },
+          { id: 't3', name: 'op' },
+        ]),
+      )
+      .mockResolvedValueOnce(makeTextResponse('{"done":true}'));
+
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], hangingExecutor, {
+      toolTimeoutMs: 1,
+    });
+
+    expect(result.toolCalls).toHaveLength(3); // one entry per invocation, regardless of outcome
+    expect(result.toolCalls[0]?.error).toBeUndefined();
+    expect(result.toolCalls[1]?.error).toBe('boom');
+    expect(result.toolCalls[2]?.error).toBeDefined(); // timeout error
+  });
+});
+
+// =========================================================================
 // capabilities() tests
 // =========================================================================
 describe('AnthropicProvider.capabilities', () => {

@@ -51,7 +51,29 @@ export abstract class ToolCapableLlmProvider extends LlmProvider {
     tools: ToolDefinition[],
     executor: ToolExecutor,
     options: {
+      /**
+       * The EFFECTIVE-OUTPUT schema (`output_schema ?? input_schema`, resolved by the caller) —
+       * a MISNOMER kept for backward compatibility: it feeds the SUBMIT TOOL and the SYSTEM
+       * PROMPT only (never the in-conversation AJV correction below). Do NOT repoint this at the
+       * raw `input_schema` — see `validationInputSchema`/`validationOutputSchema` below for the
+       * two fields the correction loop actually consumes.
+       */
       inputSchema?: Record<string, unknown>;
+      /**
+       * issue #224 (D2): the step's RAW `input_schema`, separate from the effective-output
+       * `inputSchema` above. Consumed ONLY by the in-conversation `validateAgentSubmission`
+       * correction loop — never feeds the submit tool or the system prompt. Additive-optional: a
+       * `--provider-module` plugin that ignores this field simply doesn't in-conversation-correct
+       * against it (backward-compatible).
+       */
+      validationInputSchema?: Record<string, unknown>;
+      /**
+       * issue #224 (D2): the step's RAW `output_schema`, separate from the effective-output
+       * `inputSchema` above. Consumed ONLY by the in-conversation `validateAgentSubmission`
+       * correction loop — never feeds the submit tool or the system prompt. Additive-optional,
+       * same backward-compatibility posture as `validationInputSchema`.
+       */
+      validationOutputSchema?: Record<string, unknown>;
       maxToolCalls?: number;
       maxFanOut?: number;
       toolTimeoutMs?: number;

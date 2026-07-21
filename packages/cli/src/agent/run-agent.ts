@@ -22,11 +22,13 @@ import {
   type McpServerConfig,
   type ToolCallRecord,
   type TraceBufferStore,
-  type ValidationErrorSummaryEntry,
 } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
 import type { LlmProvider } from './providers/llm-provider.js';
-import { setAdditionalRedactionValues } from './providers/agent-utils.js';
+import {
+  setAdditionalRedactionValues,
+  renderValidationSummaryEntry,
+} from './providers/agent-utils.js';
 import { isToolCapable } from './providers/llm-provider.js';
 import type { McpClient, ToolDefinition, ToolExecutor } from './mcp/mcp-extensions.js';
 import { McpClient as McpClientImpl } from './mcp/mcp-client.js';
@@ -188,25 +190,6 @@ async function pollUntilGateResolved(
     if (run.terminal_state) break;
     if (run.pending_gate === undefined || run.pending_gate.gate_id !== gateId) break;
   }
-}
-
-/**
- * Renders one whitelisted Ajv-error summary entry (issue #217, core's
- * `buildFailedAttemptRecord(...).validation_error_summary`) as a single human-readable line for
- * the schema-repair prompt trailer. Key NAMES only — the summary entry already strips value
- * echoes (see failed-attempt-record.ts's `summarizeAjvErrors`), so nothing rendered here can leak
- * a submitted or schema-declared VALUE (e.g. `enum.allowedValues`).
- */
-function renderValidationSummaryEntry(entry: ValidationErrorSummaryEntry): string {
-  const path = entry.instancePath !== '' ? entry.instancePath : '(root)';
-  let line = `- ${path}: ${entry.message} [${entry.keyword}]`;
-  if (entry.additional_property !== undefined) {
-    line += ` (additional property: '${entry.additional_property}')`;
-  }
-  if (entry.missing_property !== undefined) {
-    line += ` (missing property: '${entry.missing_property}')`;
-  }
-  return line;
 }
 
 /**
@@ -558,7 +541,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 );
               }
               // #robust-anthropic-provider Part 1: same output-over-input precedence as the callStep
-              // path above.
+              // path above. This EFFECTIVE-OUTPUT schema still feeds ONLY the submit tool + system
+              // prompt (unchanged) — issue #224 [gate] SCHEMA-ROUTING PIN: do NOT repoint it at the
+              // newly-separated raw schemas below.
               const toolsEffectiveOutputSchema =
                 (stepDef.output_schema as Record<string, unknown> | undefined) ??
                 (stepDef.input_schema as Record<string, unknown> | undefined);
@@ -569,6 +554,19 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 {
                   ...(toolsEffectiveOutputSchema !== undefined
                     ? { inputSchema: toolsEffectiveOutputSchema }
+                    : {}),
+                  // issue #224 (D2): the RAW schemas, separate from the effective-output schema
+                  // above — consumed ONLY by the in-conversation validateAgentSubmission
+                  // correction loop (never the submit tool / system prompt).
+                  ...(stepDef.input_schema !== undefined
+                    ? {
+                        validationInputSchema: stepDef.input_schema as Record<string, unknown>,
+                      }
+                    : {}),
+                  ...(stepDef.output_schema !== undefined
+                    ? {
+                        validationOutputSchema: stepDef.output_schema as Record<string, unknown>,
+                      }
                     : {}),
                   maxToolCalls: stepDef.max_tool_calls ?? 20,
                   ...(stepDef.max_fan_out !== undefined ? { maxFanOut: stepDef.max_fan_out } : {}),
