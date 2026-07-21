@@ -249,7 +249,12 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
   });
 
   it('(e) synthesized-snapshot trace carriage: an exhausting call with a submitted trace carries the normalized trace on the failure evidence', async () => {
-    const def = makeDef();
+    const def = {
+      ...makeDef({ agent_profile: 'reviewer' }),
+      resolved_profiles: {
+        reviewer: { content: 'You are a reviewer.', content_hash: 'sha256:test-hash' },
+      },
+    };
     const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
     await store.update({
       ...run,
@@ -291,6 +296,10 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     // exhausted step must not silently drop agent-supplied toolCalls.
     expect(exhaustedEvidence?.tool_calls).toHaveLength(1);
     expect(exhaustedEvidence?.tool_calls?.[0]?.tool).toBe('get_pull_request');
+    // issue #220 correction 2 — the profile spread was UNPINNED (deleting it left all tests
+    // green): an exhausted step must not silently drop agent-profile attribution either.
+    expect(exhaustedEvidence?.agent_profile).toBe('reviewer');
+    expect(exhaustedEvidence?.agent_profile_hash).toBe('sha256:test-hash');
   });
 
   it('(e) correction — WAL-variant: an exhausting call with a BARE WAL line (no options.trace at all) still carries the WAL-originated line on the failure evidence — the discriminating witness a submitted-trace-only fixture cannot provide', async () => {
