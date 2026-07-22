@@ -45,6 +45,17 @@ All notable changes to this project are documented here.
   engine's own validation gate, `execute_step` telemetry, or the #217 repair-gate's tools-path
   refusal.
 
+### Security
+
+- **`fast-uri` bumped 3.1.2 → 3.1.4 — fixes two HIGH host-confusion advisories**
+  ([GHSA-4c8g-83qw-93j6](https://github.com/advisories/GHSA-4c8g-83qw-93j6) failed-IDN-canonicalization
+  and [GHSA-v2hh-gcrm-f6hx](https://github.com/advisories/GHSA-v2hh-gcrm-f6hx) literal-backslash
+  authority delimiter, both CVSS 7.5), a transitive dependency of `ajv`. Within the existing `^3.0.1`
+  range (lockfile-only; no `package.json` change, no `overrides`). Realm exposure is LOW: `ajv` uses
+  `fast-uri` only to parse author-controlled schema `$id`/`$ref` references, never for a host-based
+  security decision, so the host-confusion path is not weaponizable in realm. Clears the
+  pre-publication `npm audit` gate.
+
 ---
 
 ## [0.30.0] — 2026-07-21
