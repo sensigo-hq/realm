@@ -724,6 +724,88 @@ describe('OpenAIProvider.callStepWithTools — issue #224 in-conversation AJV co
 });
 
 // =========================================================================
+// issue #224 — shared-budget characterization (named residual: corrections and tool calls draw
+// on the SAME `tool_call_count`, incremented per tool call AND per correction, no reset/decrement)
+// =========================================================================
+describe('OpenAIProvider.callStepWithTools — issue #224 shared-budget characterization', () => {
+  beforeEach(() => mockCreate.mockReset());
+
+  const budgetSchema = {
+    type: 'object',
+    required: ['category'],
+    properties: { category: { type: 'string', enum: ['billing', 'support'] } },
+    additionalProperties: false,
+  };
+
+  it('corrections ALONE exhaust the shared maxToolCalls budget: 2 corrections, ZERO tool calls → performFinalExtraction, correctionCount===2', async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeTextResponse('{"category": 42}')) // correction #1 (count 0→1)
+      .mockResolvedValueOnce(makeTextResponse('{"category": 43}')) // correction #2 (count 1→2 === maxCalls)
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing"}')); // performFinalExtraction
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const provider = new OpenAIProvider('gpt-4o');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      maxToolCalls: 2,
+      validationOutputSchema: budgetSchema,
+    });
+
+    expect(executor).not.toHaveBeenCalled();
+    expect(result.toolCalls).toHaveLength(0);
+    expect(result.correctionCount).toBe(2);
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    // The 3rd call is performFinalExtraction — it appends the over-budget prompt as the last user msg.
+    const finalMsgs = mockCreate.mock.calls[2][0].messages as Array<{
+      role: string;
+      content: string;
+    }>;
+    const finalUserMsgs = finalMsgs.filter((m) => m.role === 'user');
+    expect(finalUserMsgs.at(-1)?.content).toContain('maximum number of tool calls');
+    expect(result.output).toEqual({ category: 'billing' });
+
+    const breadcrumbs = errorSpy.mock.calls
+      .map((c) => String(c[0]))
+      .filter((s) => s.includes('output rejected (in-conversation)'));
+    expect(breadcrumbs).toHaveLength(2);
+    errorSpy.mockRestore();
+  });
+
+  it('MIXED: 1 tool call + 1 correction exhausts a maxToolCalls:2 budget (both draw on ONE counter)', async () => {
+    const executor = vi.fn().mockResolvedValue('file data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolCallResponse([{ id: 'c1', name: 'op' }])) // tool call (count 0→1)
+      .mockResolvedValueOnce(makeTextResponse('{"category": 42}')) // correction #1 (count 1→2 === maxCalls)
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing"}')); // performFinalExtraction
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const provider = new OpenAIProvider('gpt-4o');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      maxToolCalls: 2,
+      validationOutputSchema: budgetSchema,
+    });
+
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.correctionCount).toBe(1);
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    const finalMsgs = mockCreate.mock.calls[2][0].messages as Array<{
+      role: string;
+      content: string;
+    }>;
+    const finalUserMsgs = finalMsgs.filter((m) => m.role === 'user');
+    expect(finalUserMsgs.at(-1)?.content).toContain('maximum number of tool calls');
+    expect(result.output).toEqual({ category: 'billing' });
+
+    const breadcrumbs = errorSpy.mock.calls
+      .map((c) => String(c[0]))
+      .filter((s) => s.includes('output rejected (in-conversation)'));
+    expect(breadcrumbs).toHaveLength(1);
+    errorSpy.mockRestore();
+  });
+});
+
+// =========================================================================
 // capabilities() tests
 // =========================================================================
 describe('OpenAIProvider.capabilities', () => {
