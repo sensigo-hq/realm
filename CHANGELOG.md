@@ -55,6 +55,16 @@ All notable changes to this project are documented here.
   `fast-uri` only to parse author-controlled schema `$id`/`$ref` references, never for a host-based
   security decision, so the host-confusion path is not weaponizable in realm. Clears the
   pre-publication `npm audit` gate.
+- **`hono` bumped 4.12.25 → 4.12.31 (via Dependabot #241) — clears three MODERATE advisories**
+  ([GHSA-xgm2-5f3f-mvvc](https://github.com/advisories/GHSA-xgm2-5f3f-mvvc) API-Gateway-v1 header
+  de-duplication, [GHSA-hvrm-45r6-mjfj](https://github.com/advisories/GHSA-hvrm-45r6-mjfj) `hono/jsx`
+  per-request context isolation, [GHSA-w62v-xxxg-mg59](https://github.com/advisories/GHSA-w62v-xxxg-mg59)
+  `hono/css` `cx()` JSX escaping bypass), a transitive dependency of `@modelcontextprotocol/sdk`.
+  Within the SDK's existing `^4.11.4` range (lockfile-only; no `package.json` change, no `overrides`).
+  **Realm exposure is NONE:** all three advisories live in optional hono entrypoints (`hono/aws-lambda`,
+  `hono/jsx`, `hono/css`); realm's only HTTP surface is the SDK's `StreamableHTTPServerTransport`
+  (JSON-RPC over HTTP), which exercises hono _core_ routing only — it renders no JSX, uses no `cx()`,
+  and runs no API-Gateway adapter.
 
 ---
 
