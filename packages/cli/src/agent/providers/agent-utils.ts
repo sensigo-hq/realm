@@ -1,4 +1,5 @@
 // agent-utils.ts — Shared utility functions for LLM provider agentic loops.
+import type { ValidationErrorSummaryEntry, RawValidationError } from '@sensigo/realm';
 
 const SYSTEM_PROMPT_BASE =
   'You are an AI agent executing a step in a structured workflow.\n' +
@@ -185,18 +186,115 @@ export function extractJsonObject(text: string): Record<string, unknown> | null 
   return lastParsedObject(findBalancedObjectCandidates(text));
 }
 
+// issue #224: the required-keys-only `validateSchema` check that used to gate both providers'
+// in-conversation correction loops has been REPLACED at its only two call sites by the full-AJV
+// `validateAgentSubmission` (core) — see anthropic-provider.ts/openai-provider.ts. Removed here
+// rather than left dead: it had no other caller and no test referenced it directly.
+
+const MAX_FIELD_CHARS = 200;
+
+function truncateField(value: string): string {
+  return value.length > MAX_FIELD_CHARS ? value.slice(0, MAX_FIELD_CHARS) : value;
+}
+
+function asStringField(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
 /**
- * Returns true if all required properties from the schema are present in the parsed object.
- * Returns true when no schema is provided.
+ * issue #224 — a #224-LOCAL entry type: `ValidationErrorSummaryEntry`'s exact shape (imported
+ * from core) PLUS an optional `allowedValues`. Deliberately NOT added to core's exported
+ * `ValidationErrorSummaryEntry` (that type feeds issue #217's SHIPPED durable
+ * sidecar/telemetry — widening it would silently change #217's on-disk surface and need
+ * re-running its own leak tests; see failed-attempt-record.ts's #224 note on the same file).
  */
-export function validateSchema(
-  parsed: Record<string, unknown>,
-  schema?: Record<string, unknown>,
-): boolean {
-  if (!schema) return true;
-  const required = schema['required'];
-  if (!Array.isArray(required)) return true;
-  return (required as unknown[]).every((key) => typeof key === 'string' && key in parsed);
+export interface AgentValidationErrorEntry extends ValidationErrorSummaryEntry {
+  /**
+   * The schema's OWN declared `enum` values (`params.allowedValues`) or `const` value
+   * (`params.allowedValue`, normalized to a one-element array here) — present ONLY for those two
+   * keywords. Value-safe: these are SCHEMA constants an author wrote (already present in the
+   * system prompt the model was given), never submitted/user data — see
+   * failed-attempt-record.ts's corrected doc comment for the full distinction from a genuine
+   * leak vector (Ajv's `data`, which is never surfaced here either).
+   */
+  allowedValues?: unknown[];
+}
+
+/**
+ * issue #224 — builds the #224-local entry list DIRECTLY from raw ajv error rows
+ * (`validateAgentSubmission`'s `rawErrors`, never core's private `summarizeAjvErrors`, which
+ * drops `params`/`data` wholesale and has no `allowedValues` field at all — see the design
+ * record's DATA-PATH PIN). Mirrors core's whitelisting shape exactly (instancePath/schemaPath/
+ * keyword/message + the two keyword-conditional key-NAME fields) and ADDS `allowedValues`. Caps
+ * at 10 entries, truncates string fields to 200 chars, like core's summarizer. Never throws.
+ */
+export function summarizeAgentValidationErrors(
+  rawErrors: RawValidationError[],
+): AgentValidationErrorEntry[] {
+  const out: AgentValidationErrorEntry[] = [];
+  for (const entry of rawErrors) {
+    if (out.length >= 10) break;
+    if (entry === null || typeof entry !== 'object') continue;
+    const e = entry as unknown as Record<string, unknown>;
+    const keyword = truncateField(asStringField(e['keyword']));
+    const params =
+      e['params'] !== null && typeof e['params'] === 'object'
+        ? (e['params'] as Record<string, unknown>)
+        : undefined;
+    const additionalProperty =
+      keyword === 'additionalProperties' && typeof params?.['additionalProperty'] === 'string'
+        ? params['additionalProperty']
+        : undefined;
+    const missingProperty =
+      keyword === 'required' && typeof params?.['missingProperty'] === 'string'
+        ? params['missingProperty']
+        : undefined;
+    // enum → params.allowedValues (already an array); const → params.allowedValue (a single
+    // value, normalized into a one-element array so callers have one uniform shape to render).
+    const allowedValues =
+      keyword === 'enum' && Array.isArray(params?.['allowedValues'])
+        ? (params['allowedValues'] as unknown[])
+        : keyword === 'const' && params !== undefined && 'allowedValue' in params
+          ? [params['allowedValue']]
+          : undefined;
+    out.push({
+      instancePath: truncateField(asStringField(e['instancePath'])),
+      schemaPath: truncateField(asStringField(e['schemaPath'])),
+      keyword,
+      message: truncateField(asStringField(e['message'])),
+      ...(additionalProperty !== undefined
+        ? { additional_property: truncateField(additionalProperty) }
+        : {}),
+      ...(missingProperty !== undefined
+        ? { missing_property: truncateField(missingProperty) }
+        : {}),
+      ...(allowedValues !== undefined ? { allowedValues } : {}),
+    });
+  }
+  return out;
+}
+
+/**
+ * Renders one whitelisted Ajv-error summary entry (issue #217, extended by issue #224 with
+ * `allowedValues`) as a single human-readable line for the schema-repair/in-conversation
+ * correction prompt trailer. Key NAMES + schema-declared allowed VALUES only — never a
+ * submitted/offending value (see `AgentValidationErrorEntry`'s own doc for the leak-safety
+ * argument). RELOCATED from run-agent.ts (issue #217) to here: a provider statically importing
+ * run-agent.ts risks a load cycle, and both providers now need this renderer too (issue #224).
+ */
+export function renderValidationSummaryEntry(entry: AgentValidationErrorEntry): string {
+  const path = entry.instancePath !== '' ? entry.instancePath : '(root)';
+  let line = `- ${path}: ${entry.message} [${entry.keyword}]`;
+  if (entry.additional_property !== undefined) {
+    line += ` (additional property: '${entry.additional_property}')`;
+  }
+  if (entry.missing_property !== undefined) {
+    line += ` (missing property: '${entry.missing_property}')`;
+  }
+  if (entry.allowedValues !== undefined) {
+    line += ` (allowed values: ${JSON.stringify(entry.allowedValues)})`;
+  }
+  return line;
 }
 
 /** Returns a Promise that rejects with a timeout error after `ms` milliseconds. */

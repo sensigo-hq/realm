@@ -28,6 +28,14 @@ export interface StepWithToolsResult {
   output: Record<string, unknown>;
   toolCalls: ToolCallRecord[]; // empty array = tools declared but none called
   // (distinct from callStep which returns no toolCalls at all)
+  /**
+   * issue #224 (D6, [audit F2]): number of in-conversation schema corrections this call performed
+   * (0 or absent = none). Corrections consume the SHARED `maxToolCalls` budget invisibly (no
+   * `toolCalls` entry) — this field is the inspection surface for that cost. Deliberately NOT
+   * threaded into `stepMeta` (a CORE type, execution-loop.ts) — this is a cli-local
+   * observability field only.
+   */
+  correctionCount?: number;
 }
 
 // McpClient interface — implemented in mcp-client.ts

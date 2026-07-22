@@ -1,6 +1,6 @@
 // anthropic-provider.ts — Anthropic LLM provider implementation for realm agent.
 // Requires @anthropic-ai/sdk >= 0.20.0 as an optional peer dependency (npm install @anthropic-ai/sdk).
-import { WorkflowError } from '@sensigo/realm';
+import { WorkflowError, validateAgentSubmission, type JsonSchema } from '@sensigo/realm';
 import { ToolCapableLlmProvider } from './llm-provider.js';
 import type {
   ToolCallRecord,
@@ -13,9 +13,10 @@ import {
   serializeToolResult,
   parseNamespacedId,
   extractJsonObject,
-  validateSchema,
   rejectAfter,
   buildSystemPrompt,
+  summarizeAgentValidationErrors,
+  renderValidationSummaryEntry,
 } from './agent-utils.js';
 
 /** The tool offered at `tool_choice:'auto'` so the model can return structured output directly —
@@ -172,6 +173,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     executor: ToolExecutor,
     options: {
       inputSchema?: Record<string, unknown>;
+      validationInputSchema?: Record<string, unknown>;
+      validationOutputSchema?: Record<string, unknown>;
       maxToolCalls?: number;
       maxFanOut?: number;
       toolTimeoutMs?: number;
@@ -222,8 +225,17 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     let fan_out_count = 0;
     let fan_out_budget_exhausted = false;
     let tool_call_count = 0;
+    // issue #224 (D6): in-conversation schema corrections draw on the SAME shared `maxToolCalls`
+    // budget as tool calls (deliberate — see the design record's shared-budget rationale), with
+    // ZERO `tool_call_records` entry each, so a step can starve its own tool budget invisibly.
+    // This counter + the per-correction stderr breadcrumb below are the chosen mitigation
+    // (visibility, not budget separation).
+    let correction_count = 0;
     const tool_call_records: ToolCallRecord[] = [];
     const system = buildSystemPrompt(options.inputSchema, options.agentProfileInstructions);
+    /** Attaches `correctionCount` to a result only when at least one correction happened. */
+    const withCorrectionCount = (result: StepWithToolsResult): StepWithToolsResult =>
+      correction_count > 0 ? { ...result, correctionCount: correction_count } : result;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const history: any[] = [{ role: 'user', content: prompt }];
@@ -273,18 +285,31 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       // Extraction mechanism, not an agent-chosen tool — deliberately NOT pushed into
       // tool_call_records (would pollute stepMeta.toolCalls, run-agent.ts:487).
       const toolUse = blocks.find((b) => b.type === 'tool_use' && b.name === SUBMIT_TOOL_NAME);
+      // issue #224 (D4, §4 budget-exhaustion terminal): RETURN the best-effort output here
+      // UNCONDITIONALLY — never gate this return on schema conformance. A still-invalid output
+      // routes back through the engine's Step 2c `countRejection` (execution-loop.ts), so issue
+      // #220 counts the rejection and terminalizes at threshold (or default-substitutes, for a
+      // `mode:'default'` step). Throwing here instead — which is what would happen if this were
+      // gated on validateAgentSubmission — is caught at run-agent.ts:579-584, which returns
+      // 'failed' WITHOUT ever calling executeChain: the run record is never counted, never
+      // sealed, and a re-attach re-executes every tool call from scratch. Only a genuine
+      // PARSE failure (no usable object at all — the throw below) is a distinct class that must
+      // still throw. This was already Anthropic's behavior before #224 (never gated on schema
+      // here) — #224 UNIFIES OpenAI onto the same posture (see openai-provider.ts).
       if (toolUse !== undefined) {
-        return {
+        return withCorrectionCount({
           output: toolUse.input as Record<string, unknown>,
           toolCalls: tool_call_records,
-        };
+        });
       }
       const textBlock = blocks.find((b) => b.type === 'text');
       const text = textBlock?.text ?? '';
       const parsed = extractJsonObject(text);
       if (parsed !== null) {
-        return { output: parsed, toolCalls: tool_call_records };
+        return withCorrectionCount({ output: parsed, toolCalls: tool_call_records });
       }
+      // Parse failure — a DISTINCT class from schema-invalid (no usable object could be
+      // extracted at all) — this is the ONE case that still throws.
       throw new WorkflowError(
         sanitizeError(`max_tool_calls reached; final extraction failed: ${text.slice(0, 200)}`),
         {
@@ -405,22 +430,52 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         // Normal continuation — single user message with all tool_result blocks.
         history.push({ role: 'user', content: anthropic_result_blocks });
       } else {
-        // No tool calls — attempt to parse the final answer. extractJsonObject (P1) parses a fenced
-        // text answer immediately instead of nudging the model up to maxCalls; validateSchema stays
-        // the cheap required-keys pre-check for this correction loop (NOT the engine's Ajv validator).
+        // No tool calls — attempt to parse the final answer. extractJsonObject (P1) parses a
+        // fenced text answer immediately instead of nudging the model up to maxCalls.
+        // issue #224 (D4, the primary edit): the required-keys-only `validateSchema` pre-check is
+        // REPLACED with the full-AJV `validateAgentSubmission` (core) — right-keys-wrong-type/
+        // enum/nested-shape output is now caught and corrected IN-CONVERSATION (tool results
+        // retained, nothing re-executes), instead of passing through to die at the engine's drive.
         const textBlock = (response.content as Array<{ type: string; text?: string }>).find(
           (b) => b.type === 'text',
         );
         const text = textBlock?.text ?? '';
         const parsed = extractJsonObject(text);
-        if (parsed && validateSchema(parsed, options.inputSchema)) {
-          return { output: parsed, toolCalls: tool_call_records };
+        const verdict =
+          parsed !== null
+            ? validateAgentSubmission(
+                parsed,
+                {
+                  ...(options.validationInputSchema !== undefined
+                    ? { inputSchema: options.validationInputSchema as JsonSchema }
+                    : {}),
+                  ...(options.validationOutputSchema !== undefined
+                    ? { outputSchema: options.validationOutputSchema as JsonSchema }
+                    : {}),
+                },
+                'callStepWithTools',
+              )
+            : undefined;
+        if (parsed !== null && verdict?.valid === true) {
+          return withCorrectionCount({ output: parsed, toolCalls: tool_call_records });
         }
-        // Schema mismatch — append correction and keep looping.
+        // Invalid (schema-invalid OR unparseable) — append a leak-safe correction and keep
+        // looping. D5: names/paths/keywords + expected types + enum/const allowedValues, NEVER
+        // the offending value (ajv 8.18.0's default `message` embeds no offending value for any
+        // AC-2 keyword). D6: one breadcrumb per correction — corrections consume the SHARED
+        // maxToolCalls budget invisibly (no tool_call_records entry), so this is the mitigation.
+        correction_count++;
+        const summary =
+          verdict !== undefined
+            ? summarizeAgentValidationErrors(verdict.rawErrors)
+                .map(renderValidationSummaryEntry)
+                .join('\n')
+            : 'no valid JSON object could be extracted from the response';
+        console.error(`  ⚠ output rejected (in-conversation); correcting (${correction_count})`);
         history.push({ role: 'assistant', content: response.content });
         history.push({
           role: 'user',
-          content: 'Your response did not match the required JSON schema. Try again.',
+          content: `Your response did not match the required JSON schema: ${summary}. Try again.`,
         });
         tool_call_count++; // schema correction consumes a slot
         if (tool_call_count >= maxCalls) {

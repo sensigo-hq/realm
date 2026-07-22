@@ -1282,6 +1282,89 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     errorSpy.mockRestore();
   });
 
+  // ---------------------------------------------------------------------------
+  // issue #224 D4(b) — the provider RETURNING a still-invalid output (its own in-conversation
+  // correction having been exhausted, per D4's budget-terminal fix) must still be COUNTED by the
+  // engine's Step 2c countRejection (issue #220), even though run-agent's OWN #217 repair loop
+  // declines to retry (toolCalls.length > 0). Per [audit F4]: assert on RUN-RECORD state, not on
+  // runAgent's return value (which stays 'failed' either way — a #220 terminalization IS an error
+  // envelope).
+  // ---------------------------------------------------------------------------
+  it("D4(b): tools-path — a still-invalid RETURNED output (post-#224 provider posture) increments validation_rejections via the engine's countRejection", async () => {
+    const def = toolsWorkflow();
+    const toolCalls: ToolCallRecord[] = [
+      {
+        tool: 'get_pull_request',
+        server_id: 'github',
+        args: {},
+        result: 'x',
+        duration_ms: 1,
+        started_at: '2026-01-01T00:00:00.000Z',
+      },
+    ];
+    const provider = new (class extends ToolCapableLlmProvider {
+      callStepWithTools = vi.fn().mockResolvedValue({ output: { category: 'WRONG' }, toolCalls });
+    })();
+    const mockClient = makeMockMcpClient();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new InMemoryStore();
+    const { run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: def.version,
+      params: {},
+    });
+
+    const result = await runAgent(
+      {
+        store,
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+        mcpClientFactory: () => mockClient,
+      },
+      { existingRunId: run.id, definition: def, params: {} },
+    );
+
+    expect(result).toBe('failed'); // unchanged — a #220 rejection/terminalization is still an error envelope
+    const after = await store.get(run.id);
+    expect(after.validation_rejections?.['draft']).toBe(1); // COUNTED — proves Step 2c engaged
+    errorSpy.mockRestore();
+  });
+
+  it("D4(b) mutation-probe comparison: a THROWN provider error (the pre-#224 posture) is NEVER counted — validation_rejections stays unset, because run-agent's catch block returns 'failed' without ever reaching executeChain", async () => {
+    const def = toolsWorkflow();
+    const provider = new (class extends ToolCapableLlmProvider {
+      callStepWithTools = vi
+        .fn()
+        .mockRejectedValue(new Error('max_tool_calls reached; schema-invalid'));
+    })();
+    const mockClient = makeMockMcpClient();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new InMemoryStore();
+    const { run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: def.version,
+      params: {},
+    });
+
+    const result = await runAgent(
+      {
+        store,
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+        mcpClientFactory: () => mockClient,
+      },
+      { existingRunId: run.id, definition: def, params: {} },
+    );
+
+    expect(result).toBe('failed');
+    const after = await store.get(run.id);
+    expect(after.validation_rejections?.['draft']).toBeUndefined(); // uncounted — never claimed/settled
+    expect(after.terminal_state).toBe(false); // not even a #220 terminalization — the run was never touched
+    errorSpy.mockRestore();
+  });
+
   it('test 10: chained-auto no-false-repair — an agent step chaining into an auto step with a required-prop input_schema does not falsely repair the already-settled agent step', async () => {
     const def: WorkflowDefinition = {
       id: 'chained-auto-wf',

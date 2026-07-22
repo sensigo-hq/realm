@@ -97,13 +97,20 @@ function safeStringify(value: unknown): string {
 }
 
 /**
- * Map raw Ajv errors to the whitelisted summary. Drops `params`/`data` WHOLESALE (Ajv embeds
- * offending/schema VALUES there — a leak vector, e.g. `enum.allowedValues`) EXCEPT for two
- * keyword-conditional KEY-NAME-ONLY fields (issue #217) that carry no value: `additional_property`
- * (from `params.additionalProperty` on an `additionalProperties` error) and `missing_property`
- * (from `params.missingProperty` on a `required` error) — both gated on keyword AND a string-typed
- * params field, so no other keyword's `params` is ever touched. Skips non-object entries, caps at
- * the first 10, truncates path/message/the two new fields to 200 chars. Never throws.
+ * Map raw Ajv errors to the whitelisted summary. Drops `params`/`data` WHOLESALE — Ajv's `data`
+ * echoes the SUBMITTED value (the genuine leak vector: it can carry arbitrary caller/model
+ * content) EXCEPT for two keyword-conditional KEY-NAME-ONLY fields (issue #217) that carry no
+ * value: `additional_property` (from `params.additionalProperty` on an `additionalProperties`
+ * error) and `missing_property` (from `params.missingProperty` on a `required` error) — both
+ * gated on keyword AND a string-typed params field, so no other keyword's `params` is ever
+ * touched. issue #224 correction: a prior version of this comment mis-framed `params.allowedValues`
+ * (the `enum` keyword's own value) as a leak vector alongside `data` — it is NOT: `allowedValues`
+ * is a SCHEMA constant (author-controlled, already present in the system prompt the model was
+ * given), never submitted/user data, so dropping it here is conservative-but-unnecessary rather
+ * than a leak fix. This distinction is why issue #224's #224-local formatter (agent-utils.ts) is
+ * able to surface `allowedValues` safely from its OWN raw-error read without reusing (or needing
+ * to widen) this whitelist. Skips non-object entries, caps at the first 10, truncates
+ * path/message/the two new fields to 200 chars. Never throws.
  */
 function summarizeAjvErrors(ajvErrors: unknown[]): ValidationErrorSummaryEntry[] {
   if (!Array.isArray(ajvErrors)) return [];

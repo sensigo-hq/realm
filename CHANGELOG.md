@@ -4,6 +4,49 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **In-conversation full-AJV correction for tool-using agent steps — the "reask layer" (issue
+  #224).** A tool-using `execution: 'agent'` step whose model output has the right keys but the
+  wrong types/enums/nested shapes could not be repaired before this change: the provider's
+  in-conversation correction check (both `AnthropicProvider` and `OpenAIProvider`) validated only
+  that required keys were present, so a type/enum/shape violation passed straight through to the
+  engine's own AJV gate and died at the drive — where issue #217 deliberately declines to repair a
+  tools-path step (a stateless re-call would re-execute every already-completed tool call). The
+  correction loop now runs the SAME full AJV validation the engine itself uses
+  (`validateAgentSubmission`, new in `@sensigo/realm`, alongside newly-exported
+  `validateOutputSchema`/`RawValidationError`/`AgentSubmissionValidation`) — inside the RETAINED
+  conversation, where tool results already survive and nothing re-executes. `validateAgentSubmission`
+  is a provider-side REPLICA of the engine's own two throwing validators (never a unification —
+  issue #220's rejection counting/exhaustion telemetry stays built on the engine's own separate
+  Step 2b/2c checks, byte-unchanged), validates a declared `input_schema` and `output_schema`
+  SEQUENTIALLY (never combined into one `allOf`, which would over-reject under
+  `additionalProperties:false`), and mirrors the engine's `_debug`-field strip before validating
+  either schema. `callStepWithTools`'s options gain two new additive-optional fields,
+  `validationInputSchema`/`validationOutputSchema` (the step's raw declared schemas, consumed only
+  by this correction loop) — the pre-existing `options.inputSchema` field is unchanged and keeps
+  feeding the submit tool and system prompt exactly as before. The correction message itself is
+  leak-safe: field paths/keywords/expected-types and schema-declared `enum`/`const` allowed values,
+  **never the submitted/offending value**. Corrections draw on the same shared `maxToolCalls`
+  budget as tool calls (a deliberate choice, not a gap) — a per-correction stderr breadcrumb
+  (`⚠ output rejected (in-conversation); correcting (n)`) plus a new `correctionCount` on the
+  cli-local `StepWithToolsResult` make that budget consumption visible instead of silent.
+  Separately, **`OpenAIProvider.performFinalExtraction` no longer throws when the tool-call budget
+  is exhausted and the last output is still schema-invalid — it now returns that output, exactly
+  like `AnthropicProvider` already did.** This unifies both providers on the posture issue #220
+  depends on: a returned (even invalid) output flows through the engine's own Step 2c
+  `countRejection`, so the rejection is counted and exhaustion terminalizes normally; a thrown
+  error is instead caught by `run-agent.ts`'s outer catch, which returns `'failed'` without ever
+  reaching the engine — the run is never counted, never sealed, and a re-attach re-executes every
+  tool call from scratch. Only a genuine PARSE failure (no usable JSON object at all) still
+  throws. No behavior change for `callStep`-only (non-tool) agent steps, and no change to the
+  engine's own validation gate, `execute_step` telemetry, or the #217 repair-gate's tools-path
+  refusal.
+
+---
+
 ## [0.30.0] — 2026-07-21
 
 ### Added

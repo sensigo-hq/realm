@@ -183,7 +183,12 @@ export { TRACE_POLICY_VERSION, TRACE_POLICY, TRACE_POLICY_HASH } from './engine/
 export type { TracePolicyDescriptor, TracePolicyVersion } from './engine/trace-policy.js';
 
 // Validation
-export { validateInputSchema } from './validation/input-schema.js';
+export {
+  validateInputSchema,
+  validateOutputSchema,
+  validateAgentSubmission,
+} from './validation/input-schema.js';
+export type { RawValidationError, AgentSubmissionValidation } from './validation/input-schema.js';
 
 // Workflow
 export {
