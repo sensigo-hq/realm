@@ -938,6 +938,83 @@ describe('AnthropicProvider.callStepWithTools — issue #224 in-conversation AJV
 });
 
 // =========================================================================
+// issue #224 — shared-budget characterization (named residual: corrections and tool calls draw
+// on the SAME `tool_call_count`, incremented per tool call AND per correction, no reset/decrement)
+// =========================================================================
+describe('AnthropicProvider.callStepWithTools — issue #224 shared-budget characterization', () => {
+  beforeEach(() => mockCreate.mockReset());
+
+  const budgetSchema = {
+    type: 'object',
+    required: ['category'],
+    properties: { category: { type: 'string', enum: ['billing', 'support'] } },
+    additionalProperties: false,
+  };
+
+  it('corrections ALONE exhaust the shared maxToolCalls budget: 2 corrections, ZERO tool calls → performFinalExtraction, correctionCount===2', async () => {
+    const executor = vi.fn().mockResolvedValue('data');
+    mockCreate
+      .mockResolvedValueOnce(makeTextResponse('{"category": 42}')) // correction #1 (count 0→1)
+      .mockResolvedValueOnce(makeTextResponse('{"category": 43}')) // correction #2 (count 1→2 === maxCalls)
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing"}')); // performFinalExtraction
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      maxToolCalls: 2,
+      validationOutputSchema: budgetSchema,
+    });
+
+    expect(executor).not.toHaveBeenCalled();
+    expect(result.toolCalls).toHaveLength(0);
+    expect(result.correctionCount).toBe(2);
+    // Exactly 3 API calls: 2 correction turns + 1 performFinalExtraction. If corrections did NOT
+    // consume the shared budget, the loop would NOT exhaust at 2 — this is the pin.
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    // performFinalExtraction is the ONLY call carrying `tool_choice` (the main loop never sets it —
+    // it only sets `tools` when tools are offered, and lets the API default `tool_choice`).
+    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('tool_choice');
+    expect(mockCreate.mock.calls[1][0]).not.toHaveProperty('tool_choice');
+    expect(mockCreate.mock.calls[2][0]).toHaveProperty('tool_choice');
+    expect(result.output).toEqual({ category: 'billing' });
+
+    const breadcrumbs = errorSpy.mock.calls
+      .map((c) => String(c[0]))
+      .filter((s) => s.includes('output rejected (in-conversation)'));
+    expect(breadcrumbs).toHaveLength(2);
+    errorSpy.mockRestore();
+  });
+
+  it('MIXED: 1 tool call + 1 correction exhausts a maxToolCalls:2 budget (both draw on ONE counter)', async () => {
+    const executor = vi.fn().mockResolvedValue('file data');
+    mockCreate
+      .mockResolvedValueOnce(makeToolUseResponse([{ id: 'c1', name: 'op' }])) // tool call (count 0→1)
+      .mockResolvedValueOnce(makeTextResponse('{"category": 42}')) // correction #1 (count 1→2 === maxCalls)
+      .mockResolvedValueOnce(makeTextResponse('{"category": "billing"}')); // performFinalExtraction
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const provider = new AnthropicProvider('claude-sonnet-4-5');
+    const result = await provider.callStepWithTools('prompt', [oneTool()], executor, {
+      maxToolCalls: 2,
+      validationOutputSchema: budgetSchema,
+    });
+
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.correctionCount).toBe(1);
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    expect(mockCreate.mock.calls[2][0]).toHaveProperty('tool_choice'); // performFinalExtraction
+    expect(result.output).toEqual({ category: 'billing' });
+
+    const breadcrumbs = errorSpy.mock.calls
+      .map((c) => String(c[0]))
+      .filter((s) => s.includes('output rejected (in-conversation)'));
+    expect(breadcrumbs).toHaveLength(1);
+    errorSpy.mockRestore();
+  });
+});
+
+// =========================================================================
 // capabilities() tests
 // =========================================================================
 describe('AnthropicProvider.capabilities', () => {
