@@ -15,17 +15,39 @@ updates:
     ignore:
       - dependency-name: '@sensigo/*' # workspace-linked, resolve locally
     groups:
-      build-toolchain: # FIRST (first-match-wins priority)
+      build-toolchain: # FIRST (first-match-wins priority) — shipped-byte/CI-infra toolchain, never auto-merge
         dependency-type: 'development'
         patterns: ['typescript', 'turbo', 'audit-ci']
+      linters: # formatter/linter bumps change CI format:check/lint OUTPUT → deterministically red ci → never auto-merge, need a manual reformat/rule-fix (see #238 canary PRs #248 prettier / #249 @eslint/js)
+        dependency-type: 'development'
+        patterns: ['prettier', 'eslint', '@eslint/js', 'typescript-eslint']
       prod:
         dependency-type: 'production'
         update-types: ['minor', 'patch']
       dev-patch:
         dependency-type: 'development'
         update-types: ['patch']
-        exclude-patterns: ['typescript', 'turbo', 'audit-ci'] # structural exclusion (order-independent)
+        # structural exclusion (order-independent) — build-toolchain + linters must never fall into an auto-merge-eligible group
+        exclude-patterns:
+          [
+            'typescript',
+            'turbo',
+            'audit-ci',
+            'prettier',
+            'eslint',
+            '@eslint/js',
+            'typescript-eslint',
+          ]
       dev-minor:
         dependency-type: 'development'
         update-types: ['minor']
-        exclude-patterns: ['typescript', 'turbo', 'audit-ci']
+        exclude-patterns:
+          [
+            'typescript',
+            'turbo',
+            'audit-ci',
+            'prettier',
+            'eslint',
+            '@eslint/js',
+            'typescript-eslint',
+          ]
