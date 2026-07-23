@@ -119,6 +119,15 @@ for (const { file, pattern, replacement } of SOURCE_VERSIONS) {
   console.log(`  ${file} → ${version}`);
 }
 
+// ─── Step 3b: Sync package-lock.json self-versions ──────────────────────────
+// The four workspace self-version entries in package-lock.json must match the
+// just-bumped package.json versions, or the committed lockfile drifts — a stale
+// self-version that the next `npm install` reconciles as a noisy, unrelated diff.
+// `--package-lock-only` rewrites the lockfile from package.json without touching
+// node_modules; on an otherwise-in-sync tree the only change is the four self-versions.
+console.log('Syncing package-lock.json...');
+execSync('npm install --package-lock-only', { stdio: 'inherit', cwd: ROOT });
+
 // ─── Step 4: Build ───────────────────────────────────────────────────────────
 
 console.log('Building...');
@@ -128,7 +137,7 @@ execSync('npm run build', { stdio: 'inherit', cwd: ROOT });
 
 console.log('Creating git commit and tag...');
 execSync(
-  'git add packages/*/package.json packages/*/src/index.ts packages/mcp-server/src/server.ts',
+  'git add package-lock.json packages/*/package.json packages/*/src/index.ts packages/mcp-server/src/server.ts',
   { stdio: 'inherit', cwd: ROOT },
 );
 execSync(`git commit -m "chore: release v${version}"`, { stdio: 'inherit', cwd: ROOT });
