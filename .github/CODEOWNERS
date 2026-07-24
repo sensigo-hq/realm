@@ -1,0 +1,7 @@
+# Default owner (solo-maintained). Notification/documentation on this repo — a real review gate only once a
+# ruleset requires code-owner review (deferred, #238 R10/D2). Kept accurate so that day is a one-line flip.
+* @mihai-r-lupu
+
+# Release-critical surfaces, called out explicitly:
+/packages/*/package.json      @mihai-r-lupu
+/.github/workflows/publish.yml @mihai-r-lupu

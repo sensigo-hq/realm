@@ -1,0 +1,28 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/sensigo-hq/realm/security/vex/GHSA-frvp-7c67-39w9",
+  "author": "Mihai Lupu <mihai.lupu@sensigo.ro>",
+  "timestamp": "2026-07-24T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GHSA-frvp-7c67-39w9",
+        "description": "@hono/node-server serve-static path traversal (CWE-22), Windows-only"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/%40sensigo/realm-cli",
+          "subcomponents": [{ "@id": "pkg:npm/%40hono/node-server" }]
+        },
+        {
+          "@id": "pkg:npm/%40sensigo/realm-mcp",
+          "subcomponents": [{ "@id": "pkg:npm/%40hono/node-server" }]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "realm-cli reaches @hono/node-server only via @modelcontextprotocol/sdk's StreamableHTTPServerTransport (which uses @hono/node-server's getRequestListener) for the 'realm serve' command's JSON-RPC HTTP transport; the vulnerable serve-static handler is never imported or registered anywhere in that transport or in realm's own source, so the vulnerable path is not reachable. The advisory is additionally Windows-only, while realm deploys to macOS/Linux. @sensigo/realm-mcp declares the same @modelcontextprotocol/sdk version but uses only its stdio transport (StdioServerTransport), never loading the HTTP transport module that references @hono/node-server at all."
+    }
+  ]
+}
