@@ -11,6 +11,10 @@ All notable changes to this project are documented here.
 - Bumped `uuid` from 13 to 14 (a `@sensigo/realm` core production dependency). The `v4` ID-generation API is
   unchanged, and uuid 14's raised Node floor (20) sits below realm's own `>=22` requirement — behaviour-neutral;
   consumers receive only a resolved-version update.
+- Bumped `commander` from 14 to 15 (a `@sensigo/realm-cli` production dependency). realm-cli imports it as ESM, so
+  commander 15's ESM migration is transparent and its `require(esm)` Node-22.12 note (which applies only to
+  CommonJS `require('commander')`) does not affect realm — the `Command`/subcommand API is unchanged and the full
+  CLI test suite passes. Behaviour-neutral.
 
 ---
 
