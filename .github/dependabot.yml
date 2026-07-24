@@ -51,3 +51,15 @@ updates:
             '@eslint/js',
             'typescript-eslint',
           ]
+
+  - package-ecosystem: 'github-actions'
+    directory: '/' # scans ALL of .github/workflows — NO per-file scope exists (B1 is procedural, see below)
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7 # github-actions supports ONLY default-days (semver-*-days are unsupported here)
+    groups:
+      github-actions: # one human-reviewed, NEVER-auto-merged PR for every action bump across all workflows
+        patterns: ['*']
