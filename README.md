@@ -1,5 +1,7 @@
 # Realm
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/sensigo-hq/realm/badge)](https://scorecard.dev/viewer/?uri=github.com/sensigo-hq/realm)
+
 **The agent calls Realm. Every other tool calls the agent.**
 
 Most AI workflow platforms orchestrate LLMs as services: the platform decides when to call the model, what to send, and what to do with the result. Realm inverts this. The agent calls `execute_step` via MCP. Realm's state machine responds with the current step's task and schema. The agent executes. It cannot skip steps, produce malformed output, or proceed past a human gate — not because of instructions it might ignore, but because the state cannot change until valid output is submitted.
@@ -198,6 +200,20 @@ npm run build        # compile all packages
 npm run test         # run all tests
 npm run lint         # lint all packages
 ```
+
+## Security
+
+See [`SECURITY.md`](SECURITY.md) for how to report a vulnerability (GitHub private vulnerability
+reporting — do not open a public issue or PR) and for how dependency advisories are triaged.
+
+Every `@sensigo/*` package is published from CI via npm **trusted publishing**, with **SLSA build
+provenance** attached to every release. Verify the provenance of an installed package with:
+
+```bash
+npm audit signatures
+```
+
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/sensigo-hq/realm/badge)](https://scorecard.dev/viewer/?uri=github.com/sensigo-hq/realm)
 
 ## License
 
