@@ -8,7 +8,7 @@
     {
       "GHSA-frvp-7c67-39w9": {
         "active": true,
-        "notes": "not_affected (VEX): @hono/node-server serve-static/CWE-22 unreachable — realm stdio-only, serve-static never registered. MODERATE<high so inert here; kept as the future re-score-to-HIGH escape hatch. Upstream fix: @modelcontextprotocol/sdk -> @hono/node-server >=2.0.5.",
+        "notes": "not_affected (VEX): @hono/node-server's vulnerable serve-static (CWE-22) handler is never imported or registered — neither by realm's own source nor by the only @hono/node-server code path realm reaches (@modelcontextprotocol/sdk's StreamableHTTPServerTransport -> getRequestListener, used by realm-cli's serve command). So the vulnerable path is unreachable. Windows-only advisory; realm deploys to macOS/Linux. MODERATE<high so inert here; kept as the future re-score-to-HIGH escape hatch. Upstream fix: @modelcontextprotocol/sdk -> @hono/node-server >=2.0.5.",
         "expiry": "2027-01-31",
       },
     },
