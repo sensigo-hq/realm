@@ -192,9 +192,7 @@ realm run export abc123 --out bug-1234.json # writes exactly that file
 {
   "realm_export_version": 2,
   "exported_at": "<ISO-8601, stamped at export time>",
-  "run": {
-    /* the full RunRecord — steps, evidence, skip_details, claims, etc. */
-  },
+  "run": {/* the full RunRecord — steps, evidence, skip_details, claims, etc. */},
   "attempts": [
     /* parsed failed-attempt records — [] if none, OR if the sidecar read failed (check "complete") */
   ],
