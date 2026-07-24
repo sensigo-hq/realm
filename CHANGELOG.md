@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- Bumped `uuid` from 13 to 14 (a `@sensigo/realm` core production dependency). The `v4` ID-generation API is
+  unchanged, and uuid 14's raised Node floor (20) sits below realm's own `>=22` requirement — behaviour-neutral;
+  consumers receive only a resolved-version update.
+
+---
+
 ## [0.31.1] — 2026-07-24
 
 ### Changed
