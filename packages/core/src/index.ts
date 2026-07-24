@@ -106,7 +106,7 @@ export {
 } from './engine/precondition.js';
 export type { PreconditionResult } from './engine/precondition.js';
 export type { StepDiagnostics } from './types/run-record.js';
-export const VERSION = '0.31.0';
+export const VERSION = '0.31.1';
 export type { ToolCallRecord, McpServerConfig } from './types/mcp-types.js';
 
 // Extensions
