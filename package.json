@@ -13,6 +13,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:versions": "node scripts/check-versions.mjs",
+    "audit:ci": "audit-ci --config ./audit-ci.jsonc",
+    "audit:full": "audit-ci --config ./audit-ci.tier2.jsonc",
     "release": "node scripts/release.mjs",
     "setup": "lefthook install"
   },

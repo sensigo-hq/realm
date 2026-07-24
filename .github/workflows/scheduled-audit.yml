@@ -1,0 +1,44 @@
+name: Scheduled dependency audit (tier-2)
+
+on:
+  schedule:
+    # Weekly, Monday ~06:17 UTC — off-:00 to dodge cron congestion on the hour.
+    - cron: '17 6 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      # issue #238 PR2 (D4) — validates BOTH audit-ci.jsonc and audit-ci.tier2.jsonc (and the
+      # tier-1 ⊆ tier-2 subset invariant) before the audit itself runs.
+      - run: node scripts/check-audit-allowlist.mjs
+      # Tier-2: the broader safety net (moderate+, incl. devDependencies) — does NOT block PRs
+      # (this is a scheduled workflow, not a required check); a finding fails this run (failure
+      # email) and, via the next step, files/updates a tracking issue.
+      - name: Tier-2 audit (moderate, incl. devDependencies)
+        id: audit
+        run: |
+          set -o pipefail
+          npm run audit:full 2>&1 | tee "$RUNNER_TEMP/audit-output.txt"
+      # Only a genuine audit finding files/updates the tracking issue — `steps.audit.outcome ==
+      # 'failure'` is load-bearing: a failed `npm ci`/guard step ABOVE this also reds the run (the
+      # failure email still fires), but must NOT be mistaken for "advisories found" and must NOT
+      # file this issue.
+      - name: File or update the tracking issue
+        if: failure() && steps.audit.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUDIT_OUTPUT_FILE: ${{ runner.temp }}/audit-output.txt
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/file-audit-issue.mjs

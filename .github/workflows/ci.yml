@@ -24,9 +24,11 @@ jobs:
       # source of truth for every accepted advisory suppression; this asserts every entry is
       # GHSA-id-scoped (never a bare-string module-wide suppression).
       - run: node scripts/check-audit-allowlist.mjs
-      # issue #238 PR1 (D5) — the PR-blocking audit gate. Pinned local binary (never a bare
-      # network `npx audit-ci`), the only required check this repo has for dependency advisories.
-      - run: npx --no-install audit-ci --config ./audit-ci.jsonc
+      # issue #238 PR1 (D5) — the PR-blocking audit gate. Invoked via the `audit:ci` npm script
+      # (issue #238 PR2, D2) — `npm run` prepends node_modules/.bin to PATH, so this resolves the
+      # same pinned local binary as before, network-free, and is the same invocation PR4's
+      # release-audit step reuses. The only required check this repo has for dependency advisories.
+      - run: npm run audit:ci
       # issue #238 PR1 (D7) — positive coverage assertion (R7 mitigation). `ajv` is
       # @sensigo/realm's declared prod dependency; if audit-ci's `skip-dev` (or a future
       # `--omit=dev`/`--production` narrowing) ever silently excluded the workspace prod tree from
