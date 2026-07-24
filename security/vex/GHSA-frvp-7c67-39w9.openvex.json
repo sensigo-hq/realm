@@ -14,6 +14,10 @@
         {
           "@id": "pkg:npm/%40sensigo/realm-cli",
           "subcomponents": [{ "@id": "pkg:npm/%40hono/node-server" }]
+        },
+        {
+          "@id": "pkg:npm/%40sensigo/realm-mcp",
+          "subcomponents": [{ "@id": "pkg:npm/%40hono/node-server" }]
         }
       ],
       "status": "not_affected",
