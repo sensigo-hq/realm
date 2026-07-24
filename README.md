@@ -194,6 +194,13 @@ Run `realm <command> --help` for full options on any command.
 
 **Prerequisites:** Node.js 22+, npm 10+
 
+**Requirements for contributors:** the dev toolchain (specifically eslint 10, which declares
+`engines: ^20.19 || ^22.13 || >=24`) effectively requires **Node ≥22.13** to run `npm run lint`
+locally — an older Node 22 patch will fail there. CI runs Node 24, and that's the recommended local
+version too; see [`.nvmrc`](.nvmrc) (`nvm use` / `fnm use` / `volta run` will pick it up
+automatically). This is a _development-only_ requirement — it does not change the _published_
+runtime floor, which stays `>=22.0.0` for every consumer of `@sensigo/*`.
+
 ```bash
 npm install          # install all workspace dependencies
 npm run build        # compile all packages

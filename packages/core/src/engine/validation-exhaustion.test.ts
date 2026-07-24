@@ -617,8 +617,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     expect(envelope.status).toBe('error');
     expect(envelope.error_code).toBe('VALIDATION_EXHAUSTED');
     const lastAjvErrors = envelope.error_details?.['last_ajv_errors'] as
-      | Array<{ instancePath?: string }>
-      | undefined;
+      Array<{ instancePath?: string }> | undefined;
     // The 2b (input-schema) ajv error set is about the MISSING 'x' — never mentions 'category'.
     expect(JSON.stringify(lastAjvErrors)).not.toContain('category');
     const after = await store.get(run.id);

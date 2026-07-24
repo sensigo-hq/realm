@@ -23,14 +23,12 @@ function makeToolUseResponse(
   calls: Array<{ id: string; name: string; input?: Record<string, unknown> }>,
 ) {
   return {
-    content: calls.map(
-      (c): ContentBlock => ({
-        type: 'tool_use',
-        id: c.id,
-        name: c.name,
-        input: c.input ?? {},
-      }),
-    ),
+    content: calls.map((c): ContentBlock => ({
+      type: 'tool_use',
+      id: c.id,
+      name: c.name,
+      input: c.input ?? {},
+    })),
   };
 }
 
@@ -592,8 +590,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
     }>;
     const userMsg = secondCallMsgs.find((m) => m.role === 'user' && Array.isArray(m.content));
     const blocks = userMsg?.content as
-      | Array<{ type?: string; tool_use_id?: string; text?: string; content?: string }>
-      | undefined;
+      Array<{ type?: string; tool_use_id?: string; text?: string; content?: string }> | undefined;
     expect(blocks).toBeDefined();
 
     const toolResults = blocks?.filter((b) => b.type === 'tool_result') ?? [];

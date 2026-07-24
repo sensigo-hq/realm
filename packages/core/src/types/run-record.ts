@@ -231,12 +231,7 @@ export interface PendingGate {
  * never set directly by callers outside the engine.
  */
 export type RunPhase =
-  | 'running'
-  | 'gate_waiting'
-  | 'completed'
-  | 'failed'
-  | 'abandoned'
-  | 'aborted';
+  'running' | 'gate_waiting' | 'completed' | 'failed' | 'abandoned' | 'aborted';
 
 /** Snapshot of a single workflow context entry taken at run start. */
 export interface WorkflowContextSnapshot {

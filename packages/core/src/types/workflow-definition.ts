@@ -142,12 +142,7 @@ const _retryKeysExtraCheck: _RetryKeysExtra extends never
  * Default: 'all_success'.
  */
 export type TriggerRule =
-  | 'all_success'
-  | 'all_failed'
-  | 'all_done'
-  | 'one_failed'
-  | 'one_success'
-  | 'none_failed';
+  'all_success' | 'all_failed' | 'all_done' | 'one_failed' | 'one_success' | 'none_failed';
 
 /**
  * A node in an input_map tree. One of:
@@ -602,8 +597,7 @@ export const RUNTIME_ONLY_WORKFLOW_KEYS = [
 // exact, non-overlapping partition of WorkflowDefinition's keys. See the StepDefinition guard
 // above for why this has to be a type-level check rather than a runtime one.
 type _WorkflowKeysAll =
-  | (typeof KNOWN_WORKFLOW_KEYS)[number]
-  | (typeof RUNTIME_ONLY_WORKFLOW_KEYS)[number];
+  (typeof KNOWN_WORKFLOW_KEYS)[number] | (typeof RUNTIME_ONLY_WORKFLOW_KEYS)[number];
 type _WorkflowKeysMissing = Exclude<keyof WorkflowDefinition, _WorkflowKeysAll>;
 type _WorkflowKeysExtra = Exclude<_WorkflowKeysAll, keyof WorkflowDefinition>;
 type _WorkflowKeysOverlap = (typeof KNOWN_WORKFLOW_KEYS)[number] &
@@ -688,8 +682,7 @@ export type WebhookAuth = AuthSharedSecret | AuthGithub | AuthStripe | AuthHmac 
 
 // Dot-notation: each segment is a property name or zero-based numeric array index.
 export type FilterCondition =
-  | { header: string; value: string | string[] }
-  | { path: string; value: string | string[] };
+  { header: string; value: string | string[] } | { path: string; value: string | string[] };
 
 /** Post-normalisation form (loader converts shorthand → { all: [...] }). Max 8 conditions. */
 export interface TriggerFilter {

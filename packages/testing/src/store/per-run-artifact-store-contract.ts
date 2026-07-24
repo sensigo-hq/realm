@@ -33,10 +33,7 @@ import { WorkflowError, type PerRunArtifactStore } from '@sensigo/realm';
 
 /** One of the four laws every `PerRunArtifactStore` implementation must satisfy (issue #183). */
 export type ArtifactStoreLaw =
-  | 'L1_ABSENCE_RESOLVES'
-  | 'L2_IDEMPOTENT'
-  | 'L3_FAILURE_REJECTS'
-  | 'L4_TYPED_REJECTION';
+  'L1_ABSENCE_RESOLVES' | 'L2_IDEMPOTENT' | 'L3_FAILURE_REJECTS' | 'L4_TYPED_REJECTION';
 
 /**
  * A single, framework-agnostic contract case. `run()` throws (rejects) on failure — any test

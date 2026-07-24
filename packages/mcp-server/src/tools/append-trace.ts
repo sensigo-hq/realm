@@ -154,12 +154,7 @@ function stepStateOf(
  *  (the same state must never yield two different agent actions depending on which tool observed
  *  it). The other five are permanent from this call's perspective and stay `report_to_user`. */
 type StepEligibilityState =
-  | 'completed'
-  | 'failed'
-  | 'skipped'
-  | 'in_progress'
-  | 'run_terminal'
-  | 'run_not_found';
+  'completed' | 'failed' | 'skipped' | 'in_progress' | 'run_terminal' | 'run_not_found';
 
 function stepNotEligibleError(
   stepId: string,

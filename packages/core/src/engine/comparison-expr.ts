@@ -13,10 +13,7 @@
 export type ComparisonOp = '==' | '!=' | '>=' | '<=' | '>' | '<';
 
 export type ComparisonInvalidReason =
-  | 'empty'
-  | 'compound_and'
-  | 'compound_or'
-  | 'multiple_operators';
+  'empty' | 'compound_and' | 'compound_or' | 'multiple_operators';
 
 /** The result of splitting one condition leaf. Never thrown — malformed input returns `invalid`. */
 export type ComparisonSplit =
