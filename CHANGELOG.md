@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- Bumped the `ajv` schema validator (a `@sensigo/realm` core production dependency) from 8.18 to 8.20.
+  Routine dependency maintenance — realm's own usage is unaffected (it never enables ajv's `$data` option
+  and requires Node ≥22), so there is no behaviour or API change; consumers receive only a
+  resolved-version update.
+
+---
+
 ## [0.31.0] — 2026-07-23
 
 ### Changed
