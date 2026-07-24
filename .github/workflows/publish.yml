@@ -2,48 +2,102 @@ name: Publish
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
+  workflow_dispatch: {} # a dispatch is ALWAYS a dry-run canary (see DRY_RUN below) — it can NEVER real-publish
 
-permissions:
-  contents: read
-  id-token: write # required for OIDC trusted publishing
+# Serialize releases; NEVER cancel-in-progress — cancelling a run mid-partial-publish (e.g. after core's PUT)
+# would strand a release. cancel-in-progress:true would be a REGRESSION here.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {} # workflow-level: none; each job declares its own least-privilege set
 
 jobs:
-  publish:
-    name: Publish to npm
+  build:
+    name: Build (no publish credential)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # NO id-token — the I7 boundary
     steps:
-      - uses: actions/checkout@v5
+      - name: Assert NO OIDC token in the build job (I7 guard)
+        run: |
+          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::id-token must not be available in the build job"; exit 1
+          fi
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts
+      - name: Release audit (prod-high backstop — same gate as PR-time)
+        run: npm run audit:ci
+      - run: npm run build
+      # Deterministic dist hand-off: pack a tarball from the workspace root so paths are exactly
+      # `packages/<pkg>/dist/...`. This AVOIDS actions/upload-artifact's least-common-ancestor
+      # path-stripping — a `path: packages/*/dist` glob would store files relative to `packages/`
+      # (dropping the prefix), and the publish job would restore dist to the WRONG location and
+      # publish empty/broken tarballs. A tarball sidesteps the LCA behaviour entirely.
+      - name: Archive built dist
+        run: tar -czf dist.tar.gz packages/*/dist
+      - name: Upload built dist
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dist
+          path: dist.tar.gz
+          if-no-files-found: error
+          retention-days: 1
 
-      - uses: actions/setup-node@v5
+  publish:
+    name: Publish to npm (provenance, fail-closed)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC trusted publishing + SLSA provenance
+    env:
+      DRY_RUN: ${{ github.event_name != 'push' }} # real publish ONLY on a v* tag PUSH; ANY workflow_dispatch → dry-run (can never real-publish)
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
-          # `cache` is intentionally unset — setup-node only caches when `cache` is
-          # provided, so release builds run uncached without any extra input.
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Pin inter-package dependency ranges
-        run: node scripts/pin-deps.mjs
-
+      - name: Download built dist
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: dist
+          path: . # the single tarball lands at ./dist.tar.gz
+      - name: Restore dist (tar preserves packages/<pkg>/dist exactly)
+        run: |
+          tar -xzf dist.tar.gz
+          for p in core mcp-server testing cli; do
+            test -d "packages/$p/dist" || { echo "::error::packages/$p/dist missing after artifact restore"; exit 1; }
+          done
+      - name: Assert id-token IS present before any publish (pre-flight — avoids a partial release from a token failure)
+        if: ${{ env.DRY_RUN != 'true' }}
+        run: |
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::id-token:write not granted to the publish job; refusing to publish"; exit 1
+          fi
+      - run: node scripts/pin-deps.mjs
+      # --provenance is FAIL-CLOSED and load-bearing — do NOT remove it. --ignore-scripts is defense-in-depth.
+      # DRY_RUN is 'true' for ANY workflow_dispatch and 'false' ONLY for a v* TAG PUSH — a tag push always
+      # publishes for real; a dispatch can never real-publish.
       - name: Publish @sensigo/realm
-        run: npm publish
         working-directory: packages/core
-
+        run: npm publish --provenance --ignore-scripts ${{ env.DRY_RUN == 'true' && '--dry-run' || '' }}
       - name: Publish @sensigo/realm-mcp
-        run: npm publish
         working-directory: packages/mcp-server
-
+        run: npm publish --provenance --ignore-scripts ${{ env.DRY_RUN == 'true' && '--dry-run' || '' }}
       - name: Publish @sensigo/realm-testing
-        run: npm publish
         working-directory: packages/testing
-
+        run: npm publish --provenance --ignore-scripts ${{ env.DRY_RUN == 'true' && '--dry-run' || '' }}
       - name: Publish @sensigo/realm-cli
-        run: npm publish
         working-directory: packages/cli
+        run: npm publish --provenance --ignore-scripts ${{ env.DRY_RUN == 'true' && '--dry-run' || '' }}
+      # NO in-workflow registry-query verify: --provenance is FAIL-CLOSED, so a SUCCESSFUL publish
+      # already guarantees provenance was generated (npm throws EUSAGE before the PUT otherwise).
+      # A `npm view --json` right after publish would risk a false failure from registry-propagation
+      # delay on a release that actually succeeded. The queryable confirmation (npm view predicateType
+      # + npm audit signatures) is the ARCHITECT's post-release step, after propagation.
