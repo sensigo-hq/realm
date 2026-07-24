@@ -160,7 +160,7 @@ function realpathOrFail(path: string, what: string): string {
   try {
     return realpathSync(path);
   } catch (err) {
-    throw new Error(`Cannot resolve ${what}: ${errMsg(err)}`);
+    throw new Error(`Cannot resolve ${what}: ${errMsg(err)}`, { cause: err });
   }
 }
 
@@ -281,7 +281,9 @@ function loadManifestContext(
   try {
     raw = loadYaml(bytes.toString('utf8'));
   } catch (err) {
-    throw new Error(`Deployment manifest '${manifestPath}' is not valid YAML: ${errMsg(err)}`);
+    throw new Error(`Deployment manifest '${manifestPath}' is not valid YAML: ${errMsg(err)}`, {
+      cause: err,
+    });
   }
   const errors = validateDeploymentManifest(raw);
   if (errors.length > 0) {
@@ -572,7 +574,7 @@ async function applyDeploymentManifest(
           sentinelWarnings.push(`${redacted} (sentinel mode — entry skipped)`);
           continue;
         }
-        throw new Error(redacted);
+        throw new Error(redacted, { cause: err });
       }
 
       probeShape(instance, section.type, PROBE_MEMBERS[section.type], name, {
@@ -789,7 +791,9 @@ async function importModuleNamespace(
     try {
       namespace = (await import(pathToFileURL(resolvedPath).href)) as Record<string, unknown>;
     } catch (err) {
-      throw new Error(`Failed to import module '${label}' (${resolvedPath}): ${errMsg(err)}`);
+      throw new Error(`Failed to import module '${label}' (${resolvedPath}): ${errMsg(err)}`, {
+        cause: err,
+      });
     }
   }
   let format: 'esm' | 'cjs' | 'ts-jiti' = isTypescript
@@ -855,7 +859,7 @@ async function importViaJiti(
   try {
     jitiModule = (await import(pathToFileURL(jitiPath).href)) as Record<string, unknown>;
   } catch (err) {
-    throw new Error(`Failed to load 'jiti' from '${jitiPath}': ${errMsg(err)}`);
+    throw new Error(`Failed to load 'jiti' from '${jitiPath}': ${errMsg(err)}`, { cause: err });
   }
   try {
     // jiti v2: createJiti(parentPath).import(path) → module namespace.
@@ -880,7 +884,9 @@ async function importViaJiti(
       return { default: required };
     }
   } catch (err) {
-    throw new Error(`Failed to import TypeScript module '${label}' via jiti: ${errMsg(err)}`);
+    throw new Error(`Failed to import TypeScript module '${label}' via jiti: ${errMsg(err)}`, {
+      cause: err,
+    });
   }
   throw new Error(
     `Unrecognized 'jiti' package shape at '${jitiPath}' — upgrade jiti in your project, or ` +
@@ -893,7 +899,7 @@ function safeGet(obj: object, key: string, context: string): unknown {
   try {
     return (obj as Record<string, unknown>)[key];
   } catch (err) {
-    throw new Error(`${context}: reading '${key}' threw: ${errMsg(err)}`);
+    throw new Error(`${context}: reading '${key}' threw: ${errMsg(err)}`, { cause: err });
   }
 }
 

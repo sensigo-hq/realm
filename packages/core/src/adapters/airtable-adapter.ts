@@ -367,7 +367,12 @@ export class AirtableAdapter implements ServiceAdapter {
         let pagesFetched = 0;
         let nextOffset: string | undefined;
         let truncationReason: 'page_limit' | 'byte_limit' | undefined;
-        let lastStatus = 200;
+        // Every path that reaches the `return` below has gone through at least one loop
+        // iteration's assignment below (all three `break`s are reached only AFTER that
+        // assignment runs in the same iteration; every earlier exit is a `throw`, never a
+        // `return`) — so an initial value here is never read. `!` asserts that definite
+        // assignment to `tsc`, which cannot itself prove it across an unbounded `for (;;)`.
+        let lastStatus!: number;
 
         for (;;) {
           this.checkAborted(signal);
