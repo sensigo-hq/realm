@@ -17,7 +17,7 @@ jobs:
       security-events: write # upload the SARIF to the code-scanning dashboard
       id-token: write # OIDC token required by publish_results (the public badge + OpenSSF API)
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # Scorecard best practice — reduces credential exposure
       - name: Run Scorecard analysis
@@ -27,6 +27,6 @@ jobs:
           results_format: sarif
           publish_results: true # publishes the score for the badge + REST API (needs id-token:write; default branch only)
       - name: Upload SARIF to code-scanning
-        uses: github/codeql-action/upload-sarif@4187e74d05793876e9989daffde9c3e66b4acd07 # v3 (reuse codeql.yml's pin)
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1 (reuse codeql.yml's pin)
         with:
           sarif_file: results.sarif
