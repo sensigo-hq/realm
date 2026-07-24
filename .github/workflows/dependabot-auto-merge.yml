@@ -1,0 +1,33 @@
+name: Dependabot auto-merge
+
+on: pull_request
+
+permissions:
+  contents: write # enable + complete the merge
+  pull-requests: write # enable auto-merge on the PR
+
+jobs:
+  auto-merge:
+    # Only Dependabot's OWN PRs. user.login (not github.actor — a human re-run would flip github.actor to the human).
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0 (lightweight tag; commit SHA is the pin)
+      # GRADUATED rollout — dev-patch ONLY for now. The `dependency-group == 'dev-patch'` clause is the LOAD-BEARING
+      # exclusion: security-updates, prod, majors, build-toolchain, linters, and the github-actions group are all NOT
+      # members of the dev-patch group, so every one of them fails this clause. dependency-type + update-type are
+      # defense-in-depth. All `==` (never `!=`) so any empty/unexpected/errored metadata ⇒ false ⇒ NO merge (fail-safe).
+      # WIDEN to dev-minor LATER (a separate change, after a clean dev-patch canary) by pairing update-type WITH group:
+      #   ( (update-type == 'version-update:semver-patch' && dependency-group == 'dev-patch') ||
+      #     (update-type == 'version-update:semver-minor' && dependency-group == 'dev-minor') )
+      - name: Enable native auto-merge for eligible dev-patch updates
+        if: >
+          steps.meta.outputs.dependency-type == 'direct:development' &&
+          steps.meta.outputs.update-type == 'version-update:semver-patch' &&
+          steps.meta.outputs.dependency-group == 'dev-patch'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

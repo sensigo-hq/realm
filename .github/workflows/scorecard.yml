@@ -1,0 +1,32 @@
+name: Scorecard supply-chain security
+
+on:
+  branch_protection_rule: # re-scores Branch-Protection when the ruleset changes (default branch only)
+  schedule:
+    - cron: '30 1 * * 6' # weekly, Sat 01:30 UTC — refreshes the Maintained check + the published badge
+  push:
+    branches: [main]
+
+permissions: read-all # Scorecard's Token-Permissions check rewards a read-only workflow default
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload the SARIF to the code-scanning dashboard
+      id-token: write # OIDC token required by publish_results (the public badge + OpenSSF API)
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false # Scorecard best practice — reduces credential exposure
+      - name: Run Scorecard analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4 (PEELED commit, not the tag-object)
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true # publishes the score for the badge + REST API (needs id-token:write; default branch only)
+      - name: Upload SARIF to code-scanning
+        uses: github/codeql-action/upload-sarif@4187e74d05793876e9989daffde9c3e66b4acd07 # v3 (reuse codeql.yml's pin)
+        with:
+          sarif_file: results.sarif
