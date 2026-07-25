@@ -1,10 +1,18 @@
 // Tests for listRuns business logic.
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { listRuns, formatGateAge } from './list.js';
-import type { RunStore, RunRecord } from '@sensigo/realm';
+import { listRuns, formatGateAge, renderCauseSegment } from './list.js';
+import {
+  FailedAttemptStore,
+  FAILED_ATTEMPT_SIDECAR_MAX_BYTES,
+  buildFailedAttemptRecord,
+  serializeFailedAttemptLine,
+} from '@sensigo/realm';
+import type { RunStore, RunRecord, FailedAttemptRecord } from '@sensigo/realm';
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -34,6 +42,20 @@ function makeStore(runs: RunRecord[]): RunStore {
     list: async (workflowId?: string) =>
       workflowId !== undefined ? runs.filter((r) => r.workflow_id === workflowId) : runs,
   };
+}
+
+/** A run old enough to trip the default `never_claimed_idle` --stuck threshold (24h) — the
+ *  shared shape every issue #219 cause-attribution test below flags as stuck via, deliberately
+ *  distinct from the claim/capability-block fixtures above the tests reuse for the OTHER
+ *  --stuck-detection describe blocks. */
+function makeIdleStuckRun(overrides: Partial<RunRecord> = {}): RunRecord {
+  return makeRun({
+    run_phase: 'running',
+    terminal_state: false,
+    in_progress_steps: [],
+    updated_at: new Date(Date.now() - 47 * 86_400_000).toISOString(),
+    ...overrides,
+  });
 }
 
 describe('listRuns', () => {
@@ -563,5 +585,261 @@ describe('false-unity negative pin: no source file pairs "reclaim" with a derive
       }
     }
     expect(violations).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #219 — --stuck cause attribution, sourced from the FailedAttemptStore sidecar.
+// ---------------------------------------------------------------------------
+
+describe('renderCauseSegment (issue #219, pure helper)', () => {
+  function record(over: Partial<FailedAttemptRecord> = {}): FailedAttemptRecord {
+    return {
+      run_id: 'r',
+      workflow_id: 'wf',
+      step_id: 'classify',
+      ts: '2026-07-01T00:00:00.000Z',
+      error_code: 'VALIDATION_OUTPUT_SCHEMA',
+      validation_error_summary: [],
+      submitted_key_count: 0,
+      submitted_keys: [],
+      submitted_bytes: 0,
+      trace_entry_count: 0,
+      ...over,
+    };
+  }
+
+  it('empty (absence, no throw) — records.length === 0 renders nothing', () => {
+    expect(renderCauseSegment({ records: [], capped: false })).toBe('');
+  });
+
+  it('present, with a validation summary — renders count, step, error code, and the compact summary', () => {
+    const rec = record({
+      validation_error_summary: [
+        {
+          instancePath: '/category',
+          schemaPath: '#/properties/category/enum',
+          keyword: 'enum',
+          message: 'must be equal to one of the allowed values',
+        },
+      ],
+    });
+    const result = renderCauseSegment({ records: [rec], capped: false });
+    expect(result).toBe(
+      '  rejected: 1× (classify: VALIDATION_OUTPUT_SCHEMA — /category enum: must be equal to one of the allowed values)',
+    );
+  });
+
+  it('present, empty validation_error_summary — omits the " — ..." part entirely', () => {
+    const rec = record({ validation_error_summary: [] });
+    const result = renderCauseSegment({ records: [rec], capped: false });
+    expect(result).toBe('  rejected: 1× (classify: VALIDATION_OUTPUT_SCHEMA)');
+  });
+
+  it('capped renders "≥N×" — never a bare count (the ceiling means the count is a floor)', () => {
+    const rec = record();
+    const result = renderCauseSegment({ records: [rec, rec], capped: true });
+    expect(result).toContain('rejected: ≥2×');
+    expect(result).not.toContain('rejected: 2×');
+  });
+
+  it('uses the LATEST (last, in append order) record — not the first', () => {
+    const first = record({ step_id: 'first_step', error_code: 'FIRST_ERR' });
+    const last = record({ step_id: 'last_step', error_code: 'LAST_ERR' });
+    const result = renderCauseSegment({ records: [first, last], capped: false });
+    expect(result).toContain('last_step: LAST_ERR');
+    expect(result).not.toContain('first_step');
+    expect(result).not.toContain('FIRST_ERR');
+  });
+
+  it('an empty instancePath renders "(root)"', () => {
+    const rec = record({
+      validation_error_summary: [
+        {
+          instancePath: '',
+          schemaPath: '#/required',
+          keyword: 'required',
+          message: "must have required property 'x'",
+        },
+      ],
+    });
+    const result = renderCauseSegment({ records: [rec], capped: false });
+    expect(result).toContain('(root) required:');
+  });
+
+  it('truncates a long validation message with an ellipsis, keeping the line readable', () => {
+    const longMessage = 'x'.repeat(200);
+    const rec = record({
+      validation_error_summary: [
+        { instancePath: '/field', schemaPath: '#/x', keyword: 'format', message: longMessage },
+      ],
+    });
+    const result = renderCauseSegment({ records: [rec], capped: false });
+    expect(result).toContain('…');
+    expect(result).not.toContain(longMessage); // the full 200-char message never appears verbatim
+    expect(result.length).toBeLessThan(150); // materially shorter than the untruncated form
+  });
+});
+
+describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () => {
+  it('records present: a --stuck run with a real FailedAttemptStore sidecar renders "rejected: N× (...)" appended to its line, using the LATEST record', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'list-cause-present-'));
+    try {
+      const runId = 'run-cause-present';
+      const run = makeIdleStuckRun({ id: runId });
+      const fas = new FailedAttemptStore(dir);
+      const older = buildFailedAttemptRecord({
+        run_id: runId,
+        workflow_id: 'test-workflow',
+        step_id: 'first_attempt_step',
+        ts: '2026-07-01T00:00:00.000Z',
+        error_code: 'VALIDATION_OUTPUT_SCHEMA',
+        ajv_errors: [],
+        params: {},
+        trace_entry_count: 0,
+      });
+      const latest = buildFailedAttemptRecord({
+        run_id: runId,
+        workflow_id: 'test-workflow',
+        step_id: 'classify',
+        ts: '2026-07-02T00:00:00.000Z',
+        error_code: 'VALIDATION_MISSING_REQUIRED',
+        ajv_errors: [
+          {
+            instancePath: '/category',
+            schemaPath: '#/properties/category/enum',
+            keyword: 'enum',
+            message: 'must be equal to one of the allowed values',
+          },
+        ],
+        params: {},
+        trace_entry_count: 0,
+      });
+      await fas.append(runId, serializeFailedAttemptLine(older).line);
+      await fas.append(runId, serializeFailedAttemptLine(latest).line);
+
+      const store = makeStore([run]);
+      const result = await listRuns(undefined, store, undefined, true, undefined, fas);
+      expect(result).toContain(runId);
+      expect(result).toContain(
+        'rejected: 2× (classify: VALIDATION_MISSING_REQUIRED — /category enum: must be equal to one of the allowed values)',
+      );
+      // the LATEST record's step/code is shown — never the first attempt's.
+      expect(result).not.toContain('first_attempt_step');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('capped floor: a sidecar at the byte ceiling renders "≥N×", never a bare "N×"', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'list-cause-capped-'));
+    try {
+      const runId = 'run-cause-capped';
+      const run = makeIdleStuckRun({ id: runId });
+      const fas = new FailedAttemptStore(dir);
+      const validRec = buildFailedAttemptRecord({
+        run_id: runId,
+        workflow_id: 'test-workflow',
+        step_id: 'classify',
+        ts: '2026-07-01T00:00:00.000Z',
+        error_code: 'VALIDATION_OUTPUT_SCHEMA',
+        ajv_errors: [],
+        params: {},
+        trace_entry_count: 0,
+      });
+      const sidecarPath = join(dir, `${runId}.attempts.jsonl`);
+      const validLine = serializeFailedAttemptLine(validRec).line;
+      // Pad the file past FAILED_ATTEMPT_SIDECAR_MAX_BYTES so `read()`'s independent size≥ceiling
+      // check reports capped:true — mirrors failed-attempt-store.test.ts's own ceiling-seeding
+      // style. The padding line itself is not valid JSON and is silently skipped by the parser
+      // (never thrown) — only the one valid record above counts toward `records.length`.
+      const padding = 'x'.repeat(FAILED_ATTEMPT_SIDECAR_MAX_BYTES);
+      await writeFile(sidecarPath, `${validLine}\n${padding}\n`, 'utf8');
+
+      const store = makeStore([run]);
+      const result = await listRuns(undefined, store, undefined, true, undefined, fas);
+      expect(result).toContain('rejected: ≥1× (classify: VALIDATION_OUTPUT_SCHEMA)');
+      expect(result).not.toContain('rejected: 1× (');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('absence = parked: a --stuck run with NO sidecar renders byte-identically to injecting no failedAttemptStore at all (no cause segment)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'list-cause-absent-'));
+    try {
+      const run = makeIdleStuckRun({ id: 'run-cause-absent' });
+      const store = makeStore([run]);
+      // A REAL FailedAttemptStore injected, over a real runs dir — but no sidecar file was ever
+      // written for this run (the CLI-driven / parked-between-drives case: absence, not an
+      // error). Compared against injecting `undefined` (today's pre-#219 shape, what every OTHER
+      // test in this file does).
+      const fas = new FailedAttemptStore(dir);
+
+      const [resultWithStore, resultWithoutStore] = await Promise.all([
+        listRuns(undefined, store, undefined, true, undefined, fas),
+        listRuns(undefined, store, undefined, true, undefined, undefined),
+      ]);
+
+      expect(resultWithStore).toBe(resultWithoutStore); // byte-identical — absence is a true no-op
+      expect(resultWithStore).not.toContain('rejected:');
+      expect(resultWithStore).not.toContain('cause:');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('I/O failure is visible, not silent: an unreadable sidecar renders "cause: unavailable" for ITS run only, never conflated with absence, and the rest of the list still completes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'list-cause-ioerror-'));
+    const brokenRunId = 'run-cause-ioerror-broken';
+    const okRunId = 'run-cause-ioerror-ok';
+    const sidecarPath = join(dir, `${brokenRunId}.attempts.jsonl`);
+    try {
+      const brokenRun = makeIdleStuckRun({ id: brokenRunId });
+      const okRun = makeIdleStuckRun({ id: okRunId });
+
+      const fas = new FailedAttemptStore(dir);
+      const rec = buildFailedAttemptRecord({
+        run_id: okRunId,
+        workflow_id: 'test-workflow',
+        step_id: 'classify',
+        ts: '2026-07-01T00:00:00.000Z',
+        error_code: 'VALIDATION_OUTPUT_SCHEMA',
+        ajv_errors: [],
+        params: {},
+        trace_entry_count: 0,
+      });
+      await fas.append(okRunId, serializeFailedAttemptLine(rec).line); // a normal, readable sidecar
+      await writeFile(sidecarPath, `${serializeFailedAttemptLine(rec).line}\n`, 'utf8');
+      // Deny read on the ONE sidecar — never run as root in this repo's CI/dev environment, so
+      // this genuinely denies access rather than being silently bypassed (gc.test.ts precedent).
+      await chmod(sidecarPath, 0o000);
+
+      const store = makeStore([brokenRun, okRun]);
+      const result = await listRuns(undefined, store, undefined, true, undefined, fas);
+
+      const brokenLine = result.split('\n').find((l) => l.includes(brokenRunId));
+      const okLine = result.split('\n').find((l) => l.includes(okRunId));
+      expect(brokenLine).toBeDefined();
+      expect(brokenLine).toContain('cause: unavailable');
+      expect(brokenLine).not.toContain('rejected:'); // never rendered as "no attempts" either
+
+      // the OTHER run's read was never affected — the list still completes for it.
+      expect(okLine).toBeDefined();
+      expect(okLine).toContain('rejected: 1× (classify: VALIDATION_OUTPUT_SCHEMA)');
+      expect(okLine).not.toContain('cause: unavailable');
+    } finally {
+      await chmod(sidecarPath, 0o600).catch(() => {});
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('list.ts source-text negative pin (issue #219): list stays definition-free', () => {
+  it('never references eligible_steps or loads a workflow definition — the cause signal comes only from the FailedAttemptStore sidecar', () => {
+    const source = readFileSync(fileURLToPath(new URL('./list.ts', import.meta.url)), 'utf8');
+    expect(source).not.toContain('eligible_steps');
+    expect(source).not.toContain('WorkflowDefinition');
+    expect(source).not.toContain('loadWorkflow');
   });
 });

@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- `realm run list --stuck` now attributes cause — appends the failed-attempt count and latest validation summary
+  for runs with a FailedAttemptStore sidecar (MCP-path runs; CLI-driven runs are unaffected).
+
+---
+
 ## [0.31.2] — 2026-07-25
 
 ### Changed

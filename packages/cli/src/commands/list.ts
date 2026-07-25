@@ -1,8 +1,14 @@
 // list command — displays all runs in the store, sorted by most recent first.
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS } from '@sensigo/realm';
-import type { RunStore, RunRecord, RunPhase, RunHealthFinding } from '@sensigo/realm';
+import { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS, FailedAttemptStore } from '@sensigo/realm';
+import type {
+  RunStore,
+  RunRecord,
+  RunPhase,
+  RunHealthFinding,
+  FailedAttemptReadResult,
+} from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 
 /** Returns a chalk-coloured phase label. */
@@ -68,16 +74,60 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
   }
 }
 
+/** Cap on the appended validation-summary text (issue #219) — keeps a `--stuck` line readable
+ *  even for a long Ajv `message`/`instancePath`. Ellipsis-truncated, never hard-cut without
+ *  signalling truncation (mirrors `inspect.ts`'s `formatSummary` convention). */
+const MAX_CAUSE_SUMMARY_CHARS = 80;
+
+/**
+ * Renders the `--stuck` cause-attribution segment (issue #219) from a `FailedAttemptStore` read —
+ * pure and unit-testable in isolation from `listRuns`/the filesystem. `''` for the empty case (no
+ * records — the CLI-driven / no-sidecar / genuinely-parked-between-drives case), which the caller
+ * appends as a no-op — cause is NEVER fabricated. Non-empty results are ALWAYS prefixed with the
+ * same `'  '` two-space separator the claim/capability label groups use, so callers can
+ * unconditionally `line += renderCauseSegment(result)`.
+ *
+ * `capped` renders the count as a `≥N×` FLOOR, never a claimed-exact count — #183's
+ * append-and-stop ceiling means later attempts were silently dropped at write time, so `N` alone
+ * would understate. The summary is built from the LATEST record (the last one in append order)
+ * and its FIRST `validation_error_summary` entry only — omitted entirely when that array is empty
+ * (a validation failure with no Ajv detail, or a non-validation `error_code`).
+ */
+export function renderCauseSegment(result: FailedAttemptReadResult): string {
+  if (result.records.length === 0) return '';
+  const latest = result.records[result.records.length - 1]!;
+  const countLabel = `${result.capped ? '≥' : ''}${result.records.length}×`;
+
+  let summary = '';
+  const firstEntry = latest.validation_error_summary[0];
+  if (firstEntry !== undefined) {
+    const path = firstEntry.instancePath.length > 0 ? firstEntry.instancePath : '(root)';
+    summary = ` — ${path} ${firstEntry.keyword}: ${firstEntry.message}`;
+    if (summary.length > MAX_CAUSE_SUMMARY_CHARS) {
+      summary = `${summary.slice(0, MAX_CAUSE_SUMMARY_CHARS)}…`;
+    }
+  }
+
+  return `  rejected: ${countLabel} (${latest.step_id}: ${latest.error_code}${summary})`;
+}
+
 /**
  * Lists runs from the store, sorted by updated_at descending.
- * @param workflowId      Optional filter — only show runs from this workflow.
- * @param store           Store holding run records.
- * @param statusFilter    Optional filter — only show runs with this run_phase.
- * @param stuck           Show only runs with a typed run-health finding (issue #221).
- * @param idleThresholdMs Override for the `never_claimed_idle` age gate (issue #221's
- *                        `--older-than`). Defaults to `DEFAULT_IDLE_THRESHOLD_MS` (24h). `0`
- *                        restores today's unconditional breadth.
- * @returns               Formatted output string.
+ * @param workflowId        Optional filter — only show runs from this workflow.
+ * @param store             Store holding run records.
+ * @param statusFilter      Optional filter — only show runs with this run_phase.
+ * @param stuck             Show only runs with a typed run-health finding (issue #221).
+ * @param idleThresholdMs   Override for the `never_claimed_idle` age gate (issue #221's
+ *                          `--older-than`). Defaults to `DEFAULT_IDLE_THRESHOLD_MS` (24h). `0`
+ *                          restores today's unconditional breadth.
+ * @param failedAttemptStore Explicit injection (issue #219) for `--stuck` cause attribution —
+ *                          deliberately NOT derived from `store` (no structural typing/duck-typed
+ *                          `runsDirPath` probing on the `RunStore` interface, which stays plain
+ *                          and untouched). The caller (the CLI action, which holds a concrete
+ *                          `JsonFileStore` and its real `runsDirPath` getter) constructs this and
+ *                          passes it in; `undefined` means best-effort skip — no cause attribution
+ *                          — never a crash. `listRuns` never constructs one itself.
+ * @returns                 Formatted output string.
  */
 export async function listRuns(
   workflowId: string | undefined,
@@ -85,6 +135,7 @@ export async function listRuns(
   statusFilter?: RunPhase,
   stuck?: boolean,
   idleThresholdMs?: number,
+  failedAttemptStore?: FailedAttemptStore,
 ): Promise<string> {
   const runs = await store.list(workflowId);
   const effectiveIdleThresholdMs = idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
@@ -152,6 +203,20 @@ export async function listRuns(
       if (capabilityLabels.length > 0) {
         line += `  ${capabilityLabels.join(', ')}`;
       }
+      // issue #219: cause attribution, appended LAST — best-effort, per-run (one run's sidecar
+      // I/O failure never aborts the rest of the list). `records.length === 0` (no throw) means
+      // absence — the CLI-driven / no-sidecar / parked-between-drives case — renders nothing
+      // (renderCauseSegment returns '', a no-op append). A genuine read() throw is a DIFFERENT,
+      // visible outcome — never conflated with absence (issue #183) and never silently swallowed
+      // into the empty rendering.
+      if (failedAttemptStore !== undefined) {
+        try {
+          const result = await failedAttemptStore.read(run.id);
+          line += renderCauseSegment(result);
+        } catch {
+          line += '  cause: unavailable';
+        }
+      }
     } else if (run.run_phase === 'gate_waiting' && run.pending_gate !== undefined) {
       const age = formatGateAge(run.pending_gate.opened_at);
       line += `  gate: ${run.pending_gate.step_name} (${age})`;
@@ -178,6 +243,11 @@ export const listCommand = new Command('list')
     async (opts: { workflow?: string; status?: string; stuck?: boolean; olderThan?: string }) => {
       const { JsonFileStore } = await import('@sensigo/realm');
       const store = new JsonFileStore();
+      // issue #219: explicit injection — `JsonFileStore.runsDirPath` is a real, nominal public
+      // getter (not duck-typed off `RunStore`, which stays plain). Constructed ONLY for --stuck,
+      // at the SAME runsDir the run store persists to.
+      const failedAttemptStore =
+        opts.stuck === true ? new FailedAttemptStore(store.runsDirPath) : undefined;
 
       if (opts.stuck === true && opts.status !== undefined) {
         console.error('--stuck cannot be combined with --status.');
@@ -216,6 +286,7 @@ export const listCommand = new Command('list')
           statusFilter,
           opts.stuck,
           idleThresholdMs,
+          failedAttemptStore,
         );
         console.log(output);
       } catch (err) {
