@@ -1,9 +1,25 @@
 // list command — displays all runs in the store, sorted by most recent first.
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS } from '@sensigo/realm';
-import type { RunStore, RunRecord, RunPhase, RunHealthFinding } from '@sensigo/realm';
+import { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS, FailedAttemptStore } from '@sensigo/realm';
+import type {
+  RunStore,
+  RunRecord,
+  RunPhase,
+  RunHealthFinding,
+  FailedAttemptReadResult,
+} from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
+
+/**
+ * The subset of a concrete run store `--stuck` cause attribution (issue #219) additionally needs
+ * — the SAME runsDir the run store persists to. Deliberately optional and NOT added to the core
+ * `RunStore` interface (out of scope — no store change): a store without `runsDirPath` (every
+ * existing test double, or a future non-filesystem `RunStore` implementation) simply gets no
+ * cause attribution — best-effort, never a crash, and since every pre-existing caller/test omits
+ * it, this is automatically byte-identical to today wherever it isn't set (the S4 rail).
+ */
+type ListableRunStore = RunStore & { runsDirPath?: string };
 
 /** Returns a chalk-coloured phase label. */
 function colorState(run: RunRecord): string {
@@ -68,6 +84,43 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
   }
 }
 
+/** Cap on the appended validation-summary text (issue #219) — keeps a `--stuck` line readable
+ *  even for a long Ajv `message`/`instancePath`. Ellipsis-truncated, never hard-cut without
+ *  signalling truncation (mirrors `inspect.ts`'s `formatSummary` convention). */
+const MAX_CAUSE_SUMMARY_CHARS = 80;
+
+/**
+ * Renders the `--stuck` cause-attribution segment (issue #219) from a `FailedAttemptStore` read —
+ * pure and unit-testable in isolation from `listRuns`/the filesystem. `''` for the empty case (no
+ * records — the CLI-driven / no-sidecar / genuinely-parked-between-drives case), which the caller
+ * appends as a no-op — cause is NEVER fabricated. Non-empty results are ALWAYS prefixed with the
+ * same `'  '` two-space separator the claim/capability label groups use, so callers can
+ * unconditionally `line += renderCauseSegment(result)`.
+ *
+ * `capped` renders the count as a `≥N×` FLOOR, never a claimed-exact count — #183's
+ * append-and-stop ceiling means later attempts were silently dropped at write time, so `N` alone
+ * would understate. The summary is built from the LATEST record (the last one in append order)
+ * and its FIRST `validation_error_summary` entry only — omitted entirely when that array is empty
+ * (a validation failure with no Ajv detail, or a non-validation `error_code`).
+ */
+export function renderCauseSegment(result: FailedAttemptReadResult): string {
+  if (result.records.length === 0) return '';
+  const latest = result.records[result.records.length - 1]!;
+  const countLabel = `${result.capped ? '≥' : ''}${result.records.length}×`;
+
+  let summary = '';
+  const firstEntry = latest.validation_error_summary[0];
+  if (firstEntry !== undefined) {
+    const path = firstEntry.instancePath.length > 0 ? firstEntry.instancePath : '(root)';
+    summary = ` — ${path} ${firstEntry.keyword}: ${firstEntry.message}`;
+    if (summary.length > MAX_CAUSE_SUMMARY_CHARS) {
+      summary = `${summary.slice(0, MAX_CAUSE_SUMMARY_CHARS)}…`;
+    }
+  }
+
+  return `  rejected: ${countLabel} (${latest.step_id}: ${latest.error_code}${summary})`;
+}
+
 /**
  * Lists runs from the store, sorted by updated_at descending.
  * @param workflowId      Optional filter — only show runs from this workflow.
@@ -81,13 +134,21 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
  */
 export async function listRuns(
   workflowId: string | undefined,
-  store: RunStore,
+  store: ListableRunStore,
   statusFilter?: RunPhase,
   stuck?: boolean,
   idleThresholdMs?: number,
 ): Promise<string> {
   const runs = await store.list(workflowId);
   const effectiveIdleThresholdMs = idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
+  // issue #219: wired ONLY for --stuck, at the SAME runsDir the run store uses. `undefined` when
+  // the store doesn't expose one (every pre-existing test double, or a future non-filesystem
+  // `RunStore`) — best-effort, never a crash; the render loop below skips cause attribution
+  // entirely in that case, which is what keeps every sidecar-less-store caller byte-identical.
+  const failedAttemptStore =
+    stuck === true && store.runsDirPath !== undefined
+      ? new FailedAttemptStore(store.runsDirPath)
+      : undefined;
 
   let filtered = runs;
   const findingsByRun = new Map<string, RunHealthFinding[]>();
@@ -151,6 +212,20 @@ export async function listRuns(
         .filter((l): l is string => l !== undefined);
       if (capabilityLabels.length > 0) {
         line += `  ${capabilityLabels.join(', ')}`;
+      }
+      // issue #219: cause attribution, appended LAST — best-effort, per-run (one run's sidecar
+      // I/O failure never aborts the rest of the list). `records.length === 0` (no throw) means
+      // absence — the CLI-driven / no-sidecar / parked-between-drives case — renders nothing
+      // (renderCauseSegment returns '', a no-op append). A genuine read() throw is a DIFFERENT,
+      // visible outcome — never conflated with absence (issue #183) and never silently swallowed
+      // into the empty rendering.
+      if (failedAttemptStore !== undefined) {
+        try {
+          const result = await failedAttemptStore.read(run.id);
+          line += renderCauseSegment(result);
+        } catch {
+          line += '  cause: unavailable';
+        }
       }
     } else if (run.run_phase === 'gate_waiting' && run.pending_gate !== undefined) {
       const age = formatGateAge(run.pending_gate.opened_at);
