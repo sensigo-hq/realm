@@ -64,6 +64,9 @@ export {
 // see trace-adoption.ts's own module doc for the full contract.
 export { adoptsLine, partitionBufferedEntries } from './engine/trace-adoption.js';
 export type { BufferedEntryPartition } from './engine/trace-adoption.js';
+// The shared default-settled-step derivation (issue #232) — the ONE authoritative scan of
+// `evidence[].diagnostics.settled_by_default`; see defaulted-steps.ts's own module doc.
+export { deriveDefaultedSteps } from './engine/defaulted-steps.js';
 export {
   TERMINAL_PHASES,
   RESUMABLE_PHASES,

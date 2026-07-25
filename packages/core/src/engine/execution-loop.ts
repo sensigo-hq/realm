@@ -27,6 +27,7 @@ import { persistsField } from '../store/store-fidelity.js';
 import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-store.js';
 import { storeDeclaresSeal, storeDeclaresNonceCarriage } from '../store/trace-buffer-store.js';
 import { partitionBufferedEntries, type BufferedEntryPartition } from './trace-adoption.js';
+import { deriveDefaultedSteps } from './defaulted-steps.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import {
   validateInputSchema,
@@ -628,11 +629,11 @@ function mergeWarnings(
 }
 
 /**
- * Pure helper (issue #220 PR-2, D6): scans `sealDraft`'s evidence for entries stamped
- * `diagnostics.settled_by_default === true` and, if any exist, returns the record with
- * `defaulted_steps` set to their distinct step names (declaration order of first occurrence) —
- * else returns the SAME record reference unchanged, so a run with no default-settle anywhere is
- * byte-identical to pre-PR-2 behavior (the damage-rail this preserves). Pure, no I/O.
+ * Pure helper (issue #220 PR-2, D6): if `sealDraft`'s evidence has any entries default-settled
+ * (per {@link deriveDefaultedSteps}, issue #232 — the SHARED derivation the read surfaces also
+ * use), returns the record with `defaulted_steps` set to their distinct step names — else returns
+ * the SAME record reference unchanged, so a run with no default-settle anywhere is byte-identical
+ * to pre-PR-2 behavior (the damage-rail this preserves). Pure, no I/O.
  *
  * Applied by WRAPPING the `buildFinalizedSeal` call inside the TERMINAL branch of each seal
  * ternary — `buildFinalizedSeal` itself stays byte-untouched (a chokepoint insertion was
@@ -640,17 +641,13 @@ function mergeWarnings(
  * fragile two-touch above the damage-rail fast-path). Callers must pass ONLY a sealed record from
  * the `'complete'` branch — never a non-terminal draft, and never a fail/abort seal — so
  * `defaulted_steps` never leaks onto a persisted non-terminal record that a later FAIL seal
- * inherits (the FM-5 residual this guards).
+ * inherits (the FM-5 residual this guards). issue #232 note: this complete-only stamping is
+ * UNCHANGED — a run that fails/aborts still carries no persisted `defaulted_steps`; the failure-
+ * path disclosure gap is closed by the READ surfaces calling `deriveDefaultedSteps` directly, not
+ * by widening what gets persisted here.
  */
 function stampDefaultedSteps(sealDraft: RunRecord): RunRecord {
-  const steps: string[] = [];
-  const seen = new Set<string>();
-  for (const snap of sealDraft.evidence) {
-    if (snap.diagnostics?.settled_by_default === true && !seen.has(snap.step_id)) {
-      seen.add(snap.step_id);
-      steps.push(snap.step_id);
-    }
-  }
+  const steps = deriveDefaultedSteps(sealDraft.evidence);
   if (steps.length === 0) return sealDraft;
   return { ...sealDraft, defaulted_steps: steps };
 }

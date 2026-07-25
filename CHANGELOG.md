@@ -10,6 +10,8 @@ All notable changes to this project are documented here.
 
 - `realm run list --stuck` now attributes cause — appends the failed-attempt count and latest validation summary
   for runs with a FailedAttemptStore sidecar (MCP-path runs; CLI-driven runs are unaffected).
+- `get_run_state` and `realm inspect` now report a run's default-settled steps regardless of how the run sealed
+  (complete, failed, or aborted), derived from evidence — closing the failure-path disclosure gap from #220.
 
 ---
 
