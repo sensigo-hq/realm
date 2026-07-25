@@ -26,8 +26,42 @@ import { readIfExists, deleteIfExists, toArtifactDeleteFailedError } from './fs-
 
 const DEFAULT_RUNS_DIR = join(homedir(), '.realm', 'runs');
 
-/** Bounded per-key lock retry policy — used for the resolve-or-claim critical section. */
-const KEY_LOCK_RETRIES = { retries: 10, minTimeout: 50 } as const;
+/**
+ * Shared `proper-lockfile` retry policy for EVERY lock this store takes — the 4 run-file
+ * critical-section locks (`update`/`claimStep`/`save`/`deleteAllForRun`) and the 3 per-key locks
+ * (`create`'s resolve-or-claim section, `registerImportedKey`, `deleteAllForRun`'s pointer delete)
+ * (issue #191).
+ *
+ * `proper-lockfile` forwards this object VERBATIM to the `retry` package
+ * (`retry.operation(options.retries)` — see `node_modules/proper-lockfile/lib/lockfile.js`), which
+ * reads every field below itself (`node_modules/retry/lib/retry.js` + `retry_operation.js`) — no
+ * filtering at either layer.
+ *
+ * - `randomize: true` — the LOAD-BEARING fix: without it (the `retry` package's own default),
+ *   every contender computes the IDENTICAL deterministic backoff schedule and re-collides in
+ *   lockstep under fan-out (a thundering herd). With it, `retry`'s `createTimeout` multiplies each
+ *   attempt's delay by a fresh `Math.random() + 1` draw — contenders de-synchronize.
+ * - `maxTimeout: 1000` — caps any SINGLE attempt's sleep (also closes the OLD per-key retry
+ *   policy's latent worst-case: uncapped, its 10th attempt alone could sleep up to 25.6s).
+ * - `maxRetryTime: 5000` — a TOTAL-TIME budget (the SQLite `busy_timeout` model): `retry`'s
+ *   `RetryOperation.retry()` checks elapsed wall-time against this on every failed attempt and
+ *   gives up once exceeded, REGARDLESS of `retries` remaining — so contention degrades gracefully
+ *   into one retryable `STATE_RUN_BUSY` (Fix C) at a bounded ~5s, rather than either a hard count
+ *   bound (~6.5s+ worst case with 10 retries × up to 1s each, uncapped further by jitter) or (pre-
+ *   #191) failing fatally. Confirmed forwarding (not just by the source read above): a live check
+ *   in this file's test suite holds a lock and asserts a SMALL-scale `maxRetryTime` cuts off well
+ *   before the count-bound worst case would.
+ */
+// Exported ONLY for this file's own test (issue #191) — a direct assertion, against the REAL
+// `retry` package proper-lockfile itself delegates to, that `randomize`/`maxTimeout` genuinely
+// reach it (not re-exported from `index.ts`, so this stays off the `@sensigo/realm` public API).
+export const LOCK_RETRIES = {
+  retries: 10,
+  minTimeout: 50,
+  maxTimeout: 1000,
+  randomize: true,
+  maxRetryTime: 5000,
+} as const;
 
 /**
  * A pointer file: the authoritative, deterministic index entry for one idempotency key.
@@ -241,7 +275,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     // realpath:false lets us lock a key path whose pointer file does not exist yet.
     const release = await lockfile.lock(keyPath, {
       realpath: false,
-      retries: KEY_LOCK_RETRIES,
+      retries: LOCK_RETRIES,
     });
     try {
       const pointer = await this.readPointer(keyPath);
@@ -355,9 +389,15 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     // the file between the existsSync check above and the lock/read below.
     let release: () => Promise<void>;
     try {
-      release = await lockfile.lock(path, { retries: { retries: 3, minTimeout: 50 } });
+      release = await lockfile.lock(path, { retries: LOCK_RETRIES });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw this.runNotFoundError(record.id);
+      // issue #191 (Fix C): an exhausted lock acquisition is contention, not corruption — the SAME
+      // classification deleteAllForRun already uses (see runBusyError's own doc). Retryable: the
+      // other writer's lock is released eventually, or a genuinely stale lock is stolen by the
+      // next contender.
+      if ((err as NodeJS.ErrnoException).code === 'ELOCKED')
+        throw this.runBusyError(record.id, 'locked');
       throw err;
     }
     try {
@@ -416,7 +456,16 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       });
     }
 
-    const release = await lockfile.lock(path, { retries: { retries: 3, minTimeout: 50 } });
+    // issue #191 (Fix C): the lock acquisition itself now has its own try/catch (mirroring
+    // update()'s shape) — an exhausted acquisition is contention, not a fatal stop.
+    let release: () => Promise<void>;
+    try {
+      release = await lockfile.lock(path, { retries: LOCK_RETRIES });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ELOCKED')
+        throw this.runBusyError(runId, 'locked');
+      throw err;
+    }
     try {
       // Re-read the freshest version under lock.
       let raw: string;
@@ -497,10 +546,19 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     // realpath: false (like create()'s key lock) — save()'s whole point is create-if-absent,
     // so the target file legitimately may not exist yet; the default realpath resolution
     // would throw ENOENT locking a path with nothing there.
-    const release = await lockfile.lock(path, {
-      realpath: false,
-      retries: { retries: 3, minTimeout: 50 },
-    });
+    // issue #191 (Fix C): same ELOCKED→runBusyError mapping as update()/claimStep() — an exhausted
+    // acquisition here is contention on the read-check-write section, not a fatal stop.
+    let release: () => Promise<void>;
+    try {
+      release = await lockfile.lock(path, {
+        realpath: false,
+        retries: LOCK_RETRIES,
+      });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ELOCKED')
+        throw this.runBusyError(record.id, 'locked');
+      throw err;
+    }
     try {
       if (existsSync(path)) {
         const raw = await readFile(path, 'utf8');
@@ -539,7 +597,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     await this.ensureKeysDir();
     const key = record.idempotency_key;
     const keyPath = this.keyPath(record.workflow_id, key);
-    const release = await lockfile.lock(keyPath, { realpath: false, retries: KEY_LOCK_RETRIES });
+    const release = await lockfile.lock(keyPath, { realpath: false, retries: LOCK_RETRIES });
     try {
       const pointer = await this.readPointer(keyPath);
       if (pointer !== undefined && pointer.run_id !== record.id) {
@@ -738,7 +796,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     try {
       release = await lockfile.lock(path, {
         realpath: false,
-        retries: { retries: 3, minTimeout: 50 },
+        retries: LOCK_RETRIES,
       });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ELOCKED') {
@@ -786,7 +844,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
         const keyPath = this.keyPath(record.workflow_id, record.idempotency_key);
         let keyRelease: () => Promise<void>;
         try {
-          keyRelease = await lockfile.lock(keyPath, { realpath: false, retries: KEY_LOCK_RETRIES });
+          keyRelease = await lockfile.lock(keyPath, { realpath: false, retries: LOCK_RETRIES });
         } catch (err) {
           if ((err as NodeJS.ErrnoException).code === 'ELOCKED') {
             throw this.runBusyError(runId, 'locked');

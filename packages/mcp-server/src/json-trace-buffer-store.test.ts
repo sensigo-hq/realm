@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { storeDeclaresSeal, storeDeclaresNonceCarriage } from '@sensigo/realm';
-import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
+import { JsonTraceBufferStore, DEFAULT_LOCK_PROFILE } from './json-trace-buffer-store.js';
 
 /** Recomputes the exact on-disk WAL filename `walPath` uses — test-side only. */
 function walFileName(runId: string, stepId: string): string {
@@ -546,5 +546,18 @@ describe('JsonTraceBufferStore', () => {
       expect(await store.listSealedForRun('run-1')).toEqual([]);
       expect(await store.listSealedForRun('run-2')).toHaveLength(1);
     });
+  });
+});
+
+describe('JsonTraceBufferStore — lock-retry jitter ride-along (issue #191)', () => {
+  it('DEFAULT_LOCK_PROFILE carries randomize:true alongside its existing bounded maxTimeout', () => {
+    const retries = DEFAULT_LOCK_PROFILE.retries;
+    expect(typeof retries).toBe('object');
+    if (typeof retries === 'object') {
+      expect(retries.randomize).toBe(true);
+      expect(retries.maxTimeout).toBe(1000);
+      expect(retries.retries).toBe(6);
+      expect(retries.minTimeout).toBe(50);
+    }
   });
 });

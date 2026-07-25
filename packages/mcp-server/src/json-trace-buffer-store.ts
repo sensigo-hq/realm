@@ -81,8 +81,11 @@ function parseSealedFilename(
 }
 
 /** A `proper-lockfile` retry policy: either a bare retry count (its own simple default backoff)
- *  or an explicit `retry`-module-compatible options object. */
-type LockRetries = number | { retries: number; minTimeout?: number; maxTimeout?: number };
+ *  or an explicit `retry`-module-compatible options object. `randomize` (issue #191 ride-along —
+ *  `json-file-store.ts`'s own `LOCK_RETRIES` doc has the full jitter rationale) is optional so
+ *  every existing caller/conformance-suite override that predates it stays valid unchanged. */
+type LockRetries =
+  number | { retries: number; minTimeout?: number; maxTimeout?: number; randomize?: boolean };
 
 /** Lock-acquisition profile shared by every `lockWal` call in this file (issue #207).
  *  Constructor-injectable so a conformance suite can inflate the retry budget (e.g. to make a
@@ -96,9 +99,14 @@ export interface TraceBufferLockProfile {
 
 /** Default profile: ~4s worst-case budget (6 retries, 50ms→1000ms exponential backoff) —
  *  outlasts any legitimate millisecond-scale critical section by orders of magnitude, but never
- *  hangs an engine path for minutes on genuine contention. */
-const DEFAULT_LOCK_PROFILE: TraceBufferLockProfile = {
-  retries: { retries: 6, minTimeout: 50, maxTimeout: 1000 },
+ *  hangs an engine path for minutes on genuine contention. `randomize: true` (issue #191
+ *  ride-along) de-synchronizes contenders under fan-out — the same thundering-herd fix
+ *  `json-file-store.ts`'s `LOCK_RETRIES` applies; this store already had a bounded `maxTimeout`
+ *  where the run-file store didn't, but neither had jitter until now.
+ *  Exported ONLY for this file's own test (issue #191) — not part of this module's intended
+ *  public surface (`TraceBufferLockProfile`/the constructor's injection point are). */
+export const DEFAULT_LOCK_PROFILE: TraceBufferLockProfile = {
+  retries: { retries: 6, minTimeout: 50, maxTimeout: 1000, randomize: true },
   stale: 5000,
   realpath: false,
 };
