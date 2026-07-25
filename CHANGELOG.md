@@ -13,6 +13,11 @@ All notable changes to this project are documented here.
 - `get_run_state` and `realm inspect` now report a run's default-settled steps regardless of how the run sealed
   (complete, failed, or aborted), derived from evidence — closing the failure-path disclosure gap from #220.
 
+### Fixed
+
+- Run-file store locks now use jittered, bounded backoff (defeats thundering-herd lock contention under fan-out),
+  and an exhausted lock acquisition is now a retryable `STATE_RUN_BUSY` instead of a fatal error.
+
 ---
 
 ## [0.31.2] — 2026-07-25

@@ -1,12 +1,14 @@
 // Tests for JsonFileStore: create, get, update, list, and claimStep operations.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, readdir, writeFile, readFile, unlink } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import lockfile from 'proper-lockfile';
-import { JsonFileStore } from './json-file-store.js';
+import retry from 'retry';
+import { JsonFileStore, LOCK_RETRIES } from './json-file-store.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -1247,6 +1249,16 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
     }
   });
 
+  // issue #191: deleteAllForRun's OWN lock acquisition now retries against LOCK_RETRIES'
+  // maxRetryTime:5000 total-time budget before giving up (this test holds the external lock for
+  // the ENTIRE duration, so it now genuinely waits out that full budget, up from the pre-#191
+  // ~350ms count-bound) — override vitest's global 5000ms testTimeout (the same value as the
+  // production budget itself), mirroring this file's own precedent of per-test timeout overrides
+  // for genuinely slow, real-timing tests. 20s (4× the ~5s nominal budget), not 10s: measured
+  // flaky at 10s under `npm run test`'s full-monorepo concurrent load (turbo running all 4
+  // packages' vitest suites at once — this repo's OWN documented "nested-parallelism CPU
+  // starvation" concern, vitest.config.ts) — a real-timer budget needs headroom against
+  // scheduling jitter under load, not just against its own nominal value.
   it('ELOCKED: refuses (STATE_RUN_BUSY, reason locked) when another writer holds the run-file lock, and the run file survives untouched', async () => {
     const { store, dir } = await makeTmpStore();
     try {
@@ -1278,7 +1290,7 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it('key-lock TOCTOU: the pointer delete happens under the key lock — held briefly by another writer, deleteAllForRun retries and succeeds once it frees up', async () => {
     // Proves the pointer read→check→delete critical section genuinely goes through the SAME key
@@ -1491,6 +1503,161 @@ describe('JsonFileStore.listRunIds (issue #163)', () => {
       const brokenStore = new JsonFileStore(notADirPath);
 
       await expect(brokenStore.listRunIds()).rejects.toMatchObject({ code: 'ENOTDIR' });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('JsonFileStore lock retry policy — jittered bounded backoff (issue #191, Fix A)', () => {
+  it('LOCK_RETRIES carries randomize:true, a bounded maxTimeout, and a maxRetryTime total-time budget', () => {
+    expect(LOCK_RETRIES.randomize).toBe(true);
+    expect(LOCK_RETRIES.maxTimeout).toBe(1000);
+    expect(LOCK_RETRIES.maxRetryTime).toBe(5000);
+    expect(LOCK_RETRIES.retries).toBe(10);
+    expect(LOCK_RETRIES.minTimeout).toBe(50);
+  });
+
+  it('randomize genuinely reaches the REAL `retry` package proper-lockfile itself delegates to — two independently-computed schedules from the SAME config differ; the identical config with randomize:false is fully deterministic (the pre-#191 lockstep shape)', () => {
+    // proper-lockfile/lib/lockfile.js:230 passes our config object VERBATIM into
+    // `retry.operation(options.retries)` — this test calls the exact same real dependency function
+    // (`retry.timeouts`, which `retry.operation` uses internally to build its schedule) with our
+    // exact LOCK_RETRIES literal, so this is a direct integration proof, not a reimplementation.
+    const scheduleA = retry.timeouts(LOCK_RETRIES);
+    const scheduleB = retry.timeouts(LOCK_RETRIES);
+    expect(scheduleA).not.toEqual(scheduleB); // jitter — a fresh Math.random() draw per attempt
+
+    const unjittered = { ...LOCK_RETRIES, randomize: false };
+    const deterministicA = retry.timeouts(unjittered);
+    const deterministicB = retry.timeouts(unjittered);
+    expect(deterministicA).toEqual(deterministicB); // the contrast case: randomize is what flips it
+
+    // maxTimeout also reaches retry: no computed per-attempt delay exceeds the cap.
+    for (const t of scheduleA) expect(t).toBeLessThanOrEqual(LOCK_RETRIES.maxTimeout);
+  });
+
+  it('maxRetryTime forwards through proper-lockfile end-to-end — a direct assertion the option reaches the REAL RetryOperation instance proper-lockfile constructs', () => {
+    // Source-confirmed chain (file:line, both read directly — no mock stands in for either):
+    //  - proper-lockfile/lib/lockfile.js:230 — `const operation = retry.operation(options.retries);`
+    //    forwards our WHOLE config object unfiltered.
+    //  - retry/lib/retry.js's `exports.operation` reads `options.maxRetryTime` off that SAME object
+    //    into RetryOperation's 2nd constructor arg.
+    //  - retry/lib/retry_operation.js:10 — `this._maxRetryTime = options && options.maxRetryTime || Infinity;`
+    //  - retry/lib/retry_operation.js:48 — `.retry(err)` compares elapsed wall-time against it on
+    //    every failed attempt and gives up once exceeded, REGARDLESS of retries remaining — the
+    //    total-time-budget mechanism itself.
+    // This test constructs a REAL RetryOperation from our REAL LOCK_RETRIES (the exact call
+    // proper-lockfile itself makes) and asserts the value round-tripped onto the live instance —
+    // VERDICT: maxRetryTime DOES forward. (The mechanism is additionally exercised for real, not
+    // just structurally, by the deleteAllForRun ELOCKED test above — now measured at ~5.08s
+    // wall-clock, bounded near maxRetryTime:5000 rather than the ~6.5s+ count-bound alternative;
+    // its `it()` timeout was raised to 10s specifically to accommodate this.)
+    const operation = retry.operation(LOCK_RETRIES);
+    expect((operation as unknown as { _maxRetryTime: number })._maxRetryTime).toBe(5000);
+  });
+
+  it('the 4 run-file lock sites and 3 key-lock sites all reference the ONE shared LOCK_RETRIES const — no remaining bare {retries:3,minTimeout:50} or KEY_LOCK_RETRIES anywhere in the source', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('./json-file-store.ts', import.meta.url)),
+      'utf8',
+    );
+    expect(source).not.toContain('KEY_LOCK_RETRIES');
+    expect(source).not.toContain('retries: 3, minTimeout: 50');
+    expect(source.match(/retries: LOCK_RETRIES/g)?.length).toBe(7); // 4 run-file + 3 key-lock sites
+  });
+});
+
+describe('JsonFileStore — exhausted ELOCKED reclassified as STATE_RUN_BUSY (issue #191, Fix C)', () => {
+  const elockedErr = (): NodeJS.ErrnoException =>
+    Object.assign(new Error('Lock file is already being held'), { code: 'ELOCKED' });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('update(): a mocked exhausted lock acquisition throws STATE_RUN_BUSY (retryable:true, reason:locked) — not a fatal error', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      vi.spyOn(lockfile, 'lock').mockRejectedValueOnce(elockedErr());
+
+      await expect(store.update({ ...run, run_phase: 'running' })).rejects.toMatchObject({
+        code: 'STATE_RUN_BUSY',
+        retryable: true,
+        details: { runId: run.id, reason: 'locked' },
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('claimStep(): a mocked exhausted lock acquisition throws STATE_RUN_BUSY (retryable:true, reason:locked) — the release()/finally shape for the SUCCESS path is untouched', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      vi.spyOn(lockfile, 'lock').mockRejectedValueOnce(elockedErr());
+
+      await expect(store.claimStep(run.id, 'step-one', minimalDef)).rejects.toMatchObject({
+        code: 'STATE_RUN_BUSY',
+        retryable: true,
+        details: { runId: run.id, reason: 'locked' },
+      });
+
+      // The mock was one-shot (mockRejectedValueOnce) — a genuine, unmocked claimStep still
+      // succeeds afterward, proving the try/catch wrap didn't disturb the success path at all.
+      const claimed = await store.claimStep(run.id, 'step-one', minimalDef);
+      expect(claimed.in_progress_steps).toContain('step-one');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('save(): a mocked exhausted lock acquisition throws STATE_RUN_BUSY (retryable:true, reason:locked)', async () => {
+    const { dir } = await makeTmpStore();
+    try {
+      const store = new JsonFileStore(dir);
+      const run = makeRunRecord({ id: 'run-save-elocked', workflow_id: 'wf-1' });
+      vi.spyOn(lockfile, 'lock').mockRejectedValueOnce(elockedErr());
+
+      await expect(store.save(run)).rejects.toMatchObject({
+        code: 'STATE_RUN_BUSY',
+        retryable: true,
+        details: { runId: run.id, reason: 'locked' },
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('update(): ENOENT is STILL mapped to STATE_RUN_NOT_FOUND — the new ELOCKED branch does not clobber the pre-existing TOCTOU mapping (a file present at the existsSync guard but gone by the time the lock is attempted)', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      // The file genuinely exists (existsSync passes) — mock ONLY the lock call itself to
+      // reproduce the documented TOCTOU race (issue #107's own comment on this catch block).
+      vi.spyOn(lockfile, 'lock').mockRejectedValueOnce(
+        Object.assign(new Error('no such file or directory'), { code: 'ENOENT' }),
+      );
+
+      await expect(store.update({ ...run, run_phase: 'running' })).rejects.toMatchObject({
+        code: 'STATE_RUN_NOT_FOUND',
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('update(): an unrecognized lock-acquisition errno is neither swallowed nor reclassified — it propagates as-is', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      vi.spyOn(lockfile, 'lock').mockRejectedValueOnce(
+        Object.assign(new Error('permission denied'), { code: 'EACCES' }),
+      );
+
+      await expect(store.update({ ...run, run_phase: 'running' })).rejects.toMatchObject({
+        code: 'EACCES',
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
