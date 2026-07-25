@@ -12,6 +12,7 @@ import {
   findCapabilityBlockedSteps,
   classifyRunHealth,
   persistsField,
+  deriveDefaultedSteps,
   type RunPhase,
   type NextAction,
   type ClaimState,
@@ -129,6 +130,17 @@ export interface RunStateSummary {
    * cannot show it (notably a `gate_waiting` run, whose status MUST stay `awaiting_human`).
    */
   run_health?: RunHealthFinding[];
+  /**
+   * Names of steps that settled via their declared `validation_exhaustion.default_output`
+   * substitution (issue #232) — present only when non-empty. Derived on demand from
+   * `evidence[].diagnostics.settled_by_default` via the SAME shared `deriveDefaultedSteps` helper
+   * `RunRecord.defaulted_steps` itself is stamped from (issue #220 PR-2), so this field is exact
+   * (AC-2) and — for a `'complete'` run — identical to the persisted field (AC-4). Unlike the
+   * persisted field, this is computed UNIFORMLY regardless of how the run sealed (complete,
+   * failed, or aborted): a run that default-settles a step and then fails still surfaces it here,
+   * closing the failure-path disclosure gap `defaulted_steps`'s complete-only stamping leaves.
+   */
+  defaulted_steps?: string[];
   /**
    * Advisory diagnostics for this response (issue #119: WARN-never-gate — never a throw, never a
    * behavior change). Independent sources, any subset may be present:
@@ -266,6 +278,11 @@ export async function handleGetRunState(
     );
   }
 
+  // issue #232: read-time derivation (approach 2, DECIDED) — computed UNIFORMLY for every run
+  // regardless of terminal state or seal outcome (no guard here, unlike stampDefaultedSteps'
+  // complete-only stamping), via the SAME shared helper that stamping itself now calls.
+  const defaultedSteps = deriveDefaultedSteps(run.evidence);
+
   return {
     run_id: run.id,
     workflow_id: run.workflow_id,
@@ -298,6 +315,7 @@ export async function handleGetRunState(
       ? { skip_details: run.skip_details }
       : {}),
     ...(runHealth.length > 0 ? { run_health: runHealth } : {}),
+    ...(defaultedSteps.length > 0 ? { defaulted_steps: defaultedSteps } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
 }

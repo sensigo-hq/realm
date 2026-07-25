@@ -6,7 +6,7 @@
 // import, no createRequire), never the extensions loader.
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { classifyRunHealth } from '@sensigo/realm';
+import { classifyRunHealth, deriveDefaultedSteps } from '@sensigo/realm';
 // issue #221 correction: the CLI's first command→command import (sanctioned — harmless
 // module-level Command construction; `listCommand` is a standalone Commander object never
 // auto-registered anywhere by being imported). Reused so inspect's never_claimed_idle age
@@ -253,6 +253,14 @@ export async function inspectRun(
     lines.push(
       `  ${stepName}: ${detail !== undefined ? formatSkipDetail(detail) : 'skipped (reason unavailable)'}`,
     );
+  }
+  // issue #232: read-time derivation, computed UNIFORMLY regardless of terminal state or seal
+  // outcome (complete/failed/aborted/still running) — via the SAME shared helper the persisted
+  // RunRecord.defaulted_steps field is stamped from (issue #220 PR-2, complete-only). Omitted
+  // entirely when empty (AC-3) — never a "Defaulted: (none)" line.
+  const defaultedSteps = deriveDefaultedSteps(run.evidence);
+  if (defaultedSteps.length > 0) {
+    lines.push(`Defaulted (settled by default): ${defaultedSteps.join(', ')}`);
   }
   lines.push(`Created: ${run.created_at}`);
   lines.push(`Updated: ${run.updated_at}`);

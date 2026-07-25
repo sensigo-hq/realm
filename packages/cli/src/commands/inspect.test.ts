@@ -778,3 +778,61 @@ describe('run_health rendering (issue #221)', () => {
     expect(result).not.toContain('idle\n'); // never a bare dead-end
   });
 });
+
+describe('defaulted-steps rendering (issue #232)', () => {
+  function defaultSettledSnapshot(stepId: string): EvidenceSnapshot {
+    return makeSnapshot(stepId, {
+      diagnostics: { input_token_estimate: 1, precondition_trace: [], settled_by_default: true },
+    });
+  }
+
+  it('AC-1 failure path: a FAILED run that default-settled a step earlier ⇒ shows the Defaulted line, grouped right after Skipped', async () => {
+    const run = makeRun(
+      [defaultSettledSnapshot('draft'), makeSnapshot('finish', { status: 'error' })],
+      { run_phase: 'failed', failed_steps: ['finish'], terminal_state: true },
+    );
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).toContain('Defaulted (settled by default): draft');
+    const skippedIdx = result.indexOf('Skipped:');
+    const defaultedIdx = result.indexOf('Defaulted (settled by default)');
+    const createdIdx = result.indexOf('Created:');
+    expect(skippedIdx).toBeGreaterThan(-1);
+    expect(defaultedIdx).toBeGreaterThan(skippedIdx); // grouped right after the Skipped block
+    expect(defaultedIdx).toBeLessThan(createdIdx);
+  });
+
+  it('AC-1 abort path: an ABORTED run that default-settled a step earlier ⇒ shows the Defaulted line', async () => {
+    const run = makeRun([defaultSettledSnapshot('draft')], {
+      run_phase: 'aborted',
+      terminal_state: true,
+    });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).toContain('Defaulted (settled by default): draft');
+  });
+
+  it('multi-default and dedup: joins distinct step names, comma-separated, first-occurrence order', async () => {
+    const run = makeRun(
+      [
+        defaultSettledSnapshot('first'),
+        makeSnapshot('untouched'),
+        defaultSettledSnapshot('second'),
+        defaultSettledSnapshot('first'), // duplicate step_id — must not double-list
+      ],
+      { run_phase: 'failed', terminal_state: true },
+    );
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).toContain('Defaulted (settled by default): first, second');
+  });
+
+  it('AC-3 negative: renders nothing extra when there are no default-settled steps', async () => {
+    const run = makeRun([makeSnapshot('draft')], { run_phase: 'completed', terminal_state: true });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).not.toContain('Defaulted');
+  });
+
+  it('AC-3 negative, empty evidence: renders nothing extra', async () => {
+    const run = makeRun([], { run_phase: 'completed', terminal_state: true });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).not.toContain('Defaulted');
+  });
+});
