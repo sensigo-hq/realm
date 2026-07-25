@@ -44,20 +44,6 @@ function makeStore(runs: RunRecord[]): RunStore {
   };
 }
 
-/** Same as {@link makeStore}, plus a real `runsDirPath` (issue #219) — the duck-typed signal
- *  `listRuns` uses to wire a `FailedAttemptStore` for `--stuck` cause attribution. `runsDirPath`
- *  is a real directory the caller owns (create/clean up via `mkdtemp`/`rm`), so a REAL
- *  `FailedAttemptStore` reads REAL sidecar files from it — this is deliberately NOT a mock of
- *  `FailedAttemptStore` itself, matching the codebase's existing precedent
- *  (`export.test.ts`/`gc.test.ts`: real tmpdir + real store + real chmod for I/O-failure tests,
- *  never a hand-rolled fake of the store's read semantics). */
-function makeStoreWithRunsDir(
-  runs: RunRecord[],
-  runsDirPath: string,
-): RunStore & { runsDirPath: string } {
-  return { ...makeStore(runs), runsDirPath };
-}
-
 /** A run old enough to trip the default `never_claimed_idle` --stuck threshold (24h) — the
  *  shared shape every issue #219 cause-attribution test below flags as stuck via, deliberately
  *  distinct from the claim/capability-block fixtures above the tests reuse for the OTHER
@@ -732,8 +718,8 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
       await fas.append(runId, serializeFailedAttemptLine(older).line);
       await fas.append(runId, serializeFailedAttemptLine(latest).line);
 
-      const store = makeStoreWithRunsDir([run], dir);
-      const result = await listRuns(undefined, store, undefined, true);
+      const store = makeStore([run]);
+      const result = await listRuns(undefined, store, undefined, true, undefined, fas);
       expect(result).toContain(runId);
       expect(result).toContain(
         'rejected: 2× (classify: VALIDATION_MISSING_REQUIRED — /category enum: must be equal to one of the allowed values)',
@@ -750,6 +736,7 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
     try {
       const runId = 'run-cause-capped';
       const run = makeIdleStuckRun({ id: runId });
+      const fas = new FailedAttemptStore(dir);
       const validRec = buildFailedAttemptRecord({
         run_id: runId,
         workflow_id: 'test-workflow',
@@ -769,8 +756,8 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
       const padding = 'x'.repeat(FAILED_ATTEMPT_SIDECAR_MAX_BYTES);
       await writeFile(sidecarPath, `${validLine}\n${padding}\n`, 'utf8');
 
-      const store = makeStoreWithRunsDir([run], dir);
-      const result = await listRuns(undefined, store, undefined, true);
+      const store = makeStore([run]);
+      const result = await listRuns(undefined, store, undefined, true, undefined, fas);
       expect(result).toContain('rejected: ≥1× (classify: VALIDATION_OUTPUT_SCHEMA)');
       expect(result).not.toContain('rejected: 1× (');
     } finally {
@@ -778,24 +765,25 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
     }
   });
 
-  it('absence = parked: a --stuck run with NO sidecar renders byte-identically to a store with no runsDirPath at all (no cause segment)', async () => {
+  it('absence = parked: a --stuck run with NO sidecar renders byte-identically to injecting no failedAttemptStore at all (no cause segment)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'list-cause-absent-'));
     try {
       const run = makeIdleStuckRun({ id: 'run-cause-absent' });
-      // Real runsDir, real FailedAttemptStore wiring — but no sidecar file was ever written for
-      // this run (the CLI-driven / parked-between-drives case: absence, not an error).
-      const withRunsDir = makeStoreWithRunsDir([run], dir);
-      // The pre-#219 shape: no runsDirPath at all (what every OTHER test in this file uses).
-      const withoutRunsDir = makeStore([run]);
+      const store = makeStore([run]);
+      // A REAL FailedAttemptStore injected, over a real runs dir — but no sidecar file was ever
+      // written for this run (the CLI-driven / parked-between-drives case: absence, not an
+      // error). Compared against injecting `undefined` (today's pre-#219 shape, what every OTHER
+      // test in this file does).
+      const fas = new FailedAttemptStore(dir);
 
-      const [resultWithDir, resultWithout] = await Promise.all([
-        listRuns(undefined, withRunsDir, undefined, true),
-        listRuns(undefined, withoutRunsDir, undefined, true),
+      const [resultWithStore, resultWithoutStore] = await Promise.all([
+        listRuns(undefined, store, undefined, true, undefined, fas),
+        listRuns(undefined, store, undefined, true, undefined, undefined),
       ]);
 
-      expect(resultWithDir).toBe(resultWithout); // byte-identical — absence is a true no-op
-      expect(resultWithDir).not.toContain('rejected:');
-      expect(resultWithDir).not.toContain('cause:');
+      expect(resultWithStore).toBe(resultWithoutStore); // byte-identical — absence is a true no-op
+      expect(resultWithStore).not.toContain('rejected:');
+      expect(resultWithStore).not.toContain('cause:');
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -827,8 +815,8 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
       // this genuinely denies access rather than being silently bypassed (gc.test.ts precedent).
       await chmod(sidecarPath, 0o000);
 
-      const store = makeStoreWithRunsDir([brokenRun, okRun], dir);
-      const result = await listRuns(undefined, store, undefined, true);
+      const store = makeStore([brokenRun, okRun]);
+      const result = await listRuns(undefined, store, undefined, true, undefined, fas);
 
       const brokenLine = result.split('\n').find((l) => l.includes(brokenRunId));
       const okLine = result.split('\n').find((l) => l.includes(okRunId));

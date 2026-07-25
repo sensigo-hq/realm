@@ -11,16 +11,6 @@ import type {
 } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 
-/**
- * The subset of a concrete run store `--stuck` cause attribution (issue #219) additionally needs
- * — the SAME runsDir the run store persists to. Deliberately optional and NOT added to the core
- * `RunStore` interface (out of scope — no store change): a store without `runsDirPath` (every
- * existing test double, or a future non-filesystem `RunStore` implementation) simply gets no
- * cause attribution — best-effort, never a crash, and since every pre-existing caller/test omits
- * it, this is automatically byte-identical to today wherever it isn't set (the S4 rail).
- */
-type ListableRunStore = RunStore & { runsDirPath?: string };
-
 /** Returns a chalk-coloured phase label. */
 function colorState(run: RunRecord): string {
   if (run.run_phase === 'completed') return chalk.green(run.run_phase);
@@ -123,32 +113,32 @@ export function renderCauseSegment(result: FailedAttemptReadResult): string {
 
 /**
  * Lists runs from the store, sorted by updated_at descending.
- * @param workflowId      Optional filter — only show runs from this workflow.
- * @param store           Store holding run records.
- * @param statusFilter    Optional filter — only show runs with this run_phase.
- * @param stuck           Show only runs with a typed run-health finding (issue #221).
- * @param idleThresholdMs Override for the `never_claimed_idle` age gate (issue #221's
- *                        `--older-than`). Defaults to `DEFAULT_IDLE_THRESHOLD_MS` (24h). `0`
- *                        restores today's unconditional breadth.
- * @returns               Formatted output string.
+ * @param workflowId        Optional filter — only show runs from this workflow.
+ * @param store             Store holding run records.
+ * @param statusFilter      Optional filter — only show runs with this run_phase.
+ * @param stuck             Show only runs with a typed run-health finding (issue #221).
+ * @param idleThresholdMs   Override for the `never_claimed_idle` age gate (issue #221's
+ *                          `--older-than`). Defaults to `DEFAULT_IDLE_THRESHOLD_MS` (24h). `0`
+ *                          restores today's unconditional breadth.
+ * @param failedAttemptStore Explicit injection (issue #219) for `--stuck` cause attribution —
+ *                          deliberately NOT derived from `store` (no structural typing/duck-typed
+ *                          `runsDirPath` probing on the `RunStore` interface, which stays plain
+ *                          and untouched). The caller (the CLI action, which holds a concrete
+ *                          `JsonFileStore` and its real `runsDirPath` getter) constructs this and
+ *                          passes it in; `undefined` means best-effort skip — no cause attribution
+ *                          — never a crash. `listRuns` never constructs one itself.
+ * @returns                 Formatted output string.
  */
 export async function listRuns(
   workflowId: string | undefined,
-  store: ListableRunStore,
+  store: RunStore,
   statusFilter?: RunPhase,
   stuck?: boolean,
   idleThresholdMs?: number,
+  failedAttemptStore?: FailedAttemptStore,
 ): Promise<string> {
   const runs = await store.list(workflowId);
   const effectiveIdleThresholdMs = idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
-  // issue #219: wired ONLY for --stuck, at the SAME runsDir the run store uses. `undefined` when
-  // the store doesn't expose one (every pre-existing test double, or a future non-filesystem
-  // `RunStore`) — best-effort, never a crash; the render loop below skips cause attribution
-  // entirely in that case, which is what keeps every sidecar-less-store caller byte-identical.
-  const failedAttemptStore =
-    stuck === true && store.runsDirPath !== undefined
-      ? new FailedAttemptStore(store.runsDirPath)
-      : undefined;
 
   let filtered = runs;
   const findingsByRun = new Map<string, RunHealthFinding[]>();
@@ -253,6 +243,11 @@ export const listCommand = new Command('list')
     async (opts: { workflow?: string; status?: string; stuck?: boolean; olderThan?: string }) => {
       const { JsonFileStore } = await import('@sensigo/realm');
       const store = new JsonFileStore();
+      // issue #219: explicit injection — `JsonFileStore.runsDirPath` is a real, nominal public
+      // getter (not duck-typed off `RunStore`, which stays plain). Constructed ONLY for --stuck,
+      // at the SAME runsDir the run store persists to.
+      const failedAttemptStore =
+        opts.stuck === true ? new FailedAttemptStore(store.runsDirPath) : undefined;
 
       if (opts.stuck === true && opts.status !== undefined) {
         console.error('--stuck cannot be combined with --status.');
@@ -291,6 +286,7 @@ export const listCommand = new Command('list')
           statusFilter,
           opts.stuck,
           idleThresholdMs,
+          failedAttemptStore,
         );
         console.log(output);
       } catch (err) {
