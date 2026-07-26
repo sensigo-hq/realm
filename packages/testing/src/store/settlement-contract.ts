@@ -37,6 +37,7 @@ export type SettlementLaw =
   | 'LEDGER_MINT_ATOMICITY' // L4
   | 'DRAIN_MARK_DEDUP' // L5
   | 'TERMINAL_REFUSAL' // L6
+  | 'TERMINAL_STATE_ONLY' // PR-A correction (architect novel probe): pins isTerminal's adjudication
   | 'CS_PURITY' // L7
   | 'NEVER_DOWNGRADE' // L8
   | 'SETTLE_OUTCOME_INTEGRITY' // L9
@@ -549,6 +550,91 @@ function terminalRefusalCases(adapter: SettlementContractAdapter): SettlementCon
           def,
         );
         assertRefused(result, 'run_terminal', 'settle on an already-terminal run');
+      },
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// TERMINAL_STATE_ONLY (PR-A correction, atomic-settle-279-pr-a-pin-correction.md) — pins
+// `isTerminal := terminal_state === true` EXACTLY, refuting the earlier trio adjudication
+// (`terminal_state === true || abandoned_at !== undefined || aborted_at !== undefined`), which
+// the restart's bottom-up Finding 1 identified as the deterministic resumed-abandoned wedge.
+// terminal_state-only is load-bearing TODAY: `resume` (packages/cli/src/commands/resume.ts:71)
+// strips only `terminal_reason`, never `abandoned_at` — so `abandoned_at ∧ terminal_state:false`
+// is a LIVE, in-contract record shape on main right now. Under the trio, every settle on such a
+// run would refuse `run_terminal` forever.
+//
+// Reintroducing either trio disjunct into `isTerminal` reds this law; genuine terminal refusal is
+// TERMINAL_REFUSAL's job (`terminal_state: true` — which abandon/abort ALWAYS set atomically,
+// abandon-run.ts:66-71 / execution-loop.ts:1803-1811).
+// ---------------------------------------------------------------------------
+
+function terminalStateOnlyCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition } = adapter.settlementFixture!;
+  const settleStep = requireSettleStep(adapter.store);
+  return [
+    {
+      law: 'TERMINAL_STATE_ONLY',
+      name: `[${adapter.storeName}] a resumed-abandoned shape (abandoned_at SET, terminal_state:false) — settle_step APPLIES, never run_terminal`,
+      run: async () => {
+        const def = minimalDefinition(['a']);
+        const { run, token } = await createClaimed(adapter.store, def, 'a');
+        // Hand-authored fixture via update() (mirrors MINT_FRESH's own pattern) — a LIVE,
+        // in-contract shape today, not a hypothetical: resume never strips abandoned_at.
+        const seeded = await adapter.store.update({
+          ...run,
+          abandoned_at: '2026-01-01T00:00:00.000Z',
+        });
+        const result = await settleStep(
+          seeded.id,
+          {
+            kind: 'settle_step',
+            step: 'a',
+            outcome: 'complete',
+            claimToken: token,
+            evidence: [makeEvidence('a')],
+          },
+          def,
+        );
+        assertApplied(result, 'settle on a resumed-abandoned (terminal_state:false) run');
+        if (!result.run.completed_steps.includes('a')) {
+          throw new Error(
+            `expected 'a' to land in completed_steps, got: ${JSON.stringify(result.run.completed_steps)}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'TERMINAL_STATE_ONLY',
+      name: `[${adapter.storeName}] an aborted-marker shape (aborted_at SET, terminal_state:false) — settle_step APPLIES, never run_terminal`,
+      run: async () => {
+        const def = minimalDefinition(['a']);
+        const { run, token } = await createClaimed(adapter.store, def, 'a');
+        // Fixture-legal via update() regardless of whether the real engine can currently reach
+        // this exact combination — the law pins the PREDICATE itself, so it must make ANY trio
+        // disjunct reintroduction red, not just the abandoned one.
+        const seeded = await adapter.store.update({
+          ...run,
+          aborted_at: { step_id: 'a', abort_message: 'tck-aborted-marker' },
+        });
+        const result = await settleStep(
+          seeded.id,
+          {
+            kind: 'settle_step',
+            step: 'a',
+            outcome: 'complete',
+            claimToken: token,
+            evidence: [makeEvidence('a')],
+          },
+          def,
+        );
+        assertApplied(result, 'settle on an aborted-marker (terminal_state:false) run');
+        if (!result.run.completed_steps.includes('a')) {
+          throw new Error(
+            `expected 'a' to land in completed_steps, got: ${JSON.stringify(result.run.completed_steps)}`,
+          );
+        }
       },
     },
   ];
@@ -2116,6 +2202,7 @@ export function settlementContract(adapter: SettlementContractAdapter): Settleme
     ...ledgerMintAtomicityCases(adapter),
     ...drainMarkDedupCases(adapter),
     ...terminalRefusalCases(adapter),
+    ...terminalStateOnlyCases(adapter),
     ...csPurityCases(adapter),
     ...neverDowngradeCases(adapter),
     ...settleOutcomeIntegrityCases(adapter),
