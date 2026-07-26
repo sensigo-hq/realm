@@ -50,6 +50,11 @@ function formatSkipDetail(detail: SkipDetail): string {
       return 'handler_abort';
     case 'guard_abort':
       return 'guard_abort';
+    // issue #279 (increment 1, PR-A): render-only — no engine call site can produce this kind in
+    // this PR (dormant until PR-B migrates the seal sites); required so the SkipDetail widening
+    // doesn't red `npm run build` under this exhaustive switch's strict-TS check.
+    case 'gate_cancelled_by_abort':
+      return 'gate_cancelled_by_abort';
   }
 }
 

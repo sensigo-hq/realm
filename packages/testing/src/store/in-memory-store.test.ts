@@ -46,7 +46,17 @@ describe('InMemoryStore — claims parity (#101)', () => {
     const store = new InMemoryStore();
     const { run } = await store.create({ workflowId: 'a', workflowVersion: 1, params: {} });
     const claimed = await store.claimStep(run.id, 'work', agentWf);
-    expect(claimed.claims?.['work']).toEqual({ deadline: null });
+    expect(claimed.claims?.['work']?.deadline).toBeNull();
+  });
+
+  // issue #279 (increment 1, PR-A): claimStep now mints a fencing token alongside the deadline —
+  // dormant until PR-B, but real/present in every claim record starting with this PR.
+  it('claimStep mints a token alongside the deadline (issue #279, dormant until PR-B)', async () => {
+    const store = new InMemoryStore();
+    const { run } = await store.create({ workflowId: 'a', workflowVersion: 1, params: {} });
+    const claimed = await store.claimStep(run.id, 'work', agentWf);
+    expect(claimed.claims?.['work']?.token).toEqual(expect.any(String));
+    expect(claimed.claims!['work']!.token!.length).toBeGreaterThan(0);
   });
 });
 
@@ -60,6 +70,9 @@ const ALL_FIELDS: LoadBearingRunRecordField[] = [
   'extension_identity',
   'validation_rejections',
   'defaulted_steps',
+  // issue #279 (increment 1, PR-A): declared alongside settleStep — declaration-coherence.
+  'settled',
+  'finalizer_ledger',
 ];
 
 describe('InMemoryStore — RunStore fidelity TCK conformance (issue #188)', () => {

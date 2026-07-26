@@ -12,6 +12,9 @@ All notable changes to this project are documented here.
   for runs with a FailedAttemptStore sidecar (MCP-path runs; CLI-driven runs are unaffected).
 - `get_run_state` and `realm inspect` now report a run's default-settled steps regardless of how the run sealed
   (complete, failed, or aborted), derived from evidence — closing the failure-path disclosure gap from #220.
+- `RunStore.settleStep` (optional): atomic intent-based step settlement applied to fresh state under the store's
+  own serialization, with the `applySettlement` pure transform, per-claim fencing tokens, the finalizer ledger, and
+  a forcing conformance TCK — dormant in this release; the engine adopts it in the next PR (#279).
 
 ### Fixed
 

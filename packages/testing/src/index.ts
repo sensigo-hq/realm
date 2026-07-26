@@ -20,6 +20,13 @@ export type {
   FencedTraceBufferContractCase,
   FencedTraceBufferContractAdapter,
 } from './store/fenced-trace-buffer-contract.js';
+export { settlementContract, defaultSettlementFixture } from './store/settlement-contract.js';
+export type {
+  SettlementLaw,
+  SettlementContractCase,
+  SettlementContractAdapter,
+  SettlementFixture,
+} from './store/settlement-contract.js';
 
 // Fixtures
 export {

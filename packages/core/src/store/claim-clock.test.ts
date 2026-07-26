@@ -69,13 +69,29 @@ describe('claimStep writes the liveness clock atomically (JsonFileStore)', () =>
     });
     const claimed = await store.claimStep(run.id, 'work', agentWf);
     expect(claimed.in_progress_steps).toContain('work');
-    expect(claimed.claims?.['work']).toEqual({ deadline: null });
+    expect(claimed.claims?.['work']?.deadline).toBeNull();
   });
 
   it('an auto step in a finalizer-BEARING workflow gets deadline: null', async () => {
     const { run } = await store.create({ workflowId: 'clock-fin', workflowVersion: 1, params: {} });
     const claimed = await store.claimStep(run.id, 'work', finalizerBearing);
-    expect(claimed.claims?.['work']).toEqual({ deadline: null });
+    expect(claimed.claims?.['work']?.deadline).toBeNull();
+  });
+
+  // issue #279 (increment 1, PR-A): claimStep now mints a fencing token alongside the deadline —
+  // dormant until PR-B, but real/present in every claim record starting with this PR. Verified
+  // both in-memory (returned value) and on the re-read (actually persisted, not just returned).
+  it('claimStep mints a token alongside the deadline, persisted (issue #279, dormant until PR-B)', async () => {
+    const { run } = await store.create({
+      workflowId: 'clock-agent',
+      workflowVersion: 1,
+      params: {},
+    });
+    const claimed = await store.claimStep(run.id, 'work', agentWf);
+    expect(claimed.claims?.['work']?.token).toEqual(expect.any(String));
+    expect(claimed.claims!['work']!.token!.length).toBeGreaterThan(0);
+    const reread = await store.get(run.id);
+    expect(reread.claims?.['work']?.token).toEqual(claimed.claims!['work']!.token);
   });
 });
 

@@ -1083,11 +1083,11 @@ describe('JsonFileStore — atomic writes (torn-read safety)', () => {
     expect(src).toContain("import { atomicWriteFile } from './atomic-write.js';");
     expect(src).not.toContain('async function atomicWriteFile('); // no local re-definition
 
-    // 5 occurrences of atomicWriteFile( = the 5 write paths (writePointer, writeFreshRun,
-    // update, claimStep, save). The import statement itself has no trailing '(' so it doesn't
-    // inflate this count.
+    // 6 occurrences of atomicWriteFile( = the 6 write paths (writePointer, writeFreshRun,
+    // update, claimStep, save, settleStep [issue #279, increment 1 — a genuinely NEW write site]).
+    // The import statement itself has no trailing '(' so it doesn't inflate this count.
     const atomicIdx = [...src.matchAll(/\batomicWriteFile\(/g)];
-    expect(atomicIdx).toHaveLength(5);
+    expect(atomicIdx).toHaveLength(6);
   });
 
   it('T3b — structural guard: the atomicWriteFile primitive itself has exactly one definition and two raw writeFile( calls', async () => {
@@ -1556,14 +1556,16 @@ describe('JsonFileStore lock retry policy — jittered bounded backoff (issue #1
     expect((operation as unknown as { _maxRetryTime: number })._maxRetryTime).toBe(5000);
   });
 
-  it('the 4 run-file lock sites and 3 key-lock sites all reference the ONE shared LOCK_RETRIES const — no remaining bare {retries:3,minTimeout:50} or KEY_LOCK_RETRIES anywhere in the source', () => {
+  it('the 5 run-file lock sites and 3 key-lock sites all reference the ONE shared LOCK_RETRIES const — no remaining bare {retries:3,minTimeout:50} or KEY_LOCK_RETRIES anywhere in the source', () => {
     const source = readFileSync(
       fileURLToPath(new URL('./json-file-store.ts', import.meta.url)),
       'utf8',
     );
     expect(source).not.toContain('KEY_LOCK_RETRIES');
     expect(source).not.toContain('retries: 3, minTimeout: 50');
-    expect(source.match(/retries: LOCK_RETRIES/g)?.length).toBe(7); // 4 run-file + 3 key-lock sites
+    // 8 = the original 4 run-file sites (update/claimStep/save/deleteAllForRun) + 3 key-lock sites
+    // (issue #191) + 1 (settleStep, issue #279 increment 1 — a genuinely NEW run-file lock site).
+    expect(source.match(/retries: LOCK_RETRIES/g)?.length).toBe(8);
   });
 });
 

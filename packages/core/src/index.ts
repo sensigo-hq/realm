@@ -67,6 +67,21 @@ export type { BufferedEntryPartition } from './engine/trace-adoption.js';
 // The shared default-settled-step derivation (issue #232) — the ONE authoritative scan of
 // `evidence[].diagnostics.settled_by_default`; see defaulted-steps.ts's own module doc.
 export { deriveDefaultedSteps } from './engine/defaulted-steps.js';
+// Atomic settlement (issue #279, increment 1, PR-A) — the pure transform + finalizer selection.
+// DORMANT: no engine/mcp call site constructs a SettlementDelta or calls settleStep in this
+// release (enforced by an in-repo source-text guard — see its own test for the exact scope).
+export { applySettlement, selectFinalizers } from './engine/settlement.js';
+export type {
+  SettlementDelta,
+  SettleStepDelta,
+  SettleStepOutcome,
+  LeaseFinalizerDelta,
+  MarkFinalizerDelta,
+  MarkFinalizerResult,
+  SettlementResult,
+  SettlementRefusalReason,
+  SettlementNoopReason,
+} from './types/settlement.js';
 export {
   TERMINAL_PHASES,
   RESUMABLE_PHASES,
@@ -76,6 +91,7 @@ export {
   RESUMABLE_STATES,
   WAITING_STATES,
   isTerminalState,
+  DRAIN_LEASE_MAX,
 } from './engine/lifecycle.js';
 export {
   computeClaimDeadline,
