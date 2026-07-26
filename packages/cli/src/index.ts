@@ -6,7 +6,7 @@ import { workflowCommands, runCommands, topLevelCommands } from './commands-regi
 
 const program = new Command();
 
-program.name('realm').description('Realm workflow engine CLI').version('0.31.2');
+program.name('realm').description('Realm workflow engine CLI').version('0.32.0');
 
 // realm workflow — operations on workflow definitions
 const workflowCmd = new Command('workflow').description('Manage workflow definitions');
