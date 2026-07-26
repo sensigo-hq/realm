@@ -1,20 +1,18 @@
-// Source-text anti-recurrence guard for RunStore.settleStep's dormancy (issue #279, increment 1,
-// PR-A). PR-A's whole point is ZERO engine behavior change: `applySettlement`/`settleStep` exist,
-// are exported, and are conformance-tested (see @sensigo/realm-testing's settlement-contract.ts),
-// but nothing in the engine or the MCP server calls them yet — the engine still seals steps via
-// the legacy read-then-update path. This guard fails loudly if that invariant is ever violated by
-// accident (a future engine-file edit that starts calling `store.settleStep(...)` without going
-// through the deliberate PR-B migration).
+// Source-text POSITIVE pin for RunStore.settleStep's migration (issue #279, increment 1, PR-B).
+// PR-A shipped this file's ORIGINAL guard here: a ZERO-invocation-sites assertion proving the
+// engine never called settleStep while the substrate was still dormant. PR-B's whole point is the
+// OPPOSITE — migrating the three seal sites (complete/fail/handler-abort) onto settleStep — so
+// that guard is deleted (as its own header said it would be) and replaced with this positive pin:
+// EXACTLY three `.settleStep(` invocation sites exist, all inside execution-loop.ts (the only
+// migrated file), and packages/mcp-server/src/** stays clean (gate-open/gate-resolution/guard
+// seals are increment-2 territory — untouched this increment, so the MCP surface has nothing new
+// to call). A future accidental FOURTH call site (or a stray call outside execution-loop.ts) fails
+// this test loudly, the same anti-recurrence discipline the deleted guard had, inverted.
 //
-// Invocation-scoped (matches `.settleStep(` literally), NOT a bare `settleStep` name match — this
-// module's own JSDoc prose (RunStore.settleStep, the interface declaration, this very comment)
-// mentions the identifier freely without ever writing the CALL syntax, so the invocation-scoped
-// pattern cannot self-trip. Mechanically executable path-prefix globs, mirroring the #107
-// deleteAllForRun declarer-scan precedent (packages/cli/src/commands/purge-guard.test.ts) rather
-// than a hand-maintained list of "files that must not call it".
-//
-// PR-B (the settleStep migration) DELETES this guard test entirely — its whole job there is to
-// start calling settleStep from the engine's seal sites, which is exactly what this test forbids.
+// Invocation-scoped (matches `.settleStep(` literally, not a bare `settleStep` name match) so this
+// module's own JSDoc prose can mention the identifier freely without self-tripping the count.
+// Mechanically executable path-prefix globs, mirroring the #107 deleteAllForRun declarer-scan
+// precedent (packages/cli/src/commands/purge-guard.test.ts).
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -29,6 +27,8 @@ const SCANNED_ROOTS = [
 ];
 
 const INVOCATION = '.settleStep(';
+const EXPECTED_SITE_COUNT = 3; // complete, fail, handler-abort
+const MIGRATED_FILE = join(PACKAGES_DIR, 'core', 'src', 'engine', 'execution-loop.ts');
 
 /** Every non-test, non-declaration .ts source file under `root`, recursively. */
 function sourceFiles(root: string): string[] {
@@ -47,30 +47,22 @@ function sourceFiles(root: string): string[] {
   return out;
 }
 
-describe('RunStore.settleStep is DORMANT in the engine and MCP server (issue #279, increment 1, PR-A)', () => {
-  it('ZERO `.settleStep(` invocation sites under packages/core/src/engine/** or packages/mcp-server/src/**', () => {
-    const offenders: { file: string; line: number; text: string }[] = [];
-    for (const root of SCANNED_ROOTS) {
-      for (const file of sourceFiles(root)) {
-        const lines = readFileSync(file, 'utf8').split('\n');
-        lines.forEach((line, i) => {
-          if (line.includes(INVOCATION)) {
-            offenders.push({ file, line: i + 1, text: line.trim() });
-          }
-        });
-      }
+function findInvocationSites(): { file: string; line: number; text: string }[] {
+  const sites: { file: string; line: number; text: string }[] = [];
+  for (const root of SCANNED_ROOTS) {
+    for (const file of sourceFiles(root)) {
+      const lines = readFileSync(file, 'utf8').split('\n');
+      lines.forEach((line, i) => {
+        if (line.includes(INVOCATION)) {
+          sites.push({ file, line: i + 1, text: line.trim() });
+        }
+      });
     }
-    expect(
-      offenders,
-      offenders.length > 0
-        ? `Found ${offenders.length} '.settleStep(' invocation site(s) in the engine/MCP server ` +
-            `— PR-A requires ZERO engine behavior change. If this is the deliberate PR-B ` +
-            `migration, DELETE this guard test as part of that PR (see this file's own header):\n` +
-            offenders.map((o) => `  ${o.file}:${o.line}: ${o.text}`).join('\n')
-        : '',
-    ).toEqual([]);
-  });
+  }
+  return sites;
+}
 
+describe('RunStore.settleStep is MIGRATED at exactly three sites (issue #279, increment 1, PR-B)', () => {
   it('the scan itself is wired correctly (finds at least one .ts source file per root)', () => {
     for (const root of SCANNED_ROOTS) {
       expect(
@@ -80,7 +72,31 @@ describe('RunStore.settleStep is DORMANT in the engine and MCP server (issue #27
     }
   });
 
-  it('settlement.ts declares applySettlement and selectFinalizers as its exported surface (sanity check on the module this guard is about)', () => {
+  it(`EXACTLY ${EXPECTED_SITE_COUNT} '.settleStep(' invocation sites exist (complete/fail/handler-abort)`, () => {
+    const sites = findInvocationSites();
+    expect(
+      sites.length,
+      sites.length !== EXPECTED_SITE_COUNT
+        ? `Expected exactly ${EXPECTED_SITE_COUNT} '.settleStep(' invocation site(s), found ` +
+            `${sites.length}:\n${sites.map((s) => `  ${s.file}:${s.line}: ${s.text}`).join('\n')}`
+        : '',
+    ).toBe(EXPECTED_SITE_COUNT);
+  });
+
+  it('every invocation site lives in execution-loop.ts — none anywhere else (mcp-server stays clean)', () => {
+    const sites = findInvocationSites();
+    const elsewhere = sites.filter((s) => s.file !== MIGRATED_FILE);
+    expect(
+      elsewhere,
+      elsewhere.length > 0
+        ? `Found '.settleStep(' invocation site(s) OUTSIDE execution-loop.ts (increment 2 ` +
+            `territory — gate-open/gate-resolution/guard seals must stay on the legacy path this ` +
+            `increment):\n${elsewhere.map((s) => `  ${s.file}:${s.line}: ${s.text}`).join('\n')}`
+        : '',
+    ).toEqual([]);
+  });
+
+  it('settlement.ts declares applySettlement and selectFinalizers as its exported surface (sanity check on the module this pin is about)', () => {
     const settlementSrc = readFileSync(
       join(PACKAGES_DIR, 'core', 'src', 'engine', 'settlement.ts'),
       'utf8',

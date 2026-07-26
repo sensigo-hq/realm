@@ -47,6 +47,14 @@ export type ErrorCode =
   | 'STATE_LEGACY_FORMAT'
   | 'STATE_STEP_ALREADY_CLAIMED'
   | 'STATE_STEP_NOT_ELIGIBLE'
+  // issue #279 (increment 1, PR-B): a settle_step delta refused because the step's settled entry
+  // already carries a DIFFERENT token (already_settled_by_other) or a DIFFERENT outcome
+  // (settled_outcome_divergence) — the persisted outcome is disclosed in `details`. Never thrown
+  // for the SAME-token/SAME-outcome retry, which is an ok-shaped no-op (design record §7).
+  | 'STATE_STEP_ALREADY_SETTLED'
+  // issue #279 (increment 1, PR-B): a settle_step delta refused `claim_lost` — this attempt's
+  // outcome was NOT recorded (the claim was lost to a concurrent settle, or the run advanced).
+  | 'STATE_CLAIM_LOST'
   | 'STATE_RUN_DIVERGED'
   | 'STATE_RUN_ALREADY_ACTIVE'
   | 'STATE_IDEMPOTENCY_KEY_USED'

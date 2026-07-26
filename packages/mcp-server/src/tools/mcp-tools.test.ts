@@ -105,6 +105,20 @@ describe('mcp tool handlers', () => {
     expect(result.steps.length).toBe(1);
   });
 
+  // issue #279 (increment 1, PR-B): the appended concurrent-settlement protocol rule.
+  it('handleGetWorkflowProtocol appends the concurrent-settlement rule (STATE_STEP_ALREADY_SETTLED guidance)', async () => {
+    const workflowStore = new JsonWorkflowStore(workflowDir);
+    await workflowStore.register(makeSimpleDef());
+
+    const result = await handleGetWorkflowProtocol({ workflow_id: 'simple-wf' }, { workflowStore });
+
+    expect(
+      result.rules.some(
+        (r) => r.includes('STATE_STEP_ALREADY_SETTLED') && r.includes('get_run_state'),
+      ),
+    ).toBe(true);
+  });
+
   it('handleStartRun creates a run and chains auto steps', async () => {
     const workflowStore = new JsonWorkflowStore(workflowDir);
     await workflowStore.register(makeSimpleDef());

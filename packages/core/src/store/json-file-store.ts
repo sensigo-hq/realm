@@ -824,15 +824,25 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
 
   /**
    * Builds the `STATE_RUN_BUSY` error thrown when `deleteAllForRun` cannot proceed because
-   * another writer holds the run-file (or key) lock, or because the run is no longer terminal
-   * (issue #184). Retryable: a live writer self-heals (the lock is released), and a genuinely
-   * stale lock is eventually stolen by the next contender.
+   * another writer holds the run-file (or key) lock, because the run is no longer terminal
+   * (issue #184), or because a finalizer ledger entry is still `'pending'` (issue #279, increment
+   * 1, PR-B: `drain_pending` — R11). Retryable: a live writer self-heals (the lock is released), a
+   * genuinely stale lock is eventually stolen by the next contender, and a pending finalizer is
+   * eventually drained or voided by an operator — but `drain_pending` is deliberately NOT
+   * force-bypassable at the CLI layer (residual R11, owner-ratified): the escape is `realm run
+   * drain` or `--void`, never `purge --force`.
    */
-  private runBusyError(runId: string, reason: 'locked' | 'no_longer_terminal'): WorkflowError {
+  private runBusyError(
+    runId: string,
+    reason: 'locked' | 'no_longer_terminal' | 'drain_pending',
+  ): WorkflowError {
     const message =
       reason === 'locked'
         ? `Run '${runId}' is locked by another writer`
-        : `Run '${runId}' is no longer terminal — refusing to delete (it may have been resumed)`;
+        : reason === 'no_longer_terminal'
+          ? `Run '${runId}' is no longer terminal — refusing to delete (it may have been resumed)`
+          : `Run '${runId}' has a pending finalizer — refusing to delete until it is drained or ` +
+            `voided (realm run drain ${runId} / --void <finalizer>)`;
     return new WorkflowError(message, {
       code: 'STATE_RUN_BUSY',
       category: 'STATE',
@@ -894,6 +904,18 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       // `deleteAllForRun` never deletes a non-terminal run, full stop.
       if (!TERMINAL_PHASES.has(record.run_phase) || record.terminal_state !== true) {
         throw this.runBusyError(runId, 'no_longer_terminal');
+      }
+
+      // issue #279 (increment 1, PR-B), R11: any finalizer ledger entry still 'pending' refuses
+      // deletion — deleting the run out from under an undrained finalizer would silently destroy
+      // the record a later `realm run drain`/`--void` needs to act on. Unconditional (no --force
+      // bypass at this layer — purge.ts's single-id --force path routes through this SAME
+      // under-lock throw, so it inherits the refusal automatically); the escape is the drain verb.
+      const pendingFinalizer = Object.entries(record.finalizer_ledger ?? {}).find(
+        ([, entry]) => entry.status === 'pending',
+      );
+      if (pendingFinalizer !== undefined) {
+        throw this.runBusyError(runId, 'drain_pending');
       }
 
       const deleted: string[] = [];

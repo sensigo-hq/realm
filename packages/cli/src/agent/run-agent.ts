@@ -234,8 +234,17 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     // --run-id path: attach to existing run
     currentRun = await deps.store.get(options.existingRunId);
     if (currentRun.terminal_state) {
+      // issue #279 (increment 1, PR-B), design record §6: point at the recovery verb when the
+      // terminal run this attach targeted still carries an undelivered finalizer.
+      const pendingFinalizerCount = Object.values(currentRun.finalizer_ledger ?? {}).filter(
+        (e) => e.status === 'pending',
+      ).length;
+      const drainHint =
+        pendingFinalizerCount > 0
+          ? ` ${pendingFinalizerCount} finalizer(s) not yet delivered — realm run drain ${options.existingRunId}.`
+          : '';
       throw new Error(
-        `Run ${options.existingRunId} is already in terminal state: ${currentRun.terminal_reason ?? currentRun.run_phase}`,
+        `Run ${options.existingRunId} is already in terminal state: ${currentRun.terminal_reason ?? currentRun.run_phase}.${drainHint}`,
       );
     }
     runId = options.existingRunId;

@@ -280,10 +280,19 @@ export async function buildExportBundle(
     artifact_errors: artifactErrors,
   };
 
+  // issue #279 (increment 1, PR-B), design record §6: a pending-drain warning mirroring the
+  // non-terminal warning's TONE — mutually exclusive with it (pendings imply terminal: the
+  // finalizer ledger is only ever minted on a terminal edge). `warning` stays SINGULAR (no
+  // bundle-version bump) — `run` (carrying finalizer_ledger) rides the export verbatim either way.
+  const pendingFinalizerCount = Object.values(run.finalizer_ledger ?? {}).filter(
+    (e) => e.status === 'pending',
+  ).length;
   const warning = nonTerminal
     ? `best-effort snapshot: run '${runId}' is still ${run.run_phase}; its artifacts are read at ` +
       `slightly different instants and may be mid-flight`
-    : undefined;
+    : pendingFinalizerCount > 0
+      ? `${pendingFinalizerCount} finalizer(s) not yet delivered — realm run drain ${runId}`
+      : undefined;
 
   return { bundle, warning };
 }

@@ -28,13 +28,27 @@ function makeRun(over: Partial<RunRecord> = {}): RunRecord {
 
 describe('classifyRunHealth', () => {
   // ---------------------------------------------------------------------
-  // Branch 1 — terminal guard (unconditional first).
+  // Branch 1 — terminal guard, NARROWED by issue #279 (increment 1, PR-B, design record §6):
+  // `terminal ∧ no pending finalizer_ledger entries ⇒ []` — no longer literally unconditional on
+  // terminal_state alone (pendings are checked first; see the finding tests further below).
   // ---------------------------------------------------------------------
-  it('terminal_state ⇒ [] unconditionally', () => {
+  it('terminal_state with NO pending finalizer_ledger entries ⇒ [] (byte-identical to pre-#279 behavior)', () => {
     const run = makeRun({
       terminal_state: true,
       run_phase: 'completed',
       updated_at: new Date(NOW.getTime() - 100 * 86_400_000).toISOString(),
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+  });
+
+  it('terminal_state with a finalizer_ledger that has ZERO pending entries (all completed/failed/voided) ⇒ []', () => {
+    const run = makeRun({
+      terminal_state: true,
+      run_phase: 'completed',
+      finalizer_ledger: {
+        done: { status: 'completed', rank: 0 },
+        gone: { status: 'voided', rank: 1 },
+      },
     });
     expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
   });
@@ -48,6 +62,96 @@ describe('classifyRunHealth', () => {
       aborted_at: { step_id: 'guard_check' },
     });
     expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------
+  // Branch 1 (narrowed) — the NEW terminal_pending_finalizer finding (issue #279, increment 1,
+  // PR-B). POSITIVE pin: terminal + pending ⇒ EXACTLY the new finding and ONLY it — no
+  // claim/capability/idle finding may leak through (the narrowed guard must still suppress them).
+  // ---------------------------------------------------------------------
+  it('terminal + a never-leased pending finalizer ⇒ exactly ONE terminal_pending_finalizer finding, reason never_leased', () => {
+    const run = makeRun({
+      terminal_state: true,
+      run_phase: 'completed',
+      finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+      {
+        kind: 'terminal_pending_finalizer',
+        step: 'fin',
+        reason: 'never_leased',
+        evidence: { rank: 0 },
+      },
+    ]);
+  });
+
+  it('terminal + a pending finalizer with an EXPIRED lease ⇒ reason lease_expired', () => {
+    const run = makeRun({
+      terminal_state: true,
+      run_phase: 'completed',
+      finalizer_ledger: {
+        fin: {
+          status: 'pending',
+          rank: 0,
+          lease_token: 'dead-drainer',
+          lease_deadline: new Date(NOW.getTime() - 60_000).toISOString(),
+        },
+      },
+    });
+    const findings = classifyRunHealth(run, { now: NOW });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.reason).toBe('lease_expired');
+  });
+
+  it('terminal + a pending finalizer with an UNEXPIRED (active) lease ⇒ reason lease_held', () => {
+    const run = makeRun({
+      terminal_state: true,
+      run_phase: 'completed',
+      finalizer_ledger: {
+        fin: {
+          status: 'pending',
+          rank: 0,
+          lease_token: 'live-drainer',
+          lease_deadline: new Date(NOW.getTime() + 60_000).toISOString(),
+        },
+      },
+    });
+    const findings = classifyRunHealth(run, { now: NOW });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.reason).toBe('lease_held');
+  });
+
+  it('POSITIVE PIN: a terminal run with BOTH a pending finalizer AND a stale in-progress claim shows ONLY the finalizer finding (no claim finding leaks through)', () => {
+    const run = makeRun({
+      terminal_state: true,
+      run_phase: 'failed',
+      in_progress_steps: ['work'],
+      claims: { work: { deadline: new Date(NOW.getTime() - 60_000).toISOString() } },
+      finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+    });
+    const findings = classifyRunHealth(run, { now: NOW });
+    expect(findings).toEqual([
+      {
+        kind: 'terminal_pending_finalizer',
+        step: 'fin',
+        reason: 'never_leased',
+        evidence: { rank: 0 },
+      },
+    ]);
+    expect(findings.some((f) => f.kind === 'stale_claim')).toBe(false);
+  });
+
+  it('multiple pending finalizers each produce their own finding, in ledger order', () => {
+    const run = makeRun({
+      terminal_state: true,
+      run_phase: 'completed',
+      finalizer_ledger: {
+        first: { status: 'pending', rank: 0 },
+        second: { status: 'pending', rank: 1 },
+      },
+    });
+    const findings = classifyRunHealth(run, { now: NOW });
+    expect(findings.map((f) => f.step)).toEqual(['first', 'second']);
   });
 
   // ---------------------------------------------------------------------

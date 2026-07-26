@@ -28,6 +28,11 @@ import { storeDeclaresSeal, storeDeclaresNonceCarriage } from '../store/trace-bu
 import { partitionBufferedEntries, type BufferedEntryPartition } from './trace-adoption.js';
 import { deriveDefaultedSteps } from './defaulted-steps.js';
 import { selectFinalizers } from './settlement.js';
+import type {
+  SettleStepDelta,
+  SettlementResult,
+  MarkFinalizerResult,
+} from '../types/settlement.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import {
   validateInputSchema,
@@ -904,6 +909,195 @@ function makeErrorEnvelope(
 }
 
 /**
+ * Design record §6: a claim-time refusal envelope's advisory line when the fresh run carries
+ * finalizer_ledger pendings — points the caller at the recovery verb. `undefined` when there is
+ * nothing pending (the common case — never emits an empty/placeholder advisory).
+ */
+function finalizerDrainAdvisory(run: RunRecord): string | undefined {
+  const pendingCount = Object.values(run.finalizer_ledger ?? {}).filter(
+    (e) => e.status === 'pending',
+  ).length;
+  if (pendingCount === 0) return undefined;
+  return `${pendingCount} finalizer(s) not yet delivered — realm run drain ${run.id}`;
+}
+
+/**
+ * Re-arm disclosure (final-gate F10b, design record §6) — the settling caller's own comparison,
+ * NEVER inside the frozen `applySettlement` transform: any finalizer that was `'voided'` (an
+ * operator `--void`) in `before.finalizer_ledger` and is `'pending'` again in
+ * `after.finalizer_ledger` was just RE-ARMED by mintFresh on THIS terminal edge (a later
+ * fail-then-complete-differently — or any outcome that newly selects it — re-mints a clean pending
+ * entry per §4's mint rule; mintFresh has no memory of a prior void, by design). Called only when
+ * `result.transitioned === true` (mintFresh only ever runs on the terminal false→true edge).
+ */
+function computeReArmWarnings(
+  before: RunRecord['finalizer_ledger'],
+  after: RunRecord['finalizer_ledger'],
+): string[] {
+  const warnings: string[] = [];
+  for (const [name, afterEntry] of Object.entries(after ?? {})) {
+    const beforeEntry = before?.[name];
+    if (beforeEntry?.status === 'voided' && afterEntry.status === 'pending') {
+      warnings.push(`finalizer '${name}' was operator-voided; re-armed by this terminal edge`);
+    }
+  }
+  return warnings;
+}
+
+/**
+ * Builds the ResponseEnvelope for a `settle_step` REFUSAL (design record §7's result/code table) —
+ * shared by all three migrated seal sites (issue #279, increment 1, PR-B). `allEvidence` is
+ * attached ONLY for `claim_lost`: the dispatch DID run and produce evidence; it just was not
+ * recorded, so the caller should still see what happened. The four other reasons `settle_step` can
+ * actually return are enumerated explicitly; the remaining nine `SettlementRefusalReason` members
+ * are lease/mark-only and structurally unreachable here (a `default` throws rather than silently
+ * mis-rendering one).
+ */
+function buildSettlementRefusalEnvelope(
+  options: ExecuteStepOptions,
+  definition: WorkflowDefinition,
+  result: Extract<SettlementResult, { applied: false }>,
+  allEvidence: EvidenceSnapshot[],
+  traceWarnings: string[],
+): ResponseEnvelope {
+  const extraWarnings = traceWarnings.length > 0 ? traceWarnings : undefined;
+  switch (result.reason) {
+    case 'already_settled_by_other':
+    case 'settled_outcome_divergence': {
+      const persisted = result.run.settled?.[options.command]?.outcome;
+      const err = new WorkflowError(
+        `Step '${options.command}' was already settled` +
+          (persisted !== undefined ? ` with outcome '${persisted}'` : '') +
+          ` by a different attempt.`,
+        {
+          code: 'STATE_STEP_ALREADY_SETTLED',
+          category: 'STATE',
+          agentAction: 'resolve_precondition',
+          retryable: false,
+          details: {
+            runId: options.runId,
+            step: options.command,
+            reason: result.reason,
+            ...(persisted !== undefined ? { persisted_outcome: persisted } : {}),
+          },
+        },
+      );
+      return makeErrorEnvelope(options, result.run, err, definition, extraWarnings);
+    }
+    case 'claim_lost': {
+      const err = new WorkflowError(
+        `Step '${options.command}': this attempt's outcome was NOT recorded — the claim was lost ` +
+          `(settled by another writer, or the run advanced).`,
+        {
+          code: 'STATE_CLAIM_LOST',
+          category: 'STATE',
+          agentAction: 'resolve_precondition',
+          retryable: false,
+          details: { runId: options.runId, step: options.command },
+        },
+      );
+      return {
+        ...makeErrorEnvelope(options, result.run, err, definition, extraWarnings),
+        evidence: allEvidence,
+      };
+    }
+    case 'run_terminal': {
+      const err = new WorkflowError(
+        `Run '${options.runId}' is terminal; cannot settle step '${options.command}'.`,
+        {
+          code: 'STATE_RUN_TERMINAL',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: false,
+          details: { runId: options.runId, run_phase: result.run.run_phase },
+        },
+      );
+      return makeErrorEnvelope(options, result.run, err, definition, extraWarnings);
+    }
+    case 'gate_mismatch': {
+      const err = new WorkflowError(
+        `Step '${options.command}' is the currently open gate; resolve it via ` +
+          `submit_human_response instead of settling it directly.`,
+        {
+          code: 'STATE_BLOCKED',
+          category: 'STATE',
+          agentAction: 'resolve_precondition',
+          retryable: false,
+          details: { runId: options.runId, step: options.command },
+        },
+      );
+      return makeErrorEnvelope(options, result.run, err, definition, extraWarnings);
+    }
+    default:
+      // run_not_terminal / ledger_not_pending / lease_held / lease_lost / rank_blocked /
+      // not_eligible / already_leased / already_marked are lease_finalizer/mark_finalizer-only —
+      // settle_step never returns them (design record §7).
+      throw new Error(
+        `buildSettlementRefusalEnvelope: unreachable settle_step refusal reason '${result.reason}'`,
+      );
+  }
+}
+
+/**
+ * Ok-shaped envelope for a `settle_step` NOOP (`already_settled`) — the idempotent-retry case
+ * (design record §7: ok-shaped, calm context_hint, never `report_to_user`). Drain-aware: when the
+ * fresh run still carries pending finalizers, this retry attempts the SAME post-commit drain a
+ * fresh apply would have run — recovering an ambiguous-retry crash window (§6). A drain failure
+ * degrades to a warning (never an error status) — the settle itself is not in question here.
+ */
+async function buildAlreadySettledEnvelope(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  options: ExecuteStepOptions,
+  result: Extract<SettlementResult, { applied: false }> & { reason: 'already_settled' },
+  traceWarnings: string[],
+): Promise<ResponseEnvelope> {
+  let run = result.run;
+  let drainWarnings: string[] = [];
+  const hasPending = Object.values(run.finalizer_ledger ?? {}).some((e) => e.status === 'pending');
+  if (hasPending) {
+    try {
+      const drainOutcome = await drainFinalizers(
+        store,
+        definition,
+        options.registry,
+        options.runId,
+      );
+      run = drainOutcome.run;
+      drainWarnings = drainOutcome.warnings;
+    } catch (err) {
+      drainWarnings = [
+        `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
+      ];
+    }
+  }
+  const nextActions = run.terminal_state ? [] : buildNextActions(definition, run);
+  return {
+    command: options.command,
+    run_id: options.runId,
+    run_version: run.version,
+    status: 'ok',
+    data: {},
+    evidence: [],
+    warnings: mergeWarnings(traceWarnings, ...drainWarnings),
+    errors: [],
+    context_hint: `Step '${options.command}' was already settled (a duplicate/retried attempt) — no action was taken.`,
+    run_phase: run.run_phase,
+    next_actions: nextActions,
+  };
+}
+
+/**
+ * Design record §10 (I16, fail-closed dormancy): the ONE advisory warning every legacy
+ * (dormancy-fallback) seal-site envelope carries when `store.settleStep` is undeclared — never a
+ * hard requirement; the legacy read-then-update path remains fully functional. This dual branch
+ * persists until a major version (final-gate F4/R13).
+ */
+const DORMANCY_ADVISORY =
+  'settled via the legacy compatibility path — this store does not declare atomic settlement ' +
+  '(RunStore.settleStep); upgrade the store to close the fan-out seal race (issue #279)';
+
+/**
  * Validates eligibility, claims the step, executes it through the dispatcher with retry
  * and timeout support, captures evidence, persists the updated run record, and returns
  * a ResponseEnvelope containing the outcome and the next eligible actions.
@@ -1333,6 +1527,8 @@ export async function executeStep(
     if (err instanceof WorkflowError) {
       if (err.code === 'STATE_STEP_ALREADY_CLAIMED') {
         const freshRun = await store.get(options.runId).catch(() => run);
+        // Design record §6: append the drain advisory when the fresh run carries pendings.
+        const claimedAdvisory = finalizerDrainAdvisory(freshRun);
         return {
           command: options.command,
           run_id: options.runId,
@@ -1340,7 +1536,7 @@ export async function executeStep(
           status: 'blocked',
           data: {},
           evidence: [],
-          warnings: [],
+          warnings: claimedAdvisory !== undefined ? [claimedAdvisory] : [],
           errors: [],
           agent_action: 'resolve_precondition' as const,
           context_hint: `Step '${options.command}' was already claimed by another process.`,
@@ -1351,6 +1547,20 @@ export async function executeStep(
             suggestion: `Step is already in progress. Wait for it to complete.`,
           },
         };
+      }
+      // Design record §6: STATE_STEP_NOT_ELIGIBLE (a claim-time eligibility re-check race) also
+      // gets the drain advisory when the fresh run carries pendings — a fresh re-read since `run`
+      // (Step 1's load) may be stale by the time claimStep's own re-check inside its lock raced.
+      if (err.code === 'STATE_STEP_NOT_ELIGIBLE') {
+        const freshRun = await store.get(options.runId).catch(() => run);
+        const notEligibleAdvisory = finalizerDrainAdvisory(freshRun);
+        const extraWarnings =
+          notEligibleAdvisory !== undefined
+            ? [...traceWarnings, notEligibleAdvisory]
+            : traceWarnings.length > 0
+              ? traceWarnings
+              : undefined;
+        return makeErrorEnvelope(options, freshRun, err, definition, extraWarnings);
       }
       return makeErrorEnvelope(
         options,
@@ -1781,6 +1991,107 @@ export async function executeStep(
             }),
             status: 'skipped',
           };
+
+          // issue #279 (increment 1, PR-B): the migrated path — a store declaring settleStep
+          // settles this abort atomically against FRESH state (not `pendingRun`, which may be
+          // stale relative to a concurrent sibling settle). Dormancy: an undeclaring store falls
+          // through to the byte-identical legacy path below (I16/#169 fail-closed dormancy).
+          if (store.settleStep !== undefined) {
+            const abortClaimToken = pendingRun.claims?.[options.command]?.token;
+            const delta: SettleStepDelta = {
+              kind: 'settle_step',
+              step: options.command,
+              outcome: 'abort',
+              ...(abortClaimToken !== undefined ? { claimToken: abortClaimToken } : {}),
+              evidence: [abortEvidence],
+              abort: { stepId: options.command, abortMessage },
+            };
+            let result: SettlementResult;
+            try {
+              result = await store.settleStep(options.runId, delta, definition);
+            } catch (err) {
+              // THROWN infra errors (lock exhaustion, run-not-found, I/O) — the complete-site's
+              // existing catch shape, replicated at all three migrated sites.
+              if (err instanceof WorkflowError) {
+                return makeErrorEnvelope(
+                  options,
+                  pendingRun,
+                  err,
+                  definition,
+                  traceWarnings.length > 0 ? traceWarnings : undefined,
+                );
+              }
+              const internal = new WorkflowError('Failed to persist run update', {
+                code: 'ENGINE_STORE_FAILED',
+                category: 'ENGINE',
+                agentAction: 'stop',
+                retryable: false,
+              });
+              return makeErrorEnvelope(
+                options,
+                pendingRun,
+                internal,
+                definition,
+                traceWarnings.length > 0 ? traceWarnings : undefined,
+              );
+            }
+            if (!result.applied) {
+              if (result.reason === 'already_settled') {
+                return buildAlreadySettledEnvelope(
+                  store,
+                  definition,
+                  options,
+                  { ...result, reason: 'already_settled' },
+                  traceWarnings,
+                );
+              }
+              return buildSettlementRefusalEnvelope(
+                options,
+                definition,
+                result,
+                [abortEvidence],
+                traceWarnings,
+              );
+            }
+            // applied: true — abort is UNCONDITIONALLY terminal (transitioned is always true here;
+            // isTerminal(fresh) was already refused above inside applySettlement).
+            let finalRun = result.run;
+            let drainWarnings: string[] = [];
+            const reArmWarnings = computeReArmWarnings(
+              pendingRun.finalizer_ledger,
+              result.run.finalizer_ledger,
+            );
+            try {
+              const drainOutcome = await drainFinalizers(
+                store,
+                definition,
+                options.registry,
+                options.runId,
+              );
+              finalRun = drainOutcome.run;
+              drainWarnings = drainOutcome.warnings;
+            } catch (err) {
+              // A drain failure is NEVER the step's own failure — the abort already committed.
+              drainWarnings = [
+                `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
+              ];
+            }
+            return {
+              command: options.command,
+              run_id: options.runId,
+              run_version: finalRun.version,
+              status: 'ok',
+              data: {},
+              evidence: [abortEvidence],
+              warnings: mergeWarnings(traceWarnings, ...reArmWarnings, ...drainWarnings),
+              errors: [],
+              context_hint: `Handler step '${options.command}' aborted the run: ${abortMessage}`,
+              run_phase: finalRun.run_phase,
+              next_actions: [],
+            };
+          }
+
+          // --- Legacy path (dormancy fallback — byte-identical to pre-#279 behavior) ---
           const withHandlerSkipped: RunRecord = {
             ...pendingRun,
             in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== options.command),
@@ -1832,7 +2143,9 @@ export async function executeStep(
             evidence: [abortEvidence],
             // Issue #140: was hardcoded `[]` — now threads traceWarnings (e.g. the programmatic
             // on_timeout/idempotent gate advisory above) so it survives this settle path too.
-            warnings: mergeWarnings(traceWarnings),
+            // Issue #279 (increment 1, PR-B): + the ONE dormancy advisory (I16) — this IS the
+            // legacy path (store.settleStep undeclared).
+            warnings: mergeWarnings(traceWarnings, DORMANCY_ADVISORY),
             errors: [],
             context_hint: `Handler step '${options.command}' aborted the run: ${abortMessage}`,
             run_phase: (persistedAbortRun ?? abortedRun).run_phase,
@@ -2216,6 +2529,183 @@ export async function executeStep(
       };
     }
 
+    // issue #279 (increment 1, PR-B): the migrated path — settles this failure atomically against
+    // FRESH state via the store's own settleStep. Dormancy: an undeclaring store falls through to
+    // the byte-identical legacy path below (I16/#169 fail-closed dormancy).
+    if (store.settleStep !== undefined) {
+      const failClaimToken = pendingRun.claims?.[options.command]?.token;
+      const delta: SettleStepDelta = {
+        kind: 'settle_step',
+        step: options.command,
+        outcome: 'fail',
+        ...(failClaimToken !== undefined ? { claimToken: failClaimToken } : {}),
+        evidence: allEvidence,
+        failureMessage: dispatchError.message,
+      };
+      let result: SettlementResult;
+      try {
+        result = await store.settleStep(options.runId, delta, definition);
+      } catch (err) {
+        // THROWN infra errors — the same catch shape replicated at all three migrated sites.
+        if (err instanceof WorkflowError) {
+          return makeErrorEnvelope(
+            options,
+            pendingRun,
+            err,
+            definition,
+            traceWarnings.length > 0 ? traceWarnings : undefined,
+          );
+        }
+        const internal = new WorkflowError('Failed to persist run update', {
+          code: 'ENGINE_STORE_FAILED',
+          category: 'ENGINE',
+          agentAction: 'stop',
+          retryable: false,
+        });
+        return makeErrorEnvelope(
+          options,
+          pendingRun,
+          internal,
+          definition,
+          traceWarnings.length > 0 ? traceWarnings : undefined,
+        );
+      }
+      if (!result.applied) {
+        if (result.reason === 'already_settled') {
+          return buildAlreadySettledEnvelope(
+            store,
+            definition,
+            options,
+            { ...result, reason: 'already_settled' },
+            traceWarnings,
+          );
+        }
+        // WAL/sealFenced gates become result.applied (BU-12): claim_lost ⇒ the WAL SURVIVES
+        // (reclaim's drain owns it) — no WAL cleanup attempted on ANY refusal.
+        return buildSettlementRefusalEnvelope(
+          options,
+          definition,
+          result,
+          allEvidence,
+          traceWarnings,
+        );
+      }
+
+      let finalRun = result.run;
+      let drainWarnings: string[] = [];
+      const reArmWarnings = result.transitioned
+        ? computeReArmWarnings(pendingRun.finalizer_ledger, result.run.finalizer_ledger)
+        : [];
+      if (result.transitioned) {
+        try {
+          const drainOutcome = await drainFinalizers(
+            store,
+            definition,
+            options.registry,
+            options.runId,
+          );
+          finalRun = drainOutcome.run;
+          drainWarnings = drainOutcome.warnings;
+        } catch (err) {
+          drainWarnings = [
+            `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
+          ];
+        }
+      }
+
+      // WAL cleanup — placement stays post-commit (unchanged), now gated on result.applied
+      // (BU-12) rather than a separate persistedRun-defined check (the settle already committed
+      // by the time we reach here, so there is no "did the persist succeed" ambiguity to gate on).
+      let migratedWalCleanupWarning: string | undefined;
+      {
+        let performPlainDelete = true;
+        if (
+          adoptionPartition !== undefined &&
+          adoptionPartition.preserved_foreign > 0 &&
+          options.traceBufferStore !== undefined &&
+          storeDeclaresSeal(options.traceBufferStore)
+        ) {
+          try {
+            const sealResult = await options.traceBufferStore.sealFenced!(
+              options.runId,
+              options.command,
+              buildSettleSealGuard(store, options.runId, options.command),
+            );
+            if (sealResult.sealed) {
+              performPlainDelete = false;
+              migratedWalCleanupWarning =
+                `${adoptionPartition.preserved_foreign} foreign line(s) preserved (sealed) — ` +
+                'retrieve via `realm run export`';
+            } else if (sealResult.reason === 'capped') {
+              migratedWalCleanupWarning =
+                'preservation cap reached — foreign lines destroyed, not preserved';
+            } else {
+              performPlainDelete = false;
+            }
+          } catch (err) {
+            performPlainDelete = false;
+            migratedWalCleanupWarning = `Failed to seal trace buffer after step failure: ${err instanceof Error ? err.message : String(err)}`;
+          }
+        }
+        if (performPlainDelete) {
+          try {
+            await options.traceBufferStore?.delete(options.runId, options.command);
+          } catch (walErr) {
+            migratedWalCleanupWarning = `Failed to clean up trace buffer after step failure: ${walErr instanceof Error ? walErr.message : String(walErr)}`;
+          }
+        }
+      }
+
+      const migratedEffectiveAction = resolvePostDispatchAgentAction(
+        dispatchError,
+        finalRun.terminal_state,
+      );
+      let migratedNextActions: NextAction[] = [];
+      if (migratedEffectiveAction !== 'stop') {
+        try {
+          migratedNextActions = buildNextActions(definition, finalRun);
+        } catch {
+          // buildNextActions can throw for unresolvable template references; fall back to [].
+        }
+      }
+      const migratedContextHint =
+        migratedEffectiveAction === 'stop'
+          ? `Step '${options.command}' failed. Run is terminated.`
+          : migratedEffectiveAction === 'wait_and_proceed'
+            ? `Step '${options.command}' was rate-limited. Wait ${dispatchError.retry_after !== undefined ? `${dispatchError.retry_after} second(s)` : 'a moment'} then follow next_actions — no human intervention required.`
+            : migratedEffectiveAction === 'wait_for_human'
+              ? `Step '${options.command}' failed due to external service unavailability. Wait for service recovery, then proceed with the steps in next_actions.`
+              : `Step '${options.command}' failed. ${result.transitioned ? 'Run is terminated.' : 'Recovery steps are available in next_actions.'}`;
+
+      return {
+        command: options.command,
+        run_id: options.runId,
+        run_version: finalRun.version,
+        status: 'error',
+        data: {},
+        evidence: allEvidence,
+        warnings: mergeWarnings(
+          traceWarnings,
+          migratedWalCleanupWarning,
+          ...reArmWarnings,
+          ...drainWarnings,
+        ),
+        errors: [dispatchError.message],
+        agent_action: migratedEffectiveAction,
+        error_code: dispatchError.code,
+        ...(Object.keys(dispatchError.details).length > 0
+          ? { error_details: dispatchError.details }
+          : {}),
+        ...(dispatchError.retry_after !== undefined
+          ? { retry_after: dispatchError.retry_after }
+          : {}),
+        context_hint: migratedContextHint,
+        run_phase: finalRun.run_phase,
+        next_actions: migratedNextActions,
+      };
+    }
+
+    // --- Legacy path (dormancy fallback — byte-identical to pre-#279 behavior) ---
     // Pure in-memory derivations — no I/O, no try required.
     const afterFail: RunRecord = {
       ...pendingRun,
@@ -2361,7 +2851,13 @@ export async function executeStep(
       status: 'error',
       data: {},
       evidence: allEvidence,
-      warnings: mergeWarnings(traceWarnings, storeCleanupWarning ?? walCleanupWarning),
+      // Issue #279 (increment 1, PR-B): + the ONE dormancy advisory (I16) — this IS the legacy
+      // path (store.settleStep undeclared).
+      warnings: mergeWarnings(
+        traceWarnings,
+        storeCleanupWarning ?? walCleanupWarning,
+        DORMANCY_ADVISORY,
+      ),
       errors: [dispatchError.message],
       agent_action: effectiveAction,
       // issue #140 (D3 §2, discriminator OBSERVABLE): additive-optional — lets a caller
@@ -2557,6 +3053,177 @@ export async function executeStep(
   }
 
   // Step 6: Move step from in_progress to completed, compute terminal state.
+  // issue #279 (increment 1, PR-B): the migrated path — settles this completion atomically
+  // against FRESH state via the store's own settleStep. Dormancy: an undeclaring store falls
+  // through to the byte-identical legacy path below (I16/#169 fail-closed dormancy).
+  if (store.settleStep !== undefined) {
+    const completeClaimToken = pendingRun.claims?.[options.command]?.token;
+    const delta: SettleStepDelta = {
+      kind: 'settle_step',
+      step: options.command,
+      outcome: 'complete',
+      ...(completeClaimToken !== undefined ? { claimToken: completeClaimToken } : {}),
+      evidence: allEvidence,
+    };
+    let result: SettlementResult;
+    try {
+      result = await store.settleStep(options.runId, delta, definition);
+    } catch (err) {
+      // THROWN infra errors — the same catch shape replicated at all three migrated sites.
+      if (err instanceof WorkflowError) {
+        return makeErrorEnvelope(
+          options,
+          pendingRun,
+          err,
+          definition,
+          traceWarnings.length > 0 ? traceWarnings : undefined,
+        );
+      }
+      const internal = new WorkflowError('Failed to persist run update', {
+        code: 'ENGINE_STORE_FAILED',
+        category: 'ENGINE',
+        agentAction: 'stop',
+        retryable: false,
+      });
+      return makeErrorEnvelope(
+        options,
+        pendingRun,
+        internal,
+        definition,
+        traceWarnings.length > 0 ? traceWarnings : undefined,
+      );
+    }
+    if (!result.applied) {
+      if (result.reason === 'already_settled') {
+        return buildAlreadySettledEnvelope(
+          store,
+          definition,
+          options,
+          { ...result, reason: 'already_settled' },
+          traceWarnings,
+        );
+      }
+      // WAL/sealFenced gates become result.applied (BU-12): claim_lost ⇒ the WAL SURVIVES.
+      return buildSettlementRefusalEnvelope(
+        options,
+        definition,
+        result,
+        allEvidence,
+        traceWarnings,
+      );
+    }
+
+    let finalRun = result.run;
+    let drainWarnings: string[] = [];
+    const reArmWarnings = result.transitioned
+      ? computeReArmWarnings(pendingRun.finalizer_ledger, result.run.finalizer_ledger)
+      : [];
+    if (result.transitioned) {
+      try {
+        const drainOutcome = await drainFinalizers(
+          store,
+          definition,
+          options.registry,
+          options.runId,
+        );
+        finalRun = drainOutcome.run;
+        drainWarnings = drainOutcome.warnings;
+      } catch (err) {
+        drainWarnings = [
+          `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
+        ];
+      }
+    }
+
+    // WAL cleanup — placement stays post-commit (unchanged), gated on result.applied (BU-12).
+    let migratedSuccessWalCleanupWarning: string | undefined;
+    {
+      let performPlainDelete = true;
+      if (
+        adoptionPartition !== undefined &&
+        adoptionPartition.preserved_foreign > 0 &&
+        options.traceBufferStore !== undefined &&
+        storeDeclaresSeal(options.traceBufferStore)
+      ) {
+        try {
+          const sealResult = await options.traceBufferStore.sealFenced!(
+            options.runId,
+            options.command,
+            buildSettleSealGuard(store, options.runId, options.command),
+          );
+          if (sealResult.sealed) {
+            performPlainDelete = false;
+            migratedSuccessWalCleanupWarning =
+              `${adoptionPartition.preserved_foreign} foreign line(s) preserved (sealed) — ` +
+              'retrieve via `realm run export`';
+          } else if (sealResult.reason === 'capped') {
+            migratedSuccessWalCleanupWarning =
+              'preservation cap reached — foreign lines destroyed, not preserved';
+          } else {
+            performPlainDelete = false;
+          }
+        } catch (err) {
+          performPlainDelete = false;
+          migratedSuccessWalCleanupWarning = `Failed to seal trace buffer after step completion: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+      if (performPlainDelete) {
+        try {
+          await options.traceBufferStore?.delete(options.runId, options.command);
+        } catch (err) {
+          migratedSuccessWalCleanupWarning = `Failed to clean up trace buffer after step completion: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+    }
+
+    const migratedDefaultedStepsDurabilityWarning =
+      finalRun.defaulted_steps !== undefined &&
+      finalRun.defaulted_steps.length > 0 &&
+      !persistsField(store, 'defaulted_steps')
+        ? 'run-level defaultedness marker (defaulted_steps) not durable on this store'
+        : undefined;
+
+    const migratedNextActions = finalRun.terminal_state
+      ? []
+      : buildNextActions(definition, finalRun);
+    const migratedOrientation = finalRun.terminal_state
+      ? `Run completed (phase: '${finalRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
+      : migratedNextActions.length > 0
+        ? `Step '${options.command}' completed. ${migratedNextActions.length} step(s) now available.`
+        : `Step '${options.command}' completed. Waiting for other steps to complete.`;
+
+    return {
+      command: options.command,
+      run_id: options.runId,
+      run_version: finalRun.version,
+      status: 'ok',
+      data: output,
+      evidence: allEvidence,
+      warnings: mergeWarnings(
+        traceWarnings,
+        currentWarn,
+        migratedSuccessWalCleanupWarning,
+        migratedDefaultedStepsDurabilityWarning,
+        ...reArmWarnings,
+        ...drainWarnings,
+      ),
+      errors: [],
+      context_hint: migratedOrientation,
+      run_phase: finalRun.run_phase,
+      next_actions: migratedNextActions,
+      ...(carriageActive && adoptionPartition !== undefined
+        ? {
+            adopted_own: adoptionPartition.adopted_own,
+            adopted_anonymous: adoptionPartition.adopted_anonymous,
+            preserved_foreign: adoptionPartition.preserved_foreign,
+          }
+        : {}),
+      ...(settledByDefault ? { settled_by_default: true } : {}),
+      ...(finalRun.defaulted_steps?.length ? { defaulted_steps: finalRun.defaulted_steps } : {}),
+    };
+  }
+
+  // --- Legacy path (dormancy fallback — byte-identical to pre-#279 behavior) ---
   const afterComplete: RunRecord = {
     ...pendingRun,
     in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== options.command),
@@ -2699,11 +3366,14 @@ export async function executeStep(
     status: 'ok',
     data: output,
     evidence: allEvidence,
+    // Issue #279 (increment 1, PR-B): + the ONE dormancy advisory (I16) — this IS the legacy
+    // path (store.settleStep undeclared).
     warnings: mergeWarnings(
       traceWarnings,
       currentWarn,
       successWalCleanupWarning,
       defaultedStepsDurabilityWarning,
+      DORMANCY_ADVISORY,
     ),
     errors: [],
     context_hint: orientation,
@@ -3192,6 +3862,219 @@ async function buildFinalizedSeal(
   }
 
   return { ...record, terminal_state: true };
+}
+
+/** Every currently-`'pending'` finalizer in `run`'s ledger, ascending by rank — the order the
+ *  drain loop below consumes (design record §6). */
+function pendingByRank(run: RunRecord): string[] {
+  return Object.entries(run.finalizer_ledger ?? {})
+    .filter(([, e]) => e.status === 'pending')
+    .sort(([, a], [, b]) => a.rank - b.rank)
+    .map(([name]) => name);
+}
+
+/** Bounded retry count for `mark_finalizer` on a thrown `STATE_RUN_BUSY` (design record §6: "bounded
+ *  retry on thrown STATE_RUN_BUSY"). Small and fixed — lock contention self-heals quickly; this is
+ *  not a backoff schedule, just enough attempts to ride out a transient contender. */
+const DRAIN_MARK_BUSY_RETRIES = 3;
+
+/**
+ * Post-commit finalizer drain (design record §6, D2, issue #279 increment 1 PR-B). Drains the
+ * LOWEST-ranked pending finalizer, re-reading the record returned by the LAST settle/lease/mark at
+ * every step — NEVER a pass-start snapshot (the DRAIN_REREADS_LEDGER pin: a snapshot taken once at
+ * the top of this function would go stale the instant the first lease/mark commits, silently
+ * reintroducing exactly the kind of pre-commit assumption #279 exists to eliminate).
+ *
+ * Lives here (not in settlement.ts) so the module-private `withTimeout`/`callHandler` — already
+ * proven by `buildFinalizedSeal` above — are reused without exporting them; `settlement.ts` stays
+ * pure/no-I/O (design record §7 CS-purity).
+ *
+ * Registry pre-check: an absent handler leaves the entry pending and discloses why, rather than
+ * burning it (leasing it, failing the call, and marking it 'failed' would destroy the "recoverable
+ * on a capable runner" property a still-pending entry carries). Rank-monotonic: a pass HALTS at the
+ * first entry it cannot lease/execute, so a lower-ranked absent-handler or held-lease entry
+ * withholds every higher-ranked (later) finalizer behind it (R11) — this is deliberate: rank order
+ * is a DELIVERY order guarantee, not just a preference.
+ *
+ * `not_eligible` at lease OR mark time is a contract violation (an unknown finalizer id — mintFresh
+ * only ever mints real workflow finalizer names) and aborts the pass LOUD (throws), distinct from
+ * `ledger_not_pending` at lease time, which ADVANCES (someone else already resolved it). A
+ * non-BUSY infra throw from `mark_finalizer` also aborts loud, with the remaining-pending list in
+ * the message. The executed-but-not-recorded warning (three reasons: `lease_lost`,
+ * `ledger_not_pending`-AFTER-execution, `run_not_terminal`) halts the pass rather than continuing —
+ * each of those three reasons refuses the mark WITHOUT mutating the ledger entry's `'pending'`
+ * status, so continuing would re-select the SAME entry next iteration (an infinite loop); halting
+ * is the only forward-progress-safe response until an operator or a later terminal edge resolves it.
+ */
+export async function drainFinalizers(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  registry: ExtensionRegistry | undefined,
+  runId: string,
+): Promise<{ run: RunRecord; warnings: string[] }> {
+  // .bind(store): a bare `store.settleStep` reference loses its `this` binding — the store's own
+  // method body (e.g. JsonFileStore's `this.ensureDir()`/`this.filePath()`) would throw on
+  // `this === undefined` once called through the detached reference below.
+  const settleStep = store.settleStep?.bind(store);
+  if (settleStep === undefined) {
+    // Defensive — every caller only invokes this once it has already confirmed the store
+    // declares settleStep. A fresh read is still the correct degenerate response.
+    return { run: await store.get(runId), warnings: [] };
+  }
+  const warnings: string[] = [];
+  let run = await store.get(runId);
+
+  for (;;) {
+    const pending = pendingByRank(run);
+    if (pending.length === 0) break;
+    const finalizerName = pending[0]!;
+    const stepDef = definition.steps[finalizerName];
+    const handlerName = stepDef?.handler;
+    const handler = handlerName !== undefined ? registry?.getHandler(handlerName) : undefined;
+
+    // Registry pre-check — never burn an absent handler; rank-monotonic HALT (R11).
+    if (stepDef === undefined || handlerName === undefined || handler === undefined) {
+      warnings.push(
+        `finalizer '${finalizerName}' left pending — handler not available on this surface`,
+      );
+      break;
+    }
+
+    const leaseToken = crypto.randomUUID();
+    const leaseSeconds = stepDef.timeout_seconds ?? DRAIN_CEILING_SECONDS;
+    const leaseResult: SettlementResult = await settleStep(
+      runId,
+      { kind: 'lease_finalizer', finalizer: finalizerName, leaseToken, leaseSeconds },
+      definition,
+    );
+    if (!leaseResult.applied) {
+      if (leaseResult.reason === 'lease_held' || leaseResult.reason === 'rank_blocked') {
+        run = leaseResult.run;
+        break; // HALT the pass — a peer holds this lease, or a lower rank is still pending.
+      }
+      if (leaseResult.reason === 'ledger_not_pending') {
+        run = leaseResult.run;
+        continue; // ADVANCE — a peer already resolved this entry.
+      }
+      // not_eligible — unknown finalizer id; a contract violation (mintFresh never mints one).
+      throw new Error(
+        `drainFinalizers: lease refused '${leaseResult.reason}' for finalizer '${finalizerName}' ` +
+          `on run '${runId}' — remaining pending: ${pendingByRank(leaseResult.run).join(', ')}`,
+      );
+    }
+    run = leaseResult.run;
+
+    // callHandler under withTimeout, OUTSIDE any critical section (the store's CS ends the
+    // instant the lease-apply write above returned).
+    const startedAt = new Date();
+    const evidenceByStep = buildEvidenceByStep(run);
+    const callOptions: ExecuteStepOptions = {
+      runId,
+      command: finalizerName,
+      input: {},
+      dispatcher: async () => ({}),
+      ...(registry !== undefined ? { registry } : {}),
+    };
+    let markResult: MarkFinalizerResult;
+    let evidenceSnapshot: EvidenceSnapshot;
+    try {
+      const callResult = await withTimeout(
+        (signal) => callHandler(stepDef, callOptions, run, evidenceByStep, signal),
+        leaseSeconds * 1000,
+        finalizerName,
+      );
+      if (callResult.kind === 'abort') {
+        markResult = 'failed';
+        evidenceSnapshot = captureEvidence({
+          stepId: finalizerName,
+          startedAt,
+          completedAt: new Date(),
+          input: {},
+          output: { aborted: true, abort_message: callResult.message },
+          error: `Finalizer '${finalizerName}' returned abort: ${callResult.message}`,
+        });
+      } else {
+        markResult = 'completed';
+        evidenceSnapshot = captureEvidence({
+          stepId: finalizerName,
+          startedAt,
+          completedAt: new Date(),
+          input: {},
+          output: callResult.output,
+          ...(callResult.kind === 'warn' ? { warn: callResult.message } : {}),
+        });
+      }
+    } catch (err) {
+      markResult = 'failed';
+      const message = err instanceof Error ? err.message : String(err);
+      evidenceSnapshot = captureEvidence({
+        stepId: finalizerName,
+        startedAt,
+        completedAt: new Date(),
+        input: {},
+        output: {},
+        error: `Finalizer '${finalizerName}' failed: ${message}`,
+      });
+    }
+
+    // mark_finalizer — same lease token; bounded retry on a THROWN STATE_RUN_BUSY only.
+    let markOutcome: SettlementResult | undefined;
+    for (let attempt = 1; attempt <= DRAIN_MARK_BUSY_RETRIES; attempt++) {
+      try {
+        markOutcome = await settleStep(
+          runId,
+          {
+            kind: 'mark_finalizer',
+            finalizer: finalizerName,
+            leaseToken,
+            result: markResult,
+            evidence: evidenceSnapshot,
+          },
+          definition,
+        );
+        break;
+      } catch (err) {
+        const isBusy = err instanceof WorkflowError && err.code === 'STATE_RUN_BUSY';
+        if (isBusy && attempt < DRAIN_MARK_BUSY_RETRIES) continue;
+        // Non-BUSY infra throw (or BUSY exhausted) ⇒ abort the pass loud, remaining-pending named.
+        throw new Error(
+          `drainFinalizers: mark_finalizer failed for '${finalizerName}' on run '${runId}' — ` +
+            `remaining pending: ${pendingByRank(run).join(', ')}: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
+        );
+      }
+    }
+    /* istanbul ignore next -- the for-loop above always either assigns markOutcome or throws */
+    if (markOutcome === undefined) {
+      throw new Error(
+        `drainFinalizers: mark_finalizer produced no outcome for '${finalizerName}' on run '${runId}'`,
+      );
+    }
+    if (!markOutcome.applied) {
+      if (markOutcome.reason === 'not_eligible') {
+        throw new Error(
+          `drainFinalizers: mark refused 'not_eligible' for finalizer '${finalizerName}' on run ` +
+            `'${runId}' — contract violation (mintFresh never mints an unknown id)`,
+        );
+      }
+      // lease_lost / ledger_not_pending(-after-execution) / run_not_terminal: the handler DID
+      // execute, but the outcome could not be durably recorded — the three-reason
+      // executed-but-not-recorded warning (design record §6). Halt: none of these three mutate
+      // the entry's 'pending' status, so continuing would re-select the SAME entry forever.
+      run = markOutcome.run;
+      warnings.push(
+        `finalizer '${finalizerName}' executed but its outcome may not have been recorded ` +
+          `(${markOutcome.reason}) — it may re-execute at the next terminal edge`,
+      );
+      break;
+    }
+    run = markOutcome.run;
+    // result:'failed' is settled too (a recorded terminal outcome for this finalizer) — the loop
+    // continues to the next rank regardless of markResult.
+  }
+
+  return { run, warnings };
 }
 
 async function executeChainInternal(

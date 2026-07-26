@@ -449,6 +449,20 @@ describe("--stuck label format: TWO-GROUP join (issue #221 correction — restor
     expect(result).toContain("sibling=claim_stale  enrich: needs adapter 'shopify'");
     expect(result).not.toContain('sibling=claim_stale, enrich:');
   });
+
+  // issue #279 (increment 1, PR-B): a THIRD kind-filter group for terminal_pending_finalizer,
+  // appended-segment style after capabilityLabels — same S4 "line format otherwise unchanged" rail.
+  it('a TERMINAL run with a pending finalizer renders the drain-verb-pointing label and shows up under --stuck', async () => {
+    const run = makeRun({
+      id: 'run-pending-finalizer',
+      run_phase: 'completed',
+      terminal_state: true,
+      finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+    });
+    const result = await listRuns(undefined, makeStore([run]), undefined, true);
+    expect(result).toContain('run-pending-finalizer');
+    expect(result).toContain('fin=never_leased (realm run drain)');
+  });
 });
 
 describe('--stuck age-gating (issue #221 — classifyRunHealth-backed)', () => {

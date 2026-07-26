@@ -186,7 +186,14 @@ describe('execution-loop — extension_identity field-fidelity gate (issue #188)
       // no registry passed at all
     });
 
-    expect(envelope.warnings).toEqual([]);
+    // issue #279 (increment 1, PR-B): `DeclaredFieldsOverrideStore` declares no settleStep either
+    // (it predates PR-A/PR-B) — the legacy dormancy path now carries its own ONE advisory (I16),
+    // unrelated to the #188 extension-identity gate this test is actually about. No #188-specific
+    // warning fires (no registry identity was ever set) — only the dormancy advisory.
+    expect(envelope.warnings).toEqual([
+      'settled via the legacy compatibility path — this store does not declare atomic settlement ' +
+        '(RunStore.settleStep); upgrade the store to close the fan-out seal race (issue #279)',
+    ]);
   });
 });
 

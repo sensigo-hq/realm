@@ -315,7 +315,7 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('sealed:true ⇒ the live WAL is retired to a sealed artifact (not deleted), warns "preserved (sealed)", and the seal happens AFTER store.update (ordering)', async () => {
+  it('sealed:true ⇒ the live WAL is retired to a sealed artifact (not deleted), warns "preserved (sealed)", and the seal happens AFTER the settling commit (ordering)', async () => {
     const { run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
@@ -326,12 +326,17 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
       writerNonce: 'other-writer',
     });
 
+    // issue #279 (increment 1, PR-B): JsonFileStore declares settleStep — the complete site's
+    // MIGRATED path commits via settleStep, not store.update. Track that instead; the ordering
+    // invariant under test (seal strictly AFTER the settling commit) is unchanged by the migration.
     const calls: string[] = [];
-    const originalUpdate = store.update.bind(store);
-    vi.spyOn(store, 'update').mockImplementation(async (rec) => {
-      calls.push('update');
-      return originalUpdate(rec);
-    });
+    const originalSettleStep = store.settleStep!.bind(store);
+    vi.spyOn(store, 'settleStep' as never).mockImplementation((async (...args: unknown[]) => {
+      calls.push('settleStep');
+      return (
+        originalSettleStep as (...a: unknown[]) => ReturnType<NonNullable<typeof store.settleStep>>
+      )(...args);
+    }) as never);
     const originalSeal = traceBufferStore.sealFenced.bind(traceBufferStore);
     vi.spyOn(traceBufferStore, 'sealFenced').mockImplementation(async (...args) => {
       calls.push('sealFenced');
@@ -348,7 +353,7 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
     });
 
     expect(envelope.status).toBe('ok');
-    expect(calls).toEqual(['update', 'sealFenced']); // seal strictly AFTER the settling update
+    expect(calls).toEqual(['settleStep', 'sealFenced']); // seal strictly AFTER the settling commit
     expect(
       envelope.warnings.some(
         (w) => w.includes('foreign line(s) preserved (sealed)') && w.includes('realm run export'),

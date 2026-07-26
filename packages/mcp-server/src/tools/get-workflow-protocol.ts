@@ -20,6 +20,19 @@ const WRITER_NONCE_PROTOCOL_RULE =
   'of the honest-but-unattributed floor.';
 
 /**
+ * Issue #279 (increment 1, PR-B), design record §6: ONE appended TOOL-layer rule (the
+ * WRITER_NONCE_PROTOCOL_RULE precedent above) — a concurrent settlement of the SAME step by a
+ * sibling attempt resolves automatically (no operator action needed); on the specific
+ * STATE_STEP_ALREADY_SETTLED error, the agent should call get_run_state and continue from the
+ * run's actual state rather than treating it as a genuine failure. The generator itself is
+ * untouched — same rationale as the writer_nonce rule above.
+ */
+const CONCURRENT_SETTLEMENT_PROTOCOL_RULE =
+  'A concurrent completion of the same step by a sibling attempt resolves automatically — on a ' +
+  "STATE_STEP_ALREADY_SETTLED error, call get_run_state and continue from the run's actual " +
+  'state rather than treating it as a failure.';
+
+/**
  * Business logic for the get_workflow_protocol tool.
  * Returns the full agent protocol for the specified workflow.
  */
@@ -30,7 +43,10 @@ export async function handleGetWorkflowProtocol(
   const store = stores?.workflowStore ?? new JsonWorkflowStore();
   const definition = await store.get(args.workflow_id);
   const protocol = generateProtocol(definition);
-  return { ...protocol, rules: [...protocol.rules, WRITER_NONCE_PROTOCOL_RULE] };
+  return {
+    ...protocol,
+    rules: [...protocol.rules, WRITER_NONCE_PROTOCOL_RULE, CONCURRENT_SETTLEMENT_PROTOCOL_RULE],
+  };
 }
 
 /** Registers the get_workflow_protocol MCP tool on the server. */

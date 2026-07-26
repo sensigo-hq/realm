@@ -15,9 +15,15 @@
 //
 // Branch-conditioning table (design record §1, fold B1 — the detectors are CALL-SITE-conditioned,
 // not internal to any one detector):
-//   1. `run.terminal_state === true` ⇒ [] — unconditional FIRST guard. A terminal run (including a
-//      terminal+claimed guard-abort record — a claim can still be `in_progress_steps` at the
-//      instant a guard aborts the run) has nothing further to report.
+//   1. issue #279 (increment 1, PR-B), design record §6 — this guard is NARROWED (explicitly
+//      authorized): `terminal ∧ no pending finalizer_ledger entries ⇒ []`. Pendings are checked
+//      BEFORE the terminal short-circuit — a terminal run with an undrained finalizer gets EXACTLY
+//      the new `terminal_pending_finalizer` finding(s) and NOTHING else (no claim/capability/idle
+//      finding may leak through on a terminal run; the narrowed guard still suppresses them once
+//      the pending check clears). A terminal run with a fully-drained (or finalizer-free) ledger
+//      still returns [] exactly as before — including a terminal+claimed guard-abort record (a
+//      claim can still be `in_progress_steps` at the instant a guard aborts the run) — nothing
+//      further to report.
 //   2. Claim findings: `classifyInProgressClaims(run, now)` entries with `state !== 'healthy' &&
 //      step !== run.pending_gate?.step_name`. The open-gate claim is always `{deadline: null}` ⇒
 //      `claim_unknown_age` — excluding it is what keeps a healthy gate_waiting run at ZERO
@@ -69,7 +75,12 @@ export const DEFAULT_IDLE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
  * renders from.
  */
 export interface RunHealthFinding {
-  kind: 'never_claimed_idle' | 'stale_claim' | 'wedged_gate_sibling' | 'capability_block';
+  kind:
+    | 'never_claimed_idle'
+    | 'stale_claim'
+    | 'wedged_gate_sibling'
+    | 'capability_block'
+    | 'terminal_pending_finalizer';
   /** The affected step, when the finding is step-scoped. Absent for `never_claimed_idle` — a
    *  run-level observation (no step is claimed at all). */
   step?: string;
@@ -102,10 +113,33 @@ export function classifyRunHealth(
   run: RunRecord,
   opts?: { now?: Date; idleThresholdMs?: number; definition?: WorkflowDefinition },
 ): RunHealthFinding[] {
-  // Branch 1 — unconditional first guard (record §1, B1).
-  if (run.terminal_state) return [];
-
   const now = opts?.now ?? new Date();
+
+  // Branch 1 — NARROWED first guard (issue #279, increment 1, PR-B, design record §6, explicitly
+  // authorized): checked BEFORE the terminal short-circuit. A terminal run with a still-'pending'
+  // finalizer_ledger entry gets EXACTLY these findings and returns immediately — no claim,
+  // capability, or idle finding may leak through on a terminal run.
+  if (run.terminal_state) {
+    const pendingFindings: RunHealthFinding[] = [];
+    for (const [name, entry] of Object.entries(run.finalizer_ledger ?? {})) {
+      if (entry.status !== 'pending') continue;
+      const isLeased = entry.lease_token !== undefined && entry.lease_deadline !== undefined;
+      const leaseExpired = isLeased && new Date(entry.lease_deadline!).getTime() <= now.getTime();
+      const reason = !isLeased ? 'never_leased' : leaseExpired ? 'lease_expired' : 'lease_held';
+      pendingFindings.push({
+        kind: 'terminal_pending_finalizer',
+        step: name,
+        reason,
+        evidence: {
+          rank: entry.rank,
+          ...(entry.lease_deadline !== undefined ? { lease_deadline: entry.lease_deadline } : {}),
+        },
+      });
+    }
+    if (pendingFindings.length > 0) return pendingFindings;
+    return []; // terminal ∧ no pending ledger entries ⇒ [] (byte-identical to pre-#279 behavior)
+  }
+
   const idleThresholdMs = opts?.idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
   const findings: RunHealthFinding[] = [];
 

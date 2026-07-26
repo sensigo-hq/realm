@@ -1249,6 +1249,57 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
     }
   });
 
+  // issue #279 (increment 1, PR-B), R11: drain_pending — a terminal run with an undrained
+  // finalizer must never be deleted, since that would destroy the record a later `realm run
+  // drain`/`--void` needs. Unconditional — no store-level force bypass exists (purge.ts's
+  // single-id --force path inherits this same under-lock throw automatically).
+  it('drain_pending: refuses (STATE_RUN_BUSY, reason drain_pending) when a finalizer ledger entry is still pending, and the run file survives intact', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      await store.update({
+        ...run,
+        run_phase: 'completed',
+        terminal_state: true,
+        terminal_reason: 'Workflow completed.',
+        finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+      });
+
+      await expect(store.deleteAllForRun(run.id)).rejects.toMatchObject({
+        code: 'STATE_RUN_BUSY',
+        details: { runId: run.id, reason: 'drain_pending' },
+      });
+
+      expect(existsSync(join(dir, `${run.id}.json`))).toBe(true);
+      const survivor = await store.get(run.id);
+      expect(survivor.finalizer_ledger?.['fin']?.status).toBe('pending');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('drain_pending: a run whose finalizer ledger has NO pending entries (completed/failed/voided only) deletes normally', async () => {
+    const { store, dir } = await makeTmpStore();
+    try {
+      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      await store.update({
+        ...run,
+        run_phase: 'completed',
+        terminal_state: true,
+        terminal_reason: 'Workflow completed.',
+        finalizer_ledger: {
+          done: { status: 'completed', rank: 0 },
+          gone: { status: 'voided', rank: 1 },
+        },
+      });
+
+      await expect(store.deleteAllForRun(run.id)).resolves.toBeUndefined();
+      expect(existsSync(join(dir, `${run.id}.json`))).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   // issue #191: deleteAllForRun's OWN lock acquisition now retries against LOCK_RETRIES'
   // maxRetryTime:5000 total-time budget before giving up (this test holds the external lock for
   // the ENTIRE duration, so it now genuinely waits out that full budget, up from the pre-#191
