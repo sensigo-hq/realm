@@ -19,6 +19,21 @@ export const WAITING_PHASES = new Set<RunPhase>(['gate_waiting']);
  */
 export const DRAIN_CEILING_SECONDS = 30;
 
+/**
+ * Issue #279 (increment 1): the clamp ceiling `applySettlement`'s `lease_finalizer` arm applies to
+ * a caller-requested `leaseSeconds` (design record `plans/issue-279/design-d4-increment1.md` §3's
+ * `clamp(leaseSeconds, DRAIN_LEASE_MAX)`). A finalizer's own author-declared `timeout_seconds` can
+ * be arbitrarily long (it bounds `withTimeout`'s handler-execution wait, same as any other step),
+ * but the SEPARATE bound this constant enforces is operator-facing: `realm run resume`'s pending-
+ * lease refusal (design record §5.3) and `drain --void`'s own unexpired-lease refusal (§6) both
+ * wait AT MOST this long before an operator can act — "the wait bound must stay short" (§3),
+ * independent of whatever a workflow author declared. 300s (5 minutes) is chosen as generous
+ * enough to cover the overwhelming majority of real finalizer handlers (webhooks, notifications,
+ * short-lived side effects) while keeping an operator's worst-case wait on the order of minutes,
+ * not whatever a long-`timeout_seconds` author might declare.
+ */
+export const DRAIN_LEASE_MAX = 300;
+
 /** Returns true when a run in the given phase will not execute any more steps. */
 export function isTerminalPhase(phase: RunPhase): boolean {
   return TERMINAL_PHASES.has(phase);

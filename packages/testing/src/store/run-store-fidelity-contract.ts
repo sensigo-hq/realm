@@ -15,11 +15,9 @@
 import {
   WorkflowError,
   type RunStore,
+  type RunRecord,
   type LoadBearingRunRecordField,
   type WorkflowDefinition,
-  type CapabilityBlock,
-  type WorkflowContextSnapshot,
-  type ExtensionIdentityEntry,
 } from '@sensigo/realm';
 
 /** One of the two laws every `RunStore` implementation should be run against (issue #188). */
@@ -54,13 +52,16 @@ export interface RunStoreFidelityContractAdapter {
  * FIDELITY_HONESTY to actually exercise a round-trip. Deliberately real shapes (not `{}` or
  * `null`), since a store that only round-trips empty/degenerate values would not actually prove
  * fidelity for the shapes the engine truly writes.
+ *
+ * The type annotation is CLOSED over every key of `LoadBearingRunRecordField` — issue #279
+ * (increment 1) relies on this: widening that union to add `settled`/`finalizer_ledger` forced a
+ * compile error here until both got a sample value, which is deliberate (a store declaring
+ * `settleStep` gets these two FIDELITY_HONESTY cases automatically, everywhere
+ * `runStoreFidelityContract` already runs — including the byte-untouched CLI contract test file;
+ * see that file's own header for why it needs no edit).
  */
 const SAMPLE_VALUES: {
-  capability_blocks: Record<string, CapabilityBlock>;
-  workflow_context_snapshots: Record<string, WorkflowContextSnapshot>;
-  extension_identity: ExtensionIdentityEntry[];
-  validation_rejections: Record<string, number>;
-  defaulted_steps: string[];
+  [K in LoadBearingRunRecordField]: NonNullable<RunRecord[K]>;
 } = {
   capability_blocks: {
     'tck-step': {
@@ -94,6 +95,10 @@ const SAMPLE_VALUES: {
   ],
   validation_rejections: { 'tck-step': 3 },
   defaulted_steps: ['tck-step'],
+  // issue #279 (increment 1): sample values for the two settlement fields — dormant data shapes
+  // (nothing writes these until PR-B), but real/valid ones per their own RunRecord doc.
+  settled: { 'tck-step': { token: 'tck-fidelity-token', outcome: 'complete' } },
+  finalizer_ledger: { 'tck-finalizer': { status: 'pending', rank: 0 } },
 };
 
 /**

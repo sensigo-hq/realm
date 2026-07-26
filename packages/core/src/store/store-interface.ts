@@ -1,6 +1,7 @@
 // Interface for run record persistence — implemented by JsonFileStore (local) and future Postgres store.
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
 
 /**
  * The load-bearing `RunRecord` fields the engine treats specially enough that a store must
@@ -32,13 +33,26 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
  *    in-repo (PR-3's `$settlement` namespace reads per-step evidence instead); a store that drops
  *    it loses only the run-level convenience marker — the per-step evidence truth is unaffected —
  *    but the engine surfaces that loss as an explicit envelope warning rather than staying silent.
+ *  - `settled` / `finalizer_ledger` (issue #279, increment 1) — read by `applySettlement`'s own
+ *    predicate (`entryOf`/`leaseFinalizerArms`/`markFinalizerArms`) on every `settleStep` call; a
+ *    store that drops either one makes its OWN next settle/lease/mark blind to prior settlement
+ *    history, corrupting the idempotence/fencing guarantees `settleStep` exists to provide.
+ *    DECLARATION-COHERENCE (TCK-asserted): a store that declares `settleStep` MUST declare BOTH
+ *    of these fields — declaring the operation without the fields it depends on is a dishonest
+ *    declaration, not merely an incomplete one. Dormant in this PR: nothing writes either field
+ *    until PR-B migrates the seal sites, so a store declaring them today gains a dormant gate,
+ *    never a behavior change. Joining this CLOSED set (rather than an open one) is deliberate:
+ *    bumping it forces every full-set-declaring store's own fidelity TCK to grow two new cases at
+ *    the SAME compile, so a store cannot silently drift out of sync with what settleStep needs.
  */
 export type LoadBearingRunRecordField =
   | 'capability_blocks'
   | 'workflow_context_snapshots'
   | 'extension_identity'
   | 'validation_rejections'
-  | 'defaulted_steps';
+  | 'defaulted_steps'
+  | 'settled'
+  | 'finalizer_ledger';
 
 export interface CreateRunOptions {
   workflowId: string;
@@ -141,4 +155,42 @@ export interface RunStore {
    * see its own doc for why cross-host cannot be verified generically).
    */
   claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<RunRecord>;
+
+  /**
+   * Atomically applies one {@link SettlementDelta} to this run's FRESH state, under the store's
+   * own serialization (issue #279, increment 1). Optional (the `persistedRunRecordFields`
+   * precedent — additive-optional, never retroactively required of an external implementer).
+   *
+   * **DORMANT UNTIL PR-B.** No engine or MCP call site constructs a `SettlementDelta` or calls
+   * this method in this release (enforced by an in-repo source-text guard) — declaring it is
+   * inert. Direct callers (a test, a script, an operator tool) are OUT OF CONTRACT until the
+   * engine adopts it: nothing here promises interop with the legacy `update()`/`claimStep()` CAS
+   * paths beyond what {@link applySettlement}'s own predicate already guards (fresh-state
+   * `claims`/`settled`/`finalizer_ledger` reads).
+   *
+   * **A WRITE surface, not a read-only helper** — it carries every obligation `update()` already
+   * does for this store (e.g. a cloud store's own policy/authorization gate on the write; M1):
+   * implementers must NOT skip whatever wrapper logic their `update()` implementation applies.
+   *
+   * **Atomicity, own-suite proof required (L4 caveat):** for a store whose CS is a single
+   * lock + read + write (this repo's `JsonFileStore`/`InMemoryStore`), the existing
+   * lock/synchronous-stretch discipline already suffices. A MULTI-STATEMENT backend (e.g. a
+   * future Postgres store issuing more than one SQL statement to apply a delta) MUST prove its
+   * own atomicity — a version-CAS `UPDATE ... WHERE version = $1` alone is not sufficient once
+   * more than one statement is involved — in ITS OWN conformance suite before declaring this
+   * method; a green run of the in-repo TCK here does not and cannot verify that for an external
+   * backend (mirrors `claimStep`'s own cross-host caveat).
+   *
+   * **Infra THROWS; predicate outcomes RETURN.** A genuine I/O/lock-acquisition failure
+   * (ENOENT/ELOCKED-mapped, or an unmapped store error) throws, exactly like `update()`. Every
+   * REFUSE/NOOP arm of `applySettlement`'s predicate is a normal RETURN
+   * (`{applied:false, reason, run}`) — never thrown as a `WorkflowError`. Implementations must not
+   * invert this: a predicate refusal is not an exceptional condition.
+   */
+  settleStep?(
+    runId: string,
+    delta: SettlementDelta,
+    definition: WorkflowDefinition,
+    options?: { now?: Date },
+  ): Promise<SettlementResult>;
 }

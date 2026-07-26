@@ -6,11 +6,14 @@ import {
   decideIdempotencyPolicy,
   computeClaimDeadline,
   isStepSettledOrInFlight,
+  applySettlement,
   type RunStore,
   type RunRecord,
   type CreateRunOptions,
   type WorkflowDefinition,
   type LoadBearingRunRecordField,
+  type SettlementDelta,
+  type SettlementResult,
 } from '@sensigo/realm';
 
 /** In-memory implementation of RunStore. Uses a Map keyed by run ID. No I/O, no locking. */
@@ -30,6 +33,9 @@ export class InMemoryStore implements RunStore {
     'extension_identity',
     'validation_rejections',
     'defaulted_steps',
+    // issue #279 (increment 1, PR-A): declared alongside settleStep — declaration-coherence.
+    'settled',
+    'finalizer_ledger',
   ]);
 
   async create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
@@ -164,16 +170,59 @@ export class InMemoryStore implements RunStore {
     // Per-claim liveness clock (issue #101) — mirrors JsonFileStore.claimStep: stamp claims[S]
     // atomically with the in_progress add (OVERWRITE, so a missed settle-site delete self-heals).
     const deadline = computeClaimDeadline(definition, stepName, new Date());
+    // issue #279 (increment 1, PR-A): mint an acquirer-minted fencing token alongside the
+    // deadline, in the SAME synchronous stretch — dormant until PR-B's settleStep migration.
+    const token = crypto.randomUUID();
     const updated: RunRecord = {
       ...run,
       in_progress_steps: [...run.in_progress_steps, stepName],
-      claims: { ...run.claims, [stepName]: { deadline } },
+      claims: { ...run.claims, [stepName]: { deadline, token } },
       run_phase: 'running',
       version: run.version + 1,
       updated_at: new Date().toISOString(),
     };
     this.runs.set(updated.id, updated);
     return updated;
+  }
+
+  /**
+   * Atomically applies one `SettlementDelta` to this run's fresh state (issue #279, increment 1).
+   * DORMANT until PR-B — see `RunStore.settleStep`'s own JSDoc for the full contract.
+   *
+   * NO `await` between the read (`this.runs.get`) and the write (`this.runs.set`) — mirrors
+   * `claimStep`'s own documented no-await stretch above (issue #188's single-owner discipline):
+   * `applySettlement` is itself pure/synchronous, so calling it here does not introduce a
+   * microtask-yield point between the fresh read and the committing write. A behavioral overlap
+   * test (this package's own conformance suite) pins this directly: two disjoint concurrent
+   * settles via `Promise.all` both land, proving no interleaving window exists.
+   */
+  async settleStep(
+    runId: string,
+    delta: SettlementDelta,
+    definition: WorkflowDefinition,
+    options?: { now?: Date },
+  ): Promise<SettlementResult> {
+    const fresh = this.runs.get(runId);
+    if (fresh === undefined) {
+      throw new WorkflowError(`Run '${runId}' not found`, {
+        code: 'STATE_RUN_NOT_FOUND',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+      });
+    }
+    const outcome = applySettlement(fresh, delta, definition, options);
+    if (!outcome.applied) {
+      return outcome; // refusal/noop — fresh state, NO write (version unchanged)
+    }
+    const updated: RunRecord = {
+      ...outcome.run,
+      run_phase: deriveRunPhase(outcome.run),
+      version: fresh.version + 1,
+      updated_at: new Date().toISOString(),
+    };
+    this.runs.set(updated.id, updated);
+    return { ...outcome, run: updated };
   }
 
   async list(workflowId?: string): Promise<RunRecord[]> {

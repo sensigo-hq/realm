@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import lockfile from 'proper-lockfile';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunStore, CreateRunOptions, LoadBearingRunRecordField } from './store-interface.js';
 import type { PerRunArtifactStore } from './per-run-artifact-store.js';
@@ -18,6 +19,7 @@ import {
   isStepSettledOrInFlight,
 } from '../engine/eligibility.js';
 import { computeClaimDeadline } from '../engine/claim-liveness.js';
+import { applySettlement } from '../engine/settlement.js';
 import { TERMINAL_PHASES } from '../engine/lifecycle.js';
 import { hashParams } from './params-hash.js';
 import { decideIdempotencyPolicy } from './idempotency-policy.js';
@@ -155,6 +157,10 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     'extension_identity',
     'validation_rejections',
     'defaulted_steps',
+    // issue #279 (increment 1, PR-A): declared alongside settleStep — declaration-coherence
+    // (a store declaring settleStep MUST declare both; TCK-asserted).
+    'settled',
+    'finalizer_ledger',
   ]);
 
   constructor(runsDir?: string) {
@@ -511,16 +517,79 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       // `S ∈ in_progress` with no claims[S] would silently re-create the permanent wedge.
       // OVERWRITE (not add-if-absent) so a missed settle-site delete self-heals on re-claim.
       const deadline = computeClaimDeadline(definition, stepName, new Date());
+      // issue #279 (increment 1, PR-A): mint an acquirer-minted fencing token alongside the
+      // deadline, in the SAME write — dormant until PR-B's settleStep migration reads it.
+      const token = uuidv4();
       const claimed: RunRecord = {
         ...run,
         in_progress_steps: [...run.in_progress_steps, stepName],
-        claims: { ...run.claims, [stepName]: { deadline } },
+        claims: { ...run.claims, [stepName]: { deadline, token } },
         run_phase: deriveRunPhase(run),
         version: run.version + 1,
         updated_at: new Date().toISOString(),
       };
       await atomicWriteFile(path, JSON.stringify(claimed, null, 2));
       return claimed;
+    } finally {
+      await release();
+    }
+  }
+
+  /**
+   * Atomically applies one `SettlementDelta` to this run's fresh state (issue #279, increment 1).
+   * DORMANT until PR-B — see the JSDoc on `RunStore.settleStep` for the full contract (dormancy,
+   * write-surface obligations, atomicity, infra-throws/predicate-returns). Same lock/fresh-read
+   * shape as `update()` (ENOENT/ELOCKED mapping identical): LOCK_RETRIES lock → fresh read →
+   * `applySettlement` → a refusal returns WITHOUT any write (fresh state, version unchanged) → an
+   * apply writes the transform's own output with the write-tail `{version: fresh.version+1,
+   * updated_at}` (run_phase is already transform-derived; this store's own re-derivation below is
+   * idempotent on that already-correct value, exactly like `update()`'s own write-tail).
+   */
+  async settleStep(
+    runId: string,
+    delta: SettlementDelta,
+    definition: WorkflowDefinition,
+    options?: { now?: Date },
+  ): Promise<SettlementResult> {
+    await this.ensureDir();
+    const path = this.filePath(runId);
+
+    if (!existsSync(path)) {
+      throw this.runNotFoundError(runId);
+    }
+
+    let release: () => Promise<void>;
+    try {
+      release = await lockfile.lock(path, { retries: LOCK_RETRIES });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw this.runNotFoundError(runId);
+      if ((err as NodeJS.ErrnoException).code === 'ELOCKED')
+        throw this.runBusyError(runId, 'locked');
+      throw err;
+    }
+    try {
+      let raw: string;
+      try {
+        raw = await readFile(path, 'utf8');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw this.runNotFoundError(runId);
+        throw err;
+      }
+      const fresh = JSON.parse(raw) as RunRecord;
+
+      const outcome = applySettlement(fresh, delta, definition, options);
+      if (!outcome.applied) {
+        return outcome; // refusal/noop — fresh state, NO write (version unchanged)
+      }
+
+      const updated: RunRecord = {
+        ...outcome.run,
+        run_phase: deriveRunPhase(outcome.run),
+        version: fresh.version + 1,
+        updated_at: new Date().toISOString(),
+      };
+      await atomicWriteFile(path, JSON.stringify(updated, null, 2));
+      return { ...outcome, run: updated };
     } finally {
       await release();
     }

@@ -17,7 +17,6 @@ import { WorkflowError } from '../types/workflow-error.js';
 import type {
   WorkflowDefinition,
   StepDefinition,
-  FinalizerTrigger,
   ContextWrapperFormat,
   InputMapNode,
   LiteralNode,
@@ -28,6 +27,7 @@ import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-stor
 import { storeDeclaresSeal, storeDeclaresNonceCarriage } from '../store/trace-buffer-store.js';
 import { partitionBufferedEntries, type BufferedEntryPartition } from './trace-adoption.js';
 import { deriveDefaultedSteps } from './defaulted-steps.js';
+import { selectFinalizers } from './settlement.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import {
   validateInputSchema,
@@ -3075,13 +3075,6 @@ async function executeGuardStep(
   };
 }
 
-/** Normalizes a finalizer's `on_outcome` to a set of triggers. */
-function finalizerTriggers(stepDef: StepDefinition): Set<FinalizerTrigger> {
-  const raw = stepDef.on_outcome;
-  if (raw === undefined) return new Set();
-  return new Set(Array.isArray(raw) ? raw : [raw]);
-}
-
 /**
  * Drains the finalizers matching a run's terminal `outcome` and returns the FINALIZED
  * RunRecord — the workflow-level try/catch/finally at the seal. Modeled on
@@ -3114,19 +3107,16 @@ async function buildFinalizedSeal(
   const hasFinalizers = Object.values(definition.steps).some((s) => s.execution === 'finalizer');
   if (!hasFinalizers) return sealDraft;
 
+  // issue #279 (increment 1, PR-A extraction): the grouping/ordering logic itself now lives in
+  // settlement.ts's selectFinalizers, shared with `mintFresh` — this call passes the SAME inputs
+  // the inline loop used to compute over, so the returned name list is byte-identical to what
+  // `[...groupA, ...groupB]` produced before the extraction.
   const settled = new Set([...sealDraft.completed_steps, ...sealDraft.failed_steps]);
-  const groupA: Array<[string, StepDefinition]> = [];
-  const groupB: Array<[string, StepDefinition]> = [];
-  for (const [name, step] of Object.entries(definition.steps)) {
-    if (step.execution !== 'finalizer') continue;
-    if (settled.has(name)) continue; // at-most-once per run (resume / re-drive safety)
-    const triggers = finalizerTriggers(step);
-    if (triggers.has(outcome)) groupA.push([name, step]);
-    else if (triggers.has('always')) groupB.push([name, step]);
-  }
+  const selected = selectFinalizers(definition, settled, outcome);
 
   let record = sealDraft;
-  for (const [name, step] of [...groupA, ...groupB]) {
+  for (const name of selected) {
+    const step = definition.steps[name]!;
     const now = new Date();
     const evidenceByStep = buildEvidenceByStep(record);
     const timeoutMs = (step.timeout_seconds ?? DRAIN_CEILING_SECONDS) * 1000;

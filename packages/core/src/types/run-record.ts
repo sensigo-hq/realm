@@ -260,6 +260,15 @@ export interface ClaimRecord {
    * auto-reclaimed. A concrete deadline is set only for reliably time-boundable claims.
    */
   deadline: string | null;
+  /**
+   * Issue #279 (increment 1, PR-A): an acquirer-minted fencing token, stamped atomically in the
+   * SAME `claimStep` write that creates this claim record (uuid; each store's own existing uuid
+   * idiom). Additive-optional — legacy/pre-#279 claim records lack it, and `settleStep`'s
+   * `tokensEqual` predicate treats absent as `null` (absent≡absent — the #197 grandfathered-claims
+   * precedent), so a token-less claim is never spuriously fenced out. Dormant in this PR: nothing
+   * reads or compares it until PR-B migrates the seal sites to `settleStep`.
+   */
+  token?: string;
 }
 
 /**
@@ -308,7 +317,17 @@ export type SkipDetail =
       blocking_deps: Array<{ dep: string; state: 'completed' | 'failed' | 'skipped' }>;
     }
   | { kind: 'handler_abort' }
-  | { kind: 'guard_abort' };
+  | { kind: 'guard_abort' }
+  /**
+   * Issue #279 (increment 1, PR-A): stamped on a human-gated step whose gate was still open when
+   * a DIFFERENT step's handler aborted the run — `applySettlement`'s settle_step abort arm cancels
+   * the gate in the SAME atomic write (design record §3) rather than leaving it stranded open on
+   * an otherwise-terminal run. A genuinely NEW capability the pre-#279 legacy handler-abort path
+   * lacks (it preserves `pending_gate` untouched, which is exactly the class of inconsistent
+   * terminal-with-an-open-gate state #279 exists to close). Dormant until PR-B migrates the seal
+   * sites — no engine call site can produce this in PR-A.
+   */
+  | { kind: 'gate_cancelled_by_abort' };
 
 export interface RunRecord {
   id: string;
@@ -439,4 +458,50 @@ export interface RunRecord {
    * statement — see the design record). Additive-optional (the `validation_rejections` precedent).
    */
   defaulted_steps?: string[];
+  /**
+   * Issue #279 (increment 1, PR-A): per-step settlement record, keyed by step name — the durable
+   * outcome of an `applySettlement` `settle_step` APPLY (`settlement.ts`; design record
+   * `plans/issue-279/design-d4-increment1.md` §2/§3). `token` is the `claimToken` the settling
+   * caller presented (`norm`-ed — `null` when the caller had none), used for the
+   * `already_settled`/`already_settled_by_other` idempotence discrimination on a retry. `outcome`
+   * uses `'skip'` (not `'abort'`) for an aborted step — it mirrors where the step PHYSICALLY
+   * lands (`skipped_steps`), per the design record's `toSettledOutcome` mapping
+   * (`complete↦'complete'`, `fail↦'fail'`, `abort↦'skip'`).
+   *
+   * ORPHAN RULE (design record §2 `entryOf`): an entry whose step is NOT (also) present in the
+   * matching membership array (`completed_steps`/`failed_steps`/`skipped_steps` per its own
+   * `outcome`) is treated as ABSENT by the predicate — the next settle APPLY simply overwrites it
+   * (mirrors `claimStep`'s own pre-#279 overwrite-not-add-if-absent self-heal at the claims map).
+   * This can never happen through `settleStep` itself (APPLY always writes both the entry and the
+   * membership in the SAME atomic write) — it exists so a hand-authored fixture / an external
+   * store's own divergent history cannot wedge the predicate.
+   *
+   * Dormant in this PR — join `LoadBearingRunRecordField`/`SAMPLE_VALUES`; nothing writes this
+   * field until PR-B migrates the seal sites to `settleStep`.
+   */
+  settled?: Record<string, { token: string | null; outcome: 'complete' | 'fail' | 'skip' }>;
+  /**
+   * Issue #279 (increment 1, PR-A): the record-as-outbox finalizer ledger, keyed by finalizer step
+   * name — minted by `mintFresh` (settlement.ts) on the terminal false→true edge, drained via
+   * `lease_finalizer`/`mark_finalizer` deltas (design record §3/§4/§6). `rank` totally orders the
+   * PENDING subset only (the drain loop processes lowest-rank-first; collisions with
+   * terminal-status entries are legal and inert). `lease_deadline`/`lease_token` are present only
+   * while `status === 'pending'` AND a drainer currently holds the lease — a CLEAN mint (§4) never
+   * seeds them, and `applyResume` (PR-B) strips them when voiding a pending entry. `status`:
+   * `'pending'` (mint-not-yet-delivered) → `'completed'` | `'failed'` (delivered, terminal,
+   * never rewritten — the never-downgrade guard) or `'voided'` (superseded by a resume, §5;
+   * permanent unless a later terminal edge re-mints the SAME finalizer if still selected).
+   *
+   * Dormant in this PR — join `LoadBearingRunRecordField`/`SAMPLE_VALUES`; nothing writes this
+   * field until PR-B migrates the seal sites to `settleStep`.
+   */
+  finalizer_ledger?: Record<
+    string,
+    {
+      status: 'pending' | 'completed' | 'failed' | 'voided';
+      rank: number;
+      lease_deadline?: string;
+      lease_token?: string;
+    }
+  >;
 }

@@ -55,6 +55,10 @@ const N_A: Record<string, string> = {
   'run-store-fidelity-contract.ts':
     'the issue #188 RunStore fidelity/claimStep TCK — creates throwaway runs purely to exercise ' +
     'conformance cases against a store under test; not a production run-creating path',
+  'settlement-contract.ts':
+    'the issue #279 (increment 1) settleStep conformance TCK — creates throwaway runs purely to ' +
+    'exercise settlement-law cases (and one internal fidelity-dropping fixture store) against a ' +
+    'store under test; not a production run-creating path',
 };
 
 describe('#134 pre-flight capability warning — create-site enumeration (Part B3)', () => {
