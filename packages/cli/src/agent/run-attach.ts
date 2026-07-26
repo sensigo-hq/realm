@@ -50,8 +50,18 @@ export async function resolveRunAttach(
     } else {
       // Same refusal (and message) the agent loop raises today — thrown BEFORE any
       // extension code loads.
+      //
+      // issue #279 (increment 1, PR-B), design record §6: point at the recovery verb when the
+      // terminal run this attach targeted still carries an undelivered finalizer.
+      const pendingFinalizerCount = Object.values(run.finalizer_ledger ?? {}).filter(
+        (e) => e.status === 'pending',
+      ).length;
+      const drainHint =
+        pendingFinalizerCount > 0
+          ? ` ${pendingFinalizerCount} finalizer(s) not yet delivered — realm run drain ${runId}.`
+          : '';
       throw new Error(
-        `Run ${runId} is already in terminal state: ${run.terminal_reason ?? run.run_phase}`,
+        `Run ${runId} is already in terminal state: ${run.terminal_reason ?? run.run_phase}.${drainHint}`,
       );
     }
   }

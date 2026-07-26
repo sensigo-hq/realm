@@ -121,6 +121,56 @@ describe('buildExportBundle', () => {
     }
   });
 
+  // issue #279 (increment 1, PR-B), design record §6.
+  it('a terminal run with a pending finalizer gets the pending-drain warning (mutually exclusive with the non-terminal warning)', async () => {
+    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    try {
+      const run = makeRun({
+        run_phase: 'completed',
+        terminal_state: true,
+        finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+      });
+      await injectRun(dir, run);
+
+      const { bundle, warning } = await buildExportBundle(run.id, {
+        runStore,
+        failedAttemptStore,
+        traceBufferStore,
+      });
+
+      expect(warning).toBeDefined();
+      expect(warning).toContain('1 finalizer(s) not yet delivered');
+      expect(warning).toContain(`realm run drain ${run.id}`);
+      // No bundle-version bump — run rides the export verbatim either way.
+      expect(bundle.realm_export_version).toBe(3);
+      expect(bundle.run.finalizer_ledger).toEqual(run.finalizer_ledger);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a terminal run with NO pending finalizers gets no pending-drain warning', async () => {
+    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    try {
+      const run = makeRun({
+        run_phase: 'completed',
+        terminal_state: true,
+        finalizer_ledger: { fin: { status: 'completed', rank: 0 } },
+      });
+      await injectRun(dir, run);
+
+      const { warning } = await buildExportBundle(run.id, {
+        runStore,
+        failedAttemptStore,
+        traceBufferStore,
+      });
+
+      expect(warning).toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('clean run (no attempts, no WAL): attempts: [], attempts_capped: false, wal: {} — not an error (issue #186: complete: true, absence is not a failure)', async () => {
     const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
     try {

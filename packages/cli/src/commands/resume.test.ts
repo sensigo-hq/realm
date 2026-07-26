@@ -181,4 +181,186 @@ describe('resumeRun', () => {
     expect(resumed.skip_details?.['step-b']).toBeUndefined();
     expect(resumed.skipped_steps).not.toContain('step-b');
   });
+
+  // ---------------------------------------------------------------------------
+  // issue #279 (increment 1, PR-B) — the four CLI refusals (design record §5).
+  // ---------------------------------------------------------------------------
+
+  describe('CLI refusals (issue #279, increment 1, PR-B)', () => {
+    it('RESUME_REFUSES_ABORTED — a run with aborted_at set is never resumable, regardless of run_phase', async () => {
+      const { run } = await runStore.create({
+        workflowId: 'resume-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      // A structurally-inconsistent-but-defensive fixture: run_phase says 'failed' (which
+      // RESUMABLE_PHASES would normally admit), but aborted_at is ALSO set — proving this refusal
+      // is genuinely independent of the phase check, not merely redundant with it.
+      await runStore.update({
+        ...run,
+        run_phase: 'failed',
+        failed_steps: ['step-one'],
+        terminal_state: true,
+        aborted_at: { step_id: 'step-one', abort_message: 'handler aborted' },
+      });
+
+      await expect(resumeRun(run.id, 'step-one', runStore, workflowStore)).rejects.toThrow(
+        /aborted runs are never resumable/,
+      );
+    });
+
+    it('refuses a finalizer --from target — points at the drain verb instead', async () => {
+      const finalizerWorkflow: WorkflowDefinition = {
+        id: 'resume-finalizer-wf',
+        name: 'Resume Finalizer Workflow',
+        version: 1,
+        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+        steps: {
+          work: { description: 'w', execution: 'agent' },
+          fin: { description: 'f', execution: 'finalizer', on_outcome: 'always' },
+        },
+      };
+      await workflowStore.register(finalizerWorkflow);
+      const { run } = await runStore.create({
+        workflowId: 'resume-finalizer-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      await runStore.update({
+        ...run,
+        run_phase: 'failed',
+        failed_steps: ['fin'],
+        terminal_state: true,
+      });
+
+      await expect(resumeRun(run.id, 'fin', runStore, workflowStore)).rejects.toThrow(
+        /finalizer — finalizers cannot be resumed via --from/,
+      );
+    });
+
+    it('refuses on an unexpired drain lease — bounded wait, never force-bypassable', async () => {
+      const { run } = await runStore.create({
+        workflowId: 'resume-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const farFuture = new Date(Date.now() + 60_000).toISOString();
+      await runStore.update({
+        ...run,
+        run_phase: 'failed',
+        failed_steps: ['step-one'],
+        terminal_state: true,
+        finalizer_ledger: {
+          fin: {
+            status: 'pending',
+            rank: 0,
+            lease_token: 'active-drainer',
+            lease_deadline: farFuture,
+          },
+        },
+      });
+
+      await expect(resumeRun(run.id, 'step-one', runStore, workflowStore)).rejects.toThrow(
+        /active drain lease/,
+      );
+      // Not force-bypassable — even --force must still refuse.
+      await expect(
+        resumeRun(run.id, 'step-one', runStore, workflowStore, { force: true }),
+      ).rejects.toThrow(/active drain lease/);
+    });
+
+    it('an EXPIRED drain lease does NOT refuse — the finalizer is voided normally', async () => {
+      const { run } = await runStore.create({
+        workflowId: 'resume-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const past = new Date(Date.now() - 60_000).toISOString();
+      await runStore.update({
+        ...run,
+        run_phase: 'failed',
+        failed_steps: ['step-one'],
+        terminal_state: true,
+        finalizer_ledger: {
+          fin: { status: 'pending', rank: 0, lease_token: 'dead-drainer', lease_deadline: past },
+        },
+      });
+
+      const { voided } = await resumeRun(run.id, 'step-one', runStore, workflowStore);
+      expect(voided).toHaveLength(1);
+      const resumed = await runStore.get(run.id);
+      expect(resumed.finalizer_ledger?.['fin']?.status).toBe('voided');
+    });
+
+    it('a HEALTHY claim on another in-progress step refuses resume — never force-bypassable', async () => {
+      const { run } = await runStore.create({
+        workflowId: 'resume-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const farFuture = new Date(Date.now() + 60_000).toISOString();
+      await runStore.update({
+        ...run,
+        run_phase: 'failed',
+        failed_steps: ['step-one'],
+        terminal_state: true,
+        in_progress_steps: ['other-step'],
+        claims: { 'other-step': { deadline: farFuture, token: 'live-token' } },
+      });
+
+      await expect(resumeRun(run.id, 'step-one', runStore, workflowStore)).rejects.toThrow(
+        /HEALTHY claim/,
+      );
+      await expect(
+        resumeRun(run.id, 'step-one', runStore, workflowStore, { force: true }),
+      ).rejects.toThrow(/HEALTHY claim/);
+    });
+
+    it('a claim_unknown_age claim refuses WITHOUT --force, but --force overrides it', async () => {
+      const { run } = await runStore.create({
+        workflowId: 'resume-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      await runStore.update({
+        ...run,
+        run_phase: 'failed',
+        failed_steps: ['step-one'],
+        terminal_state: true,
+        in_progress_steps: ['other-step'],
+        claims: { 'other-step': { deadline: null, token: 'unknown-age-token' } },
+      });
+
+      await expect(resumeRun(run.id, 'step-one', runStore, workflowStore)).rejects.toThrow(
+        /unknown-age claim/,
+      );
+      // --force overrides — the claim is released inside applyResume.
+      await resumeRun(run.id, 'step-one', runStore, workflowStore, { force: true });
+      const resumed = await runStore.get(run.id);
+      expect(resumed.in_progress_steps).toEqual([]);
+      expect(resumed.claims).toEqual({});
+    });
+
+    it('a STALE (concrete, past-deadline) claim is released WITHOUT needing --force', async () => {
+      const { run } = await runStore.create({
+        workflowId: 'resume-test-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const past = new Date(Date.now() - 60_000).toISOString();
+      await runStore.update({
+        ...run,
+        run_phase: 'failed',
+        failed_steps: ['step-one'],
+        terminal_state: true,
+        in_progress_steps: ['other-step'],
+        claims: { 'other-step': { deadline: past, token: 'stale-token' } },
+      });
+
+      await resumeRun(run.id, 'step-one', runStore, workflowStore);
+      const resumed = await runStore.get(run.id);
+      expect(resumed.in_progress_steps).toEqual([]);
+      expect(resumed.claims).toEqual({});
+    });
+  });
 });

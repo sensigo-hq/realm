@@ -141,6 +141,25 @@ describe('resolveRunAttach', () => {
     expect(untouched.terminal_reason).toBe('spawn_failed');
   });
 
+  // issue #279 (increment 1, PR-B), design record §6.
+  it('a terminal run with a pending finalizer gets the drain-verb pointer appended to the refusal message', async () => {
+    const store = new InMemoryStore();
+    const runId = await createRun(store);
+    const run = await store.get(runId);
+    run.terminal_state = true;
+    run.terminal_reason = 'Workflow completed.';
+    run.finalizer_ledger = { fin: { status: 'pending', rank: 0 } };
+    await store.update(run);
+
+    await expect(
+      resolveRunAttach(runId, {
+        store,
+        workflowStore: makeWorkflowStore(),
+        loadExtensions: okLoader(),
+      }),
+    ).rejects.toThrow(`1 finalizer(s) not yet delivered — realm run drain ${runId}`);
+  });
+
   it('a completed run is refused, not re-attached', async () => {
     const store = new InMemoryStore();
     const runId = await createRun(store);

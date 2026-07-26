@@ -71,6 +71,9 @@ export { deriveDefaultedSteps } from './engine/defaulted-steps.js';
 // DORMANT: no engine/mcp call site constructs a SettlementDelta or calls settleStep in this
 // release (enforced by an in-repo source-text guard — see its own test for the exact scope).
 export { applySettlement, selectFinalizers } from './engine/settlement.js';
+export { applyResume } from './engine/apply-resume.js';
+export type { ApplyResumeResult, ApplyResumeVoidedFinalizer } from './engine/apply-resume.js';
+export { drainFinalizers } from './engine/execution-loop.js';
 export type {
   SettlementDelta,
   SettleStepDelta,

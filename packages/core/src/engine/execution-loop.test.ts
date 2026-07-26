@@ -1702,21 +1702,23 @@ describe('executeStep', () => {
   });
 
   describe('cleanup failure warning', () => {
-    it('surfaces cleanup failure as warning when the failed-state store.update throws', async () => {
+    // issue #279 (increment 1, PR-B): JsonFileStore now declares settleStep, so the fail site's
+    // MIGRATED path (not the legacy store.update path) handles this run — a genuine settleStep
+    // throw surfaces as a hard ENGINE_STORE_FAILED error envelope (the complete-site's own
+    // pre-existing catch pattern, replicated at all three migrated sites — design record §1/D1),
+    // never a warning-degraded 'error' envelope that still preserves the ORIGINAL dispatch
+    // failure's message. Mocking store.update (the old target) would no longer even intercept
+    // this path, since the migrated fail site never calls it.
+    it('surfaces a hard ENGINE_STORE_FAILED error envelope when the migrated settleStep throws', async () => {
       const { run: run } = await store.create({
         workflowId: 'test-wf',
         workflowVersion: 1,
         params: {},
       });
 
-      // Step claiming is now done via store.claimStep (not store.update), so the first
-      // store.update call is the cleanup write that marks the run as failed.
-      // Throw on every store.update call to simulate cleanup failure.
-      const originalUpdate = store.update.bind(store);
-      vi.spyOn(store, 'update').mockImplementation(async (_record) => {
+      vi.spyOn(store, 'settleStep' as never).mockImplementation((async () => {
         throw new Error('store write failed');
-        return originalUpdate(_record);
-      });
+      }) as never);
 
       try {
         const envelope = await executeStep(store, definition, {
@@ -1727,9 +1729,9 @@ describe('executeStep', () => {
         });
 
         expect(envelope.status).toBe('error');
-        expect(envelope.errors[0]).toContain('step failed');
-        expect(envelope.warnings).toHaveLength(1);
-        expect(envelope.warnings[0]).toMatch(/Failed to persist step failure/);
+        expect(envelope.error_code).toBe('ENGINE_STORE_FAILED');
+        expect(envelope.errors[0]).toMatch(/Failed to persist run update/);
+        expect(envelope.agent_action).toBe('stop');
       } finally {
         vi.restoreAllMocks();
       }
@@ -2698,7 +2700,7 @@ describe('executeStep', () => {
       expect(envelope.warnings[0]).toContain('step-one');
     });
 
-    it('trace_schema warn: both trace warning and cleanup warning appear when dispatch fails and store.update throws', async () => {
+    it('trace_schema warn: the trace warning survives a migrated settleStep throw (issue #279 PR-B)', async () => {
       const def: WorkflowDefinition = {
         ...traceSchemaDefinitionBase,
         steps: {
@@ -2716,10 +2718,12 @@ describe('executeStep', () => {
         params: {},
       });
 
-      // Mock store.update to throw — simulates cleanup write failure
-      vi.spyOn(store, 'update').mockImplementation(async () => {
+      // JsonFileStore declares settleStep — the fail site's MIGRATED path handles this run, so
+      // simulating a persist failure now means mocking settleStep, not store.update (the fail
+      // site's legacy-only call, unreachable once the store declares the capability).
+      vi.spyOn(store, 'settleStep' as never).mockImplementation((async () => {
         throw new Error('store write failed');
-      });
+      }) as never);
 
       try {
         const envelope = await executeStep(store, def, {
@@ -2731,10 +2735,14 @@ describe('executeStep', () => {
         });
 
         expect(envelope.status).toBe('error');
-        expect(envelope.warnings).toHaveLength(2);
-        // Trace warning first (deterministic order), cleanup warning second
+        expect(envelope.error_code).toBe('ENGINE_STORE_FAILED');
+        // The trace warning survives (threaded through makeErrorEnvelope's extraWarnings) even
+        // though the settle itself hard-failed — the persist-failure detail now lives in
+        // errors[0]/error_code instead of a second warning entry (design record §1/D1: a genuine
+        // throw must never become a false-ok/warning-degraded envelope).
+        expect(envelope.warnings).toHaveLength(1);
         expect(envelope.warnings[0]).toContain('step-one');
-        expect(envelope.warnings[1]).toMatch(/Failed to persist step failure/);
+        expect(envelope.errors[0]).toMatch(/Failed to persist run update/);
       } finally {
         vi.restoreAllMocks();
       }
@@ -3519,16 +3527,20 @@ describe('Step 5 dispatch-failure envelope', () => {
     ).toBe(true);
   });
 
-  it('store.update failure suppresses next_actions', async () => {
+  it('a migrated settleStep failure suppresses next_actions and hard-stops (issue #279 PR-B)', async () => {
     const { run: run } = await store.create({
       workflowId: 'two-step-wf',
       workflowVersion: 1,
       params: {},
     });
 
-    // claimStep uses its own atomic file-lock write and does not call store.update,
-    // so spying on store.update only intercepts the Step 5 store.update(failedRun) call.
-    vi.spyOn(store, 'update').mockRejectedValue(new Error('disk full'));
+    // JsonFileStore declares settleStep — the fail site's MIGRATED path handles this run;
+    // store.update is never called there, so simulating a persist failure means mocking
+    // settleStep. A genuine throw now hard-stops (agent_action: 'stop') REGARDLESS of the
+    // original dispatch error's own agentAction — design record §1/D1's replicated
+    // complete-site catch pattern overrides it, rather than degrading to a warning that
+    // preserves the original semantics.
+    vi.spyOn(store, 'settleStep' as never).mockRejectedValue(new Error('disk full') as never);
 
     const envelope = await executeStep(store, twoStepDef, {
       runId: run.id,
@@ -3545,9 +3557,10 @@ describe('Step 5 dispatch-failure envelope', () => {
     });
 
     expect(envelope.status).toBe('error');
-    expect(envelope.agent_action).toBe('wait_for_human');
+    expect(envelope.error_code).toBe('ENGINE_STORE_FAILED');
+    expect(envelope.agent_action).toBe('stop');
     expect(envelope.next_actions).toHaveLength(0);
-    expect(envelope.warnings.some((w) => w.toLowerCase().includes('persist'))).toBe(true);
+    expect(envelope.errors.some((w) => w.toLowerCase().includes('persist'))).toBe(true);
   });
 
   it('run_version reflects persisted version not stale pre-persist version', async () => {
@@ -3557,14 +3570,17 @@ describe('Step 5 dispatch-failure envelope', () => {
       params: {},
     });
 
-    // Track the version returned by store.update in Step 5.
-    const originalUpdate = store.update.bind(store);
+    // issue #279 (increment 1, PR-B): JsonFileStore declares settleStep — the fail site's
+    // MIGRATED path settles via settleStep, not store.update. Track the version it returns.
+    const originalSettleStep = store.settleStep!.bind(store);
     let persistedVersion: number | undefined;
-    vi.spyOn(store, 'update').mockImplementation(async (record) => {
-      const result = await originalUpdate(record);
-      persistedVersion = result.version;
+    vi.spyOn(store, 'settleStep' as never).mockImplementation((async (...args: unknown[]) => {
+      const result = await (
+        originalSettleStep as (...a: unknown[]) => ReturnType<NonNullable<typeof store.settleStep>>
+      )(...args);
+      if (result.applied) persistedVersion = result.run.version;
       return result;
-    });
+    }) as never);
 
     const singleStepDef: WorkflowDefinition = {
       id: 'single-step-wf',

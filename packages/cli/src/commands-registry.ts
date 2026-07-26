@@ -13,6 +13,7 @@ import { gcCommand } from './commands/gc.js';
 import { exportCommand } from './commands/export.js';
 import { reconcileCommand } from './commands/reconcile.js';
 import { attemptsCommand } from './commands/attempts.js';
+import { drainCommand } from './commands/drain.js';
 import { respondCommand } from './commands/respond.js';
 import { inspectCommand } from './commands/inspect.js';
 import { replayCommand } from './commands/replay.js';
@@ -55,6 +56,7 @@ export const runCommands = [
   exportCommand,
   reconcileCommand,
   attemptsCommand,
+  drainCommand,
 ];
 
 /** Top-level commands not nested under a subgroup. */

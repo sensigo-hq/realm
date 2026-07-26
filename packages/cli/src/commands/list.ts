@@ -71,6 +71,11 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
     }
     case 'never_claimed_idle':
       return undefined;
+    // issue #279 (increment 1, PR-B): a terminal run with an undrained finalizer — points at the
+    // recovery verb directly in the label (appended-segment style; see the dedicated kind-filter
+    // group below for the group header this label's segment rides in).
+    case 'terminal_pending_finalizer':
+      return `${f.step}=${f.reason} (realm run drain)`;
   }
 }
 
@@ -202,6 +207,17 @@ export async function listRuns(
         .filter((l): l is string => l !== undefined);
       if (capabilityLabels.length > 0) {
         line += `  ${capabilityLabels.join(', ')}`;
+      }
+      // issue #279 (increment 1, PR-B): a THIRD kind-filter group, appended-segment style — same
+      // pattern as claimLabels/capabilityLabels above, NOT routed through #219's
+      // renderCauseSegment (that one is FailedAttemptStore-sourced — a different mechanism; this
+      // is classifyRunHealth-sourced, like the two groups above it).
+      const pendingFinalizerLabels = findings
+        .filter((f) => f.kind === 'terminal_pending_finalizer')
+        .map(renderFindingLabel)
+        .filter((l): l is string => l !== undefined);
+      if (pendingFinalizerLabels.length > 0) {
+        line += `  ${pendingFinalizerLabels.join(', ')}`;
       }
       // issue #219: cause attribution, appended LAST — best-effort, per-run (one run's sidecar
       // I/O failure never aborts the rest of the list). `records.length === 0` (no throw) means

@@ -296,15 +296,21 @@ const RAW_TRACE_BUFFER_STORE_DELETE = /\btraceBufferStore\??\.(delete|deleteAllF
  *  contract-clause justification issue #207 PR-2 requires. */
 const RAW_DELETE_ALLOW_LIST: Record<string, { count: number; reason: string }> = {
   'core/src/engine/execution-loop.ts': {
-    count: 2,
+    count: 4,
     reason:
-      'the failure-settle delete (persist-gated on store.update succeeding — #186 posture) and ' +
-      'the success-settle delete (clause (a) of the unified deletion contract: the settlement ' +
-      'already committed and is durably visible, so this delete never races an unsettled step) ' +
-      '— both intentionally UNFENCED: neither can race a concurrent append_trace once the run ' +
-      "is claimed (appends are refused once in_progress/settled, per append_trace.ts's own " +
-      'eligibility check). The capability-block delete (formerly a third site here) was REMOVED ' +
-      "entirely, not fenced — see execution-loop.ts's own comment at that call site.",
+      'the LEGACY failure-settle delete (persist-gated on store.update succeeding — #186 posture) ' +
+      'and the LEGACY success-settle delete (clause (a) of the unified deletion contract: the ' +
+      'settlement already committed and is durably visible, so this delete never races an ' +
+      'unsettled step), PLUS their two MIGRATED-path twins (issue #279 increment 1, PR-B): the ' +
+      "fail site's migrated delete (gated on result.applied — BU-12, the settleStep equivalent " +
+      "of the same persist-gate) and the complete site's migrated delete (same clause-(a) " +
+      'reasoning, now gated on settleStep having committed instead of store.update). All FOUR are ' +
+      'intentionally UNFENCED for the identical reason: none can race a concurrent append_trace ' +
+      'once the run is claimed (appends are refused once in_progress/settled, per ' +
+      "append_trace.ts's own eligibility check) — the migration changes WHICH store method " +
+      'commits the settlement, not this invariant. The capability-block delete (formerly a fifth ' +
+      "site here) was REMOVED entirely, not fenced — see execution-loop.ts's own comment at that " +
+      'call site.',
   },
   'core/src/engine/reclaim-step.ts': {
     count: 1,

@@ -14,12 +14,47 @@ All notable changes to this project are documented here.
   (complete, failed, or aborted), derived from evidence — closing the failure-path disclosure gap from #220.
 - `RunStore.settleStep` (optional): atomic intent-based step settlement applied to fresh state under the store's
   own serialization, with the `applySettlement` pure transform, per-claim fencing tokens, the finalizer ledger, and
-  a forcing conformance TCK — dormant in this release; the engine adopts it in the next PR (#279).
+  a forcing conformance TCK.
+- `realm run drain <id> [--force]` / `--all [--force]` / `--void <finalizer>`: recovers finalizers left undelivered
+  by a crash between a settle's commit and its post-commit drain — dry-run by default (draining executes extension
+  code), rank-pass rendering (actionable / lease-held / rank-blocked-behind-held-lease / no-pendings), and an
+  operator void with lease-discriminated disclosure and full evidence provenance.
+- `realm run purge` refuses (`STATE_RUN_BUSY`, reason `drain_pending`) to delete a terminal run with an undrained
+  finalizer, in every mode including single-id `--force` — the escape is `realm run drain` / `--void`, never
+  force-bypassing purge.
+- `get_run_state` / `realm run list --stuck` / `realm inspect` gain a new run-health finding,
+  `terminal_pending_finalizer`, for a terminal run carrying an undelivered finalizer — pointing at `realm run drain`.
+- `start_run` (idempotent reuse) and `realm run export` now disclose undelivered finalizers on a terminal run
+  ("N finalizer(s) not yet delivered — realm run drain `<id>`"); `realm agent --run-id` on a terminal run with
+  pendings appends the same pointer to its refusal message.
+- `get_workflow_protocol` gains one appended rule: a concurrent settlement of the same step by a sibling attempt
+  resolves automatically — on `STATE_STEP_ALREADY_SETTLED`, call `get_run_state` and continue.
+- Two new `WorkflowError` codes: `STATE_STEP_ALREADY_SETTLED` and `STATE_CLAIM_LOST` (the migrated seal sites'
+  typed settle_step refusal envelopes).
 
 ### Fixed
 
 - Run-file store locks now use jittered, bounded backoff (defeats thundering-herd lock contention under fan-out),
   and an exhausted lock acquisition is now a retryable `STATE_RUN_BUSY` instead of a fatal error.
+- The fan-out seal wedge (issue #279): two sibling steps settling concurrently on the migrated paths now both
+  record cleanly — no `STATE_SNAPSHOT_MISMATCH`, no lost outcome. Finalizers now fire strictly AFTER their
+  triggering settle commits durably (post-commit drain), closing the latent fire-before-commit window the legacy
+  read-then-update seal carried (a settle that lost a race could still have already fired its finalizers).
+- `realm resume` now strips a stale `abandoned_at` marker in the same write that clears `terminal_state` (issue
+  #281) — previously a resumed-and-re-terminalized run could still read as "abandoned" to a reader that treats
+  `abandoned_at`'s presence as authoritative.
+
+### Changed
+
+- The engine's three seal sites (complete, fail, handler-abort) now settle via `RunStore.settleStep` when the
+  store declares it — the legacy read-then-update path remains the fallback for a store that does not (fail-closed
+  dormancy; this dual branch persists until a major version). **Upgrade all binaries sharing a `runsDir` together**
+  — pending-finalizer guards (the purge refusal, the drain verb, the run-health finding) exist only from this
+  version onward; an older binary sharing the same `runsDir` neither recognizes nor respects them.
+- `realm resume` gained four refusals before its write: an aborted run is never resumable; a finalizer named via
+  `--from` is refused (drain/void it instead); an unexpired drain lease refuses (bounded wait, never
+  force-bypassable); and an in-progress claim now blocks resume unless it is provably stale (`--force` overrides
+  only the unknown-age case, never a healthy claim).
 
 ---
 

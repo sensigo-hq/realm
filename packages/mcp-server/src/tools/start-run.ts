@@ -117,6 +117,18 @@ export async function handleStartRun(
         `Idempotency key matched an existing run created with different params; the original run is returned unchanged (params not updated).`,
       );
     }
+    // issue #279 (increment 1, PR-B), design record §6: pending-drain is DISCLOSURE ONLY here —
+    // it never feeds decideIdempotencyPolicy's own decision (that pure function's domain is
+    // unchanged); a 'reuse' match on a terminal run with undelivered finalizers just gets one
+    // extra advisory line pointing at the recovery verb.
+    const pendingFinalizerCount = Object.values(run.finalizer_ledger ?? {}).filter(
+      (e) => e.status === 'pending',
+    ).length;
+    if (run.terminal_state && pendingFinalizerCount > 0) {
+      warnings.push(
+        `completion recorded; ${pendingFinalizerCount} finalizer(s) not yet delivered — realm run drain ${run.id}`,
+      );
+    }
     logDedup({
       tool: 'start_run',
       workflow_id: definition.id,

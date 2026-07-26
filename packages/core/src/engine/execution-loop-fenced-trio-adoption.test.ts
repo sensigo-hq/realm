@@ -95,7 +95,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
   });
 
   // ── :1566-equivalent — failure-settle persist-gate ──────────────────────────────────────────
-  it('failure-settle: WAL delete never fires when the preceding store.update itself fails (persist-gate)', async () => {
+  it('failure-settle: WAL delete never fires when the migrated settleStep itself fails (persist-gate)', async () => {
     const { run } = await store.create({
       workflowId: 'fenced-adoption-agent-wf',
       workflowVersion: 1,
@@ -105,9 +105,14 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'pre_failure_line' }]);
     const deleteSpy = vi.spyOn(traceBufferStore, 'delete');
 
-    const updateSpy = vi
-      .spyOn(store, 'update')
-      .mockRejectedValue(new Error('simulated persist failure'));
+    // issue #279 (increment 1, PR-B): JsonFileStore declares settleStep — the fail site's
+    // MIGRATED path settles via settleStep, not store.update. A settleStep throw returns an
+    // error envelope BEFORE the WAL-cleanup section is ever reached (it lives inside the
+    // applied:true branch only), so the same persist-gate invariant holds under the new
+    // mechanism: WAL cleanup never fires when the settle itself never committed.
+    const settleStepSpy = vi
+      .spyOn(store, 'settleStep' as never)
+      .mockRejectedValue(new Error('simulated persist failure') as never);
 
     try {
       const envelope = await executeStep(store, agentDef, {
@@ -121,11 +126,12 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
       });
 
       expect(envelope.status).toBe('error');
+      expect(envelope.error_code).toBe('ENGINE_STORE_FAILED');
       expect(deleteSpy).not.toHaveBeenCalled();
       // The WAL survives — it is the sole remaining evidence copy until reclaim (#186 posture).
       expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(1);
     } finally {
-      updateSpy.mockRestore();
+      settleStepSpy.mockRestore();
     }
   });
 
