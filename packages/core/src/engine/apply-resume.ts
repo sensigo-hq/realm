@@ -28,6 +28,14 @@ export interface ApplyResumeResult {
   /** Every pending finalizer ledger entry this resume voided, in `Object.entries` order. Empty
    *  when the run carried no pending finalizers (the common case). */
   voided: ApplyResumeVoidedFinalizer[];
+  /** Issue #279 (increment 2, PR-C — the #282 class closure, D-3 leg ii): one disclosure line per
+   *  carried `pending_gate` this resume stripped — a grandfathered/zombie gate on a run that
+   *  somehow reached `RESUMABLE_PHASES` (`failed`/`abandoned`) while still carrying a leftover
+   *  `pending_gate` (the #282 class). Empty (never populated) on the overwhelming common case — a
+   *  genuinely resumable run has no gate open at all. Printed by the CLI through the same `⚠` loop
+   *  the voided-finalizer disclosures already use, AFTER them.
+   */
+  disclosures: string[];
 }
 
 /**
@@ -40,8 +48,9 @@ export interface ApplyResumeResult {
  * mask: leaving a stale `abandoned_at` on a resumed-and-re-terminalized run would let a future
  * PR-A-vintage `isTerminal` reader mis-read it as abandoned again), projects `settled` down to
  * still-live membership (L17: `settled′ = {s ∈ settled | s ∈ completed′∪failed′∪skipped′}`), VOIDS
- * every pending finalizer ledger entry (leases dropped, each disclosed), and releases every
- * remaining claim unconditionally.
+ * every pending finalizer ledger entry (leases dropped, each disclosed), strips a carried
+ * `pending_gate` (issue #279, increment 2, PR-C — D-3 leg ii: the #282 class closure's resume-side
+ * leg, disclosed when it fires), and releases every remaining claim unconditionally.
  *
  * Pure — no I/O, no `Date.now()`/randomness. Returns the mutated record; the caller performs the
  * single atomic `store.update()`.
@@ -92,9 +101,22 @@ export function applyResume(
     finalizerLedger = nextLedger;
   }
 
+  // Issue #279 (increment 2, PR-C — D-3 leg ii): strip a carried `pending_gate` in the SAME
+  // atomic payload — the #282 class closure's own resume-side leg. A genuinely resumable run
+  // (RESUMABLE_PHASES: failed/abandoned) never legitimately has a LIVE open gate (the CLI's own
+  // aborted_at/lease/claim refusals run before this, but none of them check pending_gate — a
+  // grandfathered/mixed-fleet record could still carry one), so this is defensive: it can never
+  // silently strip a live decision out from under a human, only a stale, zombie one.
+  const disclosures: string[] = [];
+  const { terminal_reason: _tr, abandoned_at: _aa, pending_gate: strippedGate, ...rest } = snapshot;
+  if (strippedGate !== undefined) {
+    disclosures.push(
+      `zombie gate '${strippedGate.gate_id}' on '${strippedGate.step_name}' cleared by resume — step will re-drive`,
+    );
+  }
+
   // Strip terminal_reason + abandoned_at (issue #281); release ALL remaining claims
   // unconditionally (the CLI refusals guarantee none are healthy by the time this runs).
-  const { terminal_reason: _tr, abandoned_at: _aa, ...rest } = snapshot;
   const run: RunRecord = {
     ...rest,
     failed_steps: failedSteps,
@@ -107,5 +129,5 @@ export function applyResume(
     ...(finalizerLedger !== undefined ? { finalizer_ledger: finalizerLedger } : {}),
   };
 
-  return { run, voided };
+  return { run, voided, disclosures };
 }

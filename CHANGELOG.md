@@ -4,6 +4,25 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- Fan-out zombie-gate resume: `realm resume` now clears a stale `pending_gate` loudly (a disclosure line) instead
+  of silently carrying it forward.
+- Grandfathered terminal-with-stale-gate runs (the `#282` class — genuinely terminal, but a leftover persisted
+  `run_phase` still reads `gate_waiting`) were unpurgeable and unresumable.
+- `rerun_if_failed` could mint a duplicate run for a completed workflow carrying a stale phase.
+- `append_trace` accepted writes on terminal runs carrying a stale gate phase.
+- Terminal exports falsely redacted claim nonces and suppressed the pending-finalizer warning.
+- Run-phase derivation now ranks terminal markers (`terminal_state`, `aborted_at`, `abandoned_at`) above an open
+  gate — stale `gate_waiting` labels heal on the next write.
+
+### Added
+
+- Dormant settlement delta kinds for gates/guards/release (`open_gate`, `settle_gate`, `settle_guard`,
+  `release_step`) — engine-inert until the next increment — plus the settlement TCK laws covering them.
+
 ## [0.32.0] — 2026-07-26
 
 ### Added

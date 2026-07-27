@@ -1,22 +1,22 @@
 // list command — displays all runs in the store, sorted by most recent first.
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS, FailedAttemptStore } from '@sensigo/realm';
-import type {
-  RunStore,
-  RunRecord,
-  RunPhase,
-  RunHealthFinding,
-  FailedAttemptReadResult,
+import {
+  classifyRunHealth,
+  deriveRunPhase,
+  DEFAULT_IDLE_THRESHOLD_MS,
+  FailedAttemptStore,
 } from '@sensigo/realm';
+import type { RunStore, RunPhase, RunHealthFinding, FailedAttemptReadResult } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 
-/** Returns a chalk-coloured phase label. */
-function colorState(run: RunRecord): string {
-  if (run.run_phase === 'completed') return chalk.green(run.run_phase);
-  if (run.run_phase === 'failed' || run.run_phase === 'abandoned') return chalk.red(run.run_phase);
-  if (run.run_phase === 'gate_waiting') return chalk.cyan(run.run_phase);
-  return chalk.yellow(run.run_phase);
+/** Returns a chalk-coloured phase label — `phase` is the caller's already-DERIVED value (issue
+ *  #279, increment 2, PR-C — D-3 leg vi: render sweep), never a raw `run.run_phase` read here. */
+function colorState(phase: RunPhase): string {
+  if (phase === 'completed') return chalk.green(phase);
+  if (phase === 'failed' || phase === 'abandoned') return chalk.red(phase);
+  if (phase === 'gate_waiting') return chalk.cyan(phase);
+  return chalk.yellow(phase);
 }
 
 /**
@@ -161,7 +161,10 @@ export async function listRuns(
       return findings.length > 0;
     });
   } else if (statusFilter !== undefined) {
-    filtered = runs.filter((r) => r.run_phase === statusFilter);
+    // issue #279 (increment 2, PR-C — D-3 leg vi): filter on the DERIVED phase, never the
+    // persisted one — a grandfathered terminal-with-stale-gate record (the #282 class) must
+    // never falsely match `--status gate_waiting`.
+    filtered = runs.filter((r) => deriveRunPhase(r) === statusFilter);
   }
 
   if (filtered.length === 0) {
@@ -178,7 +181,10 @@ export async function listRuns(
     lines.push(`Stuck runs (threshold ${formatThreshold(effectiveIdleThresholdMs)}):`);
   }
   for (const run of filtered) {
-    const state = colorState(run);
+    // issue #279 (increment 2, PR-C — D-3 leg vi): derive ONCE per run, used for both the
+    // colored state label and the gate-line suppression below.
+    const derivedPhase = deriveRunPhase(run);
+    const state = colorState(derivedPhase);
     const updated = new Date(run.updated_at).toLocaleString();
     const steps = new Set(
       run.evidence.filter((e) => e.kind !== 'gate_response').map((e) => e.step_id),
@@ -233,7 +239,9 @@ export async function listRuns(
           line += '  cause: unavailable';
         }
       }
-    } else if (run.run_phase === 'gate_waiting' && run.pending_gate !== undefined) {
+    } else if (derivedPhase === 'gate_waiting' && run.pending_gate !== undefined) {
+      // issue #279 (increment 2, PR-C — D-3 leg vi): keyed on the DERIVED phase — no live-looking
+      // gate line on a terminal run carrying a stale/leftover pending_gate (the #282 class).
       const age = formatGateAge(run.pending_gate.opened_at);
       line += `  gate: ${run.pending_gate.step_name} (${age})`;
     }

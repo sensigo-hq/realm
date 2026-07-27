@@ -5,7 +5,7 @@
 // non-gated claims are ever auto-reclaimed.
 import { describe, it, expect } from 'vitest';
 import { isAutoReclaimable, renderReclaimOutcome } from './reclaim.js';
-import { classifyInProgressClaims } from '@sensigo/realm';
+import { classifyInProgressClaims, RECLAIM_REFUSES_GATE_STEP } from '@sensigo/realm';
 import type { RunRecord, StepDefinition, PendingGate } from '@sensigo/realm';
 
 const NOW = new Date('2026-07-08T12:00:00.000Z').getTime();
@@ -77,7 +77,7 @@ describe('isAutoReclaimable — the Phase-2 --all selection rule', () => {
     expect(selectable(run, 'charge', idempotentAuto)).toBe(false);
   });
 
-  it('EXCLUDES the open-gate step even when idempotent + past-deadline', () => {
+  it(`EXCLUDES the open-gate step even when idempotent + past-deadline (${RECLAIM_REFUSES_GATE_STEP})`, () => {
     const gate: PendingGate = {
       gate_id: 'g1',
       step_name: 'charge',

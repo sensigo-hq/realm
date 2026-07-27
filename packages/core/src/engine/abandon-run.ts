@@ -4,6 +4,7 @@
 import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import { deriveRunPhase } from './eligibility.js';
 
 /**
  * Explicitly abandon a run by stamping the authoritative `abandoned_at` marker. The run's phase
@@ -33,26 +34,33 @@ export async function abandonRun(
     return run;
   }
 
-  // Gate abandonment is deliberately out of scope.
+  // issue #279 (increment 2, PR-C — D-3 leg v): the terminal arm is HOISTED ABOVE the gate arm —
+  // a terminal run carrying a leftover/stale pending_gate (the #282 class) must report "already
+  // terminal" here, not "waiting on a human gate" (a grandfathered record can be terminal AND
+  // still carry a stale pending_gate; only a genuinely LIVE gate should ever reach the gate arm
+  // below). Do not clobber a finished run.
+  if (run.terminal_state) {
+    // Derive-for-message: render the TRUE (derived) phase, never the possibly-stale persisted one.
+    const derivedPhase = deriveRunPhase(run);
+    throw new WorkflowError(
+      `Run '${runId}' is already terminal (${derivedPhase}); cannot abandon a finished run.`,
+      {
+        code: 'STATE_RUN_TERMINAL',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: { runId, run_phase: derivedPhase, persisted_run_phase: run.run_phase },
+      },
+    );
+  }
+
+  // Gate abandonment is deliberately out of scope — reached only for a genuinely LIVE gate now
+  // (the terminal check above already caught a stale/grandfathered one).
   if (run.run_phase === 'gate_waiting' || run.pending_gate !== undefined) {
     throw new WorkflowError(
       `Run '${runId}' is waiting on a human gate; resolve or reject the gate via submit_human_response before abandoning.`,
       {
         code: 'STATE_TRANSITION_DENIED',
-        category: 'STATE',
-        agentAction: 'report_to_user',
-        retryable: false,
-        details: { runId, run_phase: run.run_phase },
-      },
-    );
-  }
-
-  // Do not clobber a finished run.
-  if (run.terminal_state) {
-    throw new WorkflowError(
-      `Run '${runId}' is already terminal (${run.run_phase}); cannot abandon a finished run.`,
-      {
-        code: 'STATE_RUN_TERMINAL',
         category: 'STATE',
         agentAction: 'report_to_user',
         retryable: false,

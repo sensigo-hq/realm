@@ -6,7 +6,7 @@
 // import, no createRequire), never the extensions loader.
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { classifyRunHealth, deriveDefaultedSteps } from '@sensigo/realm';
+import { classifyRunHealth, deriveDefaultedSteps, deriveRunPhase } from '@sensigo/realm';
 // issue #221 correction: the CLI's first command→command import (sanctioned — harmless
 // module-level Command construction; `listCommand` is a standalone Commander object never
 // auto-registered anywhere by being imported). Reused so inspect's never_claimed_idle age
@@ -235,14 +235,17 @@ export async function inspectRun(
     definitionMissing = true;
   }
 
-  // Color the phase label.
+  // Color the phase label \u2014 derived, never the persisted run_phase (issue #279, increment 2,
+  // PR-C \u2014 D-3 leg vi: render sweep). A grandfathered terminal-with-stale-gate record (the #282
+  // class) must render its TRUE phase here, not a stale 'gate_waiting'.
+  const derivedPhase = deriveRunPhase(run);
   let phaseLabel: string;
-  if (run.run_phase === 'completed') {
-    phaseLabel = chalk.green(`${run.run_phase}  \u2713`);
-  } else if (run.run_phase === 'failed' || run.run_phase === 'abandoned') {
-    phaseLabel = chalk.red(run.run_phase);
+  if (derivedPhase === 'completed') {
+    phaseLabel = chalk.green(`${derivedPhase}  \u2713`);
+  } else if (derivedPhase === 'failed' || derivedPhase === 'abandoned') {
+    phaseLabel = chalk.red(derivedPhase);
   } else {
-    phaseLabel = chalk.yellow(run.run_phase);
+    phaseLabel = chalk.yellow(derivedPhase);
   }
 
   const lines: string[] = [];

@@ -11,6 +11,7 @@ import {
   unmetCapabilities,
   capabilityWarning,
   createDefaultRegistry,
+  deriveRunPhase,
   type ResponseEnvelope,
   type RunPhase,
 } from '@sensigo/realm';
@@ -159,9 +160,13 @@ export async function handleStartRunBatch(
     if (deduped) dedupHits++;
 
     const warnings: string[] = [...capabilityWarnings];
+    // issue #279 (increment 2, PR-C — D-3 leg vi): the start_run_batch REUSE surface — a deduped
+    // match can hit a GRANDFATHERED terminal-with-stale-gate record (the #282 class).
+    const derivedPhase = deriveRunPhase(run);
     if (deduped) {
-      if (run.run_phase === 'running' || run.run_phase === 'gate_waiting') {
-        warnings.push(`Idempotency key matched a run still in phase '${run.run_phase}'.`);
+      // Keyed on terminal_state, never the persisted run_phase.
+      if (!run.terminal_state) {
+        warnings.push(`Idempotency key matched a run still in phase '${derivedPhase}'.`);
       }
       if (
         item.idempotency_key !== undefined &&
@@ -178,7 +183,7 @@ export async function handleStartRunBatch(
       ...(item.idempotency_key !== undefined ? { idempotency_key: item.idempotency_key } : {}),
       params: item.params,
       deduped,
-      run_phase: run.run_phase,
+      run_phase: derivedPhase,
       ...(run.terminal_reason !== undefined ? { terminal_reason: run.terminal_reason } : {}),
       warnings,
     });

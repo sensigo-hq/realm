@@ -7,6 +7,7 @@ import { reclaimStep } from './reclaim-step.js';
 import { findEligibleSteps } from './eligibility.js';
 import { classifyInProgressClaims } from './claim-liveness.js';
 import { executeStep } from './execution-loop.js';
+import { RECLAIM_REFUSES_GATE_STEP } from './settlement.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { InMemoryTraceBufferStore } from '../store/trace-buffer-store.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
@@ -101,7 +102,7 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
     await expect(reclaimStep(store, run.id, 'work')).rejects.toThrow(/terminal/i);
   });
 
-  it('refuses the pending_gate step but ALLOWS a non-gated in_progress sibling', async () => {
+  it(`refuses the pending_gate step but ALLOWS a non-gated in_progress sibling (${RECLAIM_REFUSES_GATE_STEP})`, async () => {
     const { run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,

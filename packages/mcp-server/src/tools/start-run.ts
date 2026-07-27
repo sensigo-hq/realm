@@ -13,6 +13,7 @@ import {
   unmetCapabilities,
   capabilityWarning,
   createDefaultRegistry,
+  deriveRunPhase,
   type StepDispatcher,
   type ResponseEnvelope,
   type RunStore,
@@ -98,6 +99,10 @@ export async function handleStartRun(
   });
   // The store reports `created`; the tool surfaces its inverse, `deduped`.
   const deduped = !created;
+  // issue #279 (increment 2, PR-C — D-3 leg vi): the start_run REUSE surfaces — a deduped match
+  // can hit a GRANDFATHERED terminal-with-stale-gate record (the #282 class), never a freshly
+  // created one, so this is where the persisted `run_phase` can actually be stale.
+  const derivedPhase = deriveRunPhase(run);
 
   // #134 pre-flight (WARN-only, never refuse): if the effective registry can't satisfy the workflow's
   // auto-step handlers/adapters, warn so the operator can provision before a step blocks recoverably.
@@ -107,9 +112,10 @@ export async function handleStartRun(
     capabilityWarning,
   );
   if (deduped) {
-    // Observational only — a legitimate same-caller retry also hits an active run.
-    if (run.run_phase === 'running' || run.run_phase === 'gate_waiting') {
-      warnings.push(`Idempotency key matched a run still in phase '${run.run_phase}'.`);
+    // Observational only — a legitimate same-caller retry also hits an active run. Keyed on
+    // terminal_state, never the persisted run_phase.
+    if (!run.terminal_state) {
+      warnings.push(`Idempotency key matched a run still in phase '${derivedPhase}'.`);
     }
     // PR 1 warns on a key↔payload mismatch; PR 2 may make this policy.
     if (args.idempotency_key !== undefined && hashParams(params) !== hashParams(run.params)) {
@@ -133,7 +139,7 @@ export async function handleStartRun(
       tool: 'start_run',
       workflow_id: definition.id,
       run_id: run.id,
-      run_phase: run.run_phase,
+      run_phase: derivedPhase,
     });
   }
 
@@ -172,9 +178,9 @@ export async function handleStartRun(
     warnings,
     errors: [],
     context_hint: deduped
-      ? `Matched existing run '${run.id}' (idempotent) in phase '${run.run_phase}'; no new run created.`
+      ? `Matched existing run '${run.id}' (idempotent) in phase '${derivedPhase}'; no new run created.`
       : `Run '${run.id}' created for workflow '${definition.id}'.`,
-    run_phase: run.run_phase,
+    run_phase: derivedPhase,
     deduped,
     next_actions: nextActions,
   };

@@ -1388,7 +1388,15 @@ describe('deriveRunPhase — aborted_at precedence (Issue-2)', () => {
   it('running (no aborted_at) is unchanged', () => {
     expect(deriveRunPhase(makeRun({ terminal_state: false }))).toBe('running');
   });
-  it('gate_waiting outranks everything', () => {
+  // issue #279 (increment 2, PR-C — the #282 class closure, D-3 leg i): this test's own title and
+  // expectation are UPDATED, not preserved verbatim. Under the pre-#282 order, `pending_gate` was
+  // checked BEFORE `aborted_at`, so this synthetic fixture (aborted_at set — a combination that
+  // never occurs in practice, since aborted_at is only ever written alongside terminal_state:true
+  // — co-occurring with a pending_gate and terminal_state:false) derived 'gate_waiting'. The #282
+  // reorder moves the WHOLE terminal-indicating cluster (abandoned_at, aborted_at) above
+  // pending_gate — aborted_at is part of that cluster, so it now outranks pending_gate too; only
+  // a genuinely non-terminal, non-aborted run can still derive 'gate_waiting'.
+  it('aborted_at now outranks pending_gate too (the #282 reorder — the WHOLE terminal cluster sits above pending_gate)', () => {
     const gate: PendingGate = {
       gate_id: 'g1',
       step_name: 'review',
@@ -1398,7 +1406,66 @@ describe('deriveRunPhase — aborted_at precedence (Issue-2)', () => {
     };
     expect(
       deriveRunPhase(makeRun({ pending_gate: gate, terminal_state: false, aborted_at: aborted })),
-    ).toBe('gate_waiting');
+    ).toBe('aborted');
+  });
+
+  // issue #279 (increment 2, PR-C — the #282 CLASS itself): the fail-marker — terminal_state:true
+  // + failed_steps non-empty + NO aborted_at, but STILL carrying a leftover pending_gate. Without
+  // the gate, the old and new check orders agree (both derive 'failed') and nothing here would
+  // red under a revert — the gate is what makes this fixture DISCRIMINATING.
+  it('the #282 fail-marker: terminal ∧ failed_steps ∧ a leftover pending_gate still derives failed, never gate_waiting', () => {
+    const gate: PendingGate = {
+      gate_id: 'g-fail-marker',
+      step_name: 'review',
+      preview: {},
+      choices: ['approve', 'reject'],
+      opened_at: '2024-01-01T00:00:00.000Z',
+    };
+    expect(
+      deriveRunPhase(
+        makeRun({
+          terminal_state: true,
+          failed_steps: ['s'],
+          pending_gate: gate,
+        }),
+      ),
+    ).toBe('failed');
+  });
+
+  // The abort-marker equivalent — aborted_at ∧ terminal_state ∧ a leftover pending_gate. Already
+  // exercised structurally by the 'aborted_at now outranks pending_gate too' test above (same
+  // discriminating shape: without the gate, nothing reds); restated here under the #282-marker
+  // naming for direct correspondence with the fail-marker pin above.
+  it('the #282 abort-marker: aborted_at ∧ terminal_state ∧ a leftover pending_gate still derives aborted, never gate_waiting', () => {
+    const gate: PendingGate = {
+      gate_id: 'g-abort-marker',
+      step_name: 'review',
+      preview: {},
+      choices: ['approve', 'reject'],
+      opened_at: '2024-01-01T00:00:00.000Z',
+    };
+    expect(
+      deriveRunPhase(
+        makeRun({
+          terminal_state: true,
+          aborted_at: aborted,
+          pending_gate: gate,
+        }),
+      ),
+    ).toBe('aborted');
+  });
+
+  it('pending_gate still outranks plain running when neither abandoned_at nor aborted_at is set', () => {
+    const gate: PendingGate = {
+      gate_id: 'g1',
+      step_name: 'review',
+      preview: {},
+      choices: ['approve', 'reject'],
+      opened_at: '2024-01-01T00:00:00.000Z',
+    };
+    expect(deriveRunPhase(makeRun({ pending_gate: gate, terminal_state: false }))).toBe(
+      'gate_waiting',
+    );
   });
 });
 

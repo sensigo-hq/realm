@@ -13,8 +13,26 @@ import { splitComparison, type ComparisonOp } from './comparison-expr.js';
 import { boundResolvedValue } from '../utils/redaction.js';
 
 /**
- * Derives the run_phase from the run record fields.
- * Called after every store write to keep run_phase consistent.
+ * Derives the run_phase from the run record fields. Called after every store write to keep
+ * run_phase consistent — this function's return value is ALWAYS what gets persisted (issue #279,
+ * increment 2, PR-C — the PHASE_IS_GENERATED law): callers must never persist a raw/stale
+ * `run_phase` value, and every reader that needs the true phase should prefer this derivation over
+ * a possibly-stale persisted field (design record `design-d5-increment2.md` §5 D-3's disposal
+ * rule: "control flow keys on `terminal_state`, the terminal marker fields, or DERIVED phase —
+ * never on persisted `run_phase`; persisted `run_phase` is render-only, and rendered only after
+ * derivation").
+ *
+ * Issue #279 (increment 2, PR-C — the #282 class closure, D-3 leg i): the WHOLE terminal cluster
+ * (abandoned_at → aborted_at → terminal_state's own completed/failed/abandoned split) is now
+ * checked ABOVE `pending_gate` — reordered from a prior shape that checked `pending_gate` SECOND,
+ * right after `abandoned_at`, before `terminal_state` was ever consulted. That prior order let a
+ * TERMINAL run that still carries a leftover/grandfathered `pending_gate` (the #282 class: any
+ * write path that terminalizes a run without also clearing `pending_gate` — a legacy/pre-#279
+ * writer, or a mixed-fleet reintroduction) derive as `'gate_waiting'` forever, even though the run
+ * had already reached a real terminal outcome. The fix is a pure reordering — every non-#282
+ * record (a genuinely non-terminal run with a live open gate, or a terminal run that legitimately
+ * never had a gate) derives IDENTICALLY either way; only the one previously-mis-derived class
+ * changes, and it changes to the CORRECT phase.
  */
 export function deriveRunPhase(
   run: Pick<
@@ -28,26 +46,31 @@ export function deriveRunPhase(
   >,
 ): RunPhase {
   // abandoned_at is authoritative — explicit operator/cleanup abandonment wins over any field
-  // (failed_steps, pending_gate, terminal_reason). It is only ever set on a running run
-  // (gate_waiting abandonment is refused by abandonRun), so it never co-occurs with pending_gate
-  // in practice; top placement is future-proof and mirrors the aborted_at promotion rationale below.
+  // (failed_steps, pending_gate, terminal_reason, and now checked before the whole terminal
+  // cluster below too). It is only ever set on a running run (gate_waiting abandonment is refused
+  // by abandonRun), so it never co-occurs with pending_gate in practice; top placement is
+  // future-proof and mirrors the aborted_at promotion rationale below.
   if (run.abandoned_at !== undefined) return 'abandoned';
-  if (run.pending_gate !== undefined) return 'gate_waiting';
-  // aborted_at is authoritative and is checked before both !terminal_state and the
-  // 'Workflow completed.' check. The only records that carry aborted_at are guard/handler-aborted
-  // runs (always written terminal_state:true); legitimately resumable runs (failed/abandoned) never
-  // carry it. Promoting this branch means an aborted run can never revert to 'running' if a
-  // write-path recomputes terminal_state while the record still carries aborted_at, and a stale
-  // success reason can never mask an abort — while every normal derivation is unchanged.
+  // aborted_at is authoritative and is checked before pending_gate AND before the terminal_state
+  // split below. The only records that carry aborted_at are guard/handler-aborted runs (always
+  // written terminal_state:true); legitimately resumable runs (failed/abandoned) never carry it,
+  // and an aborted run's cancel-gate write (design record §3 applyAbortEdge) clears any OTHER
+  // step's pending_gate in the same write — but a grandfathered/legacy record could still carry
+  // both, and aborted_at must win regardless.
   if (run.aborted_at !== undefined) return 'aborted';
-  if (!run.terminal_state) return 'running';
-  // A terminal run that completed successfully sets terminal_reason to 'Workflow completed.'.
-  // Recovery workflows end with failed_steps non-empty but are still considered completed
-  // when the final recovery step succeeds, so terminal_reason takes precedence over failed_steps.
-  if (run.terminal_reason === 'Workflow completed.') return 'completed';
-  if (run.failed_steps.length > 0) return 'failed';
-  // terminal_state is true but the run neither completed normally nor failed — it was abandoned.
-  return 'abandoned';
+  if (run.terminal_state) {
+    // A terminal run that completed successfully sets terminal_reason to 'Workflow completed.'.
+    // Recovery workflows end with failed_steps non-empty but are still considered completed
+    // when the final recovery step succeeds, so terminal_reason takes precedence over failed_steps.
+    if (run.terminal_reason === 'Workflow completed.') return 'completed';
+    if (run.failed_steps.length > 0) return 'failed';
+    // terminal_state is true but the run neither completed normally nor failed — it was abandoned.
+    return 'abandoned';
+  }
+  // Only a genuinely NON-terminal run can still be gate_waiting — the #282 fix: a terminal run
+  // carrying a leftover pending_gate NEVER reaches this branch anymore.
+  if (run.pending_gate !== undefined) return 'gate_waiting';
+  return 'running';
 }
 
 /**

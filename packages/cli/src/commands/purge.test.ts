@@ -337,11 +337,21 @@ describe('purgeRuns — single-run mode', () => {
   it('reports resumable correctly: failed/abandoned are resumable, completed/aborted are not', async () => {
     const { dir, runStore, artifactStores } = await makeStores();
     try {
-      const failedRun = makeRun({ id: 'r-failed', run_phase: 'failed', terminal_state: true });
+      // issue #279 (increment 2, PR-C — the #282 class closure): purge now DERIVES run_phase,
+      // never trusts the persisted field, so each fixture must carry the fields deriveRunPhase
+      // actually keys on (failed_steps for 'failed', terminal_reason for 'completed') — a
+      // hand-set run_phase alone no longer suffices.
+      const failedRun = makeRun({
+        id: 'r-failed',
+        run_phase: 'failed',
+        terminal_state: true,
+        failed_steps: ['step1'],
+      });
       const completedRun = makeRun({
         id: 'r-completed',
         run_phase: 'completed',
         terminal_state: true,
+        terminal_reason: 'Workflow completed.',
       });
       await injectRun(dir, failedRun);
       await injectRun(dir, completedRun);

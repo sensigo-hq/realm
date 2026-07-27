@@ -1,8 +1,10 @@
 // settlement-contract.ts — framework-agnostic Test Compatibility Kit (TCK) for RunStore.settleStep
-// (issue #279, increment 1, PR-A). Normative spec: plans/issue-279/design-d4-increment1.md — this
-// file implements the PR-A-runnable law subset named in the hand-off prompt's D4 section (a subset
-// of the design record's §8 — the PR-B-only laws, e.g. RESUME_CLEARS_SETTLED / DRAIN_REREADS_LEDGER,
-// need `applyResume`/the drain verb and are deliberately NOT here).
+// (issue #279). Normative spec: plans/issue-279/design-d4-increment1.md (increment 1) +
+// plans/issue-279/design-d5-increment2.md §8 (increment 2, PR-C — this file's own gate/guard/
+// release law additions). This file implements the PR-C-runnable law subset (increment 1's own
+// laws, plus increment 2's gate/guard/release laws + PHASE_IS_GENERATED); the PR-D-only laws
+// (RESUME_CLEARS_SETTLED / DRAIN_REREADS_LEDGER, needing `applyResume`/the drain verb) are
+// deliberately NOT here.
 //
 // Pure case descriptors, NOT describe/it/expect — mirrors run-store-fidelity-contract.ts's and
 // fenced-trace-buffer-contract.ts's own precedent (importing vitest here would make it a runtime
@@ -18,6 +20,7 @@
 // circular-package hazard. See this module's own calling test files for the actual wiring.
 import {
   applySettlement,
+  deriveRunPhase,
   type RunStore,
   type RunRecord,
   type WorkflowDefinition,
@@ -25,6 +28,7 @@ import {
   type SettlementDelta,
   type SettlementResult,
   type EvidenceSnapshot,
+  type PendingGate,
 } from '@sensigo/realm';
 
 /** One of the PR-A-runnable settlement laws (design record §8, narrowed to the PR-A subset named
@@ -52,6 +56,21 @@ export type SettlementLaw =
   | 'COMPLETE_SEAL_PHASE'
   | 'WHEN_ROUTED_TERMINALIZATION'
   | 'G1_GATE_COEXISTENCE'
+  // issue #279, increment 2 (PR-C — design record design-d5-increment2.md §8): gate/guard/release
+  // laws.
+  | 'GATE_OPEN_IDEMPOTENT'
+  | 'GATE_RESOLUTION_CONFLICT'
+  | 'GATE_MISMATCH'
+  | 'GUARD_OUTCOME_DIVERGENCE'
+  | 'GUARD_WAITS_ON_OPEN_GATE'
+  | 'GUARD_PASS_COMPLETE_OUTCOME'
+  | 'GUARD_ABORT_CASCADE'
+  | 'GUARD_NO_ENTRY'
+  | 'RELEASE_IDEMPOTENT'
+  /** A NEW universal TCK law (lane-C steal 1 — the PG "generated columns cannot be written to
+   *  directly" invariant, quantified): after EVERY store mutation op, persisted `run_phase ≡
+   *  deriveRunPhase(record)`. */
+  | 'PHASE_IS_GENERATED'
   /** Not a real settlement law — a wiring-gap sentinel (see `settlementContract`'s own doc: a
    *  store declaring `settleStep` with no `settlementFixture` supplied gets ONE failing case
    *  tagged with this, never a silent zero-cases pass). */
@@ -83,6 +102,20 @@ export interface SettlementFixture {
     def: WorkflowDefinition,
     finalizerName: string,
     onOutcome: NonNullable<StepDefinition['on_outcome']>,
+  ): WorkflowDefinition;
+  /**
+   * Adds one guard step (issue #279, increment 2, PR-C — design record §8 fixture mechanics).
+   * OPTIONAL on this published interface (never a required-member widening): a store's own
+   * `SettlementFixture` that omits this triggers the `ADAPTER_WIRING`-style failing-case idiom
+   * for guard cases specifically, rather than a silent skip (see `guardOutcomeDivergenceCases`
+   * and friends, below). `opts.dependents` (optional) names steps that get `depends_on:
+   * [guardName]` — needed by `GUARD_ABORT_CASCADE`'s propagateSkips-cascade case.
+   */
+  withGuard?(
+    def: WorkflowDefinition,
+    guardName: string,
+    abortUnless: string | string[],
+    opts?: { dependents?: string[] },
   ): WorkflowDefinition;
 }
 
@@ -145,11 +178,55 @@ function withFinalizer(
   };
 }
 
-/** Default settlement fixture — builds minimal agent-step / finalizer-step definitions with no
- *  store-specific requirements beyond `RunStore.create` never validating `workflowId` against an
- *  external registry. Suitable for JsonFileStore and InMemoryStore; both this package's own
- *  conformance test files wire this in directly. */
-export const defaultSettlementFixture: SettlementFixture = { minimalDefinition, withFinalizer };
+/** Adds one guard step (+ optional dependents) to a definition. */
+function withGuard(
+  def: WorkflowDefinition,
+  guardName: string,
+  abortUnless: string | string[],
+  opts?: { dependents?: string[] },
+): WorkflowDefinition {
+  const dependentSteps: Record<string, StepDefinition> = {};
+  for (const dep of opts?.dependents ?? []) {
+    dependentSteps[dep] = { description: dep, execution: 'agent', depends_on: [guardName] };
+  }
+  return {
+    ...def,
+    steps: {
+      ...def.steps,
+      [guardName]: { description: guardName, execution: 'guard', abort_unless: abortUnless },
+      ...dependentSteps,
+    },
+  };
+}
+
+/** Default settlement fixture — builds minimal agent-step / finalizer-step / guard-step
+ *  definitions with no store-specific requirements beyond `RunStore.create` never validating
+ *  `workflowId` against an external registry. Suitable for JsonFileStore and InMemoryStore; both
+ *  this package's own conformance test files wire this in directly. */
+export const defaultSettlementFixture: SettlementFixture = {
+  minimalDefinition,
+  withFinalizer,
+  withGuard,
+};
+
+/**
+ * Contract-INTERNAL helper (design record §8 fixture mechanics) — deliberately NOT a
+ * `SettlementFixture` member: gate state lives on the RUN RECORD side (`pending_gate`), not the
+ * step definition — the transform never reads step-def gate config at all, so there is nothing
+ * store-specific to inject here.
+ */
+function makePendingGate(
+  stepName: string,
+  opts?: { gateId?: string; choices?: string[] },
+): PendingGate {
+  return {
+    gate_id: opts?.gateId ?? uid('tck-gate'),
+    step_name: stepName,
+    preview: {},
+    choices: opts?.choices ?? ['approve', 'reject'],
+    opened_at: '2026-01-01T00:00:00.000Z',
+  };
+}
 
 function makeEvidence(stepId: string, overrides: Partial<EvidenceSnapshot> = {}): EvidenceSnapshot {
   return {
@@ -207,7 +284,7 @@ function assertRefused(
   result: SettlementResult,
   expectedReason: SettlementRefusalReasonType,
   context: string,
-): void {
+): asserts result is Extract<SettlementResult, { applied: false }> {
   if (result.applied) {
     throw new Error(
       `${context}: expected a refusal (reason '${expectedReason}'), got applied:true`,
@@ -2161,6 +2238,978 @@ function g1GateCoexistenceCases(_adapter: SettlementContractAdapter): Settlement
 }
 
 // ---------------------------------------------------------------------------
+// GATE_OPEN_IDEMPOTENT (issue #279, increment 2, PR-C — design record §8)
+// ---------------------------------------------------------------------------
+
+function gateOpenIdempotentCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const fixture = adapter.settlementFixture!;
+  const { minimalDefinition } = fixture;
+  const settleStep = requireSettleStep(adapter.store);
+  return [
+    {
+      law: 'GATE_OPEN_IDEMPOTENT',
+      name: `[${adapter.storeName}] an exact-delta open_gate replay NOOPs as already_settled — version unchanged`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated');
+        const delta: SettlementDelta = {
+          kind: 'open_gate',
+          step: 'gated',
+          claimToken: token,
+          pendingGate: gate,
+          evidence: [],
+        };
+        const first = await settleStep(run.id, delta, def);
+        assertApplied(first, 'first open_gate');
+        const second = await settleStep(run.id, delta, def);
+        assertRefused(second, 'already_settled', 'exact-delta open_gate replay');
+        if (second.run.version !== first.run.version) {
+          throw new Error(
+            `expected version unchanged on a NOOP (${first.run.version}), got ${second.run.version}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'GATE_OPEN_IDEMPOTENT',
+      name: `[${adapter.storeName}] a re-submitted open_gate AFTER the step ALSO settled via a totally different route (settle_step complete) refuses already_settled_by_other`,
+      run: async () => {
+        const def = minimalDefinition(['a']);
+        const { run, token } = await createClaimed(adapter.store, def, 'a');
+        const completed = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'a',
+            outcome: 'complete',
+            claimToken: token,
+            evidence: [makeEvidence('a')],
+          },
+          def,
+        );
+        assertApplied(completed, 'settle_step complete');
+        const result = await settleStep(
+          run.id,
+          {
+            kind: 'open_gate',
+            step: 'a',
+            claimToken: token,
+            pendingGate: makePendingGate('a'),
+            evidence: [],
+          },
+          def,
+        );
+        assertRefused(
+          result,
+          'already_settled_by_other',
+          'open_gate on a step already settled via a different route',
+        );
+      },
+    },
+    {
+      law: 'GATE_OPEN_IDEMPOTENT',
+      name: `[${adapter.storeName}] a re-submitted open_gate AFTER the gate already resolved (BU F6) NOOPs as already_settled`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated');
+        const openDelta: SettlementDelta = {
+          kind: 'open_gate',
+          step: 'gated',
+          claimToken: token,
+          pendingGate: gate,
+          evidence: [],
+        };
+        const opened = await settleStep(run.id, openDelta, def);
+        assertApplied(opened, 'open_gate');
+        const resolved = await settleStep(
+          run.id,
+          { kind: 'settle_gate', gateId: gate.gate_id, choice: 'approve', evidence: [] },
+          def,
+        );
+        assertApplied(resolved, 'settle_gate resolve');
+        // A delayed/retried open_gate for the SAME gate_id, arriving after resolution.
+        const replay = await settleStep(run.id, openDelta, def);
+        assertRefused(replay, 'already_settled', 'open_gate replay after resolution');
+      },
+    },
+    {
+      law: 'GATE_OPEN_IDEMPOTENT',
+      name: `[${adapter.storeName}] fence-checked already_open: a matching claimant re-opening a DIFFERENT gate_id on the SAME step gets the LIVE gate back verbatim (defensive — in-contract unreachable)`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const liveGate = makePendingGate('gated', { gateId: 'live-gate' });
+        const opened = await settleStep(
+          run.id,
+          {
+            kind: 'open_gate',
+            step: 'gated',
+            claimToken: token,
+            pendingGate: liveGate,
+            evidence: [],
+          },
+          def,
+        );
+        assertApplied(opened, 'open_gate (live)');
+        const other = makePendingGate('gated', { gateId: 'other-gate' });
+        const result = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: other, evidence: [] },
+          def,
+        );
+        assertRefused(result, 'already_open', 'same-claimant re-open with a different gate_id');
+        if (result.gate?.gate_id !== 'live-gate') {
+          throw new Error(
+            `already_open must return the LIVE gate verbatim, got: ${JSON.stringify(result.gate)}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'GATE_OPEN_IDEMPOTENT',
+      name: `[${adapter.storeName}] a successor gate-open attempt on a DIFFERENT step while a gate is open elsewhere refuses gate_mismatch, and the target step STAYS claimed (L13)`,
+      run: async () => {
+        const def = minimalDefinition(['gated', 'successor']);
+        const { run, token: gatedToken } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated');
+        const opened = await settleStep(
+          run.id,
+          {
+            kind: 'open_gate',
+            step: 'gated',
+            claimToken: gatedToken,
+            pendingGate: gate,
+            evidence: [],
+          },
+          def,
+        );
+        assertApplied(opened, 'open_gate on gated');
+        // 'successor' can never be claimed while a gate is open (findEligibleSteps returns []),
+        // so this hand-constructs the claim to isolate the ARM being tested (open_gate's OWN
+        // serialization refusal), matching the fixture-mechanics precedent set by
+        // g1GateCoexistenceCases above.
+        const seeded = await adapter.store.update({
+          ...opened.run,
+          in_progress_steps: [...opened.run.in_progress_steps, 'successor'],
+          claims: { ...opened.run.claims, successor: { deadline: null, token: 'successor-token' } },
+        });
+        const result = await settleStep(
+          seeded.id,
+          {
+            kind: 'open_gate',
+            step: 'successor',
+            claimToken: 'successor-token',
+            pendingGate: makePendingGate('successor'),
+            evidence: [],
+          },
+          def,
+        );
+        assertRefused(result, 'gate_mismatch', 'open_gate on another step while a gate is open');
+        if (!result.run.in_progress_steps.includes('successor')) {
+          throw new Error('gate_mismatch must leave the target step STILL claimed (L13)');
+        }
+      },
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// GATE_RESOLUTION_CONFLICT (issue #279, increment 2, PR-C)
+// ---------------------------------------------------------------------------
+
+function gateResolutionConflictCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition } = adapter.settlementFixture!;
+  const settleStep = requireSettleStep(adapter.store);
+
+  async function openGate(
+    def: WorkflowDefinition,
+    stepName: string,
+  ): Promise<{ runId: string; gate: PendingGate }> {
+    const { run, token } = await createClaimed(adapter.store, def, stepName);
+    const gate = makePendingGate(stepName);
+    const opened = await settleStep(
+      run.id,
+      { kind: 'open_gate', step: stepName, claimToken: token, pendingGate: gate, evidence: [] },
+      def,
+    );
+    assertApplied(opened, `open_gate on ${stepName}`);
+    return { runId: run.id, gate };
+  }
+
+  return [
+    {
+      law: 'GATE_RESOLUTION_CONFLICT',
+      name: `[${adapter.storeName}] a same-choice settle_gate retry (double-submit) NOOPs as already_settled`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { runId, gate } = await openGate(def, 'gated');
+        const delta: SettlementDelta = {
+          kind: 'settle_gate',
+          gateId: gate.gate_id,
+          choice: 'approve',
+          evidence: [],
+        };
+        const first = await settleStep(runId, delta, def);
+        assertApplied(first, 'first settle_gate');
+        const second = await settleStep(runId, delta, def);
+        assertRefused(second, 'already_settled', 'same-choice settle_gate retry');
+      },
+    },
+    {
+      law: 'GATE_RESOLUTION_CONFLICT',
+      name: `[${adapter.storeName}] a choice NOT among the gate's own choices refuses choice_not_eligible, gate stays open`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { runId, gate } = await openGate(def, 'gated');
+        const result = await settleStep(
+          runId,
+          { kind: 'settle_gate', gateId: gate.gate_id, choice: 'not-a-real-choice', evidence: [] },
+          def,
+        );
+        assertRefused(result, 'choice_not_eligible', 'settle_gate with an ineligible choice');
+        if (result.choices?.join(',') !== gate.choices.join(',')) {
+          throw new Error(
+            `expected choices:${JSON.stringify(gate.choices)}, got: ${JSON.stringify(result.choices)}`,
+          );
+        }
+        if (result.run.pending_gate?.gate_id !== gate.gate_id) {
+          throw new Error('choice_not_eligible must leave the gate open, unchanged');
+        }
+      },
+    },
+    {
+      law: 'GATE_RESOLUTION_CONFLICT',
+      name: `[${adapter.storeName}] a DIFFERENT-choice settle_gate after resolution refuses gate_choice_conflict with the winning choice`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { runId, gate } = await openGate(def, 'gated');
+        const first = await settleStep(
+          runId,
+          { kind: 'settle_gate', gateId: gate.gate_id, choice: 'approve', evidence: [] },
+          def,
+        );
+        assertApplied(first, 'first settle_gate (approve)');
+        const second = await settleStep(
+          runId,
+          { kind: 'settle_gate', gateId: gate.gate_id, choice: 'reject', evidence: [] },
+          def,
+        );
+        assertRefused(second, 'gate_choice_conflict', 'conflicting-choice settle_gate');
+        if (second.winningChoice !== 'approve') {
+          throw new Error(`expected winningChoice:'approve', got: ${second.winningChoice}`);
+        }
+      },
+    },
+    {
+      law: 'GATE_RESOLUTION_CONFLICT',
+      name: `[${adapter.storeName}] a delayed retry of an ALREADY-RESOLVED gate's choice still NOOPs, even after a SECOND gate has since opened on another step (TD F1 — lookup is by gateId alone)`,
+      run: async () => {
+        const def = minimalDefinition(['gate1', 'gate2']);
+        const { runId, gate: gate1 } = await openGate(def, 'gate1');
+        const resolve1: SettlementDelta = {
+          kind: 'settle_gate',
+          gateId: gate1.gate_id,
+          choice: 'approve',
+          evidence: [],
+        };
+        const first = await settleStep(runId, resolve1, def);
+        assertApplied(first, 'resolve gate1');
+
+        // A second, unrelated gate opens on a different step.
+        const { token: gate2Token } = { token: 'gate2-token' } as { token: string };
+        const seeded = await adapter.store.update({
+          ...first.run,
+          in_progress_steps: [...first.run.in_progress_steps, 'gate2'],
+          claims: { ...first.run.claims, gate2: { deadline: null, token: gate2Token } },
+        });
+        const gate2 = makePendingGate('gate2');
+        const opened2 = await settleStep(
+          seeded.id,
+          {
+            kind: 'open_gate',
+            step: 'gate2',
+            claimToken: gate2Token,
+            pendingGate: gate2,
+            evidence: [],
+          },
+          def,
+        );
+        assertApplied(opened2, 'open_gate on gate2');
+
+        // The delayed retry of gate1's ORIGINAL resolution — found by gateId lookup regardless
+        // of what is currently open.
+        const delayedRetry = await settleStep(runId, resolve1, def);
+        assertRefused(delayedRetry, 'already_settled', 'delayed retry of gate1 resolution');
+      },
+    },
+    {
+      law: 'GATE_RESOLUTION_CONFLICT',
+      name: `[${adapter.storeName}] G2 corruption fixture: a hand-shaped record where BOTH a settled 'gate' entry and a live pending_gate share the same gate_id ⇒ the lookup-first NOOP wins, never a RESOLVE (fail-safe, lens-2 m3)`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run } = await adapter.store.create({
+          workflowId: def.id,
+          workflowVersion: def.version,
+          params: {},
+        });
+        const gateId = 'corrupt-gate';
+        // Hand-shaped: an entry ALREADY records this gate as resolved with choice 'approve', but
+        // pending_gate is STILL live with the SAME gate_id — never producible by settleStep
+        // itself (APPLY always clears pending_gate in the SAME write it settles); only a
+        // hand-authored fixture or an external store's divergent history can produce this.
+        const corrupted = await adapter.store.update({
+          ...run,
+          completed_steps: ['gated'],
+          settled: { gated: { token: gateId, outcome: 'gate', choice: 'approve' } },
+          pending_gate: {
+            gate_id: gateId,
+            step_name: 'gated',
+            preview: {},
+            choices: ['approve', 'reject'],
+            opened_at: '2026-01-01T00:00:00.000Z',
+          },
+        });
+        const result = await settleStep(
+          corrupted.id,
+          { kind: 'settle_gate', gateId, choice: 'approve', evidence: [] },
+          def,
+        );
+        // The lookup-first ordering means this is ALWAYS a NOOP against the settled entry — the
+        // live-gate RESOLVE branch is structurally unreachable once a matching settled entry
+        // exists, regardless of corruption.
+        assertRefused(result, 'already_settled', 'G2-corrupted both-match record');
+      },
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// GATE_MISMATCH (issue #279, increment 2, PR-C)
+// ---------------------------------------------------------------------------
+
+function gateMismatchCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition } = adapter.settlementFixture!;
+  const settleStep = requireSettleStep(adapter.store);
+  return [
+    {
+      law: 'GATE_MISMATCH',
+      name: `[${adapter.storeName}] settle_gate with an UNKNOWN gateId on a live, gate-free run refuses gate_mismatch`,
+      run: async () => {
+        const def = minimalDefinition(['a']);
+        const { run } = await adapter.store.create({
+          workflowId: def.id,
+          workflowVersion: def.version,
+          params: {},
+        });
+        const result = await settleStep(
+          run.id,
+          { kind: 'settle_gate', gateId: 'nonexistent-gate', choice: 'approve', evidence: [] },
+          def,
+        );
+        assertRefused(result, 'gate_mismatch', 'settle_gate with an unknown gateId');
+      },
+    },
+    {
+      law: 'GATE_MISMATCH',
+      name: `[${adapter.storeName}] settle_gate with a SUPERSEDED gateId (a DIFFERENT gate is now open) refuses gate_mismatch`,
+      run: async () => {
+        const def = minimalDefinition(['a']);
+        const { run, token } = await createClaimed(adapter.store, def, 'a');
+        const liveGate = makePendingGate('a', { gateId: 'live-gate' });
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'a', claimToken: token, pendingGate: liveGate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(
+          run.id,
+          { kind: 'settle_gate', gateId: 'stale-superseded-gate', choice: 'approve', evidence: [] },
+          def,
+        );
+        assertRefused(result, 'gate_mismatch', 'settle_gate with a superseded gateId');
+      },
+    },
+    {
+      law: 'GATE_MISMATCH',
+      name: `[${adapter.storeName}] zombie submit: a hand-shaped terminal ∧ pending_gate record refuses run_terminal on a matching gateId submit, record/version UNCHANGED`,
+      run: async () => {
+        const def = minimalDefinition(['a']);
+        const { run } = await adapter.store.create({
+          workflowId: def.id,
+          workflowVersion: def.version,
+          params: {},
+        });
+        const gateId = 'zombie-gate';
+        // Hand-shaped grandfathered/#282-class record: terminal AND still carrying a pending_gate
+        // — the exact class D-3 exists to close on the RENDER side; this pins the TRANSFORM's own
+        // zombie-submit refusal independent of that closure.
+        const zombie = await adapter.store.update({
+          ...run,
+          completed_steps: ['a'],
+          terminal_state: true,
+          terminal_reason: 'Workflow completed.',
+          pending_gate: {
+            gate_id: gateId,
+            step_name: 'a',
+            preview: {},
+            choices: ['approve', 'reject'],
+            opened_at: '2026-01-01T00:00:00.000Z',
+          },
+        });
+        const result = await settleStep(
+          zombie.id,
+          { kind: 'settle_gate', gateId, choice: 'approve', evidence: [] },
+          def,
+        );
+        assertRefused(result, 'run_terminal', 'zombie gate submit on a terminal record');
+        if (result.run.version !== zombie.version) {
+          throw new Error('a zombie-submit refusal must leave the record/version UNCHANGED');
+        }
+      },
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// GUARD_OUTCOME_DIVERGENCE / GUARD_WAITS_ON_OPEN_GATE / GUARD_PASS_COMPLETE_OUTCOME /
+// GUARD_ABORT_CASCADE / GUARD_NO_ENTRY (issue #279, increment 2, PR-C)
+// ---------------------------------------------------------------------------
+
+function guardCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const fixture = adapter.settlementFixture!;
+  if (fixture.withGuard === undefined) {
+    return [
+      {
+        law: 'ADAPTER_WIRING',
+        name: `[${adapter.storeName}] declares RunStore.settleStep but the supplied settlementFixture has no withGuard — guard-law coverage is a WIRING GAP, not a vacuous pass`,
+        run: async () => {
+          throw new Error(
+            `[${adapter.storeName}] settlementContract: adapter.settlementFixture.withGuard is ` +
+              "undefined — pass 'defaultSettlementFixture' (or a store-specific fixture " +
+              'implementing withGuard) to exercise guard conformance coverage.',
+          );
+        },
+      },
+    ];
+  }
+  const { minimalDefinition } = fixture;
+  const withGuard = fixture.withGuard;
+  const settleStep = requireSettleStep(adapter.store);
+
+  return [
+    // --- GUARD_OUTCOME_DIVERGENCE ---
+    {
+      law: 'GUARD_OUTCOME_DIVERGENCE',
+      name: `[${adapter.storeName}] a same-outcome (pass) settle_guard retry NOOPs as already_settled`,
+      run: async () => {
+        const def = withGuard(minimalDefinition([]), 'g', []);
+        const { run } = await adapter.store.create({
+          workflowId: def.id,
+          workflowVersion: def.version,
+          params: {},
+        });
+        const delta: SettlementDelta = {
+          kind: 'settle_guard',
+          step: 'g',
+          outcome: 'pass',
+          evidence: makeEvidence('g'),
+        };
+        const first = await settleStep(run.id, delta, def);
+        assertApplied(first, 'first settle_guard pass');
+        const second = await settleStep(run.id, delta, def);
+        assertRefused(second, 'already_settled', 'same-outcome settle_guard retry');
+      },
+    },
+    {
+      law: 'GUARD_OUTCOME_DIVERGENCE',
+      name: `[${adapter.storeName}] a CROSS-outcome settle_guard retry (pass, then resolution_error) refuses settled_outcome_divergence`,
+      run: async () => {
+        const def = withGuard(minimalDefinition([]), 'g', []);
+        const { run } = await adapter.store.create({
+          workflowId: def.id,
+          workflowVersion: def.version,
+          params: {},
+        });
+        const first = await settleStep(
+          run.id,
+          { kind: 'settle_guard', step: 'g', outcome: 'pass', evidence: makeEvidence('g') },
+          def,
+        );
+        assertApplied(first, 'first settle_guard pass');
+        const second = await settleStep(
+          run.id,
+          {
+            kind: 'settle_guard',
+            step: 'g',
+            outcome: 'resolution_error',
+            evidence: makeEvidence('g'),
+            resolutionError: { condition: 'x > 1', unresolvable_path: 'x' },
+          },
+          def,
+        );
+        assertRefused(second, 'settled_outcome_divergence', 'cross-outcome settle_guard retry');
+      },
+    },
+    {
+      law: 'GUARD_OUTCOME_DIVERGENCE',
+      name: `[${adapter.storeName}] an abort settle_guard retry against a step skipped for a DIFFERENT reason (not guard_abort) refuses settled_outcome_divergence — the skip_details conjunct`,
+      run: async () => {
+        // 'g' skipped via an unsatisfiable trigger_rule (its own dep 'never' fails), never via a
+        // guard_abort — a settle_guard abort retry for 'g' must diverge, not converge.
+        const def: WorkflowDefinition = {
+          id: uid('guard-divergence-wf'),
+          name: 'Guard divergence TCK fixture',
+          version: 1,
+          steps: {
+            never: { description: 'n', execution: 'agent', depends_on: [] },
+            g: {
+              description: 'g',
+              execution: 'guard',
+              abort_unless: [],
+              depends_on: ['never'],
+              trigger_rule: 'all_failed',
+            },
+          },
+        };
+        const { run } = await adapter.store.create({
+          workflowId: def.id,
+          workflowVersion: def.version,
+          params: {},
+        });
+        const seeded = await adapter.store.update({ ...run, skipped_steps: ['never'] });
+        // propagateSkips (run via any settle_step on 'never'-adjacent... simpler: hand-seed 'g'
+        // as skipped via trigger_rule_unsatisfiable directly, matching what propagateSkips itself
+        // would produce.
+        const skipped = await adapter.store.update({
+          ...seeded,
+          skipped_steps: ['never', 'g'],
+          skip_details: {
+            g: { kind: 'trigger_rule_unsatisfiable', rule: 'all_failed', blocking_deps: [] },
+          },
+        });
+        const result = await settleStep(
+          skipped.id,
+          {
+            kind: 'settle_guard',
+            step: 'g',
+            outcome: 'abort',
+            evidence: makeEvidence('g'),
+            abort: { conditions: [] },
+          },
+          def,
+        );
+        assertRefused(
+          result,
+          'settled_outcome_divergence',
+          'abort settle_guard vs non-guard_abort skip',
+        );
+        if (result.persisted !== 'skip-non-abort') {
+          throw new Error(`expected persisted:'skip-non-abort', got: ${result.persisted}`);
+        }
+      },
+    },
+    {
+      law: 'GUARD_OUTCOME_DIVERGENCE',
+      name: `[${adapter.storeName}] a terminalizing guard's own retry (same outcome, already terminal) still converges as already_settled`,
+      run: async () => {
+        const def = withGuard(minimalDefinition([]), 'g', ['1 == 2']); // always fails ⇒ abort
+        const { run } = await adapter.store.create({
+          workflowId: def.id,
+          workflowVersion: def.version,
+          params: {},
+        });
+        const delta: SettlementDelta = {
+          kind: 'settle_guard',
+          step: 'g',
+          outcome: 'abort',
+          evidence: makeEvidence('g'),
+          abort: { conditions: [{ condition: '1 == 2', resolved_value: false, passed: false }] },
+        };
+        const first = await settleStep(run.id, delta, def);
+        assertApplied(first, 'first settle_guard abort');
+        if (first.run.terminal_state !== true) {
+          throw new Error('fixture premise violated: abort must terminalize');
+        }
+        const second = await settleStep(run.id, delta, def);
+        assertRefused(second, 'already_settled', 'terminalizing guard retry');
+      },
+    },
+
+    // --- GUARD_WAITS_ON_OPEN_GATE ---
+    {
+      law: 'GUARD_WAITS_ON_OPEN_GATE',
+      name: `[${adapter.storeName}] a non-pass settle_guard under an open gate refuses gate_open_wait, record UNCHANGED`,
+      run: async () => {
+        let def = minimalDefinition(['gated']);
+        def = withGuard(def, 'g', ['1 == 2']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated');
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(
+          run.id,
+          {
+            kind: 'settle_guard',
+            step: 'g',
+            outcome: 'abort',
+            evidence: makeEvidence('g'),
+            abort: { conditions: [{ condition: '1 == 2', resolved_value: false, passed: false }] },
+          },
+          def,
+        );
+        assertRefused(result, 'gate_open_wait', 'non-pass settle_guard under an open gate');
+        if (result.run.version !== opened.run.version) {
+          throw new Error('gate_open_wait must leave the record UNCHANGED (quiet end-of-pass)');
+        }
+      },
+    },
+    {
+      law: 'GUARD_WAITS_ON_OPEN_GATE',
+      name: `[${adapter.storeName}] re-applying the SAME guard after the gate resolves now APPLIES`,
+      run: async () => {
+        let def = minimalDefinition(['gated']);
+        def = withGuard(def, 'g', ['1 == 2']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated');
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const guardDelta: SettlementDelta = {
+          kind: 'settle_guard',
+          step: 'g',
+          outcome: 'abort',
+          evidence: makeEvidence('g'),
+          abort: { conditions: [{ condition: '1 == 2', resolved_value: false, passed: false }] },
+        };
+        const waited = await settleStep(run.id, guardDelta, def);
+        assertRefused(waited, 'gate_open_wait', 'first attempt, gate open');
+        const resolved = await settleStep(
+          run.id,
+          { kind: 'settle_gate', gateId: gate.gate_id, choice: 'approve', evidence: [] },
+          def,
+        );
+        assertApplied(resolved, 'settle_gate resolve');
+        const retried = await settleStep(run.id, guardDelta, def);
+        assertApplied(retried, 'settle_guard retry, gate resolved');
+      },
+    },
+    {
+      law: 'GUARD_WAITS_ON_OPEN_GATE',
+      name: `[${adapter.storeName}] a PASS settle_guard under an open gate APPLIES (non-terminal — the gate wins on any terminalizing attempt, but pass alone never terminalizes under it, G-1)`,
+      run: async () => {
+        let def = minimalDefinition(['gated']);
+        def = withGuard(def, 'g', []); // trivially passes (zero conditions)
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated');
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(
+          run.id,
+          { kind: 'settle_guard', step: 'g', outcome: 'pass', evidence: makeEvidence('g') },
+          def,
+        );
+        assertApplied(result, 'pass settle_guard under an open gate');
+        if (result.transitioned !== false) {
+          throw new Error('a pass-under-gate settle_guard must never terminalize (G-1)');
+        }
+      },
+    },
+
+    // --- GUARD_PASS_COMPLETE_OUTCOME ---
+    {
+      law: 'GUARD_PASS_COMPLETE_OUTCOME',
+      name: `[${adapter.storeName}] a guard pass that completes the run sets terminal_reason 'Workflow completed.' and phase 'completed'`,
+      run: async () => {
+        const def = withGuard(minimalDefinition([]), 'g', []);
+        const { run } = await adapter.store.create({
+          workflowId: def.id,
+          workflowVersion: def.version,
+          params: {},
+        });
+        const result = await settleStep(
+          run.id,
+          { kind: 'settle_guard', step: 'g', outcome: 'pass', evidence: makeEvidence('g') },
+          def,
+        );
+        assertApplied(result, 'guard pass, sole step');
+        if (
+          result.run.terminal_state !== true ||
+          result.run.terminal_reason !== 'Workflow completed.' ||
+          result.run.run_phase !== 'completed'
+        ) {
+          throw new Error(
+            `expected terminal 'completed' seal, got terminal_state:${result.run.terminal_state} ` +
+              `terminal_reason:${result.run.terminal_reason} run_phase:${result.run.run_phase}`,
+          );
+        }
+      },
+    },
+
+    // --- GUARD_ABORT_CASCADE ---
+    {
+      law: 'GUARD_ABORT_CASCADE',
+      name: `[${adapter.storeName}] a guard abort skips the guard (object-array aborted_at, terminal_reason ABSENT) AND cascades propagateSkips onto a dependent step`,
+      run: async () => {
+        let def = minimalDefinition([]);
+        def = withGuard(def, 'g', ['1 == 2'], { dependents: ['downstream'] });
+        const { run } = await adapter.store.create({
+          workflowId: def.id,
+          workflowVersion: def.version,
+          params: {},
+        });
+        const conditions = [{ condition: '1 == 2', resolved_value: false, passed: false }];
+        const result = await settleStep(
+          run.id,
+          {
+            kind: 'settle_guard',
+            step: 'g',
+            outcome: 'abort',
+            evidence: makeEvidence('g'),
+            abort: { conditions, abort_message: 'tck guard abort' },
+          },
+          def,
+        );
+        assertApplied(result, 'guard abort');
+        if (!result.run.skipped_steps.includes('g')) {
+          throw new Error('the guard itself must land in skipped_steps');
+        }
+        if (result.run.skip_details?.['g']?.kind !== 'guard_abort') {
+          throw new Error('skip_details for the guard must carry kind:guard_abort');
+        }
+        if (!result.run.skipped_steps.includes('downstream')) {
+          throw new Error('propagateSkips must cascade onto the dependent step');
+        }
+        if (
+          result.run.aborted_at === undefined ||
+          result.run.aborted_at.step_id !== 'g' ||
+          !Array.isArray(result.run.aborted_at.conditions) ||
+          result.run.aborted_at.conditions[0]?.condition !== '1 == 2'
+        ) {
+          throw new Error(
+            `expected aborted_at with the object-array conditions shape, got: ${JSON.stringify(result.run.aborted_at)}`,
+          );
+        }
+        if (result.run.terminal_reason !== undefined) {
+          throw new Error(
+            `terminal_reason must be ABSENT on a guard-abort seal (phase derives from aborted_at), got: '${result.run.terminal_reason}'`,
+          );
+        }
+        if (result.run.terminal_state !== true) {
+          throw new Error('a guard abort must terminalize the run');
+        }
+      },
+    },
+
+    // --- GUARD_NO_ENTRY ---
+    {
+      law: 'GUARD_NO_ENTRY',
+      name: `[${adapter.storeName}] settle_guard NEVER writes a settled-map entry, regardless of outcome (SE-4)`,
+      run: async () => {
+        const def = withGuard(minimalDefinition([]), 'g', []);
+        const { run } = await adapter.store.create({
+          workflowId: def.id,
+          workflowVersion: def.version,
+          params: {},
+        });
+        const result = await settleStep(
+          run.id,
+          { kind: 'settle_guard', step: 'g', outcome: 'pass', evidence: makeEvidence('g') },
+          def,
+        );
+        assertApplied(result, 'guard pass');
+        if (result.run.settled?.['g'] !== undefined) {
+          throw new Error('settle_guard must never write a settled-map entry (SE-4)');
+        }
+      },
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// RELEASE_IDEMPOTENT (issue #279, increment 2, PR-C)
+// ---------------------------------------------------------------------------
+
+function releaseIdempotentCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition } = adapter.settlementFixture!;
+  const settleStep = requireSettleStep(adapter.store);
+  return [
+    {
+      law: 'RELEASE_IDEMPOTENT',
+      name: `[${adapter.storeName}] release_step on a claim-absent step NOOPs as already_released (TD F10)`,
+      run: async () => {
+        const def = minimalDefinition(['a']);
+        const { run } = await adapter.store.create({
+          workflowId: def.id,
+          workflowVersion: def.version,
+          params: {},
+        });
+        const result = await settleStep(
+          run.id,
+          { kind: 'release_step', step: 'a', claimToken: 'anything' },
+          def,
+        );
+        assertRefused(result, 'already_released', 'release_step with no claim outstanding');
+      },
+    },
+    {
+      law: 'RELEASE_IDEMPOTENT',
+      name: `[${adapter.storeName}] release_step with the WRONG token refuses claim_lost — never stomps a successor`,
+      run: async () => {
+        const def = minimalDefinition(['a']);
+        const { run } = await createClaimed(adapter.store, def, 'a');
+        const result = await settleStep(
+          run.id,
+          { kind: 'release_step', step: 'a', claimToken: 'wrong-token' },
+          def,
+        );
+        assertRefused(result, 'claim_lost', 'release_step with a wrong token');
+      },
+    },
+    {
+      law: 'RELEASE_IDEMPOTENT',
+      name: `[${adapter.storeName}] release_step on the currently-open gate step refuses gate_mismatch (reclaim-step.ts:389 parity)`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated');
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(
+          run.id,
+          { kind: 'release_step', step: 'gated', claimToken: token },
+          def,
+        );
+        assertRefused(result, 'gate_mismatch', 'release_step on the open-gate step');
+      },
+    },
+    {
+      law: 'RELEASE_IDEMPOTENT',
+      name: `[${adapter.storeName}] a successful release_step frees the claim (never terminal, no settled entry) — the step is eligible again`,
+      run: async () => {
+        const def = minimalDefinition(['a']);
+        const { run, token } = await createClaimed(adapter.store, def, 'a');
+        const result = await settleStep(
+          run.id,
+          { kind: 'release_step', step: 'a', claimToken: token },
+          def,
+        );
+        assertApplied(result, 'release_step');
+        if (result.transitioned !== false || result.run.terminal_state !== false) {
+          throw new Error('release_step must never terminalize');
+        }
+        if (result.run.in_progress_steps.includes('a') || result.run.claims?.['a'] !== undefined) {
+          throw new Error('release_step must clear both in_progress_steps and claims');
+        }
+        if (result.run.settled?.['a'] !== undefined) {
+          throw new Error('release_step must never write a settled-map entry');
+        }
+      },
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// PHASE_IS_GENERATED (issue #279, increment 2, PR-C, lane-C steal 1 — a NEW universal law: after
+// EVERY store mutation op, persisted run_phase ≡ deriveRunPhase(record)).
+// ---------------------------------------------------------------------------
+
+function phaseIsGeneratedCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition } = adapter.settlementFixture!;
+  const settleStep = requireSettleStep(adapter.store);
+
+  function assertGenerated(record: RunRecord, context: string): void {
+    const expected = deriveRunPhase(record);
+    if (record.run_phase !== expected) {
+      throw new Error(
+        `PHASE_IS_GENERATED violated at ${context}: persisted run_phase '${record.run_phase}' ` +
+          `!== derived '${expected}'`,
+      );
+    }
+  }
+
+  return [
+    {
+      law: 'PHASE_IS_GENERATED',
+      name: `[${adapter.storeName}] persisted run_phase ≡ deriveRunPhase(record) after settleStep (all four kinds exercised) / update / claimStep`,
+      run: async () => {
+        const def = minimalDefinition(['a', 'b']);
+        const { run } = await adapter.store.create({
+          workflowId: def.id,
+          workflowVersion: def.version,
+          params: {},
+        });
+        assertGenerated(run, 'create()');
+
+        const claimed = await adapter.store.claimStep(run.id, 'a', def);
+        assertGenerated(claimed, 'claimStep()');
+
+        const token = claimed.claims!['a']!.token!;
+        const settled = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'a',
+            outcome: 'complete',
+            claimToken: token,
+            evidence: [makeEvidence('a')],
+          },
+          def,
+        );
+        assertApplied(settled, 'settle_step complete');
+        assertGenerated(settled.run, 'settleStep(settle_step)');
+
+        const updated = await adapter.store.update({ ...settled.run });
+        assertGenerated(updated, 'update()');
+      },
+    },
+    {
+      law: 'PHASE_IS_GENERATED',
+      name: `[${adapter.storeName}] the claimStep leg's discriminating fixture: abandoned_at ∧ terminal_state:false ⇒ claimStep persists the DERIVED 'abandoned' phase, not a hardcoded 'running'`,
+      run: async () => {
+        const def = minimalDefinition(['a']);
+        const { run } = await adapter.store.create({
+          workflowId: def.id,
+          workflowVersion: def.version,
+          params: {},
+        });
+        // eligibility.ts's findEligibleSteps does NOT check abandoned_at (only terminal_state /
+        // pending_gate) — so this hand-shaped record is still claimable, while deriveRunPhase
+        // (which DOES check abandoned_at first) derives 'abandoned' for it. A store that still
+        // hardcodes 'running' on claim (rather than deriving) would persist the wrong phase here.
+        const seeded = await adapter.store.update({
+          ...run,
+          abandoned_at: '2026-01-01T00:00:00.000Z',
+        });
+        const claimed = await adapter.store.claimStep(seeded.id, 'a', def);
+        if (claimed.run_phase !== 'abandoned') {
+          throw new Error(
+            `PHASE_IS_GENERATED (claimStep leg) violated: expected persisted 'abandoned', got '${claimed.run_phase}'`,
+          );
+        }
+      },
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // Assembly
 // ---------------------------------------------------------------------------
 
@@ -2216,5 +3265,12 @@ export function settlementContract(adapter: SettlementContractAdapter): Settleme
     ...completeSealPhaseCases(adapter),
     ...whenRoutedTerminalizationCases(adapter),
     ...g1GateCoexistenceCases(adapter),
+    // issue #279, increment 2 (PR-C).
+    ...gateOpenIdempotentCases(adapter),
+    ...gateResolutionConflictCases(adapter),
+    ...gateMismatchCases(adapter),
+    ...guardCases(adapter),
+    ...releaseIdempotentCases(adapter),
+    ...phaseIsGeneratedCases(adapter),
   ];
 }

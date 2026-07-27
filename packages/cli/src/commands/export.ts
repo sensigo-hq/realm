@@ -27,7 +27,7 @@ import type {
   TraceBufferStore,
   SealedArtifact,
 } from '@sensigo/realm';
-import { WorkflowError, isTerminalPhase, FsIoError } from '@sensigo/realm';
+import { WorkflowError, FsIoError } from '@sensigo/realm';
 
 /** Fixed redaction marker (issue #197 PR-2, design §6) — replaces every `nonce` value belonging
  *  to a step currently in `in_progress_steps` on a NON-terminal export (the claimant-nonce
@@ -263,7 +263,11 @@ export async function buildExportBundle(
   // `nonce` on a line belonging to a step CURRENTLY in `run.in_progress_steps` — conservative
   // over-redaction of a dead foreign nonce on a re-driven live step is accepted (verbatim once
   // the run goes terminal). A terminal export is always verbatim — nothing is still claimable.
-  const nonTerminal = !isTerminalPhase(run.run_phase);
+  // issue #279 (increment 2, PR-C — D-3 leg v): keyed on terminal_state, never the persisted
+  // run_phase — this is exactly why the comment above ("nothing is still claimable" once
+  // terminal) is honest: a grandfathered terminal-with-stale-gate record (the #282 class) is
+  // correctly recognized as terminal here, not mistaken for still-live.
+  const nonTerminal = run.terminal_state !== true;
   const { wal: finalWal, sealed: finalSealed } = nonTerminal
     ? redactLiveClaimNonces(wal, sealed, run.in_progress_steps)
     : { wal, sealed };

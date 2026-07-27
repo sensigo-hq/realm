@@ -6,7 +6,7 @@ import {
   JsonFileStore,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
-  isTerminalPhase,
+  deriveRunPhase,
   storeDeclaresNonceCarriage,
   type AppendResult,
   type TraceBufferStore,
@@ -248,9 +248,14 @@ export async function handleAppendTrace(
   // but before the run-file unlink) — refusing it here means it is never created in the first
   // place. A terminal run is permanent, so this is agentAction: 'report_to_user' (NOT
   // provide_input/retryable — retrying can't un-terminate a run).
-  if (isTerminalPhase(run.run_phase)) {
+  // issue #279 (increment 2, PR-C — D-3 leg v): keyed on terminal_state, never the persisted
+  // run_phase — a grandfathered terminal-with-stale-gate record (the #282 class) must still be
+  // refused here.
+  if (run.terminal_state === true) {
+    // Derive-for-message: render the TRUE (derived) phase, never the possibly-stale persisted one.
+    const derivedPhase = deriveRunPhase(run);
     throw new WorkflowError(
-      `Run '${args.run_id}' is terminal (phase: '${run.run_phase}') — trace entries can no longer be adopted by any step.`,
+      `Run '${args.run_id}' is terminal (phase: '${derivedPhase}') — trace entries can no longer be adopted by any step.`,
       {
         code: 'STATE_STEP_NOT_ELIGIBLE',
         category: 'STATE',
@@ -259,7 +264,8 @@ export async function handleAppendTrace(
         details: {
           step_id: args.step_id,
           step_state: 'run_terminal',
-          run_phase: run.run_phase,
+          run_phase: derivedPhase,
+          persisted_run_phase: run.run_phase,
           run_version: run.version,
         },
       },
@@ -369,9 +375,12 @@ export async function handleAppendTrace(
         // never assume every guard failure fits this tool's own eligibility taxonomy.
         throw err;
       }
-      if (isTerminalPhase(freshRun.run_phase)) {
+      // issue #279 (increment 2, PR-C — D-3 leg v): keyed on terminal_state; derive-for-message
+      // at this guard's own details line (enumeration gap found at the PR-C prompt audit).
+      if (freshRun.terminal_state === true) {
         throw stepNotEligibleError(args.step_id, freshRun.version, 'run_terminal', {
-          run_phase: freshRun.run_phase,
+          run_phase: deriveRunPhase(freshRun),
+          persisted_run_phase: freshRun.run_phase,
         });
       }
       const freshState = stepStateOf(freshRun, args.step_id);

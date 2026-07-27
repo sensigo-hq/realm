@@ -1,13 +1,18 @@
-// settlement.ts — types for the atomic RunStore.settleStep operation (issue #279, increment 1).
-// Normative spec: plans/issue-279/design-d4-increment1.md §1/§2/§3/§7 (read that record in full
-// before touching this file — it is the specification; this file's JSDoc cross-references it but
-// does not restate the predicate/transform pseudocode).
+// settlement.ts — types for the atomic RunStore.settleStep operation (issue #279).
+// Normative spec: plans/issue-279/design-d4-increment1.md §1/§2/§3/§7 (increment 1) +
+// plans/issue-279/design-d5-increment2.md §2/§3/§7 (increment 2, PR-C — this file's own gate/
+// guard/release additions). Read both records in full before touching this file — they are the
+// specification; this file's JSDoc cross-references them but does not restate the
+// predicate/transform pseudocode.
 //
-// PR-A scope: these types exist so the store operation + the pure transform + the TCK can be
-// built and forced — the ENGINE never constructs a SettlementDelta or calls settleStep in this
-// PR (see the source-text guard in index.ts's own test coverage). PR-B migrates the three seal
-// sites to use them.
-import type { EvidenceSnapshot } from './run-record.js';
+// PR-A shipped `settle_step`/`lease_finalizer`/`mark_finalizer`, dormant. PR-B migrated the three
+// seal sites to use them (shipped in v0.32.0 — three engine call sites + drainFinalizers
+// construct `settle_step`/`lease_finalizer`/`mark_finalizer` deltas today; the old "dormant until
+// PR-B" framing below is stale, corrected here). PR-C (this file's current increment) adds four
+// MORE delta kinds — `open_gate`, `settle_gate`, `settle_guard`, `release_step` — but stays
+// engine-inert for them: no engine or MCP call site constructs one yet (enforced by a source-text
+// guard, deleted when PR-D migrates the five remaining legacy write sites).
+import type { EvidenceSnapshot, PendingGate } from './run-record.js';
 
 /** The three outcomes a `settle_step` delta's caller can report for the step being settled —
  *  mirrors the THREE seal call sites (:2560 complete, :2220 fail, :1784 handler-abort) this
@@ -85,9 +90,112 @@ export interface MarkFinalizerDelta {
   evidence: EvidenceSnapshot;
 }
 
-/** The three delta kinds `RunStore.settleStep` accepts (design record §1). A concrete discriminated
- *  union — no structural intersections, no duck-typing. */
-export type SettlementDelta = SettleStepDelta | LeaseFinalizerDelta | MarkFinalizerDelta;
+/**
+ * Opens a human gate on a claimed step (issue #279, increment 2, PR-C; design record
+ * `design-d5-increment2.md` §2/§3 `openGateArms`). `pendingGate` is carried VERBATIM into
+ * `RunRecord.pending_gate` — the transform never re-derives or re-shapes it; the caller (the
+ * migrated gate-open site, PR-D) builds the full {@link PendingGate} object (gate_id, choices,
+ * preview, etc.) exactly as the legacy `store.update()` call at execution-loop.ts:2956-2995 does
+ * today. `claimToken` is compared the same absent≡absent way `SettleStepDelta.claimToken` is.
+ */
+export interface OpenGateDelta {
+  kind: 'open_gate';
+  step: string;
+  claimToken?: string;
+  pendingGate: PendingGate;
+  evidence: EvidenceSnapshot[];
+}
+
+/**
+ * Resolves an open gate with a human's choice (issue #279, increment 2, PR-C; design record §2/§3
+ * `settleGateArms`). Fenced by `gateId` ONLY — zero claim arms (§3's own note: "fence = gateId
+ * ONLY (L20)"), since a gate's authority is bearer-gateId-credentialed (D-5: RECORDED, not
+ * enforced — `respondedBy` below is an evidence passthrough, read by no arm).
+ */
+export interface SettleGateDelta {
+  kind: 'settle_gate';
+  gateId: string;
+  choice: string;
+  /** Unenforced attribution passthrough (design record D-5, pedestal fold) — flows into the
+   *  gate_response evidence snapshot the migrated caller (PR-D) builds; no arm in this file ever
+   *  reads it. Omit when the caller has no attribution to record. */
+  respondedBy?: string;
+  evidence: EvidenceSnapshot[];
+}
+
+/**
+ * Records a guard step's evaluated outcome (issue #279, increment 2, PR-C; design record §2/§3
+ * `settleGuardArms`). Guards are never claimed (`eligibility.ts:418` — `findEligibleGuardSteps`
+ * has no claim concept), so this delta carries no `claimToken` at all — fence = ⊥. `evidence` is
+ * SINGULAR (the `MarkFinalizerDelta` precedent — one guard evaluation, one evidence snapshot),
+ * unlike `SettleStepDelta.evidence`'s array.
+ *
+ * `resolutionError` is REQUIRED when `outcome === 'resolution_error'`; `abort` is REQUIRED when
+ * `outcome === 'abort'` — a violation of either throws a plain contract-violation `Error` in the
+ * transform (the `settlement.ts:228-234` precedent), never a `WorkflowError` (a caller-programming
+ * error, not a predicate outcome).
+ */
+export interface SettleGuardDelta {
+  kind: 'settle_guard';
+  step: string;
+  outcome: 'pass' | 'resolution_error' | 'abort';
+  evidence: EvidenceSnapshot;
+  /** REQUIRED iff `outcome === 'resolution_error'` — feeds the terminal_reason string minted at
+   *  execution-loop.ts:3671 ("Guard step '<s>' failed: unresolvable path '<p>'"). */
+  resolutionError?: { condition: string; unresolvable_path: string };
+  /** REQUIRED iff `outcome === 'abort'` — mirrors `RunRecord.aborted_at`'s shipped shape
+   *  (`run-record.ts:426-430`, the `GuardConditionResult` object array — NOT `string[]`; a
+   *  record defect in an earlier design draft, corrected at the PR-C prompt audit). `step_id` on
+   *  the eventual `aborted_at` payload is always `delta.step` — never carried separately here. */
+  abort?: {
+    conditions: Array<{ condition: string; resolved_value: unknown; passed: boolean }>;
+    abort_message?: string;
+  };
+  /** Forensic-only provenance (design record §2, lane-B steal 2 — the K8s `observedGeneration`
+   *  analogue): the run version this guard's conditions were evaluated AGAINST, so a stale-
+   *  predicate refusal is self-explaining (evaluated-at vs refused-at). Read by no arm. */
+  evaluatedAtVersion?: number;
+}
+
+/**
+ * Releases a claim without settling the step (issue #279, increment 2, PR-C; design record §2/§3
+ * `releaseStepArms`) — the shared shape behind BOTH the capability-block release
+ * (execution-loop.ts:2453-2529) and the compensating un-claim (execution-loop.ts:1607-1635).
+ * NEVER terminal, writes NO `settled` entry — the step returns to eligible.
+ */
+export interface ReleaseStepDelta {
+  kind: 'release_step';
+  step: string;
+  claimToken?: string;
+  /** Optional-additive capability-block marker merge (execution-loop.ts:2461-2475 semantics). */
+  capabilityBlock?: { requirement: { kind: 'handler' | 'adapter'; name: string }; code: string };
+  /** Optional-additive evidence append (execution-loop.ts:679 semantics — the compensating
+   *  un-claim's own audit snapshot). Absent for a capability-block release, which appends its
+   *  evidence via `allEvidence` at the migrated call site instead (PR-D concern). */
+  evidence?: EvidenceSnapshot[];
+}
+
+/**
+ * The delta kinds `RunStore.settleStep` accepts (design record §1/§2). A concrete discriminated
+ * union — no structural intersections, no duck-typing.
+ *
+ * **Union-openness contract (issue #279, increment 2, PR-C — design record §2, angles fold 1):**
+ * this union is OPEN — kinds may be added in future minors (e.g. the increment-3 per-gate-timeout
+ * candidate on the design record's residuals list). A RE-IMPLEMENTING store (a multi-statement
+ * backend, e.g. a future Postgres store's `settleStepForTenant`) MUST refuse-loud (throw a
+ * contract-violation error) on an unrecognized `kind` — NEVER default-arm it. Silently applying an
+ * unrecognized kind's fields under a generic/default case is actively dangerous: `SettleGateDelta`
+ * has no `step` field at all, so a default-arm implementation reading `delta.step` would silently
+ * mis-write (write `undefined` as a step name) rather than crash where the bug is introduced.
+ */
+export type SettlementDelta =
+  | SettleStepDelta
+  | LeaseFinalizerDelta
+  | MarkFinalizerDelta
+  | OpenGateDelta
+  | SettleGateDelta
+  | SettleGuardDelta
+  | ReleaseStepDelta;
 
 /**
  * Every refusal/noop literal `applySettlement`/`settleStep` can RETURN as `SettlementResult.reason`
@@ -100,6 +208,8 @@ export type SettlementRefusalReason =
   | 'already_settled'
   | 'already_leased'
   | 'already_marked'
+  | 'already_released'
+  | 'already_open'
   // settle_step refusals
   | 'already_settled_by_other'
   | 'settled_outcome_divergence'
@@ -113,16 +223,23 @@ export type SettlementRefusalReason =
   | 'lease_held'
   | 'lease_lost'
   | 'rank_blocked'
-  | 'not_eligible';
+  | 'not_eligible'
+  // issue #279, increment 2 (PR-C — design record §2/§7): open_gate/settle_gate/settle_guard
+  // refusals.
+  | 'gate_choice_conflict'
+  | 'choice_not_eligible'
+  | 'gate_open_wait';
 
 /**
  * The ok-shaped NOOP subset of {@link SettlementRefusalReason} (design record §7: "ok-shaped
  * NOOP" — envelope-calm, `context_hint` never `report_to_user`, I15). L1's "routine same-run
  * fan-out produces ZERO refusals" acceptance sentence is stated against the NON-noop subset: a
- * same-token retry landing as one of these three is an idempotent no-op, never counted as a
- * refusal. L13/L21 discriminate on this sub-union explicitly.
+ * same-token retry landing as one of these is an idempotent no-op, never counted as a refusal.
+ * L13/L21 discriminate on this sub-union explicitly. `already_released` (release_step) and
+ * `already_open` (open_gate) joined in increment 2, PR-C — design record §2/§7.
  */
-export type SettlementNoopReason = 'already_settled' | 'already_leased' | 'already_marked';
+export type SettlementNoopReason =
+  'already_settled' | 'already_leased' | 'already_marked' | 'already_released' | 'already_open';
 
 /**
  * Result of applying one {@link SettlementDelta} against fresh state (design record §2, normative
@@ -143,9 +260,12 @@ export type SettlementResult =
   | {
       applied: true;
       run: import('./run-record.js').RunRecord;
-      /** Whether THIS apply caused the terminal false→true edge (settle_step only — a
-       *  lease/mark delta's `isTerminal(fresh)` precondition means the run was already terminal
-       *  both before and after, so it is always `false` for those two kinds). */
+      /** Whether THIS apply caused the terminal false→true edge. `settle_step`, `settle_gate`
+       *  (resolution-completes), and `settle_guard` (pass-completes) can all terminalize (issue
+       *  #279, increment 2, PR-C; design record §2/§4) — a `lease_finalizer`/`mark_finalizer`
+       *  delta's `isTerminal(fresh)` precondition means the run was already terminal both before
+       *  and after, so it is always `false` for those two kinds; `open_gate`/`release_step` never
+       *  terminalize by construction (design record §4.1). */
       transitioned: boolean;
       /** The current pending finalizer set on `run.finalizer_ledger`, by ascending `rank` —
        *  a convenience snapshot so a caller can decide whether to invoke the drain verb without
@@ -158,4 +278,19 @@ export type SettlementResult =
       applied: false;
       reason: SettlementRefusalReason;
       run: import('./run-record.js').RunRecord;
+      /** Present ONLY when `reason === 'already_open'` — the LIVE `pending_gate`, rendered
+       *  VERBATIM (issue #279, increment 2, PR-C; design record §3 `openGateArms`: "D-1: LIVE
+       *  gate wins, rendered VERBATIM"). Read by no other arm; a caller (PR-D) surfaces it as the
+       *  NOOP's own data. */
+      gate?: PendingGate;
+      /** Present ONLY when `reason === 'gate_choice_conflict'` — the choice that already won
+       *  (issue #279, increment 2, PR-C; design record §3 `settleGateArms`). */
+      winningChoice?: string;
+      /** Present ONLY when `reason === 'choice_not_eligible'` — the gate's valid choices (issue
+       *  #279, increment 2, PR-C; design record §3 `settleGateArms`). */
+      choices?: string[];
+      /** Present ONLY when `reason === 'settled_outcome_divergence'` — a human-readable
+       *  description of the persisted membership that conflicts with the delta's own outcome
+       *  (issue #279, increment 2, PR-C; design record §3 `settleGuardArms`). */
+      persisted?: string;
     };

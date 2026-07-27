@@ -39,9 +39,15 @@ export async function resumeRun(
   runStore: RunStore,
   workflowStore: WorkflowRegistrar,
   opts: ResumeOptions = {},
-): Promise<{ voided: ApplyResumeVoidedFinalizer[] }> {
-  const { WorkflowError, applyResume, RESUMABLE_PHASES, classifyClaim, DRAIN_LEASE_MAX } =
-    await import('@sensigo/realm');
+): Promise<{ voided: ApplyResumeVoidedFinalizer[]; disclosures: string[] }> {
+  const {
+    WorkflowError,
+    applyResume,
+    RESUMABLE_PHASES,
+    classifyClaim,
+    DRAIN_LEASE_MAX,
+    deriveRunPhase,
+  } = await import('@sensigo/realm');
   const run = await runStore.get(runId);
 
   // §5.1 — structural, phase-independent (RESUME_REFUSES_ABORTED pin): an aborted run is never
@@ -65,7 +71,10 @@ export async function resumeRun(
     );
   }
 
-  if (!RESUMABLE_PHASES.has(run.run_phase)) {
+  // issue #279 (increment 2, PR-C — D-3 leg iv): derive, never trust the persisted run_phase — a
+  // grandfathered terminal-with-stale-gate record (the #282 class) must be admitted here on its
+  // TRUE (derived) phase, not whatever was last persisted.
+  if (!RESUMABLE_PHASES.has(deriveRunPhase(run))) {
     throw new WorkflowError(
       `Run ${runId} is in phase '${run.run_phase}', which is not resumable.`,
       {
@@ -172,9 +181,9 @@ export async function resumeRun(
     // claim_stale, or claim_unknown_age with --force: falls through — applyResume releases it.
   }
 
-  const { run: resumedRun, voided } = applyResume(run, stepName, workflow);
+  const { run: resumedRun, voided, disclosures } = applyResume(run, stepName, workflow);
   await runStore.update(resumedRun);
-  return { voided };
+  return { voided, disclosures };
 }
 
 export const resumeCommand = new Command('resume')
@@ -190,7 +199,7 @@ export const resumeCommand = new Command('resume')
     const runStore = new JsonFileStore();
     const workflowStore = new JsonWorkflowStore();
     try {
-      const { voided } = await resumeRun(runId, opts.from, runStore, workflowStore, {
+      const { voided, disclosures } = await resumeRun(runId, opts.from, runStore, workflowStore, {
         ...(opts.force !== undefined ? { force: opts.force } : {}),
       });
       console.log(
@@ -198,6 +207,11 @@ export const resumeCommand = new Command('resume')
           `Drive it with: realm agent --run-id ${runId}`,
       );
       for (const { disclosure } of voided) {
+        console.log(`  ⚠ ${disclosure}`);
+      }
+      // issue #279 (increment 2, PR-C — D-3 leg ii): a stripped zombie gate, printed AFTER the
+      // voided-finalizer lines (same `⚠` loop convention).
+      for (const disclosure of disclosures) {
         console.log(`  ⚠ ${disclosure}`);
       }
     } catch (err) {
