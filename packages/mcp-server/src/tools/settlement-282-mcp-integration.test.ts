@@ -26,6 +26,13 @@ const def: WorkflowDefinition = {
   steps: {
     a: { description: 'a', execution: 'agent', depends_on: [] },
     b: { description: 'b', execution: 'agent', depends_on: [] },
+    // Correction (MA review of reports/atomic-settle-279-pr-c.md): a THIRD step that stays
+    // VIRGIN on the grandfathered fixture below — not in completed_steps/failed_steps/
+    // skipped_steps/in_progress_steps, not the pending_gate's step_name. `stepStateOf` returns
+    // `undefined` for it, so the terminal_state check is the ONLY thing that can refuse it —
+    // unlike step 'a' (already in completed_steps), which let a reverted terminal-state guard
+    // hide behind stepStateOf's OWN (unrelated) 'completed' refusal, same code, vacuous pin.
+    c: { description: 'c', execution: 'agent', depends_on: [] },
   },
 };
 
@@ -79,19 +86,28 @@ function makeStaticStore(run: RunRecord): RunStore {
 }
 
 describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
-  it('a G record (terminal, stale persisted phase) is refused at the pre-CS check — keyed on terminal_state, not run_phase', async () => {
+  it("a G record (terminal, stale persisted phase) is refused at the pre-CS check — keyed on terminal_state, not run_phase, on a VIRGIN step ('c') so stepStateOf cannot mask a reverted guard", async () => {
     const workflowDir = await mkdtemp(join(tmpdir(), 'realm-282-append-trace-wf-'));
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
     const workflowStore = new JsonWorkflowStore(workflowDir);
     const runStore = makeStaticStore(makeGrandfathered());
     const traceBufferStore = new InMemoryTraceBufferStore();
 
+    // Correction: empty entries — the pre-CS checks (terminal_state, then stepStateOf) are the
+    // ONLY guard on this path (issue #279 D3 §2's "raw unlocked path UNCONDITIONALLY" for the
+    // empty-probe case never re-invokes the fenced guard). A non-empty append on this SAME
+    // static (always-terminal) store would ALSO get caught by the appendFenced guard's own
+    // independent terminal_state re-check (:380, unmutated) — masking a `:254`-only revert
+    // behind an unrelated, differently-sited pass. Empty entries isolates the pre-CS check.
     await expect(
       handleAppendTrace(
-        { run_id: 'g1', step_id: 'a', entries: [{ event: 'x' }] },
+        { run_id: 'g1', step_id: 'c', entries: [] },
         { runStore, workflowStore, traceBufferStore },
       ),
-    ).rejects.toMatchObject({ code: 'STATE_STEP_NOT_ELIGIBLE' });
+    ).rejects.toMatchObject({
+      code: 'STATE_STEP_NOT_ELIGIBLE',
+      details: { step_state: 'run_terminal' },
+    });
   });
 
   it("a two-phase store (LIVE at the pre-CS get, G at the fenced guard's own re-check) is ALSO refused — proving the guard's own keying, not just the pre-CS one", async () => {
@@ -139,12 +155,27 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
     };
     const traceBufferStore = new InMemoryTraceBufferStore();
 
+    // step 'c' is virgin on BOTH `live` and `grandfathered` (neither's completed/failed/skipped/
+    // in_progress arrays name it, and the pending_gate's step_name is 'a') — so stepStateOf
+    // returns undefined at every read, and the ONLY thing that can refuse this call at all is the
+    // guard's OWN terminal_state re-check at append-trace.ts:380 (unmutated) or its :254 sibling
+    // (which never fires here, since the pre-CS read sees `live`, not `grandfathered`).
     await expect(
       handleAppendTrace(
-        { run_id: 'g1', step_id: 'a', entries: [{ event: 'x' }] },
+        { run_id: 'g1', step_id: 'c', entries: [{ event: 'x' }] },
         { runStore, workflowStore, traceBufferStore },
       ),
-    ).rejects.toMatchObject({ code: 'STATE_STEP_NOT_ELIGIBLE' });
+    ).rejects.toMatchObject({
+      code: 'STATE_STEP_NOT_ELIGIBLE',
+      details: {
+        step_state: 'run_terminal',
+        // Pins the :380 hunk's OWN derive-for-message (not just its terminal_state check): the
+        // guard's fresh read sees the GRANDFATHERED record, so the derived phase must be
+        // 'completed' (from terminal_reason) while the persisted one stays the stale 'gate_waiting'.
+        run_phase: 'completed',
+        persisted_run_phase: 'gate_waiting',
+      },
+    });
     expect(getCallCount).toBeGreaterThanOrEqual(2); // the pre-CS read AND the guard's own re-check
   });
 });
