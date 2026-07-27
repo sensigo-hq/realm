@@ -9,6 +9,7 @@ import type {
   WorkflowContextSnapshot,
   AgentTraceEntry,
   TraceNormalizationSummary,
+  PendingGate,
 } from '../types/run-record.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import { extensionIdentityDiffers } from '../types/extension-identity.js';
@@ -32,6 +33,10 @@ import type {
   SettleStepDelta,
   SettlementResult,
   MarkFinalizerResult,
+  OpenGateDelta,
+  SettleGateDelta,
+  SettleGuardDelta,
+  ReleaseStepDelta,
 } from '../types/settlement.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import {
@@ -136,6 +141,13 @@ export interface SubmitGateOptions {
    * gates on workflows with finalizers should thread their run registry here.
    */
   registry?: ExtensionRegistry;
+  /**
+   * Issue #279 (increment 2, PR-D; design record D-5): unenforced attribution passthrough — flows
+   * into the `SettleGateDelta.respondedBy` field AND the gate_response evidence snapshot's own
+   * `responded_by` field when supplied. RECORDED, not enforced (the bearer-gateId-as-sole-
+   * credential model stays authoritative); no arm ever reads it.
+   */
+  respondedBy?: string;
 }
 
 export interface ExecuteChainOptions {
@@ -658,6 +670,26 @@ function stampDefaultedSteps(sealDraft: RunRecord): RunRecord {
 }
 
 /**
+ * The compensating un-claim's own audit-evidence entry (issue #207 PR-2, D3 §5; extracted issue
+ * #279, increment 2, PR-D, Deliverable 1e — the `:679` semantics both the legacy
+ * `buildCompensatingUnclaim` below AND the migrated `release_step` delta's `evidence` field share
+ * verbatim).
+ */
+function buildCompensatingUnclaimEvidence(stepName: string, now: Date): EvidenceSnapshot {
+  return captureEvidence({
+    stepId: stepName,
+    startedAt: now,
+    completedAt: now,
+    input: {},
+    output: {
+      compensating_unclaim: true,
+      reason: 'adoption-read failure after claim',
+      unclaimed_at: now.toISOString(),
+    },
+  });
+}
+
+/**
  * Compensating un-claim (issue #207 PR-2, D3 §5): built from `pendingRun` — the record OUR OWN
  * `claimStep` call returned, never a fresh get — removing the step from `in_progress_steps` AND
  * `claims[step]` in the SAME mutation (the settle-site invariant every other settle path in this
@@ -670,17 +702,7 @@ function stampDefaultedSteps(sealDraft: RunRecord): RunRecord {
  * naturally idempotent) is simply a no-op mutation, not a special case.
  */
 function buildCompensatingUnclaim(pendingRun: RunRecord, stepName: string, now: Date): RunRecord {
-  const auditEvidence = captureEvidence({
-    stepId: stepName,
-    startedAt: now,
-    completedAt: now,
-    input: {},
-    output: {
-      compensating_unclaim: true,
-      reason: 'adoption-read failure after claim',
-      unclaimed_at: now.toISOString(),
-    },
-  });
+  const auditEvidence = buildCompensatingUnclaimEvidence(stepName, now);
   return {
     ...pendingRun,
     in_progress_steps: pendingRun.in_progress_steps.filter((s) => s !== stepName),
@@ -945,13 +967,18 @@ function computeReArmWarnings(
 }
 
 /**
- * Builds the ResponseEnvelope for a `settle_step` REFUSAL (design record §7's result/code table) —
- * shared by all three migrated seal sites (issue #279, increment 1, PR-B). `allEvidence` is
- * attached ONLY for `claim_lost`: the dispatch DID run and produce evidence; it just was not
- * recorded, so the caller should still see what happened. The four other reasons `settle_step` can
- * actually return are enumerated explicitly; the remaining nine `SettlementRefusalReason` members
- * are lease/mark-only and structurally unreachable here (a `default` throws rather than silently
- * mis-rendering one).
+ * Builds the ResponseEnvelope for a `settle_step`/`open_gate` REFUSAL (design record §7's
+ * result/code table) — shared by the three migrated `settle_step` seal sites (issue #279,
+ * increment 1, PR-B) AND the migrated gate-open site (issue #279, increment 2, PR-D; `kind:
+ * 'open_gate'`). `allEvidence` is attached ONLY for `claim_lost`: the dispatch DID run and produce
+ * evidence; it just was not recorded, so the caller should still see what happened. The reasons
+ * both callers can actually return are enumerated explicitly; every OTHER `SettlementRefusalReason`
+ * member is lease/mark/settle_gate/settle_guard/release_step-only and structurally unreachable
+ * here (a `default` throws rather than silently mis-rendering one) — `choice_not_eligible` +
+ * `gate_choice_conflict` + the settle_gate `gate_mismatch`/`run_terminal` variants are consumed at
+ * 1b's own `errorEnvelope` (submitHumanResponse), never here; `gate_open_wait` is chain-consumed
+ * (executeChainInternal's guard loop); `already_released` is site-handled at 1d/1e (never routed
+ * through this shared builder).
  */
 function buildSettlementRefusalEnvelope(
   options: ExecuteStepOptions,
@@ -959,16 +986,21 @@ function buildSettlementRefusalEnvelope(
   result: Extract<SettlementResult, { applied: false }>,
   allEvidence: EvidenceSnapshot[],
   traceWarnings: string[],
+  kind: 'settle_step' | 'open_gate' = 'settle_step',
 ): ResponseEnvelope {
   const extraWarnings = traceWarnings.length > 0 ? traceWarnings : undefined;
   switch (result.reason) {
     case 'already_settled_by_other':
     case 'settled_outcome_divergence': {
       const persisted = result.run.settled?.[options.command]?.outcome;
+      // N1 (design record §2/§11): neutral wording — never amplify a "by_other" white lie. When
+      // the persisted entry's outcome is 'gate', the step was settled by a COMPLETED GATE (a
+      // human decision resolved elsewhere), not literally "a different attempt".
+      const settledByText = persisted === 'gate' ? 'by a completed gate' : 'by a different attempt';
       const err = new WorkflowError(
         `Step '${options.command}' was already settled` +
           (persisted !== undefined ? ` with outcome '${persisted}'` : '') +
-          ` by a different attempt.`,
+          ` ${settledByText}.`,
         {
           code: 'STATE_STEP_ALREADY_SETTLED',
           category: 'STATE',
@@ -1015,25 +1047,33 @@ function buildSettlementRefusalEnvelope(
       return makeErrorEnvelope(options, result.run, err, definition, extraWarnings);
     }
     case 'gate_mismatch': {
-      const err = new WorkflowError(
-        `Step '${options.command}' is the currently open gate; resolve it via ` +
-          `submit_human_response instead of settling it directly.`,
-        {
-          code: 'STATE_BLOCKED',
-          category: 'STATE',
-          agentAction: 'resolve_precondition',
-          retryable: false,
-          details: { runId: options.runId, step: options.command },
-        },
-      );
+      // kind-discriminated (Deliverable 2): open_gate's gate_mismatch means a DIFFERENT step's
+      // gate is open (this step stays claimed — L13); settle_step's means THIS step IS the open
+      // gate and must be resolved via submit_human_response instead.
+      const message =
+        kind === 'open_gate'
+          ? `Step '${options.command}': a gate is open on another step — wait for its resolution; ` +
+            `this step stays claimed.`
+          : `Step '${options.command}' is the currently open gate; resolve it via ` +
+            `submit_human_response instead of settling it directly.`;
+      const err = new WorkflowError(message, {
+        code: 'STATE_BLOCKED',
+        category: 'STATE',
+        agentAction: 'resolve_precondition',
+        retryable: false,
+        details: { runId: options.runId, step: options.command },
+      });
       return makeErrorEnvelope(options, result.run, err, definition, extraWarnings);
     }
     default:
       // run_not_terminal / ledger_not_pending / lease_held / lease_lost / rank_blocked /
-      // not_eligible / already_leased / already_marked are lease_finalizer/mark_finalizer-only —
-      // settle_step never returns them (design record §7).
+      // not_eligible / already_leased / already_marked / already_open / already_released /
+      // gate_choice_conflict / choice_not_eligible / gate_open_wait are all consumed elsewhere
+      // (lease_finalizer/mark_finalizer's own drain loop; open_gate's own NOOP arms at the 1a call
+      // site; 1b's own errorEnvelope; 1d/1e's own site-handling; the guard chain) — settle_step and
+      // open_gate never return them here (design record §7).
       throw new Error(
-        `buildSettlementRefusalEnvelope: unreachable settle_step refusal reason '${result.reason}'`,
+        `buildSettlementRefusalEnvelope: unreachable '${kind}' refusal reason '${result.reason}'`,
       );
   }
 }
@@ -1610,12 +1650,40 @@ export async function executeStep(
           ? await options.traceBufferStore.read(options.runId, options.command)
           : [];
     } catch (err) {
-      try {
-        await store.update(buildCompensatingUnclaim(pendingRun, options.command, new Date()));
-      } catch {
-        // CAS mismatch (someone else already resolved the claim) or any other failure to even
-        // un-claim: stop immediately, leave the claim exactly as it is — never retry here.
+      // issue #279 (increment 2, PR-D, Deliverable 1e): the migrated path — settles this release
+      // atomically against FRESH state via the store's own settleStep, evidence = the SAME
+      // compensating_unclaim audit line (:679 semantics). LOG-ONLY for ALL results (applied / NOOP
+      // / any refusal / a thrown infra error) — no envelope change on any settle outcome; the
+      // ENGINE_STORE_FAILED envelope below is the disclosure regardless. Dormancy: an undeclaring
+      // store falls through to the byte-identical legacy path (I16/#169 fail-closed dormancy).
+      let unclaimDormancyWarning: string | undefined;
+      if (store.settleStep !== undefined) {
+        const unclaimToken = pendingRun.claims?.[options.command]?.token;
+        const delta: ReleaseStepDelta = {
+          kind: 'release_step',
+          step: options.command,
+          ...(unclaimToken !== undefined ? { claimToken: unclaimToken } : {}),
+          evidence: [buildCompensatingUnclaimEvidence(options.command, new Date())],
+        };
+        try {
+          await store.settleStep(options.runId, delta, definition);
+        } catch {
+          // Log-only — see the comment above; never surfaces as its own error.
+        }
+      } else {
+        // --- Legacy path (dormancy fallback — byte-identical to pre-#279 behavior) ---
+        try {
+          await store.update(buildCompensatingUnclaim(pendingRun, options.command, new Date()));
+        } catch {
+          // CAS mismatch (someone else already resolved the claim) or any other failure to even
+          // un-claim: stop immediately, leave the claim exactly as it is — never retry here.
+        }
+        // issue #279 (increment 2, PR-D): + the ONE dormancy advisory (I16) — this IS the legacy
+        // path (store.settleStep undeclared); the ENGINE_STORE_FAILED envelope below is its only
+        // carrier since this release is log-only.
+        unclaimDormancyWarning = DORMANCY_ADVISORY;
       }
+      const unclaimEnvelopeWarnings = mergeWarnings(traceWarnings, unclaimDormancyWarning);
       return makeErrorEnvelope(
         options,
         pendingRun,
@@ -1630,7 +1698,7 @@ export async function executeStep(
           },
         }),
         definition,
-        traceWarnings.length > 0 ? traceWarnings : undefined,
+        unclaimEnvelopeWarnings.length > 0 ? unclaimEnvelopeWarnings : undefined,
       );
     }
 
@@ -2478,12 +2546,60 @@ export async function executeStep(
       // (on the happy path store.update recomputes it identically via deriveRunPhase).
       const blockedRun: RunRecord = { ...blockedDraft, run_phase: deriveRunPhase(blockedDraft) };
 
+      // issue #279 (increment 2, PR-D, Deliverable 1d): the migrated path — settles this release
+      // atomically against FRESH state via the store's own settleStep. This site NEVER calls the
+      // shared buildSettlementRefusalEnvelope: regardless of write outcome (applied / NOOP
+      // already_released / any OTHER refusal / a thrown infra error), the RETURNED envelope is
+      // ALWAYS this SAME capability-block report — only whether the internal capability_blocks
+      // marker got durably persisted varies, disclosed via blockStoreWarning. Dormancy: an
+      // undeclaring store falls through to the byte-identical legacy path below (I16/#169
+      // fail-closed dormancy).
       let persistedBlockedRun: RunRecord | undefined;
       let blockStoreWarning: string | undefined;
-      try {
-        persistedBlockedRun = await store.update(blockedRun);
-      } catch (storeErr) {
-        blockStoreWarning = `Failed to persist capability block: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`;
+      let dormancyWarning: string | undefined;
+      if (store.settleStep !== undefined) {
+        const releaseClaimToken = pendingRun.claims?.[options.command]?.token;
+        const delta: ReleaseStepDelta = {
+          kind: 'release_step',
+          step: options.command,
+          ...(releaseClaimToken !== undefined ? { claimToken: releaseClaimToken } : {}),
+          capabilityBlock: {
+            requirement:
+              requirement !== undefined
+                ? { kind: requirement.kind, name: requirement.name }
+                : {
+                    kind:
+                      recoverableCode === 'ENGINE_HANDLER_NOT_REGISTERED' ? 'handler' : 'adapter',
+                    name: 'unknown',
+                  },
+            code: recoverableCode,
+          },
+          // The current :2490 append — legacy parity; the compensating un-claim's own :679
+          // audit-line channel belongs to Deliverable 1e ONLY.
+          evidence: allEvidence,
+        };
+        try {
+          const releaseResult = await store.settleStep(options.runId, delta, definition);
+          persistedBlockedRun = releaseResult.run;
+          // applied / NOOP already_released ⇒ the block envelope exactly as today (NOOP merges
+          // silently — no extra warning). ANY OTHER refusal ⇒ the same block envelope + a typed
+          // warning (never STATE_CLAIM_LOST framing) — the claim survives for reclaim either way.
+          if (!releaseResult.applied && releaseResult.reason !== 'already_released') {
+            blockStoreWarning = `capability block not persisted: ${releaseResult.reason}`;
+          }
+        } catch (storeErr) {
+          blockStoreWarning = `Failed to persist capability block: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`;
+        }
+      } else {
+        // --- Legacy path (dormancy fallback — byte-identical to pre-#279 behavior) ---
+        try {
+          persistedBlockedRun = await store.update(blockedRun);
+        } catch (storeErr) {
+          blockStoreWarning = `Failed to persist capability block: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`;
+        }
+        // issue #279 (increment 2, PR-D): + the ONE dormancy advisory (I16) — this IS the legacy
+        // path (store.settleStep undeclared).
+        dormancyWarning = DORMANCY_ADVISORY;
       }
       // issue #207 PR-2 (D3 §5): NO WAL delete belongs on this capability-block settle path — the
       // prior try/catch here was removed, not just gated. Contract-consistency hygiene, not a
@@ -2519,7 +2635,7 @@ export async function executeStep(
         status: 'error',
         data: {},
         evidence: allEvidence,
-        warnings: mergeWarnings(traceWarnings, blockStoreWarning),
+        warnings: mergeWarnings(traceWarnings, blockStoreWarning, dormancyWarning),
         errors: [dispatchError.message],
         agent_action: blockedAction,
         error_code: recoverableCode,
@@ -2951,24 +3067,200 @@ export async function executeStep(
 
     const gateConfig = stepDef!.gate;
 
+    // The PendingGate object is built EXACTLY as before, regardless of which path commits it below
+    // (issue #279, increment 2, PR-D, Deliverable 1a — the migrated `open_gate` delta carries this
+    // SAME object verbatim; the legacy fallback writes it via `store.update` unchanged).
+    const pendingGate: PendingGate = {
+      gate_id,
+      step_name,
+      preview: output,
+      choices,
+      opened_at: new Date().toISOString(),
+      ...(gateConfig?.owner !== undefined ? { owner: gateConfig.owner } : {}),
+      ...(resolvedGateMessage !== undefined ? { resolved_message: resolvedGateMessage } : {}),
+      ...(gateConfig?.resolution_messages !== undefined
+        ? { resolution_messages: gateConfig.resolution_messages }
+        : {}),
+    };
+
+    // gate.display fallback chain: gate.message resolved → step.prompt resolved → absent
+    const resolvedGateDisplay =
+      resolvedGateMessage !== undefined
+        ? resolvedGateMessage
+        : stepDef!.prompt !== undefined
+          ? renderTemplate(stepDef!.prompt, {
+              evidenceByStep: gateEvidenceCtxEarly,
+              runParams: run.params,
+              ...wfCtxSpreadEarly,
+            })
+          : undefined;
+    const resolvedGateInstructions =
+      stepDef!.instructions !== undefined
+        ? renderTemplate(stepDef!.instructions, {
+            evidenceByStep: gateEvidenceCtxEarly,
+            runParams: run.params,
+            ...wfCtxSpreadEarly,
+          })
+        : undefined;
+
+    function buildGateNextAction(id: string, gateChoices: string[], forStep: string): NextAction {
+      return {
+        instruction: {
+          tool: 'submit_human_response',
+          params: { run_id: options.runId, gate_id: id },
+          call_with: {
+            run_id: options.runId,
+            gate_id: id,
+            choice: `<${gateChoices.join('|')}>`,
+          },
+        },
+        human_readable: `Human review required for step '${forStep}'. Present gate.display to the user, wait for their choice from gate.response_spec.choices, then call submit_human_response.`,
+        orientation: `Run is paused at gate '${id}'. Available choices: ${gateChoices.join(', ')}.`,
+      };
+    }
+
+    // issue #279 (increment 2, PR-D, Deliverable 1a): the migrated path — opens this gate
+    // atomically against FRESH state via the store's own settleStep. Dormancy: an undeclaring
+    // store falls through to the byte-identical legacy path below (I16/#169 fail-closed dormancy).
+    if (store.settleStep !== undefined) {
+      const openClaimToken = pendingRun.claims?.[options.command]?.token;
+      const delta: OpenGateDelta = {
+        kind: 'open_gate',
+        step: options.command,
+        ...(openClaimToken !== undefined ? { claimToken: openClaimToken } : {}),
+        pendingGate,
+        evidence: allEvidence,
+      };
+      let result: SettlementResult;
+      try {
+        result = await store.settleStep(options.runId, delta, definition);
+      } catch (err) {
+        // THROWN infra errors — the same catch shape replicated at every migrated site.
+        if (err instanceof WorkflowError) {
+          return makeErrorEnvelope(
+            options,
+            pendingRun,
+            err,
+            definition,
+            traceWarnings.length > 0 ? traceWarnings : undefined,
+          );
+        }
+        const internal = new WorkflowError('Failed to open gate', {
+          code: 'ENGINE_STORE_FAILED',
+          category: 'ENGINE',
+          agentAction: 'stop',
+          retryable: false,
+        });
+        return makeErrorEnvelope(
+          options,
+          pendingRun,
+          internal,
+          definition,
+          traceWarnings.length > 0 ? traceWarnings : undefined,
+        );
+      }
+
+      if (!result.applied) {
+        if (result.reason === 'already_settled') {
+          // Ok-shaped NOOP — buildAlreadySettledEnvelope's SHAPE but WITHOUT its drain clause:
+          // gate-open NEVER drains (design record §6 row 1 — the crashed-drain recovery paths are
+          // the resolution site's own NOOP drain and the drain verb).
+          const noopRun = result.run;
+          const noopNextActions = noopRun.terminal_state
+            ? []
+            : buildNextActions(definition, noopRun);
+          return {
+            command: options.command,
+            run_id: options.runId,
+            run_version: noopRun.version,
+            status: 'ok',
+            data: {},
+            evidence: [],
+            warnings: [...traceWarnings],
+            errors: [],
+            context_hint: `Step '${options.command}' was already settled (a duplicate/retried attempt) — no action was taken.`,
+            run_phase: noopRun.run_phase,
+            next_actions: noopNextActions,
+          };
+        }
+        if (result.reason === 'already_open') {
+          // D-1: the LIVE gate wins — rendered VERBATIM (this delta's own rebuilt gate is
+          // discarded). Calm, confirm_required (the gate genuinely IS still open) — never
+          // report_to_user (no `agent_action` set, matching the fresh-open confirm_required shape).
+          const liveGate = result.gate!;
+          return {
+            command: options.command,
+            run_id: options.runId,
+            run_version: result.run.version,
+            status: 'confirm_required',
+            data: liveGate.preview,
+            evidence: [],
+            warnings: [...traceWarnings],
+            errors: [],
+            context_hint: `Run is already paused at gate '${liveGate.gate_id}'. Available choices: ${liveGate.choices.join(', ')}.`,
+            run_phase: result.run.run_phase,
+            next_actions: [
+              buildGateNextAction(liveGate.gate_id, liveGate.choices, liveGate.step_name),
+            ],
+            gate: {
+              gate_id: liveGate.gate_id,
+              step_name: liveGate.step_name,
+              preview: liveGate.preview,
+              choices: liveGate.choices,
+              ...(liveGate.resolved_message !== undefined
+                ? { display: liveGate.resolved_message }
+                : {}),
+              response_spec: { choices: liveGate.choices },
+            },
+          };
+        }
+        return buildSettlementRefusalEnvelope(
+          options,
+          definition,
+          result,
+          allEvidence,
+          traceWarnings,
+          'open_gate',
+        );
+      }
+
+      // applied: true — never terminalizes (design record §4.1); build confirm_required off
+      // result.run.
+      const gateRun = result.run;
+      return {
+        command: options.command,
+        run_id: options.runId,
+        run_version: gateRun.version,
+        status: 'confirm_required',
+        data: output,
+        evidence: allEvidence,
+        warnings: [...traceWarnings],
+        errors: [],
+        context_hint: `Run is paused at gate '${gate_id}'. Available choices: ${choices.join(', ')}.`,
+        run_phase: gateRun.run_phase,
+        next_actions: [buildGateNextAction(gate_id, choices, step_name)],
+        gate: {
+          gate_id,
+          step_name,
+          preview: output,
+          choices,
+          ...(resolvedGateDisplay !== undefined ? { display: resolvedGateDisplay } : {}),
+          ...(resolvedGateInstructions !== undefined
+            ? { agent_hint: resolvedGateInstructions }
+            : {}),
+          response_spec: { choices },
+        },
+      };
+    }
+
+    // --- Legacy path (dormancy fallback — byte-identical to pre-#279 behavior) ---
     let gateRun: RunRecord;
     try {
       gateRun = await store.update({
         ...pendingRun,
         // Step stays in in_progress_steps while gate is open — moved to completed on submit.
         evidence: [...pendingRun.evidence, ...allEvidence],
-        pending_gate: {
-          gate_id,
-          step_name,
-          preview: output,
-          choices,
-          opened_at: new Date().toISOString(),
-          ...(gateConfig?.owner !== undefined ? { owner: gateConfig.owner } : {}),
-          ...(resolvedGateMessage !== undefined ? { resolved_message: resolvedGateMessage } : {}),
-          ...(gateConfig?.resolution_messages !== undefined
-            ? { resolution_messages: gateConfig.resolution_messages }
-            : {}),
-        },
+        pending_gate: pendingGate,
       });
     } catch (err) {
       if (err instanceof WorkflowError) {
@@ -2994,40 +3286,6 @@ export async function executeStep(
       );
     }
 
-    // gate.display fallback chain: gate.message resolved → step.prompt resolved → absent
-    const resolvedGateDisplay =
-      resolvedGateMessage !== undefined
-        ? resolvedGateMessage
-        : stepDef!.prompt !== undefined
-          ? renderTemplate(stepDef!.prompt, {
-              evidenceByStep: gateEvidenceCtxEarly,
-              runParams: run.params,
-              ...wfCtxSpreadEarly,
-            })
-          : undefined;
-    const resolvedGateInstructions =
-      stepDef!.instructions !== undefined
-        ? renderTemplate(stepDef!.instructions, {
-            evidenceByStep: gateEvidenceCtxEarly,
-            runParams: run.params,
-            ...wfCtxSpreadEarly,
-          })
-        : undefined;
-
-    const gateNextAction: NextAction = {
-      instruction: {
-        tool: 'submit_human_response',
-        params: { run_id: options.runId, gate_id },
-        call_with: {
-          run_id: options.runId,
-          gate_id,
-          choice: `<${choices.join('|')}>`,
-        },
-      },
-      human_readable: `Human review required for step '${options.command}'. Present gate.display to the user, wait for their choice from gate.response_spec.choices, then call submit_human_response.`,
-      orientation: `Run is paused at gate '${gate_id}'. Available choices: ${choices.join(', ')}.`,
-    };
-
     return {
       command: options.command,
       run_id: options.runId,
@@ -3035,11 +3293,11 @@ export async function executeStep(
       status: 'confirm_required',
       data: output,
       evidence: allEvidence,
-      warnings: [...traceWarnings],
+      warnings: mergeWarnings(traceWarnings, DORMANCY_ADVISORY),
       errors: [],
       context_hint: `Run is paused at gate '${gate_id}'. Available choices: ${choices.join(', ')}.`,
       run_phase: gateRun.run_phase,
-      next_actions: [gateNextAction],
+      next_actions: [buildGateNextAction(gate_id, choices, step_name)],
       gate: {
         gate_id,
         step_name,
@@ -3404,6 +3662,45 @@ export async function executeStep(
  * Submits a human response for a gate-waiting run.
  * Validates the gate_id and choice, then moves the step to completed_steps.
  */
+/** Finds the settled step name for a resolved gate matching `gateId` (issue #279, increment 2,
+ *  PR-D) — a LOCAL mirror of settlement.ts's own `findSettledGateEntry` (not imported: this file
+ *  touches settlement.ts ONLY for Deliverable 3's cancel-trail `gate_id` addition). Used to recover
+ *  a reliable step name off `result.run.settled` for the `already_settled`/`gate_choice_conflict`
+ *  envelopes, since the caller's own pre-read may already be stale by the time either of those
+ *  fires (the gate could have resolved before this call's own Step-1 read). */
+function findGateStepName(run: RunRecord, gateId: string): string | undefined {
+  for (const [step, entry] of Object.entries(run.settled ?? {})) {
+    if (entry.outcome === 'gate' && entry.token === gateId) return step;
+  }
+  return undefined;
+}
+
+/** Builds the gate_response evidence snapshot (issue #279, increment 2, PR-D, Deliverable 1b) —
+ *  the SAME shape submitHumanResponse's legacy path has always built (mirrors execution-loop.ts's
+ *  own pre-PR-D Step 5), extracted so both the migrated and legacy paths construct it identically.
+ *  `respondedBy`, when supplied, populates the snapshot's own `responded_by` field (design record
+ *  D-5) in addition to the delta's own field. */
+function buildGateResponseSnapshot(
+  gate: PendingGate,
+  choice: string,
+  respondedAt: Date,
+  respondedBy: string | undefined,
+): EvidenceSnapshot {
+  const gateEvidence = captureEvidence({
+    stepId: gate.step_name,
+    startedAt: new Date(gate.opened_at),
+    completedAt: respondedAt,
+    input: { choice },
+    output: { ...gate.preview, choice },
+  });
+  return {
+    ...gateEvidence,
+    kind: 'gate_response' as const,
+    ...(gate.resolved_message !== undefined ? { gate_message: gate.resolved_message } : {}),
+    ...(respondedBy !== undefined ? { responded_by: respondedBy } : {}),
+  };
+}
+
 export async function submitHumanResponse(
   store: RunStore,
   definition: WorkflowDefinition,
@@ -3425,6 +3722,319 @@ export async function submitHumanResponse(
           });
     return errorEnvelope('submit_gate', options.runId, 0, e);
   }
+
+  // issue #279 (increment 2, PR-D, Deliverable 1b): the migrated path — the four legacy
+  // verify-arms below (1a-4) become settle_gate's OWN predicate arms; this branch skips them
+  // entirely and settles atomically against FRESH state via the store's own settleStep. Dormancy:
+  // an undeclaring store falls through to the byte-identical legacy path below (I16/#169
+  // fail-closed dormancy).
+  if (store.settleStep !== undefined) {
+    const respondedAt = new Date();
+    // Evidence rule (design record §6 lens-3 S2): built from the PRE-READ `pending_gate` IFF it
+    // matches options.gateId — else `[]` (the arm can never APPLY against a non-matching fresh
+    // read either, so an empty evidence array is inert there; a matching pre-read is guaranteed
+    // fresh enough to be correct on `applied: true`, since gate_id is a per-attempt-minted UUID
+    // that can never "come back" once resolved/absent).
+    const gateResponseEvidence: EvidenceSnapshot[] =
+      run.pending_gate !== undefined && run.pending_gate.gate_id === options.gateId
+        ? [
+            buildGateResponseSnapshot(
+              run.pending_gate,
+              options.choice,
+              respondedAt,
+              options.respondedBy,
+            ),
+          ]
+        : [];
+    const delta: SettleGateDelta = {
+      kind: 'settle_gate',
+      gateId: options.gateId,
+      choice: options.choice,
+      ...(options.respondedBy !== undefined ? { respondedBy: options.respondedBy } : {}),
+      evidence: gateResponseEvidence,
+    };
+
+    let result: SettlementResult;
+    try {
+      result = await store.settleStep(options.runId, delta, definition);
+    } catch (err) {
+      // Thrown infra errors keep the SAME shape as the legacy path's own final-persist catch,
+      // below (design record §6: "thrown infra errors ALSO keep the :3563-3581 shape").
+      const e =
+        err instanceof WorkflowError
+          ? err
+          : new WorkflowError('Failed to persist gate response', {
+              code: 'ENGINE_STORE_FAILED',
+              category: 'ENGINE',
+              agentAction: 'stop',
+              retryable: false,
+            });
+      return errorEnvelope(
+        run.pending_gate?.step_name ?? 'submit_gate',
+        options.runId,
+        run.version,
+        e,
+        `Failed to persist gate response.`,
+        run.run_phase,
+      );
+    }
+
+    if (!result.applied) {
+      switch (result.reason) {
+        case 'already_settled': {
+          // Calm ok envelope stating the resolution already committed (same choice) — never
+          // report_to_user. Drain: on already_settled ∧ pending ledger entries non-empty — hand-
+          // rolled here (buildAlreadySettledEnvelope is ExecuteStepOptions-shaped, not reusable at
+          // this call site) — recovers a crashed-drain RESOLVE on a duplicate submit (design record
+          // §6 row 2, the buildAlreadySettledEnvelope drain-on-NOOP pattern reused verbatim).
+          const stepName = findGateStepName(result.run, options.gateId) ?? 'submit_gate';
+          let noopRun = result.run;
+          let noopDrainWarnings: string[] = [];
+          const hasPending = Object.values(noopRun.finalizer_ledger ?? {}).some(
+            (e) => e.status === 'pending',
+          );
+          if (hasPending) {
+            try {
+              const drainOutcome = await drainFinalizers(
+                store,
+                definition,
+                options.registry,
+                options.runId,
+              );
+              noopRun = drainOutcome.run;
+              noopDrainWarnings = drainOutcome.warnings;
+            } catch (err) {
+              noopDrainWarnings = [
+                `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
+              ];
+            }
+          }
+          return {
+            command: stepName,
+            run_id: options.runId,
+            run_version: noopRun.version,
+            status: 'ok',
+            data: {},
+            evidence: [],
+            warnings: mergeWarnings([], ...noopDrainWarnings),
+            errors: [],
+            context_hint: `Gate '${options.gateId}' was already resolved with choice '${options.choice}' — no action was taken.`,
+            run_phase: noopRun.run_phase,
+            next_actions: noopRun.terminal_state ? [] : buildNextActions(definition, noopRun),
+          };
+        }
+        case 'gate_choice_conflict': {
+          const stepName = findGateStepName(result.run, options.gateId);
+          const err = new WorkflowError(
+            `Gate '${options.gateId}' was already resolved with choice '${result.winningChoice}' ` +
+              `— your choice '${options.choice}' was not recorded.`,
+            {
+              code: 'STATE_BLOCKED',
+              category: 'STATE',
+              agentAction: 'report_to_user',
+              retryable: false,
+              details: {
+                runId: options.runId,
+                gateId: options.gateId,
+                winning_choice: result.winningChoice,
+              },
+            },
+          );
+          return errorEnvelope(
+            stepName ?? 'submit_gate',
+            options.runId,
+            result.run.version,
+            err,
+            err.message,
+            result.run.run_phase,
+          );
+        }
+        case 'choice_not_eligible': {
+          // VALIDATION_INPUT_SCHEMA envelope — parity with the legacy path's own step 4 (below).
+          const stepName = result.run.pending_gate!.step_name; // the arm only reaches this check
+          // when fresh.pending_gate.gate_id === gateId, so this is reliably the live gate's step.
+          const expected = (result.choices ?? []).join(', ');
+          const err = new WorkflowError(
+            `Choice '${options.choice}' is not valid. Expected one of: ${expected}`,
+            {
+              code: 'VALIDATION_INPUT_SCHEMA',
+              category: 'VALIDATION',
+              agentAction: 'report_to_user',
+              retryable: false,
+            },
+          );
+          return errorEnvelope(
+            stepName,
+            options.runId,
+            result.run.version,
+            err,
+            `Invalid choice '${options.choice}' for gate '${stepName}'.`,
+            result.run.run_phase,
+          );
+        }
+        case 'gate_mismatch': {
+          const err = new WorkflowError(
+            `Gate '${options.gateId}' is not the open gate and matches no committed resolution.`,
+            {
+              code: 'STATE_BLOCKED',
+              category: 'STATE',
+              agentAction: 'report_to_user',
+              retryable: false,
+              details: { runId: options.runId, gateId: options.gateId },
+            },
+          );
+          return errorEnvelope(
+            'submit_gate',
+            options.runId,
+            result.run.version,
+            err,
+            err.message,
+            result.run.run_phase,
+          );
+        }
+        case 'run_terminal': {
+          // Composed cancelled-predicate (design record §5 D-4/§11 N10): any gate_cancelled_by_abort
+          // skip detail ⇒ the cancelled variant ("your choice was NOT recorded" + cause) — bound by
+          // gate_id equality once that field is populated (PR-D+), else by presence alone (pre-PR-D
+          // records, N10). No match ⇒ the zombie/grandfathered variant + the resume-clears/purge
+          // pointer.
+          const cancelEntry = Object.entries(result.run.skip_details ?? {}).find(
+            ([, d]) => d.kind === 'gate_cancelled_by_abort',
+          );
+          const cancelDetail = cancelEntry?.[1] as
+            { kind: 'gate_cancelled_by_abort'; gate_id?: string } | undefined;
+          const isCancelledMatch =
+            cancelEntry !== undefined &&
+            (cancelDetail!.gate_id === undefined || cancelDetail!.gate_id === options.gateId);
+          if (isCancelledMatch) {
+            const [cancelledStep] = cancelEntry!;
+            const abortedBy = result.run.aborted_at?.step_id;
+            const err = new WorkflowError(
+              `Gate '${options.gateId}' on '${cancelledStep}' was cancelled when ` +
+                `'${abortedBy ?? 'another step'}' aborted the run — your choice was NOT recorded.`,
+              {
+                code: 'STATE_RUN_TERMINAL',
+                category: 'STATE',
+                agentAction: 'report_to_user',
+                retryable: false,
+                details: {
+                  runId: options.runId,
+                  run_phase: result.run.run_phase,
+                  gate_id: options.gateId,
+                  step_name: cancelledStep,
+                  ...(abortedBy !== undefined ? { aborted_by: abortedBy } : {}),
+                },
+              },
+            );
+            return errorEnvelope(
+              cancelledStep,
+              options.runId,
+              result.run.version,
+              err,
+              err.message,
+              result.run.run_phase,
+            );
+          }
+          // Zombie/grandfathered variant — the #282 class: a terminal record may still carry a
+          // stale pending_gate (never cleared), which is the best-effort step label here.
+          const zombieStep = result.run.pending_gate?.step_name ?? 'submit_gate';
+          const err = new WorkflowError(
+            `Run '${options.runId}' is terminal; cannot submit a gate response — 'realm resume' ` +
+              `clears a stale pending gate on a resumable run, or 'realm run purge' removes the ` +
+              `record entirely.`,
+            {
+              code: 'STATE_RUN_TERMINAL',
+              category: 'STATE',
+              agentAction: 'report_to_user',
+              retryable: false,
+              details: { runId: options.runId, run_phase: result.run.run_phase },
+            },
+          );
+          return errorEnvelope(
+            zombieStep,
+            options.runId,
+            result.run.version,
+            err,
+            err.message,
+            result.run.run_phase,
+          );
+        }
+        default:
+          // gate_open_wait/already_open/already_released/choice_not_eligible's siblings and every
+          // other kind's own reason are unreachable here — settle_gate never returns them (design
+          // record §7).
+          throw new Error(
+            `submitHumanResponse: unreachable settle_gate refusal reason '${result.reason}'`,
+          );
+      }
+    }
+
+    // applied: true. Reliable step name: the pre-read's pending_gate.step_name (guaranteed
+    // correct whenever `applied` is true — see the evidence-rule comment above).
+    const resolvedGateStepName = run.pending_gate!.step_name;
+
+    // Drain: on transitioned OR (already_settled ∧ pending ledger entries non-empty) — hand-rolled
+    // (buildAlreadySettledEnvelope is ExecuteStepOptions-shaped, not reusable here). `applied:
+    // true` never reaches the already_settled leg, so only the `transitioned` disjunct applies at
+    // THIS call site (design record §6 row 2).
+    let finalRun = result.run;
+    let drainWarnings: string[] = [];
+    if (result.transitioned) {
+      try {
+        const drainOutcome = await drainFinalizers(
+          store,
+          definition,
+          options.registry,
+          options.runId,
+        );
+        finalRun = drainOutcome.run;
+        drainWarnings = drainOutcome.warnings;
+      } catch (err) {
+        drainWarnings = [
+          `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
+        ];
+      }
+    }
+
+    // Convergence hint (design record D-2 N8 narrowing, pedestal steal — must not drop): after a
+    // committed RESOLVE, when a guard is thereby eligible, append one line per eligible guard.
+    // findEligibleGuardSteps self-filters terminal runs (returns [] there), so this is inert on a
+    // gate-completion terminal transition.
+    const convergenceHints = findEligibleGuardSteps(definition, finalRun).map(
+      (name) => `guard '${name}' now eligible — converges at the next drive`,
+    );
+
+    const defaultedStepsDurabilityWarning =
+      finalRun.defaulted_steps !== undefined &&
+      finalRun.defaulted_steps.length > 0 &&
+      !persistsField(store, 'defaulted_steps')
+        ? 'run-level defaultedness marker (defaulted_steps) not durable on this store'
+        : undefined;
+
+    const migratedNextActions = finalRun.terminal_state
+      ? []
+      : buildNextActions(definition, finalRun);
+    const migratedOrientation = finalRun.terminal_state
+      ? `Run completed (phase: '${finalRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
+      : `Gate '${resolvedGateStepName}' resolved with choice '${options.choice}'. ${migratedNextActions.length} step(s) now available.`;
+
+    return {
+      command: resolvedGateStepName,
+      run_id: options.runId,
+      run_version: finalRun.version,
+      status: 'ok',
+      data: { ...run.pending_gate!.preview, choice: options.choice },
+      evidence: [],
+      warnings: mergeWarnings(convergenceHints, ...drainWarnings, defaultedStepsDurabilityWarning),
+      errors: [],
+      context_hint: migratedOrientation,
+      run_phase: finalRun.run_phase,
+      next_actions: migratedNextActions,
+      ...(finalRun.defaulted_steps?.length ? { defaulted_steps: finalRun.defaulted_steps } : {}),
+    };
+  }
+
+  // --- Legacy path (dormancy fallback — byte-identical to pre-#279 behavior) ---
 
   // 1a. Defensive terminal guard (mirrors #91/#95): a late gate response must never re-drive a
   // run that has already reached a terminal phase.
@@ -3599,7 +4209,9 @@ export async function submitHumanResponse(
     // envelope flag (do NOT add an evidence scan to recompute it). Its disclosure surface is the
     // run-level `defaulted_steps` marker below, plus whatever the gate-open envelope already
     // warned the human with.
-    warnings: mergeWarnings([], defaultedStepsDurabilityWarning),
+    // issue #279 (increment 2, PR-D): + the ONE dormancy advisory (I16) — this IS the legacy path
+    // (store.settleStep undeclared).
+    warnings: mergeWarnings([], defaultedStepsDurabilityWarning, DORMANCY_ADVISORY),
     errors: [],
     context_hint: orientation,
     run_phase: savedRun.run_phase,
@@ -4150,17 +4762,274 @@ async function executeChainInternal(
   // Execute any eligible guard steps inline before looking for the next auto step.
   // Guard steps are synchronous engine decisions — not returned to the agent.
   // Loop to handle cascading guards (guard A passes → guard B becomes eligible).
+  // issue #279 (increment 2, PR-D, Deliverable 1c): non-abort settled_outcome_divergence warnings
+  // ADVANCE the chain but must still surface somewhere — carried here and merged into whichever
+  // envelope eventually returns (the guardsRan rebuild below, or a migrated terminal return).
+  const guardWarnings: string[] = [];
   let guardEligible = findEligibleGuardSteps(definition, run);
   while (guardEligible.length > 0) {
     const guardName = guardEligible[0]!;
     const guardStepDef = definition.steps[guardName]!;
 
-    // Execute inline (pure in-memory; returns updated RunRecord).
+    // Execute inline (pure in-memory; returns updated RunRecord). executeGuardStep stays PURE and
+    // UNTOUCHED (design record §1) — both the migrated and legacy paths below call it identically.
     const guardResult = await executeGuardStep(guardName, guardStepDef, definition, run);
 
     // Capture the guard's OWN evidence (its last entry) BEFORE the finalizer drain appends
     // finalizer evidence — the terminal return below surfaces only the guard's evidence.
     const guardOwnEvidence = guardResult.evidence.slice(-1);
+
+    // issue #279 (increment 2, PR-D, Deliverable 1c): the migrated path — settles this guard's
+    // evaluated outcome atomically against FRESH state via the store's own settleStep. Dormancy:
+    // an undeclaring store falls through to the byte-identical legacy path below (I16/#169
+    // fail-closed dormancy).
+    if (store.settleStep !== undefined) {
+      // Extraction rule (design record §2, normative): reverse-classify guardResult's SEALED
+      // output by MEMBERSHIP — NEVER the terminal_state ternary below (wrong for a non-terminal
+      // pass, which never sets terminal_state at all).
+      const guardSettleOutcome: 'pass' | 'resolution_error' | 'abort' =
+        guardResult.aborted_at !== undefined
+          ? 'abort'
+          : guardResult.failed_steps.includes(guardName)
+            ? 'resolution_error'
+            : 'pass'; // the only remaining membership — completed_steps.includes(guardName)
+
+      let resolutionError: { condition: string; unresolvable_path: string } | undefined;
+      if (guardSettleOutcome === 'resolution_error') {
+        // Rails-compliant re-derivation (normative): normalize abort_unless to string[] (the
+        // executeGuardStep :3632-3635 shape) and re-run evaluateGuardConditions against the SAME
+        // pre-seal `run` passed to executeGuardStep — pure + deterministic, so this reproduces the
+        // discarded internal result byte-for-byte.
+        const conditions = Array.isArray(guardStepDef.abort_unless)
+          ? guardStepDef.abort_unless
+          : [guardStepDef.abort_unless!];
+        const reEvaluated = evaluateGuardConditions(conditions, buildEvidenceByStep(run));
+        if (reEvaluated.kind === 'resolution_error') {
+          resolutionError = {
+            condition: reEvaluated.condition,
+            unresolvable_path: reEvaluated.unresolvable_path,
+          };
+        }
+      }
+
+      const delta: SettleGuardDelta = {
+        kind: 'settle_guard',
+        step: guardName,
+        outcome: guardSettleOutcome,
+        evidence: guardOwnEvidence[0]!,
+        ...(resolutionError !== undefined ? { resolutionError } : {}),
+        ...(guardSettleOutcome === 'abort'
+          ? {
+              abort: {
+                conditions: guardResult.aborted_at!.conditions ?? [],
+                ...(guardResult.aborted_at!.abort_message !== undefined
+                  ? { abort_message: guardResult.aborted_at!.abort_message }
+                  : {}),
+              },
+            }
+          : {}),
+        // evaluatedAtVersion (design record §2, lane-B steal 2): the chain's OWN evaluation
+        // snapshot — this iteration's pre-settle `run.version`.
+        evaluatedAtVersion: run.version,
+      };
+
+      let guardSettleResult: SettlementResult;
+      try {
+        guardSettleResult = await store.settleStep(options.runId, delta, definition);
+      } catch (storeErr) {
+        // Thrown infra errors — the same persist-failure envelope shape the legacy path's own
+        // store.update catch (below) has always returned.
+        const msg = storeErr instanceof Error ? storeErr.message : String(storeErr);
+        return {
+          command: options.command,
+          run_id: options.runId,
+          run_version: run.version,
+          status: 'error',
+          data: {},
+          evidence: [],
+          warnings: [],
+          errors: [`Failed to persist guard step '${guardName}': ${msg}`],
+          agent_action: 'stop' as const,
+          context_hint: `Guard step '${guardName}' could not be persisted. Run state may be inconsistent.`,
+          run_phase: run.run_phase,
+          next_actions: [],
+        };
+      }
+
+      if (!guardSettleResult.applied) {
+        // Chain-consumption table (design record §6, adjudicated):
+        if (
+          guardSettleResult.reason === 'already_settled' ||
+          guardSettleResult.reason === 'gate_open_wait' ||
+          (guardSettleResult.reason === 'settled_outcome_divergence' &&
+            guardSettleOutcome !== 'abort')
+        ) {
+          // already_settled / gate_open_wait ⇒ ADVANCE, threading result.run (findEligibleGuardSteps
+          // self-filters both a now-settled guard and an open gate, so the loop naturally converges).
+          // settled_outcome_divergence on a NON-abort attempt ⇒ ADVANCE + a warning line.
+          if (guardSettleResult.reason === 'settled_outcome_divergence') {
+            guardWarnings.push(
+              `guard '${guardName}' outcome diverged from a concurrent settle` +
+                (guardSettleResult.persisted !== undefined
+                  ? ` (persisted: '${guardSettleResult.persisted}')`
+                  : '') +
+                ' — chain advanced on the persisted outcome.',
+            );
+          }
+          if (guardSettleResult.reason !== 'gate_open_wait') {
+            // "quiet" end-of-pass for gate_open_wait only — nothing was decided, so nothing is
+            // recorded; already_settled/divergence DID decide something (elsewhere), so it is.
+            chainedSteps.push({ step: guardName, run_phase: guardSettleResult.run.run_phase });
+          }
+          run = guardSettleResult.run;
+          // Drain: on already_settled ∧ pending ledger entries non-empty (design record §6, "same
+          // clause" as the transitioned leg below) — recovers a crashed-drain RESOLVE that a
+          // sibling's own settle committed but never drained.
+          if (guardSettleResult.reason === 'already_settled') {
+            const hasPending = Object.values(run.finalizer_ledger ?? {}).some(
+              (e) => e.status === 'pending',
+            );
+            if (hasPending) {
+              try {
+                const drainOutcome = await drainFinalizers(
+                  store,
+                  definition,
+                  options.registry,
+                  options.runId,
+                );
+                run = drainOutcome.run;
+                if (drainOutcome.warnings.length > 0) guardWarnings.push(...drainOutcome.warnings);
+              } catch (err) {
+                guardWarnings.push(
+                  `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
+            }
+          }
+          guardEligible = findEligibleGuardSteps(definition, run);
+          continue;
+        }
+        if (guardSettleResult.reason === 'settled_outcome_divergence') {
+          // ABORT leg only ⇒ report_to_user + chain-RETURN (design record §6/§7) — this attempt's
+          // abort was never recorded.
+          const err = new WorkflowError(
+            `Guard step '${guardName}' was already settled` +
+              (guardSettleResult.persisted !== undefined
+                ? ` (persisted: '${guardSettleResult.persisted}')`
+                : '') +
+              ` by a different attempt — your abort was NOT recorded.`,
+            {
+              code: 'STATE_STEP_ALREADY_SETTLED',
+              category: 'STATE',
+              agentAction: 'report_to_user',
+              retryable: false,
+              details: {
+                runId: options.runId,
+                step: guardName,
+                reason: guardSettleResult.reason,
+                ...(guardSettleResult.persisted !== undefined
+                  ? { persisted: guardSettleResult.persisted }
+                  : {}),
+              },
+            },
+          );
+          return {
+            command: options.command,
+            run_id: options.runId,
+            run_version: guardSettleResult.run.version,
+            status: 'error',
+            data: {},
+            evidence: [],
+            warnings: [],
+            errors: [err.message],
+            error_code: err.code,
+            ...(Object.keys(err.details).length > 0 ? { error_details: err.details } : {}),
+            agent_action: 'report_to_user',
+            context_hint: err.message,
+            run_phase: guardSettleResult.run.run_phase,
+            next_actions: [],
+          };
+        }
+        if (guardSettleResult.reason === 'run_terminal') {
+          // Terminal by OTHER (a sibling settle raced this guard's own evaluation) — INLINE
+          // construction, parity with the entry-terminal envelope (executeChain's own early
+          // return).
+          return {
+            command: options.command,
+            run_id: options.runId,
+            run_version: guardSettleResult.run.version,
+            status: 'ok',
+            data: {},
+            evidence: [],
+            warnings: [],
+            errors: [],
+            agent_action: 'stop' as const,
+            context_hint: `Run '${options.runId}' is already terminal (${guardSettleResult.run.run_phase}); guard '${guardName}' was not evaluated.`,
+            run_phase: guardSettleResult.run.run_phase,
+            next_actions: [],
+          };
+        }
+        // gate_mismatch/choice_not_eligible/already_open/already_released and every other kind's
+        // own reason are unreachable here — settle_guard never returns them (design record §7).
+        throw new Error(
+          `executeChainInternal: unreachable settle_guard refusal reason '${guardSettleResult.reason}'`,
+        );
+      }
+
+      // applied: true.
+      chainedSteps.push({ step: guardName, run_phase: guardSettleResult.run.run_phase });
+
+      if (guardSettleResult.transitioned) {
+        // Drain IMMEDIATELY after a transitioned settle result, BEFORE building the in-loop
+        // terminal envelope (design record §6/R5 — a post-loop drain would be dead code on this
+        // leg: this function RETURNS before ever reaching a post-loop point).
+        let finalGuardRun = guardSettleResult.run;
+        let guardDrainWarnings: string[];
+        try {
+          const drainOutcome = await drainFinalizers(
+            store,
+            definition,
+            options.registry,
+            options.runId,
+          );
+          finalGuardRun = drainOutcome.run;
+          guardDrainWarnings = drainOutcome.warnings;
+        } catch (err) {
+          guardDrainWarnings = [
+            `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
+          ];
+        }
+        const migratedContextHint =
+          guardSettleOutcome === 'abort'
+            ? `Guard step '${guardName}' aborted the run.`
+            : guardSettleOutcome === 'resolution_error'
+              ? `Guard step '${guardName}' failed with a resolution error. Run is terminated.`
+              : `Guard step '${guardName}' passed and completed the run.`;
+        return {
+          command: options.command,
+          run_id: options.runId,
+          run_version: finalGuardRun.version,
+          status: 'ok',
+          data: {},
+          evidence: guardOwnEvidence,
+          warnings: mergeWarnings(guardWarnings, ...guardDrainWarnings),
+          errors: [],
+          context_hint: migratedContextHint,
+          run_phase: finalGuardRun.run_phase,
+          next_actions: [],
+          ...(finalGuardRun.defaulted_steps?.length
+            ? { defaulted_steps: finalGuardRun.defaulted_steps }
+            : {}),
+        };
+      }
+
+      // Non-terminal pass — continue the chain.
+      run = guardSettleResult.run;
+      guardEligible = findEligibleGuardSteps(definition, run);
+      continue;
+    }
+
+    // --- Legacy path (dormancy fallback — byte-identical to pre-#279 behavior) ---
 
     // Blocking fix #1: classify the terminal outcome by the SEALED record, not aborted_at
     // alone. executeGuardStep sets terminal_state in THREE cases — abort (aborted_at set),
@@ -4237,7 +5106,9 @@ async function executeChainInternal(
         data: {},
         // The guard's own evidence entry, captured before the finalizer drain appended any.
         evidence: guardOwnEvidence,
-        warnings: mergeWarnings([], guardDefaultedStepsDurabilityWarning),
+        // issue #279 (increment 2, PR-D): + the ONE dormancy advisory (I16) — this IS the legacy
+        // path (store.settleStep undeclared).
+        warnings: mergeWarnings([], guardDefaultedStepsDurabilityWarning, DORMANCY_ADVISORY),
         errors: [],
         context_hint: contextHint,
         run_phase: persistedGuardRun.run_phase,
@@ -4263,6 +5134,12 @@ async function executeChainInternal(
       ...result,
       run_version: run.version,
       next_actions: freshNextActions,
+      // issue #279 (increment 2, PR-D): non-abort settled_outcome_divergence warnings accumulated
+      // during the guard loop above (the ADVANCE leg) must reach whichever envelope returns —
+      // this rebuild is the first point after the loop `result` is touched again.
+      ...(guardWarnings.length > 0
+        ? { warnings: mergeWarnings(result.warnings, ...guardWarnings) }
+        : {}),
     };
   }
 

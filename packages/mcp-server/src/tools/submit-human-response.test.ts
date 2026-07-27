@@ -122,9 +122,14 @@ describe('handleSubmitHumanResponse — fires finalizers on gate completion', ()
     expect(updated.completed_steps).toContain('record_outcome');
   });
 
-  it('records the finalizer as a NON-FATAL failure when no registry supplies its handler (run still completes)', async () => {
-    // Control: neither registry nor provider carries the project handler → handler-not-found is
-    // recorded, but the gate still completes the run (finalizer failure is non-fatal).
+  it('leaves the finalizer PENDING (recoverable on a capable runner) when no registry supplies its handler (run still completes)', async () => {
+    // Control: neither registry nor provider carries the project handler. issue #279 (increment 2,
+    // PR-D): gate resolution now completes via the post-commit drain loop (drainFinalizers) on a
+    // declaring store — its registry pre-check LEAVES an absent-handler entry PENDING and
+    // discloses why, rather than burning it into failed_steps (design record §6 — the
+    // "recoverable on a capable runner" property; PR-B's own already-shipped drain semantics, now
+    // also reached via gate resolution). The gate still completes the run either way (finalizer
+    // non-delivery is non-fatal).
     const emptyRegistry = new ExtensionRegistry();
     const { runId, gateId } = await startAndOpenGate({
       runStore,
@@ -138,7 +143,8 @@ describe('handleSubmitHumanResponse — fires finalizers on gate completion', ()
 
     expect(result.run_phase).toBe('completed');
     const updated = await runStore.get(runId);
-    expect(updated.failed_steps).toContain('record_outcome');
+    expect(updated.failed_steps).not.toContain('record_outcome');
     expect(updated.completed_steps).not.toContain('record_outcome');
+    expect(updated.finalizer_ledger?.['record_outcome']?.status).toBe('pending');
   });
 });

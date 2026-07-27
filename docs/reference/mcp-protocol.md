@@ -121,6 +121,12 @@ When the engine opens a gate:
 | `gate.response_spec.choices` | Valid choice values (e.g. `["approve", "reject"]`).                                                                           |
 | `gate.preview`               | Full step output at gate opening, for reference and debugging.                                                                |
 
+A duplicate `submit_human_response` call with the SAME `gate_id` and the SAME choice (e.g. a
+retried tool call) is an idempotent no-op — it returns the same `ok` outcome the original
+submission committed, not an error. Submitting a DIFFERENT choice against a gate that another
+attempt already resolved is refused (`STATE_BLOCKED`) with the winning choice named, so a racing
+caller learns what was actually recorded rather than silently overwriting it.
+
 ---
 
 ## Error recovery (`agent_action`)

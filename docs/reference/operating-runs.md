@@ -42,8 +42,8 @@ that simply has no agent action pending.
 makes the run derive to phase `abandoned` regardless of any `failed_steps` it carries. It:
 
 - is **idempotent** — abandoning an already-abandoned run is a no-op success;
-- **refuses a terminal run** (`completed`/`failed`/`aborted`) with `STATE_RUN_TERMINAL` — it never clobbers a finished run;
-- **refuses a `gate_waiting` run** with `STATE_TRANSITION_DENIED` — resolve the gate first (gate abandonment is intentionally not supported in this version);
+- **refuses a terminal run** (`completed`/`failed`/`aborted`) with `STATE_RUN_TERMINAL` — checked FIRST, keyed on `terminal_state`/the derived phase, never the persisted `run_phase` label (a grandfathered record whose persisted phase still reads `gate_waiting` but is actually terminal is refused HERE, not below) — it never clobbers a finished run;
+- **refuses a run with an OPEN gate** (a genuinely non-terminal run still carrying a live `pending_gate`) with `STATE_TRANSITION_DENIED` — resolve the gate first (gate abandonment is intentionally not supported in this version);
 - is **concurrency-safe** — if a live writer advances the run while abandon is in flight, abandon loses (propagates `STATE_SNAPSHOT_MISMATCH`) rather than corrupting the record.
 
 ### Honesty note
@@ -93,7 +93,9 @@ realm run purge --older-than 30d --force                    # actually deletes t
 | Targets            | Non-terminal, non-`gate_waiting` runs          | **Terminal-only** runs, claim-state permitting (see below) |
 | Exposed to agents? | Yes (`abandon_run` MCP tool)                   | **No** — CLI-only, deliberately never an MCP tool          |
 
-Purge will **never** touch a run that is not terminal or a run that is `gate_waiting`. Beyond that, its
+Purge will **never** touch a run that is not terminal — derived (never the persisted `run_phase`
+label), so a genuinely non-terminal `gate_waiting` run is excluded, while a grandfathered record
+whose stale persisted phase still reads `gate_waiting` but is actually terminal IS eligible. Beyond that, its
 claim-state check is **mode-aware** — the same run can be refused in a batch sweep yet purgeable when
 you name it directly:
 

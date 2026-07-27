@@ -46,6 +46,22 @@
 //      go find it elsewhere. `opts.definition`, when supplied, additionally adds
 //      `evidence.eligible_steps` (Temporal's list-cheap/describe-rich split); a definition-free
 //      caller still classifies correctly on age alone.
+//   5. issue #279 (increment 2, PR-D, design record §9) — THREE new finding classes surfacing the
+//      #282 class and its adjacent gate-corruption/liveness classes:
+//        - `terminal_with_stale_gate`: `run.terminal_state && run.pending_gate !== undefined` — a
+//          grandfathered #282-class record (checked INSIDE branch 1, above the `pendingFindings`
+//          return, since a terminal run never reaches branches 2-4). Pointer to `realm run purge`.
+//        - `gate_corruption` (G-2): a `settled` entry with `outcome === 'gate'` whose `token`
+//          equals `run.pending_gate.gate_id` — the both-match corruption N9 names (fail-safe
+//          NOOP-not-RESOLVE pinned in settlement.ts, but `pending_gate` then never clears itself).
+//          Checked in BOTH the terminal branch (1) and the non-terminal path — a live pending_gate
+//          can coexist with either. Exits: settle_step abort or purge.
+//        - `resolved_gate_with_eligible_guard` (N8's surface): `opts.definition` supplied AND
+//          `findEligibleGuardSteps(definition, run)` non-empty — that function ALREADY self-filters
+//          both a terminal run and an open gate (eligibility.ts), so this is checked unconditionally
+//          in the non-terminal path with no extra gating needed. Disclosed consequence (list.ts is
+//          frozen and passes no `definition` — this finding never surfaces there; ACCEPTABLE, not a
+//          list.ts defect).
 //
 // Honest-admission rule (Celery-corrected, record §1): `never_claimed_idle`'s reason text NEVER
 // claims rejection — "parked with no claimed step, idle", never "rejected" or "stuck". Rescoped
@@ -59,7 +75,7 @@ import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { classifyInProgressClaims } from './claim-liveness.js';
 import { findCapabilityBlockedSteps } from './capability.js';
-import { findEligibleSteps } from './eligibility.js';
+import { findEligibleSteps, findEligibleGuardSteps } from './eligibility.js';
 
 /**
  * Default age threshold for the `never_claimed_idle` finding (issue #221) — 24 hours. Engine-
@@ -80,7 +96,11 @@ export interface RunHealthFinding {
     | 'stale_claim'
     | 'wedged_gate_sibling'
     | 'capability_block'
-    | 'terminal_pending_finalizer';
+    | 'terminal_pending_finalizer'
+    // issue #279 (increment 2, PR-D, design record §9) — the #282 class + its adjacent classes.
+    | 'terminal_with_stale_gate'
+    | 'gate_corruption'
+    | 'resolved_gate_with_eligible_guard';
   /** The affected step, when the finding is step-scoped. Absent for `never_claimed_idle` — a
    *  run-level observation (no step is claimed at all). */
   step?: string;
@@ -102,6 +122,35 @@ export interface RunHealthFinding {
    *  findings carry `{requirement, code}`; `never_claimed_idle` carries `{idle_threshold_ms}` and,
    *  when `opts.definition` was supplied, `{eligible_steps}`. */
   evidence?: Record<string, unknown>;
+}
+
+/**
+ * G-2-corruption detector (issue #279, increment 2, PR-D, design record §9/N9): a `settled` entry
+ * recording a resolved gate (`outcome === 'gate'`) whose `token` equals the run's OWN live
+ * `pending_gate.gate_id` — the both-match corruption `settleGateArms`'s lookup-first ordering
+ * fail-safes against (NOOP, never RESOLVE — settlement.ts), but which then leaves `pending_gate`
+ * permanently unclearable by normal means (exits: `settle_step` abort, or `realm run purge`).
+ * Out-of-contract producer only (a real store honoring `settleStep`'s own atomicity can never
+ * produce this); a run-health finding is the detection surface. Checked from BOTH branches of
+ * {@link classifyRunHealth} (a live pending_gate can coexist with this corruption whether or not
+ * the run has separately gone terminal).
+ */
+function findGateCorruption(run: RunRecord): RunHealthFinding | undefined {
+  if (run.pending_gate === undefined) return undefined;
+  const gateId = run.pending_gate.gate_id;
+  for (const [step, entry] of Object.entries(run.settled ?? {})) {
+    if (entry.outcome === 'gate' && entry.token === gateId) {
+      return {
+        kind: 'gate_corruption',
+        step,
+        reason:
+          'settled gate entry coexists with a live pending_gate bearing the same gate_id — ' +
+          'store history divergent',
+        evidence: { gate_id: gateId },
+      };
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -136,6 +185,22 @@ export function classifyRunHealth(
         },
       });
     }
+    // issue #279 (increment 2, PR-D, design record §9): terminal-with-stale-gate — the #282
+    // class's own surface. A terminal record that STILL carries a pending_gate is a grandfathered
+    // (or mixed-fleet old-binary-written) record; purge is the disposal path.
+    if (run.pending_gate !== undefined) {
+      pendingFindings.push({
+        kind: 'terminal_with_stale_gate',
+        step: run.pending_gate.step_name,
+        reason:
+          'run is terminal but still carries a pending_gate (a grandfathered #282-class record)',
+        evidence: { gate_id: run.pending_gate.gate_id },
+      });
+    }
+    // G-2-corruption: checked here too — a terminal record can carry the same both-match
+    // corruption a live run can (N9).
+    const terminalGateCorruption = findGateCorruption(run);
+    if (terminalGateCorruption !== undefined) pendingFindings.push(terminalGateCorruption);
     if (pendingFindings.length > 0) return pendingFindings;
     return []; // terminal ∧ no pending ledger entries ⇒ [] (byte-identical to pre-#279 behavior)
   }
@@ -165,6 +230,24 @@ export function classifyRunHealth(
       since: b.at,
       evidence: { requirement: b.requirement, code: b.code },
     });
+  }
+
+  // issue #279 (increment 2, PR-D, design record §9): G-2-corruption on the non-terminal path too
+  // — a live pending_gate can coexist with the same both-match corruption a terminal record can.
+  const gateCorruption = findGateCorruption(run);
+  if (gateCorruption !== undefined) findings.push(gateCorruption);
+
+  // issue #279 (increment 2, PR-D, design record §9, N8's surface): resolved-gate-with-eligible-
+  // guard. findEligibleGuardSteps ALREADY self-filters both a terminal run and an open gate
+  // (eligibility.ts), so no extra gating is needed beyond requiring a definition.
+  if (opts?.definition !== undefined) {
+    for (const guardName of findEligibleGuardSteps(opts.definition, run)) {
+      findings.push({
+        kind: 'resolved_gate_with_eligible_guard',
+        step: guardName,
+        reason: `gate resolved; guard '${guardName}' awaits the next drive`,
+      });
+    }
   }
 
   // Branch 4 — never_claimed_idle (the #221 class). since/idle_ms/evidence.idle_threshold_ms are

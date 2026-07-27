@@ -17,7 +17,7 @@ import { sseJsonStringify } from '../sse-json.js';
  * Validates the gate_id and choice, then advances the run past the gate.
  */
 export async function handleSubmitHumanResponse(
-  args: { run_id: string; gate_id: string; choice: string },
+  args: { run_id: string; gate_id: string; choice: string; responded_by?: string | undefined },
   stores?: HandleRunStores,
 ): Promise<ResponseEnvelope> {
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
@@ -38,6 +38,8 @@ export async function handleSubmitHumanResponse(
     gateId: args.gate_id,
     choice: args.choice,
     ...(registry !== undefined ? { registry } : {}),
+    // issue #279 (increment 2, PR-D; design record D-5): pass-through only, never validated.
+    ...(args.responded_by !== undefined ? { respondedBy: args.responded_by } : {}),
   });
 }
 
@@ -50,6 +52,9 @@ export function registerSubmitHumanResponse(server: McpServer, opts?: HandleRunS
       run_id: z.string(),
       gate_id: z.string(),
       choice: z.string(),
+      // issue #279 (increment 2, PR-D; design record D-5): unenforced attribution passthrough —
+      // pass-through only, never validated.
+      responded_by: z.string().optional(),
     },
     async (args) => {
       try {

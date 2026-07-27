@@ -147,7 +147,13 @@ describe('human gate', () => {
     });
 
     expect(result.status).toBe('error');
-    expect(result.errors[0]).toContain('Gate ID mismatch');
+    // issue #279 (increment 2, PR-D): on the migrated path (JsonFileStore declares settleStep),
+    // an unknown/superseded gateId is settle_gate's own `gate_mismatch` refusal — the design
+    // record's uniform text for "no live gate matches this id", collapsing the legacy path's
+    // separate "no open gate at all" / "gate ID mismatch" texts into one.
+    expect(result.errors[0]).toContain(
+      "Gate 'wrong-gate-id' is not the open gate and matches no committed resolution",
+    );
   });
 
   it('submitHumanResponse with invalid choice returns error', async () => {

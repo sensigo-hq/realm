@@ -2748,7 +2748,7 @@ describe('executeStep', () => {
       }
     });
 
-    it('trace_schema warn: gate store.update error envelope retains trace warning', async () => {
+    it('trace_schema warn: gate settleStep error envelope retains trace warning', async () => {
       const def: WorkflowDefinition = {
         ...traceSchemaDefinitionBase,
         steps: {
@@ -2767,8 +2767,10 @@ describe('executeStep', () => {
         params: {},
       });
 
-      // Mock store.update to throw — simulates the gate persistence failure (post-dispatch)
-      vi.spyOn(store, 'update').mockImplementation(async () => {
+      // issue #279 (increment 2, PR-D): gate-open now persists via store.settleStep (not
+      // store.update) on a declaring store — mock THAT to simulate the gate persistence failure
+      // (post-dispatch). Mocking store.update alone no longer reaches the gate-open write path.
+      vi.spyOn(store, 'settleStep').mockImplementation(async () => {
         throw new Error('gate store write failed');
       });
 
