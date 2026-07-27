@@ -1,13 +1,20 @@
-// Source-text POSITIVE pin for RunStore.settleStep's migration (issue #279, increment 1, PR-B).
-// PR-A shipped this file's ORIGINAL guard here: a ZERO-invocation-sites assertion proving the
-// engine never called settleStep while the substrate was still dormant. PR-B's whole point is the
-// OPPOSITE — migrating the three seal sites (complete/fail/handler-abort) onto settleStep — so
-// that guard is deleted (as its own header said it would be) and replaced with this positive pin:
-// EXACTLY three `.settleStep(` invocation sites exist, all inside execution-loop.ts (the only
-// migrated file), and packages/mcp-server/src/** stays clean (gate-open/gate-resolution/guard
-// seals are increment-2 territory — untouched this increment, so the MCP surface has nothing new
-// to call). A future accidental FOURTH call site (or a stray call outside execution-loop.ts) fails
-// this test loudly, the same anti-recurrence discipline the deleted guard had, inverted.
+// Source-text POSITIVE pin for RunStore.settleStep's migration (issue #279). PR-A shipped this
+// file's ORIGINAL guard here: a ZERO-invocation-sites assertion proving the engine never called
+// settleStep while the substrate was still dormant. PR-B migrated the three seal sites
+// (complete/fail/handler-abort) onto settleStep — that guard was deleted (as its own header said
+// it would be) and replaced with a positive three-site pin. PR-C added four MORE delta kinds
+// (open_gate/settle_gate/settle_guard/release_step) but stayed engine-inert for them, adding its
+// OWN temporary zero-construction-sites guard. PR-D (increment 2, this file's current state)
+// migrates the five remaining legacy write sites (gate-open, gate-resolution, guard-chain,
+// capability-block release, compensating un-claim) onto settleStep — deleting PR-C's
+// engine-inertness guard (its whole premise is now false) and widening this positive pin to
+// EXACTLY EIGHT `.settleStep(` invocation sites: the three PR-B shipped (complete/fail/
+// handler-abort) plus the five PR-D just migrated (gate-open/gate-resolution/guard-chain/
+// capability-release/compensating-unclaim) — all inside execution-loop.ts (the only migrated
+// file), with packages/mcp-server/src/** staying clean (it constructs no deltas of its own; it
+// only calls into execution-loop.ts's exported functions). A future accidental NINTH call site (or
+// a stray call outside execution-loop.ts) fails this test loudly, the same anti-recurrence
+// discipline the deleted PR-A guard had, inverted.
 //
 // Invocation-scoped (matches `.settleStep(` literally, not a bare `settleStep` name match) so this
 // module's own JSDoc prose can mention the identifier freely without self-tripping the count.
@@ -27,7 +34,9 @@ const SCANNED_ROOTS = [
 ];
 
 const INVOCATION = '.settleStep(';
-const EXPECTED_SITE_COUNT = 3; // complete, fail, handler-abort
+// complete/fail/handler-abort (PR-B) + gate-open/gate-resolution/guard-chain/capability-release/
+// compensating-unclaim (PR-D, increment 2).
+const EXPECTED_SITE_COUNT = 8;
 const MIGRATED_FILE = join(PACKAGES_DIR, 'core', 'src', 'engine', 'execution-loop.ts');
 
 /** Every non-test, non-declaration .ts source file under `root`, recursively. */
@@ -62,7 +71,7 @@ function findInvocationSites(): { file: string; line: number; text: string }[] {
   return sites;
 }
 
-describe('RunStore.settleStep is MIGRATED at exactly three sites (issue #279, increment 1, PR-B)', () => {
+describe('RunStore.settleStep is MIGRATED at exactly eight sites — increment 2, PR-D', () => {
   it('the scan itself is wired correctly (finds at least one .ts source file per root)', () => {
     for (const root of SCANNED_ROOTS) {
       expect(
@@ -72,7 +81,7 @@ describe('RunStore.settleStep is MIGRATED at exactly three sites (issue #279, in
     }
   });
 
-  it(`EXACTLY ${EXPECTED_SITE_COUNT} '.settleStep(' invocation sites exist (complete/fail/handler-abort)`, () => {
+  it(`EXACTLY ${EXPECTED_SITE_COUNT} '.settleStep(' invocation sites exist (complete/fail/handler-abort/gate-open/gate-resolution/guard-chain/capability-release/compensating-unclaim)`, () => {
     const sites = findInvocationSites();
     expect(
       sites.length,
@@ -168,66 +177,5 @@ describe('applySettlement is deterministic — same inputs + fixed now ⇒ deep-
     // Sanity: the fixture actually exercises the applied path (a vacuously-equal pair of
     // refusals would pass this check without proving anything about the transform's output).
     expect(first.applied).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Engine-inert guard for the four increment-2 delta kinds (issue #279, increment 2, PR-C).
-// The whole point of this PR's scope class (EXPAND / Parallel Change) is that open_gate,
-// settle_gate, settle_guard, and release_step are ADDED to the substrate but not yet wired to any
-// call site — the five legacy write sites they'll eventually replace (gate-open, gate-resolution,
-// guard-pass/abort/error, capability-block release) stay on their pre-existing paths until PR-D's
-// migration. This mirrors the ORIGINAL zero-invocation-sites guard PR-A shipped for settle_step
-// itself (since deleted above, replaced by the positive three-site pin, once PR-B migrated it) —
-// same discipline, applied to the four kinds still dormant in THIS increment.
-//
-// Literal-construction-scoped (`kind: 'open_gate'` etc., not a bare identifier match) so this
-// module's own JSDoc/type definitions can mention the kind names freely without self-tripping —
-// settlement.ts (where the delta *types* and `applySettlement`'s dispatcher legitimately name
-// these literals) and any `.test.ts` file (this file's own fixtures, the TCK) are excluded from
-// the scan; every other engine/mcp-server source file must be clean.
-describe('the four increment-2 delta kinds are ENGINE-INERT — no source-text construction site exists yet (issue #279, increment 2, PR-C)', () => {
-  const INCREMENT_2_KINDS = ['open_gate', 'settle_gate', 'settle_guard', 'release_step'];
-  const EXCLUDED_FILES = new Set([join(PACKAGES_DIR, 'core', 'src', 'engine', 'settlement.ts')]);
-
-  function findConstructionSites(): { file: string; line: number; text: string }[] {
-    const sites: { file: string; line: number; text: string }[] = [];
-    for (const root of SCANNED_ROOTS) {
-      for (const file of sourceFiles(root)) {
-        if (EXCLUDED_FILES.has(file)) continue;
-        const lines = readFileSync(file, 'utf8').split('\n');
-        lines.forEach((line, i) => {
-          for (const kind of INCREMENT_2_KINDS) {
-            if (line.includes(`kind: '${kind}'`) || line.includes(`kind:'${kind}'`)) {
-              sites.push({ file, line: i + 1, text: line.trim() });
-            }
-          }
-        });
-      }
-    }
-    return sites;
-  }
-
-  it('no engine or mcp-server source file (excluding settlement.ts) constructs an open_gate/settle_gate/settle_guard/release_step literal', () => {
-    const sites = findConstructionSites();
-    expect(
-      sites,
-      sites.length > 0
-        ? `Found increment-2 delta construction site(s) OUTSIDE settlement.ts — these kinds must ` +
-            `stay engine-inert until PR-D's migration:\n${sites
-              .map((s) => `  ${s.file}:${s.line}: ${s.text}`)
-              .join('\n')}`
-        : '',
-    ).toEqual([]);
-  });
-
-  it('settlement.ts ITSELF does declare all four kinds (sanity check — an empty scan must mean "excluded", not "the kinds do not exist")', () => {
-    const settlementSrc = readFileSync(
-      join(PACKAGES_DIR, 'core', 'src', 'engine', 'settlement.ts'),
-      'utf8',
-    );
-    for (const kind of INCREMENT_2_KINDS) {
-      expect(settlementSrc, `expected settlement.ts to reference kind '${kind}'`).toContain(kind);
-    }
   });
 });

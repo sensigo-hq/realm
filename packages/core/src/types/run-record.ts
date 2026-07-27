@@ -126,6 +126,14 @@ export interface EvidenceSnapshot {
    * This is an evidence integrity field: it records exactly what the human read.
    */
   gate_message?: string;
+  /**
+   * Issue #279 (increment 2, PR-D; design record D-5): unenforced attribution passthrough for a
+   * gate resolution — the caller-supplied identity of whoever made this gate choice, when
+   * supplied. RECORDED, not enforced (D-5: the bearer-gateId-as-sole-credential model stays the
+   * authority; no arm reads this field). Present only on `gate_response` evidence entries whose
+   * caller supplied `respondedBy`/`responded_by`.
+   */
+  responded_by?: string;
   /** Diagnostic metadata. Present on snapshots captured after Week 7. */
   diagnostics?: StepDiagnostics;
   /** Name of the agent profile active at this step, if any. */
@@ -327,7 +335,16 @@ export type SkipDetail =
    * terminal-with-an-open-gate state #279 exists to close). Dormant until PR-B migrates the seal
    * sites — no engine call site can produce this in PR-A.
    */
-  | { kind: 'gate_cancelled_by_abort' };
+  | {
+      kind: 'gate_cancelled_by_abort';
+      /**
+       * Issue #279 (increment 2, PR-D; design record §5 D-4): the cancelled gate's `gate_id` —
+       * additive, so pre-PR-D cancel records (which lack this field) remain valid; the settle_gate
+       * `run_terminal` envelope's cancelled-variant discriminator binds by skip-detail PRESENCE for
+       * those (N10), and by `gate_id` equality once this field is populated.
+       */
+      gate_id?: string;
+    };
 
 export interface RunRecord {
   id: string;

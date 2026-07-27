@@ -333,6 +333,7 @@ function applyAbortEdge(
   // nothing above has touched it.
   if (fresh.pending_gate !== undefined && fresh.pending_gate.step_name !== step) {
     const gateStepName = fresh.pending_gate.step_name;
+    const cancelledGateId = fresh.pending_gate.gate_id;
     const { pending_gate: _droppedGate, ...withoutGate } = aborted;
     aborted = {
       ...withoutGate,
@@ -341,7 +342,9 @@ function applyAbortEdge(
       skipped_steps: [...withoutGate.skipped_steps, gateStepName],
       skip_details: {
         ...withoutGate.skip_details,
-        [gateStepName]: { kind: 'gate_cancelled_by_abort' },
+        // gate_id additive (design record §5 D-4) — the settle_gate run_terminal envelope's
+        // cancelled-variant discriminator binds by this once populated.
+        [gateStepName]: { kind: 'gate_cancelled_by_abort', gate_id: cancelledGateId },
       },
       evidence: [
         ...withoutGate.evidence,
@@ -350,7 +353,7 @@ function applyAbortEdge(
           startedAt: now,
           completedAt: now,
           input: {},
-          output: { gate_cancelled_by_abort: true, aborted_by: step },
+          output: { gate_cancelled_by_abort: true, aborted_by: step, gate_id: cancelledGateId },
         }),
       ],
     };

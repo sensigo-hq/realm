@@ -17,11 +17,28 @@ All notable changes to this project are documented here.
 - Terminal exports falsely redacted claim nonces and suppressed the pending-finalizer warning.
 - Run-phase derivation now ranks terminal markers (`terminal_state`, `aborted_at`, `abandoned_at`) above an open
   gate — stale `gate_waiting` labels heal on the next write.
+- Fan-out gate-open, gate-resolution, and guard seals can no longer lose an overlap with a concurrent settle —
+  deterministic CAS-loss (a stuck claim, a human decision reported "not recorded", a discarded guard
+  terminalization) is now dead for stores that declare atomic settlement.
+- Gate and guard terminal seals no longer fire their finalizers before the terminal commit — delivery is now
+  ledger-mediated, exactly-once, and recoverable via `realm run drain` if a crash lands between commit and delivery.
+
+### Changed
+
+- Gate-open, gate-resolution, guard, and capability-block/compensating-release write paths migrate to atomic
+  settlement (`RunStore.settleStep`); a non-declaring external store keeps the legacy write path plus an
+  upgrade advisory, matching the increment-1 lockstep-upgrade posture.
+- Refusal envelopes at the gate, guard, and capability-block surfaces are now uniformly typed, including a
+  cancelled-gate disclosure ("your choice was NOT recorded") when a sibling abort cancelled the gate first.
 
 ### Added
 
 - Dormant settlement delta kinds for gates/guards/release (`open_gate`, `settle_gate`, `settle_guard`,
   `release_step`) — engine-inert until the next increment — plus the settlement TCK laws covering them.
+- `submit_human_response` gains an optional `responded_by` attribution pass-through (recorded, not enforced).
+- Three new run-health finding classes for stale/corrupt gate states: a terminal record still carrying a
+  pending gate, a settled gate entry coexisting with a live gate of the same id, and a resolved gate with a
+  guard now awaiting its next drive.
 
 ## [0.32.0] — 2026-07-26
 

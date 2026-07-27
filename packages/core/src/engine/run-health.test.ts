@@ -384,4 +384,91 @@ describe('classifyRunHealth', () => {
       expect(f.reason.toLowerCase()).not.toContain('stuck');
     }
   });
+
+  // ---------------------------------------------------------------------
+  // issue #279 (increment 2, PR-D, design record §9) — the three NEW finding classes.
+  // ---------------------------------------------------------------------
+
+  it('terminal_with_stale_gate: a terminal record still carrying a pending_gate gets exactly this finding, pointing at purge', () => {
+    const run = makeRun({
+      terminal_state: true,
+      terminal_reason: 'Workflow completed.',
+      run_phase: 'gate_waiting', // stale — the #282 class's own persisted-phase symptom
+      pending_gate: {
+        gate_id: 'stale-gate',
+        step_name: 'gated_step',
+        preview: {},
+        choices: ['approve', 'reject'],
+        opened_at: '2026-01-01T00:00:00.000Z',
+      },
+    });
+    const findings = classifyRunHealth(run, { now: NOW });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.kind).toBe('terminal_with_stale_gate');
+    expect(findings[0]?.step).toBe('gated_step');
+    expect(findings[0]?.evidence?.['gate_id']).toBe('stale-gate');
+  });
+
+  it('gate_corruption (G-2): a settled gate entry sharing the SAME gate_id as the live pending_gate is flagged, on BOTH the terminal and non-terminal paths', () => {
+    const corruptGate = {
+      gate_id: 'corrupt-gate',
+      step_name: 'gated_step',
+      preview: {},
+      choices: ['approve', 'reject'],
+      opened_at: '2026-01-01T00:00:00.000Z',
+    };
+    const nonTerminalRun = makeRun({
+      pending_gate: corruptGate,
+      run_phase: 'gate_waiting',
+      settled: { gated_step: { token: 'corrupt-gate', outcome: 'gate', choice: 'approve' } },
+    });
+    const nonTerminalFindings = classifyRunHealth(nonTerminalRun, { now: NOW });
+    expect(nonTerminalFindings.some((f) => f.kind === 'gate_corruption')).toBe(true);
+    const corruptionFinding = nonTerminalFindings.find((f) => f.kind === 'gate_corruption');
+    expect(corruptionFinding?.step).toBe('gated_step');
+    expect(corruptionFinding?.evidence?.['gate_id']).toBe('corrupt-gate');
+
+    const terminalRun = makeRun({
+      terminal_state: true,
+      terminal_reason: 'Workflow completed.',
+      pending_gate: corruptGate,
+      settled: { gated_step: { token: 'corrupt-gate', outcome: 'gate', choice: 'approve' } },
+    });
+    const terminalFindings = classifyRunHealth(terminalRun, { now: NOW });
+    expect(terminalFindings.some((f) => f.kind === 'gate_corruption')).toBe(true);
+  });
+
+  it('resolved_gate_with_eligible_guard: a resolved gate with a NOW-eligible guard names it, ONLY when a definition is supplied', () => {
+    const run = makeRun({
+      completed_steps: ['gated_step'],
+      run_phase: 'running',
+    });
+    const definition: WorkflowDefinition = {
+      id: 'wf',
+      name: 'wf',
+      version: 1,
+      steps: {
+        gated_step: { description: 'g', execution: 'agent', depends_on: [] },
+        guard_after: {
+          description: 'guard',
+          execution: 'guard',
+          depends_on: ['gated_step'],
+          abort_unless: ['gated_step.status == "open"'],
+        },
+      },
+    };
+    const withDefinition = classifyRunHealth(run, { now: NOW, definition });
+    expect(withDefinition.some((f) => f.kind === 'resolved_gate_with_eligible_guard')).toBe(true);
+    const finding = withDefinition.find((f) => f.kind === 'resolved_gate_with_eligible_guard');
+    expect(finding?.step).toBe('guard_after');
+    expect(finding?.reason).toContain('guard_after');
+    expect(finding?.reason).toContain('next drive');
+
+    // Definition-free: the finding never surfaces (findEligibleGuardSteps needs a definition) —
+    // matches list.ts's own disclosed, accepted limitation (design record §9).
+    const withoutDefinition = classifyRunHealth(run, { now: NOW });
+    expect(withoutDefinition.some((f) => f.kind === 'resolved_gate_with_eligible_guard')).toBe(
+      false,
+    );
+  });
 });
