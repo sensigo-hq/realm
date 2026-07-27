@@ -476,10 +476,20 @@ export interface RunRecord {
    * membership in the SAME atomic write) — it exists so a hand-authored fixture / an external
    * store's own divergent history cannot wedge the predicate.
    *
-   * Dormant in this PR — join `LoadBearingRunRecordField`/`SAMPLE_VALUES`; nothing writes this
-   * field until PR-B migrates the seal sites to `settleStep`.
+   * Issue #279 (increment 2, PR-C): `outcome` gains `'gate'` — a resolved human-gate entry
+   * (`settleGateArms`'s APPLY writes `outcome: 'gate'` LITERALLY; `toSettledOutcome`'s own
+   * `SettleStepOutcome` domain stays untouched — a `settle_step` delta can never produce a
+   * `'gate'` entry, only `settle_gate` can). `choice` is set IFF `outcome === 'gate'` — the
+   * human's resolved choice, mirrored from `SettleGateDelta.choice`.
+   *
+   * Shipped in v0.32.0 (PR-B migrated the three seal sites to `settleStep`) — the "dormant until
+   * PR-B" framing below is stale for the `'complete'|'fail'|'skip'` outcomes; `'gate'` itself
+   * stays dormant until PR-D migrates the gate-resolution site.
    */
-  settled?: Record<string, { token: string | null; outcome: 'complete' | 'fail' | 'skip' }>;
+  settled?: Record<
+    string,
+    { token: string | null; outcome: 'complete' | 'fail' | 'skip' | 'gate'; choice?: string }
+  >;
   /**
    * Issue #279 (increment 1, PR-A): the record-as-outbox finalizer ledger, keyed by finalizer step
    * name — minted by `mintFresh` (settlement.ts) on the terminal false→true edge, drained via

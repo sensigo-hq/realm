@@ -47,8 +47,15 @@ export class InMemoryStore implements RunStore {
         const existing = this.runs.get(existingId);
         if (existing !== undefined) {
           // `reuse` → return the existing run; `supersede` → fall through to a fresh create
-          // (which overwrites the keyIndex entry below). `fail`/`reject` throw.
-          if (decideIdempotencyPolicy(existing, options) === 'reuse') {
+          // (which overwrites the keyIndex entry below). `fail`/`reject` throw. Derives (issue
+          // #279, increment 2, PR-C — D-3 leg v), matching JsonFileStore's own call-site derive —
+          // decideIdempotencyPolicy's own exported `Pick<>` signature stays untouched.
+          if (
+            decideIdempotencyPolicy(
+              { ...existing, run_phase: deriveRunPhase(existing) },
+              options,
+            ) === 'reuse'
+          ) {
             return { run: existing, created: false };
           }
         }
@@ -173,11 +180,16 @@ export class InMemoryStore implements RunStore {
     // issue #279 (increment 1, PR-A): mint an acquirer-minted fencing token alongside the
     // deadline, in the SAME synchronous stretch — dormant until PR-B's settleStep migration.
     const token = crypto.randomUUID();
+    // issue #279 (increment 2, PR-C — D-3 leg vii): derive instead of hardcoding 'running' —
+    // parity with JsonFileStore.claimStep, which derives off the PRE-claim `run` (claiming a step
+    // touches none of deriveRunPhase's own inputs, so `deriveRunPhase(run)` and
+    // `deriveRunPhase(updated)` are always identical; derived off `run` for consistency with that
+    // precedent, not because it matters here).
     const updated: RunRecord = {
       ...run,
       in_progress_steps: [...run.in_progress_steps, stepName],
       claims: { ...run.claims, [stepName]: { deadline, token } },
-      run_phase: 'running',
+      run_phase: deriveRunPhase(run),
       version: run.version + 1,
       updated_at: new Date().toISOString(),
     };

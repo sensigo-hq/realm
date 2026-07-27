@@ -21,6 +21,10 @@ import type {
   SettleStepOutcome,
   LeaseFinalizerDelta,
   MarkFinalizerDelta,
+  OpenGateDelta,
+  SettleGateDelta,
+  SettleGuardDelta,
+  ReleaseStepDelta,
 } from '../types/settlement.js';
 import {
   deriveRunPhase,
@@ -61,11 +65,14 @@ function tokensEqual(a: string | null | undefined, b: string | null | undefined)
   return norm(a) === norm(b);
 }
 
-/** `M := {complete: completed_steps, fail: failed_steps, skip: skipped_steps}` — the membership
- *  array a settled-map entry's `outcome` maps to. */
+/** `M := {complete: completed_steps, fail: failed_steps, skip: skipped_steps, gate:
+ *  completed_steps}` — the membership array a settled-map entry's `outcome` maps to. `gate`
+ *  (issue #279, increment 2, PR-C — design record §2) joined alongside `completed_steps`: a
+ *  resolved gate's step physically lands there, same as a `complete` settle_step outcome. */
 function membershipFor(fresh: RunRecord, outcome: SettledEntry['outcome']): readonly string[] {
   switch (outcome) {
     case 'complete':
+    case 'gate':
       return fresh.completed_steps;
     case 'fail':
       return fresh.failed_steps;
@@ -189,6 +196,47 @@ function mintFresh(
 }
 
 // ---------------------------------------------------------------------------
+// §4 shared APPLY postconditions (design record design-d5-increment2.md §4, hoisted — lens-2 F4:
+// "one implementation, every kind routes through it"). Every kind whose APPLY can terminalize
+// (settle_step complete/fail/abort [shipped]; settle_gate resolution-complete; settle_guard
+// pass/resolution_error/abort [increment 2, PR-C]) calls this ONE function to (1) mint fresh
+// finalizers on a genuine terminal false→true edge (§4.1), (2) stamp `defaulted_steps` on a
+// COMPLETE-terminal edge only (§4.2), and (3) derive `run_phase` uniformly (§4.5) — regardless of
+// whether this particular APPLY actually transitioned.
+// ---------------------------------------------------------------------------
+
+/**
+ * `record.terminal_state` must already reflect the kind-specific terminal decision (each arm
+ * computes its own `isComplete`/unconditional-abort logic BEFORE calling this) — every in-contract
+ * caller has already refused `run_terminal` earlier in its own arm, so `record.terminal_state` can
+ * only be transitioning `false → true` here, never `true → true`; `transitioned` is therefore
+ * simply the post-write value, read back explicitly (not assumed) so a future caller that ever
+ * violates that precondition fails loudly via a wrong `transitioned` value rather than silently.
+ */
+function applyTerminalPostconditions(
+  record: RunRecord,
+  definition: WorkflowDefinition,
+  mintOutcome: SettleStepOutcome,
+  stampDefaulted: boolean,
+): { run: RunRecord; transitioned: boolean } {
+  const transitioned = record.terminal_state === true;
+  let sealed = record;
+  if (transitioned) {
+    // On terminal false→true edge: mintFresh (§4.1), same atomic write.
+    const ledger = mintFresh(record, definition, mintOutcome);
+    sealed = { ...record, ...(ledger !== undefined ? { finalizer_ledger: ledger } : {}) };
+    // defaulted_steps stamped IFF a COMPLETE-terminal edge (§4.2; the FM-5/#232 guard) — never on
+    // a fail/abort seal, even one that terminalizes.
+    if (stampDefaulted) {
+      const defaultedSteps = deriveDefaultedSteps(sealed.evidence);
+      if (defaultedSteps.length > 0) sealed = { ...sealed, defaulted_steps: defaultedSteps };
+    }
+  }
+  const withPhase: RunRecord = { ...sealed, run_phase: deriveRunPhase(sealed) };
+  return { run: withPhase, transitioned };
+}
+
+// ---------------------------------------------------------------------------
 // §3 settleStepArms
 // ---------------------------------------------------------------------------
 
@@ -308,19 +356,15 @@ function applyAbortEdge(
     };
   }
 
-  // On terminal false→true edge: mintFresh (§4), same atomic write. abort NEVER stamps
-  // defaulted_steps (the FM-5/#232 guard — only the complete edge does).
-  const ledger = mintFresh(aborted, definition, 'abort');
-  const finalRun: RunRecord = {
-    ...aborted,
-    ...(ledger !== undefined ? { finalizer_ledger: ledger } : {}),
-  };
-  const withPhase: RunRecord = { ...finalRun, run_phase: deriveRunPhase(finalRun) };
+  // §4 shared postconditions: abort NEVER stamps defaulted_steps (the FM-5/#232 guard — only the
+  // complete edge does); `transitioned` is always true here (isTerminal(fresh) was already
+  // refused above, and `aborted.terminal_state` is unconditionally true).
+  const { run, transitioned } = applyTerminalPostconditions(aborted, definition, 'abort', false);
   return {
     applied: true,
-    run: withPhase,
-    transitioned: true, // isTerminal(fresh) was already refused above — abort is always false→true
-    pendingFinalizers: pendingFinalizerNames(withPhase.finalizer_ledger),
+    run,
+    transitioned,
+    pendingFinalizers: pendingFinalizerNames(run.finalizer_ledger),
   };
 }
 
@@ -358,25 +402,445 @@ function applyCompleteOrFailEdge(
       : {}),
   };
 
-  let sealed = draft;
-  if (isComplete) {
-    // On terminal edge: mintFresh (§4), same atomic write.
-    const ledger = mintFresh(draft, definition, outcome);
-    sealed = { ...draft, ...(ledger !== undefined ? { finalizer_ledger: ledger } : {}) };
-    // defaulted_steps stamped IFF complete-terminal edge (FM-5/#232 guard) — never on a fail seal,
-    // even one that terminalizes.
-    if (outcome === 'complete') {
-      const defaultedSteps = deriveDefaultedSteps(sealed.evidence);
-      if (defaultedSteps.length > 0) sealed = { ...sealed, defaulted_steps: defaultedSteps };
-    }
-  }
-
-  const withPhase: RunRecord = { ...sealed, run_phase: deriveRunPhase(sealed) };
+  // §4 shared postconditions: defaulted_steps stamps IFF this is a COMPLETE-terminal edge — never
+  // on a fail seal, even one that terminalizes.
+  const { run, transitioned } = applyTerminalPostconditions(
+    draft,
+    definition,
+    outcome,
+    outcome === 'complete' && isComplete,
+  );
   return {
     applied: true,
-    run: withPhase,
-    transitioned: isComplete,
-    pendingFinalizers: pendingFinalizerNames(withPhase.finalizer_ledger),
+    run,
+    transitioned,
+    pendingFinalizers: pendingFinalizerNames(run.finalizer_ledger),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// §3 openGateArms (issue #279, increment 2, PR-C) — fence = claimToken; entry lookup FIRST
+// (design record lens-2 F1).
+// ---------------------------------------------------------------------------
+
+function applyOpenGate(fresh: RunRecord, delta: OpenGateDelta): SettlementResult {
+  const { step, claimToken, pendingGate, evidence } = delta;
+
+  // Idempotence arm BEFORE terminal/claim (mirrors settleStepArms's own ordering, L21 ii).
+  const existing = entryOf(fresh, step);
+  if (existing !== undefined) {
+    if (existing.outcome === 'gate' && existing.token === pendingGate.gate_id) {
+      // Exact-delta replay AFTER the gate already resolved (BU F6) — the gate this delta is
+      // trying to open is the SAME one already committed as resolved.
+      return { applied: false, reason: 'already_settled', run: fresh };
+    }
+    // Envelope text stays neutral (N1 — no "by_other" amplification) at the caller (PR-D).
+    return { applied: false, reason: 'already_settled_by_other', run: fresh };
+  }
+
+  if (isTerminal(fresh)) {
+    return { applied: false, reason: 'run_terminal', run: fresh };
+  }
+
+  if (fresh.pending_gate !== undefined) {
+    if (fresh.pending_gate.step_name === step) {
+      if (fresh.pending_gate.gate_id === pendingGate.gate_id) {
+        // Exact-delta replay, gate still open (e.g. a retried gate-open write).
+        return { applied: false, reason: 'already_settled', run: fresh };
+      }
+      const claim = fresh.claims?.[step];
+      if (claim !== undefined && tokensEqual(claim.token, claimToken)) {
+        // D-1: the LIVE gate wins, rendered VERBATIM. In-contract UNREACHABLE (claimStep's
+        // in-flight guard + reclaim's own open-gate refusal both prevent a second open_gate
+        // attempt from ever reaching here with a live claim) — defensive.
+        return { applied: false, reason: 'already_open', run: fresh, gate: fresh.pending_gate };
+      }
+      // Same step, different claimant — defensive (a claim can't be re-acquired under an open
+      // gate; findEligibleSteps returns [] while a gate is open).
+      return { applied: false, reason: 'claim_lost', run: fresh };
+    }
+    // A gate open on ANOTHER step — serialization; the step named here STAYS claimed (L13
+    // asserts this — the caller's recovery path is to wait for the live gate to resolve).
+    return { applied: false, reason: 'gate_mismatch', run: fresh };
+  }
+
+  const claim = fresh.claims?.[step];
+  if (claim === undefined || !tokensEqual(claim.token, claimToken)) {
+    return { applied: false, reason: 'claim_lost', run: fresh };
+  }
+
+  // APPLY OPEN: pending_gate set (delta-carried verbatim); evidence append; CLAIM RETAINED + step
+  // stays in_progress (execution-loop.ts:2958 — retention keeps isComplete sound, G-1). Never
+  // terminalizes (design record §4.1) — run_phase still derives (§4.5: transform-owned uniformly).
+  const withGate: RunRecord = {
+    ...fresh,
+    evidence: [...fresh.evidence, ...evidence],
+    pending_gate: pendingGate,
+  };
+  const run: RunRecord = { ...withGate, run_phase: deriveRunPhase(withGate) };
+  return {
+    applied: true,
+    run,
+    transitioned: false,
+    pendingFinalizers: pendingFinalizerNames(run.finalizer_ledger),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// §3 settleGateArms (issue #279, increment 2, PR-C) — fence = gateId ONLY (L20). ZERO claim arms.
+// ---------------------------------------------------------------------------
+
+/**
+ * Finds the (at most one, per G-2) `settled` entry recording a resolved gate matching `gateId` —
+ * searched by gateId (the settle_gate fence), not by a known step name, since a gate submission
+ * carries only the gate_id. `first` (design record §3): lookup runs FIRST for fail-safety under
+ * corruption (D3 §0.2) — soundness of both the lookup and the "first" quantifier rests on G-2
+ * (TERMINAL_GATE_EXCLUSION) plus per-attempt gate_id uniqueness plus the membership conjunct (the
+ * orphan rule, generalized): a G-2-violating corrupt both-match record makes iteration order
+ * store-dependent, which is exactly why the fail-safe direction (NOOP, never RESOLVE) is pinned
+ * at the CALLER (this function returns whichever match Object.entries visits first — a real store
+ * never produces two, so this never matters in-contract).
+ */
+function findSettledGateEntry(
+  fresh: RunRecord,
+  gateId: string,
+): { step: string; choice: string | undefined } | undefined {
+  for (const [step, entry] of Object.entries(fresh.settled ?? {})) {
+    if (entry.outcome !== 'gate' || entry.token !== gateId) continue;
+    if (!membershipFor(fresh, entry.outcome).includes(step)) continue; // orphan rule
+    return { step, choice: entry.choice };
+  }
+  return undefined;
+}
+
+function applySettleGate(
+  fresh: RunRecord,
+  delta: SettleGateDelta,
+  definition: WorkflowDefinition,
+): SettlementResult {
+  const { gateId, choice, evidence } = delta;
+
+  // Lookup FIRST (D3 §0.2 fail-safer-under-corruption; L21 ii: the own-commit may have already
+  // flipped terminal).
+  const hit = findSettledGateEntry(fresh, gateId);
+  if (hit !== undefined) {
+    if (hit.choice === choice) {
+      // Double-submit / two-gates delayed retry (TD F1) — same choice, idempotent no-op.
+      return { applied: false, reason: 'already_settled', run: fresh };
+    }
+    return {
+      applied: false,
+      reason: 'gate_choice_conflict',
+      run: fresh,
+      ...(hit.choice !== undefined ? { winningChoice: hit.choice } : {}),
+    };
+  }
+
+  // Zombie / stale submit — BEFORE the live-gate arm (matches the shipped `applySettleStep`
+  // terminal-first order `:215-217`, AND the live `submitHumanResponse` site's own terminal-first
+  // check `:3431`): a grandfathered terminal∧pending_gate record refuses run_terminal instead of
+  // resurrecting the run or falsely completing it.
+  if (isTerminal(fresh)) {
+    return { applied: false, reason: 'run_terminal', run: fresh };
+  }
+
+  if (fresh.pending_gate !== undefined && fresh.pending_gate.gate_id === gateId) {
+    if (!fresh.pending_gate.choices.includes(choice)) {
+      return {
+        applied: false,
+        reason: 'choice_not_eligible',
+        run: fresh,
+        choices: fresh.pending_gate.choices,
+      };
+    }
+
+    // APPLY RESOLVE: clear pending_gate; completed_steps += step_name; release claim +
+    // in_progress (execution-loop.ts:3519-3520 parity); settled[step] = {token: gateId,
+    // outcome:'gate', choice} — 'gate' LITERAL here, toSettledOutcome's own SettleStepOutcome
+    // domain stays untouched (§2).
+    const stepName = fresh.pending_gate.step_name;
+    const { pending_gate: _pg, ...rest } = fresh;
+    const withMembership: RunRecord = {
+      ...rest,
+      in_progress_steps: rest.in_progress_steps.filter((s) => s !== stepName),
+      claims: omitClaim(rest.claims, stepName),
+      completed_steps: [...rest.completed_steps, stepName],
+      evidence: [...rest.evidence, ...evidence],
+      settled: { ...rest.settled, [stepName]: { token: gateId, outcome: 'gate', choice } },
+    };
+    const propagated = propagateSkips(withMembership, definition);
+    const withSkipped: RunRecord = {
+      ...withMembership,
+      skipped_steps: propagated.skipped,
+      skip_details: propagated.details,
+    };
+    const isComplete =
+      isWorkflowComplete(withSkipped, definition) ||
+      (withSkipped.in_progress_steps.length === 0 &&
+        findEligibleSteps(definition, withSkipped).length === 0 &&
+        findEligibleGuardSteps(definition, withSkipped).length === 0);
+    const draft: RunRecord = {
+      ...withSkipped,
+      terminal_state: isComplete,
+      // eligibility.ts:47 keys deriveRunPhase's 'completed' on this exact string.
+      ...(isComplete ? { terminal_reason: 'Workflow completed.' } : {}),
+    };
+    const { run, transitioned } = applyTerminalPostconditions(
+      draft,
+      definition,
+      'complete',
+      isComplete,
+    );
+    return {
+      applied: true,
+      run,
+      transitioned,
+      pendingFinalizers: pendingFinalizerNames(run.finalizer_ledger),
+    };
+  }
+
+  // Superseded/unknown gateId on a live run.
+  return { applied: false, reason: 'gate_mismatch', run: fresh };
+}
+
+// ---------------------------------------------------------------------------
+// §3 settleGuardArms (issue #279, increment 2, PR-C) — fence = ⊥ (guards are never claimed,
+// eligibility.ts:418); writes NO settled entry (SE-4).
+// ---------------------------------------------------------------------------
+
+function ownMembershipFor(
+  fresh: RunRecord,
+  outcome: SettleGuardDelta['outcome'],
+): readonly string[] {
+  switch (outcome) {
+    case 'pass':
+      return fresh.completed_steps;
+    case 'resolution_error':
+      return fresh.failed_steps;
+    case 'abort':
+      return fresh.skipped_steps;
+  }
+}
+
+function applySettleGuard(
+  fresh: RunRecord,
+  delta: SettleGuardDelta,
+  definition: WorkflowDefinition,
+): SettlementResult {
+  const { step, outcome, evidence, resolutionError, abort } = delta;
+
+  if (outcome === 'resolution_error' && resolutionError === undefined) {
+    // Caller-programming-error, not a predicate outcome (the SettleStepDelta abort precedent).
+    throw new Error(
+      `applySettlement contract violation: settle_guard delta for step '${step}' has ` +
+        `outcome:'resolution_error' but no 'resolutionError' payload`,
+    );
+  }
+  if (outcome === 'abort' && abort === undefined) {
+    throw new Error(
+      `applySettlement contract violation: settle_guard delta for step '${step}' has ` +
+        `outcome:'abort' but no 'abort' payload`,
+    );
+  }
+
+  // A := {pass: completed_steps, resolution_error: failed_steps, abort: skipped_steps} (lens-1 F8).
+  if (ownMembershipFor(fresh, outcome).includes(step)) {
+    if (outcome === 'abort' && fresh.skip_details?.[step]?.kind !== 'guard_abort') {
+      // In skipped_steps, but NOT via a prior guard_abort (e.g. when_false/trigger_rule_
+      // unsatisfiable instead) — a genuine divergence, not this guard's own convergent retry.
+      return {
+        applied: false,
+        reason: 'settled_outcome_divergence',
+        run: fresh,
+        persisted: 'skip-non-abort',
+      };
+    }
+    // Convergence on own-APPLY coordinates (L21) — idempotent retry.
+    return { applied: false, reason: 'already_settled', run: fresh };
+  }
+
+  // Any OTHER membership array already containing this step is a genuine divergence — a
+  // different settle already committed a DIFFERENT outcome for the same guard.
+  if (fresh.completed_steps.includes(step)) {
+    return {
+      applied: false,
+      reason: 'settled_outcome_divergence',
+      run: fresh,
+      persisted: 'complete',
+    };
+  }
+  if (fresh.failed_steps.includes(step)) {
+    return { applied: false, reason: 'settled_outcome_divergence', run: fresh, persisted: 'fail' };
+  }
+  if (fresh.skipped_steps.includes(step)) {
+    return { applied: false, reason: 'settled_outcome_divergence', run: fresh, persisted: 'skip' };
+  }
+
+  if (isTerminal(fresh)) {
+    return { applied: false, reason: 'run_terminal', run: fresh }; // terminal by OTHER
+  }
+
+  if (fresh.pending_gate !== undefined && outcome !== 'pass') {
+    // D-2: the GATE WINS; quiet end-of-pass — the guard re-evaluates at the NEXT drive (N8).
+    return { applied: false, reason: 'gate_open_wait', run: fresh };
+  }
+
+  // APPLY GUARD.
+  if (outcome === 'resolution_error') {
+    const withFailed: RunRecord = {
+      ...fresh,
+      evidence: [...fresh.evidence, evidence],
+      failed_steps: [...fresh.failed_steps, step],
+    };
+    const propagated = propagateSkips(withFailed, definition);
+    const withSkipped: RunRecord = {
+      ...withFailed,
+      skipped_steps: propagated.skipped,
+      skip_details: propagated.details,
+    };
+    const draft: RunRecord = {
+      ...withSkipped,
+      terminal_state: true,
+      // execution-loop.ts:3671 parity.
+      terminal_reason: `Guard step '${step}' failed: unresolvable path '${resolutionError!.unresolvable_path}'`,
+    };
+    const { run, transitioned } = applyTerminalPostconditions(draft, definition, 'fail', false);
+    return {
+      applied: true,
+      run,
+      transitioned,
+      pendingFinalizers: pendingFinalizerNames(run.finalizer_ledger),
+    };
+  }
+
+  if (outcome === 'abort') {
+    const withSkippedSelf: RunRecord = {
+      ...fresh,
+      evidence: [...fresh.evidence, evidence],
+      skipped_steps: [...fresh.skipped_steps, step],
+    };
+    const propagated = propagateSkips(withSkippedSelf, definition);
+    const withSkipped: RunRecord = {
+      ...withSkippedSelf,
+      skipped_steps: propagated.skipped,
+      // #111: the merge preserves any cascade details for OTHER now-unreachable steps alongside
+      // this guard's own guard_abort tag (execution-loop.ts:3728-3735 parity).
+      skip_details: { ...propagated.details, [step]: { kind: 'guard_abort' } },
+    };
+    const draft: RunRecord = {
+      ...withSkipped,
+      terminal_state: true,
+      // terminal_reason ABSENT — phase 'aborted' derives from aborted_at (§4 table).
+      aborted_at: {
+        step_id: step,
+        conditions: abort!.conditions,
+        ...(abort!.abort_message !== undefined ? { abort_message: abort!.abort_message } : {}),
+      },
+    };
+    const { run, transitioned } = applyTerminalPostconditions(draft, definition, 'abort', false);
+    return {
+      applied: true,
+      run,
+      transitioned,
+      pendingFinalizers: pendingFinalizerNames(run.finalizer_ledger),
+    };
+  }
+
+  // pass: two-disjunct isComplete predicate (same shape as settleStepArms's own).
+  const withCompleted: RunRecord = {
+    ...fresh,
+    evidence: [...fresh.evidence, evidence],
+    completed_steps: [...fresh.completed_steps, step],
+  };
+  const propagated = propagateSkips(withCompleted, definition);
+  const withSkipped: RunRecord = {
+    ...withCompleted,
+    skipped_steps: propagated.skipped,
+    skip_details: propagated.details,
+  };
+  const isComplete =
+    isWorkflowComplete(withSkipped, definition) ||
+    (withSkipped.in_progress_steps.length === 0 &&
+      findEligibleSteps(definition, withSkipped).length === 0 &&
+      findEligibleGuardSteps(definition, withSkipped).length === 0);
+  const draft: RunRecord = {
+    ...withSkipped,
+    terminal_state: isComplete,
+    // execution-loop.ts:3675-3705 parity; eligibility.ts:47 keys deriveRunPhase's 'completed' on
+    // this exact string.
+    ...(isComplete ? { terminal_reason: 'Workflow completed.' } : {}),
+  };
+  const { run, transitioned } = applyTerminalPostconditions(
+    draft,
+    definition,
+    'complete',
+    isComplete,
+  );
+  return {
+    applied: true,
+    run,
+    transitioned,
+    pendingFinalizers: pendingFinalizerNames(run.finalizer_ledger),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// §3 releaseStepArms (issue #279, increment 2, PR-C) — fence = claimToken. NEVER terminal, writes
+// NO settled entry — the step returns to eligible.
+// ---------------------------------------------------------------------------
+
+function applyReleaseStep(fresh: RunRecord, delta: ReleaseStepDelta, now: Date): SettlementResult {
+  const { step, claimToken, capabilityBlock, evidence } = delta;
+
+  if (entryOf(fresh, step) !== undefined) {
+    return { applied: false, reason: 'already_settled_by_other', run: fresh };
+  }
+
+  if (isTerminal(fresh)) {
+    return { applied: false, reason: 'run_terminal', run: fresh };
+  }
+
+  const claim = fresh.claims?.[step];
+  if (claim === undefined) {
+    // TD F10: the claim is already gone — the RELEASE intent already holds. Idempotent no-op.
+    return { applied: false, reason: 'already_released', run: fresh };
+  }
+  if (!tokensEqual(claim.token, claimToken)) {
+    // Never stomp a successor's claim (execution-loop.ts:660-671 parity).
+    return { applied: false, reason: 'claim_lost', run: fresh };
+  }
+  if (fresh.pending_gate?.step_name === step) {
+    // reclaim-step.ts:389 parity — a claim pinned by an open gate is never released this way.
+    return { applied: false, reason: 'gate_mismatch', run: fresh };
+  }
+
+  // APPLY RELEASE: release claim + in_progress; optional capability_blocks merge
+  // (execution-loop.ts:2461-2475 semantics); optional evidence append (execution-loop.ts:679
+  // semantics — the compensating un-claim's own audit snapshot). NEVER terminal, NO settled entry.
+  const withRelease: RunRecord = {
+    ...fresh,
+    in_progress_steps: fresh.in_progress_steps.filter((s) => s !== step),
+    claims: omitClaim(fresh.claims, step),
+    ...(capabilityBlock !== undefined
+      ? {
+          capability_blocks: {
+            ...fresh.capability_blocks,
+            [step]: {
+              requirement: capabilityBlock.requirement,
+              code: capabilityBlock.code,
+              at: now.toISOString(),
+            },
+          },
+        }
+      : {}),
+    ...(evidence !== undefined ? { evidence: [...fresh.evidence, ...evidence] } : {}),
+  };
+  const run: RunRecord = { ...withRelease, run_phase: deriveRunPhase(withRelease) };
+  return {
+    applied: true,
+    run,
+    transitioned: false,
+    pendingFinalizers: pendingFinalizerNames(run.finalizer_ledger),
   };
 }
 
@@ -521,5 +985,26 @@ export function applySettlement(
       return applyLeaseFinalizer(fresh, delta, now);
     case 'mark_finalizer':
       return applyMarkFinalizer(fresh, delta);
+    case 'open_gate':
+      return applyOpenGate(fresh, delta);
+    case 'settle_gate':
+      return applySettleGate(fresh, delta, definition);
+    case 'settle_guard':
+      return applySettleGuard(fresh, delta, definition);
+    case 'release_step':
+      return applyReleaseStep(fresh, delta, now);
   }
 }
+
+/**
+ * Named constant (issue #279, increment 2, PR-C; design record §4.3) tying reclaim-step.ts's own
+ * open-gate refusal (`reclaimStep`, ~line 389: "the claim is legitimately pinned by a human gate")
+ * to this design's "unfenced-release soundness rests on reclaim" premise: `settle_step` abort's
+ * cancel-gate write (`applyAbortEdge`, above) is the ONLY path that may release an open gate's
+ * claim; `reclaimStep`/`isAutoReclaimable` must NEVER also release it, or the two paths could race
+ * and double-release the same claim. Referenced (not asserted via) by this invariant's two
+ * existing pinning tests (`reclaim-step.test.ts` + the CLI's `reclaim.test.ts`) so a future reader
+ * can grep this name to find both, and reclaim-step.ts's own SOURCE stays untouched by this PR.
+ */
+export const RECLAIM_REFUSES_GATE_STEP =
+  'reclaim never releases the open-gate claim (design record design-d5-increment2.md §4.3, unfenced-release soundness)';

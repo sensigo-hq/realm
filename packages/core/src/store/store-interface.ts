@@ -158,15 +158,18 @@ export interface RunStore {
 
   /**
    * Atomically applies one {@link SettlementDelta} to this run's FRESH state, under the store's
-   * own serialization (issue #279, increment 1). Optional (the `persistedRunRecordFields`
-   * precedent — additive-optional, never retroactively required of an external implementer).
+   * own serialization (issue #279). Optional (the `persistedRunRecordFields` precedent —
+   * additive-optional, never retroactively required of an external implementer).
    *
-   * **DORMANT UNTIL PR-B.** No engine or MCP call site constructs a `SettlementDelta` or calls
-   * this method in this release (enforced by an in-repo source-text guard) — declaring it is
-   * inert. Direct callers (a test, a script, an operator tool) are OUT OF CONTRACT until the
-   * engine adopts it: nothing here promises interop with the legacy `update()`/`claimStep()` CAS
-   * paths beyond what {@link applySettlement}'s own predicate already guards (fresh-state
-   * `claims`/`settled`/`finalizer_ledger` reads).
+   * **LIVE since v0.32.0** for the `settle_step`/`lease_finalizer`/`mark_finalizer` kinds: three
+   * engine call sites (the seal sites) plus `drainFinalizers` construct these deltas and call this
+   * method today — this is corrected from an earlier "dormant until PR-B" framing that is now
+   * stale. The four increment-2 kinds (`open_gate`/`settle_gate`/`settle_guard`/`release_step`)
+   * remain engine-inert until PR-D migrates their five legacy write sites (enforced by an in-repo
+   * source-text guard in the interim) — declaring this method commits a store to the FULL,
+   * OPEN-ended `SettlementDelta` union (see that type's own doc): a re-implementing store MUST
+   * refuse-loud (throw a contract-violation error) on any `kind` it does not recognize, never
+   * default-arm it.
    *
    * **A WRITE surface, not a read-only helper** — it carries every obligation `update()` already
    * does for this store (e.g. a cloud store's own policy/authorization gate on the write; M1):

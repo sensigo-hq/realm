@@ -7,7 +7,10 @@
 // delete (a single <id> ALSO requires `--force` — naming a run is selection, not consent).
 //
 // Non-negotiable invariants (do not weaken): terminal-only (never a non-terminal or `gate_waiting`
-// run). Claim posture (issue #107 correction) is mode-aware: a `healthy` (future-deadline) claim is
+// run — issue #279, increment 2, PR-C: keyed on the DERIVED phase, never the persisted one, so a
+// grandfathered terminal run carrying a stale/leftover `pending_gate` is correctly recognized as
+// terminal rather than permanently refused as "still gate_waiting"). Claim posture (issue #107
+// correction) is mode-aware: a `healthy` (future-deadline) claim is
 // NEVER purged, in either mode — there is no override, because a live runner is provably still
 // working it. A `claim_unknown_age` (null-deadline) claim — load-bearing for `abandoned` runs, which
 // do not clear `claims` (see cleanup.ts) — is skipped+warned in BATCH mode (a cron sweep cannot prove
@@ -24,6 +27,7 @@ import {
   TERMINAL_PHASES,
   RESUMABLE_PHASES,
   classifyInProgressClaims,
+  deriveRunPhase,
 } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 
@@ -54,7 +58,10 @@ export function isPurgeEligible(
   run: RunRecord,
   opts: { explicit: boolean; now?: Date },
 ): PurgeEligibility {
-  if (!TERMINAL_PHASES.has(run.run_phase)) {
+  // issue #279 (increment 2, PR-C — D-3 leg iii): derive, never trust the persisted run_phase — a
+  // grandfathered terminal-with-stale-gate record (the #282 class) must be recognized as terminal
+  // (and therefore purge-eligible, subject to the claim checks below) on its TRUE phase.
+  if (!TERMINAL_PHASES.has(deriveRunPhase(run))) {
     return { eligible: false, reason: `not terminal (phase: '${run.run_phase}')` };
   }
 
@@ -208,8 +215,8 @@ export async function purgeRuns(
       if (!verdict.eligible) {
         // Only a terminal-but-blocked run (a future or indeterminate-age claim) is a noteworthy
         // skip+warn — a plain non-terminal run isn't a purge candidate in the first place and
-        // needn't be noisy.
-        if (TERMINAL_PHASES.has(run.run_phase)) {
+        // needn't be noisy. Derives (issue #279, increment 2, PR-C — D-3 leg iii).
+        if (TERMINAL_PHASES.has(deriveRunPhase(run))) {
           skipped.push({ runId: run.id, reason: verdict.reason });
         }
         continue;
@@ -235,7 +242,8 @@ export async function purgeRuns(
     selected.push({
       run,
       bytes,
-      resumable: RESUMABLE_PHASES.has(run.run_phase),
+      // Derives (issue #279, increment 2, PR-C — D-3 leg iii).
+      resumable: RESUMABLE_PHASES.has(deriveRunPhase(run)),
       overriddenClaimStep,
     });
   }
@@ -347,7 +355,8 @@ function buildPurgeWalGuard(
       }
       throw err;
     }
-    if (!TERMINAL_PHASES.has(fresh.run_phase)) {
+    // Derives (issue #279, increment 2, PR-C — D-3 leg iii).
+    if (!TERMINAL_PHASES.has(deriveRunPhase(fresh))) {
       throw new WorkflowError(
         `Run '${runId}' is no longer terminal — refusing to purge its trace buffer`,
         {

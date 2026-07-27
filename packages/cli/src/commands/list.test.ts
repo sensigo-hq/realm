@@ -20,6 +20,10 @@ function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
     workflow_id: 'test-workflow',
     workflow_version: 1,
     run_phase: 'completed',
+    // issue #279 (increment 2, PR-C — the #282 class closure): paired with the default
+    // run_phase:'completed' above so a fixture DERIVES the same phase it declares — `list.ts`
+    // now derives, never trusts, the persisted field.
+    terminal_reason: 'Workflow completed.',
     completed_steps: [],
     in_progress_steps: [],
     failed_steps: [],

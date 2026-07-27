@@ -295,7 +295,14 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
           // (b') Apply the re-encounter policy to the matched run (PR 2). decideIdempotencyPolicy
           // is called directly here (not inside a nested async helper) so a `reject`/`fail` throw
           // is synchronous within this try — avoiding a transiently-orphaned rejected promise.
-          if (decideIdempotencyPolicy(target, options) === 'reuse') {
+          // issue #279 (increment 2, PR-C — D-3 leg v): derive at the CALL SITE, never trust the
+          // persisted run_phase — decideIdempotencyPolicy's own exported `Pick<>` signature stays
+          // untouched (a public-API break otherwise); this makes its `terminal_state`/`run_phase`
+          // branch AND its own error messages render the derived value automatically.
+          if (
+            decideIdempotencyPolicy({ ...target, run_phase: deriveRunPhase(target) }, options) ===
+            'reuse'
+          ) {
             return { run: target, created: false };
           }
           return await this.supersede(options, keyPath, key);
@@ -306,8 +313,14 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
         // recovers run-written-but-pointer-not crash orphans, which still carry the field).
         const canonical = await this.findCanonicalLegacyRun(options.workflowId, key);
         if (canonical !== undefined) {
-          // A legacy match runs through the same policy.
-          if (decideIdempotencyPolicy(canonical, options) === 'reuse') {
+          // A legacy match runs through the same policy. Derives (issue #279, increment 2, PR-C
+          // — D-3 leg v) — same rationale as the pointer-present branch above.
+          if (
+            decideIdempotencyPolicy(
+              { ...canonical, run_phase: deriveRunPhase(canonical) },
+              options,
+            ) === 'reuse'
+          ) {
             // Migrate the adopted run into the pointer index (PR 1 behavior).
             await this.writePointer(keyPath, canonical, key);
             return { run: canonical, created: false };
@@ -536,10 +549,12 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
   }
 
   /**
-   * Atomically applies one `SettlementDelta` to this run's fresh state (issue #279, increment 1).
-   * DORMANT until PR-B — see the JSDoc on `RunStore.settleStep` for the full contract (dormancy,
-   * write-surface obligations, atomicity, infra-throws/predicate-returns). Same lock/fresh-read
-   * shape as `update()` (ENOENT/ELOCKED mapping identical): LOCK_RETRIES lock → fresh read →
+   * Atomically applies one `SettlementDelta` to this run's fresh state (issue #279). LIVE since
+   * v0.32.0 for `settle_step`/`lease_finalizer`/`mark_finalizer` — see the JSDoc on
+   * `RunStore.settleStep` for the full contract (the increment-2 gate/guard/release kinds stay
+   * engine-inert until PR-D; write-surface obligations, atomicity, infra-throws/predicate-returns
+   * apply uniformly regardless of kind). Same lock/fresh-read shape as `update()` (ENOENT/ELOCKED
+   * mapping identical): LOCK_RETRIES lock → fresh read →
    * `applySettlement` → a refusal returns WITHOUT any write (fresh state, version unchanged) → an
    * apply writes the transform's own output with the write-tail `{version: fresh.version+1,
    * updated_at}` (run_phase is already transform-derived; this store's own re-derivation below is
@@ -649,7 +664,13 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
         );
       }
       // Run file FIRST (consistent with create()), then register the key pointer.
-      await atomicWriteFile(path, JSON.stringify(record, null, 2));
+      // issue #279 (increment 2, PR-C — D-3 leg vii): derive run_phase before the write — an
+      // imported record (e.g. from a remote store, or a hand-authored fixture) could carry a
+      // stale/foreign run_phase value; this store must never persist one that disagrees with its
+      // own derivation. `pending_gate` itself is NOT stripped here (save() is a verbatim import,
+      // not a resume) — only the derived render field is corrected.
+      const withDerivedPhase: RunRecord = { ...record, run_phase: deriveRunPhase(record) };
+      await atomicWriteFile(path, JSON.stringify(withDerivedPhase, null, 2));
     } finally {
       await release();
     }
@@ -902,7 +923,10 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       // refuse to delete a run that is (now) live, regardless of what the caller believed at
       // selection. This is a sound store-level invariant, not just a purge-specific patch:
       // `deleteAllForRun` never deletes a non-terminal run, full stop.
-      if (!TERMINAL_PHASES.has(record.run_phase) || record.terminal_state !== true) {
+      // Derives (issue #279, increment 2, PR-C — D-3 leg iii): never trust the persisted
+      // run_phase — a grandfathered terminal-with-stale-gate record (the #282 class) must still
+      // be recognized as terminal here.
+      if (!TERMINAL_PHASES.has(deriveRunPhase(record)) || record.terminal_state !== true) {
         throw this.runBusyError(runId, 'no_longer_terminal');
       }
 

@@ -41,7 +41,7 @@ import {
 } from '../validation/input-schema.js';
 import { normalizeTrace } from './trace-normalizer.js';
 import type { NormalizeTraceResult } from './trace-normalizer.js';
-import { TERMINAL_PHASES, isTerminalPhase, DRAIN_CEILING_SECONDS } from './lifecycle.js';
+import { TERMINAL_PHASES, DRAIN_CEILING_SECONDS } from './lifecycle.js';
 import {
   omitClaim,
   shouldEnforceTimeout,
@@ -4336,7 +4336,13 @@ export async function executeChain(
       throw err;
     }
   }
-  if (entryRun !== undefined && isTerminalPhase(entryRun.run_phase)) {
+  // issue #279 (increment 2, PR-C — D-3 leg v): keyed on terminal_state, never the persisted
+  // run_phase — a grandfathered terminal-with-stale-gate record (the #282 class) must still be
+  // recognized as terminal here.
+  if (entryRun !== undefined && entryRun.terminal_state === true) {
+    // Derive-for-message (D-3 leg v): render the TRUE (derived) phase, never the possibly-stale
+    // persisted one.
+    const derivedPhase = deriveRunPhase(entryRun);
     return {
       command: options.command,
       run_id: options.runId,
@@ -4347,8 +4353,8 @@ export async function executeChain(
       warnings: [],
       errors: [],
       agent_action: 'stop' as const,
-      context_hint: `Run '${options.runId}' is already terminal (${entryRun.run_phase}); no steps executed.`,
-      run_phase: entryRun.run_phase,
+      context_hint: `Run '${options.runId}' is already terminal (${derivedPhase}); no steps executed.`,
+      run_phase: derivedPhase,
       next_actions: [],
     };
   }

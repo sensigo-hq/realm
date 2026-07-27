@@ -170,3 +170,64 @@ describe('applySettlement is deterministic — same inputs + fixed now ⇒ deep-
     expect(first.applied).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Engine-inert guard for the four increment-2 delta kinds (issue #279, increment 2, PR-C).
+// The whole point of this PR's scope class (EXPAND / Parallel Change) is that open_gate,
+// settle_gate, settle_guard, and release_step are ADDED to the substrate but not yet wired to any
+// call site — the five legacy write sites they'll eventually replace (gate-open, gate-resolution,
+// guard-pass/abort/error, capability-block release) stay on their pre-existing paths until PR-D's
+// migration. This mirrors the ORIGINAL zero-invocation-sites guard PR-A shipped for settle_step
+// itself (since deleted above, replaced by the positive three-site pin, once PR-B migrated it) —
+// same discipline, applied to the four kinds still dormant in THIS increment.
+//
+// Literal-construction-scoped (`kind: 'open_gate'` etc., not a bare identifier match) so this
+// module's own JSDoc/type definitions can mention the kind names freely without self-tripping —
+// settlement.ts (where the delta *types* and `applySettlement`'s dispatcher legitimately name
+// these literals) and any `.test.ts` file (this file's own fixtures, the TCK) are excluded from
+// the scan; every other engine/mcp-server source file must be clean.
+describe('the four increment-2 delta kinds are ENGINE-INERT — no source-text construction site exists yet (issue #279, increment 2, PR-C)', () => {
+  const INCREMENT_2_KINDS = ['open_gate', 'settle_gate', 'settle_guard', 'release_step'];
+  const EXCLUDED_FILES = new Set([join(PACKAGES_DIR, 'core', 'src', 'engine', 'settlement.ts')]);
+
+  function findConstructionSites(): { file: string; line: number; text: string }[] {
+    const sites: { file: string; line: number; text: string }[] = [];
+    for (const root of SCANNED_ROOTS) {
+      for (const file of sourceFiles(root)) {
+        if (EXCLUDED_FILES.has(file)) continue;
+        const lines = readFileSync(file, 'utf8').split('\n');
+        lines.forEach((line, i) => {
+          for (const kind of INCREMENT_2_KINDS) {
+            if (line.includes(`kind: '${kind}'`) || line.includes(`kind:'${kind}'`)) {
+              sites.push({ file, line: i + 1, text: line.trim() });
+            }
+          }
+        });
+      }
+    }
+    return sites;
+  }
+
+  it('no engine or mcp-server source file (excluding settlement.ts) constructs an open_gate/settle_gate/settle_guard/release_step literal', () => {
+    const sites = findConstructionSites();
+    expect(
+      sites,
+      sites.length > 0
+        ? `Found increment-2 delta construction site(s) OUTSIDE settlement.ts — these kinds must ` +
+            `stay engine-inert until PR-D's migration:\n${sites
+              .map((s) => `  ${s.file}:${s.line}: ${s.text}`)
+              .join('\n')}`
+        : '',
+    ).toEqual([]);
+  });
+
+  it('settlement.ts ITSELF does declare all four kinds (sanity check — an empty scan must mean "excluded", not "the kinds do not exist")', () => {
+    const settlementSrc = readFileSync(
+      join(PACKAGES_DIR, 'core', 'src', 'engine', 'settlement.ts'),
+      'utf8',
+    );
+    for (const kind of INCREMENT_2_KINDS) {
+      expect(settlementSrc, `expected settlement.ts to reference kind '${kind}'`).toContain(kind);
+    }
+  });
+});

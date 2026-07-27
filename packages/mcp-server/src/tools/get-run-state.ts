@@ -13,6 +13,7 @@ import {
   classifyRunHealth,
   persistsField,
   deriveDefaultedSteps,
+  deriveRunPhase,
   type RunPhase,
   type NextAction,
   type ClaimState,
@@ -286,13 +287,18 @@ export async function handleGetRunState(
   return {
     run_id: run.id,
     workflow_id: run.workflow_id,
-    run_phase: run.run_phase,
+    // issue #279 (increment 2, PR-C — D-3 leg vi): render the DERIVED phase, never the persisted
+    // one — a grandfathered terminal-with-stale-gate record (the #282 class) must never report
+    // itself as still 'gate_waiting'.
+    run_phase: deriveRunPhase(run),
     terminal_state: run.terminal_state,
     completed_steps: run.completed_steps,
     in_progress_steps: run.in_progress_steps,
     failed_steps: run.failed_steps,
     skipped_steps: run.skipped_steps,
-    pending_gate: run.pending_gate,
+    // Suppress a stale/leftover pending_gate on a terminal record (the #282 class) — never
+    // surface a gate that no longer means anything live.
+    pending_gate: run.terminal_state ? undefined : run.pending_gate,
     evidence_count: run.evidence.length,
     last_step: run.evidence.at(-1)?.step_id ?? null,
     created_at: run.created_at,

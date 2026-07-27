@@ -84,8 +84,12 @@ describe('get_run_state — defaulted_steps (issue #232)', () => {
   });
 
   it('AC-1 abort path: an ABORTED run that default-settled step "draft" earlier ⇒ defaulted_steps: ["draft"]', async () => {
+    // issue #279 (increment 2, PR-C — the #282 class closure): get_run_state now DERIVES
+    // run_phase rather than trusting the persisted field, so a genuinely-aborted fixture must
+    // carry `aborted_at` too — a hand-set `run_phase: 'aborted'` alone no longer suffices.
     const run = makeRun({
       run_phase: 'aborted',
+      aborted_at: { step_id: 'guard' },
       evidence: [defaultSettledSnapshot('draft')],
     });
     const summary = await handleGetRunState({ run_id: 'r1' }, { runStore: makeStore(run) });

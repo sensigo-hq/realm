@@ -33,9 +33,20 @@ const LAWS: SettlementLaw[] = [
   'COMPLETE_SEAL_PHASE',
   'WHEN_ROUTED_TERMINALIZATION',
   'G1_GATE_COEXISTENCE',
+  // issue #279, increment 2 (PR-C).
+  'GATE_OPEN_IDEMPOTENT',
+  'GATE_RESOLUTION_CONFLICT',
+  'GATE_MISMATCH',
+  'GUARD_OUTCOME_DIVERGENCE',
+  'GUARD_WAITS_ON_OPEN_GATE',
+  'GUARD_PASS_COMPLETE_OUTCOME',
+  'GUARD_ABORT_CASCADE',
+  'GUARD_NO_ENTRY',
+  'RELEASE_IDEMPOTENT',
+  'PHASE_IS_GENERATED',
 ];
 
-describe('InMemoryStore — settlement TCK conformance (issue #279, increment 1, PR-A)', () => {
+describe('InMemoryStore — settlement TCK conformance (issue #279, increment 1 + 2)', () => {
   it('declares settleStep and the two new LoadBearingRunRecordFields (settled/finalizer_ledger)', () => {
     const store = new InMemoryStore();
     expect(store.settleStep).toBeDefined();
