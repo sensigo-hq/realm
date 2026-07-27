@@ -1,5 +1,5 @@
 // guard-chain-consumption-279.test.ts — GUARD_CHAIN_CONSUMPTION (issue #279, increment 2, PR-D,
-// Deliverable 5; design record §6/§8, gate-1 gap-1's forcing test). Four legs through the REAL
+// Deliverable 5; design record §6/§8, gate-1 gap-1's forcing test). Five legs through the REAL
 // engine (executeChain) + a REAL JsonFileStore, exercising the chain-consumption table adjudicated
 // for settle_guard's refusal reasons:
 //   (a) a sibling settles the guard FIRST (same outcome) ⇒ our own attempt returns already_settled
@@ -10,6 +10,14 @@
 //       (STATE_STEP_ALREADY_SETTLED) — the abort was never recorded.
 //   (d) a gate opens on ANOTHER step between the guard's pre-seal snapshot and its own settle call
 //       ⇒ gate_open_wait ⇒ quiet end-of-pass; the guard re-applies cleanly once the gate resolves.
+//   (e) [correction, MA review of reports/atomic-settle-279-pr-d.md] a sibling settles the guard
+//       FIRST with the SAME outcome as our own attempt (same shape as leg (a)), but the sibling's
+//       commit is a RAW `store.settleStep` call — it terminalizes the run and mints the finalizer
+//       ledger PENDING, but (being a bare store-layer write, not a full executeChain/
+//       submitHumanResponse call) never drains. Our own attempt then hits already_settled ⇒ the
+//       1c NOOP-leg's own drain-on-already_settled clause must fire and deliver the finalizer,
+//       exactly once, with its warnings (if any) riding `guardWarnings` into the final envelope —
+//       pinning the self-corrected fix Deviation #2 of the PR-D report left unpinned.
 //
 // Construction technique: rather than a raw concurrency race (which would non-deterministically
 // decide which of two callers "wins" the guard — unlike symptom-death-279.test.ts's sibling-STEP
@@ -32,10 +40,12 @@ import { join } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { executeChain, submitHumanResponse } from './execution-loop.js';
 import { captureEvidence } from '../evidence/snapshot.js';
+import { ExtensionRegistry } from '../extensions/registry.js';
 import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
+import type { StepHandler } from '../extensions/step-handler.js';
 
 /**
  * Delegates every RunStore method to a real, functional JsonFileStore. `settleStep` is
@@ -116,6 +126,23 @@ const defWithRecheck: WorkflowDefinition = {
   steps: {
     ...def.steps,
     trigger_recheck: { description: 'tr', execution: 'auto', depends_on: [] },
+  },
+};
+
+// Leg (e) ONLY — a SEPARATE definition (same reasoning as defWithRecheck): adds a finalizer bound
+// to the run's overall 'abort' outcome (r5-guard-finalizer-wf's own shape, gate-death-279.test.ts),
+// so guard_b's abort terminalizes the run AND mints exactly one finalizer to drain.
+const defWithFinalizer: WorkflowDefinition = {
+  ...def,
+  id: 'guard-chain-consumption-finalizer-wf',
+  steps: {
+    ...def.steps,
+    fin: {
+      description: 'finalizer',
+      execution: 'finalizer',
+      on_outcome: 'abort',
+      handler: 'fin-handler',
+    },
   },
 };
 
@@ -338,6 +365,78 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       expect(finalRun.skipped_steps).toContain('guard_b');
       expect(finalRun.aborted_at?.step_id).toBe('guard_b');
       expect(finalRun.terminal_state).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("(e) [correction] a sibling RAW-settles the guard with the SAME (abort) outcome, terminalizing the run and minting a finalizer PENDING with no drain ⇒ our own already_settled leg's NOOP-drain delivers it, exactly once", async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'realm-gcc-e-'));
+    try {
+      const inner = new JsonFileStore(dir);
+      const { run } = await inner.create({
+        workflowId: defWithFinalizer.id,
+        workflowVersion: 1,
+        params: {},
+      });
+
+      let handlerCallCount = 0;
+      const finHandler: StepHandler = {
+        id: 'fin-handler',
+        execute: async () => {
+          handlerCallCount += 1;
+          return { data: {} };
+        },
+      };
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'fin-handler', finHandler);
+
+      const store = new InjectBeforeSettleStore(
+        inner,
+        (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
+        async () => {
+          // RAW sibling commit — a bare `store.settleStep` call, bypassing executeChain entirely.
+          // applySettleGuard's abort arm mints the finalizer ledger PENDING as part of terminal
+          // postconditions, but ONLY executeChain/submitHumanResponse ever call drainFinalizers —
+          // a raw store-layer write never does, so "no drain runs" arises naturally, without any
+          // separate lease-refusal interception (unlike 1b's own drain-on-NOOP precedent).
+          await inner.settleStep(
+            run.id,
+            {
+              kind: 'settle_guard',
+              step: 'guard_b',
+              outcome: 'abort',
+              evidence: makeGuardEvidence('abort'),
+              abort: {
+                conditions: [
+                  { condition: "step_a.status == 'open'", resolved_value: 'closed', passed: false },
+                ],
+              },
+            },
+            defWithFinalizer,
+          );
+        },
+      );
+
+      const result = await executeChain(store, defWithFinalizer, {
+        runId: run.id,
+        command: 'step_a',
+        input: {},
+        dispatcher: async () => ({ status: 'closed' }), // OUR OWN attempt also aborts — same outcome
+        registry,
+      });
+
+      expect(result.status).toBe('ok');
+      expect(result.errors).toEqual([]);
+      expect(result.error_code).toBeUndefined();
+
+      const finalRun = await inner.get(run.id);
+      // Delivered, not merely settled-terminal: the NOOP-leg's drain-on-already_settled clause
+      // recovered the crashed-drain state left by the raw sibling commit.
+      expect(finalRun.finalizer_ledger?.['fin']?.status).toBe('completed');
+      expect(finalRun.completed_steps).toContain('fin');
+      expect(finalRun.evidence.find((e) => e.step_id === 'fin')).toBeDefined();
+      expect(handlerCallCount).toBe(1); // exactly once — never zero, never twice
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
