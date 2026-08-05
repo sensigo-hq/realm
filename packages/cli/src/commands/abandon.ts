@@ -12,7 +12,10 @@ export const abandonCommand = new Command('abandon')
       const run = await abandonRun(runStore, runId, opts.reason);
       console.log(
         `Run '${runId}' abandoned (phase: '${run.run_phase}'). Reason: ${run.terminal_reason}.\n` +
-          `To re-run the same idempotency key, use start_run with on_terminal_match: 'rerun' (default 'reuse' returns this abandoned run).`,
+          `To re-run the same idempotency key, use start_run with on_terminal_match: 'rerun' (default 'reuse' returns this abandoned run).\n` +
+          // issue #222 — the documented/advised abandon contract: unconditional, same wording as
+          // the abandon_run MCP tool's `note` field (abandon-run.ts).
+          `abandon is a kill — declared finalizers (if any) did NOT run; 'abort' is the graceful path.`,
       );
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));

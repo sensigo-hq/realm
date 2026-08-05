@@ -71,6 +71,29 @@ export type SettlementLaw =
    *  directly" invariant, quantified): after EVERY store mutation op, persisted `run_phase ≡
    *  deriveRunPhase(record)`. */
   | 'PHASE_IS_GENERATED'
+  // issue #302 (finalizer outcome×trigger matrix) — the completed_with_failed_steps trigger laws.
+  /** Mixed-complete (a `complete` seal with `failed_steps ≠ ∅`) mints the declared
+   *  `completed_with_failed_steps` finalizer, discriminated per-arm — VIA `settle_step`, VIA
+   *  `settle_gate` resolution, and VIA `settle_guard` pass all independently reach `mintFresh`'s
+   *  one chokepoint (design record S3). */
+  | 'CWFS_FIRES_PER_ARM'
+  /** The new trigger never over-fires: a CLEAN complete (no `failed_steps`) does not select it;
+   *  a PURE fail seal (never reaches `complete`) does not select it either. */
+  | 'CWFS_NEGATIVES'
+  /** Uniform-predicate pin (design record M1): a second-epoch complete seal whose ONLY
+   *  `failed_steps` scar is a PRIOR epoch's finalizer self-failure (unresumable, so it never
+   *  leaves `failed_steps`) still fires — no exclusion of finalizer-declared step names. */
+  | 'CWFS_SECOND_EPOCH'
+  /** A finalizer never fires twice for one seal: the array form
+   *  (`on_outcome: [complete, completed_with_failed_steps]`) fires EXACTLY once on mixed-complete
+   *  (Group A, single push despite a multi-element intersection); `always` fires EXACTLY once on
+   *  mixed-complete too (Group B, once — never double-counted alongside a Group A hit). */
+  | 'CWFS_ARRAY_ONCE'
+  /** The REJECTED design alternative (D-C: auto-firing `fail` on mixed-complete) never happens,
+   *  pinned both ways: clean-complete × a `fail`-only finalizer ⇒ not selected (unsurprising);
+   *  mixed-complete × a `fail`-only finalizer ⇒ ALSO not selected (`fail`-only genuinely requires
+   *  a `fail` seal — a `complete` seal carrying `failed_steps` is not a backdoor into it). */
+  | 'CURRENT_BEHAVIOR_PINNED'
   /** Not a real settlement law — a wiring-gap sentinel (see `settlementContract`'s own doc: a
    *  store declaring `settleStep` with no `settlementFixture` supplied gets ONE failing case
    *  tagged with this, never a silent zero-cases pass). */
@@ -3210,6 +3233,533 @@ function phaseIsGeneratedCases(adapter: SettlementContractAdapter): SettlementCo
 }
 
 // ---------------------------------------------------------------------------
+// issue #302 (finalizer outcome×trigger matrix) — completed_with_failed_steps laws.
+// ---------------------------------------------------------------------------
+
+/** CWFS_FIRES_PER_ARM — mixed-complete mints the declared completed_with_failed_steps finalizer,
+ *  discriminated per settlement ARM (S3): VIA settle_step, VIA settle_gate resolution, VIA
+ *  settle_guard pass. Each case independently fails a step FIRST (claimed, then settled), THEN
+ *  drives the arm under test as the run's LAST remaining piece — so failed_steps is non-empty at
+ *  the moment that arm's own settle terminalizes the run to 'complete'. */
+function cwfsFiresPerArmCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const fixture = adapter.settlementFixture!;
+  const { minimalDefinition, withFinalizer } = fixture;
+  const settleStep = requireSettleStep(adapter.store);
+  const cases: SettlementContractCase[] = [
+    {
+      law: 'CWFS_FIRES_PER_ARM',
+      name: `[${adapter.storeName}] mixed-complete VIA settle_step mints the declared completed_with_failed_steps finalizer`,
+      run: async () => {
+        const def = withFinalizer(
+          minimalDefinition(['fail_step', 'complete_step']),
+          'fin',
+          'completed_with_failed_steps',
+        );
+        const { run, token: failToken } = await createClaimed(adapter.store, def, 'fail_step');
+        const claimedComplete = await adapter.store.claimStep(run.id, 'complete_step', def);
+        const completeToken = claimedComplete.claims!['complete_step']!.token!;
+
+        const failed = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'fail_step',
+            outcome: 'fail',
+            claimToken: failToken,
+            evidence: [],
+            failureMessage: 'x',
+          },
+          def,
+        );
+        assertApplied(failed, 'fail fail_step');
+        if (failed.run.terminal_state) {
+          throw new Error(
+            'fixture setup: run must NOT terminalize while complete_step is still claimed',
+          );
+        }
+
+        const completed = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'complete_step',
+            outcome: 'complete',
+            claimToken: completeToken,
+            evidence: [makeEvidence('complete_step')],
+          },
+          def,
+        );
+        assertApplied(completed, 'complete complete_step (terminalizes mixed-complete)');
+        if (completed.run.finalizer_ledger?.['fin']?.status !== 'pending') {
+          throw new Error(
+            `expected 'fin' minted pending on the settle_step-driven mixed-complete seal, got: ${JSON.stringify(completed.run.finalizer_ledger)}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'CWFS_FIRES_PER_ARM',
+      name: `[${adapter.storeName}] mixed-complete VIA settle_gate resolution mints the declared completed_with_failed_steps finalizer`,
+      run: async () => {
+        const def = withFinalizer(
+          minimalDefinition(['fail_step', 'gated_step']),
+          'fin',
+          'completed_with_failed_steps',
+        );
+        // PR-C ordering rule: claim BOTH steps before any gate opens — once a gate is open,
+        // findEligibleSteps returns [] globally, so a fresh claim for 'gated_step' after opening a
+        // gate on it would be the wrong sequencing (this claims first, opens second).
+        const { run, token: failToken } = await createClaimed(adapter.store, def, 'fail_step');
+        const claimedGated = await adapter.store.claimStep(run.id, 'gated_step', def);
+        const gatedToken = claimedGated.claims!['gated_step']!.token!;
+
+        const failed = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'fail_step',
+            outcome: 'fail',
+            claimToken: failToken,
+            evidence: [],
+            failureMessage: 'x',
+          },
+          def,
+        );
+        assertApplied(failed, 'fail fail_step');
+
+        const gate = makePendingGate('gated_step');
+        const opened = await settleStep(
+          run.id,
+          {
+            kind: 'open_gate',
+            step: 'gated_step',
+            claimToken: gatedToken,
+            pendingGate: gate,
+            evidence: [],
+          },
+          def,
+        );
+        assertApplied(opened, 'open_gate on gated_step');
+        if (opened.run.terminal_state) {
+          throw new Error('fixture setup: run must not be terminal merely from opening the gate');
+        }
+
+        const resolved = await settleStep(
+          run.id,
+          { kind: 'settle_gate', gateId: gate.gate_id, choice: 'approve', evidence: [] },
+          def,
+        );
+        assertApplied(resolved, 'settle_gate resolve (terminalizes mixed-complete)');
+        if (resolved.run.finalizer_ledger?.['fin']?.status !== 'pending') {
+          throw new Error(
+            `expected 'fin' minted pending on the settle_gate-driven mixed-complete seal, got: ${JSON.stringify(resolved.run.finalizer_ledger)}`,
+          );
+        }
+      },
+    },
+  ];
+  if (fixture.withGuard === undefined) {
+    cases.push({
+      law: 'ADAPTER_WIRING',
+      name: `[${adapter.storeName}] declares RunStore.settleStep but the supplied settlementFixture has no withGuard — CWFS_FIRES_PER_ARM's guard leg is a WIRING GAP, not a vacuous pass`,
+      run: async () => {
+        throw new Error(
+          `[${adapter.storeName}] settlementContract: adapter.settlementFixture.withGuard is ` +
+            "undefined — pass 'defaultSettlementFixture' (or a store-specific fixture " +
+            'implementing withGuard) to exercise the CWFS_FIRES_PER_ARM guard-leg coverage.',
+        );
+      },
+    });
+  } else {
+    const withGuard = fixture.withGuard;
+    cases.push({
+      law: 'CWFS_FIRES_PER_ARM',
+      name: `[${adapter.storeName}] mixed-complete VIA settle_guard pass mints the declared completed_with_failed_steps finalizer`,
+      run: async () => {
+        const def = withFinalizer(
+          withGuard(minimalDefinition(['fail_step']), 'g', []), // empty abort_unless ⇒ always passes
+          'fin',
+          'completed_with_failed_steps',
+        );
+        const { run, token: failToken } = await createClaimed(adapter.store, def, 'fail_step');
+        const failed = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'fail_step',
+            outcome: 'fail',
+            claimToken: failToken,
+            evidence: [],
+            failureMessage: 'x',
+          },
+          def,
+        );
+        assertApplied(failed, 'fail fail_step');
+        if (failed.run.terminal_state) {
+          throw new Error(
+            "fixture setup: run must NOT terminalize while guard 'g' is still eligible",
+          );
+        }
+
+        const passed = await settleStep(
+          run.id,
+          { kind: 'settle_guard', step: 'g', outcome: 'pass', evidence: makeEvidence('g') },
+          def,
+        );
+        assertApplied(passed, 'settle_guard pass (terminalizes mixed-complete)');
+        if (passed.run.finalizer_ledger?.['fin']?.status !== 'pending') {
+          throw new Error(
+            `expected 'fin' minted pending on the settle_guard-driven mixed-complete seal, got: ${JSON.stringify(passed.run.finalizer_ledger)}`,
+          );
+        }
+      },
+    });
+  }
+  return cases;
+}
+
+/** CWFS_NEGATIVES — the new trigger never over-fires: a clean complete (no failed_steps) does not
+ *  select it; a pure fail seal (never reaches complete) does not select it either. */
+function cwfsNegativesCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
+  const settleStep = requireSettleStep(adapter.store);
+  return [
+    {
+      law: 'CWFS_NEGATIVES',
+      name: `[${adapter.storeName}] a CLEAN complete seal (no failed_steps) does NOT select completed_with_failed_steps`,
+      run: async () => {
+        const def = withFinalizer(minimalDefinition(['a']), 'fin', 'completed_with_failed_steps');
+        const { run, token } = await createClaimed(adapter.store, def, 'a');
+        const completed = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'a',
+            outcome: 'complete',
+            claimToken: token,
+            evidence: [makeEvidence('a')],
+          },
+          def,
+        );
+        assertApplied(completed, 'clean complete of a');
+        if (completed.run.finalizer_ledger?.['fin'] !== undefined) {
+          throw new Error(
+            `expected 'fin' NOT selected on a clean complete seal, got: ${JSON.stringify(completed.run.finalizer_ledger)}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'CWFS_NEGATIVES',
+      name: `[${adapter.storeName}] a PURE fail seal does NOT select completed_with_failed_steps (it requires a complete seal, never a fail seal)`,
+      run: async () => {
+        const def = withFinalizer(minimalDefinition(['a']), 'fin', 'completed_with_failed_steps');
+        const { run, token } = await createClaimed(adapter.store, def, 'a');
+        const failed = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'a',
+            outcome: 'fail',
+            claimToken: token,
+            evidence: [],
+            failureMessage: 'x',
+          },
+          def,
+        );
+        assertApplied(failed, 'pure fail of a');
+        if (failed.run.finalizer_ledger?.['fin'] !== undefined) {
+          throw new Error(
+            `expected 'fin' NOT selected on a pure fail seal, got: ${JSON.stringify(failed.run.finalizer_ledger)}`,
+          );
+        }
+      },
+    },
+  ];
+}
+
+/** CWFS_SECOND_EPOCH — the M1 uniform-predicate pin: a second-epoch complete seal whose ONLY
+ *  failed_steps scar is a PRIOR epoch's finalizer self-failure (unresumable, so it never leaves
+ *  failed_steps) still fires completed_with_failed_steps. The post-resume state is HAND-AUTHORED
+ *  via update() (the mintFreshCases/L14 precedent) — this TCK case does not drive real
+ *  applyResume; a core-homed witness through the REAL applyResume lives in core's own test suite
+ *  (finalizer-matrix-302.test.ts), per the hand-off prompt's "Core tests" bullet. */
+function cwfsSecondEpochCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
+  const settleStep = requireSettleStep(adapter.store);
+  return [
+    {
+      law: 'CWFS_SECOND_EPOCH',
+      name: `[${adapter.storeName}] a second-epoch complete seal driven SOLELY by a prior epoch's finalizer self-failure still fires completed_with_failed_steps`,
+      run: async () => {
+        const def = withFinalizer(
+          withFinalizer(minimalDefinition(['a']), 'onFail', 'fail'),
+          'fin',
+          'completed_with_failed_steps',
+        );
+        const { run, token } = await createClaimed(adapter.store, def, 'a');
+        const failedA = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'a',
+            outcome: 'fail',
+            claimToken: token,
+            evidence: [],
+            failureMessage: 'x',
+          },
+          def,
+        );
+        assertApplied(failedA, 'fail step a (terminalizes fail, mints onFail)');
+        if (failedA.run.finalizer_ledger?.['onFail']?.status !== 'pending') {
+          throw new Error(
+            'fixture setup: expected onFail minted pending on the fail-terminal edge',
+          );
+        }
+        if (failedA.run.finalizer_ledger?.['fin'] !== undefined) {
+          throw new Error("fixture setup: 'fin' must NOT be selected on a pure fail seal");
+        }
+
+        // The prior epoch's finalizer self-failure: onFail itself FAILS (unresumable — its name
+        // enters failed_steps and stays there forever).
+        const leaseToken = uid('lease');
+        const leased = await settleStep(
+          run.id,
+          { kind: 'lease_finalizer', finalizer: 'onFail', leaseToken, leaseSeconds: 60 },
+          def,
+        );
+        assertApplied(leased, 'lease onFail');
+        const markedFailed = await settleStep(
+          run.id,
+          {
+            kind: 'mark_finalizer',
+            finalizer: 'onFail',
+            leaseToken,
+            result: 'failed',
+            evidence: makeEvidence('onFail'),
+          },
+          def,
+        );
+        assertApplied(markedFailed, 'mark onFail failed');
+        if (!markedFailed.run.failed_steps.includes('onFail')) {
+          throw new Error(
+            "fixture setup: expected 'onFail' in failed_steps after its own self-failure",
+          );
+        }
+
+        // Hand-author the post-resume state: 'a' is resumed/cleared (eligible again), but
+        // 'onFail' — a FINALIZER, unresumable — stays in failed_steps (the M1 scenario's own
+        // premise). terminal_state:false / in_progress_steps:[] / settled:{} mirror the
+        // mintFreshCases precedent's own void shape.
+        const postResumeVoid = await adapter.store.update({
+          ...markedFailed.run,
+          terminal_state: false,
+          in_progress_steps: [],
+          failed_steps: ['onFail'],
+          settled: {},
+        });
+        if (postResumeVoid.finalizer_ledger?.['onFail']?.status !== 'failed') {
+          throw new Error(
+            "fixture setup: onFail must still read 'failed' after the hand-authored void",
+          );
+        }
+
+        // Second epoch: re-claim + complete 'a'. Its own failed_steps has NOTHING from this
+        // epoch — only onFail's own prior-epoch scar.
+        const reclaimed = await adapter.store.claimStep(run.id, 'a', def);
+        const reToken = reclaimed.claims!['a']!.token!;
+        const reCompleted = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'a',
+            outcome: 'complete',
+            claimToken: reToken,
+            evidence: [makeEvidence('a')],
+          },
+          def,
+        );
+        assertApplied(reCompleted, 're-complete step a on its second epoch');
+        if (reCompleted.run.finalizer_ledger?.['fin']?.status !== 'pending') {
+          throw new Error(
+            `expected 'fin' minted pending on the second-epoch complete seal (driven solely by ` +
+              `onFail's prior-epoch self-failure), got: ${JSON.stringify(reCompleted.run.finalizer_ledger)}`,
+          );
+        }
+        // onFail itself must NOT be re-selected (its own trigger is 'fail', not 'complete'/
+        // 'completed_with_failed_steps') — it stays 'failed', never rewritten.
+        if (reCompleted.run.finalizer_ledger?.['onFail']?.status !== 'failed') {
+          throw new Error(
+            `expected onFail to STAY 'failed' (never re-selected on a complete seal), got: '${reCompleted.run.finalizer_ledger?.['onFail']?.status}'`,
+          );
+        }
+      },
+    },
+  ];
+}
+
+/** CWFS_ARRAY_ONCE — a finalizer never fires twice for one seal: the array form fires exactly
+ *  once on mixed-complete (Group A, a single push despite a multi-element intersection); `always`
+ *  fires exactly once on mixed-complete too (Group B). */
+function cwfsArrayOnceCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
+  const settleStep = requireSettleStep(adapter.store);
+
+  /** Builds a mixed-complete seal (fail 'fail_step' first, then complete 'complete_step' last)
+   *  over whatever finalizer(s) `withFin` has already added to the definition. */
+  async function driveMixedComplete(def: WorkflowDefinition): Promise<SettlementResult> {
+    const { run, token: failToken } = await createClaimed(adapter.store, def, 'fail_step');
+    const claimedComplete = await adapter.store.claimStep(run.id, 'complete_step', def);
+    const completeToken = claimedComplete.claims!['complete_step']!.token!;
+    const failed = await settleStep(
+      run.id,
+      {
+        kind: 'settle_step',
+        step: 'fail_step',
+        outcome: 'fail',
+        claimToken: failToken,
+        evidence: [],
+        failureMessage: 'x',
+      },
+      def,
+    );
+    assertApplied(failed, 'fail fail_step');
+    return settleStep(
+      run.id,
+      {
+        kind: 'settle_step',
+        step: 'complete_step',
+        outcome: 'complete',
+        claimToken: completeToken,
+        evidence: [makeEvidence('complete_step')],
+      },
+      def,
+    );
+  }
+
+  return [
+    {
+      law: 'CWFS_ARRAY_ONCE',
+      name: `[${adapter.storeName}] on_outcome: [complete, completed_with_failed_steps] fires EXACTLY ONCE on a mixed-complete seal (Group A, one push despite a two-element intersection)`,
+      run: async () => {
+        const def = withFinalizer(minimalDefinition(['fail_step', 'complete_step']), 'fin', [
+          'complete',
+          'completed_with_failed_steps',
+        ]);
+        const result = await driveMixedComplete(def);
+        assertApplied(result, 'array-form mixed-complete seal');
+        const entry = result.run.finalizer_ledger?.['fin'];
+        if (entry?.status !== 'pending' || entry.rank !== 0) {
+          throw new Error(
+            `expected exactly one 'fin' entry (rank 0, pending), got: ${JSON.stringify(entry)}`,
+          );
+        }
+        if (result.run.completed_steps.filter((s) => s === 'fin').length > 1) {
+          throw new Error("'fin' must not appear more than once in completed_steps");
+        }
+      },
+    },
+    {
+      law: 'CWFS_ARRAY_ONCE',
+      name: `[${adapter.storeName}] on_outcome: 'always' fires EXACTLY ONCE on a mixed-complete seal (Group B, never double-counted alongside a Group A hit)`,
+      run: async () => {
+        const def = withFinalizer(
+          minimalDefinition(['fail_step', 'complete_step']),
+          'fin',
+          'always',
+        );
+        const result = await driveMixedComplete(def);
+        assertApplied(result, 'always-form mixed-complete seal');
+        const entry = result.run.finalizer_ledger?.['fin'];
+        if (entry?.status !== 'pending' || entry.rank !== 0) {
+          throw new Error(
+            `expected exactly one 'fin' entry (rank 0, pending), got: ${JSON.stringify(entry)}`,
+          );
+        }
+      },
+    },
+  ];
+}
+
+/** CURRENT_BEHAVIOR_PINNED — the REJECTED design alternative (D-C: auto-firing 'fail' on
+ *  mixed-complete) never happens, pinned both ways. */
+function currentBehaviorPinnedCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
+  const settleStep = requireSettleStep(adapter.store);
+  return [
+    {
+      law: 'CURRENT_BEHAVIOR_PINNED',
+      name: `[${adapter.storeName}] a clean complete seal does NOT select a 'fail'-only finalizer`,
+      run: async () => {
+        const def = withFinalizer(minimalDefinition(['a']), 'onFail', 'fail');
+        const { run, token } = await createClaimed(adapter.store, def, 'a');
+        const completed = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'a',
+            outcome: 'complete',
+            claimToken: token,
+            evidence: [makeEvidence('a')],
+          },
+          def,
+        );
+        assertApplied(completed, 'clean complete of a');
+        if (completed.run.finalizer_ledger?.['onFail'] !== undefined) {
+          throw new Error("expected 'onFail' NOT selected on a clean complete seal");
+        }
+      },
+    },
+    {
+      law: 'CURRENT_BEHAVIOR_PINNED',
+      name: `[${adapter.storeName}] a MIXED-complete seal (failed_steps ≠ ∅) still does NOT select a 'fail'-only finalizer — D-C's rejected auto-fire alternative is contract, not merely untested`,
+      run: async () => {
+        const def = withFinalizer(
+          minimalDefinition(['fail_step', 'complete_step']),
+          'onFail',
+          'fail',
+        );
+        const { run, token: failToken } = await createClaimed(adapter.store, def, 'fail_step');
+        const claimedComplete = await adapter.store.claimStep(run.id, 'complete_step', def);
+        const completeToken = claimedComplete.claims!['complete_step']!.token!;
+        const failed = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'fail_step',
+            outcome: 'fail',
+            claimToken: failToken,
+            evidence: [],
+            failureMessage: 'x',
+          },
+          def,
+        );
+        assertApplied(failed, 'fail fail_step');
+        const completed = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'complete_step',
+            outcome: 'complete',
+            claimToken: completeToken,
+            evidence: [makeEvidence('complete_step')],
+          },
+          def,
+        );
+        assertApplied(completed, 'complete complete_step (terminalizes mixed-complete)');
+        if (completed.run.finalizer_ledger?.['onFail'] !== undefined) {
+          throw new Error(
+            `expected 'onFail' (fail-only trigger) NOT selected on a mixed-complete seal — the ` +
+              `rejected auto-fire-fail-on-mixed-complete alternative must not happen; got: ` +
+              `${JSON.stringify(completed.run.finalizer_ledger)}`,
+          );
+        }
+      },
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // Assembly
 // ---------------------------------------------------------------------------
 
@@ -3272,5 +3822,11 @@ export function settlementContract(adapter: SettlementContractAdapter): Settleme
     ...guardCases(adapter),
     ...releaseIdempotentCases(adapter),
     ...phaseIsGeneratedCases(adapter),
+    // issue #302 (finalizer outcome×trigger matrix).
+    ...cwfsFiresPerArmCases(adapter),
+    ...cwfsNegativesCases(adapter),
+    ...cwfsSecondEpochCases(adapter),
+    ...cwfsArrayOnceCases(adapter),
+    ...currentBehaviorPinnedCases(adapter),
   ];
 }

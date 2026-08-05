@@ -21,7 +21,20 @@ export interface AbandonRunSummary {
   run_phase: RunPhase;
   terminal_state: boolean;
   terminal_reason: string | undefined;
+  /**
+   * Unconditional advisory (issue #222 — the documented/advised abandon contract): abandon is,
+   * and stays, a kill — declared finalizers never run on this path (that behavior does NOT
+   * change; see `docs/reference/yaml-schema.md`'s `execution: finalizer` section and
+   * `finalizer.test.ts`'s kill-contract pin). Present on every success response, not gated on any
+   * condition (definition-blind, zero lookup — core `abandonRun` itself is untouched and returns
+   * only a `RunRecord`; this field is built HERE, never persisted into the run record).
+   */
+  note: string;
 }
+
+const ABANDON_ADVISORY =
+  'abandon is a kill — declared finalizers (if any) did NOT run; ' +
+  "'abort' is the graceful path.";
 
 /**
  * Business logic for the abandon_run tool. Abandons a non-terminal run via the shared core
@@ -38,6 +51,7 @@ export async function handleAbandonRun(
     run_phase: run.run_phase,
     terminal_state: run.terminal_state,
     terminal_reason: run.terminal_reason,
+    note: ABANDON_ADVISORY,
   };
 }
 

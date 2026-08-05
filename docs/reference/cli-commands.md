@@ -480,6 +480,9 @@ refuses a `gate_waiting` run (resolve the gate via `realm run respond` first). T
 work afterward, use `start_run` with `on_terminal_match: 'rerun'` or a fresh idempotency key — the
 default returns the abandoned run. See [Operating & recovering runs](operating-runs.md).
 
+`abort` is the graceful path and runs finalizers; `abandon` is a kill and runs nothing — use it
+only when the run cannot be aborted normally. Every successful `abandon` prints this reminder.
+
 ---
 
 ### `realm run respond <run-id>`

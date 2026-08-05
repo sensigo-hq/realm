@@ -54,6 +54,12 @@ const LAWS: SettlementLaw[] = [
   'GUARD_NO_ENTRY',
   'RELEASE_IDEMPOTENT',
   'PHASE_IS_GENERATED',
+  // issue #302 (finalizer outcome×trigger matrix).
+  'CWFS_FIRES_PER_ARM',
+  'CWFS_NEGATIVES',
+  'CWFS_SECOND_EPOCH',
+  'CWFS_ARRAY_ONCE',
+  'CURRENT_BEHAVIOR_PINNED',
 ];
 
 describe('JsonFileStore — settlement TCK conformance (issue #279, increment 1 + 2)', () => {
