@@ -20,6 +20,14 @@ All notable changes to this project are documented here.
 
 ### Security
 
+- Bumped `@modelcontextprotocol/sdk` 1.29.0 → 1.30.0 (exact-pin manifest bump, realm-mcp + realm-cli): adopts the
+  upstream fix for GHSA-frvp-7c67-39w9 — the SDK's widened range now resolves `@hono/node-server` 2.1.0 (≥2.0.5,
+  the patched line). **Retires the standing `not_affected` posture**: the audit-ci allowlist entry (both tiers) is
+  removed and the OpenVEX document gains a `fixed` statement (v2) — the wait-for-upstream disposition set at
+  v0.31.0 completes.
+- Bumped `hono` 4.12.31 → 4.13.0 (lockfile-only, in-range): GHSA CORS-middleware ReDoS (moderate; realm's serve
+  path uses hono core only — fixed in-range regardless).
+
 - Bumped `fast-uri` 3.1.4 → 3.1.5 (lockfile-only, in-range via `ajv`): GHSA-7p8r-x3mc-p8w7 (HIGH, host confusion
   via backslash authority). Exposure LOW (same class as the v0.31.0 fast-uri triage: `ajv` uses fast-uri only for
   opaque `$ref` parsing and makes no trust decision on the parsed host) — fixed in-range regardless.
