@@ -46,6 +46,36 @@ describe('yaml-loader — execution: finalizer', () => {
     expect(def.steps['cleanup']!.on_outcome).toEqual(['fail', 'abort']);
   });
 
+  // issue #302 (correction): the shipped code was verified by value to accept the new literal,
+  // but nothing forced the YAML LOADER's own acceptance — every CWFS test constructed its
+  // definition programmatically. Finalizers are YAML-only authoring, so this is the one link a
+  // regression re-narrowing VALID_FINALIZER_TRIGGERS would silently break.
+  it('accepts on_outcome: completed_with_failed_steps (the new #302 literal)', () => {
+    const yaml = VALID_FINALIZER_YAML.replace(
+      'on_outcome: always',
+      'on_outcome: completed_with_failed_steps',
+    );
+    const def = loadWorkflowFromString(yaml);
+    expect(def.steps['cleanup']!.on_outcome).toBe('completed_with_failed_steps');
+  });
+
+  it('accepts on_outcome: [fail, completed_with_failed_steps] — the documented canonical array example', () => {
+    const yaml = VALID_FINALIZER_YAML.replace(
+      'on_outcome: always',
+      'on_outcome: [fail, completed_with_failed_steps]',
+    );
+    const def = loadWorkflowFromString(yaml);
+    expect(def.steps['cleanup']!.on_outcome).toEqual(['fail', 'completed_with_failed_steps']);
+  });
+
+  it('control: a genuinely invalid trigger (completed_with_issues) still rejects — the gate itself still has teeth', () => {
+    const yaml = VALID_FINALIZER_YAML.replace(
+      'on_outcome: always',
+      'on_outcome: completed_with_issues',
+    );
+    expectMessage(yaml, "invalid on_outcome value 'completed_with_issues'");
+  });
+
   it('accepts finalizer with a valid timeout_seconds', () => {
     const yaml = VALID_FINALIZER_YAML.replace(
       'handler: do_cleanup',

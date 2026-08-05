@@ -16,9 +16,9 @@ All notable changes to this project are documented here.
   on a `complete` seal that still carries `failed_steps`. Combine it with `fail` in the existing array form to
   cover both shapes with one finalizer: `on_outcome: [fail, completed_with_failed_steps]`.
 - `abandon` now carries an explicit, unconditional advisory — "abandon is a kill — declared finalizers (if any)
-  did NOT run; `abort` is the graceful path" — on the `abandon_run` MCP tool's response (`note`) and on `realm run
-abandon`'s success output. The behavior itself (abandon runs no finalizers) is unchanged; this documents and
-  surfaces it.
+  did NOT run; `abort` is the graceful path" — on the `abandon_run` MCP tool's response (`note`) and on
+  `realm run abandon`'s success output. The behavior itself (abandon runs no finalizers) is unchanged; this
+  documents and surfaces it.
 
 ### Fixed
 
