@@ -698,9 +698,13 @@ Every `execution: 'agent'` step whose submitted output/input is rejected against
 per-step rejection count on the run record (`RunRecord.validation_rejections`, pooled across
 concurrent writers, never reset). Once the count reaches a threshold — `6` by default
 (`DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD`, exported), or the value declared here — the step
-terminalizes with a real `VALIDATION_EXHAUSTED` failure: it claims, fails, drains `on_outcome:
-fail` finalizers when the run completes, and seals exactly like any other dispatch failure. This
-is deliberate (issue #220): a persistently-rejected agent step is otherwise an unbounded,
+terminalizes with a real `VALIDATION_EXHAUSTED` failure: it claims, fails, and seals exactly like
+any other dispatch failure. Finalizer triggers key on the RUN's own sealing outcome, never on this
+one step's failure in isolation — `complete` seal ⇒ `on_outcome: complete` + `always` finalizers
+fire; `fail` seal ⇒ `fail` + `always`; `abort` seal ⇒ `abort` + `always`. A run that recovers around
+this step's exhaustion (via `trigger_rule`) and still reaches a `complete` seal fires `complete` +
+`always` finalizers only — `fail`-triggered finalizers do NOT also run just because this one step
+failed along the way. This is deliberate (issue #220): a persistently-rejected agent step is otherwise an unbounded,
 write-free wedge — `run_phase` never reaches `failed` and finalizer machinery never fires. **Every
 countable agent step is auto-enrolled at the default threshold — there is no way to disable
 exhaustion in PR-1**, only to retune it.

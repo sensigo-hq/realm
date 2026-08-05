@@ -39,7 +39,17 @@ export function formatGateAge(openedAt: string, now: Date = new Date()): string 
   return `${totalDays}d ${remainingHours}h`;
 }
 
-const VALID_PHASES: RunPhase[] = ['running', 'gate_waiting', 'completed', 'failed', 'abandoned'];
+// issue #289: 'aborted' was missing — RunPhase has carried it since #279 increment 2 (PR-C), but
+// this list (the ONLY --status validator) was never updated, so a genuinely valid phase value was
+// rejected. This is the single source both the --status help text and the validator below read.
+const VALID_PHASES: RunPhase[] = [
+  'running',
+  'gate_waiting',
+  'completed',
+  'failed',
+  'abandoned',
+  'aborted',
+];
 
 /**
  * Formats a threshold duration for the `--stuck` header, e.g. `24h`, `30d`, `10m`, `0m`. Whole-
@@ -158,7 +168,13 @@ export async function listRuns(
       // function; see its own classifyNoActiveClaim discriminator in reclaim-step.ts.
       const findings = classifyRunHealth(r, { idleThresholdMs: effectiveIdleThresholdMs });
       if (findings.length > 0) findingsByRun.set(r.id, findings);
-      return findings.length > 0;
+      // issue #302: a completed run is not stuck — deliberately INVERTS the
+      // terminal_pending_finalizer precedent (which selects AND labels). A run whose entire
+      // finding set is completed_with_failed_steps is excluded from --stuck; the FULL array is
+      // still stored above, so a run selected for some OTHER co-occurring finding still renders
+      // that finding's own label (completed_with_failed_steps itself has none — the
+      // terminal_with_stale_gate/gate_corruption no-label precedent).
+      return findings.some((f) => f.kind !== 'completed_with_failed_steps');
     });
   } else if (statusFilter !== undefined) {
     // issue #279 (increment 2, PR-C — D-3 leg vi): filter on the DERIVED phase, never the

@@ -23,7 +23,8 @@
 //      the pending check clears). A terminal run with a fully-drained (or finalizer-free) ledger
 //      still returns [] exactly as before — including a terminal+claimed guard-abort record (a
 //      claim can still be `in_progress_steps` at the instant a guard aborts the run) — nothing
-//      further to report.
+//      further to report — **and the run did not complete while carrying `failed_steps` (item 6,
+//      below); that class is narrower still, checked in the same branch.**
 //   2. Claim findings: `classifyInProgressClaims(run, now)` entries with `state !== 'healthy' &&
 //      step !== run.pending_gate?.step_name`. The open-gate claim is always `{deadline: null}` ⇒
 //      `claim_unknown_age` — excluding it is what keeps a healthy gate_waiting run at ZERO
@@ -62,6 +63,19 @@
 //          in the non-terminal path with no extra gating needed. Disclosed consequence (list.ts is
 //          frozen and passes no `definition` — this finding never surfaces there; ACCEPTABLE, not a
 //          list.ts defect).
+//   6. issue #302 (disclosure gaps) — `completed_with_failed_steps`: `run.terminal_state === true`
+//      ∧ `deriveRunPhase(run) === 'completed'` ∧ `run.failed_steps.length > 0` — checked inside
+//      branch 1, above its `pendingFindings.length > 0` return. A completed seal carrying
+//      `failed_steps` is DESIGNED recovery behavior (eligibility.ts:62-66: trigger_rule routes
+//      around the failure and the run still reaches `terminal_reason: 'Workflow completed.'`), not
+//      an error — informational only, never `report_to_user`. Deliberately keyed on the DERIVED
+//      phase (never the persisted `run_phase` field, and never re-derived as the byte-equivalent
+//      direct `terminal_reason === 'Workflow completed.'` check) — the disposal rule (D-3, above)
+//      applies here exactly as it does everywhere else in this module: control flow keys on
+//      `terminal_state`/marker fields/DERIVED phase, never on a persisted label. Finalizer
+//      self-failures (F4: a finalizer's OWN failure grows `failed_steps` after the mint) are
+//      included by name, undiscriminated from a domain-step failure — this is honest raw data, not
+//      a judgment about WHICH failure kind produced the completed-with-failures seal.
 //
 // Honest-admission rule (Celery-corrected, record §1): `never_claimed_idle`'s reason text NEVER
 // claims rejection — "parked with no claimed step, idle", never "rejected" or "stuck". Rescoped
@@ -75,7 +89,7 @@ import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { classifyInProgressClaims } from './claim-liveness.js';
 import { findCapabilityBlockedSteps } from './capability.js';
-import { findEligibleSteps, findEligibleGuardSteps } from './eligibility.js';
+import { findEligibleSteps, findEligibleGuardSteps, deriveRunPhase } from './eligibility.js';
 
 /**
  * Default age threshold for the `never_claimed_idle` finding (issue #221) — 24 hours. Engine-
@@ -100,7 +114,10 @@ export interface RunHealthFinding {
     // issue #279 (increment 2, PR-D, design record §9) — the #282 class + its adjacent classes.
     | 'terminal_with_stale_gate'
     | 'gate_corruption'
-    | 'resolved_gate_with_eligible_guard';
+    | 'resolved_gate_with_eligible_guard'
+    // issue #302 (disclosure gaps) — a completed seal that still carries failed_steps (designed
+    // recovery behavior; see item 6 in the branch-conditioning table above).
+    | 'completed_with_failed_steps';
   /** The affected step, when the finding is step-scoped. Absent for `never_claimed_idle` — a
    *  run-level observation (no step is claimed at all). */
   step?: string;
@@ -201,8 +218,22 @@ export function classifyRunHealth(
     // corruption a live run can (N9).
     const terminalGateCorruption = findGateCorruption(run);
     if (terminalGateCorruption !== undefined) pendingFindings.push(terminalGateCorruption);
+    // issue #302 (disclosure gaps, item 6 above): a completed seal that still carries failed_steps
+    // — designed recovery behavior, informational only. Keyed on the DERIVED phase (never the
+    // persisted run_phase field, never the byte-equivalent direct terminal_reason check).
+    if (deriveRunPhase(run) === 'completed' && run.failed_steps.length > 0) {
+      pendingFindings.push({
+        kind: 'completed_with_failed_steps',
+        reason:
+          `completed with ${run.failed_steps.length} failed step(s): ${run.failed_steps.join(', ')} ` +
+          `— failure-triggered finalizers do not run on a completed seal`,
+        evidence: { failed_steps: run.failed_steps },
+      });
+    }
     if (pendingFindings.length > 0) return pendingFindings;
-    return []; // terminal ∧ no pending ledger entries ⇒ [] (byte-identical to pre-#279 behavior)
+    // terminal ∧ no pending ledger entries ∧ not completed-with-failed-steps ⇒ [] (byte-identical
+    // to pre-#279 behavior for every OTHER class of terminal record).
+    return [];
   }
 
   const idleThresholdMs = opts?.idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;

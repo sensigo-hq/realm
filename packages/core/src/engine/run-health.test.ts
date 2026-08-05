@@ -31,8 +31,11 @@ describe('classifyRunHealth', () => {
   // Branch 1 — terminal guard, NARROWED by issue #279 (increment 1, PR-B, design record §6):
   // `terminal ∧ no pending finalizer_ledger entries ⇒ []` — no longer literally unconditional on
   // terminal_state alone (pendings are checked first; see the finding tests further below).
+  // Narrowed AGAIN by issue #302 (disclosure gaps): `∧ NOT completed-with-failed-steps` — see the
+  // `completed_with_failed_steps` finding tests near the end of this file for that class's own
+  // positive/negative pins; this fixture's `failed_steps: []` keeps it green either way.
   // ---------------------------------------------------------------------
-  it('terminal_state with NO pending finalizer_ledger entries ⇒ [] (byte-identical to pre-#279 behavior)', () => {
+  it('terminal_state with NO pending finalizer_ledger entries AND no failed-steps-on-completed ⇒ [] (byte-identical to pre-#279 behavior)', () => {
     const run = makeRun({
       terminal_state: true,
       run_phase: 'completed',
@@ -470,5 +473,62 @@ describe('classifyRunHealth', () => {
     expect(withoutDefinition.some((f) => f.kind === 'resolved_gate_with_eligible_guard')).toBe(
       false,
     );
+  });
+
+  // ---------------------------------------------------------------------
+  // issue #302 (disclosure gaps) — the NEW completed_with_failed_steps finding class. Predicate:
+  // terminal_state ∧ deriveRunPhase(run) === 'completed' ∧ failed_steps.length > 0. The hidden
+  // hinge (eligibility.ts:65): deriveRunPhase's 'completed' branch requires
+  // terminal_reason === 'Workflow completed.' verbatim — the run_phase FIELD is ignored by
+  // derivation, so every fixture below sets/omits terminal_reason deliberately, never run_phase.
+  // ---------------------------------------------------------------------
+
+  it('completed_with_failed_steps: a completed seal carrying failed_steps gets exactly this finding', () => {
+    const run = makeRun({
+      terminal_state: true,
+      terminal_reason: 'Workflow completed.',
+      run_phase: 'completed',
+      failed_steps: ['retry_step', 'notify_step'],
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+      {
+        kind: 'completed_with_failed_steps',
+        reason:
+          'completed with 2 failed step(s): retry_step, notify_step — failure-triggered ' +
+          'finalizers do not run on a completed seal',
+        evidence: { failed_steps: ['retry_step', 'notify_step'] },
+      },
+    ]);
+  });
+
+  it('negative: a CLEAN completed seal (no failed_steps) ⇒ no completed_with_failed_steps finding', () => {
+    const run = makeRun({
+      terminal_state: true,
+      terminal_reason: 'Workflow completed.',
+      run_phase: 'completed',
+      failed_steps: [],
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+  });
+
+  it('negative: a pure-FAIL terminal seal (terminal_reason absent) with failed_steps ⇒ no completed_with_failed_steps finding (deriveRunPhase is "failed", not "completed")', () => {
+    const run = makeRun({
+      terminal_state: true,
+      // terminal_reason deliberately absent — deriveRunPhase falls through to the
+      // failed_steps.length > 0 branch, deriving 'failed', never 'completed'.
+      run_phase: 'failed',
+      failed_steps: ['work'],
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+  });
+
+  it('negative: a pure-FAIL terminal seal with a DIFFERENT terminal_reason string ⇒ still no finding (exact-match hinge, not a prefix/substring check)', () => {
+    const run = makeRun({
+      terminal_state: true,
+      terminal_reason: 'Guard step failed: unresolvable path.',
+      run_phase: 'failed',
+      failed_steps: ['work'],
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
   });
 });

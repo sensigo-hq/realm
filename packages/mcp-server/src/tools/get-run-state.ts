@@ -68,6 +68,18 @@ export interface RunStateSummary {
   workflow_id: string;
   run_phase: RunPhase;
   terminal_state: boolean;
+  /**
+   * The run's own terminal-seal reason string, verbatim (issue #302 — disclosure gaps), e.g.
+   * `'Workflow completed.'`. Present only when the underlying `RunRecord.terminal_reason` is set —
+   * absent on a live (non-terminal) run, never a synthesized/default string. This is what
+   * `deriveRunPhase` itself keys the `'completed'` phase on (eligibility.ts:65), so an MCP
+   * consumer that wants to distinguish "completed cleanly" from "completed with failed_steps
+   * carried" (issue #302's `completed_with_failed_steps` run-health class — CLI-only; this run's
+   * own `get_run_state` terminal guard below stays byte-untouched, see `run_health`'s own doc)
+   * now has the raw signal to combine with `failed_steps` and the derived `run_phase` itself,
+   * without needing the run-health surface this response deliberately does not inherit.
+   */
+  terminal_reason?: string;
   completed_steps: string[];
   in_progress_steps: string[];
   failed_steps: string[];
@@ -304,6 +316,7 @@ export async function handleGetRunState(
     created_at: run.created_at,
     updated_at: run.updated_at,
     params: run.params,
+    ...(run.terminal_reason !== undefined ? { terminal_reason: run.terminal_reason } : {}),
     ...(run.aborted_at !== undefined ? { abort_context: run.aborted_at } : {}),
     next_actions: nextActions,
     next_actions_status: nextActionsStatus,

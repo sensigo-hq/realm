@@ -6,6 +6,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- A run-health finding class (`completed_with_failed_steps`): a run that seals `completed` while still carrying
+  `failed_steps` (designed recovery behavior) is now disclosed on CLI surfaces (`realm run inspect`), informational
+  only — never a warning or a `--stuck` selection.
+- `get_run_state` now echoes the run's own `terminal_reason` verbatim when present.
+
+### Fixed
+
+- `realm run list --status aborted` is no longer rejected — `aborted` was a valid `run_phase` value the
+  `--status` filter's own validator had never been updated to accept (#289).
+
 ### Security
 
 - Bumped `fast-uri` 3.1.4 → 3.1.5 (lockfile-only, in-range via `ajv`): GHSA-7p8r-x3mc-p8w7 (HIGH, host confusion
@@ -15,6 +27,8 @@ All notable changes to this project are documented here.
   `express-rate-limit`): GHSA-mwp4-54f8-5fhr, GHSA-4xrf-jv44-h6hh, GHSA-22jq-vg5j-6vgg (HIGH, IPv4/IPv6
   parsing misclassification). Exposure LOW (used for client-IP classification in the MCP `serve` rate limiter;
   realm makes no SSRF-relevant address-trust decision) — fixed in-range regardless.
+
+---
 
 ## [0.33.0] — 2026-07-27
 
