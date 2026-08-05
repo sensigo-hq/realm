@@ -469,6 +469,47 @@ describe("--stuck label format: TWO-GROUP join (issue #221 correction — restor
   });
 });
 
+describe('--stuck selection exclusion: completed_with_failed_steps (issue #302 — deliberate precedent inversion)', () => {
+  it('a completed run carrying failed_steps (and NO other finding) is ABSENT from --stuck — a completed run is not stuck', async () => {
+    const run = makeRun({
+      id: 'run-completed-with-failures',
+      run_phase: 'completed',
+      terminal_state: true,
+      failed_steps: ['retry_step'],
+    });
+    const result = await listRuns(undefined, makeStore([run]), undefined, true);
+    expect(result).not.toContain('run-completed-with-failures');
+    expect(result).toContain('No stuck runs found');
+  });
+
+  it('the SAME run WITHOUT --stuck still appears in the plain listing (this finding never hides a run outside --stuck)', async () => {
+    const run = makeRun({
+      id: 'run-completed-with-failures-plain',
+      run_phase: 'completed',
+      terminal_state: true,
+      failed_steps: ['retry_step'],
+    });
+    const result = await listRuns(undefined, makeStore([run]));
+    expect(result).toContain('run-completed-with-failures-plain');
+  });
+
+  it('a run carrying completed_with_failed_steps PLUS a co-occurring terminal_pending_finalizer IS selected (the some() mechanics) — and only the finalizer label renders, never one for completed_with_failed_steps', async () => {
+    const run = makeRun({
+      id: 'run-completed-failures-plus-pending-fin',
+      run_phase: 'completed',
+      terminal_state: true,
+      failed_steps: ['retry_step'],
+      finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+    });
+    const result = await listRuns(undefined, makeStore([run]), undefined, true);
+    expect(result).toContain('run-completed-failures-plus-pending-fin');
+    expect(result).toContain('fin=never_leased (realm run drain)');
+    // completed_with_failed_steps has no label group (the terminal_with_stale_gate/gate_corruption
+    // no-label precedent) — its own kind string must never leak into the rendered line.
+    expect(result).not.toContain('completed_with_failed_steps');
+  });
+});
+
 describe('--stuck age-gating (issue #221 — classifyRunHealth-backed)', () => {
   it('hides a YOUNG (<24h) claimless running run by default, but flags a 47-day-old one', async () => {
     const young = makeRun({

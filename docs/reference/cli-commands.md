@@ -326,7 +326,7 @@ realm run list --stuck                    # only wedged/idle runs (typed run-hea
 realm run list --stuck --older-than 6h    # override the idle-age threshold (default 24h)
 ```
 
-Valid `--status` values: `running`, `gate_waiting`, `completed`, `failed`, `abandoned`.
+Valid `--status` values: `running`, `gate_waiting`, `completed`, `failed`, `abandoned`, `aborted`.
 
 When filtering by `gate_waiting`, each line also shows the gate step name and gate age (time since the gate opened).
 

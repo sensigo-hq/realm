@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- A run-health finding class (`completed_with_failed_steps`): a run that seals `completed` while still carrying
+  `failed_steps` (designed recovery behavior) is now disclosed on CLI surfaces (`realm run inspect`), informational
+  only — never a warning or a `--stuck` selection.
+- `get_run_state` now echoes the run's own `terminal_reason` verbatim when present.
+
+### Fixed
+
+- `realm run list --status aborted` is no longer rejected — `aborted` was a valid `run_phase` value the
+  `--status` filter's own validator had never been updated to accept (#289).
+
+---
+
 ## [0.33.0] — 2026-07-27
 
 ### Fixed
