@@ -42,9 +42,6 @@ export function formatGateAge(openedAt: string, now: Date = new Date()): string 
 // issue #289: 'aborted' was missing — RunPhase has carried it since #279 increment 2 (PR-C), but
 // this list (the ONLY --status validator) was never updated, so a genuinely valid phase value was
 // rejected. This is the single source both the --status help text and the validator below read.
-// issue #289: 'aborted' was missing — RunPhase has carried it since #279 increment 2 (PR-C), but
-// this list (the ONLY --status validator) was never updated, so a genuinely valid phase value was
-// rejected. This is the single source both the --status help text and the validator below read.
 const VALID_PHASES: RunPhase[] = [
   'running',
   'gate_waiting',
