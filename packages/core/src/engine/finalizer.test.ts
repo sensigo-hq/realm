@@ -589,6 +589,10 @@ describe('finalizer drain — abandon runs no finalizers', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  // issue #302 (D-B): this contract is now DOCUMENTED (docs/reference/yaml-schema.md's
+  // `execution: finalizer` section) + runtime-advised (the abandon_run MCP tool's `note` field,
+  // `realm run abandon`'s success line) — this pin proves the underlying BEHAVIOR still holds,
+  // unchanged; the docs/advisory additions describe it, they do not alter it.
   it('abandoning a run runs NO finalizers (a kill runs no finally)', async () => {
     const cleanup = okHandler('h_always', order);
     registry.register('handler', 'h_always', cleanup);

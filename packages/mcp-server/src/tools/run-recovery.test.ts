@@ -66,6 +66,41 @@ describe('abandon_run MCP tool', () => {
     expect(summary.terminal_reason).toBe('stale');
   });
 
+  // issue #302 (D-B, M2): the abandon kill-advisory — unconditional on every success response.
+  it('success: the summary carries the unconditional kill-advisory note, and finalizers still do NOT run', async () => {
+    const withFinalizer: WorkflowDefinition = {
+      id: 'agentflow-with-finalizer',
+      name: 'Agent First (with a finalizer)',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        review: { description: 'Agent step', execution: 'agent', depends_on: [] },
+        cleanup: {
+          description: 'cleanup',
+          execution: 'finalizer',
+          on_outcome: 'always',
+          handler: 'h_always',
+        },
+      },
+    };
+    await workflowStore.register(withFinalizer);
+    const { run } = await runStore.create({
+      workflowId: 'agentflow-with-finalizer',
+      workflowVersion: 1,
+      params: {},
+    });
+    const summary = await handleAbandonRun({ run_id: run.id }, { runStore });
+    expect(summary.note).toBe(
+      "abandon is a kill — declared finalizers (if any) did NOT run; 'abort' is the graceful path.",
+    );
+    // core abandonRun has no handler-dispatch code path at all — structurally impossible for
+    // 'cleanup' to have run; this re-confirms it at the record level, alongside the new note.
+    const finalRun = await runStore.get(run.id);
+    expect(finalRun.completed_steps).not.toContain('cleanup');
+    expect(finalRun.failed_steps).not.toContain('cleanup');
+    expect(finalRun.evidence.some((e) => e.step_id === 'cleanup')).toBe(false);
+  });
+
   it('error envelope: missing run → STATE_RUN_NOT_FOUND', async () => {
     const env = await callRegisteredAbandon(runStore, { run_id: 'no-such-run' });
     expect(env['status']).toBe('error');

@@ -6,9 +6,14 @@ export type ExecutionMode = 'auto' | 'agent' | 'guard' | 'finalizer';
 /**
  * Terminal outcome(s) a finalizer step matches. `execution: finalizer` steps run at the
  * run's terminal transition (a workflow-level try/catch/finally): `complete` = success,
- * `fail`/`abort` = catch, `always` = finally. OR-membership when given as an array.
+ * `fail`/`abort` = catch, `always` = finally, `completed_with_failed_steps` = a `complete`
+ * seal that still carries `failed_steps` (issue #302 — author-opt-in; fires IN ADDITION to
+ * `complete`/`always` on that specific seal shape; never fires on a clean complete or on a pure
+ * fail/abort seal — see `docs/reference/yaml-schema.md`'s `execution: finalizer` trigger table).
+ * OR-membership when given as an array.
  */
-export type FinalizerTrigger = 'complete' | 'fail' | 'abort' | 'always';
+export type FinalizerTrigger =
+  'complete' | 'fail' | 'abort' | 'always' | 'completed_with_failed_steps';
 
 export interface ProtocolConfig {
   /** Override for the generated quick-start paragraph. */

@@ -28,7 +28,7 @@ import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-stor
 import { storeDeclaresSeal, storeDeclaresNonceCarriage } from '../store/trace-buffer-store.js';
 import { partitionBufferedEntries, type BufferedEntryPartition } from './trace-adoption.js';
 import { deriveDefaultedSteps } from './defaulted-steps.js';
-import { selectFinalizers } from './settlement.js';
+import { selectFinalizers, deriveEffectiveTriggers } from './settlement.js';
 import type {
   SettleStepDelta,
   SettlementResult,
@@ -4393,8 +4393,14 @@ async function buildFinalizedSeal(
   // settlement.ts's selectFinalizers, shared with `mintFresh` — this call passes the SAME inputs
   // the inline loop used to compute over, so the returned name list is byte-identical to what
   // `[...groupA, ...groupB]` produced before the extraction.
+  // issue #302 (chokepoint 2 of 2): derive the full effective trigger set from sealDraft — the
+  // legacy seal path for a non-declaring external store (the dormancy fallback).
   const settled = new Set([...sealDraft.completed_steps, ...sealDraft.failed_steps]);
-  const selected = selectFinalizers(definition, settled, outcome);
+  const selected = selectFinalizers(
+    definition,
+    settled,
+    deriveEffectiveTriggers(outcome, sealDraft),
+  );
 
   let record = sealDraft;
   for (const name of selected) {

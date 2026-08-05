@@ -209,7 +209,16 @@ const SERVICE_ENTRY_JSON_SCHEMA = {
 };
 
 const VALID_EXECUTIONS = new Set(['auto', 'agent', 'guard', 'finalizer']);
-const VALID_FINALIZER_TRIGGERS = new Set(['complete', 'fail', 'abort', 'always']);
+const VALID_FINALIZER_TRIGGERS = new Set([
+  'complete',
+  'fail',
+  'abort',
+  'always',
+  // issue #302: author-opt-in — fires IN ADDITION to complete/always on a complete seal that
+  // still carries failed_steps (a designed-recovery seal, #304's own class); never on a clean
+  // complete.
+  'completed_with_failed_steps',
+]);
 // issue #220 (PR-2): the full set of recognized validation_exhaustion sub-keys.
 const KNOWN_VALIDATION_EXHAUSTION_KEYS = ['threshold', 'mode', 'default_output'];
 const VALID_SERVICE_METHODS = new Set(['fetch', 'create', 'update', 'delete']);

@@ -12,6 +12,13 @@ All notable changes to this project are documented here.
   `failed_steps` (designed recovery behavior) is now disclosed on CLI surfaces (`realm run inspect`), informational
   only — never a warning or a `--stuck` selection.
 - `get_run_state` now echoes the run's own `terminal_reason` verbatim when present.
+- A new, author-opt-in finalizer trigger, `completed_with_failed_steps`: fires in addition to `complete`/`always`
+  on a `complete` seal that still carries `failed_steps`. Combine it with `fail` in the existing array form to
+  cover both shapes with one finalizer: `on_outcome: [fail, completed_with_failed_steps]`.
+- `abandon` now carries an explicit, unconditional advisory — "abandon is a kill — declared finalizers (if any)
+  did NOT run; `abort` is the graceful path" — on the `abandon_run` MCP tool's response (`note`) and on
+  `realm run abandon`'s success output. The behavior itself (abandon runs no finalizers) is unchanged; this
+  documents and surfaces it.
 
 ### Fixed
 

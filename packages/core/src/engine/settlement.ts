@@ -134,30 +134,80 @@ function finalizerTriggers(stepDef: {
 }
 
 /**
- * Selects the finalizer steps that fire for a terminal `outcome`, in the drain order (design
- * record §4/§6; extracted from `buildFinalizedSeal`'s selection, execution-loop.ts :3117-3126):
- * Group A (rank precedence) — `on_outcome` contains `outcome` (the specific catch/complete arm);
- * Group B — `on_outcome` contains `'always'` but NOT `outcome` (a finalizer listing both runs
- * once, in Group A). Each group in `Object.entries` declaration order; Group A then Group B.
+ * Selects the finalizer steps that fire for a terminal outcome, in the drain order (design
+ * record §4/§6, widened by #302's S2 fold; extracted from `buildFinalizedSeal`'s selection,
+ * execution-loop.ts :3117-3126): Group A (rank precedence) — the finalizer's OWN declared
+ * `on_outcome` set intersects the EFFECTIVE trigger set non-emptily; Group B — `on_outcome`
+ * contains `'always'` but the finalizer missed Group A (a finalizer listing both runs once, in
+ * Group A). Each group in `Object.entries` declaration order; Group A then Group B.
  * `settledStepNames` excludes any finalizer already at-most-once settled (resume/re-drive safety)
  * — pass `completed_steps ∪ failed_steps`, NEVER the `RunRecord.settled` map (a different,
  * per-step-outcome-keyed structure this selection does not consult).
+ *
+ * `outcome` accepts EITHER shape (issue #302, S2 — `selectFinalizers` is a PUBLIC export,
+ * `index.ts`, so widening the param rather than replacing it is an API-compat requirement, not a
+ * style choice):
+ *  - a bare `SettleStepOutcome` string — every pre-#302 caller's shape, normalized internally to
+ *    a singleton set; BYTE-IDENTICAL selection to the pre-widening behavior (pinned by the
+ *    string-form compat test) and supported INDEFINITELY — this is not a deprecated compat shim.
+ *  - a pre-derived `ReadonlySet<FinalizerTrigger>` (via {@link deriveEffectiveTriggers}) — the
+ *    #302 call shape both engine chokepoints (`mintFresh`, `buildFinalizedSeal`) now use, letting
+ *    a seal satisfy more than one trigger at once (e.g. `{'complete', 'completed_with_failed_steps'}`).
+ * Semver: additive or (minor) — no existing call site's behavior changes.
  */
 export function selectFinalizers(
   definition: WorkflowDefinition,
   settledStepNames: ReadonlySet<string>,
-  outcome: SettleStepOutcome,
+  outcome: SettleStepOutcome | ReadonlySet<FinalizerTrigger>,
 ): string[] {
+  const effective: ReadonlySet<FinalizerTrigger> =
+    typeof outcome === 'string' ? new Set([outcome]) : outcome;
   const groupA: string[] = [];
   const groupB: string[] = [];
   for (const [name, step] of Object.entries(definition.steps)) {
     if (step.execution !== 'finalizer') continue;
     if (settledStepNames.has(name)) continue; // at-most-once per run (resume / re-drive safety)
     const triggers = finalizerTriggers(step);
-    if (triggers.has(outcome)) groupA.push(name);
+    let inGroupA = false;
+    for (const t of triggers) {
+      if (effective.has(t)) {
+        inGroupA = true;
+        break;
+      }
+    }
+    if (inGroupA) groupA.push(name);
     else if (triggers.has('always')) groupB.push(name);
   }
   return [...groupA, ...groupB];
+}
+
+/**
+ * Derives the full set of finalizer triggers a terminal `outcome` satisfies for `record` (issue
+ * #302, design record §Mechanics-1): `{outcome}` — always — plus `'completed_with_failed_steps'`
+ * when `outcome === 'complete' ∧ record.failed_steps.length > 0` (a "mixed complete" seal — the
+ * SAME class #304's `completed_with_failed_steps` run-health finding already surfaces at read
+ * time; this is the mint-time trigger, sharing that one predicate).
+ *
+ * Uniform across epochs (design record M1, deliberate): a second-epoch complete seal whose ONLY
+ * `failed_steps` scar is a PRIOR epoch's finalizer self-failure (unresumable, so it never leaves
+ * `failed_steps`) still fires this trigger — no exclusion of finalizer-declared step names. The
+ * alternative (excluding finalizer names from the predicate) buys mint-time purity at the cost of
+ * diverging from the read-time #304 finding's own uniform predicate; this design keeps ONE
+ * predicate for both surfaces, deliberately.
+ *
+ * Pure; this ONE function is the seam a future authorable tolerance threshold (SFN-style: fire
+ * only when `failed_steps.length` exceeds some declared N) would extend — banked, not built
+ * (design record R2).
+ */
+export function deriveEffectiveTriggers(
+  outcome: SettleStepOutcome,
+  record: Pick<RunRecord, 'failed_steps'>,
+): ReadonlySet<FinalizerTrigger> {
+  const triggers = new Set<FinalizerTrigger>([outcome]);
+  if (outcome === 'complete' && record.failed_steps.length > 0) {
+    triggers.add('completed_with_failed_steps');
+  }
+  return triggers;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +232,14 @@ function mintFresh(
   outcome: SettleStepOutcome,
 ): FinalizerLedger | undefined {
   const settledStepNames = new Set([...record.completed_steps, ...record.failed_steps]);
-  const selected = selectFinalizers(definition, settledStepNames, outcome);
+  // issue #302: derive the FULL effective trigger set (chokepoint 1 of 2) — record already
+  // reflects this settlement's own membership effects (a 'complete' outcome's failed_steps here
+  // is PRIOR failures only), so this is the correct read point for the mixed-complete predicate.
+  const selected = selectFinalizers(
+    definition,
+    settledStepNames,
+    deriveEffectiveTriggers(outcome, record),
+  );
   if (selected.length === 0) return record.finalizer_ledger;
 
   const ledger: FinalizerLedger = { ...record.finalizer_ledger };
