@@ -8,6 +8,8 @@ import {
   resolvePreExecutionAgentAction,
   findUnknownKeys,
   renderLoaderWarning,
+  assessStructuredOutputEligibility,
+  renderIneligibleMessage,
   type WorkflowDefinition,
   type ResponseEnvelope,
   type JsonSchema,
@@ -34,12 +36,17 @@ const stepSchema = z
     depends_on: z.array(z.string()).optional(),
     input_schema: z.record(z.unknown()).optional(),
     timeout_seconds: z.number().optional(),
+    // issue #236 (L0 prevention layer): opt in to Anthropic strict/grammar-constrained decoding
+    // for this step's submit tool. Gated at PRE-register time by assessStructuredOutputEligibility
+    // — see validateArgs below.
+    structured_output: z.literal('strict').optional(),
   })
   .passthrough()
   .describe(
     'A single workflow step. Valid fields: id, description, depends_on, input_schema, ' +
-      'timeout_seconds. Any other field is dropped and returned as a warning — do not invent ' +
-      'step fields.',
+      'timeout_seconds, structured_output (the literal "strict" — opts into constrained ' +
+      'decoding; rejected pre-register if the input_schema is ineligible). Any other field is ' +
+      'dropped and returned as a warning — do not invent step fields.',
   );
 
 export interface CreateWorkflowStep {
@@ -48,6 +55,7 @@ export interface CreateWorkflowStep {
   depends_on?: string[];
   input_schema?: Record<string, unknown>;
   timeout_seconds?: number;
+  structured_output?: 'strict';
 }
 
 export interface CreateWorkflowArgs {
@@ -82,13 +90,39 @@ function makeErrorEnvelope(errors: string[]): ResponseEnvelope {
   };
 }
 
-/** Validates all submitted steps. Returns collected error strings (empty = valid). */
-function validateArgs(args: CreateWorkflowArgs): string[] {
+/**
+ * Validates all submitted steps. Returns collected error strings (empty = valid) AND
+ * structured_output caveat lines (issue #236) — render-only, never a WarningCode, threaded into
+ * the success envelope's `warnings` array by the caller.
+ */
+function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: string[] } {
   const errors: string[] = [];
+  const caveats: string[] = [];
 
   if (args.steps.length === 0) {
     errors.push('steps must contain at least one step');
-    return errors;
+    return { errors, caveats };
+  }
+
+  // issue #236: the gate reject joins THIS error path — PRE-register (validateArgs runs before
+  // handleCreateWorkflow's own `errors.length > 0` early-return, well before register()/
+  // start_run() fire) — an ineligible step never reaches a live registered workflow or run.
+  for (const step of args.steps) {
+    if (step.structured_output !== 'strict') continue;
+    const verdict = assessStructuredOutputEligibility({
+      schema: step.input_schema,
+      tools: false, // create_workflow's dynamic steps never declare tools (no such field exists)
+    });
+    if (verdict.verdict === 'ineligible') {
+      errors.push(
+        `Step '${step.id}': 'structured_output: strict' is not eligible for this step's ` +
+          `schema — ${renderIneligibleMessage(verdict.reasons)}`,
+      );
+    } else if (verdict.verdict === 'eligible_with_caveats') {
+      for (const c of verdict.caveats) {
+        caveats.push(`Step '${step.id}': structured_output caveat — ${c.remediation}`);
+      }
+    }
   }
 
   // Rule 7: agent_profile is not supported on dynamic workflows.
@@ -185,7 +219,7 @@ function validateArgs(args: CreateWorkflowArgs): string[] {
     }
   }
 
-  return errors;
+  return { errors, caveats };
 }
 
 /**
@@ -231,6 +265,13 @@ function buildWorkflowDefinition(workflowId: string, args: CreateWorkflowArgs): 
     if (step.timeout_seconds !== undefined) {
       stepDef.timeout_seconds = step.timeout_seconds;
     }
+    // issue #236: MUST copy — buildWorkflowDefinition copies an explicit field list (never a
+    // spread), so an omitted field here would make the registered run silently carry no
+    // structured_output at all while the envelope had already disclosed its caveats/rejection —
+    // a false disclosure (audit-corrected touch point 3 of 4).
+    if (step.structured_output !== undefined) {
+      stepDef.structured_output = step.structured_output;
+    }
 
     stepsRecord[step.id] = stepDef;
   }
@@ -273,7 +314,7 @@ export async function handleCreateWorkflow(
   args: CreateWorkflowArgs,
   stores?: { workflowStore?: JsonWorkflowStore; runStore?: RunStore },
 ): Promise<ResponseEnvelope> {
-  const errors = validateArgs(args);
+  const { errors, caveats: structuredOutputCaveats } = validateArgs(args);
   if (errors.length > 0) {
     return makeErrorEnvelope(errors);
   }
@@ -326,7 +367,13 @@ export async function handleCreateWorkflow(
     ...result,
     command: 'create_workflow',
     data: { workflow_id: workflowId },
-    warnings: [...result.warnings, ...stepDiagnostics.map(renderLoaderWarning)],
+    // issue #236 [R2-4]: structured_output caveats render into the existing warnings: string[]
+    // (render-only — no WarningCode minted; ALL_ERROR_POLICY never sees them).
+    warnings: [
+      ...result.warnings,
+      ...stepDiagnostics.map(renderLoaderWarning),
+      ...structuredOutputCaveats,
+    ],
     diagnostics: [...(result.diagnostics ?? []), ...stepDiagnostics],
   };
 }

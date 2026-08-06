@@ -28,6 +28,10 @@ import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-sche
 import { splitComparison, isPathShaped } from '../engine/comparison-expr.js';
 import { DEFAULT_EXECUTION_TIMEOUT_SECONDS } from '../engine/claim-liveness.js';
 import { validateOutputSchema } from '../validation/input-schema.js';
+import {
+  assessStructuredOutputEligibility,
+  renderIneligibleMessage,
+} from './structured-output-eligibility.js';
 
 type ConditionSurface = 'when' | 'abort_unless' | 'preconditions';
 
@@ -896,6 +900,40 @@ function parseWorkflowString(
     // output_schema is only valid on execution: agent steps.
     if (step['output_schema'] !== undefined && step['execution'] !== 'agent') {
       errors.push(`Step '${stepName}': 'output_schema' is only valid on execution: agent steps`);
+    }
+
+    // issue #236 (L0 prevention layer): structured_output is only valid on execution: agent
+    // steps (mirrors output_schema's rule above), and its only legal value is the literal
+    // 'strict'. On an opted-in step, Phase A REJECTS an ineligible verdict at load time — the
+    // API provably rejects some legal schemas and silently weakens others, so authoring never
+    // ships a schema the gate already knows is unsafe. Caveats are NOT rejected (informational
+    // only, surfaced by validate's nudge — Deliverable 7); this loader block only ever REJECTS.
+    if (step['structured_output'] !== undefined) {
+      if (step['execution'] !== 'agent') {
+        errors.push(
+          `Step '${stepName}': 'structured_output' is only valid on execution: agent steps`,
+        );
+      } else if (step['structured_output'] !== 'strict') {
+        errors.push(
+          `Step '${stepName}': 'structured_output' must be the literal string 'strict' (got ${JSON.stringify(step['structured_output'])})`,
+        );
+      } else {
+        const verdict = assessStructuredOutputEligibility({
+          ...(step['output_schema'] !== undefined
+            ? { output_schema: step['output_schema'] as JsonSchema }
+            : {}),
+          ...(step['input_schema'] !== undefined
+            ? { input_schema: step['input_schema'] as JsonSchema }
+            : {}),
+          ...(step['tools'] !== undefined ? { tools: step['tools'] as string[] } : {}),
+        });
+        if (verdict.verdict === 'ineligible') {
+          errors.push(
+            `Step '${stepName}': 'structured_output: strict' is not eligible for this step's ` +
+              `schema — ${renderIneligibleMessage(verdict.reasons)}`,
+          );
+        }
+      }
     }
 
     // issue #220 (PR-2): validation_exhaustion is only valid on execution: agent steps — the

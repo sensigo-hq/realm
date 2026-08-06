@@ -9,6 +9,7 @@ version: 1
 
 params_schema:
   type: object
+  additionalProperties: false
   required: [path]
   properties:
     path:
@@ -51,6 +52,7 @@ steps:
       {{ context.resources.read_alert.content }}
     input_schema:
       type: object
+      additionalProperties: false
       required: [root_cause, severity, impacted_services, confidence]
       properties:
         root_cause:
@@ -98,6 +100,7 @@ steps:
       {{ context.resources.read_alert.content }}
     input_schema:
       type: object
+      additionalProperties: false
       required: [headline, message]
       properties:
         headline:
@@ -114,6 +117,7 @@ steps:
     trust: human_confirmed
     input_schema:
       type: object
+      additionalProperties: false
       properties:
         choice:
           type: string

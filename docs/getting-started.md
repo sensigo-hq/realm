@@ -56,6 +56,7 @@ steps:
     depends_on: [] # no dependencies — starts immediately
     input_schema: # the engine validates agent output against this schema
       type: object
+      additionalProperties: false
       required: [result]
       properties:
         result:
@@ -611,6 +612,7 @@ create_workflow
       description: "For each file identified in the previous step, generate corrected JSDoc."
       input_schema:
         type: object
+        additionalProperties: false
         properties:
           audit_summary: { type: string }
         required: [audit_summary]

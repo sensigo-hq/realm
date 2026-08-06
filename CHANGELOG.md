@@ -19,6 +19,21 @@ All notable changes to this project are documented here.
   did NOT run; `abort` is the graceful path" — on the `abandon_run` MCP tool's response (`note`) and on
   `realm run abandon`'s success output. The behavior itself (abandon runs no finalizers) is unchanged; this
   documents and surfaces it.
+- A new, author-opt-in step key, `structured_output: 'strict'` (`execution: agent` steps only): realm turns on
+  Anthropic grammar-constrained ("strict") decoding for the step's submit tool, gated by a realm-owned
+  eligibility check (some legal schemas are silently weakened or rejected by the API), a never-strand fallback
+  ladder on live 400/503s, and full per-attempt disclosure in evidence (`diagnostics.structured_output`). See
+  [`structured_output`](docs/reference/yaml-schema.md#structured_output-anthropic-strict-decoding). `realm
+validate` also gains a per-step adoption nudge on its own informational channel.
+
+### Changed
+
+- `examples/*/workflow.yaml`, the docs example schemas, and the `realm init` scaffold now declare
+  `additionalProperties: false` on every object schema (congruence with the `structured_output` gate above) —
+  this narrows Ajv validation at those steps (extra, previously-tolerated properties are now rejected). No
+  constraint keyword (`minimum`/`maximum`/`minLength`/`maxLength`/`pattern`/etc.) was removed anywhere.
+- `resolveMaxTokens` (the Anthropic provider's per-model output-token cap) no longer gives the claude-3.5
+  family's own hard cap (8192) to every 4.x model too — 4.x/*-5/unknown future model ids now get 16384 (#309).
 
 ### Fixed
 

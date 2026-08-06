@@ -11,6 +11,7 @@ version: 1
 
 params_schema:
   type: object
+  additionalProperties: false
   properties:
     repo:
       type: string
@@ -45,6 +46,13 @@ steps:
     execution: agent
     depends_on: [fetch_issue]
     trust: human_confirmed
+    # issue #236 — TEACHING artifact: this step opts into Anthropic grammar-constrained
+    # ("strict") decoding for its submit tool. Never exercised by CI (no live API in CI) — it
+    # demonstrates the opt-in shape, not a tested behavior. Eligible with ZERO caveats: every
+    # property below is `required` (no optional-emission caveat), and the schema uses only
+    # keywords the grammar itself can enforce — see docs/reference/yaml-schema.md's
+    # `structured_output` section for the full gate table.
+    structured_output: strict
     prompt: |
       Triage GitHub issue #{{ run.params.issue_number }} in {{ run.params.repo }}.
 
@@ -64,6 +72,7 @@ steps:
         - No greetings, no "thank you for reporting", no customer-facing language; under 150 words
     input_schema:
       type: object
+      additionalProperties: false
       properties:
         severity:
           type: string

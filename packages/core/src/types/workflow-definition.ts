@@ -397,6 +397,24 @@ export interface StepDefinition {
    * Default: 30 (applied at runtime).
    */
   tool_timeout?: number;
+  /**
+   * Issue #236 (L0 prevention layer) — author opt-in to Anthropic grammar-constrained
+   * ("strict") decoding for this step's submit tool. Only valid on `execution: 'agent'` steps
+   * (mirrors `output_schema`'s agent-only rule). The literal `'strict'` is the only accepted
+   * value (a union of one, kept as a string rather than boolean so a future non-Anthropic
+   * strict mode can add a sibling literal without a breaking type change).
+   *
+   * Governed by `assessStructuredOutputEligibility` (core) against the step's EFFECTIVE schema
+   * (`output_schema ?? input_schema`): an `ineligible` verdict is a LOADER ERROR at authoring
+   * time (`loadWorkflowFrom*`, `validate`, `register`, `create_workflow`) — the API provably
+   * rejects some legal schemas (a 400) and silently weakens others (an unsupported keyword is
+   * dropped from the grammar with no error), so realm never lets an author ship a schema the
+   * gate already knows is unsafe. At runtime the SAME verdict is re-derived (never persisted —
+   * self-healing under API drift) and a fallback ladder additionally degrades loudly on a live
+   * 400/503 the gate could not have predicted. See `docs/reference/yaml-schema.md`'s
+   * `structured_output` section for the full gate table and the runtime disclosure vocabulary.
+   */
+  structured_output?: 'strict';
 }
 
 /**
@@ -441,6 +459,7 @@ export const KNOWN_STEP_KEYS = [
   'max_tool_calls',
   'max_fan_out',
   'tool_timeout',
+  'structured_output',
 ] as const;
 
 // Compile-time drift guard: KNOWN_STEP_KEYS must be an exact partition of StepDefinition's keys.

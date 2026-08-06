@@ -12,6 +12,7 @@ version: 1
 
 params_schema:
   type: object
+  additionalProperties: false
   required: [path]
   properties:
     path:
@@ -59,6 +60,7 @@ steps:
       {{ context.resources.read_ticket.content }}
     input_schema:
       type: object
+      additionalProperties: false
       required: [customer_id, product_area, product_version, reported_issue]
       properties:
         customer_id:
@@ -99,6 +101,7 @@ steps:
       allowed values will be rejected before your response is accepted.
     input_schema:
       type: object
+      additionalProperties: false
       required: [category, priority, summary]
       properties:
         category:

@@ -12,6 +12,7 @@ version: 1
 
 params_schema:
   type: object
+  additionalProperties: false
   required: [path]
   properties:
     path:
@@ -58,6 +59,7 @@ steps:
       {{ context.resources.read_diff.content }}
     input_schema:
       type: object
+      additionalProperties: false
       required: [severity, summary, breaking_changes, action_required]
       properties:
         severity:

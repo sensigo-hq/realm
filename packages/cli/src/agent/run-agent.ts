@@ -14,6 +14,7 @@ import {
   buildFailedAttemptRecord,
   WorkflowError,
   DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
+  assessStructuredOutputEligibility,
   type RunStore,
   type WorkflowDefinition,
   type StepDefinition,
@@ -22,6 +23,7 @@ import {
   type McpServerConfig,
   type ToolCallRecord,
   type TraceBufferStore,
+  type StructuredOutputMeta,
 } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
 import type { LlmProvider } from './providers/llm-provider.js';
@@ -211,6 +213,21 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // env-var strict-flip counterpart here). `0` disables the repair loop entirely.
   const schemaRetries = deps.schemaRetries ?? 2;
 
+  // issue #236 — sticky downgrade (design §4 [Rv8]): per step, homed HERE (run-agent scope,
+  // beside the verdict) — survives ALL THREE loops (the provider ladder ⊂ the 2-attempt callStep
+  // wrapper ⊂ the #217 repair loop). Once armed for a step, every LATER attempt for that SAME
+  // step name (across repair iterations, across a re-attach) never re-sends strict — it goes
+  // straight to the ORIGINAL downgrade_reason/api_message. Never cleared for the run's lifetime
+  // (R-Q: a non-grammar 503 disables prevention for the whole drive session — accepted, the
+  // `service_unavailable` labeling makes it auditable).
+  const structuredOutputSticky = new Map<
+    string,
+    {
+      downgrade_reason: NonNullable<StructuredOutputMeta['downgrade_reason']>;
+      api_message?: string;
+    }
+  >();
+
   // Load or use provided definition.
   const definition: WorkflowDefinition =
     options.definition !== undefined
@@ -378,12 +395,16 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       // pre-existing (non-repair) case.
       let stepInput: Record<string, unknown> = {};
       let toolCallsForMeta: ToolCallRecord[] | undefined;
+      // issue #236: the resolved structuredOutput meta for THIS attempt's callStep call — reset
+      // every iteration alongside toolCallsForMeta, threaded into stepMeta below.
+      let structuredOutputMetaForStep: StructuredOutputMeta | undefined;
       let result: Awaited<ReturnType<typeof executeChain>>;
       let repairsUsed = 0;
       let lastRejection: { kind: 'output' | 'input'; summary: string } | undefined;
 
       for (;;) {
         toolCallsForMeta = undefined;
+        structuredOutputMetaForStep = undefined;
         // issue #217 conjunct (vi) ground truth — captured FRESH at the top of EVERY attempt
         // (including the first), never once per step: a per-step capture is stale across the
         // whole provider LLM call, so any concurrent writer (a second drive, a gate `respond`, a
@@ -431,6 +452,46 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             stepDef.agent_profile !== undefined
               ? definition.resolved_profiles?.[stepDef.agent_profile]?.content
               : undefined;
+
+          // issue #236: compute the Phase-B verdict ONCE per attempt-cycle, on the EXACT resolved
+          // `inputSchema` local above — never re-derived from `stepDef` (design §2, Rv11). Only
+          // steps that DECLARED structured_output ever get a plan at all — an undeclared step's
+          // call site below is completely untouched (byte-identical for the non-opted majority).
+          let structuredOutputPlan:
+            | { send: boolean; ineligibleMeta?: StructuredOutputMeta; caveats?: string[] }
+            | undefined;
+          if (stepDef.structured_output === 'strict') {
+            const sticky = structuredOutputSticky.get(stepName);
+            if (sticky !== undefined) {
+              // A prior attempt for this step already downgraded — never re-attempt strict.
+              structuredOutputPlan = {
+                send: false,
+                ineligibleMeta: { requested: true, sent: false, ...sticky },
+              };
+            } else {
+              const verdict = assessStructuredOutputEligibility({
+                schema: inputSchema,
+                tools: false,
+              });
+              if (verdict.verdict === 'ineligible') {
+                structuredOutputPlan = {
+                  send: false,
+                  ineligibleMeta: {
+                    requested: true,
+                    sent: false,
+                    downgrade_reason: 'gate_ineligible',
+                  },
+                };
+              } else if (verdict.verdict === 'eligible_with_caveats') {
+                structuredOutputPlan = {
+                  send: true,
+                  caveats: verdict.caveats.map((c) => c.code),
+                };
+              } else {
+                structuredOutputPlan = { send: true };
+              }
+            }
+          }
 
           if (repairsUsed === 0) {
             const descPreview = stepDef.description.slice(0, 80);
@@ -597,15 +658,81 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             stepInput = {};
             for (let attempt = 0; attempt < 2; attempt++) {
               try {
-                stepInput = await deps.provider.callStep(
-                  promptForAttempt,
-                  inputSchema,
-                  agentProfileInstructions,
-                );
+                if (structuredOutputPlan !== undefined) {
+                  // issue #236: the declared-step path — always call callStepWithMeta so the
+                  // synthesis rule (design §5 [R2-3]) can distinguish a genuinely-absent meta
+                  // (third-party provider ⇒ provider_unsupported) from a gate/sticky decision
+                  // that never even attempted a call.
+                  const { output, meta } = await deps.provider.callStepWithMeta(
+                    promptForAttempt,
+                    inputSchema,
+                    agentProfileInstructions,
+                    { structuredOutputStrict: structuredOutputPlan.send },
+                  );
+                  stepInput = output;
+                  if (structuredOutputPlan.ineligibleMeta !== undefined) {
+                    // Gate-ineligible or sticky — strict was never attempted this call at all.
+                    structuredOutputMetaForStep = structuredOutputPlan.ineligibleMeta;
+                  } else if (meta !== undefined) {
+                    structuredOutputMetaForStep = {
+                      ...meta,
+                      ...(structuredOutputPlan.caveats !== undefined
+                        ? { caveats: structuredOutputPlan.caveats }
+                        : {}),
+                    };
+                    // Arm sticky the FIRST time THIS step downgrades (never re-arm from a
+                    // gate_ineligible meta — that's not a live-API downgrade to remember).
+                    if (
+                      meta.sent === false &&
+                      meta.downgrade_reason !== undefined &&
+                      meta.downgrade_reason !== 'gate_ineligible' &&
+                      !structuredOutputSticky.has(stepName)
+                    ) {
+                      structuredOutputSticky.set(stepName, {
+                        downgrade_reason: meta.downgrade_reason,
+                        ...(meta.api_message !== undefined
+                          ? { api_message: meta.api_message }
+                          : {}),
+                      });
+                    }
+                  } else {
+                    // The base LlmProvider default returned no meta at all — a third-party
+                    // provider that never overrides callStepWithMeta.
+                    structuredOutputMetaForStep = {
+                      requested: true,
+                      sent: false,
+                      downgrade_reason: 'provider_unsupported',
+                    };
+                  }
+                } else {
+                  stepInput = await deps.provider.callStep(
+                    promptForAttempt,
+                    inputSchema,
+                    agentProfileInstructions,
+                  );
+                }
                 callError = undefined;
                 break;
               } catch (err) {
                 callError = err;
+                // issue #236 [R2-7]: a ladder failure still carries a structuredOutput meta on
+                // the thrown error — arm sticky from it too, so a subsequent repair/retry never
+                // re-attempts strict even though this attempt produced no result at all.
+                const failedMeta = (err as { structuredOutput?: StructuredOutputMeta } | undefined)
+                  ?.structuredOutput;
+                if (
+                  failedMeta !== undefined &&
+                  failedMeta.downgrade_reason !== undefined &&
+                  failedMeta.downgrade_reason !== 'gate_ineligible' &&
+                  !structuredOutputSticky.has(stepName)
+                ) {
+                  structuredOutputSticky.set(stepName, {
+                    downgrade_reason: failedMeta.downgrade_reason,
+                    ...(failedMeta.api_message !== undefined
+                      ? { api_message: failedMeta.api_message }
+                      : {}),
+                  });
+                }
                 console.warn(
                   `  ⚠  LLM call attempt ${attempt + 1} failed: ${err instanceof Error ? err.message : String(err)}`,
                 );
@@ -631,7 +758,18 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           ...(deps.traceBufferStore !== undefined
             ? { traceBufferStore: deps.traceBufferStore }
             : {}),
-          ...(toolCallsForMeta !== undefined ? { stepMeta: { toolCalls: toolCallsForMeta } } : {}),
+          // issue #236: stepMeta now ALSO passes when structuredOutput exists (previously only
+          // passed when toolCalls existed) — the two are independent, either alone must thread.
+          ...(toolCallsForMeta !== undefined || structuredOutputMetaForStep !== undefined
+            ? {
+                stepMeta: {
+                  ...(toolCallsForMeta !== undefined ? { toolCalls: toolCallsForMeta } : {}),
+                  ...(structuredOutputMetaForStep !== undefined
+                    ? { structuredOutput: structuredOutputMetaForStep }
+                    : {}),
+                },
+              }
+            : {}),
           // issue #197 PR-2: a FRESH nonce per step-attempt — resolved per call, never cached, so
           // the strict-flip (checked inside shouldMintWriterNonce) is honored even if the env var
           // changes mid-process (tests flip it). Also fresh per issue #217 repair attempt, since
