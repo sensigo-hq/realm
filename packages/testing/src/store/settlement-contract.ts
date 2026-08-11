@@ -94,6 +94,27 @@ export type SettlementLaw =
    *  mixed-complete × a `fail`-only finalizer ⇒ ALSO not selected (`fail`-only genuinely requires
    *  a `fail` seal — a `complete` seal carrying `failed_steps` is not a backdoor into it). */
   | 'CURRENT_BEHAVIOR_PINNED'
+  // issue #291 (gate-timeout-291-correction, Leg 2 — ported from the dedicated core-only
+  // gate-expiry-tck-laws.test.ts, per the PR-C precedent that new delta kinds' laws join this
+  // shared, cross-store conformance kit): the `expire_gate` delta's own arm matrix + its two
+  // dispositions' postconditions.
+  /** The full `applyExpireGate` arm matrix: not_expired (arm-verified, never the caller-implied
+   *  clock), replay ×2 idempotence (both dispositions), a DIFFERENT terminal cause refuses
+   *  run_terminal (never resurrecting/re-terminalizing), an unknown/superseded gateId refuses
+   *  gate_mismatch, finding-only (expires_at present, on_expiry absent) refuses no_disposition
+   *  arm-level before APPLY. */
+  | 'EXPIRE_ARM_MATRIX'
+  /** The abort disposition's full postcondition shape: pending_gate + claim cleared, aborted_at +
+   *  skip_details `{kind:'gate_expired', gate_id}` (day-one) + finalizers minted in ONE write;
+   *  the D-4 discriminator (never mistaken for `gate_cancelled_by_abort`); never stamps
+   *  `defaulted_steps` on the abort edge (the FM-5/#232 guard). */
+  | 'EXPIRE_ABORT_CASCADE'
+  /** The settle_default disposition's full postcondition shape: `resolved_by:'timeout'`
+   *  attribution + both isComplete legs (terminalizing/non-terminalizing); FROZEN-BEATS-
+   *  DEFINITION (enactment reads the RECORD-frozen `default_choice`, never a re-registered
+   *  definition's drifted value); the evidence `gate_response` snapshot's `responded_by`/
+   *  `resolution` fields. */
+  | 'EXPIRE_DEFAULT_RESOLVE'
   /** Not a real settlement law — a wiring-gap sentinel (see `settlementContract`'s own doc: a
    *  store declaring `settleStep` with no `settlementFixture` supplied gets ONE failing case
    *  tagged with this, never a silent zero-cases pass). */
@@ -240,7 +261,16 @@ export const defaultSettlementFixture: SettlementFixture = {
  */
 function makePendingGate(
   stepName: string,
-  opts?: { gateId?: string; choices?: string[] },
+  opts?: {
+    gateId?: string;
+    choices?: string[];
+    /** issue #291 (gate-timeout-291-correction, Leg 2): the mint-frozen enforce/notify fields —
+     *  additive-optional, existing callers (GATE_OPEN_IDEMPOTENT/GATE_RESOLUTION_CONFLICT/
+     *  GATE_MISMATCH/guard cases) are unaffected. */
+    expiresAt?: string;
+    onExpiry?: 'settle_default' | 'abort';
+    defaultChoice?: string;
+  },
 ): PendingGate {
   return {
     gate_id: opts?.gateId ?? uid('tck-gate'),
@@ -248,6 +278,9 @@ function makePendingGate(
     preview: {},
     choices: opts?.choices ?? ['approve', 'reject'],
     opened_at: '2026-01-01T00:00:00.000Z',
+    ...(opts?.expiresAt !== undefined ? { expires_at: opts.expiresAt } : {}),
+    ...(opts?.onExpiry !== undefined ? { on_expiry: opts.onExpiry } : {}),
+    ...(opts?.defaultChoice !== undefined ? { default_choice: opts.defaultChoice } : {}),
   };
 }
 
@@ -3760,6 +3793,484 @@ function currentBehaviorPinnedCases(adapter: SettlementContractAdapter): Settlem
 }
 
 // ---------------------------------------------------------------------------
+// EXPIRE_ARM_MATRIX / EXPIRE_ABORT_CASCADE / EXPIRE_DEFAULT_RESOLVE (issue #291,
+// gate-timeout-291-correction Leg 2 — ported from the dedicated core-only
+// gate-expiry-tck-laws.test.ts per the PR-C precedent: new delta kinds' laws join this shared,
+// cross-store conformance kit rather than staying core-internal only). The dedicated core file
+// stays (see its own SCOPE NOTE, amended) as fast unit-level coverage exercising `applySettlement`
+// directly with hand-rolled fixtures — this is the STORE-EXERCISING cross-conformance layer,
+// proving BOTH JsonFileStore and InMemoryStore's `settleStep` reach the identical, correct
+// `applyExpireGate` behavior through the real store surface, matching every other delta kind's
+// own dual coverage (a dedicated engine-level test file + a settlement-contract.ts law family).
+// ---------------------------------------------------------------------------
+
+function expireArmMatrixCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition } = adapter.settlementFixture!;
+  const settleStep = requireSettleStep(adapter.store);
+  return [
+    {
+      law: 'EXPIRE_ARM_MATRIX',
+      name: `[${adapter.storeName}] expire_gate refuses not_expired with the injectable now, never the caller-implied clock`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated', {
+          gateId: 'gate-1',
+          expiresAt: '2026-01-01T00:05:00.000Z',
+          onExpiry: 'abort',
+        });
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
+          now: new Date('2026-01-01T00:00:30.000Z'),
+        });
+        assertRefused(result, 'not_expired', 'expire_gate before expires_at');
+      },
+    },
+    {
+      law: 'EXPIRE_ARM_MATRIX',
+      name: `[${adapter.storeName}] expire_gate replay ×2 (settle_default): the SECOND attempt NOOPs already_settled — version-safe idempotence`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated', {
+          gateId: 'gate-1',
+          expiresAt: '2026-01-01T00:05:00.000Z',
+          onExpiry: 'settle_default',
+          defaultChoice: 'approve',
+        });
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const now = new Date('2026-01-01T00:10:00.000Z');
+        const first = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
+          now,
+        });
+        assertApplied(first, 'first expire_gate (settle_default)');
+        const second = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
+          now,
+        });
+        assertRefused(
+          second,
+          'already_settled',
+          'replay expire_gate for an already-settled settle_default gate',
+        );
+      },
+    },
+    {
+      law: 'EXPIRE_ARM_MATRIX',
+      name: `[${adapter.storeName}] expire_gate replay ×2 (abort): the SECOND attempt NOOPs already_settled (terminal split)`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated', {
+          gateId: 'gate-1',
+          expiresAt: '2026-01-01T00:05:00.000Z',
+          onExpiry: 'abort',
+        });
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const now = new Date('2026-01-01T00:10:00.000Z');
+        const first = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
+          now,
+        });
+        assertApplied(first, 'first expire_gate (abort)');
+        const second = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
+          now,
+        });
+        assertRefused(
+          second,
+          'already_settled',
+          'replay expire_gate for an already-aborted gate (terminal-split arm)',
+        );
+      },
+    },
+    {
+      law: 'EXPIRE_ARM_MATRIX',
+      name: `[${adapter.storeName}] expire_gate against a run terminalized by a DIFFERENT cause refuses run_terminal — never resurrecting or re-terminalizing`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const completed = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'gated',
+            outcome: 'complete',
+            claimToken: token,
+            evidence: [makeEvidence('gated')],
+          },
+          def,
+        );
+        assertApplied(
+          completed,
+          'complete gated (terminalizes — sole step, unrelated to any gate)',
+        );
+        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
+          now: new Date('2026-01-01T00:10:00.000Z'),
+        });
+        assertRefused(
+          result,
+          'run_terminal',
+          'expire_gate against a run terminalized by an unrelated cause',
+        );
+      },
+    },
+    {
+      law: 'EXPIRE_ARM_MATRIX',
+      name: `[${adapter.storeName}] expire_gate with an unknown/superseded gateId refuses gate_mismatch`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated', {
+          gateId: 'live-gate',
+          expiresAt: '2026-01-01T00:05:00.000Z',
+          onExpiry: 'abort',
+        });
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(
+          run.id,
+          { kind: 'expire_gate', gateId: 'stale-unknown-gate' },
+          def,
+          { now: new Date('2026-01-01T00:10:00.000Z') },
+        );
+        assertRefused(result, 'gate_mismatch', 'expire_gate with an unknown gateId');
+      },
+    },
+    {
+      law: 'EXPIRE_ARM_MATRIX',
+      name: `[${adapter.storeName}] expire_gate on a finding-only gate (expires_at present, on_expiry absent) refuses no_disposition, arm-level, before APPLY — never cleared`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated', {
+          gateId: 'gate-1',
+          expiresAt: '2026-01-01T00:05:00.000Z',
+          // no onExpiry — finding-only.
+        });
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
+          now: new Date('2026-01-01T00:10:00.000Z'),
+        });
+        assertRefused(result, 'no_disposition', 'expire_gate on a finding-only gate');
+        if (result.run.pending_gate === undefined) {
+          throw new Error('a finding-only refusal must NEVER clear pending_gate');
+        }
+      },
+    },
+  ];
+}
+
+function expireAbortCascadeCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
+  const settleStep = requireSettleStep(adapter.store);
+  return [
+    {
+      law: 'EXPIRE_ABORT_CASCADE',
+      name: `[${adapter.storeName}] expire_gate (abort) clears pending_gate + claim, writes aborted_at + skip_details {gate_expired, gate_id} (day-one), mints finalizers — all in ONE write`,
+      run: async () => {
+        const def = withFinalizer(minimalDefinition(['gated']), 'fin', 'abort');
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated', {
+          gateId: 'gate-1',
+          expiresAt: '2026-01-01T00:05:00.000Z',
+          onExpiry: 'abort',
+        });
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
+          now: new Date('2026-01-01T00:10:00.000Z'),
+        });
+        assertApplied(result, 'expire_gate (abort)');
+        if (result.run.pending_gate !== undefined) {
+          throw new Error('expected pending_gate cleared');
+        }
+        if (result.run.claims?.['gated'] !== undefined) {
+          throw new Error('expected the claim cleared');
+        }
+        if (result.run.in_progress_steps.includes('gated')) {
+          throw new Error("expected 'gated' removed from in_progress_steps");
+        }
+        if (result.run.terminal_state !== true) {
+          throw new Error('expected the run to terminalize');
+        }
+        if (result.run.aborted_at?.step_id !== 'gated') {
+          throw new Error(
+            `expected aborted_at.step_id === 'gated', got ${JSON.stringify(result.run.aborted_at)}`,
+          );
+        }
+        const detail = result.run.skip_details?.['gated'];
+        if (detail === undefined || detail.kind !== 'gate_expired' || detail.gate_id !== 'gate-1') {
+          throw new Error(
+            `expected skip_details.gated = {kind:'gate_expired', gate_id:'gate-1'}, got ${JSON.stringify(detail)}`,
+          );
+        }
+        if (result.run.settled?.['gated'] !== undefined) {
+          throw new Error(
+            'TERMINAL_GATE_EXCLUSION: the abort disposition must never ALSO write a settled gate entry',
+          );
+        }
+        if (result.run.finalizer_ledger?.['fin'] === undefined) {
+          throw new Error("expected the 'abort'-triggered finalizer minted on the abort edge");
+        }
+      },
+    },
+    {
+      law: 'EXPIRE_ABORT_CASCADE',
+      name: `[${adapter.storeName}] the D-4 discriminator: a gate_expired skip_detail is NEVER mistaken for gate_cancelled_by_abort`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated', {
+          gateId: 'gate-1',
+          expiresAt: '2026-01-01T00:05:00.000Z',
+          onExpiry: 'abort',
+        });
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
+          now: new Date('2026-01-01T00:10:00.000Z'),
+        });
+        assertApplied(result, 'expire_gate (abort)');
+        const kind = result.run.skip_details?.['gated']?.kind;
+        if (kind !== 'gate_expired') {
+          throw new Error(`expected skip_details.gated.kind === 'gate_expired', got '${kind}'`);
+        }
+        // TypeScript narrows `kind` to the literal above; the discriminator being tested is that
+        // it is NEVER 'gate_cancelled_by_abort' — asserted by construction (the union excludes it
+        // once narrowed) and restated here as an explicit, readable pin.
+      },
+    },
+    {
+      law: 'EXPIRE_ABORT_CASCADE',
+      name: `[${adapter.storeName}] expire_gate (abort) never stamps defaulted_steps, even though it terminalizes (the FM-5/#232 guard)`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated', {
+          gateId: 'gate-1',
+          expiresAt: '2026-01-01T00:05:00.000Z',
+          onExpiry: 'abort',
+        });
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
+          now: new Date('2026-01-01T00:10:00.000Z'),
+        });
+        assertApplied(result, 'expire_gate (abort)');
+        if (result.run.defaulted_steps !== undefined) {
+          throw new Error('expire_gate (abort) must never stamp defaulted_steps');
+        }
+      },
+    },
+  ];
+}
+
+function expireDefaultResolveCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition } = adapter.settlementFixture!;
+  const settleStep = requireSettleStep(adapter.store);
+  return [
+    {
+      law: 'EXPIRE_DEFAULT_RESOLVE',
+      name: `[${adapter.storeName}] expire_gate (settle_default) resolves with resolved_by:'timeout' attribution + terminalizes (sole step)`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated', {
+          gateId: 'gate-1',
+          expiresAt: '2026-01-01T00:05:00.000Z',
+          onExpiry: 'settle_default',
+          defaultChoice: 'approve',
+        });
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
+          now: new Date('2026-01-01T00:10:00.000Z'),
+        });
+        assertApplied(result, 'expire_gate (settle_default)');
+        const entry = result.run.settled?.['gated'];
+        if (
+          entry?.token !== 'gate-1' ||
+          entry.outcome !== 'gate' ||
+          entry.choice !== 'approve' ||
+          entry.resolved_by !== 'timeout'
+        ) {
+          throw new Error(
+            `expected settled.gated = {token:'gate-1', outcome:'gate', choice:'approve', ` +
+              `resolved_by:'timeout'}, got ${JSON.stringify(entry)}`,
+          );
+        }
+        if (result.run.terminal_state !== true) {
+          throw new Error('sole step ⇒ isComplete ⇒ the run must terminalize');
+        }
+      },
+    },
+    {
+      law: 'EXPIRE_DEFAULT_RESOLVE',
+      name: `[${adapter.storeName}] expire_gate (settle_default): a sibling step still in progress keeps the run non-terminal`,
+      run: async () => {
+        const def = minimalDefinition(['gated', 'sibling']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        await adapter.store.claimStep(run.id, 'sibling', def);
+        const gate = makePendingGate('gated', {
+          gateId: 'gate-1',
+          expiresAt: '2026-01-01T00:05:00.000Z',
+          onExpiry: 'settle_default',
+          defaultChoice: 'approve',
+        });
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
+          now: new Date('2026-01-01T00:10:00.000Z'),
+        });
+        assertApplied(result, 'expire_gate (settle_default)');
+        if (result.run.terminal_state !== false) {
+          throw new Error("'sibling' still in_progress ⇒ the run must stay non-terminal");
+        }
+        if (!result.run.completed_steps.includes('gated')) {
+          throw new Error("expected 'gated' in completed_steps");
+        }
+      },
+    },
+    {
+      law: 'EXPIRE_DEFAULT_RESOLVE',
+      name: `[${adapter.storeName}] FROZEN-BEATS-DEFINITION: expire_gate reads the RECORD-frozen default_choice, NEVER a re-registered definition's drifted value`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        // The gate was minted under a definition whose gate.default_choice was 'approve' — frozen
+        // into the record's own pending_gate.default_choice at mint (simulated directly here, as
+        // the source test targets applyExpireGate's own read behavior, not the mint site).
+        const gate = makePendingGate('gated', {
+          gateId: 'gate-1',
+          expiresAt: '2026-01-01T00:05:00.000Z',
+          onExpiry: 'settle_default',
+          defaultChoice: 'approve',
+        });
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        // A DIFFERENT definition — simulating a workflow re-registered with a changed
+        // default_choice ('reject') and a different choice set entirely — passed only at
+        // enactment time. applyExpireGate never reads step-def gate config (gate state lives
+        // entirely on the RECORD's frozen pending_gate), so this must have zero effect.
+        const driftedDef: WorkflowDefinition = {
+          id: uid('settlement-wf-drifted'),
+          name: 'Drifted default_choice',
+          version: 1,
+          steps: {
+            gated: {
+              description: 'gated',
+              execution: 'agent',
+              depends_on: [],
+              trust: 'human_confirmed',
+              gate: {
+                choices: ['ship', 'hold'],
+                on_expiry: 'settle_default',
+                default_choice: 'reject',
+              },
+            },
+          },
+        };
+        const result = await settleStep(
+          run.id,
+          { kind: 'expire_gate', gateId: 'gate-1' },
+          driftedDef,
+          {
+            now: new Date('2026-01-01T00:10:00.000Z'),
+          },
+        );
+        assertApplied(result, 'expire_gate against a drifted definition');
+        if (result.run.settled?.['gated']?.choice !== 'approve') {
+          throw new Error(
+            `expected the FROZEN choice 'approve' to win, got '${result.run.settled?.['gated']?.choice}'`,
+          );
+        }
+      },
+    },
+    {
+      law: 'EXPIRE_DEFAULT_RESOLVE',
+      name: `[${adapter.storeName}] expire_gate (settle_default): the evidence gate_response snapshot carries responded_by:'timeout' + resolution:'expired_default'`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated', {
+          gateId: 'gate-1',
+          expiresAt: '2026-01-01T00:05:00.000Z',
+          onExpiry: 'settle_default',
+          defaultChoice: 'approve',
+        });
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
+          now: new Date('2026-01-01T00:10:00.000Z'),
+        });
+        assertApplied(result, 'expire_gate (settle_default)');
+        const snapshot = result.run.evidence.at(-1);
+        if (
+          snapshot?.kind !== 'gate_response' ||
+          snapshot.responded_by !== 'timeout' ||
+          snapshot.resolution !== 'expired_default'
+        ) {
+          throw new Error(
+            `expected the last evidence entry to be a gate_response with responded_by:'timeout'/` +
+              `resolution:'expired_default', got ${JSON.stringify(snapshot)}`,
+          );
+        }
+      },
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // Assembly
 // ---------------------------------------------------------------------------
 
@@ -3828,5 +4339,9 @@ export function settlementContract(adapter: SettlementContractAdapter): Settleme
     ...cwfsSecondEpochCases(adapter),
     ...cwfsArrayOnceCases(adapter),
     ...currentBehaviorPinnedCases(adapter),
+    // issue #291 (gate-timeout-291-correction, Leg 2).
+    ...expireArmMatrixCases(adapter),
+    ...expireAbortCascadeCases(adapter),
+    ...expireDefaultResolveCases(adapter),
   ];
 }

@@ -2,15 +2,17 @@
 // EXPIRE_ABORT_CASCADE, EXPIRE_DEFAULT_RESOLVE — organized as named law families per the design
 // record's own O7 list, exercising the pure `applySettlement` transform directly.
 //
-// SCOPE NOTE (disclosed deviation): these laws are NOT wired into the shared cross-store
-// `settlement-contract.ts` TCK (packages/testing) that other #279/#302 laws use. `applyExpireGate`
-// is entirely pure, store-agnostic code — both JsonFileStore's and InMemoryStore's `settleStep`
-// delegate to the exact same `applySettlement` this file exercises directly, and cross-store
-// behavioral parity for the enactment mechanism is separately proven end-to-end by
-// `submit-expiry-wins.test.ts` (which runs the SAME scenarios through a real `JsonFileStore` AND
-// a non-declaring legacy-CAS store double). Integrating into the ~3800-line shared TCK file was
-// judged lower marginal value than the risk of a subtle wiring error under this PR's time budget;
-// flagged here for the review, not silently absorbed.
+// SCOPE NOTE (amended, gate-timeout-291-correction Leg 2): the same three law families now ALSO
+// live in the shared cross-store `settlement-contract.ts` TCK (packages/testing/src/store/), per
+// the PR-C precedent — wired into both `settlement-json-file-store.test.ts` and
+// `settlement-in-memory-store.test.ts`'s `LAWS` arrays, proving BOTH stores' `settleStep` reach
+// the identical, correct `applyExpireGate` behavior through the real store surface. THIS file is
+// DELIBERATELY KEPT, not slimmed or deleted: it exercises `applySettlement` directly against
+// hand-rolled fixtures (no store, no filesystem, no async I/O) — fast unit-level coverage of the
+// pure transform's own arm matrix, complementary to the TCK's store-exercising cases (which incur
+// real create/claim/open_gate round-trips per case). Both layers stay, matching how every other
+// delta kind in this codebase is proven: a focused engine-level unit file plus the shared
+// conformance kit — neither one subsumes the other's failure-isolation value.
 import { describe, it, expect } from 'vitest';
 import { applySettlement } from './settlement.js';
 import type { RunRecord, PendingGate } from '../types/run-record.js';
