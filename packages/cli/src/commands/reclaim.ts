@@ -205,6 +205,11 @@ export const reclaimCommand = new Command('reclaim')
             if (result.outcome === 'reclaimed') reclaimed += 1;
             const { glyph, message } = renderReclaimOutcome(result);
             console.log(`  ${glyph} ${rid}: ${message}`);
+            // issue #291 ([F7] defer-to-drain advisory) — reclaim never enacts a sibling gate's
+            // expiry itself; it only points at the guaranteed-reachable lever.
+            if (result.gateAdvisory !== undefined) {
+              console.log(`    ⚠ ${result.gateAdvisory}`);
+            }
           } catch (err) {
             // continue-on-error: one CAS mismatch/failure must not abort the batch.
             console.error(
@@ -259,6 +264,9 @@ export const reclaimCommand = new Command('reclaim')
           );
           const result = await reclaimStep(store, runId, opts.step, { traceBufferStore });
           console.log(renderReclaimOutcome(result).message);
+          if (result.gateAdvisory !== undefined) {
+            console.log(`  ⚠ ${result.gateAdvisory}`);
+          }
           return;
         }
 

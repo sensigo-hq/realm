@@ -47,6 +47,36 @@ export interface ReclaimResult {
   /** The claim state observed at the initial read (for the caller's warning/audit output). */
   priorState: ClaimState;
   priorDeadline: string | null;
+  /**
+   * Issue #291 ([F7]: "reclaim = defer-to-drain WITH advisory — no new plumbing"). Present only
+   * when this run ALSO carries an expired, enactable gate (on a DIFFERENT step — the gate's own
+   * step is refused above and never reaches here) at the time this result was produced.
+   * `reclaimStep` never enacts it itself (no settlement write added to this verb); the advisory
+   * points the operator at `realm run drain --expired`, the guaranteed-reachable enactment lever.
+   */
+  gateAdvisory?: string;
+}
+
+/**
+ * Issue #291 ([F7] reclaim advisory): builds the defer-to-drain advisory string when `record`
+ * carries an expired, enactable gate — undefined otherwise (a finding-only or non-expired gate,
+ * or no gate at all, produces no advisory). Pure, read-only; never used to decide reclaim's OWN
+ * outcome — purely informational.
+ */
+function buildGateExpiryAdvisory(record: RunRecord, now: Date): string | undefined {
+  const gate = record.pending_gate;
+  if (
+    gate === undefined ||
+    gate.expires_at === undefined ||
+    gate.on_expiry === undefined ||
+    now.getTime() < new Date(gate.expires_at).getTime()
+  ) {
+    return undefined;
+  }
+  return (
+    `this run's gate '${gate.step_name}' has also expired (on_expiry: ${gate.on_expiry}) and is ` +
+    `awaiting enactment — 'realm run drain --expired' will enact it.`
+  );
 }
 
 /**
@@ -407,6 +437,7 @@ export async function reclaimStep(
   // Guard — membership: not in_progress → discriminate settled vs no-active-claim (issue #221, B2).
   if (!run.in_progress_steps.includes(stepName)) {
     const { outcome, detail } = classifyNoActiveClaim(run, stepName);
+    const gateAdvisory = buildGateExpiryAdvisory(run, now);
     return {
       run,
       step: stepName,
@@ -414,6 +445,7 @@ export async function reclaimStep(
       ...(detail !== undefined ? { detail } : {}),
       priorState,
       priorDeadline,
+      ...(gateAdvisory !== undefined ? { gateAdvisory } : {}),
     };
   }
 
@@ -456,7 +488,15 @@ export async function reclaimStep(
     if (!fenced) {
       await clearStaleWal(traceBufferStore, runId, stepName);
     }
-    return { run: updated, step: stepName, outcome: 'reclaimed', priorState, priorDeadline };
+    const gateAdvisory = buildGateExpiryAdvisory(updated, now);
+    return {
+      run: updated,
+      step: stepName,
+      outcome: 'reclaimed',
+      priorState,
+      priorDeadline,
+      ...(gateAdvisory !== undefined ? { gateAdvisory } : {}),
+    };
   } catch (err) {
     if (!(err instanceof WorkflowError) || err.code !== 'STATE_SNAPSHOT_MISMATCH') throw err;
 
@@ -473,6 +513,7 @@ export async function reclaimStep(
       // NOW, after the concurrent write that caused this CAS mismatch, not at the stale decision
       // read).
       const { outcome, detail } = classifyNoActiveClaim(reloaded, stepName);
+      const gateAdvisory = buildGateExpiryAdvisory(reloaded, now);
       return {
         run: reloaded,
         step: stepName,
@@ -480,11 +521,20 @@ export async function reclaimStep(
         ...(detail !== undefined ? { detail } : {}),
         priorState,
         priorDeadline,
+        ...(gateAdvisory !== undefined ? { gateAdvisory } : {}),
       };
     }
     if (classifyClaim(reloaded.claims?.[stepName], now) === 'healthy') {
       // Re-claimed FRESH (a future deadline) → a live driver took over. Never stomp live work.
-      return { run: reloaded, step: stepName, outcome: 'taken_over', priorState, priorDeadline };
+      const gateAdvisory = buildGateExpiryAdvisory(reloaded, now);
+      return {
+        run: reloaded,
+        step: stepName,
+        outcome: 'taken_over',
+        priorState,
+        priorDeadline,
+        ...(gateAdvisory !== undefined ? { gateAdvisory } : {}),
+      };
     }
     // Still a stale / unknown-age wedge after the concurrent write → re-apply ONCE on the fresh
     // record. A second mismatch propagates (reclaim loses, abandon-style — no retry loop).
@@ -514,6 +564,14 @@ export async function reclaimStep(
     if (!fenced) {
       await clearStaleWal(traceBufferStore, runId, stepName);
     }
-    return { run: updated, step: stepName, outcome: 'reclaimed', priorState, priorDeadline };
+    const gateAdvisory = buildGateExpiryAdvisory(updated, now);
+    return {
+      run: updated,
+      step: stepName,
+      outcome: 'reclaimed',
+      priorState,
+      priorDeadline,
+      ...(gateAdvisory !== undefined ? { gateAdvisory } : {}),
+    };
   }
 }

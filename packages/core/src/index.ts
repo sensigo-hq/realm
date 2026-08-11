@@ -118,6 +118,8 @@ export { reclaimStep } from './engine/reclaim-step.js';
 export type { ReclaimResult, ReclaimOutcome, ReclaimStepOptions } from './engine/reclaim-step.js';
 export { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS } from './engine/run-health.js';
 export type { RunHealthFinding } from './engine/run-health.js';
+export { computeGateDueState } from './engine/gate-timing.js';
+export type { GateDueState } from './engine/gate-timing.js';
 export {
   requirementForStep,
   unmetCapabilities,

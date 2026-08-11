@@ -12,6 +12,7 @@ import {
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { startSlackGateServer } from './slack-gate-server.js';
 import { connectSocketMode } from './slack-socket-client.js';
+import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
 
 /**
  * Formats a gate preview object as human-readable Slack mrkdwn text.
@@ -150,9 +151,47 @@ export async function postSlackReply(
 }
 
 /**
+ * Issue #291 ([F-A2-1]/[F-A2-2]/[F-A2-3] — the authored notify clock): builds the reminder
+ * message text for one occurrence. `isFinal` (only ever true when `gate.expires_at` is frozen)
+ * switches the wording to the enforcement fact rather than soliciting a doomed response —
+ * finding-only (no `on_expiry`) gets its own variant with no "will enact" claim.
+ */
+function buildReminderText(gate: PendingGate, isFinal: boolean): string {
+  if (!isFinal) {
+    return `⏰ Reminder: gate \`${gate.step_name}\` is still waiting for a response.`;
+  }
+  const overdueMin = Math.max(
+    0,
+    Math.round((Date.now() - new Date(gate.expires_at!).getTime()) / 60_000),
+  );
+  if (gate.on_expiry !== undefined) {
+    return (
+      `⏰ gate \`${gate.step_name}\` expired ${overdueMin}m ago — will enact ${gate.on_expiry}; ` +
+      `realm run drain --expired.`
+    );
+  }
+  return (
+    `⏰ gate \`${gate.step_name}\` expired ${overdueMin}m ago — finding-only (no on_expiry ` +
+    `declared, nothing will be enacted); still waiting for a response.`
+  );
+}
+
+/**
  * Starts reminder and escalation timers for an open gate.
- * Returns a cleanup function that clears both timers — must be called when the gate resolves.
- * Exported for testing.
+ *
+ * Issue #291 (Deliverable 6 — the authored notify clock): the REMINDER leg now repeats when the
+ * gate carries a frozen `reminder_seconds` ([F-A2-1]): every `reminder_seconds` (record-keyed
+ * precedence over `reminderIntervalMs` [F-A2-2] — the author's declared value always wins when
+ * present), up to `reminder_max` occurrences (frozen at mint, default 3) OR until the frozen
+ * `expires_at` is reached, whichever comes first — the occurrence that would land at/after
+ * `expires_at` is the FINAL one, with wording switched to the enforcement fact (never soliciting
+ * a doomed response). A PURE-notify gate (`reminder_seconds` frozen, no `expires_at`) is bounded
+ * by `reminder_max` alone, all plain-wording occurrences. When the author declared NO
+ * `reminder_seconds`, the OPERATOR fallback (`reminderIntervalMs`) stays exactly as before —
+ * SINGLE-SHOT, unchanged behavior for existing deployments ([F-A2-3] — repeating it would alter
+ * an unchanged config's Slack volume). The ESCALATION leg is completely untouched either way.
+ * Returns a cleanup function that clears every pending timer — must be called when the gate
+ * resolves. Exported for testing.
  */
 export function startGateReminderTimers(
   botToken: string,
@@ -162,16 +201,33 @@ export function startGateReminderTimers(
   reminderIntervalMs: number,
   escalationThresholdMs: number,
 ): () => void {
-  const reminderTimer = setTimeout(() => {
-    postSlackReply(
-      botToken,
-      channelId,
-      threadTs,
-      `⏰ Reminder: gate \`${gate.step_name}\` is still waiting for a response.`,
-    ).catch((err) => {
-      console.warn(`Reminder post failed: ${err instanceof Error ? err.message : String(err)}`);
-    });
-  }, reminderIntervalMs);
+  const authored = gate.reminder_seconds !== undefined;
+  const effectiveReminderMs = authored ? gate.reminder_seconds! * 1000 : reminderIntervalMs;
+  // [F-A2-3]: the operator fallback stays single-shot — reminder_max only ever bounds the
+  // AUTHORED cycle (reminder_max is frozen alongside reminder_seconds — always defined together).
+  const reminderMax = authored ? (gate.reminder_max ?? 3) : 1;
+  const expiresAtMs =
+    gate.expires_at !== undefined ? new Date(gate.expires_at).getTime() : undefined;
+
+  let reminderTimer: ReturnType<typeof setTimeout> | undefined;
+  let occurrence = 0;
+  let cancelled = false;
+
+  const scheduleNext = (): void => {
+    if (cancelled || occurrence >= reminderMax) return;
+    const nextFireAtMs = Date.now() + effectiveReminderMs;
+    const isFinal = expiresAtMs !== undefined && nextFireAtMs >= expiresAtMs;
+    reminderTimer = setTimeout(() => {
+      occurrence += 1;
+      postSlackReply(botToken, channelId, threadTs, buildReminderText(gate, isFinal)).catch(
+        (err) => {
+          console.warn(`Reminder post failed: ${err instanceof Error ? err.message : String(err)}`);
+        },
+      );
+      if (!isFinal) scheduleNext();
+    }, effectiveReminderMs);
+  };
+  scheduleNext();
 
   const escalationTimer = setTimeout(() => {
     const elapsedMin = Math.round((Date.now() - new Date(gate.opened_at).getTime()) / 60_000);
@@ -183,9 +239,39 @@ export function startGateReminderTimers(
   }, escalationThresholdMs);
 
   return () => {
-    clearTimeout(reminderTimer);
+    cancelled = true;
+    if (reminderTimer !== undefined) clearTimeout(reminderTimer);
     clearTimeout(escalationTimer);
   };
+}
+
+/**
+ * Issue #291 (Amendment: "dead-notification advisory" — [F-A2-1]/pedestal-lane Q5 rule 2): warns
+ * ONCE, at notifier wiring, when the OPERATOR fallback's own reminder/escalation config could
+ * never fire before the frozen enforce clock expires — never solicits a response the gate will
+ * already have refused. Only meaningful for the operator-fallback path (an AUTHORED
+ * `reminder_seconds` already gets its own load-time cross-validation — [Amendment 2],
+ * yaml-loader.ts's `reminder_seconds >= timeout_seconds` DEAD_GATE_CONFIG warn — this is the
+ * SAME check's CLI-side counterpart for the config the loader cannot see). Exported for testing.
+ */
+export function checkDeadNotificationAdvisory(
+  gate: PendingGate,
+  reminderIntervalMs: number,
+  escalationThresholdMs: number,
+): string | undefined {
+  if (gate.reminder_seconds !== undefined || gate.expires_at === undefined) return undefined;
+  const windowMs = new Date(gate.expires_at).getTime() - new Date(gate.opened_at).getTime();
+  const deadReminder = reminderIntervalMs >= windowMs;
+  const deadEscalation = escalationThresholdMs >= windowMs;
+  if (!deadReminder && !deadEscalation) return undefined;
+  const parts: string[] = [];
+  if (deadReminder) parts.push(`the reminder (${reminderIntervalMs}ms)`);
+  if (deadEscalation) parts.push(`the escalation (${escalationThresholdMs}ms)`);
+  return (
+    `dead notification: ${parts.join(' and ')} on gate '${gate.step_name}' will never fire ` +
+    `before its authored timeout_seconds elapses (${windowMs}ms window) — the operator ` +
+    `reminder/escalation config never reaches the human before the gate expires.`
+  );
 }
 
 /** Parameters for the bidirectional gate handler. Exported for testing. */
@@ -392,6 +478,25 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
         )
       : (): void => {};
 
+  // issue #291 (dead-notification advisory): printed once, at notifier wiring.
+  if (gateThreadTs !== undefined) {
+    const advisory = checkDeadNotificationAdvisory(
+      gate,
+      gateReminderIntervalMs,
+      gateEscalationThresholdMs,
+    );
+    if (advisory !== undefined) console.warn(`⚠ ${advisory}`);
+  }
+
+  // issue #291 (Deliverable 4e, Amendment 4): the ATTENDING-PROCESS enactment timer — independent
+  // of Slack notification wiring (it fires regardless of whether a thread anchor exists; this
+  // process is holding the gate open either way). A no-op for a finding-only/non-expiring gate.
+  const clearExpiryTimer = scheduleGateExpiryTimer(runId, gate, {
+    store,
+    definition,
+    ...(registry !== undefined ? { registry } : {}),
+  });
+
   try {
     // Poll the store as the unified done-detector — resolves when candidate processor
     // calls submitHumanResponse OR when the terminal command is used.
@@ -399,6 +504,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
   } finally {
     abortController.abort();
     clearTimers();
+    clearExpiryTimer();
     serverHandle?.close();
     // Let the resolving candidate's confirmation (or submit-error) reply flush before process.exit()
     // can truncate it on a run-completing gate. BOUNDED by DRAIN_TIMEOUT_MS so a hung Slack can't

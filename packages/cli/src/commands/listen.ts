@@ -57,8 +57,13 @@ export type SpawnResult = { pid: number } | { error: Error };
 
 /** Injected I/O dependencies — everything that touches disk, the clock, or child processes. */
 export interface ListenDeps {
-  workflowStore: Pick<WorkflowRegistrar, 'register'>;
-  runStore: Pick<RunStore, 'create' | 'get' | 'update'>;
+  // issue #291 (Deliverable 4f): widened to add 'get' — the sweep loop resolves each expired
+  // gate's workflow definition before it can construct an expire_gate delta.
+  workflowStore: Pick<WorkflowRegistrar, 'register' | 'get'>;
+  // issue #291 (Deliverable 4f): widened to add 'list' (the sweep's own store-scan) + 'settleStep'
+  // (the enactment write). Both OPTIONAL-shaped on the real RunStore interface already — Pick
+  // preserves that optionality, so a store that doesn't declare settleStep still satisfies this.
+  runStore: Pick<RunStore, 'create' | 'get' | 'update' | 'list' | 'settleStep'>;
   dedupStoreFor: (workflowId: string) => DedupStore;
   spawnAgent: (runId: string, cwd: string) => SpawnResult;
   clock: () => number;
@@ -539,6 +544,113 @@ export interface ListenOptions {
   bodyTimeoutMs: number;
   maxBodyBytes: number;
   maxConcurrent: number;
+  /**
+   * Issue #291 (Deliverable 4f, Amendment 4): opt-in interval (ms) for the expired-gate sweeper —
+   * the USER-CHOSEN always-on enactor (the `realm listen` process becomes the daemon-analogue,
+   * launchd-precedent: realm itself still ships no daemon, but a user MAY run `listen` as one).
+   * Absent (the default) = the sweeper never runs — byte-identical to pre-#291 `listen` behavior.
+   */
+  sweepExpiredGatesIntervalMs?: number;
+}
+
+/** Per-pass sweep outcome (issue #291) — returned for tests/logging; the CLI action itself only
+ *  logs it. */
+export interface SweepResult {
+  scanned: number;
+  enacted: number;
+  skipped_unregistered: number;
+  skipped_locked: number;
+  errors: number;
+}
+
+/**
+ * Issue #291 (Deliverable 4f, Amendment 4 — the `realm listen` opt-in sweeper): one store-wide
+ * scan for expired, enactable gates across EVERY run this store holds (not just the workflows
+ * THIS `listen` process has mounted — a gate opened by any process on the same store is
+ * enactable). [F7]: listen is reclaim-like — it enacts (unlike reclaim), but NEVER drains
+ * finalizers itself (no `ExtensionRegistry` for a workflow this process hasn't mounted) —
+ * a terminalizing enactment logs an advisory pointing at `realm run drain --expired` (or plain
+ * `drain`) instead. Multi-process safe: races with ANY other enactment point (submit/
+ * execute_step/reclaim/drain --expired/another listen process/the attending timer) resolve via
+ * the [F1] arm matrix's NOOPs — this function absorbs every refusal silently. Dormant when the
+ * store declares no `settleStep` (nothing to enact with — a fast no-op). Pure I/O orchestration,
+ * `now`-injectable for deterministic tests.
+ */
+export async function sweepExpiredGates(
+  deps: Pick<ListenDeps, 'runStore' | 'workflowStore' | 'logger'>,
+  now: Date = new Date(),
+): Promise<SweepResult> {
+  const result: SweepResult = {
+    scanned: 0,
+    enacted: 0,
+    skipped_unregistered: 0,
+    skipped_locked: 0,
+    errors: 0,
+  };
+  if (deps.runStore.settleStep === undefined) return result;
+
+  const runs = await deps.runStore.list();
+  for (const run of runs) {
+    if (run.terminal_state || run.pending_gate === undefined) continue;
+    const gate = run.pending_gate;
+    // Finding-only (no on_expiry) or no enforce clock at all — nothing this sweep can enact.
+    if (gate.expires_at === undefined || gate.on_expiry === undefined) continue;
+    if (now.getTime() < new Date(gate.expires_at).getTime()) continue;
+
+    result.scanned += 1;
+
+    // Unregistered-workflow skip arm: this store may hold runs for workflows this `listen`
+    // process's own workflowStore has never registered.
+    let definition: WorkflowDefinition;
+    try {
+      definition = await deps.workflowStore.get(run.workflow_id);
+    } catch {
+      result.skipped_unregistered += 1;
+      continue;
+    }
+
+    try {
+      const outcome = await deps.runStore.settleStep(
+        run.id,
+        { kind: 'expire_gate', gateId: gate.gate_id },
+        definition,
+        { now },
+      );
+      if (outcome.applied) {
+        result.enacted += 1;
+        deps.logger.info('listen: sweeper enacted an expired gate', {
+          run_id: run.id,
+          gate_id: gate.gate_id,
+          disposition: gate.on_expiry,
+        });
+        if (outcome.transitioned) {
+          deps.logger.info(
+            'listen: the enactment terminalized the run — it may carry pending finalizers; ' +
+              "run 'realm run drain --expired' (or plain drain, once terminal) to deliver them " +
+              '(the sweeper never drains finalizers itself — no extension registry for an ' +
+              'unmounted workflow)',
+            { run_id: run.id },
+          );
+        }
+      }
+      // Any refusal (already_settled/not_expired/gate_mismatch/run_terminal) is a benign race
+      // with another enactment point — silently absorbed, exactly like every other enactment
+      // point's own advisory-not-crash posture.
+    } catch (err) {
+      // ELOCKED catch-and-continue arm: another writer holds this run's lock right now.
+      if (err instanceof WorkflowError && err.code === 'STATE_RUN_BUSY') {
+        result.skipped_locked += 1;
+        continue;
+      }
+      result.errors += 1;
+      deps.logger.error('listen: sweeper failed to enact an expired gate', {
+        run_id: run.id,
+        gate_id: gate.gate_id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return result;
 }
 
 export interface ListenHandle {
@@ -567,11 +679,25 @@ export function startListen(
     });
   });
 
+  // issue #291 (Deliverable 4f): the opt-in expired-gate sweeper — a coarse setInterval, started
+  // only when the operator explicitly requested it. A pass's own errors never crash the server
+  // (sweepExpiredGates itself never throws — every failure is caught+logged per-run internally);
+  // this outer catch is defensive-only.
+  const sweepTimer =
+    options.sweepExpiredGatesIntervalMs !== undefined
+      ? setInterval(() => {
+          sweepExpiredGates(deps).catch((err) => {
+            deps.logger.error('listen: sweeper pass failed', { error: String(err) });
+          });
+        }, options.sweepExpiredGatesIntervalMs)
+      : undefined;
+
   let shuttingDown = false;
   const shutdown = (reason: string): Promise<void> => {
     if (shuttingDown) return Promise.resolve();
     shuttingDown = true;
     deps.logger.info('listen: shutting down', { reason });
+    if (sweepTimer !== undefined) clearInterval(sweepTimer);
     return new Promise((resolve) => server.close(() => resolve()));
   };
   const onSignal = (sig: string): void => {
@@ -632,6 +758,12 @@ export const listenCommand = new Command('listen')
   .option('--max-concurrent <n>', 'Max in-flight requests before 503', '20')
   .option('--dedup-store <kind>', 'Dedup store: file | memory', 'file')
   .option('--log-level <level>', 'Log level: debug | info | warn | error', 'info')
+  .option(
+    '--sweep-expired-gates <seconds>',
+    'OPT-IN (issue #291): store-wide sweep interval (seconds) that enacts expired, enactable ' +
+      'gates across every run this store holds. Default OFF — listen never touches gates ' +
+      'unless this is set. Never drains finalizers itself — see: realm run drain --expired.',
+  )
   .action(async (workflows: string[], opts: Record<string, string>) => {
     const levels = ['debug', 'info', 'warn', 'error'];
     const threshold = levels.indexOf(opts['logLevel'] ?? 'info');
@@ -721,6 +853,8 @@ export const listenCommand = new Command('listen')
       return;
     }
 
+    const sweepExpiredGatesSeconds =
+      opts['sweepExpiredGates'] !== undefined ? parseInt(opts['sweepExpiredGates'], 10) : undefined;
     const handle = await startListen(
       routes,
       {
@@ -729,6 +863,9 @@ export const listenCommand = new Command('listen')
         bodyTimeoutMs: parseInt(opts['bodyTimeoutMs'] ?? '5000', 10),
         maxBodyBytes: parseInt(opts['maxBodyBytes'] ?? '1048576', 10),
         maxConcurrent: parseInt(opts['maxConcurrent'] ?? '20', 10),
+        ...(sweepExpiredGatesSeconds !== undefined
+          ? { sweepExpiredGatesIntervalMs: sweepExpiredGatesSeconds * 1000 }
+          : {}),
       },
       deps,
     );

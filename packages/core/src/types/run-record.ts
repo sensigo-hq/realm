@@ -193,6 +193,13 @@ export interface EvidenceSnapshot {
    * caller supplied `respondedBy`/`responded_by`.
    */
   responded_by?: string;
+  /**
+   * Issue #291 (D1 §5 / [F12]): present only on a `gate_response` snapshot minted by
+   * `applyExpireGate` — discriminates WHICH enforce-clock disposition produced this snapshot,
+   * for the late-response envelope strings to read. `responded_by` on the SAME snapshot is
+   * always the literal `'timeout'` when this field is present (never a human identity).
+   */
+  resolution?: 'expired_default' | 'expired_abort';
   /** Diagnostic metadata. Present on snapshots captured after Week 7. */
   diagnostics?: StepDiagnostics;
   /** Name of the agent profile active at this step, if any. */
@@ -291,6 +298,32 @@ export interface PendingGate {
    * The CLI reads the message for the chosen key and posts it to the thread.
    */
   resolution_messages?: Record<string, string>;
+  /**
+   * Issue #291 (mint-time freeze, F2 — the definition-drift-livelock cure): the gate's own
+   * `GateConfig` timeout/notify fields, denormalized into the RECORD at mint
+   * (execution-loop.ts's gate-open site — the `ClaimRecord.deadline`/#302 uniform-epoch-freeze
+   * precedent). Every enactment/notification/read-side surface reads THESE fields, never the
+   * workflow definition's `gate:` block — a definition edited after this gate opened (new
+   * `choices`, a changed `default_choice`) never applies to an already-open gate. A gate minted
+   * before this feature shipped (or by an old binary that silently ignored these `gate:`
+   * sub-keys) has NONE of these fields — grandfathered: finding-silent, reminder-silent, never
+   * enacted (R-d).
+   */
+  /** ISO-8601 deadline = `opened_at + gate.timeout_seconds`. Absent = no enforce clock (the gate
+   *  never expires — grandfathered or the author declared no `timeout_seconds`). */
+  expires_at?: string;
+  /** Frozen copy of `gate.on_expiry`. Present only when `expires_at` is (a `timeout_seconds` with
+   *  no `on_expiry` is LEGAL finding-only mode: `expires_at` present, this absent). */
+  on_expiry?: 'settle_default' | 'abort';
+  /** Frozen copy of `gate.default_choice`. Present iff `on_expiry === 'settle_default'`. */
+  default_choice?: string;
+  /** Frozen copy of `gate.reminder_seconds` — the authored notify clock. Standalone-legal
+   *  (present without `expires_at` = a pure-notify gate). Absent = no authored reminder (the
+   *  operator's `reminderIntervalMs` config, if any, is the fallback — record-keyed precedence). */
+  reminder_seconds?: number;
+  /** Frozen copy of `gate.reminder_max`, defaulted to 3 at mint when `reminder_seconds` is
+   *  present and the author declared no explicit value. Absent iff `reminder_seconds` is. */
+  reminder_max?: number;
 }
 
 /**
@@ -403,7 +436,18 @@ export type SkipDetail =
        * those (N10), and by `gate_id` equality once this field is populated.
        */
       gate_id?: string;
-    };
+    }
+  /**
+   * Issue #291 (F9, day-one gate_id): stamped on a gate's OWN step by `applyExpireGate`'s abort
+   * disposition — the enforce clock expired and no human responded, so the run aborted per the
+   * workflow's declared `on_expiry: 'abort'`. Distinct from `gate_cancelled_by_abort` (a
+   * DIFFERENT step's handler-abort cancelling this gate) — that would falsely claim "cancelled
+   * when '<other step>' aborted the run" for what is actually a timeout. `gate_id` is REQUIRED
+   * (not optional, unlike the cancelled variant's grandfathered-record allowance) — this kind
+   * was born with the field, so the run_terminal envelope's third discriminated variant binds by
+   * id equality from birth, never by presence alone.
+   */
+  | { kind: 'gate_expired'; gate_id: string };
 
 export interface RunRecord {
   id: string;
@@ -564,7 +608,19 @@ export interface RunRecord {
    */
   settled?: Record<
     string,
-    { token: string | null; outcome: 'complete' | 'fail' | 'skip' | 'gate'; choice?: string }
+    {
+      token: string | null;
+      outcome: 'complete' | 'fail' | 'skip' | 'gate';
+      choice?: string;
+      /**
+       * Issue #291 (D1 §5, carried; the module-local `SettledEntry` alias in settlement.ts
+       * projects THIS field): present, and only ever `'timeout'`, on a `'gate'` entry written by
+       * `applyExpireGate`'s settle_default disposition — attributes the resolution to the enforce
+       * clock rather than a human. Absent = a human resolved it (backward-clean: every pre-#291
+       * `'gate'` entry lacks this field). Never set by any other arm.
+       */
+      resolved_by?: 'timeout';
+    }
   >;
   /**
    * Issue #279 (increment 1, PR-A): the record-as-outbox finalizer ledger, keyed by finalizer step

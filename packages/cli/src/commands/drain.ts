@@ -13,8 +13,68 @@ import type {
   ExtensionRegistry,
   EvidenceSnapshot,
   CaptureEvidenceParams,
+  SettlementResult,
 } from '@sensigo/realm';
+import { applySettlement } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+
+/**
+ * Issue #291 ([F5] `drain --expired` opt-in flag): classifies a run's `pending_gate` against the
+ * frozen enforce clock — pure, `now`-injectable. `'none'`/`'not_expired'` mean nothing to show;
+ * `'finding_only'` (expires_at present, on_expiry absent) is listed but never acted on;
+ * `'enactable'` carries the frozen disposition drain would enact under `--force`.
+ */
+export type GateExpiryClass =
+  | { kind: 'none' }
+  | { kind: 'not_expired' }
+  | { kind: 'finding_only'; overdueMs: number }
+  | { kind: 'enactable'; disposition: 'settle_default' | 'abort'; overdueMs: number };
+
+export function classifyGateExpiry(run: RunRecord, now: Date): GateExpiryClass {
+  const gate = run.pending_gate;
+  if (gate === undefined || gate.expires_at === undefined) return { kind: 'none' };
+  const overdueMs = now.getTime() - new Date(gate.expires_at).getTime();
+  if (overdueMs < 0) return { kind: 'not_expired' };
+  if (gate.on_expiry === undefined) return { kind: 'finding_only', overdueMs };
+  return { kind: 'enactable', disposition: gate.on_expiry, overdueMs };
+}
+
+/** Local duration formatter (issue #291) — CLI-side, mirrors core's own `formatOverdueDuration`
+ *  shape independently (no cross-package import for a two-branch formatter). */
+function formatOverdueDuration(ms: number): string {
+  const totalMinutes = Math.floor(Math.max(0, ms) / 60_000);
+  const totalHours = Math.floor(totalMinutes / 60);
+  const totalDays = Math.floor(totalHours / 24);
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  if (totalHours < 24) return `${totalHours}h ${totalMinutes % 60}m`;
+  return `${totalDays}d ${totalHours % 24}h`;
+}
+
+/**
+ * Issue #291 ([F5]/[F4]): enacts an expired, enactable gate via the SAME dormancy-discriminated
+ * pattern `submitHumanResponse`/`enactExpiredGateIfDue` use — `store.settleStep` when declared,
+ * else the pure `applySettlement` transform + `store.update`'s CAS write. Returns the resulting
+ * run (unchanged on a benign refusal/race) and whether it actually applied.
+ */
+async function enactGateExpiry(
+  runStore: RunStore,
+  definition: WorkflowDefinition,
+  run: RunRecord,
+  now: Date,
+): Promise<{ run: RunRecord; applied: boolean }> {
+  const gateId = run.pending_gate!.gate_id;
+  const delta = { kind: 'expire_gate' as const, gateId };
+  let outcome: SettlementResult;
+  if (runStore.settleStep !== undefined) {
+    outcome = await runStore.settleStep(run.id, delta, definition, { now });
+  } else {
+    const pure = applySettlement(run, delta, definition, { now });
+    if (!pure.applied) return { run: pure.run, applied: false };
+    const persisted = await runStore.update(pure.run);
+    outcome = { ...pure, run: persisted };
+  }
+  return { run: outcome.run, applied: outcome.applied };
+}
 
 // issue #279 (increment 1, PR-B): NO top-level VALUE import from `@sensigo/realm` in THIS file —
 // but that alone is NOT sufficient, and this comment corrects an earlier (wrong) assumption to
@@ -96,9 +156,43 @@ export function isBatchActionable(run: RunRecord, now: Date): boolean {
   return classifyDrainRankPass(run.finalizer_ledger, now).some((e) => e.class === 'actionable');
 }
 
-function renderDryRun(runId: string, run: RunRecord, now: Date): void {
+/** Issue #291 ([F5]): prints the gate-expiry dry-run line when `--expired` is set and this run
+ *  carries an expired gate — the EXACT pinned strings ("would enact <disposition>" /
+ *  "expired — finding-only"). Returns `true` when an enactable gate was reported (the caller
+ *  uses this to decide whether the run still counts as "nothing to drain" when it has neither a
+ *  gate nor pending finalizers). No-op (returns `false`) when `--expired` is unset or nothing
+ *  gate-related applies — bare `drain` stays byte-stable. */
+function renderGateExpiryDryRun(
+  runId: string,
+  run: RunRecord,
+  now: Date,
+  expiredFlag: boolean,
+): boolean {
+  if (!expiredFlag) return false;
+  const cls = classifyGateExpiry(run, now);
+  if (cls.kind === 'enactable') {
+    const overdue = formatOverdueDuration(cls.overdueMs);
+    console.log(
+      `Run '${runId}': gate expired ${overdue} ago — would enact ${cls.disposition} on --force.`,
+    );
+    return true;
+  }
+  if (cls.kind === 'finding_only') {
+    const overdue = formatOverdueDuration(cls.overdueMs);
+    console.log(
+      `Run '${runId}': gate expired ${overdue} ago — finding-only (no on_expiry declared, nothing to enact).`,
+    );
+    return false;
+  }
+  return false;
+}
+
+function renderDryRun(runId: string, run: RunRecord, now: Date, expiredFlag = false): void {
+  const gateReported = renderGateExpiryDryRun(runId, run, now, expiredFlag);
   if (!run.terminal_state) {
-    console.log(`Run '${runId}' is not terminal (phase: '${run.run_phase}') — nothing to drain.`);
+    if (!gateReported) {
+      console.log(`Run '${runId}' is not terminal (phase: '${run.run_phase}') — nothing to drain.`);
+    }
     return;
   }
   const entries = classifyDrainRankPass(run.finalizer_ledger, now);
@@ -140,6 +234,11 @@ export interface DrainCommandOptions {
   void?: string;
   project?: string;
   extensionsModule?: string;
+  /** Issue #291 ([F5]): opt-in — without it, drain's terminal-only behavior (incl. batch
+   *  `--force`) stays byte-stable. With it, drain ALSO reports/enacts expired-and-enactable
+   *  gates (never finding-only ones), flowing an abort-disposition's terminalization straight
+   *  into drain's native finalizer pass. */
+  expired?: boolean;
 }
 
 /** The three `@sensigo/realm` runtime values `runDrainAction` needs, injected explicitly (never
@@ -251,24 +350,52 @@ export async function runDrainAction(
       process.exit(1);
     }
     const runs = await runStore.list();
-    const actionable = runs.filter((r) => r.terminal_state && isBatchActionable(r, now));
+    const finalizerActionable = runs.filter((r) => r.terminal_state && isBatchActionable(r, now));
+    // issue #291 ([F5]): OPT-IN — without --expired, batch mode is byte-stable terminal-only
+    // (a non-terminal run with an expired gate is invisible to bare `drain --all`, exactly as
+    // before). finalizerActionable requires terminal_state; gateActionable/findingOnlyGates
+    // require !terminal_state — mutually exclusive by construction, no dedup needed.
+    const gateActionable =
+      opts.expired === true
+        ? runs.filter((r) => !r.terminal_state && classifyGateExpiry(r, now).kind === 'enactable')
+        : [];
+    const findingOnlyGates =
+      opts.expired === true
+        ? runs.filter(
+            (r) => !r.terminal_state && classifyGateExpiry(r, now).kind === 'finding_only',
+          )
+        : [];
+    const actionable = [...finalizerActionable, ...gateActionable];
 
-    if (actionable.length === 0) {
+    if (actionable.length === 0 && findingOnlyGates.length === 0) {
       console.log('No runs with an actionable pending finalizer.');
       return;
     }
 
     if (opts.force !== true) {
-      console.log(`${actionable.length} run(s) WOULD be drained:`);
-      for (const r of actionable) {
-        console.log(`  • ${r.id}`);
+      if (actionable.length > 0) {
+        console.log(`${actionable.length} run(s) WOULD be drained:`);
+        for (const r of finalizerActionable) {
+          console.log(`  • ${r.id}`);
+        }
+        for (const r of gateActionable) {
+          const cls = classifyGateExpiry(r, now);
+          if (cls.kind === 'enactable') {
+            console.log(
+              `  • ${r.id}: gate expired ${formatOverdueDuration(cls.overdueMs)} ago — would enact ${cls.disposition}`,
+            );
+          }
+        }
+      }
+      for (const r of findingOnlyGates) {
+        console.log(`  • ${r.id}: gate expired — finding-only (no on_expiry, nothing to enact)`);
       }
       console.log(`\nRe-run with --force to actually drain them.`);
       return;
     }
 
     let drained = 0;
-    for (const r of actionable) {
+    for (const r of finalizerActionable) {
       try {
         const registry = await (deps.resolveRegistry ?? resolveRegistry)(workflowStore, r, opts);
         const workflow = await workflowStore.get(r.workflow_id);
@@ -276,6 +403,32 @@ export async function runDrainAction(
         drained += 1;
         for (const w of outcome.warnings) console.log(`  ⚠ ${r.id}: ${w}`);
         console.log(`  ✓ ${r.id}: drained`);
+      } catch (err) {
+        console.error(`  ✗ ${r.id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    // issue #291: enact each expired gate, then — per [F5]'s "abort enactment flows into
+    // drain's own finalizer pass" — run the native finalizer drain on any run the enactment
+    // just terminalized (settle_default may or may not terminalize; abort always does).
+    for (const r of gateActionable) {
+      try {
+        const workflow = await workflowStore.get(r.workflow_id);
+        const { run: enactedRun, applied } = await enactGateExpiry(runStore, workflow, r, now);
+        if (!applied) {
+          console.log(`  • ${r.id}: gate expiry already resolved (race) — skipped`);
+          continue;
+        }
+        drained += 1;
+        console.log(`  ✓ ${r.id}: gate enacted`);
+        if (enactedRun.terminal_state && isBatchActionable(enactedRun, now)) {
+          const registry = await (deps.resolveRegistry ?? resolveRegistry)(
+            workflowStore,
+            enactedRun,
+            opts,
+          );
+          const outcome = await deps.drainFinalizers(runStore, workflow, registry, r.id);
+          for (const w of outcome.warnings) console.log(`  ⚠ ${r.id}: ${w}`);
+        }
       } catch (err) {
         console.error(`  ✗ ${r.id}: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -292,21 +445,55 @@ export async function runDrainAction(
 
   try {
     const run = await runStore.get(runId);
+    const gateClass = classifyGateExpiry(run, now);
+    const hasEnactableGate = opts.expired === true && gateClass.kind === 'enactable';
 
     if (opts.force !== true) {
-      renderDryRun(runId, run, now);
+      renderDryRun(runId, run, now, opts.expired === true);
       return;
     }
 
-    if (!run.terminal_state) {
+    if (!run.terminal_state && !hasEnactableGate) {
       console.error(
         `Run '${runId}' is not terminal (phase: '${run.run_phase}') — nothing to drain.`,
       );
       process.exit(1);
     }
 
-    const registry = await (deps.resolveRegistry ?? resolveRegistry)(workflowStore, run, opts);
-    const workflow = await workflowStore.get(run.workflow_id);
+    let workingRun = run;
+    if (hasEnactableGate) {
+      const workflowForGate = await workflowStore.get(run.workflow_id);
+      const { run: enactedRun, applied } = await enactGateExpiry(
+        runStore,
+        workflowForGate,
+        run,
+        now,
+      );
+      if (applied) {
+        console.log(
+          `✓ gate enacted (${gateClass.kind === 'enactable' ? gateClass.disposition : ''}).`,
+        );
+        workingRun = enactedRun;
+      } else {
+        console.log(`• gate expiry already resolved (race) — skipped.`);
+        workingRun = enactedRun;
+      }
+    }
+
+    if (!workingRun.terminal_state) {
+      // The enactment (settle_default) did not terminalize this run — nothing further to drain.
+      console.log(
+        `Run '${runId}' is not terminal (phase: '${workingRun.run_phase}') — nothing further to drain.`,
+      );
+      return;
+    }
+
+    const registry = await (deps.resolveRegistry ?? resolveRegistry)(
+      workflowStore,
+      workingRun,
+      opts,
+    );
+    const workflow = await workflowStore.get(workingRun.workflow_id);
     const outcome = await deps.drainFinalizers(runStore, workflow, registry, runId);
     for (const w of outcome.warnings) console.log(`  ⚠ ${w}`);
     console.log(`Drained run '${runId}'.`);
@@ -324,6 +511,12 @@ export const drainCommand = new Command('drain')
   .option('--force', 'Actually drain (without this, drain only reports what WOULD run)')
   .option('--all', 'Batch mode: drain every run with an actionable pending finalizer')
   .option('--void <finalizer>', 'Void a specific pending finalizer instead of draining it')
+  .option(
+    '--expired',
+    'OPT-IN (issue #291): also report/enact expired-and-enactable gates (never finding-only ' +
+      'ones) — a non-terminal run with an expired gate is invisible without this flag, on both ' +
+      "per-run and --all. An abort disposition's terminalization flows into the same drain pass.",
+  )
   .option(
     '--project <dir>',
     'CONFIG anchor: deployment root whose realm.yaml applies to definitions without a stored trust_root (default: current directory)',

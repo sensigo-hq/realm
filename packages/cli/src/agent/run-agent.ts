@@ -34,6 +34,7 @@ import {
 import { isToolCapable } from './providers/llm-provider.js';
 import type { McpClient, ToolDefinition, ToolExecutor } from './mcp/mcp-extensions.js';
 import { McpClient as McpClientImpl } from './mcp/mcp-client.js';
+import { scheduleGateExpiryTimer } from './gate/gate-expiry-timer.js';
 
 export type AgentRunResult = 'completed' | 'failed';
 
@@ -343,12 +344,24 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               `   ${label}: realm run respond ${runId} --gate ${gate.gate_id} --choice ${choice}`,
             );
           }
-          await pollUntilGateResolved(
-            deps.store,
-            runId,
-            gate.gate_id,
-            options.pollIntervalMs ?? 3000,
-          );
+          // issue #291 (Deliverable 4e, Amendment 4): the ATTENDING-PROCESS enactment timer —
+          // this IS "the non-Slack agent poll loop" the design names as its own timer host. A
+          // no-op for a finding-only/non-expiring gate.
+          const clearExpiryTimer = scheduleGateExpiryTimer(runId, gate, {
+            store: deps.store,
+            definition,
+            registry: deps.registry,
+          });
+          try {
+            await pollUntilGateResolved(
+              deps.store,
+              runId,
+              gate.gate_id,
+              options.pollIntervalMs ?? 3000,
+            );
+          } finally {
+            clearExpiryTimer();
+          }
         }
 
         currentRun = await deps.store.get(runId);

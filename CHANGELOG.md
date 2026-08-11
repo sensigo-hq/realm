@@ -25,6 +25,18 @@ All notable changes to this project are documented here.
   ladder on live 400/503s, and full per-attempt disclosure in evidence (`diagnostics.structured_output`). See
   [`structured_output`](docs/reference/yaml-schema.md#structured_output-anthropic-strict-decoding). `realm
 validate` also gains a per-step adoption nudge on its own informational channel.
+- Authorable gate timeout (#291): five new `gate:` sub-keys — `timeout_seconds`/`on_expiry`/`default_choice`
+  (the enforce clock) and `reminder_seconds`/`reminder_max` (the notify clock), mint-frozen into the run
+  record. An expired, undisposed gate is enacted level-triggered by any of `submit_human_response`,
+  `execute_step`, `realm run drain --expired` (new opt-in flag — bare `drain` stays byte-stable), the
+  attending CLI process's own timer, or `realm listen --sweep-expired-gates <seconds>` (new opt-in flag) —
+  every enactment point shares one idempotent arm matrix, so races between them NOOP harmlessly. A late human
+  response to an already-expired gate gets an honest, disposition-specific refusal rather than being silently
+  recorded as if it arrived in time. A new run-health finding, `gate_expired_awaiting_drive`, and EXPIRED/
+  reminder-due-or-overdue rendering on `realm run list`/`inspect`/`get_run_state` disclose the window between
+  expiry and the next drive. `realm run reclaim` never enacts a sibling gate's expiry itself — it only
+  advises. See
+  [`gate.timeout_seconds`](docs/reference/yaml-schema.md#gate-timeout-authorable-enforce-notify-clocks).
 
 ### Changed
 

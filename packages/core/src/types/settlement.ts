@@ -158,6 +158,23 @@ export interface SettleGuardDelta {
 }
 
 /**
+ * Enacts a gate's frozen enforce-clock disposition once it has expired unresolved (issue #291;
+ * design record `plans/issue-291/design-d2.md` [F1]/[F2]/[F3] `applyExpireGate`). Fenced by
+ * `gateId` ONLY — same fencing shape as {@link SettleGateDelta} (a gate's authority is
+ * bearer-gateId-credentialed) — so a stale/duplicate expire attempt for a gate that has since
+ * been superseded (resolved by a human, or already expired by a racing enactment point) NOOPs or
+ * refuses rather than silently expiring the WRONG (newer) gate. Carries no caller-supplied
+ * `evidence`, unlike every other delta kind: the disposition (and therefore the evidence shape)
+ * is decided INSIDE `applyExpireGate` itself by reading the frozen `PendingGate` fields — the
+ * `applyAbortEdge` cancel-gate precedent (settlement.ts) for a transform building its own
+ * evidence via `captureEvidence` rather than a caller-supplied array.
+ */
+export interface ExpireGateDelta {
+  kind: 'expire_gate';
+  gateId: string;
+}
+
+/**
  * Releases a claim without settling the step (issue #279, increment 2, PR-C; design record §2/§3
  * `releaseStepArms`) — the shared shape behind BOTH the capability-block release
  * (execution-loop.ts:2453-2529) and the compensating un-claim (execution-loop.ts:1607-1635).
@@ -195,7 +212,8 @@ export type SettlementDelta =
   | OpenGateDelta
   | SettleGateDelta
   | SettleGuardDelta
-  | ReleaseStepDelta;
+  | ReleaseStepDelta
+  | ExpireGateDelta;
 
 /**
  * Every refusal/noop literal `applySettlement`/`settleStep` can RETURN as `SettlementResult.reason`
@@ -228,7 +246,22 @@ export type SettlementRefusalReason =
   // refusals.
   | 'gate_choice_conflict'
   | 'choice_not_eligible'
-  | 'gate_open_wait';
+  | 'gate_open_wait'
+  // issue #291 (design record [F1]/[F3]): expire_gate refusals + the settle_gate F3 write-free
+  // expiry-wins refusal.
+  /** expire_gate only: `now < fresh.pending_gate.expires_at` — the enactment attempt is
+   *  premature (arm-verified with the injectable `now`, never trusted from the caller). */
+  | 'not_expired'
+  /** expire_gate only: the gate's `expires_at` is present (so an expire delta was constructed
+   *  at all) but `on_expiry` is absent — finding-only mode. Arm-level refusal, before APPLY;
+   *  never enacted, only ever disclosed. */
+  | 'no_disposition'
+  /** settle_gate only ([F3] shape c): the live gate this delta targets has expired unresolved —
+   *  a WRITE-FREE refusal (checked under the lock, before `choice_not_eligible`) so the caller
+   *  can issue the caller-composed `expire_gate` delta as ITS OWN settleStep and compose the
+   *  honest envelope from the enactment result, rather than resolving with a human choice that
+   *  arrived after the enforce clock already won. */
+  | 'gate_expired_pending';
 
 /**
  * The ok-shaped NOOP subset of {@link SettlementRefusalReason} (design record §7: "ok-shaped

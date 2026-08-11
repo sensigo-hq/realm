@@ -60,6 +60,10 @@ const LAWS: SettlementLaw[] = [
   'CWFS_SECOND_EPOCH',
   'CWFS_ARRAY_ONCE',
   'CURRENT_BEHAVIOR_PINNED',
+  // issue #291 (gate-timeout-291-correction, Leg 2).
+  'EXPIRE_ARM_MATRIX',
+  'EXPIRE_ABORT_CASCADE',
+  'EXPIRE_DEFAULT_RESOLVE',
 ];
 
 describe('JsonFileStore — settlement TCK conformance (issue #279, increment 1 + 2)', () => {

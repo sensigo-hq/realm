@@ -6,7 +6,12 @@
 // import, no createRequire), never the extensions loader.
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { classifyRunHealth, deriveDefaultedSteps, deriveRunPhase } from '@sensigo/realm';
+import {
+  classifyRunHealth,
+  deriveDefaultedSteps,
+  deriveRunPhase,
+  computeGateDueState,
+} from '@sensigo/realm';
 // issue #221 correction: the CLI's first command→command import (sanctioned — harmless
 // module-level Command construction; `listCommand` is a standalone Commander object never
 // auto-registered anywhere by being imported). Reused so inspect's never_claimed_idle age
@@ -55,6 +60,11 @@ function formatSkipDetail(detail: SkipDetail): string {
     // doesn't red `npm run build` under this exhaustive switch's strict-TS check.
     case 'gate_cancelled_by_abort':
       return 'gate_cancelled_by_abort';
+    // issue #291: a gate's OWN step, aborted by applyExpireGate on enforce-clock expiry —
+    // distinct from gate_cancelled_by_abort (a DIFFERENT step's handler-abort cancelling this
+    // gate).
+    case 'gate_expired':
+      return `gate_expired (gate_id: ${detail.gate_id})`;
   }
 }
 
@@ -272,6 +282,27 @@ export async function inspectRun(
   }
   lines.push(`Created: ${run.created_at}`);
   lines.push(`Updated: ${run.updated_at}`);
+
+  // issue #291 (Deliverable 7): an open gate's due/overdue state — off the SAME shared
+  // computeGateDueState derivation list/get_run_state also read from. The EXPIRED fact ITSELF is
+  // additionally (and independently) disclosed via the gate_expired_awaiting_drive run-health
+  // finding below (the generic finding-render loop already covers it); this line's own job is
+  // the reminder due/overdue annotation, which [B1] deliberately keeps OUT of run-health.
+  if (derivedPhase === 'gate_waiting' && run.pending_gate !== undefined) {
+    const gate = run.pending_gate;
+    const due = computeGateDueState(gate, new Date());
+    let gateLine = `Gate: ${gate.step_name} (opened ${formatGateAge(gate.opened_at)} ago)`;
+    if (due.expired) {
+      gateLine += ` — EXPIRED ${formatGateAge(gate.expires_at!)} ago`;
+    }
+    if (due.next_reminder_due_at !== undefined) {
+      const overdueReminder = new Date(due.next_reminder_due_at).getTime() <= Date.now();
+      gateLine += overdueReminder
+        ? `, reminder overdue (was due ${formatGateAge(due.next_reminder_due_at)} ago)`
+        : `, reminder due in ${formatGateAge(new Date().toISOString(), new Date(due.next_reminder_due_at))}`;
+    }
+    lines.push(gateLine);
+  }
 
   // issue #221: typed run-health findings — the SAME shared classifyRunHealth predicate the three
   // READ surfaces (get_run_state, list --stuck, inspect) derive from. Definition-aware when
