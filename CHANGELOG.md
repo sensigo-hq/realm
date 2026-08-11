@@ -69,6 +69,11 @@ validate` also gains a per-step adoption nudge on its own informational channel.
   `express-rate-limit`): GHSA-mwp4-54f8-5fhr, GHSA-4xrf-jv44-h6hh, GHSA-22jq-vg5j-6vgg (HIGH, IPv4/IPv6
   parsing misclassification). Exposure LOW (used for client-IP classification in the MCP `serve` rate limiter;
   realm makes no SSRF-relevant address-trust decision) — fixed in-range regardless.
+- Bumped `js-yaml` 4.3.0 → 4.3.1 (lockfile-only, in-range): GHSA-5p4m-2wfm-xmqj (HIGH, CVE-2026-59870 — quadratic
+  CPU consumption in `!!omap` resolution; the 5.x fix line's backport to 4.x). Exposure LOW (same class as the
+  v0.30.0 js-yaml triage: every `js-yaml` entry point in realm — the workflow loader, the extensions manifest
+  loader, `realm validate`, test fixtures — parses operator/developer-authored local files, never untrusted
+  network input) — fixed in-range regardless.
 
 ---
 
