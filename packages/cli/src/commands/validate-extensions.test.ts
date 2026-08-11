@@ -28,12 +28,27 @@ function runValidate(args: string[]): Promise<{ code: number; stdout: string; st
 }
 
 describe('realm workflow validate — golden (extension-free byte-identical)', () => {
+  // issue #236: the golden output gained the structured_output nudge's own INFO lines — the
+  // sweep added `additionalProperties: false` to this example's step schemas (Deliverable 8),
+  // making both agent steps eligible_with_caveats (pattern/minLength/maxLength are all post-hoc-
+  // only under strict). Updated deliberately, not a silent snapshot bump — see the report.
   it('validates the existing ticket-classifier example with the exact current output', async () => {
     const { code, stdout, stderr } = await runValidate([
       join(REPO_ROOT, 'examples', '02-ticket-classifier', 'workflow.yaml'),
     ]);
     expect(stderr).toBe('');
-    expect(stdout).toBe('Valid: ticket-classifier v1 (4 steps)\n');
+    expect(stdout).toBe(
+      'Valid: ticket-classifier v1 (4 steps)\n' +
+        "ℹ Step 'identify_ticket': eligible for structured_output: strict, with caveat — 'pattern' at 'properties.customer_id' is silently ignored or rejected by the API — enforced post-hoc by realm's own validation only\n" +
+        "ℹ Step 'identify_ticket': eligible for structured_output: strict, with caveat — 'minLength' at 'properties.product_area' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n" +
+        "ℹ Step 'identify_ticket': eligible for structured_output: strict, with caveat — 'maxLength' at 'properties.product_area' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n" +
+        "ℹ Step 'identify_ticket': eligible for structured_output: strict, with caveat — 'minLength' at 'properties.product_version' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n" +
+        "ℹ Step 'identify_ticket': eligible for structured_output: strict, with caveat — 'maxLength' at 'properties.product_version' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n" +
+        "ℹ Step 'identify_ticket': eligible for structured_output: strict, with caveat — 'minLength' at 'properties.reported_issue' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n" +
+        "ℹ Step 'identify_ticket': eligible for structured_output: strict, with caveat — 'maxLength' at 'properties.reported_issue' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n" +
+        "ℹ Step 'classify_ticket': eligible for structured_output: strict, with caveat — 'minLength' at 'properties.summary' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n" +
+        "ℹ Step 'classify_ticket': eligible for structured_output: strict, with caveat — 'maxLength' at 'properties.summary' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n",
+    );
     expect(code).toBe(0);
   }, 20_000);
 });

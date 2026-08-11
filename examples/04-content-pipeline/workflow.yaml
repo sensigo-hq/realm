@@ -10,6 +10,7 @@ version: 1
 
 params_schema:
   type: object
+  additionalProperties: false
   required: [path]
   properties:
     path:
@@ -53,6 +54,7 @@ steps:
       {{ context.resources.fetch_content.content }}
     input_schema:
       type: object
+      additionalProperties: false
       required: [title, summary, word_count]
       properties:
         title:
@@ -94,6 +96,7 @@ steps:
       Return exactly these two fields. Any tag outside the format constraints will be rejected.
     input_schema:
       type: object
+      additionalProperties: false
       required: [headline, message]
       properties:
         headline:

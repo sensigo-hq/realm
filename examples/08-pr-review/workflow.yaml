@@ -16,6 +16,7 @@ version: 1
 
 params_schema:
   type: object
+  additionalProperties: false
   required: [repo, pr_number]
   properties:
     repo:
@@ -66,6 +67,7 @@ steps:
         begin with "Approve." or "Changes requested." (capitalized, with a period), then explain
     input_schema:
       type: object
+      additionalProperties: false
       required: [risk, key_changes, recommendation, review_comment]
       properties:
         risk:

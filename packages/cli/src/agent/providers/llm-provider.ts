@@ -1,4 +1,5 @@
 // llm-provider.ts — LLM provider interface and factory function for realm agent.
+import type { StructuredOutputMeta } from '@sensigo/realm';
 import type { ToolDefinition, ToolExecutor, StepWithToolsResult } from '../mcp/mcp-extensions.js';
 
 /**
@@ -26,6 +27,27 @@ export abstract class LlmProvider {
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
   ): Promise<Record<string, unknown>>;
+
+  /**
+   * Issue #236 — the structured_output-aware entry point run-agent's callStep site calls for
+   * every agent step. DEFAULT-IMPLEMENTED here (never abstract): every third-party
+   * `--provider-module` that only implements `callStep` inherits a disclosed no-op BY
+   * CONSTRUCTION — `{ output }`, no `meta` — WITHOUT needing to know this method exists (the
+   * `instanceof` check at agent.ts is unaffected; a plugin author never has to override this).
+   * `AnthropicProvider` is the only override in this codebase — it actually honors
+   * `opts.structuredOutputStrict`. The OpenAI provider gets this SAME default no-op; it is never
+   * special-cased (design record §5, final gate: restored — do not add an OpenAI override).
+   */
+  async callStepWithMeta(
+    prompt: string,
+    inputSchema?: Record<string, unknown>,
+    agentProfileInstructions?: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    opts?: { structuredOutputStrict?: boolean },
+  ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
+    const output = await this.callStep(prompt, inputSchema, agentProfileInstructions);
+    return { output };
+  }
 
   /** Returns the capability set for this provider instance. */
   capabilities(): ProviderCapabilities {

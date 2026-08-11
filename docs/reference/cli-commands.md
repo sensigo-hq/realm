@@ -109,6 +109,20 @@ $ echo $?
 
 Without `--strict`, the same workflow prints the identical warning but exits `0`.
 
+**The `structured_output` adoption nudge (issue #236):** for every `execution: agent` step with an
+effective schema, `validate` also prints, on its own informational line (`ℹ`, never a `⚠`
+warning), whether that step is eligible for `structured_output: strict` and what — if
+anything — stands in the way. This is pure information: it never affects `--strict`'s exit code,
+and it prints whether or not the step has actually opted in (an opted-in step's OWN caveats print
+here too). See [`structured_output`](yaml-schema.md#structured_output-anthropic-strict-decoding)
+for the full gate table.
+
+```bash
+$ realm workflow validate ./my-workflow
+Valid: my-workflow v1 (2 steps)
+ℹ Step 'classify': structured_output: strict — one line short: add additionalProperties: false at 'the schema root'
+```
+
 ---
 
 ### `realm workflow register <path>`

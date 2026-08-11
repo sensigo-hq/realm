@@ -17,6 +17,8 @@ import {
   shouldEnforceTimeout,
   DEFAULT_EXECUTION_TIMEOUT_SECONDS,
   resolveSeverity,
+  assessStructuredOutputEligibility,
+  renderIneligibleMessage,
   type LoaderWarning,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
@@ -102,6 +104,82 @@ function printValidationOutcome(
   return false;
 }
 
+/** issue #236: the reasoning-position heuristic (design record §7, ratified via fixture C6) —
+ *  top-level property NAME match only, never a value/content inspection. */
+const REASONING_LIKE_PROPERTY = /reason|rational|think|explan|analysis/i;
+
+function findReasoningLikeTopLevelProperty(schema: unknown): string | undefined {
+  if (typeof schema !== 'object' || schema === null) return undefined;
+  const properties = (schema as Record<string, unknown>)['properties'];
+  if (typeof properties !== 'object' || properties === null) return undefined;
+  return Object.keys(properties as Record<string, unknown>).find((name) =>
+    REASONING_LIKE_PROPERTY.test(name),
+  );
+}
+
+/**
+ * issue #236 (Deliverable 7) — the adoption-without-default-ON nudge. Prints, per
+ * `execution: 'agent'` step with an effective schema, the migration DELTA on its OWN INFO
+ * channel: structurally NOT a LoaderWarning (plain `console.log`, never routed through
+ * `printLoaderWarnings`/the warnings accumulator/`--strict` — that stays a hard zero-diff rail on
+ * `loader-warnings.ts`, since ANY new WarningCode there would auto-fail `validate --strict`).
+ * Opted-in steps ALSO print here (their own caveats) — the same channel, per design [Rv3]. Never
+ * printed for an ineligible-and-opted-in step: the LOADER already rejected that combination at
+ * load time, so this function structurally never observes it.
+ */
+function printStructuredOutputNudge(definition: WorkflowDefinition): void {
+  for (const [stepName, step] of Object.entries(definition.steps)) {
+    if (step.execution !== 'agent') continue;
+    const effectiveSchema = step.output_schema ?? step.input_schema;
+    if (effectiveSchema === undefined) continue; // nothing to nudge without a schema at all
+
+    const optedIn = step.structured_output === 'strict';
+    const verdict = assessStructuredOutputEligibility({
+      ...(step.output_schema !== undefined ? { output_schema: step.output_schema } : {}),
+      ...(step.input_schema !== undefined ? { input_schema: step.input_schema } : {}),
+      ...(step.tools !== undefined ? { tools: step.tools } : {}),
+    });
+    const reasoningProp = findReasoningLikeTopLevelProperty(effectiveSchema);
+
+    if (verdict.verdict === 'ineligible') {
+      // Opted-in + ineligible is unreachable (the loader already rejected it) — this is always
+      // the "here's what you're one step short of" migration nudge for a NOT-opted-in step.
+      console.log(
+        `ℹ Step '${stepName}': structured_output: strict — one line short: ` +
+          `${renderIneligibleMessage(verdict.reasons)}`,
+      );
+      continue;
+    }
+
+    if (verdict.verdict === 'eligible_with_caveats') {
+      const prefix = optedIn
+        ? `ℹ Step '${stepName}': structured_output caveat`
+        : `ℹ Step '${stepName}': eligible for structured_output: strict, with caveat`;
+      for (const caveat of verdict.caveats) {
+        console.log(`${prefix} — ${caveat.remediation}`);
+      }
+      if (reasoningProp !== undefined) {
+        console.log(
+          `ℹ Step '${stepName}': the optional '${reasoningProp}' property looks like a ` +
+            `reasoning field — see the optional_emission caveat above (position matters: with ` +
+            `default thinking there is no regression; on non-thinking configurations prefer ` +
+            `'required' + first property order — see docs/reference/yaml-schema.md).`,
+        );
+      }
+      continue;
+    }
+
+    // eligible, zero caveats — NEVER printed bare (census: this is a rare, fully-required
+    // schema). Always paired with the concrete next step.
+    if (!optedIn) {
+      console.log(
+        `ℹ Step '${stepName}': eligible for structured_output: strict — add ` +
+          `'structured_output: strict' to opt in.`,
+      );
+    }
+  }
+}
+
 /**
  * The dormant issue #170 boundary-reject: inert today (DEFAULT_POLICY has no 'error' entries),
  * but once #170 flips UNKNOWN_WORKFLOW_KEY/UNKNOWN_STEP_KEY, this refuses those workflows here.
@@ -177,7 +255,10 @@ export const validateCommand = new Command('validate')
         if (rejectIfPolicyEscalates(accumulated)) {
           process.exit(1);
         }
-        if (printValidationOutcome(definition, accumulated, strict)) {
+        const strictFailed = printValidationOutcome(definition, accumulated, strict);
+        // issue #236: the nudge's own INFO channel — never affects the exit code below.
+        printStructuredOutputNudge(definition);
+        if (strictFailed) {
           process.exit(1);
         }
       } catch (err) {
@@ -214,6 +295,8 @@ export const validateCommand = new Command('validate')
         process.exit(1);
       }
       const strictFailed = printValidationOutcome(definition, accumulated, strict);
+      // issue #236: the nudge's own INFO channel — never affects the exit code below.
+      printStructuredOutputNudge(definition);
       if (manifest.modules.length > 0) {
         console.log(
           `Extensions: ${manifest.modules.map((m) => m.declared).join(', ')} ` +

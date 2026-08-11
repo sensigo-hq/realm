@@ -32,6 +32,7 @@ steps:
     execution: agent
     input_schema:
       type: object
+      additionalProperties: false
       required: [result]
       properties:
         result:

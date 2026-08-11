@@ -237,6 +237,18 @@ export {
 } from './workflow/diagnostics.js';
 export type { WarningCode, LoaderWarning } from './workflow/diagnostics.js';
 
+// Structured output eligibility — the L0 prevention layer (issue #236)
+export {
+  assessStructuredOutputEligibility,
+  renderIneligibleMessage,
+  STRICT_SUPPORTED_KEYWORDS,
+} from './workflow/structured-output-eligibility.js';
+export type {
+  StructuredOutputVerdict,
+  StructuredOutputReason,
+  StructuredOutputCaveat,
+} from './workflow/structured-output-eligibility.js';
+
 // Handler primitives
 export { resolveResource } from './handlers/primitives/resolve-resource.js';
 export { walkField } from './handlers/primitives/walk-field.js';

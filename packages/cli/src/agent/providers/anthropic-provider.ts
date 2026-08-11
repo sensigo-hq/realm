@@ -1,6 +1,11 @@
 // anthropic-provider.ts — Anthropic LLM provider implementation for realm agent.
 // Requires @anthropic-ai/sdk >= 0.20.0 as an optional peer dependency (npm install @anthropic-ai/sdk).
-import { WorkflowError, validateAgentSubmission, type JsonSchema } from '@sensigo/realm';
+import {
+  WorkflowError,
+  validateAgentSubmission,
+  type JsonSchema,
+  type StructuredOutputMeta,
+} from '@sensigo/realm';
 import { ToolCapableLlmProvider } from './llm-provider.js';
 import type {
   ToolCallRecord,
@@ -27,15 +32,26 @@ import {
  * used — it's an extraction mechanism, not an agent-chosen tool. */
 const SUBMIT_TOOL_NAME = '__realm_submit__';
 
-function buildSubmitTool(schema: Record<string, unknown>): {
+/**
+ * Issue #236: `strict` is a NEW sanctioned option, threaded from run-agent through both call
+ * sites of this builder (the main `callStep`/`callStepWithMeta` call AND `performFinalExtraction`
+ * — design §4 [CG]). Default absent = today's behavior byte-identical: the key is only ever
+ * added to the returned object when the caller explicitly opts in.
+ */
+function buildSubmitTool(
+  schema: Record<string, unknown>,
+  opts?: { strict?: boolean },
+): {
   name: string;
   description: string;
   input_schema: Record<string, unknown>;
+  strict?: boolean;
 } {
   return {
     name: SUBMIT_TOOL_NAME,
     description: 'Return your final result for this step as structured data.',
     input_schema: schema,
+    ...(opts?.strict === true ? { strict: true } : {}),
   };
 }
 
@@ -43,12 +59,132 @@ function buildSubmitTool(schema: Record<string, unknown>): {
  * Returns the maximum output tokens for the given Anthropic model.
  * The Anthropic Messages API requires max_tokens — this must always produce a valid value.
  * Source: https://docs.anthropic.com/en/docs/about-claude/models/all-models
+ *
+ * Issue #309 fix (ratified per design-d4-final.md's ADDENDUM, the audit's 3.5-cap correction):
+ * the PRE-#309 regex (`claude-(3[-.]5|[a-z]+-4)`) was stale in a dangerous direction — it gave
+ * the claude-3.5 family's OWN hard output cap (8192; 16384 would 400 every call) to EVERY 4.x
+ * model too (claude-sonnet-4-5, claude-opus-4-1, …), silently under-budgeting them. Three
+ * buckets now, ordered most-specific-first:
+ *   1. claude-3.5 family (`claude-3-5-*` / `claude-3.5-*`) ⇒ 8192 — its OWN hard cap.
+ *   2. Bare legacy claude-3 generation (claude-3-opus/-sonnet/-haiku, NOT 3.5) ⇒ 4096 — original,
+ *      unchanged fallback.
+ *   3. Everything else — 3.7, every 4.x/5.x model, and any UNKNOWN future model id — ⇒ 16384.
+ *      Fail-forward (the stale-classifier lesson, #312 is the durable fix: an unrecognized model
+ *      id is treated as AT LEAST as capable as today's models, never less; 16384 is
+ *      non-streaming-safe and current models think by default, so 4096 would starve
+ *      thinking+output on anything not explicitly bucketed above).
  */
 function resolveMaxTokens(model: string): number {
-  // claude-3.5 and claude-4 families support 8192 output tokens.
-  // Matches: claude-3-5-*, claude-3.5-*, claude-<name>-4-*, etc.
-  if (/claude-(3[-.]5|[a-z]+-4)/i.test(model)) return 8192;
-  return 4096; // safe fallback for claude-3 and any unrecognised model
+  if (/claude-3[-.]5/i.test(model)) return 8192;
+  if (/claude-3-(opus|sonnet|haiku)(-|$)/i.test(model)) return 4096;
+  return 16384;
+}
+
+// ---------------------------------------------------------------------------------------------
+// issue #236 — the fallback ladder. Any 400/503 on a request that carried `strict: true` drops
+// strict, discloses, and retries ONCE; any other status propagates untouched (the arm keys on
+// HTTP status ∧ strict-sent, NEVER on message text — design §4 [Rv5]).
+// ---------------------------------------------------------------------------------------------
+
+/** The captured grammar-compilation-unavailable text (premise-probe-raw.md's own canonical mock
+ *  — the label match keys on THIS string only, never a broader "any 503" heuristic). A stale/
+ *  non-matching message degrades to the generic `service_unavailable` label (fail-safe). */
+const GRAMMAR_UNAVAILABLE_TEXT = 'Grammar compilation is temporarily unavailable';
+
+/** Duck-typed extraction — the `@anthropic-ai/sdk` package is a consumer-supplied peer dependency
+ *  (absent from this repo and CI), so its real error class can never be imported/instanceof-
+ *  checked here. `.status`/`.message` are the SDK's own long-stable public `APIError` contract. */
+function extractHttpStatus(err: unknown): number | undefined {
+  if (typeof err === 'object' && err !== null && 'status' in err) {
+    const status = (err as { status?: unknown }).status;
+    if (typeof status === 'number') return status;
+  }
+  return undefined;
+}
+
+function extractErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Thrown when the ladder's OWN drop-strict retry ALSO fails — design §4 [R2-7]: (a) carries the
+ * `structuredOutput` meta so a catch site can still disclose the downgrade even though no result
+ * was ever produced (run-agent's sticky map is armed from this on failure paths too), (b) sets
+ * the ORIGINAL (retry) error as `cause`, (c) adopts that error's own message verbatim — run-agent
+ * prints `err.message` directly at its two LLM-call catch sites, so this must describe what
+ * ACTUALLY failed (the retry's real error), never a generic wrapper string.
+ */
+export class StructuredOutputLadderError extends Error {
+  readonly structuredOutput: StructuredOutputMeta;
+  constructor(
+    message: string,
+    structuredOutput: StructuredOutputMeta,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = 'StructuredOutputLadderError';
+    this.structuredOutput = structuredOutput;
+  }
+}
+
+/** Per-`callStepInternal`-invocation ladder state — STICKY within the call: once a downgrade
+ *  happens, every LATER `client.messages.create` in the SAME invocation (e.g. the non-JSON-retry
+ *  leg) goes out without strict too, never re-attempting it. */
+interface LadderState {
+  strict: boolean;
+  meta: StructuredOutputMeta | undefined;
+}
+
+/**
+ * Wraps ONE `client.messages.create` call with the strict fallback ladder. `buildOpts(strict)`
+ * must build the FULL request options for that boolean — called fresh on every attempt so a
+ * downgrade takes effect immediately. Non-strict calls (state.strict already false, OR strict was
+ * never requested for this invocation) pass straight through with no ladder engagement at all —
+ * byte-identical to pre-#236 behavior.
+ */
+async function createMessageWithLadder(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client: any,
+  buildOpts: (strict: boolean) => Record<string, unknown>,
+  state: LadderState,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> {
+  if (!state.strict) {
+    return (client.messages.create as (opts: Record<string, unknown>) => Promise<unknown>)(
+      buildOpts(false),
+    );
+  }
+  try {
+    const response = await (
+      client.messages.create as (opts: Record<string, unknown>) => Promise<unknown>
+    )(buildOpts(true));
+    state.meta = { requested: true, sent: true };
+    return response;
+  } catch (err) {
+    const status = extractHttpStatus(err);
+    if (status !== 400 && status !== 503) throw err; // unrelated failure — never engage the ladder
+    const api_message = extractErrorMessage(err);
+    const downgrade_reason: NonNullable<StructuredOutputMeta['downgrade_reason']> =
+      status === 400
+        ? 'api_rejected_schema'
+        : api_message.includes(GRAMMAR_UNAVAILABLE_TEXT)
+          ? 'grammar_unavailable'
+          : 'service_unavailable';
+    state.strict = false; // sticky for the rest of THIS invocation
+    try {
+      const response = await (
+        client.messages.create as (opts: Record<string, unknown>) => Promise<unknown>
+      )(buildOpts(false));
+      state.meta = { requested: true, sent: false, downgrade_reason, api_message };
+      return response;
+    } catch (retryErr) {
+      throw new StructuredOutputLadderError(
+        extractErrorMessage(retryErr),
+        { requested: true, sent: false, downgrade_reason, api_message },
+        { cause: retryErr },
+      );
+    }
+  }
 }
 
 /**
@@ -61,11 +197,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     super();
   }
 
-  async callStep(
-    prompt: string,
-    inputSchema?: Record<string, unknown>,
-    agentProfileInstructions?: string,
-  ): Promise<Record<string, unknown>> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async getClient(): Promise<any> {
     // Dynamically import @anthropic-ai/sdk to keep it an optional peer dependency.
     // See openai-provider.ts for an explanation of the 'string' cast technique.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -79,22 +212,39 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       );
       process.exit(1);
     }
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const client = new (mod.default as new (opts: Record<string, unknown>) => any)({
+    return new (mod.default as new (opts: Record<string, unknown>) => any)({
       apiKey: process.env['ANTHROPIC_API_KEY'],
     });
+  }
+
+  /**
+   * Shared body for `callStep`/`callStepWithMeta` (issue #236). `strictRequested` is `undefined`
+   * for `callStep`'s own byte-identical-behavior contract (no ladder state is even constructed);
+   * `true`/`false` for `callStepWithMeta`. Returns `meta` only when strict was ever requested for
+   * THIS invocation — a step that never opted in gets no `structuredOutput` meta at all.
+   */
+  private async callStepInternal(
+    prompt: string,
+    inputSchema: Record<string, unknown> | undefined,
+    agentProfileInstructions: string | undefined,
+    strictRequested: boolean | undefined,
+  ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
+    const client = await this.getClient();
+    const state: LadderState = { strict: strictRequested === true, meta: undefined };
 
     // P0: offer a schema-typed __realm_submit__ tool at tool_choice:'auto' (never forced — see the
     // module-level SUBMIT_TOOL_NAME comment) when a schema is available; a tool_use.input arrives
     // pre-parsed, so this eliminates the fenced/prefaced-JSON parse-failure class by construction.
     // Without a schema there is nothing to type the tool with, so no tool is offered — falls straight
-    // to the P1 extractor below.
-    const submitTool = inputSchema !== undefined ? buildSubmitTool(inputSchema) : undefined;
+    // to the P1 extractor below. `hasSchema` — NOT `strict` — governs buildSystemPrompt: the O8
+    // honesty mechanism depends on the original schema staying model-visible regardless of strict
+    // (design §4, pinned by test — buildSystemPrompt is byte-invariant under strict).
+    const hasSchema = inputSchema !== undefined;
     const systemPrompt = buildSystemPrompt(
       inputSchema,
       agentProfileInstructions,
-      /* structuredToolOffered */ submitTool !== undefined,
+      /* structuredToolOffered */ hasSchema,
     );
 
     interface CallResult {
@@ -104,18 +254,23 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     }
 
     const makeRequest = async (userContent: string): Promise<CallResult> => {
-      const opts: Record<string, unknown> = {
-        model: this.model,
-        max_tokens: resolveMaxTokens(this.model),
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userContent }],
+      const buildOpts = (strict: boolean): Record<string, unknown> => {
+        const submitTool = hasSchema
+          ? buildSubmitTool(inputSchema!, strict ? { strict: true } : undefined)
+          : undefined;
+        const opts: Record<string, unknown> = {
+          model: this.model,
+          max_tokens: resolveMaxTokens(this.model),
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userContent }],
+        };
+        if (submitTool !== undefined) {
+          opts['tools'] = [submitTool];
+          opts['tool_choice'] = { type: 'auto' };
+        }
+        return opts;
       };
-      if (submitTool !== undefined) {
-        opts['tools'] = [submitTool];
-        opts['tool_choice'] = { type: 'auto' };
-      }
-      const response = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (client.messages.create as (opts: Record<string, unknown>) => Promise<any>)(opts);
+      const response = await createMessageWithLadder(client, buildOpts, state);
       const blocks = response.content as Array<{
         type: string;
         text?: string;
@@ -136,15 +291,28 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     const extract = (result: CallResult): Record<string, unknown> | null =>
       result.toolInput ?? extractJsonObject(result.text);
 
+    // issue #236: submission_channel — the standing dodge detector (design record R-B). Set on
+    // whichever result actually produced the returned output.
+    const withChannel = (
+      output: Record<string, unknown>,
+      viaTool: boolean,
+    ): { output: Record<string, unknown>; meta?: StructuredOutputMeta } => {
+      if (state.meta === undefined) return { output };
+      return {
+        output,
+        meta: { ...state.meta, submission_channel: viaTool ? 'tool' : 'text' },
+      };
+    };
+
     const first = await makeRequest(prompt);
     const firstParsed = extract(first);
-    if (firstParsed !== null) return firstParsed;
+    if (firstParsed !== null) return withChannel(firstParsed, first.toolInput !== undefined);
 
     // Retry once with an explicit reminder to return JSON (preserves today's retry shape).
     const retryPrompt = `${prompt}\n\nYour previous response was not valid JSON. Respond with a JSON object only.`;
     const retry = await makeRequest(retryPrompt);
     const retryParsed = extract(retry);
-    if (retryParsed !== null) return retryParsed;
+    if (retryParsed !== null) return withChannel(retryParsed, retry.toolInput !== undefined);
 
     // Guard: a response cut short by the token budget must never silently return a partial object —
     // give a clear, distinct error rather than the generic "non-JSON content" message.
@@ -159,6 +327,36 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     throw new WorkflowError(
       sanitizeError(`Anthropic returned non-JSON content after retry: ${retry.text.slice(0, 200)}`),
       { code: 'ENGINE_STEP_FAILED', category: 'ENGINE', agentAction: 'stop', retryable: false },
+    );
+  }
+
+  async callStep(
+    prompt: string,
+    inputSchema?: Record<string, unknown>,
+    agentProfileInstructions?: string,
+  ): Promise<Record<string, unknown>> {
+    const { output } = await this.callStepInternal(
+      prompt,
+      inputSchema,
+      agentProfileInstructions,
+      undefined,
+    );
+    return output;
+  }
+
+  /** issue #236 override — the only provider in this codebase that actually honors
+   *  `opts.structuredOutputStrict`; the base class's default just wraps `callStep`. */
+  override async callStepWithMeta(
+    prompt: string,
+    inputSchema?: Record<string, unknown>,
+    agentProfileInstructions?: string,
+    opts?: { structuredOutputStrict?: boolean },
+  ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
+    return this.callStepInternal(
+      prompt,
+      inputSchema,
+      agentProfileInstructions,
+      opts?.structuredOutputStrict === true,
     );
   }
 
@@ -258,6 +456,11 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // history ends with a valid user turn. NOT restructuring the agentic loop / MCP tools array —
     // this synthetic tool only ever appears on this ONE isolated extraction call.
     const performFinalExtraction = async (): Promise<StepWithToolsResult> => {
+      // issue #236: buildSubmitTool's `strict` option is never threaded here — BY CONSTRUCTION,
+      // not by omission. This call site lives inside callStepWithTools, which only ever runs for
+      // tools-bearing steps; G6 makes every tools-bearing step ineligible for strict end-to-end
+      // in v1 (design §4 [CG]), so run-agent structurally never has a `true` to pass down this
+      // path. No end-to-end pin is possible here — do not add one.
       const finalSubmitTool =
         options.inputSchema !== undefined ? buildSubmitTool(options.inputSchema) : undefined;
       const finalOpts: Record<string, unknown> = {
@@ -272,7 +475,10 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       } else {
         finalOpts['tool_choice'] = { type: 'none' };
         // NO tools array — enforces text-only response
-        // NO response_format — not a valid Anthropic parameter
+        // NO response_format — Anthropic's structured-output mechanism is strict TOOL USE
+        // (issue #236's `structured_output: 'strict'`, wired through buildSubmitTool's `strict`
+        // option above), not an `output_config.format` request parameter — deliberately not
+        // used here (banked, design record R-P).
       }
       const final = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (client.messages.create as (opts: Record<string, unknown>) => Promise<any>)(finalOpts);

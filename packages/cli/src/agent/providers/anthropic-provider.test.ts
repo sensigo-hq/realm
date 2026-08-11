@@ -83,11 +83,13 @@ describe('AnthropicProvider.callStep', () => {
     expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('response_format');
   });
 
-  it('callStep sends max_tokens: 8192 for claude-sonnet-4-5', async () => {
+  // issue #309 fix: the pre-#309 regex gave the claude-3.5 family's OWN hard cap (8192) to every
+  // 4.x model too — claude-sonnet-4-5 now correctly gets the fail-forward 16384 bucket.
+  it('callStep sends max_tokens: 16384 for claude-sonnet-4-5 (a 4.x model — the fail-forward bucket)', async () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
     const provider = new AnthropicProvider('claude-sonnet-4-5');
     await provider.callStep('prompt');
-    expect(mockCreate.mock.calls[0][0].max_tokens).toBe(8192);
+    expect(mockCreate.mock.calls[0][0].max_tokens).toBe(16384);
   });
 
   it('callStep sends max_tokens: 4096 for claude-3-opus-20240229', async () => {
@@ -95,6 +97,37 @@ describe('AnthropicProvider.callStep', () => {
     const provider = new AnthropicProvider('claude-3-opus-20240229');
     await provider.callStep('prompt');
     expect(mockCreate.mock.calls[0][0].max_tokens).toBe(4096);
+  });
+
+  // issue #309: the four resolveMaxTokens buckets, pinned explicitly (design record's own
+  // required pin — Deliverable 3).
+  describe('resolveMaxTokens buckets (issue #309)', () => {
+    it('claude-3.5 family ⇒ 8192 (its own hard output cap)', async () => {
+      mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
+      await new AnthropicProvider('claude-3-5-sonnet-20241022').callStep('prompt');
+      expect(mockCreate.mock.calls[0][0].max_tokens).toBe(8192);
+    });
+
+    it('bare legacy claude-3 (non-3.5) ⇒ 4096', async () => {
+      mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
+      await new AnthropicProvider('claude-3-opus-20240229').callStep('prompt');
+      expect(mockCreate.mock.calls[0][0].max_tokens).toBe(4096);
+    });
+
+    it.each(['claude-3-7-sonnet-20250219', 'claude-sonnet-4-6', 'claude-opus-5'])(
+      '%s ⇒ 16384 (fail-forward)',
+      async (model) => {
+        mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
+        await new AnthropicProvider(model).callStep('prompt');
+        expect(mockCreate.mock.calls[0][0].max_tokens).toBe(16384);
+      },
+    );
+
+    it('an invented future model id ⇒ 16384 (fail-forward, never under-budgeted)', async () => {
+      mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
+      await new AnthropicProvider('claude-turbo-9000-preview').callStep('prompt');
+      expect(mockCreate.mock.calls[0][0].max_tokens).toBe(16384);
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -200,7 +233,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
   // -----------------------------------------------------------------------
   // 0. max_tokens is model-aware in the main loop call
   // -----------------------------------------------------------------------
-  it('callStepWithTools main loop sends max_tokens: 8192 for claude-sonnet-4-5', async () => {
+  it('callStepWithTools main loop sends max_tokens: 16384 for claude-sonnet-4-5 (issue #309)', async () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"answer":"done"}'));
     const provider = new AnthropicProvider('claude-sonnet-4-5');
     await provider.callStepWithTools('prompt', [], _NOOP_EXECUTOR, {
@@ -210,7 +243,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
         required: ['answer'],
       },
     });
-    expect(mockCreate.mock.calls[0][0].max_tokens).toBe(8192);
+    expect(mockCreate.mock.calls[0][0].max_tokens).toBe(16384);
   });
 
   // -----------------------------------------------------------------------

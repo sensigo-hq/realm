@@ -44,6 +44,7 @@ trigger:
 
 params_schema:
   type: object
+  additionalProperties: false
   required:
     - pr_number
     - repo
@@ -107,6 +108,7 @@ steps:
     tool_timeout: 30
     input_schema:
       type: object
+      additionalProperties: false
       required: [diff_summary, changed_files]
       properties:
         diff_summary: { type: string }
@@ -143,6 +145,7 @@ steps:
     tool_timeout: 30
     input_schema:
       type: object
+      additionalProperties: false
       required: [review_body, confirmation_text]
       properties:
         review_body: { type: string }

@@ -10,6 +10,7 @@ import type {
   AgentTraceEntry,
   TraceNormalizationSummary,
   PendingGate,
+  StructuredOutputMeta,
 } from '../types/run-record.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import { extensionIdentityDiffers } from '../types/extension-identity.js';
@@ -101,8 +102,12 @@ export interface ExecuteStepOptions {
    * Tool calls produced by callStepWithTools for this step.
    * Absent on the callStep path (no tools configured).
    * Present (possibly []) when tools were declared — threads through to captureEvidence.
+   *
+   * `structuredOutput` (issue #236): the caller's own `structured_output: 'strict'` attempt
+   * disclosure for THIS attempt — threads into the diagnostics literal at every evidence-capture
+   * site. Independent of `toolCalls` (either alone must still cause `stepMeta` to be passed).
    */
-  stepMeta?: { toolCalls?: ToolCallRecord[] };
+  stepMeta?: { toolCalls?: ToolCallRecord[]; structuredOutput?: StructuredOutputMeta };
   /**
    * Optional agent-submitted trace entries for this step.
    * Silently dropped for non-agent steps. When present on agent steps, the
@@ -161,8 +166,12 @@ export interface ExecuteChainOptions {
    * Tool calls produced by callStepWithTools for this step.
    * Absent on the callStep path (no tools configured).
    * Present (possibly []) when tools were declared — threads through to captureEvidence.
+   *
+   * `structuredOutput` (issue #236): the caller's own `structured_output: 'strict'` attempt
+   * disclosure for THIS attempt — threads into the diagnostics literal at every evidence-capture
+   * site. Independent of `toolCalls` (either alone must still cause `stepMeta` to be passed).
    */
-  stepMeta?: { toolCalls?: ToolCallRecord[] };
+  stepMeta?: { toolCalls?: ToolCallRecord[]; structuredOutput?: StructuredOutputMeta };
   /** @see ExecuteStepOptions.trace */
   trace?: AgentTraceEntry[];
   /** @see ExecuteStepOptions.traceBufferStore */
@@ -2265,6 +2274,20 @@ export async function executeStep(
           ...(attemptError === null && (run.validation_rejections?.[options.command] ?? 0) > 0
             ? { validation_rejections: run.validation_rejections![options.command] }
             : {}),
+          // issue #236: the attempt's structured_output disclosure. External-agent stamp [Rv6 +
+          // R2-3]: a step that DECLARED structured_output but arrives with no
+          // options.stepMeta.structuredOutput at all was driven by something other than
+          // run-agent (e.g. an external agent calling execute_step over MCP directly) — realm
+          // cannot know whether strict was honored, so it says so rather than staying silent.
+          ...(stepDef?.structured_output !== undefined
+            ? {
+                structured_output: options.stepMeta?.structuredOutput ?? {
+                  requested: true,
+                  sent: false,
+                  downgrade_reason: 'external_agent',
+                },
+              }
+            : {}),
         },
         ...(profileData !== undefined
           ? { agentProfile: profile!, agentProfileHash: profileData.content_hash }
@@ -2377,6 +2400,17 @@ export async function executeStep(
         precondition_trace: preconditionTrace,
         settled_by_default: true,
         validation_rejections: exhaustion!.details['rejections'] as number,
+        // issue #236: same disclosure/external-agent-stamp rule as the real dispatch-loop
+        // capture above.
+        ...(stepDef?.structured_output !== undefined
+          ? {
+              structured_output: options.stepMeta?.structuredOutput ?? {
+                requested: true,
+                sent: false,
+                downgrade_reason: 'external_agent',
+              },
+            }
+          : {}),
       },
       ...(defaultProfileData !== undefined
         ? { agentProfile: defaultProfile!, agentProfileHash: defaultProfileData.content_hash }
@@ -2436,6 +2470,17 @@ export async function executeStep(
         input_token_estimate: inputTokenEstimate,
         precondition_trace: preconditionTrace,
         validation_rejections: exhaustion!.details['rejections'] as number,
+        // issue #236: same disclosure/external-agent-stamp rule as the real dispatch-loop
+        // capture above.
+        ...(stepDef?.structured_output !== undefined
+          ? {
+              structured_output: options.stepMeta?.structuredOutput ?? {
+                requested: true,
+                sent: false,
+                downgrade_reason: 'external_agent',
+              },
+            }
+          : {}),
       },
       ...(exhaustedProfileData !== undefined
         ? { agentProfile: exhaustedProfile!, agentProfileHash: exhaustedProfileData.content_hash }

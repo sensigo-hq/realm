@@ -9,6 +9,7 @@ version: 1
 
 params_schema:
   type: object
+  additionalProperties: false
   required: [path]
   properties:
     path:
@@ -62,6 +63,7 @@ steps:
       Return exactly these three fields. Any missing or invalid field will be rejected.
     input_schema:
       type: object
+      additionalProperties: false
       required: [findings, risk_level, confidence]
       properties:
         findings:
@@ -101,6 +103,7 @@ steps:
       Return exactly these three fields. Any missing or invalid field will be rejected.
     input_schema:
       type: object
+      additionalProperties: false
       required: [findings, risk_level, confidence]
       properties:
         findings:
@@ -148,6 +151,7 @@ steps:
       - recommendation: one sentence — APPROVED, NEEDS REVISION, or BLOCKED, with reason
     input_schema:
       type: object
+      additionalProperties: false
       required: [agreed_risk_level, security_concerns, performance_concerns, recommendation]
       properties:
         agreed_risk_level:

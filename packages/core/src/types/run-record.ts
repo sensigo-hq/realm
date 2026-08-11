@@ -77,6 +77,62 @@ export interface TraceNormalizationSummary {
   foreign_lines_preserved?: number;
 }
 
+/**
+ * Issue #236 (L0 prevention layer) — the observables-only disclosure vocabulary for a
+ * `structured_output: 'strict'`-declared step's attempt. Deliberately carries NO `applied`
+ * field (unwitnessable — a silently-stripping proxy could accept `strict` on the wire and never
+ * honor it; `sent` only ever claims "realm placed strict on the request handed to the SDK", never
+ * that the API enforced it). Per-attempt: a retry-configured step's evidence array can carry a
+ * different value per attempt. `requested` is always `true` when this object is present at all —
+ * it exists ONLY on a step that declared `structured_output: 'strict'`.
+ */
+export interface StructuredOutputMeta {
+  /** Always `true` — this object's mere presence already implies it; kept explicit so a reader
+   *  never has to special-case "object present but requested:false". */
+  requested: true;
+  /** Whether realm actually placed `strict: true` on the request it handed to the SDK for the
+   *  attempt THIS diagnostics object describes. Absent on a synthesized stamp (`external_agent`)
+   *  where no request was ever made by realm at all. */
+  sent?: boolean;
+  /** Caveat codes from `assessStructuredOutputEligibility`'s `eligible_with_caveats` verdict —
+   *  present only when `sent` is `true` and the schema carried caveats (never on an `ineligible`
+   *  attempt, where strict was never sent at all). */
+  caveats?: string[];
+  /**
+   * Why `sent` is `false` (absent when `sent` is `true`):
+   * - `gate_ineligible` — the Phase-B verdict was `ineligible`; strict was never attempted.
+   * - `api_rejected_schema` — a live 400 on a strict-carrying request; realm dropped strict and
+   *   retried once.
+   * - `grammar_unavailable` — a live 503 whose message matched Anthropic's captured
+   *   grammar-compilation-unavailable text.
+   * - `service_unavailable` — a live 503 that did NOT match the grammar text (a generic overload
+   *   — fail-safe default label for any non-matching 503).
+   * - `provider_unsupported` — the configured LLM provider does not implement `callStepWithMeta`
+   *   (a third-party `--provider-module` that only implements the base `callStep`).
+   * - `unsupported_context_tools` — the step declares `tools` (G6 — v1 never supports strict on
+   *   a tools-bearing step).
+   * - `external_agent` — the step declared `structured_output: 'strict'` but was driven by
+   *   something other than `realm agent` (e.g. an external agent calling `execute_step` over
+   *   MCP directly) — no `stepMeta.structuredOutput` was ever attached, so realm cannot know
+   *   whether strict was honored at all.
+   */
+  downgrade_reason?:
+    | 'gate_ineligible'
+    | 'api_rejected_schema'
+    | 'grammar_unavailable'
+    | 'service_unavailable'
+    | 'provider_unsupported'
+    | 'unsupported_context_tools'
+    | 'external_agent';
+  /** The raw API error message, when a live 400/503 drove a downgrade — attached verbatim,
+   *  never rewritten, so an operator can compare against Anthropic's own documented error text. */
+  api_message?: string;
+  /** Whether the model's output arrived via the submit tool (`tool_use.input`, pre-parsed) or as
+   *  extracted text — the standing dodge detector (design record R-B): a schema shaped to make
+   *  the model prefer a text answer over the strict-constrained tool would show up here. */
+  submission_channel?: 'tool' | 'text';
+}
+
 /** Diagnostic metadata captured during step execution. Written once; read by inspect. */
 export interface StepDiagnostics {
   /** Rough token count estimate: Math.ceil(JSON.stringify(input).length / 4) */
@@ -105,6 +161,9 @@ export interface StepDiagnostics {
    * even one that previously accrued rejections, carries only `validation_rejections` here.
    */
   settled_by_default?: boolean;
+  /** Issue #236 — disclosure for a `structured_output: 'strict'`-declared step's attempt. See
+   *  {@link StructuredOutputMeta}. Absent on a step that never declared `structured_output`. */
+  structured_output?: StructuredOutputMeta;
 }
 
 export interface EvidenceSnapshot {

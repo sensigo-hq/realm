@@ -37,6 +37,16 @@ agent/handler steps as `next_actions` plus a `next_actions_status` that classifi
 `auto_pending` vs an empty `ok` distinguishes a genuinely-parked run from one with no pending agent
 action. See [Operating & recovering runs](operating-runs.md).
 
+**`structured_output` note (issue #236):** a step declaring `structured_output: strict` that is
+driven via `execute_step` by anything other than `realm agent` (an external agent calling the MCP
+tool directly, for instance) never receives Anthropic grammar-constrained decoding — that
+mechanism is `realm agent`'s own provider layer, not part of the MCP protocol surface. The
+attempt's evidence still discloses this honestly (`downgrade_reason: 'external_agent'`, visible
+via `realm run inspect`) — but `get_run_state` does not carry per-step evidence at all, so an
+MCP-only consumer combines the run's `terminal_reason` + `failed_steps` + derived `run_phase`
+instead of reading a per-attempt field. See
+[`structured_output`](yaml-schema.md#structured_output-anthropic-strict-decoding).
+
 ---
 
 ## Standard loop

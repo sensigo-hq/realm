@@ -12,6 +12,7 @@ version: 1
 
 params_schema:
   type: object
+  additionalProperties: false
   required: [path]
   properties:
     path:
@@ -59,6 +60,7 @@ steps:
       {{ context.resources.read_ticket.content }}
     input_schema:
       type: object
+      additionalProperties: false
       required: [customer_id, product_area, product_version, reported_issue]
       properties:
         customer_id:
@@ -99,6 +101,7 @@ steps:
       allowed values will be rejected before your response is accepted.
     input_schema:
       type: object
+      additionalProperties: false
       required: [category, priority, summary]
       properties:
         category:
@@ -132,6 +135,7 @@ steps:
       under 150 words — professional, direct, no filler phrases.
     input_schema:
       type: object
+      additionalProperties: false
       required: [response_draft]
       properties:
         response_draft:
@@ -159,6 +163,7 @@ steps:
       and state that the ticket has been escalated to engineering. Keep under 150 words.
     input_schema:
       type: object
+      additionalProperties: false
       required: [response_draft]
       properties:
         response_draft:
@@ -185,6 +190,7 @@ steps:
       expectations appropriately (no delivery commitments). Keep under 150 words.
     input_schema:
       type: object
+      additionalProperties: false
       required: [response_draft]
       properties:
         response_draft:
@@ -210,6 +216,7 @@ steps:
       (e.g. account team review, verification process). Keep under 150 words.
     input_schema:
       type: object
+      additionalProperties: false
       required: [response_draft]
       properties:
         response_draft:
@@ -236,6 +243,7 @@ steps:
       and state that someone will follow up within 24 hours. Keep under 150 words.
     input_schema:
       type: object
+      additionalProperties: false
       required: [response_draft]
       properties:
         response_draft:

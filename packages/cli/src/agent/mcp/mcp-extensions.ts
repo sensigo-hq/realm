@@ -1,7 +1,7 @@
 // MCP extensions — CLI-internal MCP types: McpTool, ToolDefinition, ToolExecutor,
 // StepWithToolsResult, McpClient. Also re-exports ToolCallRecord and McpServerConfig
 // from @sensigo/realm for use within the CLI package.
-import type { ToolCallRecord, McpServerConfig } from '@sensigo/realm';
+import type { ToolCallRecord, McpServerConfig, StructuredOutputMeta } from '@sensigo/realm';
 export type { ToolCallRecord, McpServerConfig };
 
 // MCP-native tool shape returned by the server's tool list
@@ -36,6 +36,13 @@ export interface StepWithToolsResult {
    * observability field only.
    */
   correctionCount?: number;
+  /**
+   * Issue #236: additive, present only on the tools-path leg the design's by-construction-only
+   * coverage note describes (G6 makes every tools-bearing step ineligible for strict end-to-end,
+   * so this is never populated by AnthropicProvider in v1 — the field exists so a FUTURE
+   * provider/version can populate it without another interface change).
+   */
+  structuredOutput?: StructuredOutputMeta;
 }
 
 // McpClient interface — implemented in mcp-client.ts
