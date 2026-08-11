@@ -537,6 +537,83 @@ Values are **plain text** — no template substitution. Keep entries to one line
 
 ---
 
+## Gate timeout (authorable enforce + notify clocks)
+
+```yaml
+approve_deploy:
+  execution: auto
+  trust: human_confirmed
+  gate:
+    choices: [approve, reject]
+    timeout_seconds: 3600 # enforce clock: 1 hour
+    on_expiry: settle_default
+    default_choice: reject # safe default — never deploy unattended
+    reminder_seconds: 900 # notify clock: nudge every 15 minutes
+    reminder_max: 3 # up to 3 nudges (default when reminder_seconds is set)
+```
+
+Issue #291. Five `gate:` sub-keys, all optional and independent of each other except where noted:
+
+| Key                | Type                          | Rule                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `timeout_seconds`  | positive integer              | The **enforce clock**: seconds after gate-open after which the gate is eligible for enactment.                                                                                                                                                                                                                                                         |
+| `on_expiry`        | `'settle_default' \| 'abort'` | The disposition enacted once `timeout_seconds` elapses unanswered. Absent = **finding-only mode** (see below) — LEGAL.                                                                                                                                                                                                                                 |
+| `default_choice`   | string                        | The choice enacted when `on_expiry: settle_default`. **REQUIRED iff `on_expiry: settle_default`** (a load-time hard error otherwise); validated against the step's own effective choice set (`gate.choices ?? input_schema.properties.choice.enum ?? ['approve','reject']`) at load time — a load-time-legal default can never fail at enactment time. |
+| `reminder_seconds` | positive integer              | The **notify clock**: seconds between reminder nudges while the gate is unresolved. Standalone-legal — does NOT require `timeout_seconds` (a pure-notify gate) — LEGAL.                                                                                                                                                                                |
+| `reminder_max`     | positive integer, default `3` | Repetition cap on the reminder cycle (only meaningful when `reminder_seconds` is set).                                                                                                                                                                                                                                                                 |
+
+**Two documented distinct concepts, never confused:**
+
+- The **enforce clock** (`timeout_seconds`/`on_expiry`/`default_choice`) is part of the workflow's contract — it can settle or abort the run. Canon analogue: Camunda's interrupting boundary timer / AWS Step Functions `TimeoutSeconds`.
+- The **notify clock** (`reminder_seconds`/`reminder_max`, plus the CLI operator's own `reminderIntervalMs`/`escalationThresholdMs` config) has **ZERO settlement authority** — it can only send a message. A reminder being overdue is never a run-health finding (see the negative pin below); it never enacts anything. Canon analogue: Camunda's non-interrupting boundary timer / `dueDate` / the C7 timeout task listener.
+
+**Dead-config warns** (never rejects): `on_expiry` declared without `timeout_seconds` (nothing will ever trigger it); `default_choice` declared with `on_expiry: 'abort'` or with no `on_expiry` at all (inert); `reminder_seconds >= timeout_seconds` (the first reminder would never fire before expiry). All are `DEAD_GATE_CONFIG` loader warnings. An unrecognized `gate:` sub-key (a typo) is a separate `UNKNOWN_GATE_KEY` warning — the FIRST gate sub-key validation the loader has ever had.
+
+**Finding-only mode** — `timeout_seconds` with NO `on_expiry` — is legal and distinct from a fully-enforced gate: the gate never auto-resolves (there is nothing to enact), but a `gate_expired_awaiting_drive` run-health finding still fires once it passes its deadline (disposition `'finding_only'` in the finding's own evidence), `realm run drain --expired` lists it as "expired — finding-only" and never touches it, no enactment timer is scheduled for it, and the final reminder occurrence (if `reminder_seconds` is also set) uses a wording variant that never claims "will enact". A human response to a finding-only gate is **never refused**, however overdue.
+
+### Mint-freeze semantics
+
+Every one of the five fields above is **frozen into the run record at the exact moment the gate opens** (never re-read from the workflow definition afterward — the `ClaimRecord.deadline`/issue #302 uniform-epoch-freeze precedent, generalized). Consequences:
+
+- Editing a workflow's `gate:` block after a gate has already opened **never applies to that already-open gate** — only to the NEXT gate a re-registered definition opens. This is deliberate: it kills a definition-drift class where a changed `default_choice` could make an enactment attempt fail forever.
+- A gate opened by an **old binary** that predates issue #291 (or one whose `gate:` sub-keys the loader silently ignored under an even older binary) carries **NONE** of these fields — it is **grandfathered**: finding-silent (no `gate_expired_awaiting_drive` finding, since there is no `expires_at` to compare against), reminder-silent (the operator's own `reminderIntervalMs` config is its only notify path), and **never automatically enacted**. This population never resolves itself; a human response is its only path forward. Mixed-fleet advisory: a workflow deployed with `gate.timeout_seconds` but driven by a binary older than issue #291 has that key **silently ignored** — the gate behaves as if untimed.
+
+### The fallback ladder (never a strand)
+
+The enactment mechanism is a single pure arm-set (`applyExpireGate`) reused identically by every enactment point below — refusing a premature attempt (`now < expires_at`, verified server-side, never trusted from a caller's own clock) and idempotently NOOPing a replay (two enactment points racing each other never double-apply). **Expiry-WINS**: once the enforce clock has genuinely passed, a late human response is refused with an honest, disposition-specific explanation rather than silently recorded as if it arrived in time — see the disclosure section below for the exact wording per cell.
+
+**Enactment points** (any of these may observe and enact an expired gate — level-triggered, not a single dedicated daemon):
+
+| Point                                          | When it enacts                                                                                                                                                                                                                                                                                |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `submit_human_response`                        | A late response to an already-expired gate triggers enactment first, then composes the honest refusal/NOOP.                                                                                                                                                                                   |
+| `execute_step`                                 | Attempting any step while a sibling gate has expired enacts it first — may un-block the very step being attempted.                                                                                                                                                                            |
+| `realm run reclaim`                            | Never enacts — DEFERS, with an advisory pointing at `drain --expired` (reclaim has no drain plumbing of its own).                                                                                                                                                                             |
+| `realm run drain --expired`                    | **Opt-in flag** — bare `drain` (including batch `--force`) is byte-stable, terminal-only, and never touches a gate. With the flag: reports/enacts expired-and-enactable gates; an abort disposition's terminalization flows into the same drain pass.                                         |
+| The attending process's timer                  | The CLI process holding a gate open (interactively, via `realm agent`, or via the Slack notifier) schedules ONE enactment attempt at the frozen `expires_at`.                                                                                                                                 |
+| `realm listen --sweep-expired-gates <seconds>` | **Opt-in flag**, default OFF — a coarse, store-wide sweep; the only enactor that doesn't require an attending process to be waiting on that specific run. Never drains finalizers itself (no extension registry for a workflow it hasn't mounted) — logs the same `drain --expired` advisory. |
+
+**Late-response disclosure** — every enactment carries an honest, per-cell envelope: a same-choice late response to a `settle_default` gate is told "the outcome matches your choice, but it was settled by timeout; your response was not recorded" (never implying the human's own answer was recorded); a conflicting choice is told which choice actually won and that theirs was not recorded; a response to an aborted gate gets a third, distinct terminal-run variant ("the gate expired and the run aborted per the workflow's declared on_expiry — your choice was NOT recorded") — never the misleading "cancelled when &lt;another step&gt; aborted the run" wording a genuinely-cancelled gate gets. `realm run inspect`/`get_run_state` both disclose `enacted_via` (`submit`/`execute_step`/`drain`/`timer`/`listen`) and the overdue duration on the triggering call's own response.
+
+### Realm ↔ canon vocabulary
+
+| Realm                                            | Canon analogue                                                                                                                                      |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gate.timeout_seconds`                           | Camunda interrupting boundary timer / AWS Step Functions `TimeoutSeconds`                                                                           |
+| `on_expiry: abort`                               | Interrupting timer → terminate                                                                                                                      |
+| `on_expiry: settle_default`                      | Interrupting timer → default branch                                                                                                                 |
+| `gate.reminder_seconds`/`reminder_max`           | Camunda non-interrupting boundary timer / `dueDate` / the C7 timeout listener                                                                       |
+| CLI `reminderIntervalMs`/`escalationThresholdMs` | Operator-configured notify — Temporal/external alerting                                                                                             |
+| `gate_expired_awaiting_drive` (run-health)       | No canon analogue — daemonless-specific: canon's daemon enacts synchronously; realm discloses the window between expiry and the next drive instead. |
+
+**Dead-notification advisory:** the CLI warns once, at notifier wiring, when the OPERATOR's own `reminderIntervalMs`/`escalationThresholdMs` could never fire before the gate's frozen `timeout_seconds` elapses (the AWS Step Functions `HeartbeatSeconds < TimeoutSeconds` cross-validation, extended cross-domain). An AUTHORED `reminder_seconds >= timeout_seconds` gets the SAME check at LOAD time instead (the `DEAD_GATE_CONFIG` warning above) — the loader can't see the operator's CLI config, so this is genuinely two checks for two config sources, not a duplicate.
+
+**Fallback asymmetry (stated, not a bug):** the AUTHORED reminder cycle repeats (up to `reminder_max`); the OPERATOR fallback (`reminderIntervalMs`, used only when the author declared no `reminder_seconds` — record-keyed precedence) stays **single-shot**, unchanged from before issue #291 — repeating it would silently change an existing deployment's Slack volume under an unchanged config. The **webhook-only** Slack topology (no bot token) runs **no timers at all** — an authored reminder is silently inert there; the escalation one-shot itself is completely untouched by any of this.
+
+**`create_workflow` cannot author a gate at all** (its step schema has no `gate:`/`trust:` block) — gates, including every field on this page, are YAML-only.
+
+---
+
 ## Step display
 
 The `display:` field produces a formatted terminal summary printed after the step completes.

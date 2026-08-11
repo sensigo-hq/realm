@@ -43,6 +43,22 @@ export interface GateInfo {
   agent_hint?: string;
   /** Structured response specification — the choices the human may select. */
   response_spec?: { choices: string[] };
+  /**
+   * Issue #291 ([F-A2-6]): the mint-frozen enforce-clock deadline, verbatim from
+   * `PendingGate.expires_at` — present iff the step declared `gate.timeout_seconds`. Disclosure-
+   * positive: a caller can see the deadline at the exact moment the gate opens, without a
+   * separate `get_run_state` round-trip.
+   */
+  expires_at?: string;
+  /**
+   * Issue #291 ([F-A2-6]): the absolute timestamp of the FIRST notify-clock occurrence
+   * (`opened_at + reminder_seconds`), present iff the step declared `gate.reminder_seconds`.
+   * Computed at open time — a gate is never overdue for its own first reminder at the instant it
+   * opens, so this is always a future instant here (later read surfaces — `realm run list`/
+   * `get_run_state`/`inspect` — recompute the NEXT-undelivered occurrence at read time via the
+   * same `computeGateDueState` derivation, which may differ from this snapshot).
+   */
+  first_reminder_due_at?: string;
 }
 
 export interface ResponseEnvelope {

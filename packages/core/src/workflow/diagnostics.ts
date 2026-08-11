@@ -29,7 +29,12 @@ export type WarningCode =
   | 'RETRY_INERT_NON_AUTO'
   // issue #220 PR-2 (declared fail-open validation_exhaustion.mode/default_output):
   | 'UNKNOWN_VALIDATION_EXHAUSTION_KEY'
-  | 'DEAD_VALIDATION_EXHAUSTION_CONFIG';
+  | 'DEAD_VALIDATION_EXHAUSTION_CONFIG'
+  // issue #291 (authorable gate timeout — the FIRST gate sub-key validation the loader has ever
+  // had; new codes are the precedent — #140 UNKNOWN_RETRY_KEY / #220 UNKNOWN_VALIDATION_
+  // EXHAUSTION_KEY, not a noun-override reuse):
+  | 'UNKNOWN_GATE_KEY'
+  | 'DEAD_GATE_CONFIG';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text (matching, for every
@@ -71,6 +76,8 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   RETRY_INERT_NON_AUTO: 'warn',
   UNKNOWN_VALIDATION_EXHAUSTION_KEY: 'warn',
   DEAD_VALIDATION_EXHAUSTION_CONFIG: 'warn',
+  UNKNOWN_GATE_KEY: 'warn',
+  DEAD_GATE_CONFIG: 'warn',
 };
 
 /**
@@ -196,6 +203,7 @@ const UNKNOWN_KEY_CODES = new Set<WarningCode>([
   'UNKNOWN_CREATE_WORKFLOW_KEY',
   'UNKNOWN_RETRY_KEY',
   'UNKNOWN_VALIDATION_EXHAUSTION_KEY',
+  'UNKNOWN_GATE_KEY',
 ]);
 
 /**

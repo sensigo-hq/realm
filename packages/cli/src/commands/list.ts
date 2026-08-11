@@ -6,6 +6,7 @@ import {
   deriveRunPhase,
   DEFAULT_IDLE_THRESHOLD_MS,
   FailedAttemptStore,
+  computeGateDueState,
 } from '@sensigo/realm';
 import type { RunStore, RunPhase, RunHealthFinding, FailedAttemptReadResult } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
@@ -260,6 +261,20 @@ export async function listRuns(
       // gate line on a terminal run carrying a stale/leftover pending_gate (the #282 class).
       const age = formatGateAge(run.pending_gate.opened_at);
       line += `  gate: ${run.pending_gate.step_name} (${age})`;
+      // issue #291 (Deliverable 7): the EXPIRED marker + next-reminder-due annotation — the SAME
+      // shared computeGateDueState derivation get_run_state/inspect also read from, off the
+      // frozen record fields only (never the definition — definition-free by construction here).
+      const due = computeGateDueState(run.pending_gate, new Date());
+      if (due.expired) {
+        line += `  EXPIRED ${formatGateAge(run.pending_gate.expires_at!)} ago`;
+      }
+      if (due.next_reminder_due_at !== undefined) {
+        const dueMs = new Date(due.next_reminder_due_at).getTime();
+        const overdueReminder = dueMs <= Date.now();
+        line += overdueReminder
+          ? `  reminder overdue (was due ${formatGateAge(due.next_reminder_due_at)} ago)`
+          : `  reminder due in ${formatGateAge(new Date().toISOString(), new Date(due.next_reminder_due_at))}`;
+      }
     }
     lines.push(line);
   }

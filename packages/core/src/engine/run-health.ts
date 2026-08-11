@@ -117,7 +117,13 @@ export interface RunHealthFinding {
     | 'resolved_gate_with_eligible_guard'
     // issue #302 (disclosure gaps) — a completed seal that still carries failed_steps (designed
     // recovery behavior; see item 6 in the branch-conditioning table above).
-    | 'completed_with_failed_steps';
+    | 'completed_with_failed_steps'
+    // issue #291: a live gate whose frozen enforce clock has expired but nothing has enacted it
+    // yet — the "awaiting a drive" window the feature's own read-side finding names. NEVER a
+    // reminder-overdue signal (the B1 negative pin: the notify clock has zero settlement
+    // authority, so a reminder-overdue gate stays HEALTHY — see the module doc's honest-
+    // admission rule).
+    | 'gate_expired_awaiting_drive';
   /** The affected step, when the finding is step-scoped. Absent for `never_claimed_idle` — a
    *  run-level observation (no step is claimed at all). */
   step?: string;
@@ -267,6 +273,34 @@ export function classifyRunHealth(
   // — a live pending_gate can coexist with the same both-match corruption a terminal record can.
   const gateCorruption = findGateCorruption(run);
   if (gateCorruption !== undefined) findings.push(gateCorruption);
+
+  // issue #291: gate_expired_awaiting_drive — record-fields-only (never the definition), fires
+  // for BOTH an enactable gate AND a finding-only one (expires_at present, on_expiry absent) —
+  // the finding-only payload names its own disposition as 'finding_only' rather than omitting
+  // the finding entirely (a finding-only gate is STILL awaiting a human drive; the operator
+  // should still see it). Unreachable on a terminal record by construction (the terminal branch,
+  // above, returns before this line is ever reached).
+  if (
+    run.pending_gate !== undefined &&
+    run.pending_gate.expires_at !== undefined &&
+    now.getTime() >= new Date(run.pending_gate.expires_at).getTime()
+  ) {
+    const overdueMs = now.getTime() - new Date(run.pending_gate.expires_at).getTime();
+    findings.push({
+      kind: 'gate_expired_awaiting_drive',
+      step: run.pending_gate.step_name,
+      reason:
+        run.pending_gate.on_expiry !== undefined
+          ? `gate expired — awaiting enactment of the declared ${run.pending_gate.on_expiry}`
+          : 'gate expired — finding-only (no on_expiry declared), awaiting a human response',
+      evidence: {
+        gate_id: run.pending_gate.gate_id,
+        expires_at: run.pending_gate.expires_at,
+        overdue_ms: overdueMs,
+        disposition: run.pending_gate.on_expiry ?? 'finding_only',
+      },
+    });
+  }
 
   // issue #279 (increment 2, PR-D, design record §9, N8's surface): resolved-gate-with-eligible-
   // guard. findEligibleGuardSteps ALREADY self-filters both a terminal run and an open gate

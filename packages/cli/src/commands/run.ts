@@ -14,6 +14,7 @@ import {
 import type { WorkflowDefinition, StepDefinition, ExtensionRegistry } from '@sensigo/realm';
 import type { StepDispatcher } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+import { scheduleGateExpiryTimer } from '../agent/gate/gate-expiry-timer.js';
 
 /**
  * Dormant strict posture (issue #197 PR-2, design §6 — the #169→#170 template): read PER CALL,
@@ -134,7 +135,22 @@ export const runCommand = new Command('run')
             const g = run.pending_gate;
             console.log(`  ⏸  Gate: ${g.step_name} | gate_id: ${g.gate_id}`);
             console.log(`  Preview: ${JSON.stringify(g.preview, null, 2)}`);
-            const raw = await rl.question(`  Choice [${g.choices.join('/')}]: `);
+            // issue #291 (Deliverable 4e, Amendment 4): the ATTENDING-PROCESS enactment timer.
+            // CAVEAT (lane-1-verified, stated here per the design's own instruction): this
+            // process is blocked on `rl.question` below and cannot observe an EXTERNAL
+            // resolution (e.g. a different terminal's `realm run respond`) while waiting — but
+            // that is SAFE: if this timer fires having lost that race, the [F1] `already_settled`
+            // lookup-first arm NOOPs harmlessly, and if the human answers after an unattended
+            // enactment already won, `submitHumanResponse` below composes the honest late-response
+            // envelope exactly as any other late submit does.
+            const clearExpiryTimer = scheduleGateExpiryTimer(runId, g, {
+              store,
+              definition,
+              registry,
+            });
+            const raw = await rl.question(`  Choice [${g.choices.join('/')}]: `).finally(() => {
+              clearExpiryTimer();
+            });
             const choice = raw.trim();
             const respondResult = await submitHumanResponse(store, definition, {
               runId,

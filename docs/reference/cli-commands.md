@@ -507,6 +507,50 @@ Submits a human gate response interactively. Prompts for the gate choice.
 realm run respond abc123
 ```
 
+**Expiry-WINS (issue #291):** if the gate carries an authored `gate.timeout_seconds` and has
+already expired unresolved when this is called, the response is **refused** with an honest
+explanation of what actually happened instead — never silently recorded as if it arrived in time.
+See [`gate.timeout_seconds`](yaml-schema.md#gate-timeout-authorable-enforce-notify-clocks) for
+the full disposition/disclosure table.
+
+---
+
+### `realm run reclaim <run-id>`
+
+Recovers a wedged claim (issue #101) — see [Operating & recovering runs](operating-runs.md).
+Never enacts an expired gate itself, even when the same run also carries one: if it does, the
+result carries an advisory pointing at `realm run drain --expired` as the enactment lever.
+
+---
+
+### `realm run drain [<run-id>] [--all]`
+
+Delivers post-commit finalizers for a terminal run (crash-window recovery, issue #279). Dry-run
+by default; `--force` actually drains. `--all` batch-drains every terminal run with an actionable
+pending finalizer.
+
+```bash
+realm run drain abc123              # dry-run: report what would run
+realm run drain abc123 --force      # actually drain
+realm run drain --all --force       # batch-drain every actionable terminal run
+realm run drain abc123 --void <finalizer>   # void one pending finalizer instead
+```
+
+**`--expired` (issue #291, opt-in):** without this flag, `drain` is byte-stable and
+terminal-only — a non-terminal run with an expired gate is completely invisible to it, on both
+per-run and `--all`. With `--expired`:
+
+```bash
+realm run drain abc123 --expired            # dry-run: also reports an expired gate
+realm run drain abc123 --expired --force    # also enacts it (settle_default/abort per the frozen disposition)
+realm run drain --all --expired --force     # batch: enacts every expired, enactable gate store-wide
+```
+
+A `settle_default` disposition may or may not terminalize the run (depends on the workflow's own
+remaining steps); an `abort` disposition always does, and its finalizer terminalization flows
+into the SAME `drain` pass. A finding-only gate (`timeout_seconds` with no `on_expiry`) is listed
+as `expired — finding-only` and is **never** enacted, even under `--force`.
+
 ---
 
 ### `realm run replay <run-id>`
@@ -770,7 +814,7 @@ creates a run, and spawns `realm agent --run-id` (detached) for it.
 ```
 realm listen [workflows...] [--port <n>] [--host <addr>] [--body-timeout-ms <n>]
              [--max-body-bytes <n>] [--max-concurrent <n>] [--dedup-store file|memory]
-             [--log-level debug|info|warn|error]
+             [--log-level debug|info|warn|error] [--sweep-expired-gates <seconds>]
 ```
 
 **Arguments:**
@@ -787,6 +831,15 @@ realm listen [workflows...] [--port <n>] [--host <addr>] [--body-timeout-ms <n>]
 - `--max-concurrent <n>` — in-flight request ceiling before `503` (default `20`)
 - `--dedup-store file|memory` — durable file dedup (default) or in-memory best-effort
 - `--log-level <level>` — `debug` | `info` | `warn` | `error` (default `info`)
+- `--sweep-expired-gates <seconds>` — **opt-in** (issue #291), default OFF: runs a coarse,
+  store-wide sweep every `<seconds>` that enacts every expired, enactable gate this store holds —
+  not just gates on workflows this `listen` process has mounted. The **user-chosen always-on
+  enactor**: realm itself still ships no daemon, but running `listen` with this flag makes that
+  process one. Never drains finalizers itself (no extension registry for a workflow it hasn't
+  mounted) — a terminalizing enactment logs an advisory pointing at `realm run drain --expired`
+  instead. Safe to run alongside any other enactment point (submit/execute_step/drain/an
+  attending process's own timer, or a second `listen` sweeper) — races resolve via the same
+  idempotent arm matrix every enactment point shares.
 
 **Verification (`trigger.auth.mode`):** `shared_secret` (header token — e.g. Gorgias `Authorization:
 Bearer …`), `github` / `stripe` / `hmac` (body signature), or `none` (explicit, discouraged escape

@@ -14,6 +14,7 @@ import {
   KNOWN_STEP_KEYS,
   KNOWN_WORKFLOW_KEYS,
   KNOWN_RETRY_KEYS,
+  KNOWN_GATE_KEYS,
 } from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import {
@@ -1091,6 +1092,134 @@ function parseWorkflowString(
       errors.push(
         `Step '${stepName}': invalid trace_validation_mode '${String(step['trace_validation_mode'])}'; must be 'warn' or 'enforce'`,
       );
+    }
+
+    // issue #291 (authorable gate timeout — the FIRST validation the `gate:` block has ever had):
+    // the E2 positive-integer checks on timeout_seconds/reminder_seconds/reminder_max, the
+    // on_expiry enum, default_choice's required-iff + choice-set validation, and the dead-config
+    // warn cells. Runs regardless of `trust` (a `gate:` block with no gate trust is already inert
+    // — no separate rejection needed; the existing render/mint paths never read it without a
+    // trust value).
+    if (step['gate'] !== undefined) {
+      if (typeof step['gate'] !== 'object' || step['gate'] === null) {
+        errors.push(`Step '${stepName}': 'gate' must be an object`);
+      } else {
+        const gate = step['gate'] as Record<string, unknown>;
+
+        // WARN (do not reject) on an unknown gate-block key — same non-breaking posture as
+        // retry/validation_exhaustion (issues #140/#220).
+        warnings.push(
+          ...findUnknownKeys(gate, KNOWN_GATE_KEYS, {
+            scope: 'step',
+            code: 'UNKNOWN_GATE_KEY',
+            step: stepName,
+            noun: 'gate',
+          }),
+        );
+
+        // E2: timeout_seconds/reminder_seconds/reminder_max must each be a positive integer
+        // (yaml-loader :1164-1174 precedent — the SAME convention as retry.total_timeout_seconds).
+        if (
+          'timeout_seconds' in gate &&
+          (!Number.isInteger(gate['timeout_seconds']) || (gate['timeout_seconds'] as number) <= 0)
+        ) {
+          errors.push(`Step '${stepName}': 'gate.timeout_seconds' must be a positive integer`);
+        }
+        if (
+          'reminder_seconds' in gate &&
+          (!Number.isInteger(gate['reminder_seconds']) || (gate['reminder_seconds'] as number) <= 0)
+        ) {
+          errors.push(`Step '${stepName}': 'gate.reminder_seconds' must be a positive integer`);
+        }
+        if (
+          'reminder_max' in gate &&
+          (!Number.isInteger(gate['reminder_max']) || (gate['reminder_max'] as number) <= 0)
+        ) {
+          errors.push(`Step '${stepName}': 'gate.reminder_max' must be a positive integer`);
+        }
+
+        // on_expiry must be 'settle_default' or 'abort' when provided.
+        const onExpiry = gate['on_expiry'];
+        if (onExpiry !== undefined && onExpiry !== 'settle_default' && onExpiry !== 'abort') {
+          errors.push(
+            `Step '${stepName}': 'gate.on_expiry' must be 'settle_default' or 'abort' (got: ${JSON.stringify(onExpiry)})`,
+          );
+        }
+
+        // default_choice: REQUIRED iff on_expiry === 'settle_default' (E2-style hard error,
+        // mirroring validation_exhaustion.mode:'default' requiring default_output); validated
+        // against the step's own EFFECTIVE STATIC choice set — the EXACT same three-source
+        // derivation the engine mints PendingGate.choices from (execution-loop.ts's gate-open
+        // site: gate.choices ?? input_schema.properties.choice.enum ?? ['approve','reject']) —
+        // so a load-time-legal default_choice can NEVER fail at enactment time.
+        const hasDefaultChoice = 'default_choice' in gate;
+        if (onExpiry === 'settle_default') {
+          if (!hasDefaultChoice) {
+            errors.push(
+              `Step '${stepName}': 'gate.on_expiry: settle_default' requires 'gate.default_choice' ` +
+                `(nothing to resolve the gate with on expiry)`,
+            );
+          } else {
+            const choicesRaw =
+              gate['choices'] ??
+              (step['input_schema'] as JsonSchema | undefined)?.properties?.['choice']?.enum;
+            const effectiveChoices = Array.isArray(choicesRaw)
+              ? (choicesRaw as string[])
+              : ['approve', 'reject'];
+            if (!effectiveChoices.includes(gate['default_choice'] as string)) {
+              errors.push(
+                `Step '${stepName}': 'gate.default_choice' (${JSON.stringify(gate['default_choice'])}) ` +
+                  `is not one of the step's effective choices: ${effectiveChoices.join(', ')}`,
+              );
+            }
+          }
+        } else if (hasDefaultChoice) {
+          // default_choice with on_expiry:'abort' or with no on_expiry at all — inert, not an
+          // error: WARN as dead config (the #220 DEAD_VALIDATION_EXHAUSTION_CONFIG precedent).
+          warnings.push({
+            code: 'DEAD_GATE_CONFIG',
+            severity: resolveSeverity('DEAD_GATE_CONFIG'),
+            scope: 'step',
+            step: stepName,
+            message:
+              `Step '${stepName}': 'gate.default_choice' is ignored without ` +
+              `'gate.on_expiry: settle_default' — set it, or remove 'gate.default_choice'.`,
+          });
+        }
+
+        // Dead config: on_expiry declared but no timeout_seconds — nothing will ever trigger the
+        // enforce clock, so the declared disposition can never enact.
+        if (onExpiry !== undefined && gate['timeout_seconds'] === undefined) {
+          warnings.push({
+            code: 'DEAD_GATE_CONFIG',
+            severity: resolveSeverity('DEAD_GATE_CONFIG'),
+            scope: 'step',
+            step: stepName,
+            message:
+              `Step '${stepName}': 'gate.on_expiry' is ignored without 'gate.timeout_seconds' — ` +
+              `set a timeout, or remove 'gate.on_expiry'.`,
+          });
+        }
+
+        // Dead notification ([F-A2-5]): reminder_seconds >= timeout_seconds means the FIRST
+        // reminder occurrence would never fire before the enforce clock expires.
+        if (
+          typeof gate['reminder_seconds'] === 'number' &&
+          typeof gate['timeout_seconds'] === 'number' &&
+          gate['reminder_seconds'] >= gate['timeout_seconds']
+        ) {
+          warnings.push({
+            code: 'DEAD_GATE_CONFIG',
+            severity: resolveSeverity('DEAD_GATE_CONFIG'),
+            scope: 'step',
+            step: stepName,
+            message:
+              `Step '${stepName}': 'gate.reminder_seconds' (${String(gate['reminder_seconds'])}) ` +
+              `>= 'gate.timeout_seconds' (${String(gate['timeout_seconds'])}) — the first reminder ` +
+              `would never fire before the gate expires.`,
+          });
+        }
+      }
     }
 
     if ('uses_service' in step && typeof step['uses_service'] === 'string') {

@@ -143,6 +143,116 @@ const _retryKeysExtraCheck: _RetryKeysExtra extends never
   : ['KNOWN_RETRY_KEYS has a key RetryConfig does not declare', _RetryKeysExtra] = true;
 
 /**
+ * Gate configuration — choices available to the human reviewer, plus (issue #291) the authored
+ * enforce clock (`timeout_seconds`/`on_expiry`/`default_choice`) and the authored notify clock
+ * (`reminder_seconds`/`reminder_max`). See `docs/reference/yaml-schema.md`'s `structured_output`-
+ * adjacent `## Gate timeout` section for the full authoring/enactment/disclosure contract; the
+ * loader (`yaml-loader.ts`) is the normative validator for every field below.
+ */
+export interface GateConfig {
+  choices?: string[];
+  /**
+   * Slack user ID or handle of the person responsible for resolving this gate.
+   * Used for notification targeting and escalation.
+   * Optional — notifications work without it.
+   * Example: '@mihai.lupu' or 'U012AB3CD'
+   */
+  owner?: string;
+  /**
+   * Developer-authored template string presented to the human reviewer when this gate opens.
+   * Supports {{ context.resources.STEP.FIELD }} and {{ run.params.FIELD }} references.
+   * Resolved from run data at gate-open time. Fail-fast: unresolvable references cause
+   * a stop error rather than opening a gate with broken placeholder text.
+   * When absent, the Slack path falls back to formatGatePreviewForSlack(preview)
+   * and the MCP path falls back to step.prompt resolution (existing behavior).
+   */
+  message?: string;
+  /**
+   * Per-choice messages posted to the Slack thread when the gate resolves via Slack.
+   * Keys must match entries in `choices`. Values are plain text (not mrkdwn templates).
+   * Optional — when absent or when a choice has no entry, the generic fallback is used.
+   * Example:
+   *   resolution_messages:
+   *     send: "✅ Incident report sent to #incidents."
+   *     reject: "❌ Draft discarded. Run will not continue."
+   */
+  resolution_messages?: Record<string, string>;
+  /**
+   * Issue #291 — the authored ENFORCE clock: seconds after gate-open after which the gate is
+   * eligible for level-triggered enactment. Positive integer (E2, same convention as
+   * `timeout_seconds`/`retry.total_timeout_seconds`). Frozen into `PendingGate.expires_at` at
+   * mint (never re-read from the definition — kills the definition-drift livelock). A
+   * `timeout_seconds` with no `on_expiry` is LEGAL — finding-only mode: the run-health
+   * `gate_expired_awaiting_drive` finding fires, but no enactment point ever disposes it.
+   */
+  timeout_seconds?: number;
+  /**
+   * Issue #291 — the disposition enacted once `timeout_seconds` elapses and no human has
+   * responded. `'settle_default'` resolves the gate with `default_choice` (REQUIRED alongside
+   * this value — a load-time hard error otherwise); `'abort'` aborts the run with skip-detail
+   * kind `'gate_expired'`. Absent (with `timeout_seconds` present) = finding-only mode: never
+   * enacted, only disclosed.
+   */
+  on_expiry?: 'settle_default' | 'abort';
+  /**
+   * Issue #291 — the choice enacted on expiry when `on_expiry: 'settle_default'`. REQUIRED iff
+   * `on_expiry: 'settle_default'` (a load-time hard error otherwise); validated at load time
+   * against the step's own effective (static) choice set, exactly like a human's submitted
+   * choice is validated at resolve time. Dead-config warn when present without
+   * `on_expiry: 'settle_default'`.
+   */
+  default_choice?: string;
+  /**
+   * Issue #291 — the authored NOTIFY clock: seconds between reminder occurrences while the gate
+   * is unresolved. Positive integer (E2). NOTIFY-ONLY: zero settlement authority — a reminder
+   * due/overdue is NEVER a run-health finding (the enforce/notify clocks never cross). Frozen
+   * into `PendingGate.reminder_seconds` at mint (record-keyed precedence over the operator's
+   * `reminderIntervalMs` config — author-declares doctrine). Standalone-legal: does NOT require
+   * `timeout_seconds` (a pure-notify gate). Dead-config warn when
+   * `reminder_seconds >= timeout_seconds` (the first occurrence would never fire before expiry).
+   */
+  reminder_seconds?: number;
+  /**
+   * Issue #291 — the repetition cap on the authored reminder cycle (Camunda `R<n>` precedent).
+   * Positive integer (E2). Default 3 when `reminder_seconds` is declared and this is absent.
+   * Reminders stop at whichever comes first: `reminder_max` occurrences, or (when
+   * `timeout_seconds` is also declared) the gate's expiry — the LAST occurrence at/after expiry
+   * carries the switched "expired — will enact <disposition>" wording instead of a plain
+   * reminder.
+   */
+  reminder_max?: number;
+}
+
+/**
+ * Every key GateConfig declares. Used by the YAML loader (issue #291) to warn when a `gate:`
+ * block declares a key that isn't recognized (misspelling, or a stale field) — same non-breaking
+ * posture as KNOWN_STEP_KEYS/KNOWN_RETRY_KEYS (issues #144/#169/#140). This is the FIRST gate
+ * sub-key validation the loader has ever had (previously zero gate sub-keys were checked at all).
+ */
+export const KNOWN_GATE_KEYS = [
+  'choices',
+  'owner',
+  'message',
+  'resolution_messages',
+  'timeout_seconds',
+  'on_expiry',
+  'default_choice',
+  'reminder_seconds',
+  'reminder_max',
+] as const;
+
+// Compile-time drift guard: KNOWN_GATE_KEYS must be an exact partition of GateConfig's keys — see
+// the KNOWN_STEP_KEYS guard above for why this has to be a type-level check.
+type _GateKeysMissing = Exclude<keyof GateConfig, (typeof KNOWN_GATE_KEYS)[number]>;
+type _GateKeysExtra = Exclude<(typeof KNOWN_GATE_KEYS)[number], keyof GateConfig>;
+const _gateKeysMissingCheck: _GateKeysMissing extends never
+  ? true
+  : ['KNOWN_GATE_KEYS is missing a GateConfig key', _GateKeysMissing] = true;
+const _gateKeysExtraCheck: _GateKeysExtra extends never
+  ? true
+  : ['KNOWN_GATE_KEYS has a key GateConfig does not declare', _GateKeysExtra] = true;
+
+/**
  * Controls when a step becomes eligible based on its dependencies' outcomes.
  * Default: 'all_success'.
  */
@@ -343,35 +453,7 @@ export interface StepDefinition {
    */
   use_template?: string;
   /** Gate configuration — choices available to the human reviewer. */
-  gate?: {
-    choices?: string[];
-    /**
-     * Slack user ID or handle of the person responsible for resolving this gate.
-     * Used for notification targeting and escalation.
-     * Optional — notifications work without it.
-     * Example: '@mihai.lupu' or 'U012AB3CD'
-     */
-    owner?: string;
-    /**
-     * Developer-authored template string presented to the human reviewer when this gate opens.
-     * Supports {{ context.resources.STEP.FIELD }} and {{ run.params.FIELD }} references.
-     * Resolved from run data at gate-open time. Fail-fast: unresolvable references cause
-     * a stop error rather than opening a gate with broken placeholder text.
-     * When absent, the Slack path falls back to formatGatePreviewForSlack(preview)
-     * and the MCP path falls back to step.prompt resolution (existing behavior).
-     */
-    message?: string;
-    /**
-     * Per-choice messages posted to the Slack thread when the gate resolves via Slack.
-     * Keys must match entries in `choices`. Values are plain text (not mrkdwn templates).
-     * Optional — when absent or when a choice has no entry, the generic fallback is used.
-     * Example:
-     *   resolution_messages:
-     *     send: "✅ Incident report sent to #incidents."
-     *     reject: "❌ Draft discarded. Run will not continue."
-     */
-    resolution_messages?: Record<string, string>;
-  };
+  gate?: GateConfig;
   /** Name of the agent profile for this step. Only valid on execution: 'agent' steps. */
   agent_profile?: string;
   /**

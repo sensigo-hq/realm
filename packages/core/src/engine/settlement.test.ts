@@ -8,12 +8,21 @@
 // migrates the five remaining legacy write sites (gate-open, gate-resolution, guard-chain,
 // capability-block release, compensating un-claim) onto settleStep — deleting PR-C's
 // engine-inertness guard (its whole premise is now false) and widening this positive pin to
-// EXACTLY EIGHT `.settleStep(` invocation sites: the three PR-B shipped (complete/fail/
-// handler-abort) plus the five PR-D just migrated (gate-open/gate-resolution/guard-chain/
-// capability-release/compensating-unclaim) — all inside execution-loop.ts (the only migrated
-// file), with packages/mcp-server/src/** staying clean (it constructs no deltas of its own; it
-// only calls into execution-loop.ts's exported functions). A future accidental NINTH call site (or
-// a stray call outside execution-loop.ts) fails this test loudly, the same anti-recurrence
+// EIGHT `.settleStep(` invocation sites: the three PR-B shipped (complete/fail/handler-abort)
+// plus the five PR-D just migrated (gate-open/gate-resolution/guard-chain/capability-release/
+// compensating-unclaim) — all inside execution-loop.ts (the only migrated file), with
+// packages/mcp-server/src/** staying clean (it constructs no deltas of its own; it only calls
+// into execution-loop.ts's exported functions).
+//
+// issue #291 (Deliverable 4a): submitHumanResponse's migrated path gained a NINTH site — the
+// `expire_gate` settleStep call issued when the [F3] `gate_expired_pending` write-free refusal
+// fires ([F3] shape c: the caller reacts to the refusal with its OWN settleStep, rather than
+// applySettleGate enacting anything itself). The legacy (non-declaring-store) path does NOT add
+// a tenth site: per [F4]'s explicit decision, it enacts via the pure `applySettlement` transform
+// directly + this store's OWN `store.update()` CAS write (it has no `settleStep` to call at
+// all) — so the count stays keyed on `.settleStep(` invocations specifically, not on "every
+// expiry-enactment call site" more broadly. A future accidental TENTH `.settleStep(` call site
+// (or a stray call outside execution-loop.ts) fails this test loudly, the same anti-recurrence
 // discipline the deleted PR-A guard had, inverted.
 //
 // Invocation-scoped (matches `.settleStep(` literally, not a bare `settleStep` name match) so this
@@ -35,8 +44,10 @@ const SCANNED_ROOTS = [
 
 const INVOCATION = '.settleStep(';
 // complete/fail/handler-abort (PR-B) + gate-open/gate-resolution/guard-chain/capability-release/
-// compensating-unclaim (PR-D, increment 2).
-const EXPECTED_SITE_COUNT = 8;
+// compensating-unclaim (PR-D, increment 2) + expire_gate on the [F3] gate_expired_pending
+// refusal leg (submitHumanResponse) + expire_gate on the execute_step pre-refusal enact-then-
+// proceed leg (`enactExpiredGateIfDue`) — both issue #291, Deliverable 4a/4b.
+const EXPECTED_SITE_COUNT = 10;
 const MIGRATED_FILE = join(PACKAGES_DIR, 'core', 'src', 'engine', 'execution-loop.ts');
 
 /** Every non-test, non-declaration .ts source file under `root`, recursively. */
@@ -71,7 +82,7 @@ function findInvocationSites(): { file: string; line: number; text: string }[] {
   return sites;
 }
 
-describe('RunStore.settleStep is MIGRATED at exactly eight sites — increment 2, PR-D', () => {
+describe('RunStore.settleStep is MIGRATED at exactly ten sites — increment 2 PR-D + issue #291', () => {
   it('the scan itself is wired correctly (finds at least one .ts source file per root)', () => {
     for (const root of SCANNED_ROOTS) {
       expect(
@@ -81,7 +92,7 @@ describe('RunStore.settleStep is MIGRATED at exactly eight sites — increment 2
     }
   });
 
-  it(`EXACTLY ${EXPECTED_SITE_COUNT} '.settleStep(' invocation sites exist (complete/fail/handler-abort/gate-open/gate-resolution/guard-chain/capability-release/compensating-unclaim)`, () => {
+  it(`EXACTLY ${EXPECTED_SITE_COUNT} '.settleStep(' invocation sites exist (complete/fail/handler-abort/gate-open/gate-resolution/guard-chain/capability-release/compensating-unclaim/expire-gate-submit/expire-gate-execute-step)`, () => {
     const sites = findInvocationSites();
     expect(
       sites.length,

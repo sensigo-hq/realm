@@ -29,7 +29,8 @@ import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-stor
 import { storeDeclaresSeal, storeDeclaresNonceCarriage } from '../store/trace-buffer-store.js';
 import { partitionBufferedEntries, type BufferedEntryPartition } from './trace-adoption.js';
 import { deriveDefaultedSteps } from './defaulted-steps.js';
-import { selectFinalizers, deriveEffectiveTriggers } from './settlement.js';
+import { computeGateDueState } from './gate-timing.js';
+import { selectFinalizers, deriveEffectiveTriggers, applySettlement } from './settlement.js';
 import type {
   SettleStepDelta,
   SettlementResult,
@@ -38,6 +39,7 @@ import type {
   SettleGateDelta,
   SettleGuardDelta,
   ReleaseStepDelta,
+  ExpireGateDelta,
 } from '../types/settlement.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import {
@@ -132,6 +134,11 @@ export interface ExecuteStepOptions {
    * today's byte-identical behavior.
    */
   writerNonce?: string;
+  /**
+   * Issue #291: injectable clock for deterministic expiry tests (the execute_step pre-refusal
+   * enact-then-proceed check reads this). Defaults to `new Date()` — real callers never set it.
+   */
+  now?: Date;
 }
 
 export interface SubmitGateOptions {
@@ -153,6 +160,12 @@ export interface SubmitGateOptions {
    * credential model stays authoritative); no arm ever reads it.
    */
   respondedBy?: string;
+  /**
+   * Issue #291: injectable clock for deterministic expiry tests (the F3 write-free
+   * `gate_expired_pending` refusal + the caller-issued `expire_gate` follow-up both read this).
+   * Defaults to `new Date()` — real callers never set it.
+   */
+  now?: Date;
 }
 
 export interface ExecuteChainOptions {
@@ -1147,6 +1160,90 @@ const DORMANCY_ADVISORY =
   '(RunStore.settleStep); upgrade the store to close the fan-out seal race (issue #279)';
 
 /**
+ * issue #291 (D1 "execute_step pre-refusal" enactment point — enact-then-proceed): if `run`
+ * carries an expired, enactable gate (`expires_at` past, `on_expiry` frozen), enacts it via the
+ * SAME dormancy-discriminated pattern `submitHumanResponse` uses (settleStep when declared, else
+ * the pure `applySettlement` transform + `store.update`'s CAS write) and returns the resulting
+ * (possibly unchanged) run plus any disclosure line for the caller's `warnings` array. A
+ * finding-only gate (no `on_expiry`) is a fast no-op — nothing to enact, never touched. Any
+ * refusal from the enactment attempt (a benign race: `already_settled`/`not_expired`/
+ * `gate_mismatch`/`run_terminal`) is absorbed silently — the caller's own subsequent eligibility
+ * re-check against the returned `run` is what actually matters, and a NOOP correctly leaves `run`
+ * as the fresh state the refusal matched against. [F4] advisory-not-crash: an external store's
+ * OWN `settleStep` throwing on the `expire_gate` kind (a pre-#291 re-implementing store
+ * honoring the union-openness contract's refuse-loud mandate) degrades to a console advisory and
+ * proceeds with `run` UNCHANGED — never crashes the caller's verb.
+ */
+async function enactExpiredGateIfDue(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  run: RunRecord,
+  registry: ExtensionRegistry | undefined,
+  now: Date,
+): Promise<{ run: RunRecord; disclosure?: string }> {
+  const gate = run.pending_gate;
+  if (
+    gate === undefined ||
+    gate.expires_at === undefined ||
+    gate.on_expiry === undefined ||
+    now.getTime() < new Date(gate.expires_at).getTime()
+  ) {
+    return { run };
+  }
+
+  const delta = { kind: 'expire_gate' as const, gateId: gate.gate_id };
+  let expireOutcome: SettlementResult;
+  try {
+    if (store.settleStep !== undefined) {
+      expireOutcome = await store.settleStep(run.id, delta, definition, { now });
+    } else {
+      const pure = applySettlement(run, delta, definition, { now });
+      if (!pure.applied) {
+        return { run: pure.run };
+      }
+      const persisted = await store.update(pure.run);
+      expireOutcome = { ...pure, run: persisted };
+    }
+  } catch (err) {
+    console.warn(
+      `⚠ realm: could not enact run '${run.id}''s expired gate '${gate.gate_id}' (${err instanceof Error ? err.message : String(err)}) — proceeding with the pre-enactment state.`,
+    );
+    return { run };
+  }
+
+  if (!expireOutcome.applied) {
+    return { run: expireOutcome.run };
+  }
+
+  let finalRun = expireOutcome.run;
+  const disclosureParts: string[] = [];
+  const disposition =
+    finalRun.settled?.[gate.step_name]?.resolved_by === 'timeout' ? 'settle_default' : 'abort';
+  disclosureParts.push(
+    `gate '${gate.gate_id}' on '${gate.step_name}' had expired — enacted declared ${disposition} before this execute_step call (enacted_via: execute_step).`,
+  );
+
+  if (expireOutcome.transitioned) {
+    try {
+      const drainOutcome = await drainFinalizers(store, definition, registry, run.id);
+      finalRun = drainOutcome.run;
+      disclosureParts.push(...drainOutcome.warnings);
+    } catch (err) {
+      disclosureParts.push(
+        `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  const disclosure = disclosureParts.join(' ');
+  // Printed unconditionally (never silently dropped, regardless of which downstream envelope
+  // path the caller's own request takes) — the caller ALSO threads this into whichever
+  // response-envelope warnings array is in scope at its own return point.
+  console.warn(`⚠ ${disclosure}`);
+  return { run: finalRun, disclosure };
+}
+
+/**
  * Validates eligibility, claims the step, executes it through the dispatcher with retry
  * and timeout support, captures evidence, persists the updated run record, and returns
  * a ResponseEnvelope containing the outcome and the next eligible actions.
@@ -1173,6 +1270,25 @@ export async function executeStep(
     return makeErrorEnvelope(options, null, internal);
   }
 
+  // Step 1.5 (issue #291, D1 "execute_step pre-refusal" enactment point): if this run's gate has
+  // expired with an enactable disposition, enact it BEFORE the eligibility check below — a
+  // finding-only or non-expired gate is an immediate no-op (same `run` reference back). Level-
+  // triggering: the requested step may become newly eligible right here (settle_default/abort
+  // both clear `pending_gate`, un-blocking `findEligibleSteps`'s gate-serialization exclusion).
+  const gateExpiryCheckNow = options.now ?? new Date();
+  let gateExpiryDisclosure: string | undefined;
+  if (run.pending_gate !== undefined) {
+    const enacted = await enactExpiredGateIfDue(
+      store,
+      definition,
+      run,
+      options.registry,
+      gateExpiryCheckNow,
+    );
+    run = enacted.run;
+    gateExpiryDisclosure = enacted.disclosure;
+  }
+
   // Step 2: Check eligibility.
   const eligible = findEligibleSteps(definition, run);
   if (!eligible.includes(options.command)) {
@@ -1184,7 +1300,7 @@ export async function executeStep(
       status: 'blocked',
       data: {},
       evidence: [],
-      warnings: [],
+      warnings: gateExpiryDisclosure !== undefined ? [gateExpiryDisclosure] : [],
       errors: [],
       agent_action: 'resolve_precondition' as const,
       context_hint: `Step '${options.command}' is not eligible in the current run state.`,
@@ -1432,6 +1548,9 @@ export async function executeStep(
   // walEntries is declared at this outer scope because it is REASSIGNED to the post-claim read
   // below and referenced at the captureEvidence call site further down this function.
   const traceWarnings: string[] = [];
+  // issue #291: the Step-1.5 gate-expiry disclosure (if any) now rides every downstream envelope
+  // this function's own `traceWarnings` threading already reaches.
+  if (gateExpiryDisclosure !== undefined) traceWarnings.push(gateExpiryDisclosure);
   let preNormalizedTrace: NormalizeTraceResult | undefined;
   let walEntries: BufferedEntry[] = [];
   let preClaimSchemaResult:
@@ -3111,6 +3230,19 @@ export async function executeStep(
     }
 
     const gateConfig = stepDef!.gate;
+    const openedAt = new Date();
+
+    // issue #291 (mint-time freeze, [F2]): the gate's OWN enforce/notify clock fields, frozen
+    // into the record HERE — never re-read from the definition by any later enactment/
+    // notification/read-side surface (the definition-drift-livelock cure). `expires_at` derives
+    // from THIS `openedAt` instant, never a second `new Date()` call. `reminder_max` defaults to
+    // 3 at mint when `reminder_seconds` is declared and the author gave no explicit value — so
+    // every later reader can treat the frozen field as authoritative without re-applying a
+    // default itself.
+    const expiresAt =
+      gateConfig?.timeout_seconds !== undefined
+        ? new Date(openedAt.getTime() + gateConfig.timeout_seconds * 1000).toISOString()
+        : undefined;
 
     // The PendingGate object is built EXACTLY as before, regardless of which path commits it below
     // (issue #279, increment 2, PR-D, Deliverable 1a — the migrated `open_gate` delta carries this
@@ -3120,13 +3252,31 @@ export async function executeStep(
       step_name,
       preview: output,
       choices,
-      opened_at: new Date().toISOString(),
+      opened_at: openedAt.toISOString(),
       ...(gateConfig?.owner !== undefined ? { owner: gateConfig.owner } : {}),
       ...(resolvedGateMessage !== undefined ? { resolved_message: resolvedGateMessage } : {}),
       ...(gateConfig?.resolution_messages !== undefined
         ? { resolution_messages: gateConfig.resolution_messages }
         : {}),
+      // issue #291: the mint-frozen enforce clock.
+      ...(expiresAt !== undefined ? { expires_at: expiresAt } : {}),
+      ...(gateConfig?.on_expiry !== undefined ? { on_expiry: gateConfig.on_expiry } : {}),
+      ...(gateConfig?.default_choice !== undefined
+        ? { default_choice: gateConfig.default_choice }
+        : {}),
+      // issue #291: the mint-frozen notify clock (standalone-legal — independent of expiresAt).
+      ...(gateConfig?.reminder_seconds !== undefined
+        ? {
+            reminder_seconds: gateConfig.reminder_seconds,
+            reminder_max: gateConfig.reminder_max ?? 3,
+          }
+        : {}),
     };
+
+    // issue #291 ([F-A2-6]): computed ONCE for the whole gate-open envelope (migrated + legacy
+    // both read it) — the absolute first-due notify-clock timestamp, when reminder_seconds was
+    // declared.
+    const gateOpenDueState = computeGateDueState(pendingGate, openedAt);
 
     // gate.display fallback chain: gate.message resolved → step.prompt resolved → absent
     const resolvedGateDisplay =
@@ -3233,6 +3383,7 @@ export async function executeStep(
           // discarded). Calm, confirm_required (the gate genuinely IS still open) — never
           // report_to_user (no `agent_action` set, matching the fresh-open confirm_required shape).
           const liveGate = result.gate!;
+          const liveGateDueState = computeGateDueState(liveGate, new Date());
           return {
             command: options.command,
             run_id: options.runId,
@@ -3256,6 +3407,10 @@ export async function executeStep(
                 ? { display: liveGate.resolved_message }
                 : {}),
               response_spec: { choices: liveGate.choices },
+              ...(liveGate.expires_at !== undefined ? { expires_at: liveGate.expires_at } : {}),
+              ...(liveGateDueState.next_reminder_due_at !== undefined
+                ? { first_reminder_due_at: liveGateDueState.next_reminder_due_at }
+                : {}),
             },
           };
         }
@@ -3294,6 +3449,10 @@ export async function executeStep(
             ? { agent_hint: resolvedGateInstructions }
             : {}),
           response_spec: { choices },
+          ...(pendingGate.expires_at !== undefined ? { expires_at: pendingGate.expires_at } : {}),
+          ...(gateOpenDueState.next_reminder_due_at !== undefined
+            ? { first_reminder_due_at: gateOpenDueState.next_reminder_due_at }
+            : {}),
         },
       };
     }
@@ -3351,6 +3510,10 @@ export async function executeStep(
         ...(resolvedGateDisplay !== undefined ? { display: resolvedGateDisplay } : {}),
         ...(resolvedGateInstructions !== undefined ? { agent_hint: resolvedGateInstructions } : {}),
         response_spec: { choices },
+        ...(pendingGate.expires_at !== undefined ? { expires_at: pendingGate.expires_at } : {}),
+        ...(gateOpenDueState.next_reminder_due_at !== undefined
+          ? { first_reminder_due_at: gateOpenDueState.next_reminder_due_at }
+          : {}),
       },
     };
   }
@@ -3746,6 +3909,157 @@ function buildGateResponseSnapshot(
   };
 }
 
+/** Renders a millisecond duration as a compact human-readable string ("3m", "2h 15m", "1d 4h") —
+ *  issue #291 [F8] overdue-delta disclosure. Local to this file (core has no CLI dependency);
+ *  mirrors the CLI's own `formatGateAge` shape but is independently maintained — no cross-package
+ *  import for a two-branch formatter. */
+function formatOverdueDuration(ms: number): string {
+  const totalMinutes = Math.floor(ms / 60_000);
+  const totalHours = Math.floor(totalMinutes / 60);
+  const totalDays = Math.floor(totalHours / 24);
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  if (totalHours < 24) return `${totalHours}h ${totalMinutes % 60}m`;
+  return `${totalDays}d ${totalHours % 24}h`;
+}
+
+/**
+ * issue #291 ([F3] shape c / [F8] / [F12]): composes the honest envelope for a late gate response
+ * that lost the race to the enforce clock — called AFTER an `expire_gate` settleStep attempt,
+ * regardless of whether THIS call enacted it (`applied: true`) or a racing enactment point already
+ * had (`applied: false, reason: 'already_settled'` — F1's arms make both paths land on the SAME
+ * committed disposition, read from `finalRun`). `finalRun` must be the state that actually reflects
+ * the enactment (either `expireResult.run` directly). Drains post-commit finalizers when the
+ * enactment itself transitioned the run (F7 — submit's existing transitioned-drain plumbing,
+ * extended to the expire result); a store lacking `settleStep`'s companion `drainFinalizers`
+ * capability is not a concern here — `drainFinalizers` works off any `RunStore`.
+ */
+async function composeExpiredGateEnvelope(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  registry: ExtensionRegistry | undefined,
+  originalGateId: string,
+  originalChoice: string,
+  overdueMs: number,
+  expireResult: SettlementResult,
+): Promise<ResponseEnvelope> {
+  let finalRun = expireResult.run;
+  let drainWarnings: string[] = [];
+  if (expireResult.applied && expireResult.transitioned) {
+    try {
+      const drainOutcome = await drainFinalizers(store, definition, registry, finalRun.id);
+      finalRun = drainOutcome.run;
+      drainWarnings = drainOutcome.warnings;
+    } catch (err) {
+      drainWarnings = [
+        `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
+      ];
+    }
+  }
+  const overdueLabel = formatOverdueDuration(Math.max(0, overdueMs));
+
+  // settle_default disposition: a 'gate' settled entry bearing this gateId, resolved_by:'timeout'.
+  const settledEntry = Object.entries(finalRun.settled ?? {}).find(
+    ([, e]) => e.outcome === 'gate' && e.token === originalGateId && e.resolved_by === 'timeout',
+  );
+  if (settledEntry !== undefined) {
+    const [stepName, entry] = settledEntry;
+    const enactedDisclosure = `gate '${originalGateId}' expired ${overdueLabel} ago and was enacted (settle_default: '${entry.choice}') before this response arrived — enacted_via: submit.`;
+    if (entry.choice === originalChoice) {
+      // [F12]'s own pinned string — same choice, still honestly not "your" recorded response.
+      return {
+        command: stepName,
+        run_id: finalRun.id,
+        run_version: finalRun.version,
+        status: 'ok',
+        data: {},
+        evidence: [],
+        warnings: mergeWarnings([], enactedDisclosure, ...drainWarnings),
+        errors: [],
+        context_hint:
+          'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
+        run_phase: finalRun.run_phase,
+        next_actions: finalRun.terminal_state ? [] : buildNextActions(definition, finalRun),
+      };
+    }
+    const err = new WorkflowError(
+      `Gate '${originalGateId}' was settled by timeout with choice '${entry.choice}' — your choice '${originalChoice}' was not recorded.`,
+      {
+        code: 'STATE_BLOCKED',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: {
+          runId: finalRun.id,
+          gateId: originalGateId,
+          winning_choice: entry.choice,
+          resolved_by: 'timeout',
+        },
+      },
+    );
+    const envelope = errorEnvelope(
+      stepName,
+      finalRun.id,
+      finalRun.version,
+      err,
+      err.message,
+      finalRun.run_phase,
+    );
+    return { ...envelope, warnings: mergeWarnings([], enactedDisclosure, ...drainWarnings) };
+  }
+
+  // abort disposition: a skip_details entry kind 'gate_expired' bearing this gateId.
+  const abortEntry = Object.entries(finalRun.skip_details ?? {}).find(
+    ([, d]) => d.kind === 'gate_expired' && d.gate_id === originalGateId,
+  );
+  if (abortEntry !== undefined) {
+    const [stepName] = abortEntry;
+    const enactedDisclosure = `gate '${originalGateId}' expired ${overdueLabel} ago and was enacted (abort) before this response arrived — enacted_via: submit.`;
+    const err = new WorkflowError(
+      `Gate '${originalGateId}' on '${stepName}' expired and the run aborted per the ` +
+        `workflow's declared on_expiry — your choice was NOT recorded.`,
+      {
+        code: 'STATE_RUN_TERMINAL',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: { runId: finalRun.id, gateId: originalGateId, step_name: stepName },
+      },
+    );
+    const envelope = errorEnvelope(
+      stepName,
+      finalRun.id,
+      finalRun.version,
+      err,
+      err.message,
+      finalRun.run_phase,
+    );
+    return { ...envelope, warnings: mergeWarnings([], enactedDisclosure, ...drainWarnings) };
+  }
+
+  // Unreachable in-contract (the expire delta either enacted it here or a racing enactment point
+  // already had — one of the two branches above always matches). Defensive fallback: never throw
+  // out of a response-envelope-returning function; report the ambiguity honestly instead.
+  const err = new WorkflowError(
+    `Gate '${originalGateId}' expired, but its enacted disposition could not be determined from ` +
+      `the resulting record — this indicates a store or engine defect, not a normal refusal.`,
+    {
+      code: 'ENGINE_INTERNAL',
+      category: 'ENGINE',
+      agentAction: 'stop',
+      retryable: false,
+      details: { runId: finalRun.id, gateId: originalGateId },
+    },
+  );
+  return errorEnvelope(
+    'submit_gate',
+    finalRun.id,
+    finalRun.version,
+    err,
+    err.message,
+    finalRun.run_phase,
+  );
+}
+
 export async function submitHumanResponse(
   store: RunStore,
   definition: WorkflowDefinition,
@@ -3768,13 +4082,17 @@ export async function submitHumanResponse(
     return errorEnvelope('submit_gate', options.runId, 0, e);
   }
 
+  // issue #291: injectable clock, hoisted here so BOTH the migrated and legacy paths below use
+  // the SAME instant for their expiry checks.
+  const now = options.now ?? new Date();
+
   // issue #279 (increment 2, PR-D, Deliverable 1b): the migrated path — the four legacy
   // verify-arms below (1a-4) become settle_gate's OWN predicate arms; this branch skips them
   // entirely and settles atomically against FRESH state via the store's own settleStep. Dormancy:
   // an undeclaring store falls through to the byte-identical legacy path below (I16/#169
   // fail-closed dormancy).
   if (store.settleStep !== undefined) {
-    const respondedAt = new Date();
+    const respondedAt = now;
     // Evidence rule (design record §6 lens-3 S2): built from the PRE-READ `pending_gate` IFF it
     // matches options.gateId — else `[]` (the arm can never APPLY against a non-matching fresh
     // read either, so an empty evidence array is inert there; a matching pre-read is guaranteed
@@ -3801,7 +4119,9 @@ export async function submitHumanResponse(
 
     let result: SettlementResult;
     try {
-      result = await store.settleStep(options.runId, delta, definition);
+      // issue #291 ([F3]): the injectable `now` reaches applySettleGate's write-free
+      // gate_expired_pending arm through this SAME options.now plumbing.
+      result = await store.settleStep(options.runId, delta, definition, { now });
     } catch (err) {
       // Thrown infra errors keep the SAME shape as the legacy path's own final-persist catch,
       // below (design record §6: "thrown infra errors ALSO keep the :3563-3581 shape").
@@ -3826,6 +4146,50 @@ export async function submitHumanResponse(
 
     if (!result.applied) {
       switch (result.reason) {
+        case 'gate_expired_pending': {
+          // issue #291 ([F3] shape c): the live gate has already expired unresolved — issue the
+          // caller-composed expire_gate settleStep ([F1]'s arms make this idempotent even under a
+          // race with another enactment point) and compose the honest late-response envelope from
+          // whatever the enactment result actually committed.
+          const overdueMs =
+            run.pending_gate?.expires_at !== undefined
+              ? now.getTime() - new Date(run.pending_gate.expires_at).getTime()
+              : 0;
+          const expireDelta: ExpireGateDelta = { kind: 'expire_gate', gateId: options.gateId };
+          let expireResult: SettlementResult;
+          try {
+            expireResult = await store.settleStep(options.runId, expireDelta, definition, {
+              now,
+            });
+          } catch (err) {
+            const e =
+              err instanceof WorkflowError
+                ? err
+                : new WorkflowError("Failed to enact the gate's expiry", {
+                    code: 'ENGINE_STORE_FAILED',
+                    category: 'ENGINE',
+                    agentAction: 'stop',
+                    retryable: false,
+                  });
+            return errorEnvelope(
+              run.pending_gate?.step_name ?? 'submit_gate',
+              options.runId,
+              result.run.version,
+              e,
+              "Failed to enact the gate's expiry.",
+              result.run.run_phase,
+            );
+          }
+          return composeExpiredGateEnvelope(
+            store,
+            definition,
+            options.registry,
+            options.gateId,
+            options.choice,
+            overdueMs,
+            expireResult,
+          );
+        }
         case 'already_settled': {
           // Calm ok envelope stating the resolution already committed (same choice) — never
           // report_to_user. Drain: on already_settled ∧ pending ledger entries non-empty — hand-
@@ -4128,6 +4492,75 @@ export async function submitHumanResponse(
         retryable: false,
       }),
       `Gate ID mismatch on run '${options.runId}'.`,
+    );
+  }
+
+  // 3.5. issue #291 ([F4] legacy-store expiry — the ONE enactment point F4 explicitly gives a
+  // legacy-CAS fallback, since it already owns one): the gate has expired AND has an enactable
+  // disposition (on_expiry frozen — a finding-only gate, expires_at with no on_expiry, is
+  // excluded exactly like applySettleGate's own F3 gating, so a finding-only gate's human
+  // response resolves normally below, however overdue). Enacted via the SAME pure
+  // `applySettlement` transform this store's declaring siblings use through `settleStep` — this
+  // store has no `settleStep` of its own, so the result is persisted through the version-CAS
+  // `store.update()` this legacy path already owns. A CAS-mismatch (a genuine race) surfaces as
+  // an honest error, matching this path's existing no-retry risk profile everywhere else.
+  if (
+    run.pending_gate.expires_at !== undefined &&
+    run.pending_gate.on_expiry !== undefined &&
+    now.getTime() >= new Date(run.pending_gate.expires_at).getTime()
+  ) {
+    const overdueMs = now.getTime() - new Date(run.pending_gate.expires_at).getTime();
+    const expireOutcome = applySettlement(
+      run,
+      { kind: 'expire_gate', gateId: options.gateId },
+      definition,
+      { now },
+    );
+    if (!expireOutcome.applied) {
+      // In-contract for this snapshot-based path: the local `run` might already reflect a prior
+      // enactment (e.g. a same-process retry) — already_settled composes the honest envelope the
+      // same way the migrated path's race leg does, reading disposition off `expireOutcome.run`
+      // (the very snapshot the refusal matched against).
+      return composeExpiredGateEnvelope(
+        store,
+        definition,
+        options.registry,
+        options.gateId,
+        options.choice,
+        overdueMs,
+        expireOutcome,
+      );
+    }
+    let persistedExpiry: RunRecord;
+    try {
+      persistedExpiry = await store.update(expireOutcome.run);
+    } catch (err) {
+      const e =
+        err instanceof WorkflowError
+          ? err
+          : new WorkflowError("Failed to persist the gate's expiry", {
+              code: 'ENGINE_STORE_FAILED',
+              category: 'ENGINE',
+              agentAction: 'stop',
+              retryable: false,
+            });
+      return errorEnvelope(
+        run.pending_gate.step_name,
+        options.runId,
+        run.version,
+        e,
+        "Failed to enact the gate's expiry.",
+        run.run_phase,
+      );
+    }
+    return composeExpiredGateEnvelope(
+      store,
+      definition,
+      options.registry,
+      options.gateId,
+      options.choice,
+      overdueMs,
+      { ...expireOutcome, run: persistedExpiry },
     );
   }
 

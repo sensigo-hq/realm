@@ -12,7 +12,7 @@
 // packages/core/src/engine (outside this file) or packages/mcp-server calls `applySettlement` or
 // a store's `settleStep`. PR-B migrates the three legacy seal sites to construct `SettlementDelta`
 // values and call `store.settleStep` instead of `store.update` directly.
-import type { RunRecord } from '../types/run-record.js';
+import type { RunRecord, EvidenceSnapshot } from '../types/run-record.js';
 import type { WorkflowDefinition, FinalizerTrigger } from '../types/workflow-definition.js';
 import type {
   SettlementDelta,
@@ -25,6 +25,7 @@ import type {
   SettleGateDelta,
   SettleGuardDelta,
   ReleaseStepDelta,
+  ExpireGateDelta,
 } from '../types/settlement.js';
 import {
   deriveRunPhase,
@@ -577,6 +578,10 @@ function applySettleGate(
   fresh: RunRecord,
   delta: SettleGateDelta,
   definition: WorkflowDefinition,
+  // issue #291 ([F3] shape c, lane-1 authorized): injectable `now` threaded through, mirroring
+  // every other `now`-consuming arm (`applySettleStep`'s abort branch, `applyExpireGate` below).
+  // The ONE authorized addition to this function — every other line is byte-unchanged from PR-C.
+  now: Date,
 ): SettlementResult {
   const { gateId, choice, evidence } = delta;
 
@@ -605,6 +610,27 @@ function applySettleGate(
   }
 
   if (fresh.pending_gate !== undefined && fresh.pending_gate.gate_id === gateId) {
+    // issue #291 ([F3] shape c, the expiry-WINS mechanism): a WRITE-FREE refusal when the live
+    // gate has expired unresolved AND has an enactable disposition (`on_expiry` frozen) —
+    // checked under the lock, with the injectable `now`, BEFORE choice_not_eligible. The caller
+    // (submitHumanResponse) reacts to this refusal by issuing its OWN `expire_gate` settleStep
+    // (this function never enacts anything itself — that stays applyExpireGate's job) and
+    // composing the honest envelope from the enactment result. This is exact-at-the-
+    // serialization-point-once-observed, uniform-fleet-only: a gate minted by an old binary (no
+    // `expires_at` frozen) can never trip this arm. The `on_expiry !== undefined` conjunct is
+    // load-bearing: a FINDING-ONLY gate (expires_at present, on_expiry absent) has NOTHING that
+    // could ever win this race — refusing the human here with no enactable disposition to
+    // compose an envelope from would strand the human's response forever (the exact
+    // undisposable dead-end this feature exists to cure), since expire_gate would just refuse
+    // `no_disposition` right back. A finding-only gate's human response always resolves
+    // normally, however overdue.
+    if (
+      fresh.pending_gate.expires_at !== undefined &&
+      fresh.pending_gate.on_expiry !== undefined &&
+      now.getTime() >= new Date(fresh.pending_gate.expires_at).getTime()
+    ) {
+      return { applied: false, reason: 'gate_expired_pending', run: fresh };
+    }
     if (!fresh.pending_gate.choices.includes(choice)) {
       return {
         applied: false,
@@ -661,6 +687,189 @@ function applySettleGate(
 
   // Superseded/unknown gateId on a live run.
   return { applied: false, reason: 'gate_mismatch', run: fresh };
+}
+
+// ---------------------------------------------------------------------------
+// §3 expireGateArms (issue #291; design record `plans/issue-291/design-d2.md` [F1]/[F2]/[F3]/[F9])
+// — fence = gateId ONLY (mirrors settleGateArms — L20). Enacts a gate's FROZEN enforce-clock
+// disposition once expired-unresolved. Reads the RECORD only, never the workflow definition
+// (F2's whole point — kills the definition-drift livelock: a re-registered workflow's changed
+// `choices`/`default_choice` can never make an already-open gate's expiry refuse forever).
+// ---------------------------------------------------------------------------
+
+function applyExpireGate(
+  fresh: RunRecord,
+  delta: ExpireGateDelta,
+  definition: WorkflowDefinition,
+  now: Date,
+): SettlementResult {
+  const { gateId } = delta;
+
+  // Lookup FIRST ([F1] i; D3 §0.2 fail-safer-under-corruption — same order as settleGateArms).
+  const hit = findSettledGateEntry(fresh, gateId);
+  if (hit !== undefined) {
+    return { applied: false, reason: 'already_settled', run: fresh };
+  }
+
+  // Terminal split ([F1] iv, the replay/crash-recovery arm): a prior expire-abort enactment for
+  // THIS gateId already sealed the run — NOOP (idempotent replay). Any OTHER terminal cause
+  // (a different disposition, a concurrent human resolve that raced ahead, a handler-abort on a
+  // sibling) REFUSES run_terminal — never silently resurrect or re-terminalize.
+  if (isTerminal(fresh)) {
+    const expiredEntry = Object.entries(fresh.skip_details ?? {}).find(
+      ([, d]) => d.kind === 'gate_expired' && d.gate_id === gateId,
+    );
+    if (expiredEntry !== undefined) {
+      return { applied: false, reason: 'already_settled', run: fresh };
+    }
+    return { applied: false, reason: 'run_terminal', run: fresh };
+  }
+
+  // No/other pending_gate ([F1] iii) — superseded or unknown gateId on a live run. Mirrors
+  // settleGateArms's own final fallthrough exactly.
+  if (fresh.pending_gate === undefined || fresh.pending_gate.gate_id !== gateId) {
+    return { applied: false, reason: 'gate_mismatch', run: fresh };
+  }
+
+  const gate = fresh.pending_gate;
+
+  // now < expires_at ([F1] the new arm-verified refusal, NEVER trusting the caller's own clock):
+  // premature enactment attempt. Absent expires_at (a grandfathered/old-binary-minted gate, R-d)
+  // falls into this same refusal — it can never legitimately expire, so no in-contract caller
+  // should ever construct this delta for one; defensive rather than a crash either way.
+  if (gate.expires_at === undefined || now.getTime() < new Date(gate.expires_at).getTime()) {
+    return { applied: false, reason: 'not_expired', run: fresh };
+  }
+
+  // Finding-only mode (the prompt's own addendum, MA-ratified): timeout_seconds is present
+  // (expires_at exists) but on_expiry is absent — REFUSE no_disposition, arm-level, BEFORE APPLY.
+  // Never enacted; disclosed only via the run-health finding + the notifier's finding-only wording.
+  if (gate.on_expiry === undefined) {
+    return { applied: false, reason: 'no_disposition', run: fresh };
+  }
+
+  const respondedAt = now;
+  const stepName = gate.step_name;
+
+  if (gate.on_expiry === 'settle_default') {
+    // APPLY settle_default: reuses settleGateArms' own RESOLVE shape end-to-end (choice =
+    // FROZEN default_choice, clear gate, complete step, release claim, isComplete/terminalize) —
+    // written as its OWN independent implementation (settleGateArms itself stays byte-untouched
+    // beyond the F3 addition above), attributed `resolved_by: 'timeout'`.
+    const choice = gate.default_choice!; // E2/[F10]-enforced at load: required-iff-settle_default.
+    const evidence = captureEvidence({
+      stepId: stepName,
+      startedAt: new Date(gate.opened_at),
+      completedAt: respondedAt,
+      input: { choice },
+      output: { ...gate.preview, choice },
+    });
+    const gateResponseSnapshot: EvidenceSnapshot = {
+      ...evidence,
+      kind: 'gate_response' as const,
+      ...(gate.resolved_message !== undefined ? { gate_message: gate.resolved_message } : {}),
+      responded_by: 'timeout',
+      resolution: 'expired_default',
+    };
+    const { pending_gate: _pg, ...rest } = fresh;
+    const withMembership: RunRecord = {
+      ...rest,
+      in_progress_steps: rest.in_progress_steps.filter((s) => s !== stepName),
+      claims: omitClaim(rest.claims, stepName),
+      completed_steps: [...rest.completed_steps, stepName],
+      evidence: [...rest.evidence, gateResponseSnapshot],
+      settled: {
+        ...rest.settled,
+        [stepName]: { token: gateId, outcome: 'gate', choice, resolved_by: 'timeout' },
+      },
+    };
+    const propagated = propagateSkips(withMembership, definition);
+    const withSkipped: RunRecord = {
+      ...withMembership,
+      skipped_steps: propagated.skipped,
+      skip_details: propagated.details,
+    };
+    const isComplete =
+      isWorkflowComplete(withSkipped, definition) ||
+      (withSkipped.in_progress_steps.length === 0 &&
+        findEligibleSteps(definition, withSkipped).length === 0 &&
+        findEligibleGuardSteps(definition, withSkipped).length === 0);
+    const draft: RunRecord = {
+      ...withSkipped,
+      terminal_state: isComplete,
+      ...(isComplete ? { terminal_reason: 'Workflow completed.' } : {}),
+    };
+    const { run, transitioned } = applyTerminalPostconditions(
+      draft,
+      definition,
+      'complete',
+      isComplete,
+    );
+    return {
+      applied: true,
+      run,
+      transitioned,
+      pendingFinalizers: pendingFinalizerNames(run.finalizer_ledger),
+    };
+  }
+
+  // APPLY abort (on_expiry === 'abort'): a NEW own-step arm — applyAbortEdge is sibling-only
+  // (its cancel-gate branch only fires for `pending_gate.step_name !== step`), so aborting the
+  // GATE'S OWN step needs its own shape: clear pending_gate + aborted_at + skip_details
+  // {kind:'gate_expired', gate_id} (day-one, F9) + mintFresh — in ONE write (TERMINAL_GATE_
+  // EXCLUSION: never leave BOTH a live pending_gate AND a settled 'gate' entry — this branch
+  // writes NEITHER a settled entry NOR a completed_steps membership; the step lands in
+  // skipped_steps instead, mirroring every other abort disposition in this file).
+  const evidence = captureEvidence({
+    stepId: stepName,
+    startedAt: new Date(gate.opened_at),
+    completedAt: respondedAt,
+    input: {},
+    output: { gate_expired: true, disposition: 'abort' },
+  });
+  const gateResponseSnapshot: EvidenceSnapshot = {
+    ...evidence,
+    kind: 'gate_response' as const,
+    ...(gate.resolved_message !== undefined ? { gate_message: gate.resolved_message } : {}),
+    responded_by: 'timeout',
+    resolution: 'expired_abort',
+  };
+  const { pending_gate: _pg2, ...withoutGate } = fresh;
+  const withSkippedSelf: RunRecord = {
+    ...withoutGate,
+    in_progress_steps: withoutGate.in_progress_steps.filter((s) => s !== stepName),
+    claims: omitClaim(withoutGate.claims, stepName),
+    skipped_steps: [...withoutGate.skipped_steps, stepName],
+    skip_details: {
+      ...withoutGate.skip_details,
+      [stepName]: { kind: 'gate_expired', gate_id: gateId },
+    },
+    evidence: [...withoutGate.evidence, gateResponseSnapshot],
+  };
+  const propagated = propagateSkips(withSkippedSelf, definition);
+  const withSkipped: RunRecord = {
+    ...withSkippedSelf,
+    skipped_steps: propagated.skipped,
+    skip_details: { ...propagated.details, [stepName]: { kind: 'gate_expired', gate_id: gateId } },
+  };
+  const aborted: RunRecord = {
+    ...withSkipped,
+    terminal_state: true,
+    terminal_reason: `Gate '${stepName}' expired and the run aborted per the workflow's declared on_expiry.`,
+    aborted_at: {
+      step_id: stepName,
+      abort_message: `Gate expired (timeout_seconds elapsed with no human response); on_expiry: 'abort'.`,
+    },
+  };
+  // §4 shared postconditions: abort NEVER stamps defaulted_steps (the FM-5/#232 guard);
+  // `transitioned` is always true (isTerminal(fresh) already refused above).
+  const { run, transitioned } = applyTerminalPostconditions(aborted, definition, 'abort', false);
+  return {
+    applied: true,
+    run,
+    transitioned,
+    pendingFinalizers: pendingFinalizerNames(run.finalizer_ledger),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1048,23 +1257,35 @@ export function applySettlement(
     case 'open_gate':
       return applyOpenGate(fresh, delta);
     case 'settle_gate':
-      return applySettleGate(fresh, delta, definition);
+      return applySettleGate(fresh, delta, definition, now);
     case 'settle_guard':
       return applySettleGuard(fresh, delta, definition);
     case 'release_step':
       return applyReleaseStep(fresh, delta, now);
+    case 'expire_gate':
+      return applyExpireGate(fresh, delta, definition, now);
   }
 }
 
 /**
  * Named constant (issue #279, increment 2, PR-C; design record §4.3) tying reclaim-step.ts's own
  * open-gate refusal (`reclaimStep`, ~line 389: "the claim is legitimately pinned by a human gate")
- * to this design's "unfenced-release soundness rests on reclaim" premise: `settle_step` abort's
- * cancel-gate write (`applyAbortEdge`, above) is the ONLY path that may release an open gate's
- * claim; `reclaimStep`/`isAutoReclaimable` must NEVER also release it, or the two paths could race
- * and double-release the same claim. Referenced (not asserted via) by this invariant's two
- * existing pinning tests (`reclaim-step.test.ts` + the CLI's `reclaim.test.ts`) so a future reader
- * can grep this name to find both, and reclaim-step.ts's own SOURCE stays untouched by this PR.
+ * to this design's "unfenced-release soundness rests on reclaim" premise. **Reworded (issue #291,
+ * [F6]):** the ORIGINAL text claimed `applyAbortEdge`'s cancel-gate write was "the ONLY path that
+ * may release an open gate's claim" — issue #291's `applyExpireGate` (both dispositions) ALSO
+ * releases it now, making that literal claim false. The invariant this constant actually protects
+ * — `reclaimStep`/`isAutoReclaimable` must NEVER release an open gate's claim, or a concurrent
+ * release could race and double-release the same claim — still holds exactly; the closed set of
+ * paths that MAY release it is now: `settle_step` abort's cancel-gate write (another step's
+ * handler-abort), and `expire_gate`'s settle_default/abort dispositions (the gate's OWN step,
+ * enforce-clock-driven) — all three live inside `applySettlement`, under the SAME store lock,
+ * which is exactly WHY they can never race `reclaimStep`'s own (separate) CAS write. Referenced
+ * (not asserted via) by this invariant's two existing pinning tests (`reclaim-step.test.ts` +
+ * the CLI's `reclaim.test.ts`) so a future reader can grep this name to find both, and
+ * reclaim-step.ts's own SOURCE stays untouched by this PR.
  */
 export const RECLAIM_REFUSES_GATE_STEP =
-  'reclaim never releases the open-gate claim (design record design-d5-increment2.md §4.3, unfenced-release soundness)';
+  'reclaim never releases the open-gate claim (design record design-d5-increment2.md §4.3 + ' +
+  'issue #291 design-d2.md [F6], unfenced-release soundness — the closed set: settle_step abort ' +
+  "(another step), expire_gate settle_default/abort (the gate's own step), all inside " +
+  'applySettlement under the same lock)';
