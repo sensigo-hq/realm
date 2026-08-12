@@ -858,10 +858,16 @@ export const gcCommand = new Command('gc')
 
       // --- Pass 3 (issue #293) — only when --heal was given. No preview/force double-call the
       // way passes 1+2 need (that split exists purely for the byte-total report, which heal has
-      // no equivalent of) — one call per invocation, dry-run or force. ---
+      // no equivalent of) — one call per invocation, dry-run or force. This dry-run-only preview
+      // call is gated on `opts.force !== true` specifically SO IT NEVER RUNS in force mode — the
+      // force branch below (a) already makes its OWN call with `force: true`, and (b) is the one
+      // that actually matters for a real heal, so a discarded `force: false` call here would be
+      // pure waste (an extra `list()` I/O pass, correction-291-293). Reaching the force branch's
+      // own `healSweepError === undefined` guard, `healSweepError` is vacuously undefined —
+      // nothing above can have set it once this call never runs.
       let healPreview: SweepStalePhasesResult | undefined;
       let healSweepError: string | undefined;
-      if (opts.heal === true) {
+      if (opts.heal === true && opts.force !== true) {
         try {
           healPreview = await sweepStalePhases(runStore, { force: false, deriveRunPhase });
         } catch (err) {
@@ -917,6 +923,10 @@ export const gcCommand = new Command('gc')
       }
 
       let healResult: SweepStalePhasesResult | undefined;
+      // `healSweepError === undefined` is vacuously true on entry here (force mode never runs the
+      // dry-run-only preview call above) — kept as the guard anyway: it's still the correct
+      // condition in spirit (never attempt the real heal if an earlier heal-pass error is already
+      // known) and costs nothing to leave in place.
       if (opts.heal === true && healSweepError === undefined) {
         try {
           healResult = await sweepStalePhases(runStore, { force: true, deriveRunPhase });

@@ -21,7 +21,13 @@ import {
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { JsonFileStore, FailedAttemptStore, deriveRunPhase, atomicWriteFile } from '@sensigo/realm';
+import {
+  JsonFileStore,
+  FailedAttemptStore,
+  deriveRunPhase,
+  atomicWriteFile,
+  WorkflowError,
+} from '@sensigo/realm';
 import type { RunRecord } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
 import { sweepOrphans, sweepOrphanArtifacts, sweepStalePhases, gcExitCode } from './gc.js';
@@ -1020,6 +1026,97 @@ describe('sweepStalePhases (issue #293)', () => {
       // The concurrent writer's own heal already fixed it — retrying would have been pointless.
       const finalRecord = JSON.parse(await readFile(join(dir, `${id}.json`), 'utf8')) as RunRecord;
       expect(finalRecord.run_phase).toBe(expectedDerived);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  // --- gc-heal-293 correction, Leg 2: per-conjunct discrimination through the REAL catch —
+  // the existing conflict-skip test above only exercises STATE_SNAPSHOT_MISMATCH; these three pin
+  // the remaining conjuncts of `err instanceof WorkflowError && (code === SNAPSHOT_MISMATCH ||
+  // code === RUN_BUSY)`, each via the SAME wrapping-double idiom (a `Pick<JsonFileStore, 'list' |
+  // 'update'>` whose `update()` throws), never a hand-built result object.
+
+  it('non-WorkflowError from update() (e.g. a raw EACCES) lands in `failed`, never `skipped_conflict` — and the REAL result composes into gcExitCode as 1', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const runStore = new JsonFileStore(dir);
+      const { id } = await writeStalePhaseFixture(runStore, dir);
+
+      const throwingStore: Pick<JsonFileStore, 'list' | 'update'> = {
+        list: () => runStore.list(),
+        update: async () => {
+          throw new Error('EACCES: permission denied');
+        },
+      };
+
+      const result = await sweepStalePhases(throwingStore, { force: true, deriveRunPhase });
+
+      expect(result.failed).toEqual([{ id, error: 'EACCES: permission denied' }]);
+      expect(result.skipped_conflict).toEqual([]);
+      expect(result.healed).toEqual([]);
+
+      // The exit path exercised with a genuine catch product, not a hand-built object.
+      expect(gcExitCode(undefined, undefined, undefined, result, undefined)).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a WorkflowError with a FOREIGN code (e.g. STATE_RUN_NOT_FOUND) lands in `failed`, not `skipped_conflict`', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const runStore = new JsonFileStore(dir);
+      const { id } = await writeStalePhaseFixture(runStore, dir);
+
+      const throwingStore: Pick<JsonFileStore, 'list' | 'update'> = {
+        list: () => runStore.list(),
+        update: async () => {
+          throw new WorkflowError(`Run '${id}' not found`, {
+            code: 'STATE_RUN_NOT_FOUND',
+            category: 'STATE',
+            agentAction: 'report_to_user',
+            retryable: false,
+          });
+        },
+      };
+
+      const result = await sweepStalePhases(throwingStore, { force: true, deriveRunPhase });
+
+      expect(result.failed).toEqual([{ id, error: `Run '${id}' not found` }]);
+      expect(result.skipped_conflict).toEqual([]);
+      expect(result.healed).toEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a WorkflowError STATE_RUN_BUSY (ELOCKED) lands in `skipped_conflict` — the conjunct the existing race test never exercised', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const runStore = new JsonFileStore(dir);
+      const { id, stale } = await writeStalePhaseFixture(runStore, dir);
+      const expectedDerived = deriveRunPhase(stale);
+
+      const throwingStore: Pick<JsonFileStore, 'list' | 'update'> = {
+        list: () => runStore.list(),
+        update: async () => {
+          throw new WorkflowError(`Run '${id}' is locked by another writer`, {
+            code: 'STATE_RUN_BUSY',
+            category: 'STATE',
+            agentAction: 'report_to_user',
+            retryable: true,
+          });
+        },
+      };
+
+      const result = await sweepStalePhases(throwingStore, { force: true, deriveRunPhase });
+
+      expect(result.skipped_conflict).toEqual([
+        { id, persisted_phase: 'gate_waiting', derived_phase: expectedDerived },
+      ]);
+      expect(result.failed).toEqual([]);
+      expect(result.healed).toEqual([]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
