@@ -7,17 +7,32 @@
 // non-destructive dry-run, the not-reaped footer) is smoke-tested against the built binary — see
 // the implementation report — mirroring how purge.ts's own `.action()` has no dedicated test file.
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir, symlink, utimes, stat, chmod } from 'node:fs/promises';
+import {
+  mkdtemp,
+  rm,
+  writeFile,
+  mkdir,
+  symlink,
+  utimes,
+  stat,
+  chmod,
+  readFile,
+} from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { JsonFileStore, FailedAttemptStore } from '@sensigo/realm';
+import { JsonFileStore, FailedAttemptStore, deriveRunPhase, atomicWriteFile } from '@sensigo/realm';
+import type { RunRecord } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
-import { sweepOrphans, sweepOrphanArtifacts, gcExitCode } from './gc.js';
-import type { SweepOrphansResult, OrphanArtifactSweepResult } from './gc.js';
+import { sweepOrphans, sweepOrphanArtifacts, sweepStalePhases, gcExitCode } from './gc.js';
+import type {
+  SweepOrphansResult,
+  OrphanArtifactSweepResult,
+  SweepStalePhasesResult,
+} from './gc.js';
 
-/** Matches the module-private `FLOOR_MS` in gc.ts (1 hour) — not imported (sweepOrphans is the
- *  ONLY export; the floor is enforced inside it, per the design's "reap logic module-private"). */
+/** Matches the module-private `FLOOR_MS` in gc.ts (1 hour) — not imported (the reap logic stays
+ *  module-private by design; only the pure sweep functions themselves are exported). */
 const ONE_HOUR_MS = 3_600_000;
 const FIVE_MIN_MS = 5 * 60_000; // margin, chosen in MINUTES per the WSL mtime-granularity trap
 
@@ -702,7 +717,6 @@ describe('sweepOrphanArtifacts — fenced reap path (issue #207 PR-2)', () => {
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},
-        idempotencyKey: undefined,
       });
       // Force the re-imported run to have the EXACT id the WAL names (create() mints a fresh
       // uuid; overwrite the file directly to land on resurrectedId, mirroring how save() would
@@ -824,9 +838,215 @@ describe('fail-closed wiring: a listRunIds() failure must abort the orphan sweep
   });
 });
 
+// --- sweepStalePhases — the grandfathered stale-run_phase heal (issue #293) ---
+
+/**
+ * Hand-shapes a #282-class stale-phase run record — terminal ∧ a leftover `pending_gate`, with a
+ * STALE persisted `run_phase` ('gate_waiting', the pre-#282-fix mis-derivation — see
+ * eligibility.ts's own `deriveRunPhase` doc) that disagrees with what `deriveRunPhase` computes
+ * for it TODAY ('completed', since terminal_state is now checked before pending_gate).
+ *
+ * Written via `atomicWriteFile` DIRECTLY — the exact bytes the store's own write path would
+ * produce, but bypassing `store.update()`/`.save()` entirely: BOTH heal `run_phase` at write time
+ * (json-file-store.ts's own write tail always re-derives it from the record, discarding whatever
+ * the caller passed), so seeding through either would silently persist the CORRECT phase and
+ * vacuate every test below.
+ *
+ * Built from a REAL `store.create()` run (a realistic, fully-populated shape) mutated in memory,
+ * never hand-typed field-by-field — mirrors this file's own "resurrect race" test's technique.
+ */
+async function writeStalePhaseFixture(
+  runStore: JsonFileStore,
+  dir: string,
+): Promise<{ id: string; stale: RunRecord }> {
+  const { run } = await runStore.create({ workflowId: 'wf-282', workflowVersion: 1, params: {} });
+  const stale: RunRecord = {
+    ...run,
+    completed_steps: ['a', 'b'],
+    terminal_state: true,
+    terminal_reason: 'Workflow completed.',
+    pending_gate: {
+      gate_id: 'zombie',
+      step_name: 'a',
+      preview: {},
+      choices: ['approve'],
+      opened_at: '2026-01-01T00:00:00.000Z',
+    },
+    run_phase: 'gate_waiting', // STALE — pre-#282; deriveRunPhase(this) computes 'completed' today.
+  };
+  await atomicWriteFile(join(dir, `${run.id}.json`), JSON.stringify(stale, null, 2));
+  return { id: run.id, stale };
+}
+
+describe('sweepStalePhases (issue #293)', () => {
+  it('dry-run LISTS a stale-phase record without writing (mtime/bytes unchanged); a genuinely matching record is never even considered', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const runStore = new JsonFileStore(dir);
+      const { id, stale } = await writeStalePhaseFixture(runStore, dir);
+      const path = join(dir, `${id}.json`);
+      const before = await stat(path);
+      const beforeContent = await readFile(path, 'utf8');
+
+      const { run: matching } = await runStore.create({
+        workflowId: 'wf-clean',
+        workflowVersion: 1,
+        params: {},
+      });
+      const matchingPath = join(dir, `${matching.id}.json`);
+      const matchingBefore = await readFile(matchingPath, 'utf8');
+
+      const result = await sweepStalePhases(runStore, { force: false, deriveRunPhase });
+
+      expect(result.would_heal).toEqual([
+        { id, persisted_phase: 'gate_waiting', derived_phase: deriveRunPhase(stale) },
+      ]);
+      expect(result.healed).toEqual([]);
+      expect(result.skipped_conflict).toEqual([]);
+      expect(result.failed).toEqual([]);
+
+      const after = await stat(path);
+      expect(after.mtimeMs).toBe(before.mtimeMs);
+      expect(await readFile(path, 'utf8')).toBe(beforeContent);
+      expect(await readFile(matchingPath, 'utf8')).toBe(matchingBefore);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('--force heals a stale-phase record: persisted == derived after, and every OTHER field is identical except run_phase/version/updated_at', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const runStore = new JsonFileStore(dir);
+      const { id, stale } = await writeStalePhaseFixture(runStore, dir);
+      const expectedDerived = deriveRunPhase(stale);
+
+      const result = await sweepStalePhases(runStore, { force: true, deriveRunPhase });
+
+      expect(result.healed).toEqual([
+        { id, persisted_phase: 'gate_waiting', derived_phase: expectedDerived },
+      ]);
+      expect(result.would_heal).toEqual([]);
+      expect(result.skipped_conflict).toEqual([]);
+      expect(result.failed).toEqual([]);
+
+      const healed = JSON.parse(await readFile(join(dir, `${id}.json`), 'utf8')) as RunRecord;
+      expect(healed.run_phase).toBe(expectedDerived);
+      expect(healed.version).toBe(stale.version + 1);
+      expect(healed.updated_at).not.toBe(stale.updated_at);
+
+      // Compare parsed fields: everything identical EXCEPT run_phase/version/updated_at — a
+      // byte-diff-minus-two-fields criterion would red against a CORRECT implementation, since
+      // the store's write tail rewrites all THREE (json-file-store.ts's update()).
+      const { run_phase: _rp1, version: _v1, updated_at: _ua1, ...staleRest } = stale;
+      const { run_phase: _rp2, version: _v2, updated_at: _ua2, ...healedRest } = healed;
+      expect(healedRest).toEqual(staleRest);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('idempotent: a SECOND --force run finds ZERO mismatches after the first heal', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const runStore = new JsonFileStore(dir);
+      await writeStalePhaseFixture(runStore, dir);
+
+      const first = await sweepStalePhases(runStore, { force: true, deriveRunPhase });
+      expect(first.healed.length).toBe(1);
+
+      const second = await sweepStalePhases(runStore, { force: true, deriveRunPhase });
+      expect(second).toEqual({ healed: [], would_heal: [], skipped_conflict: [], failed: [] });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('matching records are NEVER passed to update() — untouched, byte-identical, across a mixed population', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const runStore = new JsonFileStore(dir);
+      const { run: clean1 } = await runStore.create({
+        workflowId: 'wf-a',
+        workflowVersion: 1,
+        params: {},
+      });
+      const { run: clean2 } = await runStore.create({
+        workflowId: 'wf-b',
+        workflowVersion: 1,
+        params: {},
+      });
+      await writeStalePhaseFixture(runStore, dir);
+
+      const before1 = await readFile(join(dir, `${clean1.id}.json`), 'utf8');
+      const before2 = await readFile(join(dir, `${clean2.id}.json`), 'utf8');
+
+      await sweepStalePhases(runStore, { force: true, deriveRunPhase });
+
+      expect(await readFile(join(dir, `${clean1.id}.json`), 'utf8')).toBe(before1);
+      expect(await readFile(join(dir, `${clean2.id}.json`), 'utf8')).toBe(before2);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('conflict-skip arm: a version bump between list() and update() is skipped-and-counted, never a crash, never failed', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const runStore = new JsonFileStore(dir);
+      const { id, stale } = await writeStalePhaseFixture(runStore, dir);
+      const expectedDerived = deriveRunPhase(stale);
+
+      // A wrapping store double simulating the exact race #293's own doc describes: "a live
+      // writer got there first — which itself heals." update() is intercepted so that a
+      // CONCURRENT write (the live writer's own heal) lands between our list() snapshot and our
+      // own update() call, genuinely conflicting on version.
+      const racyStore: Pick<JsonFileStore, 'list' | 'update'> = {
+        list: () => runStore.list(),
+        update: async (record) => {
+          await runStore.update({ ...record }); // the concurrent writer's own heal, lands FIRST.
+          return runStore.update(record); // OUR call, now genuinely stale — must conflict.
+        },
+      };
+
+      const result = await sweepStalePhases(racyStore, { force: true, deriveRunPhase });
+
+      expect(result.skipped_conflict).toEqual([
+        { id, persisted_phase: 'gate_waiting', derived_phase: expectedDerived },
+      ]);
+      expect(result.healed).toEqual([]);
+      expect(result.failed).toEqual([]);
+
+      // The concurrent writer's own heal already fixed it — retrying would have been pointless.
+      const finalRecord = JSON.parse(await readFile(join(dir, `${id}.json`), 'utf8')) as RunRecord;
+      expect(finalRecord.run_phase).toBe(expectedDerived);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('list() throwing (a corrupt run file, #132/#183 fail-closed) aborts the WHOLE heal pass — no per-file salvage', async () => {
+    const dir = await makeTmpRunsDir();
+    try {
+      const runStore = new JsonFileStore(dir);
+      await writeStalePhaseFixture(runStore, dir);
+      await writeFile(join(dir, 'corrupt.json'), '{ not valid json');
+
+      await expect(sweepStalePhases(runStore, { force: false, deriveRunPhase })).rejects.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('gcExitCode (issue #163 exit-code correction)', () => {
   const clean: SweepOrphansResult = { reaped: [], already_gone: [], failed: [] };
-  const cleanArtifacts: OrphanArtifactSweepResult = { reaped: [], already_gone: [], failed: [] };
+  const cleanArtifacts: OrphanArtifactSweepResult = {
+    reaped: [],
+    already_gone: [],
+    failed: [],
+    resurrected: [],
+  };
 
   it('all-clean: no temp failures, no artifact failures, no abort → 0', () => {
     expect(gcExitCode(clean, cleanArtifacts, undefined)).toBe(0);
@@ -846,6 +1066,7 @@ describe('gcExitCode (issue #163 exit-code correction)', () => {
       reaped: [],
       already_gone: [],
       failed: [{ path: '/some/wal.jsonl', runId: 'x', error: 'EACCES' }],
+      resurrected: [],
     };
     expect(gcExitCode(clean, artifactResult, undefined)).toBe(1);
   });
@@ -856,5 +1077,59 @@ describe('gcExitCode (issue #163 exit-code correction)', () => {
 
   it('an abort ALONGSIDE an otherwise-clean temp sweep and no artifactResult → 1 (the abort dominates)', () => {
     expect(gcExitCode(clean, undefined, 'listRunIds failed')).toBe(1);
+  });
+
+  // --- issue #293 extensions: a pass that never ran contributes no failure; heal-specific cells ---
+  const cleanHeal: SweepStalePhasesResult = {
+    healed: [],
+    would_heal: [],
+    skipped_conflict: [],
+    failed: [],
+  };
+
+  it('neither temp/artifact result NOR heal result/error supplied (both undefined) → 0 — a --heal-only run with nothing to report', () => {
+    expect(gcExitCode(undefined, undefined, undefined, cleanHeal, undefined)).toBe(0);
+  });
+
+  it('a --older-than-only invocation (heal params both undefined) → identical to the pre-#293 signature — 0 when clean', () => {
+    expect(gcExitCode(clean, cleanArtifacts, undefined)).toBe(0);
+  });
+
+  it('a failed heal write → 1', () => {
+    const healResult: SweepStalePhasesResult = {
+      healed: [],
+      would_heal: [],
+      skipped_conflict: [],
+      failed: [{ id: 'run-1', error: 'EACCES' }],
+    };
+    expect(gcExitCode(undefined, undefined, undefined, healResult, undefined)).toBe(1);
+  });
+
+  it('an aborted heal sweep (healSweepError defined, no healResult) → 1', () => {
+    expect(
+      gcExitCode(undefined, undefined, undefined, undefined, 'list() failed: corrupt run file'),
+    ).toBe(1);
+  });
+
+  it('heal found/healed mismatches with zero failures → 0 (merely finding or healing is not a failure)', () => {
+    const healResult: SweepStalePhasesResult = {
+      healed: [{ id: 'run-1', persisted_phase: 'gate_waiting', derived_phase: 'completed' }],
+      would_heal: [],
+      skipped_conflict: [
+        { id: 'run-2', persisted_phase: 'gate_waiting', derived_phase: 'completed' },
+      ],
+      failed: [],
+    };
+    expect(gcExitCode(undefined, undefined, undefined, healResult, undefined)).toBe(0);
+  });
+
+  it('heal failure ALONGSIDE otherwise-clean temp+artifact results → 1 (the heal failure dominates)', () => {
+    const healResult: SweepStalePhasesResult = {
+      healed: [],
+      would_heal: [],
+      skipped_conflict: [],
+      failed: [{ id: 'run-1', error: 'ELOCKED' }],
+    };
+    expect(gcExitCode(clean, cleanArtifacts, undefined, healResult, undefined)).toBe(1);
   });
 });

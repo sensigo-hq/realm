@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- `realm run gc --heal` (issue #293): an opt-in, one-shot pass that rewrites grandfathered run records
+  whose persisted `run_phase` disagrees with the phase re-derived today — a no-op rewrite through the
+  store's own versioned write, safe at any age, composable with the existing temp/orphan-artifact
+  sweeps.
+
+---
+
 ## [0.34.0] — 2026-08-12
 
 ### Added

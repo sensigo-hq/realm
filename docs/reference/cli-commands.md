@@ -661,6 +661,30 @@ orphaned `.lock` directories (deferred — issue #164) or run-less `trace-buffer
 (issue #163) — the report always names both so you don't mistake their presence for a bug. A no-op on
 Windows (no temp files are ever produced there).
 
+**`--heal`** (issue #293, opt-in) — a one-shot pass that rewrites every run record whose _persisted_
+`run_phase` disagrees with the phase re-derived from the record today, curing the residue left by a
+pre-#282 binary (which could mis-derive `gate_waiting` for a run that had already reached a real
+terminal outcome). This is pure population hygiene, not a correctness fix — every live read path
+(`get_run_state`, `realm run list --status`, the engine's own eligibility checks) already derives the
+phase fresh on every read, so a stale on-disk value is cosmetic residue, invisible unless you read the
+raw JSON file directly. The heal writes each mismatched record back **unmodified**; the store's own
+versioned write tail corrects `run_phase` (plus `version`/`updated_at`) as its ordinary side effect —
+gc itself never constructs or edits a single field. Composable with `--older-than`: `--heal` alone runs
+without it (healing is safe at any age, no 1-hour floor applies), `--older-than` alone runs the temp/
+artifact sweeps as always, and both together run all three passes in one invocation.
+
+```bash
+realm run gc --heal                        # dry-run: list records that WOULD be healed
+realm run gc --heal --force                # actually rewrite them
+realm run gc --heal --older-than 6h --force  # heal, plus the temp/artifact sweeps, together
+```
+
+A single unparseable run file makes `list()` throw (the store's deliberate fail-closed read — issue
+#132/#183) — `--heal` aborts with a non-zero exit and heals nothing, rather than silently healing a
+partial, possibly-wrong population. This mirrors the orphan-artifact sweep's own "couldn't look, abort
+loudly" convention above. Postgres and other external stores are out of scope for `--heal` — their own
+records heal automatically the next time anything writes to them through the store's normal path.
+
 ---
 
 ### `realm run export <run-id>`

@@ -1,5 +1,6 @@
-// gc command — sweep orphaned atomic-write temps (issue #160) AND run-less orphaned WAL/sidecar
-// artifacts (issue #163). One operator command, two independent sweeps, same flags.
+// gc command — sweep orphaned atomic-write temps (issue #160), run-less orphaned WAL/sidecar
+// artifacts (issue #163), AND (--heal, opt-in) grandfathered stale run_phase records (issue #293).
+// One operator command, three independent, composable passes.
 //
 // --- Sweep 1: atomic-write temps (issue #160, Phase 1: .tmp only) ---
 // atomicWriteFile (packages/core/src/store/atomic-write.ts) writes a unique sibling temp
@@ -29,11 +30,34 @@
 // `.lock` reaping is deliberately split to #164 (deferred — proper-lockfile self-heals a live-path
 // lock; only a purged-target's lock lingers, which is negligible). Neither is this command's job
 // yet — see the report footer.
+//
+// --- Pass 3: grandfathered stale-phase heal (issue #293, opt-in via --heal) ---
+// `run_phase` is a DERIVED, render-only field (issue #279 increment 2, PR-C's disposal rule) —
+// every store write (`update()`, `save()`) re-derives it from the record's own authoritative
+// fields and persists the FRESH value as a side effect, discarding whatever the caller passed.
+// The #282 fix (a reordering of `deriveRunPhase` itself) corrected what a NEW write derives, but
+// never touched records that were written by an OLDER binary and have sat untouched since — their
+// on-disk `run_phase` can still disagree with what `deriveRunPhase` would compute for them today.
+// Correctness never depended on this: every live read path derives fresh (`get_run_state`, `list
+// --status`, the engine's own eligibility checks) — a stale PERSISTED value is cosmetic residue,
+// visible only to someone reading the raw JSON file directly. `--heal` is a one-shot population
+// shrink, not a correctness fix: for each mismatched record, it writes the record back UNMODIFIED
+// through `RunStore.update()` — the store's own write tail heals `run_phase` (plus `version` and
+// `updated_at`, its other two side effects) as an ordinary consequence of a normal write, exactly
+// as it would if any other legitimate writer touched that record next. Canon: kube's
+// storage-version-migrator does the identical read-then-write-back-unmodified trick to migrate
+// encryption-at-rest/API versions across a whole etcd population with zero bespoke migration code.
 import { readdir, lstat, unlink, stat } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { Command } from 'commander';
 import { WorkflowError, deleteIfExists } from '@sensigo/realm';
-import type { OrphanSweepableStore, OrphanArtifact, RunStore } from '@sensigo/realm';
+import type {
+  OrphanSweepableStore,
+  OrphanArtifact,
+  RunStore,
+  RunRecord,
+  RunPhase,
+} from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 
 /**
@@ -404,6 +428,125 @@ function buildGcResurrectGuard(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Pass 3: stale-phase heal (issue #293)
+// ---------------------------------------------------------------------------
+
+export interface SweepStalePhasesOptions {
+  /** false (default caller behavior): report mismatches only, never write. */
+  force: boolean;
+  /**
+   * Injected, never imported directly by this module (gc.ts's own top-level `@sensigo/realm`
+   * VALUE import must not widen — see the module header). The caller destructures this from its
+   * existing dynamic `await import('@sensigo/realm')`.
+   */
+  deriveRunPhase: (
+    run: Pick<
+      RunRecord,
+      | 'pending_gate'
+      | 'terminal_state'
+      | 'failed_steps'
+      | 'terminal_reason'
+      | 'aborted_at'
+      | 'abandoned_at'
+    >,
+  ) => RunPhase;
+}
+
+/** One mismatched record's before/after phase — carried through every bucket below so a report
+ *  (dry-run or force) can always say WHAT was wrong, not just WHICH id. */
+export interface StalePhaseEntry {
+  id: string;
+  persisted_phase: RunPhase;
+  derived_phase: RunPhase;
+}
+
+export interface SweepStalePhasesResult {
+  /** force mode: rewritten via `store.update()` — persisted now matches derived. */
+  healed: StalePhaseEntry[];
+  /** dry-run mode: mismatches found, nothing written. */
+  would_heal: StalePhaseEntry[];
+  /**
+   * force mode only: a concurrent writer touched this record between our `list()` snapshot and
+   * our `update()` call (`STATE_SNAPSHOT_MISMATCH`, a genuine version conflict) or the record was
+   * lock-contended at write time (`STATE_RUN_BUSY`, ELOCKED). Either way the live writer's own
+   * write ALSO heals `run_phase` as the same side effect this sweep would have produced — retrying
+   * here is pointless, so this is a skip-and-count bucket, never a crash and never `failed`.
+   */
+  skipped_conflict: StalePhaseEntry[];
+  /** A genuine write failure (permissions, I/O, an unrecognized store error) — loud, never
+   *  silently swallowed, in either mode. */
+  failed: Array<{ id: string; error: string }>;
+}
+
+/**
+ * For every run record whose persisted `run_phase` disagrees with `deriveRunPhase(record)`,
+ * writes the record back UNMODIFIED through `store.update()` — the store's own versioned write
+ * tail heals the phase (plus `version`/`updated_at`) as its ordinary side effect; this function
+ * never constructs or mutates a single field itself (the store-literal forensics stance: the only
+ * thing that ever changes a persisted record is the store's own write path, never a bespoke gc
+ * rewrite). Records already matching are never even passed to `update()` — untouched, byte-for-
+ * byte, verified in tests.
+ *
+ * `store.list()`'s fail-closed contract (issue #132/#183: `JSON.parse` uncaught on a corrupt
+ * file) is INHERITED here deliberately, uncaught — a single unparseable run file aborts the
+ * WHOLE heal pass rather than silently healing a partial, possibly-wrong population. No
+ * per-file try/catch salvage: see the module's own report footer / CHANGELOG for why this is
+ * accepted, not worked around.
+ *
+ * No age gate (unlike the other two sweeps): healing is a no-op rewrite of a record already on
+ * disk, safe at any age — there is no in-flight-write window to guard against the way there is
+ * for a `.tmp` or a fresh WAL.
+ */
+export async function sweepStalePhases(
+  store: Pick<RunStore, 'list' | 'update'>,
+  options: SweepStalePhasesOptions,
+): Promise<SweepStalePhasesResult> {
+  const records = await store.list();
+
+  const result: SweepStalePhasesResult = {
+    healed: [],
+    would_heal: [],
+    skipped_conflict: [],
+    failed: [],
+  };
+
+  for (const record of records) {
+    const derivedPhase = options.deriveRunPhase(record);
+    if (record.run_phase === derivedPhase) continue; // matching — never touched, not even read-only.
+
+    const entry: StalePhaseEntry = {
+      id: record.id,
+      persisted_phase: record.run_phase,
+      derived_phase: derivedPhase,
+    };
+
+    if (!options.force) {
+      result.would_heal.push(entry);
+      continue;
+    }
+
+    try {
+      await store.update(record); // UNMODIFIED — the write tail is the entire mechanism.
+      result.healed.push(entry);
+    } catch (err) {
+      if (
+        err instanceof WorkflowError &&
+        (err.code === 'STATE_SNAPSHOT_MISMATCH' || err.code === 'STATE_RUN_BUSY')
+      ) {
+        result.skipped_conflict.push(entry);
+      } else {
+        result.failed.push({
+          id: record.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
 /** Best-effort total bytes for a known list of paths — reporting-only, never gates reaping.
  *  Called against a fresh dry-run preview, so the paths are still on disk when stat'd. */
 async function statPathBytes(paths: readonly string[]): Promise<number> {
@@ -445,37 +588,43 @@ const NOT_REAPED_FOOTER =
  * happens in the real CLI action — always one or the other).
  */
 function printGcReport(
-  result: SweepOrphansResult,
+  result: SweepOrphansResult | undefined,
   previewBytes: number,
   dryRun: boolean,
   artifactResult: OrphanArtifactSweepResult | undefined,
   artifactSweepError: string | undefined,
+  healResult: SweepStalePhasesResult | undefined,
+  healSweepError: string | undefined,
 ): void {
-  const nothingToReport =
-    result.reaped.length === 0 && result.already_gone.length === 0 && result.failed.length === 0;
+  // --- temp-file section (issue #160) — only when the --older-than pass actually ran; a
+  // --heal-only invocation never touches this section at all (never even "nothing found"). ---
+  if (result !== undefined) {
+    const nothingToReport =
+      result.reaped.length === 0 && result.already_gone.length === 0 && result.failed.length === 0;
 
-  if (nothingToReport) {
-    console.log('No orphaned .tmp files found to reap.');
-  } else if (dryRun) {
-    console.log(
-      `${result.reaped.length} orphaned .tmp file(s) WOULD be reaped (${formatBytes(previewBytes)} to free):`,
-    );
-    for (const p of result.reaped) console.log(`  • ${p}`);
-    if (result.already_gone.length > 0) {
-      console.log(`(${result.already_gone.length} candidate(s) already vanished on their own.)`);
+    if (nothingToReport) {
+      console.log('No orphaned .tmp files found to reap.');
+    } else if (dryRun) {
+      console.log(
+        `${result.reaped.length} orphaned .tmp file(s) WOULD be reaped (${formatBytes(previewBytes)} to free):`,
+      );
+      for (const p of result.reaped) console.log(`  • ${p}`);
+      if (result.already_gone.length > 0) {
+        console.log(`(${result.already_gone.length} candidate(s) already vanished on their own.)`);
+      }
+    } else {
+      console.log(
+        `Reaped ${result.reaped.length} orphaned .tmp file(s) (${formatBytes(previewBytes)} freed). ` +
+          `${result.already_gone.length} already gone, ${result.failed.length} failed.`,
+      );
     }
-  } else {
-    console.log(
-      `Reaped ${result.reaped.length} orphaned .tmp file(s) (${formatBytes(previewBytes)} freed). ` +
-        `${result.already_gone.length} already gone, ${result.failed.length} failed.`,
-    );
-  }
 
-  for (const f of result.failed) {
-    console.error(`  ✗ ${f.path}: ${f.error}`);
-  }
-  if (dryRun && !nothingToReport) {
-    console.log('\nRe-run with --force to actually delete.');
+    for (const f of result.failed) {
+      console.error(`  ✗ ${f.path}: ${f.error}`);
+    }
+    if (dryRun && !nothingToReport) {
+      console.log('\nRe-run with --force to actually delete.');
+    }
   }
 
   // --- orphan-artifacts section (issue #163) ---
@@ -527,58 +676,136 @@ function printGcReport(
     }
   }
 
+  // --- stale-phase heal section (issue #293) — only when --heal was requested. ---
+  if (healSweepError !== undefined) {
+    console.error(`\n✗ stale-phase heal sweep ABORTED (healed nothing from it): ${healSweepError}`);
+  } else if (healResult !== undefined) {
+    const nothingToReportHeal =
+      healResult.healed.length === 0 &&
+      healResult.would_heal.length === 0 &&
+      healResult.skipped_conflict.length === 0 &&
+      healResult.failed.length === 0;
+
+    if (nothingToReportHeal) {
+      console.log('\nNo stale-phase records found to heal.');
+    } else if (dryRun) {
+      console.log(`\n${healResult.would_heal.length} stale-phase record(s) WOULD be healed:`);
+      for (const e of healResult.would_heal) {
+        console.log(`  • ${e.id}: persisted '${e.persisted_phase}' → derived '${e.derived_phase}'`);
+      }
+    } else {
+      console.log(
+        `\nHealed ${healResult.healed.length} stale-phase record(s). ` +
+          `${healResult.skipped_conflict.length} skipped (concurrent writer), ${healResult.failed.length} failed.`,
+      );
+      for (const e of healResult.healed) {
+        console.log(`  • ${e.id}: persisted '${e.persisted_phase}' → derived '${e.derived_phase}'`);
+      }
+    }
+    // A concurrent writer's own write ALSO heals the phase — benign, exit-code-neutral, never
+    // `failed` (mirrors the orphan-artifact sweep's own `resurrected` bucket precedent above).
+    if (healResult.skipped_conflict.length > 0) {
+      console.log(
+        `(${healResult.skipped_conflict.length} record(s) skipped — a concurrent writer already ` +
+          `touched them, which heals them too.)`,
+      );
+      for (const e of healResult.skipped_conflict) {
+        console.log(`  • ${e.id}  (skipped — concurrent write)`);
+      }
+    }
+    for (const f of healResult.failed) {
+      console.error(`  ✗ ${f.id}: ${f.error}`);
+    }
+    if (dryRun && !nothingToReportHeal) {
+      console.log('Re-run with --force to actually heal.');
+    }
+  }
+
   console.log(`\n${NOT_REAPED_FOOTER}`);
 }
 
 /** gc's exit code: non-zero iff gc could not complete a sweep it attempted (issue #163
- *  exit-code correction). A failed unlink in EITHER sweep, OR an aborted orphan sweep
- *  (enumeration failed — `artifactSweepError` set), is a failure. Merely *finding* reapable
- *  residue is NOT — that holds in both dry-run and `--force`, so this one helper decides both
- *  branches' exit code instead of each re-deriving its own (inline) predicate. */
+ *  exit-code correction; extended, issue #293, for the opt-in heal pass). A failed unlink/write in
+ *  ANY attempted pass, OR an aborted orphan/heal sweep (enumeration/`list()` failed —
+ *  `artifactSweepError`/`healSweepError` set), is a failure. Merely *finding* reapable or
+ *  healable residue is NOT — that holds in both dry-run and `--force`, so this one helper decides
+ *  every branch's exit code instead of each re-deriving its own (inline) predicate. A pass that
+ *  never ran (its result param is `undefined`, its error param is `undefined`) contributes no
+ *  failure — exactly the same "absence is not a failure" reading `artifactResult: undefined`
+ *  already relies on. */
 export function gcExitCode(
-  tempResult: SweepOrphansResult,
+  tempResult: SweepOrphansResult | undefined,
   artifactResult: OrphanArtifactSweepResult | undefined,
   artifactSweepError: string | undefined,
+  healResult?: SweepStalePhasesResult,
+  healSweepError?: string,
 ): number {
   const anyFailure =
-    tempResult.failed.length > 0 ||
+    (tempResult?.failed.length ?? 0) > 0 ||
     (artifactResult?.failed.length ?? 0) > 0 ||
-    artifactSweepError !== undefined;
+    artifactSweepError !== undefined ||
+    (healResult?.failed.length ?? 0) > 0 ||
+    healSweepError !== undefined;
   return anyFailure ? 1 : 0;
 }
 
 export const gcCommand = new Command('gc')
   .description(
-    'Sweep orphaned atomic-write .tmp files and run-less orphaned WAL/sidecar artifacts (dry-run by default)',
+    'Sweep orphaned atomic-write .tmp files, run-less orphaned WAL/sidecar artifacts, and ' +
+      '(--heal) grandfathered stale-phase records (dry-run by default)',
   )
-  .requiredOption(
+  .option(
     '--older-than <duration>',
-    'Reap residue idle at least this long (minimum 1h; e.g. 1h, 6h, 30d)',
+    'Reap residue idle at least this long (minimum 1h; e.g. 1h, 6h, 30d) — required unless ' +
+      '--heal is the only pass requested',
   )
-  .option('--force', 'Actually delete (without this, gc only reports what WOULD be reaped)')
-  .action(async (opts: { olderThan: string; force?: boolean }) => {
-    let olderThanMs: number;
-    try {
-      olderThanMs = parseDuration(opts.olderThan);
-    } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
+  .option('--force', 'Actually delete/rewrite (without this, gc only reports what WOULD change)')
+  .option(
+    '--heal',
+    'One-shot pass (issue #293): rewrite records whose persisted run_phase disagrees with the ' +
+      'derived phase — safe at any age, no --older-than floor applies to this pass',
+  )
+  .action(async (opts: { olderThan?: string; force?: boolean; heal?: boolean }) => {
+    // [issue #293] --older-than demoted from a Commander requiredOption to a plain option so
+    // `gc --heal` alone can run without it — but it is STILL required unless --heal is the only
+    // pass requested, so bare `gc` (neither flag) must still refuse exactly as it always has.
+    // Commander's own requiredOption error text ("error: required option '--older-than
+    // <duration>' not specified") is reproduced verbatim here since demoting the flag loses its
+    // automatic enforcement.
+    if (opts.heal !== true && opts.olderThan === undefined) {
+      console.error("error: required option '--older-than <duration>' not specified");
       process.exit(1);
       return;
     }
 
-    // Defense-in-depth over sweepOrphans's/sweepOrphanArtifacts's own floor checks — reject
-    // before touching the filesystem at all, with a CLI-friendly message naming the flag the
-    // operator just typed.
-    if (olderThanMs < FLOOR_MS) {
-      console.error(
-        `--older-than must be at least 1h (got '${opts.olderThan}'). gc refuses to reap crash ` +
-          `residue younger than that, even with --force.`,
-      );
-      process.exit(1);
-      return;
+    let olderThanMs: number | undefined;
+    if (opts.olderThan !== undefined) {
+      try {
+        olderThanMs = parseDuration(opts.olderThan);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+        return;
+      }
+
+      // Defense-in-depth over sweepOrphans's/sweepOrphanArtifacts's own floor checks — reject
+      // before touching the filesystem at all, with a CLI-friendly message naming the flag the
+      // operator just typed. Does NOT apply to --heal (see sweepStalePhases's own doc: healing a
+      // record already on disk is safe at any age).
+      if (olderThanMs < FLOOR_MS) {
+        console.error(
+          `--older-than must be at least 1h (got '${opts.olderThan}'). gc refuses to reap crash ` +
+            `residue younger than that, even with --force.`,
+        );
+        process.exit(1);
+        return;
+      }
     }
 
-    const { JsonFileStore, FailedAttemptStore } = await import('@sensigo/realm');
+    // deriveRunPhase destructured from the SAME existing dynamic import as JsonFileStore/
+    // FailedAttemptStore — gc.ts's top-level `@sensigo/realm` VALUE import (line 36) stays
+    // byte-unchanged; only this dynamic import widens.
+    const { JsonFileStore, FailedAttemptStore, deriveRunPhase } = await import('@sensigo/realm');
     const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
     const runStore = new JsonFileStore();
     const runsDir = runStore.runsDirPath;
@@ -588,61 +815,38 @@ export const gcCommand = new Command('gc')
     const now = new Date();
 
     try {
-      // Always preview first — this NEVER mutates, in either mode — because it is the only
-      // reliable moment to `stat()` the candidates for the report's byte total: a force-mode
-      // reap deletes the files before sweepOrphans returns, so statting them afterward is
-      // impossible. The preview and the (optional) real pass share the same olderThanMs/now, so
-      // the candidate set is consistent bar a narrow, benign concurrent-activity window — which
-      // already_gone exists to absorb.
-      const preview = await sweepOrphans(runsDir, { olderThanMs, dryRun: true, now });
-      const bytes = await statPathBytes(preview.reaped);
-
-      // issue #163: FAIL-CLOSED. A `listRunIds()` (or a store's `listOrphans()`) failure aborts
-      // ONLY the orphan-artifact sweep, loudly — it must NEVER fabricate an empty `liveRunIds`,
-      // which would make every live run's artifacts look orphaned and reap them. The temp sweep
-      // above is fully independent of this and is completely unaffected either way.
+      // --- Pass 1+2 preview (temp files + orphan artifacts) — only when --older-than was given.
+      // Composition rule: --older-than gates passes 1+2; --heal gates pass 3; either, both, or
+      // (checked above) neither-is-an-error. Byte-identical to the pre-#293 behavior whenever
+      // --heal is absent. ---
+      let preview: SweepOrphansResult | undefined;
+      let bytes = 0;
       let artifactPreview: OrphanArtifactSweepResult | undefined;
       let artifactSweepError: string | undefined;
-      try {
-        const liveRunIds = await runStore.listRunIds();
-        artifactPreview = await sweepOrphanArtifacts(
-          orphanSweepableStores,
-          liveRunIds,
-          {
-            olderThanMs,
-            dryRun: true,
-            now,
-          },
-          runStore,
-        );
-      } catch (err) {
-        artifactSweepError = err instanceof Error ? err.message : String(err);
-      }
 
-      if (opts.force !== true) {
-        printGcReport(preview, bytes, true, artifactPreview, artifactSweepError);
-        if (gcExitCode(preview, artifactPreview, artifactSweepError) !== 0) {
-          process.exit(1);
-        }
-        return;
-      }
+      if (olderThanMs !== undefined) {
+        // Always preview first — this NEVER mutates, in either mode — because it is the only
+        // reliable moment to `stat()` the candidates for the report's byte total: a force-mode
+        // reap deletes the files before sweepOrphans returns, so statting them afterward is
+        // impossible. The preview and the (optional) real pass share the same olderThanMs/now, so
+        // the candidate set is consistent bar a narrow, benign concurrent-activity window — which
+        // already_gone exists to absorb.
+        preview = await sweepOrphans(runsDir, { olderThanMs, dryRun: true, now });
+        bytes = await statPathBytes(preview.reaped);
 
-      const result = await sweepOrphans(runsDir, { olderThanMs, dryRun: false, now });
-
-      let artifactResult: OrphanArtifactSweepResult | undefined;
-      if (artifactSweepError === undefined) {
-        // The preview above already proved listRunIds()/listOrphans() succeed — re-read for the
-        // real pass (a fresh liveRunIds, since force mode is a separate call; a run created or
-        // completed between the preview and here is a benign, narrow race — exactly the same
-        // shape the temp sweep's own preview/force split already accepts).
+        // issue #163: FAIL-CLOSED. A `listRunIds()` (or a store's `listOrphans()`) failure
+        // aborts ONLY the orphan-artifact sweep, loudly — it must NEVER fabricate an empty
+        // `liveRunIds`, which would make every live run's artifacts look orphaned and reap them.
+        // The temp sweep above is fully independent of this and is completely unaffected either
+        // way.
         try {
           const liveRunIds = await runStore.listRunIds();
-          artifactResult = await sweepOrphanArtifacts(
+          artifactPreview = await sweepOrphanArtifacts(
             orphanSweepableStores,
             liveRunIds,
             {
               olderThanMs,
-              dryRun: false,
+              dryRun: true,
               now,
             },
             runStore,
@@ -652,8 +856,87 @@ export const gcCommand = new Command('gc')
         }
       }
 
-      printGcReport(result, bytes, false, artifactResult, artifactSweepError);
-      if (gcExitCode(result, artifactResult, artifactSweepError) !== 0) {
+      // --- Pass 3 (issue #293) — only when --heal was given. No preview/force double-call the
+      // way passes 1+2 need (that split exists purely for the byte-total report, which heal has
+      // no equivalent of) — one call per invocation, dry-run or force. ---
+      let healPreview: SweepStalePhasesResult | undefined;
+      let healSweepError: string | undefined;
+      if (opts.heal === true) {
+        try {
+          healPreview = await sweepStalePhases(runStore, { force: false, deriveRunPhase });
+        } catch (err) {
+          healSweepError = err instanceof Error ? err.message : String(err);
+        }
+      }
+
+      if (opts.force !== true) {
+        printGcReport(
+          preview,
+          bytes,
+          true,
+          artifactPreview,
+          artifactSweepError,
+          healPreview,
+          healSweepError,
+        );
+        if (
+          gcExitCode(preview, artifactPreview, artifactSweepError, healPreview, healSweepError) !==
+          0
+        ) {
+          process.exit(1);
+        }
+        return;
+      }
+
+      let result: SweepOrphansResult | undefined;
+      let artifactResult: OrphanArtifactSweepResult | undefined;
+      if (olderThanMs !== undefined) {
+        result = await sweepOrphans(runsDir, { olderThanMs, dryRun: false, now });
+
+        if (artifactSweepError === undefined) {
+          // The preview above already proved listRunIds()/listOrphans() succeed — re-read for
+          // the real pass (a fresh liveRunIds, since force mode is a separate call; a run
+          // created or completed between the preview and here is a benign, narrow race — exactly
+          // the same shape the temp sweep's own preview/force split already accepts).
+          try {
+            const liveRunIds = await runStore.listRunIds();
+            artifactResult = await sweepOrphanArtifacts(
+              orphanSweepableStores,
+              liveRunIds,
+              {
+                olderThanMs,
+                dryRun: false,
+                now,
+              },
+              runStore,
+            );
+          } catch (err) {
+            artifactSweepError = err instanceof Error ? err.message : String(err);
+          }
+        }
+      }
+
+      let healResult: SweepStalePhasesResult | undefined;
+      if (opts.heal === true && healSweepError === undefined) {
+        try {
+          healResult = await sweepStalePhases(runStore, { force: true, deriveRunPhase });
+        } catch (err) {
+          healSweepError = err instanceof Error ? err.message : String(err);
+        }
+      }
+
+      printGcReport(
+        result,
+        bytes,
+        false,
+        artifactResult,
+        artifactSweepError,
+        healResult,
+        healSweepError,
+      );
+      if (
+        gcExitCode(result, artifactResult, artifactSweepError, healResult, healSweepError) !== 0
+      ) {
         process.exit(1);
       }
     } catch (err) {
