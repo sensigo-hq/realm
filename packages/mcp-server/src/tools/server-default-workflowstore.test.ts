@@ -1,7 +1,15 @@
 // Correction (0.10.0): createRealmMcpServer() with no options must still let get_run_state compute
 // next_actions — i.e. the factory defaults a workflowStore (parity with the `realm mcp` path).
-// JsonFileStore/JsonWorkflowStore compute their default dirs at module load, so $HOME is set BEFORE
-// the first `@sensigo/realm` / server import (no static realm imports here; load them lazily).
+// $HOME is set BEFORE the first `@sensigo/realm` / server import (no static realm imports here;
+// load them lazily).
+// issue #285 correction (2026-08-13): the line above ORIGINALLY claimed "JsonFileStore/
+// JsonWorkflowStore compute their default dirs at module load" — that was only ever HALF true.
+// `JsonFileStore`'s default `runsDir` genuinely was module-load-time (`DEFAULT_RUNS_DIR`) until
+// #285 fixed it at the root — it now resolves at CONSTRUCTION time (drain.ts's header has the
+// full account). `JsonWorkflowStore`'s default dir, by contrast, has ALWAYS resolved `homedir()`
+// inside its own constructor (`registrar.ts:26`, unchanged since it was written) — the original
+// claim that it, too, computed its dir at module load was simply wrong, not merely stale. This
+// file's lazy-import idiom stays regardless of either half.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

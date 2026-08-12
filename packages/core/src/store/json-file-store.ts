@@ -26,8 +26,6 @@ import { decideIdempotencyPolicy } from './idempotency-policy.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { readIfExists, deleteIfExists, toArtifactDeleteFailedError } from './fs-io.js';
 
-const DEFAULT_RUNS_DIR = join(homedir(), '.realm', 'runs');
-
 /**
  * Shared `proper-lockfile` retry policy for EVERY lock this store takes — the 4 run-file
  * critical-section locks (`update`/`claimStep`/`save`/`deleteAllForRun`) and the 3 per-key locks
@@ -164,7 +162,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
   ]);
 
   constructor(runsDir?: string) {
-    this.runsDir = runsDir ?? DEFAULT_RUNS_DIR;
+    this.runsDir = runsDir ?? join(homedir(), '.realm', 'runs');
   }
 
   /** The directory where run JSON files are stored. */

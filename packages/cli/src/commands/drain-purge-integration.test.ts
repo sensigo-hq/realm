@@ -13,6 +13,9 @@
 // draft of this test silently read/wrote the REAL `~/.realm/runs` instead of a temp dir). Neither
 // function here relies on `$HOME` or any default at all — both take an explicit store — so a
 // static top-level import is safe.
+// issue #285 (2026-08-13): the capture itself is now fixed at the root — `DEFAULT_RUNS_DIR` no
+// longer exists; the default resolves at CONSTRUCTION time (drain.ts's header has the full
+// account). Historicized here only — this file's explicit-store approach is unaffected either way.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

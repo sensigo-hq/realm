@@ -13,6 +13,12 @@ All notable changes to this project are documented here.
   store's own versioned write, safe at any age, composable with the existing temp/orphan-artifact
   sweeps.
 
+### Fixed
+
+- `JsonFileStore` and `JsonFileReplayStore` (issue #285) now resolve their default `~/.realm/{runs,replays}`
+  directory at construction time instead of module load, matching `JsonWorkflowStore`'s existing pattern —
+  a store constructed after `$HOME` changes now sees the new value.
+
 ---
 
 ## [0.34.0] — 2026-08-12

@@ -93,6 +93,26 @@ async function enactGateExpiry(
 // store, never through `drainCommand.parseAsync`'s default-store construction. Only
 // `drainCommand`'s own `.action()` (real CLI use) still does the dynamic `@sensigo/realm` import
 // and constructs the real defaults.
+//
+// issue #285 (2026-08-13): the paragraph above is now HISTORICAL, not current — this comment adds
+// a layer rather than flattening the ones before it, per its own established style. The capture
+// mechanism itself is FIXED AT THE ROOT: `JsonFileStore`'s default `runsDir` (and
+// `JsonFileReplayStore`'s default `replaysDir`) now resolve `homedir()` INSIDE their constructors,
+// exactly like `JsonWorkflowStore` (`registrar.ts:26`) always has — never at module load. A static
+// top-level VALUE import of `@sensigo/realm` anywhere in the transitive closure no longer freezes
+// anything; `$HOME` is read fresh at the moment a store is actually constructed. Concretely: `:18`
+// below (`import { applySettlement } from '@sensigo/realm'`, added by #317, after this header's
+// "NO top-level VALUE import" claim was written) no longer contradicts anything — the invariant
+// this paragraph enforced is RETIRED, and #317's import was always harmless post-#285, just
+// pre-#285-inconsistent with a rule that has now been dissolved rather than followed. The
+// explicit-params architecture (`runDrainAction` taking `runStore`/`workflowStore` etc.) REMAINS
+// the preferred test idiom regardless — it was never solely a workaround for this hazard (it also
+// avoids constructing REAL default stores in tests at all, keeps call sites explicit about what
+// they depend on, and is the same shape `resumeRun` already uses) — so it is NOT being unwound;
+// only the "must never top-level-import @sensigo/realm" prohibition is. `drain.test.ts`/
+// `drain-purge-integration.test.ts`'s own lazy-import workarounds are similarly left in place
+// (still correct, no longer load-bearing against this specific hazard — not worth the churn to
+// simplify) — see their own headers' #285 addenda.
 
 /** One pending finalizer's classification at the RANK-PASS level (design record §6) — what the
  *  NEXT real drain pass would do with it, in rank order. `no_pendings` is a whole-run summary

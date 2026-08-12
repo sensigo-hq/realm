@@ -20,6 +20,11 @@
 // reading a REAL run record's `failed_steps`, before any write — no real data was touched, but it
 // would have been a live-user-data mutation on a less lucky record shape. Never repeat this.)
 //
+// issue #285 (2026-08-13): the capture itself is now fixed at the root — `DEFAULT_RUNS_DIR` no
+// longer exists; the default resolves at CONSTRUCTION time (drain.ts's header has the full
+// account). Historicized here only — the lazy-import workaround above stays (still correct, no
+// longer load-bearing against this specific hazard, not worth the churn to simplify).
+//
 // The pure sweep functions (`sweepOrphans`/`sweepOrphanArtifacts`/`sweepStalePhases`) and
 // `gcExitCode` are already unit-tested directly against real tmp dirs in gc.test.ts — this file
 // tests ONLY the `.action()` wiring these unit tests cannot reach: the three flag-composition

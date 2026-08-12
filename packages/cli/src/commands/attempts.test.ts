@@ -2,6 +2,9 @@
 // $HOME/.realm/runs (JsonFileStore default, computed ONCE at module-load), so $HOME is set in
 // beforeAll — before the first `@sensigo/realm` import — and shared across tests; each test uses a
 // distinct run id for isolation. No static core import here; load it lazily.
+// issue #285 (2026-08-13): fixed at the root — the default dir now resolves at CONSTRUCTION time,
+// not module load (drain.ts's header has the full account). This file's lazy-import idiom stays;
+// historicized here only.
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, mkdir, appendFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
