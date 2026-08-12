@@ -2,6 +2,9 @@
 // R1-wedge reproduction through the REAL CLI — settle-fail → resume (via the real resumeCommand)
 // → re-claim → settle applies. JsonFileStore's default dir is computed at module-load time, so
 // $HOME must be set BEFORE the first `@sensigo/realm` import (mirrors abandon.test.ts/drain.test.ts).
+// issue #285 (2026-08-13): fixed at the root — the default dir now resolves at CONSTRUCTION time,
+// not module load (drain.ts's header has the full account). This file's ordering idiom stays;
+// historicized here only.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

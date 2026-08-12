@@ -14,6 +14,12 @@ import type { RunStore, WorkflowRegistrar, ApplyResumeVoidedFinalizer } from '@s
 // would freeze it before any test/caller can override `$HOME` (the abandon.ts precedent). Every
 // value this file needs is loaded dynamically inside `resumeRun` itself (cached after the first
 // call — cheap on every subsequent one).
+//
+// issue #285 (2026-08-13): the capture is now fixed at the root — `JsonFileStore`'s (and
+// `JsonFileReplayStore`'s) default directory resolves `homedir()` at CONSTRUCTION time, not module
+// load (drain.ts's own header carries the full account). A top-level value import here would no
+// longer freeze anything. The dynamic-import pattern above stays as-is regardless — not worth the
+// churn to unwind for a hazard that no longer exists.
 
 export interface ResumeOptions {
   /** Overrides the claim_unknown_age refusal (§5.4) — the ONLY refusal `--force` can bypass. A

@@ -12,9 +12,18 @@ export default defineConfig({
     // zero oversubscription, on any core count (12-core dev, 4-vCPU CI alike).
     maxWorkers: '50%',
     // Pin the verified vitest 4.1.8 defaults so a future default-flip can't silently break us.
-    // forks + isolate give per-FILE process isolation — LOAD-BEARING: abandon/attempts mutate
-    // process.env.HOME then lazily import @sensigo/realm, whose JsonFileStore captures its default
-    // dir once at module-load; per-file isolation makes that capture correct with no cross-file leak.
+    // forks + isolate give per-FILE process isolation — LOAD-BEARING (re-grounded, issue #285,
+    // 2026-08-13: the original rationale here named one now-fixed bug — JsonFileStore's default
+    // dir used to be captured once at module-load, so a test mutating process.env.HOME needed its
+    // OWN process to make that capture correct; #285 fixed the capture at the root, but per-file
+    // isolation is still load-bearing for the GENERAL class that bug was one instance of): several
+    // tests (abandon/attempts/drain/resume-wedge-e2e/gc-heal-composition/…) mutate
+    // `process.env.HOME` (or similar ambient env) around a real store construction. Per-file
+    // process isolation is what makes that safe regardless of ANY particular module's capture
+    // timing — a shared-process pool would let one file's env mutation leak into another's timing
+    // window (a concurrently-running or immediately-following file observing the wrong value)
+    // however carefully each individual module resolves its own defaults. The config VALUE is
+    // unchanged by this re-grounding; only the justification is.
     pool: 'forks',
     isolate: true,
     // Kept at the default 5s DELIBERATELY: once the pool is bounded, pure tests finish in ms

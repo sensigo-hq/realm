@@ -16,6 +16,9 @@
 // import to freeze). `listCommand` is imported dynamically instead, INSIDE `beforeAll`, strictly
 // AFTER `process.env['HOME']` is overridden — mirroring attempts.test.ts's own ordering discipline,
 // applied to the one command file where a static import would defeat it.
+// issue #285 (2026-08-13): the capture itself is now fixed at the root — `DEFAULT_RUNS_DIR` no
+// longer exists; the default resolves at CONSTRUCTION time (drain.ts's header has the full
+// account). Historicized here only — this file's dynamic-import-in-beforeAll idiom stays.
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

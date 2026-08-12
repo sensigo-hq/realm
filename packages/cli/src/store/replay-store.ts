@@ -28,13 +28,11 @@ export interface ReplayStore {
   get(replayId: string): Promise<ReplayRecord>;
 }
 
-const DEFAULT_REPLAYS_DIR = join(homedir(), '.realm', 'replays');
-
 export class JsonFileReplayStore implements ReplayStore {
   private readonly replaysDir: string;
 
   constructor(replaysDir?: string) {
-    this.replaysDir = replaysDir ?? DEFAULT_REPLAYS_DIR;
+    this.replaysDir = replaysDir ?? join(homedir(), '.realm', 'replays');
   }
 
   async save(record: Omit<ReplayRecord, 'id' | 'created_at'>): Promise<ReplayRecord> {

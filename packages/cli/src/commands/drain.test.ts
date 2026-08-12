@@ -18,6 +18,10 @@
 // `drainFinalizers`/`captureEvidence`/`DRAIN_LEASE_MAX` directly, never relying on `$HOME` or any
 // default at all. A static top-level import of `@sensigo/realm` is therefore safe here (no
 // `$HOME`-timing dependency exists to defeat).
+// issue #285 (2026-08-13): the capture itself is now fixed at the root — `DEFAULT_RUNS_DIR` no
+// longer exists; the default resolves at CONSTRUCTION time (drain.ts's header has the full
+// account). Historicized here only — this file's explicit-directory approach is unaffected either
+// way.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

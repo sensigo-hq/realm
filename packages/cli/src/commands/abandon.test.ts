@@ -2,6 +2,9 @@
 // $HOME/.realm/runs (like resume/cleanup). JsonFileStore's default dir is computed at module-load,
 // so we set $HOME before the FIRST `@sensigo/realm` import (no static import here; load it lazily
 // inside the tests, after beforeEach has pointed $HOME at a temp dir).
+// issue #285 (2026-08-13): fixed at the root — the default dir now resolves at CONSTRUCTION time,
+// not module load (drain.ts's header has the full account). This file's lazy-import idiom stays;
+// historicized here only.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
