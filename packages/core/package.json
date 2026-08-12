@@ -4,7 +4,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "description": "Realm workflow execution engine — state machine, evidence capture, and service adapters for agent-driven workflows.",
+  "description": "Realm workflow execution engine \u2014 state machine, evidence capture, and service adapters for agent-driven workflows.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -44,7 +44,6 @@
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.5.0",
     "@types/proper-lockfile": "^4.1.4",
-    "@types/uuid": "^10.0.0",
     "typescript": "*",
     "vitest": "^4.1.0"
   },
