@@ -13,11 +13,19 @@ All notable changes to this project are documented here.
   store's own versioned write, safe at any age, composable with the existing temp/orphan-artifact
   sweeps.
 
+### Changed
+
+- `@sensigo/realm` drops its unused `dotenv` dependency (issue #327) — nothing in core's source imports it;
+  the real consumer is `@sensigo/realm-cli`, which already declares its own. Behavior-neutral for consumers.
+
 ### Fixed
 
 - `JsonFileStore` and `JsonFileReplayStore` (issue #285) now resolve their default `~/.realm/{runs,replays}`
   directory at construction time instead of module load, matching `JsonWorkflowStore`'s existing pattern —
   a store constructed after `$HOME` changes now sees the new value.
+- `@sensigo/realm-mcp` (issue #327) now declares its own `proper-lockfile` dependency instead of relying on
+  npm's hoisting of `@sensigo/realm`'s copy — a phantom dependency is a latent crash under any installer
+  that doesn't hoist (e.g. strict/isolated installs).
 
 ---
 
