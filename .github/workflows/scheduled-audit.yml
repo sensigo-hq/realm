@@ -19,6 +19,12 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
+      # issue #326 — the action-pin truth guard, same check as ci.yml runs on every PR. Run here
+      # TOO, on the weekly clock: this is what catches an upstream tag RE-POINT that happens
+      # between PRs, when nothing in this repo changed at all and the PR gate never re-runs.
+      - run: node scripts/check-action-pins.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - run: npm ci
       # issue #238 PR2 (D4) — validates BOTH audit-ci.jsonc and audit-ci.tier2.jsonc (and the
       # tier-1 ⊆ tier-2 subset invariant) before the audit itself runs.

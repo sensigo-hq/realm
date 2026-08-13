@@ -19,6 +19,14 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
+      # issue #326 — the action-pin truth guard: every `uses:` SHA must match the tag its trailing
+      # comment names (never just resolve — mismatch, imprecision, and cross-file non-uniformity
+      # all fail). Placed BEFORE `npm ci`, unlike the audit-allowlist guard below it: this script
+      # has ZERO npm dependencies (only Node 24 built-ins), so there is no reason to pay for a
+      # dependency install before a check that can fail on its own — fail fast.
+      - run: node scripts/check-action-pins.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - run: npm ci
       # issue #238 PR1 (D6) — the allowlist GHSA-id guard: audit-ci.jsonc's allowlist is the single
       # source of truth for every accepted advisory suppression; this asserts every entry is
