@@ -123,7 +123,12 @@ export interface RunHealthFinding {
     // reminder-overdue signal (the B1 negative pin: the notify clock has zero settlement
     // authority, so a reminder-overdue gate stays HEALTHY — see the module doc's honest-
     // admission rule).
-    | 'gate_expired_awaiting_drive';
+    | 'gate_expired_awaiting_drive'
+    // issue #316: one or more steps that DECLARED `structured_output: 'strict'` ran without it —
+    // a degraded-assurance disclosure (outputs were still validated post-hoc, L1), never an
+    // error. Excludes `external_agent`-attributed downgrades (an MCP-driven run's synthesized
+    // stamp is never realm's own doing to report on) — see `findStructuredOutputDowngrades`.
+    | 'structured_output_downgraded';
   /** The affected step, when the finding is step-scoped. Absent for `never_claimed_idle` — a
    *  run-level observation (no step is claimed at all). */
   step?: string;
@@ -174,6 +179,50 @@ function findGateCorruption(run: RunRecord): RunHealthFinding | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * issue #316: `structured_output_downgraded` — ONE aggregated finding per run (the #304 shape:
+ * one finding carrying the list, never one per step), covering every `EvidenceSnapshot` in
+ * `run.evidence` whose `diagnostics.structured_output.downgrade_reason` is present and is NOT
+ * `'external_agent'`. That exclusion is LOAD-BEARING, not belt-and-braces: the three synthesized
+ * stamps execution-loop.ts mints when a declared step arrives with no `stepMeta.structuredOutput`
+ * at all (an external agent driving `execute_step` over MCP directly) all set
+ * `sent: false, downgrade_reason: 'external_agent'` — without this exclusion, EVERY MCP-driven
+ * declared run would fire this finding regardless of whether strict was ever actually attempted.
+ *
+ * Dedup'd per step: a step retried N times with the SAME reason across attempts contributes that
+ * reason once; a step that saw DIFFERENT reasons across distinct attempts (e.g. `api_rejected_schema`
+ * on attempt 1, `service_unavailable` on a retry) lists every distinct reason it saw, in
+ * first-seen order — never conflated into one bucket, never silently dropped to "the last one".
+ * Checked from BOTH branches of {@link classifyRunHealth}, mirroring {@link findGateCorruption}'s
+ * own dual-branch pattern — a live run's evidence and a terminal run's evidence are read exactly
+ * the same way; only WHERE the caller is standing differs.
+ */
+function findStructuredOutputDowngrades(run: RunRecord): RunHealthFinding | undefined {
+  const reasonsByStep = new Map<string, Set<string>>();
+  for (const entry of run.evidence) {
+    const meta = entry.diagnostics?.structured_output;
+    if (meta === undefined) continue;
+    if (meta.downgrade_reason === undefined || meta.downgrade_reason === 'external_agent') continue;
+    const reasons = reasonsByStep.get(entry.step_id) ?? new Set<string>();
+    reasons.add(meta.downgrade_reason);
+    reasonsByStep.set(entry.step_id, reasons);
+  }
+  if (reasonsByStep.size === 0) return undefined;
+
+  const steps = [...reasonsByStep.entries()].map(([step, reasons]) => ({
+    step,
+    reasons: [...reasons],
+  }));
+  const stepSummaries = steps.map((s) => `${s.step}: ${s.reasons.join(', ')}`);
+  return {
+    kind: 'structured_output_downgraded',
+    reason:
+      `${steps.length} step(s) requested strict structured output but ran without it ` +
+      `(${stepSummaries.join('; ')}) — outputs were validated post-hoc (L1), not grammar-constrained`,
+    evidence: { steps },
+  };
 }
 
 /**
@@ -232,13 +281,21 @@ export function classifyRunHealth(
         kind: 'completed_with_failed_steps',
         reason:
           `completed with ${run.failed_steps.length} failed step(s): ${run.failed_steps.join(', ')} ` +
-          `— failure-triggered finalizers do not run on a completed seal`,
+          `— fail-triggered finalizers do not run on a completed seal unless the workflow opts ` +
+          `into the 'completed_with_failed_steps' trigger`,
         evidence: { failed_steps: run.failed_steps },
       });
     }
+    // issue #316: structured_output_downgraded on the terminal path — the run is sealed, but its
+    // permanent evidence still records any strict-downgrade that happened before it sealed. This
+    // is the ONLY surface a downgrade on a run's final step reaches (get_run_state hard-zeroes
+    // run_health on a terminal run, the frozen #279-R3 guard below — see the module doc).
+    const terminalDowngrade = findStructuredOutputDowngrades(run);
+    if (terminalDowngrade !== undefined) pendingFindings.push(terminalDowngrade);
     if (pendingFindings.length > 0) return pendingFindings;
-    // terminal ∧ no pending ledger entries ∧ not completed-with-failed-steps ⇒ [] (byte-identical
-    // to pre-#279 behavior for every OTHER class of terminal record).
+    // terminal ∧ no pending ledger entries ∧ not completed-with-failed-steps ∧ no recorded
+    // structured-output downgrade ⇒ [] (byte-identical to pre-#279 behavior for every OTHER class
+    // of terminal record).
     return [];
   }
 
@@ -273,6 +330,13 @@ export function classifyRunHealth(
   // — a live pending_gate can coexist with the same both-match corruption a terminal record can.
   const gateCorruption = findGateCorruption(run);
   if (gateCorruption !== undefined) findings.push(gateCorruption);
+
+  // issue #316: structured_output_downgraded on the live path too — this is the run-health
+  // watchdog scenario the issue was filed for: a poller sees the downgrade WHILE the run is still
+  // in flight, via get_run_state's run_health + its warning line, without waiting for a terminal
+  // seal (which, per the module doc, get_run_state never surfaces run_health for at all).
+  const structuredOutputDowngrade = findStructuredOutputDowngrades(run);
+  if (structuredOutputDowngrade !== undefined) findings.push(structuredOutputDowngrade);
 
   // issue #291: gate_expired_awaiting_drive — record-fields-only (never the definition), fires
   // for BOTH an enactable gate AND a finding-only one (expires_at present, on_expiry absent) —

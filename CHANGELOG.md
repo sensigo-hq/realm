@@ -12,6 +12,10 @@ All notable changes to this project are documented here.
   whose persisted `run_phase` disagrees with the phase re-derived today — a no-op rewrite through the
   store's own versioned write, safe at any age, composable with the existing temp/orphan-artifact
   sweeps.
+- A run-health finding class (`structured_output_downgraded`, issue #316): one aggregated finding per
+  run disclosing every step that declared `structured_output: strict` but ran without it — informational
+  only, visible on live runs via `get_run_state`/`list --stuck` (excluded from stuck selection) and on
+  terminal runs via `realm run inspect`.
 
 ### Changed
 

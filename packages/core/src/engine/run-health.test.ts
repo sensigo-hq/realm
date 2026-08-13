@@ -1,7 +1,7 @@
 // Tests for classifyRunHealth — typed run-health classification (issue #221).
 import { describe, it, expect } from 'vitest';
 import { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS } from './run-health.js';
-import type { RunRecord } from '../types/run-record.js';
+import type { RunRecord, EvidenceSnapshot } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
 const NOW = new Date('2026-07-20T12:00:00.000Z');
@@ -483,7 +483,7 @@ describe('classifyRunHealth', () => {
   // derivation, so every fixture below sets/omits terminal_reason deliberately, never run_phase.
   // ---------------------------------------------------------------------
 
-  it('completed_with_failed_steps: a completed seal carrying failed_steps gets exactly this finding', () => {
+  it('completed_with_failed_steps: a completed seal carrying failed_steps gets exactly this finding (issue #316/R7: trigger-aware trailing clause — the leading count/step-list half stays byte-stable, only the trailing clause changed)', () => {
     const run = makeRun({
       terminal_state: true,
       terminal_reason: 'Workflow completed.',
@@ -494,8 +494,9 @@ describe('classifyRunHealth', () => {
       {
         kind: 'completed_with_failed_steps',
         reason:
-          'completed with 2 failed step(s): retry_step, notify_step — failure-triggered ' +
-          'finalizers do not run on a completed seal',
+          'completed with 2 failed step(s): retry_step, notify_step — fail-triggered ' +
+          'finalizers do not run on a completed seal unless the workflow opts into the ' +
+          "'completed_with_failed_steps' trigger",
         evidence: { failed_steps: ['retry_step', 'notify_step'] },
       },
     ]);
@@ -528,6 +529,294 @@ describe('classifyRunHealth', () => {
       terminal_reason: 'Guard step failed: unresolvable path.',
       run_phase: 'failed',
       failed_steps: ['work'],
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #316 — structured_output_downgraded: one aggregated finding per run, covering every
+// EvidenceSnapshot whose diagnostics.structured_output carries a real (non-external_agent)
+// downgrade_reason. Fires on BOTH the live and terminal paths (findStructuredOutputDowngrades is
+// called from both branches of classifyRunHealth, mirroring findGateCorruption's own pattern).
+// ---------------------------------------------------------------------------
+describe('classifyRunHealth — structured_output_downgraded (issue #316)', () => {
+  function snap(overrides: { step_id: string } & Partial<EvidenceSnapshot>): EvidenceSnapshot {
+    return {
+      started_at: '2024-01-01T00:00:00.000Z',
+      completed_at: '2024-01-01T00:00:01.000Z',
+      duration_ms: 100,
+      input_summary: {},
+      output_summary: {},
+      status: 'success',
+      evidence_hash: 'abc',
+      ...overrides,
+    };
+  }
+
+  // (a) downgrade_reason set ⇒ fires (live path).
+  it('(a) a live run with one downgraded step (api_rejected_schema) ⇒ exactly one structured_output_downgraded finding', () => {
+    const run = makeRun({
+      run_phase: 'running',
+      updated_at: NOW.toISOString(),
+      evidence: [
+        snap({
+          step_id: 'classify',
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'api_rejected_schema',
+            },
+          },
+        }),
+      ],
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+      {
+        kind: 'structured_output_downgraded',
+        reason:
+          '1 step(s) requested strict structured output but ran without it (classify: ' +
+          'api_rejected_schema) — outputs were validated post-hoc (L1), not grammar-constrained',
+        evidence: { steps: [{ step: 'classify', reasons: ['api_rejected_schema'] }] },
+      },
+    ]);
+  });
+
+  // (b) not-constructible cells: audit-verified (execution-loop.ts + anthropic-provider.ts +
+  // run-agent.ts) that `sent: false` NEVER occurs without a `downgrade_reason`, and a
+  // `downgrade_reason` NEVER occurs with `sent: true` — every mint site pairs them together or
+  // omits both. No fixture is fabricated for these cells; the predicate
+  // (`downgrade_reason !== undefined && downgrade_reason !== 'external_agent'`) does not read
+  // `sent` at all, so these cells cannot influence its behavior even if they somehow occurred.
+
+  // (c) external_agent ⇒ NEVER fires — the adjudicated, load-bearing exclusion.
+  it('(c) external_agent downgrade_reason ⇒ NEVER fires (an MCP-driven run synthesized stamp)', () => {
+    const run = makeRun({
+      run_phase: 'running',
+      updated_at: NOW.toISOString(),
+      evidence: [
+        snap({
+          step_id: 'classify',
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: { requested: true, sent: false, downgrade_reason: 'external_agent' },
+          },
+        }),
+      ],
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+  });
+
+  // (d) no structured_output diagnostics anywhere ⇒ no finding.
+  it('(d) evidence with no structured_output diagnostics at all ⇒ no finding', () => {
+    const run = makeRun({
+      run_phase: 'running',
+      updated_at: NOW.toISOString(),
+      evidence: [
+        snap({ step_id: 'plain_step' }),
+        snap({
+          step_id: 'other_step',
+          diagnostics: { input_token_estimate: 5, precondition_trace: [] },
+        }),
+      ],
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+  });
+
+  // (e) terminal run with a historical downgrade ⇒ fires in the terminal branch.
+  it('(e) a terminal run whose evidence records a historical downgrade ⇒ fires via the terminal branch', () => {
+    const run = makeRun({
+      terminal_state: true,
+      terminal_reason: 'Workflow completed.',
+      run_phase: 'completed',
+      evidence: [
+        snap({
+          step_id: 'classify',
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'grammar_unavailable',
+            },
+          },
+        }),
+      ],
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+      {
+        kind: 'structured_output_downgraded',
+        reason:
+          '1 step(s) requested strict structured output but ran without it (classify: ' +
+          'grammar_unavailable) — outputs were validated post-hoc (L1), not grammar-constrained',
+        evidence: { steps: [{ step: 'classify', reasons: ['grammar_unavailable'] }] },
+      },
+    ]);
+  });
+
+  // (f) aggregation: two steps, distinct reasons ⇒ ONE finding, both named in the reason.
+  it('(f) two steps with distinct reasons ⇒ ONE aggregated finding naming both', () => {
+    const run = makeRun({
+      run_phase: 'running',
+      updated_at: NOW.toISOString(),
+      evidence: [
+        snap({
+          step_id: 'classify',
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'api_rejected_schema',
+            },
+          },
+        }),
+        snap({
+          step_id: 'route',
+          diagnostics: {
+            input_token_estimate: 8,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'gate_ineligible',
+            },
+          },
+        }),
+      ],
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+      {
+        kind: 'structured_output_downgraded',
+        reason:
+          '2 step(s) requested strict structured output but ran without it (classify: ' +
+          'api_rejected_schema; route: gate_ineligible) — outputs were validated post-hoc (L1), ' +
+          'not grammar-constrained',
+        evidence: {
+          steps: [
+            { step: 'classify', reasons: ['api_rejected_schema'] },
+            { step: 'route', reasons: ['gate_ineligible'] },
+          ],
+        },
+      },
+    ]);
+  });
+
+  // Aggregation, same-step dedup: a step retried with the SAME reason across attempts contributes
+  // that reason once, not once per attempt.
+  it('a step retried twice with the SAME reason ⇒ that reason is deduped to ONE entry', () => {
+    const run = makeRun({
+      run_phase: 'running',
+      updated_at: NOW.toISOString(),
+      evidence: [
+        snap({
+          step_id: 'classify',
+          attempt: 1,
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'service_unavailable',
+            },
+          },
+        }),
+        snap({
+          step_id: 'classify',
+          attempt: 2,
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'service_unavailable',
+            },
+          },
+        }),
+      ],
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+      {
+        kind: 'structured_output_downgraded',
+        reason:
+          '1 step(s) requested strict structured output but ran without it (classify: ' +
+          'service_unavailable) — outputs were validated post-hoc (L1), not grammar-constrained',
+        evidence: { steps: [{ step: 'classify', reasons: ['service_unavailable'] }] },
+      },
+    ]);
+  });
+
+  // Aggregation, same-step DIFFERENT reasons across attempts: every distinct reason the step saw
+  // is listed, in first-seen order — never conflated, never silently dropped to "the last one".
+  it('a step with DIFFERENT reasons across attempts ⇒ every distinct reason listed, first-seen order', () => {
+    const run = makeRun({
+      run_phase: 'running',
+      updated_at: NOW.toISOString(),
+      evidence: [
+        snap({
+          step_id: 'classify',
+          attempt: 1,
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'api_rejected_schema',
+            },
+          },
+        }),
+        snap({
+          step_id: 'classify',
+          attempt: 2,
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'service_unavailable',
+            },
+          },
+        }),
+      ],
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+      {
+        kind: 'structured_output_downgraded',
+        reason:
+          '1 step(s) requested strict structured output but ran without it (classify: ' +
+          'api_rejected_schema, service_unavailable) — outputs were validated post-hoc (L1), ' +
+          'not grammar-constrained',
+        evidence: {
+          steps: [{ step: 'classify', reasons: ['api_rejected_schema', 'service_unavailable'] }],
+        },
+      },
+    ]);
+  });
+
+  it('negative: sent:true with no downgrade_reason ⇒ no finding (the normal successful-strict shape)', () => {
+    const run = makeRun({
+      run_phase: 'running',
+      updated_at: NOW.toISOString(),
+      evidence: [
+        snap({
+          step_id: 'classify',
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: { requested: true, sent: true },
+          },
+        }),
+      ],
     });
     expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
   });
