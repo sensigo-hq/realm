@@ -1,0 +1,58 @@
+{
+  // issue #327 — weekly dead-dependency detection (knip, `--dependencies` scope only: unused +
+  // unlisted + binaries + unresolved + catalog/catalogReferences — NOT exports/files/duplicates,
+  // which are a deliberate v2). Comments are the point of `.jsonc` — every non-default entry
+  // below carries the reason it exists, so a stale one is legible at review time (and the
+  // `--treat-config-hints-as-errors` flag in `deps:audit` makes a stale entry fail the run
+  // mechanically, not just legibly).
+  //
+  // Run from the REPO ROOT only (`npm run deps:audit`) — knip#1642 is a since-closed regression
+  // where per-package invocation inside an npm workspace produced wrong results; root invocation
+  // is the standing discipline here, matching every other repo-wide guard script.
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+
+  // With npm workspaces auto-detected (packages/*, examples/*), workspace-specific settings must
+  // live under "workspaces", keyed by workspace name/path — a top-level "entry"/"project" here is
+  // itself a stale-config hint once real workspaces exist (audit-verified: knip flags it as an
+  // unused top-level key and tells you to move it into "workspaces").
+  "workspaces": {
+    // The root workspace (".") has no `main`/`exports` of its own — its only "production" code is
+    // the zero-dependency guard scripts under scripts/*.mjs (check-action-pins.mjs,
+    // check-audit-allowlist.mjs, file-audit-issue.mjs, etc.). Without an explicit entry here,
+    // knip doesn't know to scan them, and root devDependencies that only those scripts import
+    // (e.g. json5) would misreport as unused.
+    ".": {
+      "entry": ["scripts/*.mjs"],
+      "project": ["scripts/**/*.mjs"],
+    },
+
+    // packages/* all stay on knip's defaults — each is a normal npm-workspace TypeScript package
+    // with its own package.json, and knip's plugins (vitest/eslint/prettier/lefthook/
+    // github-actions) already cover the tooling configs those packages reference.
+  },
+
+  // examples/* are NOT ignored — the MA's live run shows them quiet (zero findings) at zero
+  // configuration cost, so leave them in scope for wider coverage. If they ever get noisy (e.g.
+  // an example intentionally vendors something knip can't see), the TanStack fallback is to
+  // exclude the whole group rather than fight each example's shape:
+  //   "ignoreWorkspaces": ["examples/*"]
+
+  // finding 4 (#327 prompt): openai IS used — cli's OpenAI provider loads it via
+  // `await import(moduleId)` with a VARIABLE specifier (openai-provider.ts:59/:133), which is
+  // deliberately invisible to static analysis so openai can stay an optional peer dependency.
+  // The root `openai` copy satisfies cli's optional peer in the dev tree. Do NOT remove or
+  // relocate it (the relocation question — should it live in cli's devDependencies instead of
+  // root's dependencies — is open and tracked in the PR body, not decided here).
+  //
+  // Constraint: this list may contain EXACTLY this one entry. Ignoring suppresses BOTH the
+  // unused-dependency finding AND any unlisted-dependency finding for the same name — so a
+  // second entry here would be a silent way to "fix" a real phantom dependency by hiding it
+  // instead of declaring it. Any addition to this array outside of this one documented,
+  // dynamic-import-backed exception is a review red flag.
+  "ignoreDependencies": ["openai"],
+
+  // No plugin covers turbo.json today — anything referenced ONLY from a turbo.json `dependsOn`/
+  // task definition (never imported from source) would be invisible to this scope. Currently
+  // nothing in this repo is turbo-only-referenced (grep-verified against the #327 investigation),
+  // so this is a documented gap, not a live finding.
+}

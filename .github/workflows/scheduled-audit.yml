@@ -48,3 +48,24 @@ jobs:
           AUDIT_OUTPUT_FILE: ${{ runner.temp }}/audit-output.txt
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: node scripts/file-audit-issue.mjs
+      # issue #327 — weekly dead-dependency detection (knip, `--dependencies` scope: unused +
+      # unlisted/phantom dependencies, v1). `if: ${{ !cancelled() }}` is load-bearing (audit
+      # finding S2): without it, a red tier-2 audit step above would skip this step via GitHub
+      # Actions' implicit success()-only default, silently omitting dead-dep detection in exactly
+      # the weeks the dependency tree churns enough to trip BOTH audits. `!cancelled()` still lets
+      # the step skip on a cancelled run, just not on an ordinary step failure.
+      - name: Dead-dependency audit (knip, dependencies-only)
+        id: knip
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          npm run deps:audit 2>&1 | tee "$RUNNER_TEMP/knip-output.txt"
+      # Same `outcome == 'failure'`-gated pattern as the tier-2 audit above — only a genuine knip
+      # finding files/updates this (separately-titled) tracking issue.
+      - name: File or update the tracking issue (knip dead dependencies)
+        if: failure() && steps.knip.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUDIT_OUTPUT_FILE: ${{ runner.temp }}/knip-output.txt
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/file-audit-issue.mjs knip
