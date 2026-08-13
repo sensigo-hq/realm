@@ -229,6 +229,13 @@ function finding(cls, file, lineNumber, message) {
  * Classifies every `uses:` entry across every workflow file. Returns `{ findings, checkedCount,
  * distinctRepoCount, localSkipped }` — `findings` is the full, ordered list of guard failures
  * (empty ⇒ the tree passes); `checkedCount`/`distinctRepoCount` feed the passing summary line.
+ * issue #326 correction: `checkedCount` stays scoped to `shaPinned` (the precise-commented
+ * subset actually resolved against the API — the count of pins genuinely VERIFIED, not merely
+ * syntax-valid); `distinctRepoCount` is now `byRepoBase.size`, sourced from the WIDER `shaValid`
+ * NON_UNIFORM grouping. The two are only ever read together in the all-green summary line, and
+ * `findings.length === 0` is only reachable when `shaValid` and `shaPinned` are the exact same
+ * set (any entry in `shaValid` but not `shaPinned` would itself be a MISSING_COMMENT/
+ * IMPRECISE_COMMENT finding) — so the two counts never disagree in the sentence that prints them.
  */
 async function checkActionPins(dir, rawResolver, retryDelayMs) {
   const files = readdirSync(dir)
@@ -244,8 +251,14 @@ async function checkActionPins(dir, rawResolver, retryDelayMs) {
 
   const findings = [];
   const localSkipped = [];
-  /** Entries whose ref is a syntactically valid 40-hex SHA — the only ones eligible for
-   *  resolution AND for the NON_UNIFORM cross-file comparison. */
+  /** issue #326 correction: every entry whose ref is a syntactically valid 40-hex SHA —
+   *  REGARDLESS of comment state. This is the NON_UNIFORM grouping population: two pins of the
+   *  same action repo at different SHAs are non-uniform whether or not either line carries a
+   *  (precise) comment — a missing/imprecise comment must never mask a uniformity violation. */
+  const shaValid = [];
+  /** Subset of `shaValid` that ALSO carries a precise `# vX.Y.Z…` comment — the only entries
+   *  eligible for API resolution (MISMATCH/TAG_NOT_FOUND/API_FAILURE need a trustworthy tag to
+   *  resolve against; a missing or imprecise comment has nothing to resolve). */
   const shaPinned = [];
 
   for (const entry of allEntries) {
@@ -285,6 +298,11 @@ async function checkActionPins(dir, rawResolver, retryDelayMs) {
       );
       continue;
     }
+
+    // issue #326 correction: join the NON_UNIFORM population NOW, before the comment checks below
+    // can `continue` past it — a same-action different-SHA pin is non-uniform independent of
+    // whether its comment is present/precise.
+    shaValid.push({ ...entry, repoBase, ref });
 
     if (entry.comment === undefined || entry.comment.length === 0) {
       findings.push(
@@ -378,11 +396,13 @@ async function checkActionPins(dir, rawResolver, retryDelayMs) {
     }
   }
 
-  // NON_UNIFORM: group every SHA-pinned entry (regardless of comment precision or resolution
-  // outcome — this is a purely structural same-repo-different-SHA check) by repoBase; any group
-  // with more than one distinct SHA gets every one of its entries flagged.
+  // NON_UNIFORM: group every SHA-VALID entry — issue #326 correction: `shaValid`, not `shaPinned`
+  // — REGARDLESS of comment precision or resolution outcome (this is a purely structural
+  // same-repo-different-SHA check, and the block comment's claim is now literally true: a line
+  // with no comment at all, or an imprecise one, still joins this grouping). Any group with more
+  // than one distinct SHA gets every one of its entries flagged.
   const byRepoBase = new Map();
-  for (const entry of shaPinned) {
+  for (const entry of shaValid) {
     const list = byRepoBase.get(entry.repoBase) ?? [];
     list.push(entry);
     byRepoBase.set(entry.repoBase, list);
