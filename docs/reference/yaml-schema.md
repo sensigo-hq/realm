@@ -1015,6 +1015,17 @@ the migration delta for a step that hasn't opted in yet, and the caveat text for
 never a bare "eligible" (see `realm validate --strict` in [cli-commands.md](cli-commands.md); the
 nudge never affects the exit code).
 
+**Run-health disclosure (issue #316).** A run-health `structured_output_downgraded` finding
+aggregates every step whose disclosed `downgrade_reason` is present — surfacing on live runs via
+`get_run_state`'s `run_health`/`warnings`, and on terminal runs via `realm run inspect` (see
+[mcp-protocol.md](mcp-protocol.md)). `external_agent` is deliberately **excluded**: it names an
+MCP-driven attempt realm never made a request for at all, not a degraded one realm itself chose to
+send unconstrained — reporting it as a finding would fire on every declared step of every
+non-`realm agent`-driven run, regardless of whether strict was ever actually attempted. The
+finding is always informational: even when it fires, the step's output was still validated
+post-hoc by realm's own L1 Ajv + reask loop above — a downgrade narrows the prevention layer, it
+never removes the safety net.
+
 ### A tools-bearing step is a G6 reject, not a degrade
 
 `examples/09-webhook-pr-review/workflow.yaml`'s agent steps declare `tools` — `structured_output`

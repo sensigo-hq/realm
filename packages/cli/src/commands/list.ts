@@ -175,7 +175,17 @@ export async function listRuns(
       // still stored above, so a run selected for some OTHER co-occurring finding still renders
       // that finding's own label (completed_with_failed_steps itself has none — the
       // terminal_with_stale_gate/gate_corruption no-label precedent).
-      return findings.some((f) => f.kind !== 'completed_with_failed_steps');
+      //
+      // issue #316: structured_output_downgraded joins the SAME exclusion — a degraded-assurance
+      // disclosure is not a "stuck" symptom either. MORE load-bearing than the #302 conjunct: that
+      // kind is terminal-only (a completed run was already excluded from --stuck's live-run scan
+      // by other means), but this kind fires on LIVE runs too — without this exclusion, a
+      // perfectly healthy in-flight run that merely downgraded strict on one step would
+      // misreport as --stuck.
+      return findings.some(
+        (f) =>
+          f.kind !== 'completed_with_failed_steps' && f.kind !== 'structured_output_downgraded',
+      );
     });
   } else if (statusFilter !== undefined) {
     // issue #279 (increment 2, PR-C — D-3 leg vi): filter on the DERIVED phase, never the

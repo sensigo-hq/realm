@@ -91,8 +91,10 @@ export interface StructuredOutputMeta {
    *  never has to special-case "object present but requested:false". */
   requested: true;
   /** Whether realm actually placed `strict: true` on the request it handed to the SDK for the
-   *  attempt THIS diagnostics object describes. Absent on a synthesized stamp (`external_agent`)
-   *  where no request was ever made by realm at all. */
+   *  attempt THIS diagnostics object describes. Issue #316 correction: a synthesized stamp
+   *  (`external_agent`) sets this to `false` explicitly — never absent — since no request was
+   *  ever made by realm at all; all three mint sites (execution-loop.ts) construct
+   *  `{requested: true, sent: false, downgrade_reason: 'external_agent'}` verbatim. */
   sent?: boolean;
   /** Caveat codes from `assessStructuredOutputEligibility`'s `eligible_with_caveats` verdict —
    *  present only when `sent` is `true` and the schema carried caveats (never on an `ineligible`

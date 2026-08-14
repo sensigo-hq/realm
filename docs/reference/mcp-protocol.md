@@ -47,6 +47,21 @@ MCP-only consumer combines the run's `terminal_reason` + `failed_steps` + derive
 instead of reading a per-attempt field. See
 [`structured_output`](yaml-schema.md#structured_output-anthropic-strict-decoding).
 
+**`structured_output_downgraded` run-health finding (issue #316):** the remedy for the
+per-step-evidence gap above, for the OTHER downgrade causes (a live API rejection, a gate
+ineligibility, an unsupported provider — anything except the `external_agent` case, which is
+excluded by design since it is never realm's own doing to report on). `get_run_state`'s
+`run_health` array carries a `structured_output_downgraded` finding, and its `warnings` array
+gains a summary line, whenever a live run has one or more steps that requested strict but ran
+without it — no per-step evidence access required. **Residual, stated honestly:** a downgrade on
+a run's FINAL step can seal before a watchdog's next poll notices it, and `get_run_state` zeroes
+`run_health` entirely on a terminal run (the frozen #279-R3 guard — see
+[operating-runs.md](operating-runs.md)) — so a pure-MCP poller that only ever calls `get_run_state`
+can miss a last-window downgrade. The evidence itself retains the disclosure permanently
+regardless (it is never deleted on seal), and `realm run inspect` always shows it — the finding is
+a live-visibility improvement, not a replacement for inspecting a terminal run's evidence when
+that matters.
+
 ---
 
 ## Standard loop

@@ -510,6 +510,77 @@ describe('--stuck selection exclusion: completed_with_failed_steps (issue #302 �
   });
 });
 
+describe('--stuck selection exclusion: structured_output_downgraded (issue #316 — MORE load-bearing than #302: this kind fires on LIVE runs, not just terminal ones)', () => {
+  it('a LIVE run whose only finding is structured_output_downgraded is NOT --stuck-selected', async () => {
+    const run = makeRun({
+      id: 'run-live-downgraded-only',
+      run_phase: 'running',
+      terminal_state: false,
+      // Recent updated_at — listRuns has no `now` override for classifyRunHealth, so this must
+      // stay well inside the 24h never_claimed_idle threshold to keep this run's ONLY finding as
+      // structured_output_downgraded (otherwise idle detection would co-fire and this cell would
+      // no longer isolate the exclusion conjunct it's meant to pin).
+      updated_at: new Date().toISOString(),
+      evidence: [
+        {
+          step_id: 'classify',
+          started_at: '2024-01-01T00:00:00.000Z',
+          completed_at: '2024-01-01T00:00:01.000Z',
+          duration_ms: 100,
+          input_summary: {},
+          output_summary: {},
+          status: 'success',
+          evidence_hash: 'abc',
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'api_rejected_schema',
+            },
+          },
+        },
+      ],
+    });
+    const result = await listRuns(undefined, makeStore([run]), undefined, true);
+    expect(result).not.toContain('run-live-downgraded-only');
+    expect(result).toContain('No stuck runs found');
+  });
+
+  it('the SAME run WITHOUT --stuck still appears in the plain listing (this finding never hides a run outside --stuck)', async () => {
+    const run = makeRun({
+      id: 'run-live-downgraded-only-plain',
+      run_phase: 'running',
+      terminal_state: false,
+      updated_at: new Date().toISOString(),
+      evidence: [
+        {
+          step_id: 'classify',
+          started_at: '2024-01-01T00:00:00.000Z',
+          completed_at: '2024-01-01T00:00:01.000Z',
+          duration_ms: 100,
+          input_summary: {},
+          output_summary: {},
+          status: 'success',
+          evidence_hash: 'abc',
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'api_rejected_schema',
+            },
+          },
+        },
+      ],
+    });
+    const result = await listRuns(undefined, makeStore([run]));
+    expect(result).toContain('run-live-downgraded-only-plain');
+  });
+});
+
 describe('--stuck age-gating (issue #221 — classifyRunHealth-backed)', () => {
   it('hides a YOUNG (<24h) claimless running run by default, but flags a 47-day-old one', async () => {
     const young = makeRun({
