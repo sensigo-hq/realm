@@ -1,10 +1,10 @@
 {
   "name": "@sensigo/realm",
-  "version": "0.34.0",
+  "version": "0.35.0",
   "publishConfig": {
     "access": "public"
   },
-  "description": "Realm workflow execution engine \u2014 state machine, evidence capture, and service adapters for agent-driven workflows.",
+  "description": "Realm workflow execution engine — state machine, evidence capture, and service adapters for agent-driven workflows.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
