@@ -4036,16 +4036,23 @@ async function composeExpiredGateEnvelope(
     return { ...envelope, warnings: mergeWarnings([], enactedDisclosure, ...drainWarnings) };
   }
 
-  // Unreachable in-contract (the expire delta either enacted it here or a racing enactment point
-  // already had — one of the two branches above always matches). Defensive fallback: never throw
-  // out of a response-envelope-returning function; report the ambiguity honestly instead.
+  // issue #319: rare-by-construction, not unreachable. Reachable ONLY in the migrated-path race
+  // window where a concurrent writer terminalized the run BETWEEN the F3 gate_expired_pending
+  // refusal and this caller's own expire delta being applied — neither search above finds a
+  // matching entry because the concurrent settlement recorded a DIFFERENT gate/step, never this
+  // one (the #317-correction discriminator: this cell is proven reachable only with a terminal
+  // `finalRun`, since the legacy snapshot path answers both searches from one snapshot and can
+  // never fall through to here). The honest answer is a terminal disclosure, not an engine fault
+  // — never attribute the outcome to THIS gate's expiry (no matched entry exists to attribute it
+  // to), and never claim "expired" at all, since nothing here witnessed this gate expiring.
   const err = new WorkflowError(
-    `Gate '${originalGateId}' expired, but its enacted disposition could not be determined from ` +
-      `the resulting record — this indicates a store or engine defect, not a normal refusal.`,
+    `Gate '${originalGateId}': the run reached a terminal outcome concurrently — your choice ` +
+      `was NOT recorded. 'realm resume' clears a stale pending gate on a resumable run, or ` +
+      `'realm run purge' removes the record entirely.`,
     {
-      code: 'ENGINE_INTERNAL',
-      category: 'ENGINE',
-      agentAction: 'stop',
+      code: 'STATE_RUN_TERMINAL',
+      category: 'STATE',
+      agentAction: 'report_to_user',
       retryable: false,
       details: { runId: finalRun.id, gateId: originalGateId },
     },

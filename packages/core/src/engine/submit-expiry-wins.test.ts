@@ -354,16 +354,32 @@ describe('submitHumanResponse — composeExpiredGateEnvelope gate_id discriminat
       expect(envelope.status).toBe('error');
       // The ACTUAL, correct answer (discriminator intact): composeExpiredGateEnvelope's search
       // for THIS gate finds neither a settled entry nor a matching skip_details entry (only the
-      // unrelated one exists) — the pre-existing defensive "Unreachable in-contract" fallback,
-      // never a normal refusal and never a false attribution.
-      expect(envelope.error_code).toBe('ENGINE_INTERNAL');
+      // unrelated one exists) — this used to fall through to the generic "Unreachable in-contract"
+      // ENGINE_INTERNAL fallback (honest, but illegible — it implied an engine fault where the
+      // truth is a benign concurrent settlement). issue #319: the fallback is now an HONEST
+      // terminal disclosure, mirroring the abort-sibling/zombie STATE_RUN_TERMINAL cells —
+      // never a normal refusal, never an engine fault, and never a false attribution.
+      expect(envelope.error_code).toBe('STATE_RUN_TERMINAL');
       expect(envelope.errors.join(' ')).toContain(
-        'its enacted disposition could not be determined from the resulting record',
+        'the run reached a terminal outcome concurrently',
       );
+      expect(envelope.errors.join(' ')).toContain('your choice was NOT recorded');
+      // The house resume/purge pointer (verbatim from the zombie/#282-class cell) — the same
+      // guidance an operator gets on the OTHER terminal-submit refusal path, so the honest answer
+      // here isn't a dead end.
+      expect(envelope.errors.join(' ')).toContain(
+        "'realm resume' clears a stale pending gate on a resumable run",
+      );
+      expect(envelope.errors.join(' ')).toContain("'realm run purge' removes the record entirely");
       // The false attribution the mutant produces instead: reports THIS gate as the one that
       // expired and aborted, quoting the UNRELATED step's name — never true.
       expect(envelope.errors.join(' ')).not.toContain('expired and the run aborted');
-      expect(envelope.errors.join(' ')).not.toContain('your choice was NOT recorded');
+      // issue #319 discrimination pin: no BARE "expired" anywhere in the envelope's errors — not
+      // merely the false-attribution PHRASE. Word-scoped, not phrase-scoped, deliberately: the
+      // OLD ENGINE_INTERNAL message ("Gate 'X' expired, but its enacted disposition could not be
+      // determined…") contains bare "expired" WITHOUT the attribution phrase, so a phrase-only
+      // pin would not catch a reversion to it — only this bare-word pin does.
+      expect(envelope.errors.join(' ')).not.toMatch(/expired/);
       expect(envelope.command).not.toBe('other-step');
     });
   });
