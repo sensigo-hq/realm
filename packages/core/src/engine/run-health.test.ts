@@ -659,6 +659,53 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
     ]);
   });
 
+  // issue #316 correction — the terminal CO-FIRE cell (MA novel probe, 2026-08-14): a completed
+  // seal carrying BOTH failed_steps AND a historical downgrade must return BOTH findings — the
+  // downgrade push sits BEFORE the `pendingFindings.length > 0` early return specifically so a
+  // future tidy-up that moves it AFTER cannot silently drop the disclosure. terminal_reason MUST
+  // be the verbatim 'Workflow completed.' string (the derivation hinge) — omitting it derives
+  // 'failed', not 'completed', and this cell would silently stop exercising the co-fire path at
+  // all (the MA's own first probe fixture hit exactly this).
+  it('terminal co-fire: completed-with-failed-steps AND a historical downgrade ⇒ BOTH findings, both asserted by content', () => {
+    const run = makeRun({
+      terminal_state: true,
+      terminal_reason: 'Workflow completed.',
+      run_phase: 'completed',
+      failed_steps: ['retry_step'],
+      evidence: [
+        snap({
+          step_id: 'classify',
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'api_rejected_schema',
+            },
+          },
+        }),
+      ],
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+      {
+        kind: 'completed_with_failed_steps',
+        reason:
+          'completed with 1 failed step(s): retry_step — fail-triggered finalizers do not run ' +
+          "on a completed seal unless the workflow opts into the 'completed_with_failed_steps' " +
+          'trigger',
+        evidence: { failed_steps: ['retry_step'] },
+      },
+      {
+        kind: 'structured_output_downgraded',
+        reason:
+          '1 step(s) requested strict structured output but ran without it (classify: ' +
+          'api_rejected_schema) — outputs were validated post-hoc (L1), not grammar-constrained',
+        evidence: { steps: [{ step: 'classify', reasons: ['api_rejected_schema'] }] },
+      },
+    ]);
+  });
+
   // (f) aggregation: two steps, distinct reasons ⇒ ONE finding, both named in the reason.
   it('(f) two steps with distinct reasons ⇒ ONE aggregated finding naming both', () => {
     const run = makeRun({
