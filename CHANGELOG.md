@@ -30,6 +30,8 @@ All notable changes to this project are documented here.
 - `@sensigo/realm-mcp` (issue #327) now declares its own `proper-lockfile` dependency instead of relying on
   npm's hoisting of `@sensigo/realm`'s copy — a phantom dependency is a latent crash under any installer
   that doesn't hoist (e.g. strict/isolated installs).
+- A late `submit_human_response` on a terminal run, in the rare concurrent-settlement race window
+  (issue #319), now gets an honest terminal disclosure instead of a generic internal-error answer.
 
 ---
 
