@@ -867,4 +867,42 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
     });
     expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
   });
+
+  // issue #332 item 6, pin (iii): the run-agent.ts tools-fork fix mints `unsupported_context_tools`
+  // instead of leaving the engine to synthesize `external_agent` for a strict-declared,
+  // tools-bearing, realm-driven step. This finding's predicate treats any non-external_agent
+  // reason identically (no code change needed here — classifyRunHealth never special-cases
+  // individual reason strings), but before the fix such a run's downgrade was INVISIBLE to this
+  // finding entirely (external_agent is the load-bearing exclusion) — it now SURFACES. Asserted
+  // verbatim (toEqual, not toContain) so the exact reason string a fix regression would corrupt
+  // is caught, not just its presence.
+  it('a run whose only downgrade is unsupported_context_tools (the #332 item 6 fix) now SURFACES via this finding — previously invisible as external_agent', () => {
+    const run = makeRun({
+      run_phase: 'running',
+      updated_at: NOW.toISOString(),
+      evidence: [
+        snap({
+          step_id: 'classify',
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'unsupported_context_tools',
+            },
+          },
+        }),
+      ],
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+      {
+        kind: 'structured_output_downgraded',
+        reason:
+          '1 step(s) requested strict structured output but ran without it (classify: ' +
+          'unsupported_context_tools) — outputs were validated post-hoc (L1), not grammar-constrained',
+        evidence: { steps: [{ step: 'classify', reasons: ['unsupported_context_tools'] }] },
+      },
+    ]);
+  });
 });

@@ -360,6 +360,10 @@ describe('submitHumanResponse — composeExpiredGateEnvelope gate_id discriminat
       // terminal disclosure, mirroring the abort-sibling/zombie STATE_RUN_TERMINAL cells —
       // never a normal refusal, never an engine fault, and never a false attribution.
       expect(envelope.error_code).toBe('STATE_RUN_TERMINAL');
+      // issue #332 item 7: positive agent_action pin for the #319 fallback cell — errorEnvelope
+      // maps it verbatim (execution-loop.ts:885, no translation on this path), so this is the
+      // exact `agentAction: 'report_to_user'` set at the fallback's mint site.
+      expect(envelope.agent_action).toBe('report_to_user');
       expect(envelope.errors.join(' ')).toContain(
         'the run reached a terminal outcome concurrently',
       );

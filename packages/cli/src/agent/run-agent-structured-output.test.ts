@@ -3,13 +3,22 @@
 // provider_unsupported synthesis rule (never external_agent), and sticky-downgrade across
 // separate callStepWithMeta invocations for the same step (the provider's OWN internal ladder
 // retry is covered at the provider level — anthropic-provider-structured-output.test.ts).
+// issue #332 item 6 also lives here: the tools-fork misattribution fix — a strict-declared,
+// tools-bearing step now discloses `unsupported_context_tools` (realm's own agent DID drive this
+// step, just via a path that structurally cannot honor strict), never the `external_agent`
+// stamp (which claims realm made no request at all). The OTHER boundary of that fix — a
+// genuinely external MCP-driven step still gets `external_agent` — is unaffected by this change
+// (the tools fork is never reached by an external caller) and is already pinned at the
+// execution-loop level: structured-output-evidence.test.ts's "a declared step with NO
+// stepMeta.structuredOutput at all gets the external_agent stamp".
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runAgent } from './run-agent.js';
 import type { WorkflowDefinition, StructuredOutputMeta } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { AnthropicProvider } from './providers/anthropic-provider.js';
-import { LlmProvider } from './providers/llm-provider.js';
+import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js';
+import type { McpClient, McpTool } from './mcp/mcp-extensions.js';
 
 const mockCreate = vi.fn();
 vi.mock('@anthropic-ai/sdk', () => ({
@@ -330,5 +339,135 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
     const meta = lastEvidenceMeta(runs[0]!);
     expect(meta?.sent).toBe(true);
     expect(meta?.caveats).toEqual(['optional_emission']);
+  });
+
+  it('issue #332 item 1: an eligible_with_caveats schema whose LIVE attempt then downgrades (400) carries BOTH caveats AND downgrade_reason — caveats record an eligibility-time fact about the schema, independent of the attempt outcome (run-record.ts:99-108 correction)', async () => {
+    const def: WorkflowDefinition = {
+      id: 'so-caveat-downgrade-wf',
+      name: 'SO Caveat Downgrade',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        classify: {
+          description: 'Classify',
+          execution: 'agent',
+          structured_output: 'strict',
+          output_schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['category'],
+            // Same eligible_with_caveats shape as the caveat-carry test above (an optional
+            // property ⇒ G7' optional_emission) — but THIS attempt's live call 400s, unlike that
+            // test's clean success. The existing api_rejected pins elsewhere in this file all use
+            // no-caveat schemas, so this cell (caveats co-occurring with a live downgrade) was
+            // previously unpinned.
+            properties: { category: { type: 'string' }, note: { type: 'string' } },
+          },
+        },
+      },
+    };
+    const store = new InMemoryStore();
+    mockCreate
+      .mockRejectedValueOnce(
+        httpError(
+          400,
+          "tools.0.custom: For 'object' type, 'additionalProperties' must be explicitly set to false",
+        ),
+      )
+      .mockResolvedValueOnce(makeToolUseResponse({ category: 'billing' }));
+
+    const result = await runAgent(
+      {
+        store,
+        workflowStore: makeWorkflowStore(def),
+        provider: new AnthropicProvider('claude-sonnet-4-5'),
+        registry: createDefaultRegistry(),
+      },
+      { definition: def, params: {} },
+    );
+
+    expect(result).toBe('completed');
+    const runs = await store.list();
+    const meta = lastEvidenceMeta(runs[0]!);
+    // VERIFY-FIRST note: the retry response is ALSO run through the provider's own
+    // submission-channel disclosure (anthropic-provider.ts's withChannel — the standing dodge
+    // detector, design record R-B), so a real recovered attempt honestly also carries
+    // `submission_channel` — this cell's first draft omitted it and the real run caught the gap.
+    expect(meta).toEqual({
+      requested: true,
+      sent: false,
+      downgrade_reason: 'api_rejected_schema',
+      api_message:
+        "tools.0.custom: For 'object' type, 'additionalProperties' must be explicitly set to false",
+      caveats: ['optional_emission'],
+      submission_channel: 'tool',
+    });
+  });
+
+  it('issue #332 item 6, pin (i): a strict-declared, tools-bearing step (mcpClient present, realm-driven) discloses unsupported_context_tools, NEVER external_agent — the tools fork structurally cannot honor strict, but realm DID drive this step', async () => {
+    const def: WorkflowDefinition = {
+      id: 'so-tools-wf',
+      name: 'SO Tools',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      mcp_servers: [{ id: 'github', command: 'npx', args: ['-y', 'mcp-github'] }],
+      steps: {
+        classify: {
+          description: 'Classify',
+          execution: 'agent',
+          structured_output: 'strict',
+          tools: ['github:get_pull_request'],
+          output_schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['category'],
+            properties: { category: { type: 'string' } },
+          },
+        },
+      },
+    };
+    const mockClient: McpClient = {
+      async connect() {},
+      async getTools(_serverId: string, allowList: string[]): Promise<McpTool[]> {
+        return allowList.map((name) => ({
+          name,
+          description: `Tool ${name}`,
+          inputSchema: { type: 'object' },
+        }));
+      },
+      async call() {
+        return { result: 'ok' };
+      },
+      async disconnect() {},
+    };
+    const provider = new (class extends ToolCapableLlmProvider {
+      callStep = vi.fn();
+      callStepWithTools = vi
+        .fn()
+        .mockResolvedValue({ output: { category: 'billing' }, toolCalls: [] });
+    })();
+    const store = new InMemoryStore();
+
+    const result = await runAgent(
+      {
+        store,
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+        mcpClientFactory: () => mockClient,
+      },
+      { definition: def, params: {} },
+    );
+
+    expect(result).toBe('completed');
+    expect(provider.callStepWithTools).toHaveBeenCalledOnce();
+    const runs = await store.list();
+    const meta = lastEvidenceMeta(runs[0]!);
+    expect(meta).toEqual({
+      requested: true,
+      sent: false,
+      downgrade_reason: 'unsupported_context_tools',
+    });
+    expect(meta?.downgrade_reason).not.toBe('external_agent');
   });
 });

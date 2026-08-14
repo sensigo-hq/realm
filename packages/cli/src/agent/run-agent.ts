@@ -665,6 +665,27 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             }
             stepInput = toolsResult.output;
             toolCallsForMeta = toolsResult.toolCalls;
+            // issue #332 item 6: the tools path never consumes structuredOutputPlan (there is no
+            // grammar-constrained call here — callStepWithTools has no strict concept at all), so
+            // a strict-DECLARED, tools-bearing step used to leave structuredOutputMetaForStep
+            // undefined — falling through to execution-loop.ts's synthesized `external_agent`
+            // stamp, which claims "realm made no request at all". That's a misattribution: realm's
+            // OWN agent DID drive this step, via the tools path, which structurally cannot honor
+            // strict. Mint the honest, distinct reason here instead of letting the engine
+            // synthesize the wrong one.
+            //
+            // NOT a ladder outcome — deliberately does NOT touch structuredOutputSticky. Sticky
+            // exists to remember a LIVE downgrade across repair-loop attempts for the SAME step
+            // (armed only at the live-downgrade sites below, :698-702/:736-740 in the non-tools
+            // branch); this is a per-step STRUCTURAL fact (declares `tools`) that is identical on
+            // every attempt and needs no memory across attempts.
+            if (stepDef.structured_output === 'strict') {
+              structuredOutputMetaForStep = {
+                requested: true,
+                sent: false,
+                downgrade_reason: 'unsupported_context_tools',
+              };
+            }
           } else {
             // Retry the LLM call once on failure before giving up.
             let callError: unknown;
