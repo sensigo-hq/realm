@@ -88,6 +88,10 @@ describe('run_terminal envelope — the composed cancelled-predicate (issue #279
       });
       expect(submitAfterCancel.status).toBe('error');
       expect(submitAfterCancel.error_code).toBe('STATE_RUN_TERMINAL');
+      // issue #332 item 7: agent_action was previously only asserted negatively elsewhere in this
+      // file (:290 — a DIFFERENT envelope, never `report_to_user`); this positive pin closes the
+      // gap for the CANCELLED variant.
+      expect(submitAfterCancel.agent_action).toBe('report_to_user');
       expect(submitAfterCancel.errors[0]).toContain('NOT recorded');
       expect(submitAfterCancel.errors[0]).toContain('aborter');
     } finally {
@@ -137,6 +141,9 @@ describe('run_terminal envelope — the composed cancelled-predicate (issue #279
       });
       expect(result.status).toBe('error');
       expect(result.error_code).toBe('STATE_RUN_TERMINAL');
+      // issue #332 item 7: positive agent_action pin for the ZOMBIE variant (see the CANCELLED
+      // variant above for the same addition and its rationale).
+      expect(result.agent_action).toBe('report_to_user');
       expect(result.errors[0]).not.toContain('NOT recorded'); // never the cancelled text
       expect(result.errors[0]).toContain('realm resume');
       expect(result.errors[0]).toContain('realm run purge');

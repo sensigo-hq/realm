@@ -28,7 +28,31 @@
 
     // packages/* all stay on knip's defaults — each is a normal npm-workspace TypeScript package
     // with its own package.json, and knip's plugins (vitest/eslint/prettier/lefthook/
-    // github-actions) already cover the tooling configs those packages reference.
+    // github-actions) already cover the tooling configs those packages reference. The one
+    // exception is cli's `openai` ignore, below — a workspace-scoped entry, not a top-level one.
+    "packages/cli": {
+      // issue #332 item 5: openai re-homed from root `dependencies` to cli `devDependencies` (the
+      // #327 PR body's open relocation question, now resolved) — the ignore entry moves WITH it.
+      // A top-level `ignoreDependencies` binds ONLY the root workspace in knip's config model;
+      // leaving it there after the move would be silently inert (root no longer declares openai
+      // at all) while cli's own copy would newly misreport as unused — the move must be BOTH
+      // sides at once.
+      //
+      // openai IS used — cli's OpenAI provider loads it via `await import(moduleId)` with a
+      // VARIABLE specifier (openai-provider.ts:59/:133), which is deliberately invisible to
+      // static analysis so openai can stay an optional peer dependency. Do NOT remove or
+      // re-relocate it.
+      //
+      // Constraint: this list may contain EXACTLY this one entry (repo-wide, across every
+      // workspace block — not just this one). Ignoring suppresses BOTH the unused-dependency
+      // finding AND any unlisted-dependency finding for the same name — so a second entry
+      // anywhere would be a silent way to "fix" a real phantom dependency by hiding it instead of
+      // declaring it. Any addition outside of this one documented, dynamic-import-backed
+      // exception is a review red flag. A leftover ROOT-level entry (from before this move) WILL
+      // red the config-hints gate — that redness is the self-cleaning mechanism working, not a
+      // bug; fix by moving, never by loosening.
+      "ignoreDependencies": ["openai"],
+    },
   },
 
   // examples/* are NOT ignored — the MA's live run shows them quiet (zero findings) at zero
@@ -36,20 +60,6 @@
   // an example intentionally vendors something knip can't see), the TanStack fallback is to
   // exclude the whole group rather than fight each example's shape:
   //   "ignoreWorkspaces": ["examples/*"]
-
-  // finding 4 (#327 prompt): openai IS used — cli's OpenAI provider loads it via
-  // `await import(moduleId)` with a VARIABLE specifier (openai-provider.ts:59/:133), which is
-  // deliberately invisible to static analysis so openai can stay an optional peer dependency.
-  // The root `openai` copy satisfies cli's optional peer in the dev tree. Do NOT remove or
-  // relocate it (the relocation question — should it live in cli's devDependencies instead of
-  // root's dependencies — is open and tracked in the PR body, not decided here).
-  //
-  // Constraint: this list may contain EXACTLY this one entry. Ignoring suppresses BOTH the
-  // unused-dependency finding AND any unlisted-dependency finding for the same name — so a
-  // second entry here would be a silent way to "fix" a real phantom dependency by hiding it
-  // instead of declaring it. Any addition to this array outside of this one documented,
-  // dynamic-import-backed exception is a review red flag.
-  "ignoreDependencies": ["openai"],
 
   // No plugin covers turbo.json today — anything referenced ONLY from a turbo.json `dependsOn`/
   // task definition (never imported from source) would be invisible to this scope. Currently

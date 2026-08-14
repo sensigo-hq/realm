@@ -13,6 +13,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { Command } from 'commander';
 import {
   loadWorkflowFromFile,
@@ -455,6 +456,21 @@ function isLoopbackHost(host: string): boolean {
 }
 
 /**
+ * issue #332 item 3: the webhook dedup store's default base directory — resolved at CALL time
+ * (never module load; the #285 class), exported so the `.action` closure below and any future
+ * consumer/test can call it without constructing a full `listen` invocation. Previously an inline
+ * `process.env['HOME'] ?? '.'` expression in the closure — house-pattern-inconsistent (every other
+ * store's default resolves via `homedir()`, matching `JsonFileStore`/`JsonFileReplayStore`),
+ * Windows-blind (`HOME` is a POSIX-only env var; Windows sets `USERPROFILE`, so a bare `HOME`
+ * check silently falls through to `'.'` on every Windows install), and silently wrote under the
+ * CURRENT WORKING DIRECTORY rather than failing loudly when `HOME` was unset for any reason.
+ * `homedir()` resolves correctly on both platforms and never returns an empty/undefined value.
+ */
+export function defaultDedupBase(): string {
+  return join(homedir(), '.realm', 'dedup');
+}
+
+/**
  * Builds the path→workflow route table from loaded workflows. Fail-closed at startup:
  *  - workflows without a `trigger:` block are skipped (logged);
  *  - a path collision across workflows throws;
@@ -821,7 +837,7 @@ export const listenCommand = new Command('listen')
     }
 
     const dedupKind = opts['dedupStore'] === 'memory' ? 'memory' : 'file';
-    const dedupBase = join(process.env['HOME'] ?? '.', '.realm', 'dedup');
+    const dedupBase = defaultDedupBase();
     const memoryStores = new Map<string, DedupStore>();
     const deps: ListenDeps = {
       workflowStore: new JsonWorkflowStore(),

@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- `realm listen`'s webhook dedup store default base directory now resolves via `homedir()` instead of
+  a bare `process.env['HOME'] ?? '.'` check (issue #332) — matches the house pattern every other store
+  default uses, resolves correctly on Windows (`HOME` is POSIX-only), and never silently falls back to
+  writing under the current working directory when `HOME` is unset.
+- A strict-declared, tools-bearing agent step now discloses `unsupported_context_tools` instead of the
+  engine's synthesized `external_agent` stamp (issue #332) — `external_agent` claims realm made no
+  request at all, which was never true for a step realm's own agent drove via the tools path; this is a
+  disclosure change, not a wording change: such runs now newly appear in the `structured_output_downgraded`
+  run-health finding, where they were previously invisible (`external_agent` is that finding's
+  load-bearing exclusion). A watchdog that saw these runs as clean will now see the downgrade.
+
+---
+
 ## [0.35.0] — 2026-08-14
 
 ### Added

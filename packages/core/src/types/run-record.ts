@@ -97,8 +97,16 @@ export interface StructuredOutputMeta {
    *  `{requested: true, sent: false, downgrade_reason: 'external_agent'}` verbatim. */
   sent?: boolean;
   /** Caveat codes from `assessStructuredOutputEligibility`'s `eligible_with_caveats` verdict —
-   *  present only when `sent` is `true` and the schema carried caveats (never on an `ineligible`
-   *  attempt, where strict was never sent at all). */
+   *  present whenever the Phase-B eligibility verdict carried them, REGARDLESS of what the live
+   *  attempt then did (issue #332 correction: the mint is right, this doc was wrong). The verdict
+   *  is computed once, at eligibility time (run-agent.ts:498-502), and its caveats are spread
+   *  onto the meta unconditionally (run-agent.ts:690-695) — including onto a `sent: false` meta
+   *  when the schema passed eligibility but the LIVE call then downgraded (a 400/503). `caveats`
+   *  therefore records an eligibility-time fact about the SCHEMA; `sent`/`downgrade_reason`
+   *  record the ATTEMPT's own outcome — the two can legitimately co-occur, and a reader
+   *  disambiguates via the co-present fields, never via caveats' mere presence. Never present on
+   *  a `gate_ineligible`/`external_agent` attempt (no eligibility verdict with caveats was ever
+   *  computed for either). */
   caveats?: string[];
   /**
    * Why `sent` is `false` (absent when `sent` is `true`):
