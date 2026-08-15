@@ -475,7 +475,7 @@ describe('mcp tool handlers', () => {
       name: 'Single Service Workflow',
       version: 1,
       schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-      services: { svc: { adapter: 'mock_throwing' } },
+      services: { svc: { adapter: 'mock_throwing', trust: 'engine_delivered' } },
       steps: {
         call_api: {
           description: 'Service call',
@@ -498,7 +498,7 @@ describe('mcp tool handlers', () => {
       name: 'Two Step Service Workflow',
       version: 1,
       schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-      services: { svc: { adapter: 'mock_throwing' } },
+      services: { svc: { adapter: 'mock_throwing', trust: 'engine_delivered' } },
       steps: {
         call_api: {
           description: 'Service call',
@@ -534,7 +534,7 @@ describe('mcp tool handlers', () => {
 
   it('Step 5 dispatch failure: terminal run → agent_action: stop in MCP response', async () => {
     const adapterErr = new WorkflowError('Mock adapter failure', {
-      code: 'SERVICE_UNAVAILABLE',
+      code: 'SERVICE_HTTP_5XX',
       category: 'SERVICE',
       agentAction: 'report_to_user',
       retryable: false,
@@ -566,7 +566,7 @@ describe('mcp tool handlers', () => {
 
   it('Step 5 dispatch failure: non-terminal run, report_to_user error → agent_action: report_to_user with next_actions', async () => {
     const adapterErr = new WorkflowError('Mock adapter failure', {
-      code: 'SERVICE_UNAVAILABLE',
+      code: 'SERVICE_HTTP_5XX',
       category: 'SERVICE',
       agentAction: 'report_to_user',
       retryable: false,
@@ -599,7 +599,7 @@ describe('mcp tool handlers', () => {
 
   it('Step 5 dispatch failure: non-terminal run, wait_for_human error → agent_action: wait_for_human', async () => {
     const adapterErr = new WorkflowError('Mock adapter temporarily unavailable', {
-      code: 'SERVICE_UNAVAILABLE',
+      code: 'SERVICE_HTTP_5XX',
       category: 'SERVICE',
       agentAction: 'wait_for_human',
       retryable: true,

@@ -54,8 +54,8 @@ describe('execute_step failed-attempt telemetry', () => {
   /** Lines emitted by the telemetry hook (filtered by event). */
   function emittedEvents(): Array<Record<string, unknown>> {
     return errSpy.mock.calls
-      .map((c) => String(c[0]))
-      .map((s) => {
+      .map((c: unknown[]) => String(c[0]))
+      .map((s: string) => {
         try {
           return JSON.parse(s) as Record<string, unknown>;
         } catch {
@@ -63,7 +63,7 @@ describe('execute_step failed-attempt telemetry', () => {
         }
       })
       .filter(
-        (o): o is Record<string, unknown> =>
+        (o: Record<string, unknown> | null): o is Record<string, unknown> =>
           o !== null && o['event'] === 'agent_step_attempt_failed',
       );
   }
@@ -187,7 +187,7 @@ describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
     expect(records[0]!.step_id).toBe('classify');
     expect(records[0]!.error_code).toBe('VALIDATION_OUTPUT_SCHEMA');
     // The FILE line omits the `event` wrapper (the file IS the event stream).
-    expect((records[0]! as Record<string, unknown>)['event']).toBeUndefined();
+    expect((records[0]! as unknown as Record<string, unknown>)['event']).toBeUndefined();
     // Metadata-only: no raw PII value persisted.
     expect(JSON.stringify(records[0])).not.toContain('jane@example.com');
 
@@ -234,8 +234,8 @@ describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
     expect(result.error_code).toBe('VALIDATION_OUTPUT_SCHEMA');
     // stderr sink (sink 1) fired despite the sidecar (sink 2) being unwritable.
     const emitted = errSpy.mock.calls
-      .map((c) => String(c[0]))
-      .filter((s) => s.includes('agent_step_attempt_failed'));
+      .map((c: unknown[]) => String(c[0]))
+      .filter((s: string) => s.includes('agent_step_attempt_failed'));
     expect(emitted.length).toBeGreaterThan(0);
   });
 });

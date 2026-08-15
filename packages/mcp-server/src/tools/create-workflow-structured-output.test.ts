@@ -92,7 +92,12 @@ describe('create_workflow — structured_output (issue #236)', () => {
     ).toBe(true);
     // Never disclosed as a structured LoaderWarning diagnostic — this is a render-only caveat,
     // not a WarningCode-bearing diagnostic.
-    expect((result.diagnostics ?? []).some((d) => d.code === 'structured_output')).toBe(false);
+    // The cast is load-bearing: `WarningCode` has no 'structured_output' member, so the bare
+    // comparison was statically always-false and this assertion could never fail. Comparing as a
+    // string preserves the intended never-mint pin against a future WarningCode gaining that name.
+    expect((result.diagnostics ?? []).some((d) => (d.code as string) === 'structured_output')).toBe(
+      false,
+    );
   });
 
   it('a step with no structured_output key is entirely unaffected — no gate, no caveat, no field on the registered definition', async () => {
