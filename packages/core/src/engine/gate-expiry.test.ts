@@ -59,7 +59,6 @@ describe('applyExpireGate — the [F1] arm matrix (issue #291)', () => {
 
   it('lookup-first: a settled gate entry for gateId NOOPs as already_settled (replay after resolution)', () => {
     const run = makeRun({
-      pending_gate: undefined,
       in_progress_steps: [],
       completed_steps: ['gated'],
       settled: { gated: { token: 'gate-1', outcome: 'gate', choice: 'approve' } },
@@ -72,7 +71,6 @@ describe('applyExpireGate — the [F1] arm matrix (issue #291)', () => {
 
   it('terminal split: a prior expire-abort for THIS gateId replays as already_settled (crash-recovery NOOP)', () => {
     const run = makeRun({
-      pending_gate: undefined,
       in_progress_steps: [],
       skipped_steps: ['gated'],
       skip_details: { gated: { kind: 'gate_expired', gate_id: 'gate-1' } },
@@ -89,7 +87,6 @@ describe('applyExpireGate — the [F1] arm matrix (issue #291)', () => {
 
   it('terminal split: a DIFFERENT terminal cause (not this gateId) REFUSES run_terminal — never resurrects', () => {
     const run = makeRun({
-      pending_gate: undefined,
       in_progress_steps: [],
       completed_steps: ['gated'],
       terminal_state: true,

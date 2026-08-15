@@ -1255,7 +1255,7 @@ describe('loadWorkflowFromString — rate_limit validation', () => {
       'trust: engine_delivered\n    rate_limit:\n      min_retry_seconds: 30',
     );
     const def = loadWorkflowFromString(content);
-    expect(def.services?.['my-service'].rate_limit?.min_retry_seconds).toBe(30);
+    expect(def.services!['my-service']!.rate_limit?.min_retry_seconds).toBe(30);
   });
 
   // min_retry_seconds = 0 is invalid (must be > 0)

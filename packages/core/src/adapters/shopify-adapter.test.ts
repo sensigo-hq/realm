@@ -10,7 +10,11 @@ import { WorkflowError } from '../types/workflow-error.js';
 
 type RequestHandler = (req: http.IncomingMessage, res: http.ServerResponse, body: string) => void;
 
-let port: number;
+// issue #337: initial value only satisfies tsc's definite-assignment analysis for
+// VALID_CONFIG's module-load-time reference below — VALID_CONFIG.base_url is immediately
+// overwritten by a freshly-computed one everywhere it's spread (makeAdapter(), below), so this
+// placeholder is never actually observed by any test.
+let port: number = 0;
 let server: http.Server;
 const handlers: RequestHandler[] = [];
 
@@ -159,9 +163,9 @@ describe("ShopifyAdapter fetch('query') param validation", () => {
 
   it('throws ADAPTER_VALIDATION_FAILED with details.store when store not in map', async () => {
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('query', { store: 'unknown', query: '{ shop { name } }' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('ADAPTER_VALIDATION_FAILED');
     expect(err.details['store']).toBe('unknown');
@@ -198,9 +202,9 @@ describe("ShopifyAdapter fetch('query') HTTP errors", () => {
   it('throws SERVICE_RATE_LIMITED on HTTP 429 with Retry-After header', async () => {
     respondWith(429, { errors: 'Too Many Requests' }, { 'Retry-After': '10' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('query', { store: 'mystore', query: '{ shop { name } }' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
     expect(err.agentAction).toBe('wait_and_proceed');
@@ -211,9 +215,9 @@ describe("ShopifyAdapter fetch('query') HTTP errors", () => {
   it('throws SERVICE_RATE_LIMITED on HTTP 429 without Retry-After header, retry_after is undefined (resolved by callAdapter)', async () => {
     respondWith(429, { errors: 'Too Many Requests' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('query', { store: 'mystore', query: '{ shop { name } }' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
     expect(err.agentAction).toBe('wait_and_proceed');
@@ -224,9 +228,9 @@ describe("ShopifyAdapter fetch('query') HTTP errors", () => {
   it('throws SERVICE_HTTP_4XX on HTTP 403', async () => {
     respondWith(403, { errors: 'Forbidden' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('query', { store: 'mystore', query: '{ shop { name } }' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_HTTP_4XX');
     expect(err.retryable).toBe(false);
@@ -260,9 +264,9 @@ describe("ShopifyAdapter fetch('query') GraphQL errors", () => {
       errors: [{ message: 'Throttled', extensions: { code: 'THROTTLED' } }],
     });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('query', { store: 'mystore', query: '{ shop { name } }' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
     expect(err.agentAction).toBe('wait_and_proceed');

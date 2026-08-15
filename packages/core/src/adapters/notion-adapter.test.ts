@@ -194,9 +194,9 @@ describe('NotionAdapter get_page', () => {
   it('HTTP 429 → SERVICE_RATE_LIMITED, agentAction: wait_and_proceed', async () => {
     respond(429, { message: 'Rate limited' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('get_page', { page_id: 'p1' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
     expect(err.agentAction).toBe('wait_and_proceed');
@@ -205,9 +205,9 @@ describe('NotionAdapter get_page', () => {
   it('HTTP 429 with Retry-After header → retry_after (top-level)', async () => {
     respond(429, { message: 'Rate limited' }, { 'Retry-After': '60' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('get_page', { page_id: 'p1' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
     expect(err.retry_after).toBe(60);
     expect(err.details['retryAfterSeconds']).toBeUndefined();
@@ -216,9 +216,9 @@ describe('NotionAdapter get_page', () => {
   it('HTTP 503 → SERVICE_HTTP_5XX, agentAction: wait_for_human', async () => {
     respond(503, { message: 'unavailable' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('get_page', { page_id: 'p1' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err.code).toBe('SERVICE_HTTP_5XX');
     expect(err.agentAction).toBe('wait_for_human');
   });
@@ -226,9 +226,9 @@ describe('NotionAdapter get_page', () => {
   it('HTTP 503 with additional_data → additionalData in details', async () => {
     respond(503, { message: 'timeout', additional_data: { retry_after: 30 } });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('get_page', { page_id: 'p1' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err.code).toBe('SERVICE_HTTP_5XX');
     expect(err.details['additionalData']).toEqual({ retry_after: 30 });
   });
@@ -245,9 +245,9 @@ describe('NotionAdapter get_page', () => {
   it('HTTP 400 → SERVICE_HTTP_4XX, message from body', async () => {
     respond(400, { message: 'path.field is invalid' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('get_page', { page_id: 'p1' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err.code).toBe('SERVICE_HTTP_4XX');
     expect(err.message).toContain('path.field is invalid');
     expect(err.details['body']).toBeDefined();
@@ -256,9 +256,9 @@ describe('NotionAdapter get_page', () => {
   it('x-notion-request-id header is included in error details', async () => {
     respond(404, { message: 'Not found' }, { 'x-notion-request-id': 'req-id-xyz' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('get_page', { page_id: 'p1' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err.details['notionRequestId']).toBe('req-id-xyz');
   });
 });
@@ -380,9 +380,9 @@ describe('NotionAdapter query_data_source', () => {
   it('HTTP 503 → SERVICE_HTTP_5XX, agentAction: wait_for_human', async () => {
     respond(503, { message: 'Backend timeout' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('query_data_source', { data_source_id: 'ds-1' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err.code).toBe('SERVICE_HTTP_5XX');
     expect(err.agentAction).toBe('wait_for_human');
   });
@@ -551,9 +551,9 @@ describe('NotionAdapter create_page', () => {
   it('children > 100 → ADAPTER_VALIDATION_FAILED with count in message', async () => {
     const adapter = makeAdapter();
     const children = Array.from({ length: 101 }, () => ({ type: 'paragraph' }));
-    const err = await adapter
+    const err = (await adapter
       .create('create_page', { parent: { page_id: 'p1' }, children }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err.code).toBe('ADAPTER_VALIDATION_FAILED');
     expect(err.message).toContain('101');
   });
@@ -618,9 +618,9 @@ describe('NotionAdapter create_page', () => {
   it('HTTP 409 → SERVICE_HTTP_4XX with body in details and message from body', async () => {
     respond(409, { message: 'Conflict with existing page' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .create('create_page', { parent: { page_id: 'p1' } }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err.code).toBe('SERVICE_HTTP_4XX');
     expect(err.message).toContain('Conflict with existing page');
     expect(err.details['body']).toBeDefined();
@@ -673,9 +673,9 @@ describe('NotionAdapter append_block_children', () => {
   it('children > 100 → ADAPTER_VALIDATION_FAILED with count in message', async () => {
     const adapter = makeAdapter();
     const children = Array.from({ length: 101 }, () => ({ type: 'paragraph' }));
-    const err = await adapter
+    const err = (await adapter
       .create('append_block_children', { block_id: 'b1', children }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err.code).toBe('ADAPTER_VALIDATION_FAILED');
     expect(err.message).toContain('101');
   });
@@ -810,9 +810,9 @@ describe('NotionAdapter update_page', () => {
 
   it("'archived' key → ADAPTER_VALIDATION_FAILED with deprecation message", async () => {
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .update('update_page', { page_id: 'p1', archived: true }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err.code).toBe('ADAPTER_VALIDATION_FAILED');
     expect(err.message).toContain("'archived' is deprecated");
     expect(err.message).toContain('in_trash');

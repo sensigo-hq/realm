@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reclaimStep } from './reclaim-step.js';
 import { JsonFileStore } from '../store/json-file-store.js';
-import type { RunRecord } from '../types/run-record.js';
+import type { RunRecord, PendingGate } from '../types/run-record.js';
 
 const pastIso = () => new Date(Date.now() - 60_000).toISOString();
 
@@ -23,9 +23,19 @@ describe('reclaimStep — gate expiry advisory (issue #291, [F7])', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  // `on_expiry` alone admits an EXPLICIT `undefined`, because callers use it to ERASE the base
+  // default below: `{ on_expiry: undefined }` is how the finding-only-gate test clears the base
+  // `on_expiry: 'abort'`. Merely OMITTING the key would leave the default in place and turn that
+  // test into a duplicate of the enactable-gate one. The remaining keys stay plain `Partial` —
+  // widening them too would make the gate's required fields possibly-undefined after the spread.
   async function seedRunWithStaleSiblingAndExpiredGate(
-    overrides: Partial<RunRecord['pending_gate']>,
+    overrides: Partial<Omit<PendingGate, 'on_expiry'>> & {
+      on_expiry?: PendingGate['on_expiry'] | undefined;
+    },
   ): Promise<RunRecord> {
+    const { on_expiry, ...gateOverrides } = overrides;
+    // Present-but-undefined must erase; absent must take the default.
+    const resolvedOnExpiry = 'on_expiry' in overrides ? on_expiry : 'abort';
     const { run } = await store.create({
       workflowId: 'reclaim-gate-advisory-wf',
       workflowVersion: 1,
@@ -44,8 +54,8 @@ describe('reclaimStep — gate expiry advisory (issue #291, [F7])', () => {
         choices: ['approve', 'reject'],
         opened_at: '2020-01-01T00:00:00.000Z',
         expires_at: '2020-01-01T00:05:00.000Z',
-        on_expiry: 'abort',
-        ...overrides,
+        ...gateOverrides,
+        ...(resolvedOnExpiry === undefined ? {} : { on_expiry: resolvedOnExpiry }),
       },
     });
   }

@@ -73,7 +73,6 @@ describe('deriveRunPhase', () => {
         pending_gate: gate,
         terminal_state: false,
         failed_steps: [],
-        terminal_reason: undefined,
       }),
     ).toBe('gate_waiting');
   });
@@ -81,10 +80,8 @@ describe('deriveRunPhase', () => {
   it('returns running when not terminal', () => {
     expect(
       deriveRunPhase({
-        pending_gate: undefined,
         terminal_state: false,
         failed_steps: [],
-        terminal_reason: undefined,
       }),
     ).toBe('running');
   });
@@ -92,7 +89,6 @@ describe('deriveRunPhase', () => {
   it('returns completed when terminal_reason is Workflow completed.', () => {
     expect(
       deriveRunPhase({
-        pending_gate: undefined,
         terminal_state: true,
         failed_steps: [],
         terminal_reason: 'Workflow completed.',
@@ -103,7 +99,6 @@ describe('deriveRunPhase', () => {
   it('returns completed even when failed_steps is non-empty if terminal_reason is Workflow completed. (recovery workflow)', () => {
     expect(
       deriveRunPhase({
-        pending_gate: undefined,
         terminal_state: true,
         failed_steps: ['main_step'],
         terminal_reason: 'Workflow completed.',
@@ -114,7 +109,6 @@ describe('deriveRunPhase', () => {
   it('returns failed when terminal and failed_steps is non-empty without Workflow completed. reason', () => {
     expect(
       deriveRunPhase({
-        pending_gate: undefined,
         terminal_state: true,
         failed_steps: ['step-a'],
         terminal_reason: "Step 'step-a' failed: error",
@@ -125,7 +119,6 @@ describe('deriveRunPhase', () => {
   it('returns abandoned when terminal, no failed steps, and reason is not Workflow completed.', () => {
     expect(
       deriveRunPhase({
-        pending_gate: undefined,
         terminal_state: true,
         failed_steps: [],
         terminal_reason: 'Marked abandoned by realm cleanup',
@@ -136,7 +129,6 @@ describe('deriveRunPhase', () => {
   it('returns aborted when aborted_at is set', () => {
     expect(
       deriveRunPhase({
-        pending_gate: undefined,
         terminal_state: true,
         failed_steps: [],
         terminal_reason: 'Guard step aborted run.',
@@ -153,7 +145,6 @@ describe('deriveRunPhase', () => {
   it('returns aborted even when failed_steps is non-empty if aborted_at is set', () => {
     expect(
       deriveRunPhase({
-        pending_gate: undefined,
         terminal_state: true,
         failed_steps: ['some_step'],
         terminal_reason: 'Guard aborted.',
@@ -168,7 +159,6 @@ describe('deriveRunPhase', () => {
   it('returns abandoned when abandoned_at is set (authoritative), even with failed_steps + a non-completed reason', () => {
     expect(
       deriveRunPhase({
-        pending_gate: undefined,
         terminal_state: true,
         failed_steps: ['main_step'],
         terminal_reason: 'Abandoned via abandon_run',
@@ -180,7 +170,6 @@ describe('deriveRunPhase', () => {
   it('abandoned_at outranks a Workflow completed. reason (authoritative marker wins)', () => {
     expect(
       deriveRunPhase({
-        pending_gate: undefined,
         terminal_state: true,
         failed_steps: [],
         terminal_reason: 'Workflow completed.',

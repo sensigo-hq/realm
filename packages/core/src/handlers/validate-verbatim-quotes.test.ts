@@ -91,8 +91,8 @@ describe('ValidateVerbatimQuotesHandler', () => {
         { params: { candidates: [{ verbatim_quote: 'quick brown fox', field_id: 'q1' }] } },
         ctx,
       );
-      expect(result.data.accepted_count).toBe(1);
-      expect(result.data.rejected_count).toBe(0);
+      expect(result.data!.accepted_count).toBe(1);
+      expect(result.data!.rejected_count).toBe(0);
     });
 
     it('rejects candidates whose quotes do not appear in the source text', async () => {
@@ -101,8 +101,8 @@ describe('ValidateVerbatimQuotesHandler', () => {
         { params: { candidates: [{ verbatim_quote: 'purple elephant', field_id: 'q1' }] } },
         ctx,
       );
-      expect(result.data.accepted_count).toBe(0);
-      expect(result.data.rejected_count).toBe(1);
+      expect(result.data!.accepted_count).toBe(0);
+      expect(result.data!.rejected_count).toBe(1);
     });
 
     it('returns candidates_found equal to total candidates checked', async () => {
@@ -118,7 +118,7 @@ describe('ValidateVerbatimQuotesHandler', () => {
         },
         ctx,
       );
-      expect(result.data.candidates_found).toBe(2);
+      expect(result.data!.candidates_found).toBe(2);
     });
 
     it('uses default source_field "text" when not configured', async () => {
@@ -127,7 +127,7 @@ describe('ValidateVerbatimQuotesHandler', () => {
         { params: { candidates: [{ verbatim_quote: 'lazy dog' }] } },
         ctx,
       );
-      expect(result.data.accepted_count).toBe(1);
+      expect(result.data!.accepted_count).toBe(1);
     });
 
     it('uses default quote_field "verbatim_quote" when not configured', async () => {
@@ -136,7 +136,7 @@ describe('ValidateVerbatimQuotesHandler', () => {
         { params: { candidates: [{ verbatim_quote: 'cat sat on the mat' }] } },
         ctx,
       );
-      expect(result.data.accepted_count).toBe(1);
+      expect(result.data!.accepted_count).toBe(1);
     });
 
     it('uses custom source_field and quote_field when configured', async () => {
@@ -150,7 +150,7 @@ describe('ValidateVerbatimQuotesHandler', () => {
         { params: { candidates: [{ excerpt: 'custom source' }] } },
         ctx,
       );
-      expect(result.data.accepted_count).toBe(1);
+      expect(result.data!.accepted_count).toBe(1);
     });
   });
 
@@ -158,7 +158,7 @@ describe('ValidateVerbatimQuotesHandler', () => {
     it('returns candidates_found === 0 when candidates array is empty', async () => {
       const ctx = makeContext();
       const result = await handler.execute({ params: { candidates: [] } }, ctx);
-      expect(result.data.candidates_found).toBe(0);
+      expect(result.data!.candidates_found).toBe(0);
     });
 
     it('returns candidates_found === 0 when no candidate has the quote field', async () => {
@@ -168,7 +168,7 @@ describe('ValidateVerbatimQuotesHandler', () => {
         ctx,
       );
       // walkField finds no objects with verbatim_quote, so walked is empty
-      expect(result.data.candidates_found).toBe(0);
+      expect(result.data!.candidates_found).toBe(0);
     });
   });
 });

@@ -974,7 +974,12 @@ describe('executeStep', () => {
       return {
         id: 'my_handler',
         execute: vi
-          .fn<[StepHandlerInputs, StepContext], Promise<{ data: Record<string, unknown> }>>()
+          .fn<
+            (
+              inputs: StepHandlerInputs,
+              ctx: StepContext,
+            ) => Promise<{ data: Record<string, unknown> }>
+          >()
           .mockResolvedValue({ data }),
       };
     }
@@ -1716,9 +1721,9 @@ describe('executeStep', () => {
         params: {},
       });
 
-      vi.spyOn(store, 'settleStep' as never).mockImplementation((async () => {
+      vi.spyOn(store, 'settleStep').mockImplementation(async () => {
         throw new Error('store write failed');
-      }) as never);
+      });
 
       try {
         const envelope = await executeStep(store, definition, {
@@ -2721,9 +2726,9 @@ describe('executeStep', () => {
       // JsonFileStore declares settleStep — the fail site's MIGRATED path handles this run, so
       // simulating a persist failure now means mocking settleStep, not store.update (the fail
       // site's legacy-only call, unreachable once the store declares the capability).
-      vi.spyOn(store, 'settleStep' as never).mockImplementation((async () => {
+      vi.spyOn(store, 'settleStep').mockImplementation(async () => {
         throw new Error('store write failed');
-      }) as never);
+      });
 
       try {
         const envelope = await executeStep(store, def, {
@@ -3394,7 +3399,7 @@ describe('Step 5 dispatch-failure envelope', () => {
     expect(envelope.status).toBe('error');
     expect(envelope.agent_action).toBe('wait_for_human');
     expect(envelope.next_actions.length).toBeGreaterThanOrEqual(1);
-    expect(envelope.next_actions[0]?.instruction.call_with.command).toBe('step_b');
+    expect(envelope.next_actions[0]?.instruction!.call_with.command).toBe('step_b');
     expect(
       envelope.context_hint.toLowerCase().includes('service') ||
         envelope.context_hint.toLowerCase().includes('recovery'),
@@ -3425,7 +3430,7 @@ describe('Step 5 dispatch-failure envelope', () => {
     expect(envelope.status).toBe('error');
     expect(envelope.agent_action).toBe('report_to_user');
     expect(envelope.next_actions.length).toBeGreaterThanOrEqual(1);
-    expect(envelope.next_actions[0]?.instruction.call_with.command).toBe('step_b');
+    expect(envelope.next_actions[0]?.instruction!.call_with.command).toBe('step_b');
   });
 
   it('non-terminal failure with stop is translated to report_to_user and exposes recovery branch', async () => {
@@ -3542,7 +3547,7 @@ describe('Step 5 dispatch-failure envelope', () => {
     // original dispatch error's own agentAction — design record §1/D1's replicated
     // complete-site catch pattern overrides it, rather than degrading to a warning that
     // preserves the original semantics.
-    vi.spyOn(store, 'settleStep' as never).mockRejectedValue(new Error('disk full') as never);
+    vi.spyOn(store, 'settleStep').mockRejectedValue(new Error('disk full'));
 
     const envelope = await executeStep(store, twoStepDef, {
       runId: run.id,
@@ -3576,13 +3581,11 @@ describe('Step 5 dispatch-failure envelope', () => {
     // MIGRATED path settles via settleStep, not store.update. Track the version it returns.
     const originalSettleStep = store.settleStep!.bind(store);
     let persistedVersion: number | undefined;
-    vi.spyOn(store, 'settleStep' as never).mockImplementation((async (...args: unknown[]) => {
-      const result = await (
-        originalSettleStep as (...a: unknown[]) => ReturnType<NonNullable<typeof store.settleStep>>
-      )(...args);
+    vi.spyOn(store, 'settleStep').mockImplementation(async (...args) => {
+      const result = await originalSettleStep(...args);
       if (result.applied) persistedVersion = result.run.version;
       return result;
-    }) as never);
+    });
 
     const singleStepDef: WorkflowDefinition = {
       id: 'single-step-wf',
@@ -3707,6 +3710,7 @@ describe('retry_after on ResponseEnvelope', () => {
     // Use a mock store whose get() throws a WorkflowError with retry_after set.
     // This exercises the makeErrorEnvelope(options, null, err) path in step 1.
     const mockStore: import('../store/store-interface.js').RunStore = {
+      persistsClaims: store.persistsClaims,
       create: store.create.bind(store),
       get: async () => {
         throw new WorkflowError('Rate limited at store level', {
@@ -4162,7 +4166,7 @@ describe('guard step execution', () => {
     // Guard ran inline — visible in chained_auto_steps
     expect(envelope.chained_auto_steps?.some((s) => s.step === 'guard_b')).toBe(true);
     // step_c is the next eligible agent step
-    expect(envelope.next_actions.some((a) => a.instruction.call_with.command === 'step_c')).toBe(
+    expect(envelope.next_actions.some((a) => a.instruction?.call_with.command === 'step_c')).toBe(
       true,
     );
 
@@ -4195,7 +4199,7 @@ describe('guard step execution', () => {
     expect(savedRun.aborted_at).toBeDefined();
     expect(savedRun.aborted_at?.step_id).toBe('guard_b');
     expect(savedRun.aborted_at?.conditions).toHaveLength(1);
-    expect(savedRun.aborted_at?.conditions[0]?.passed).toBe(false);
+    expect(savedRun.aborted_at?.conditions?.[0]?.passed).toBe(false);
   });
 
   it('guard abort skips downstream steps (step_c goes into skipped_steps)', async () => {
@@ -4332,7 +4336,7 @@ describe('guard step execution', () => {
     });
 
     expect(envelope.status).toBe('ok');
-    expect(envelope.next_actions.some((a) => a.instruction.call_with.command === 'step_d')).toBe(
+    expect(envelope.next_actions.some((a) => a.instruction?.call_with.command === 'step_d')).toBe(
       true,
     );
 
