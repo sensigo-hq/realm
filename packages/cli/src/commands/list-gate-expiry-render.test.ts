@@ -40,10 +40,16 @@ function makeGate(overrides: Partial<PendingGate> = {}): PendingGate {
 
 function makeStore(runs: RunRecord[]): RunStore {
   return {
+    persistsClaims: true,
     get: async () => runs[0]!,
-    create: async () => runs[0]!,
+    create: async () => ({ run: runs[0]!, created: true }),
     update: async () => runs[0]!,
     list: async () => runs,
+    // listRuns (the sole consumer under test here) never claims a step — this mock never needs
+    // a real implementation, only a type-complete stub.
+    claimStep: async () => {
+      throw new Error('claimStep is not used by listRuns');
+    },
   };
 }
 

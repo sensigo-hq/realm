@@ -56,10 +56,16 @@ function makeRun(evidence: EvidenceSnapshot[] = [], overrides: Partial<RunRecord
 
 function makeRunStore(run: RunRecord): RunStore {
   return {
+    persistsClaims: true,
     get: async () => run,
-    create: async () => run,
+    create: async () => ({ run, created: true }),
     update: async () => run,
     list: async () => [run],
+    // inspect.ts (the sole consumer under test here) never claims a step — this mock never needs
+    // a real implementation, only a type-complete stub.
+    claimStep: async () => {
+      throw new Error('claimStep is not used by inspect');
+    },
   };
 }
 
@@ -170,7 +176,6 @@ describe('inspectRun', () => {
           args: { pr: 42 },
           result: 'PR body',
           duration_ms: 87,
-          started_at: new Date().toISOString(),
         },
       ],
     });
@@ -189,7 +194,6 @@ describe('inspectRun', () => {
           args: { pr: 42 },
           result: '{"title":"Fix bug"}',
           duration_ms: 87,
-          started_at: new Date().toISOString(),
         },
       ],
     });
@@ -211,7 +215,6 @@ describe('inspectRun', () => {
           args: { pr: 42 },
           result: '{"title":"Fix bug"}',
           duration_ms: 50,
-          started_at: new Date().toISOString(),
         },
       ],
     });

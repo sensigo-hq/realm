@@ -63,7 +63,7 @@ describe('realm run list --status aborted (issue #289) — action-level', () => 
   });
 
   function stderrText(): string {
-    return errSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    return errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
   }
 
   it('does NOT reject --status aborted (RunPhase has carried it since #279 PR-C; VALID_PHASES was never updated)', async () => {

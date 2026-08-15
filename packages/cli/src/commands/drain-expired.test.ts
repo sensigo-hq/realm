@@ -95,8 +95,12 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
     it('per-run dry-run: no gate line, non-terminal "nothing to drain" message', async () => {
       const run = await seedExpiredGateRun('abort');
       await runDrainAction(run.id, {}, store, workflowStore, DEPS);
-      expect(logSpy.mock.calls.some((c) => String(c[0]).includes('gate expired'))).toBe(false);
-      expect(logSpy.mock.calls.some((c) => String(c[0]).includes('not terminal'))).toBe(true);
+      expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('gate expired'))).toBe(
+        false,
+      );
+      expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('not terminal'))).toBe(
+        true,
+      );
     });
 
     it('per-run --force: refuses (not terminal) — never enacts the gate', async () => {
@@ -112,7 +116,9 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
       await seedExpiredGateRun('abort');
       await runDrainAction(undefined, { all: true }, store, workflowStore, DEPS);
       expect(
-        logSpy.mock.calls.some((c) => String(c[0]).includes('No runs with an actionable')),
+        logSpy.mock.calls.some((c: unknown[]) =>
+          String(c[0]).includes('No runs with an actionable'),
+        ),
       ).toBe(true);
     });
 
@@ -128,14 +134,20 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
     it('renders "would enact <disposition>" for an enactable gate', async () => {
       const run = await seedExpiredGateRun('abort');
       await runDrainAction(run.id, { expired: true }, store, workflowStore, DEPS);
-      expect(logSpy.mock.calls.some((c) => String(c[0]).includes('would enact abort'))).toBe(true);
+      expect(
+        logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('would enact abort')),
+      ).toBe(true);
     });
 
     it('renders the finding-only line for a gate with no on_expiry — never "would enact"', async () => {
       const run = await seedExpiredGateRun(undefined);
       await runDrainAction(run.id, { expired: true }, store, workflowStore, DEPS);
-      expect(logSpy.mock.calls.some((c) => String(c[0]).includes('finding-only'))).toBe(true);
-      expect(logSpy.mock.calls.some((c) => String(c[0]).includes('would enact'))).toBe(false);
+      expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('finding-only'))).toBe(
+        true,
+      );
+      expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('would enact'))).toBe(
+        false,
+      );
     });
   });
 
@@ -159,7 +171,9 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
         kind: 'gate_expired',
         gate_id: 'gate-1',
       });
-      expect(logSpy.mock.calls.some((c) => String(c[0]).includes('gate enacted'))).toBe(true);
+      expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('gate enacted'))).toBe(
+        true,
+      );
     });
 
     it('finding-only: --force refuses (still not terminal, nothing enactable) — never silently enacts', async () => {
@@ -178,7 +192,7 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
       await runDrainAction(undefined, { all: true, expired: true }, store, workflowStore, DEPS);
       expect(
         logSpy.mock.calls.some(
-          (c) =>
+          (c: unknown[]) =>
             String(c[0]).includes(run.id) && String(c[0]).includes('would enact settle_default'),
         ),
       ).toBe(true);
@@ -195,9 +209,9 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
       );
       const reloaded = await store.get(run.id);
       expect(reloaded.completed_steps).toContain('approve');
-      expect(logSpy.mock.calls.some((c) => String(c[0]).includes(`${run.id}: gate enacted`))).toBe(
-        true,
-      );
+      expect(
+        logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes(`${run.id}: gate enacted`)),
+      ).toBe(true);
     });
 
     it('finding-only gates are listed but excluded from the actionable/force set', async () => {
@@ -205,7 +219,7 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
       await runDrainAction(undefined, { all: true, expired: true }, store, workflowStore, DEPS);
       expect(
         logSpy.mock.calls.some(
-          (c) => String(c[0]).includes(run.id) && String(c[0]).includes('finding-only'),
+          (c: unknown[]) => String(c[0]).includes(run.id) && String(c[0]).includes('finding-only'),
         ),
       ).toBe(true);
       await runDrainAction(

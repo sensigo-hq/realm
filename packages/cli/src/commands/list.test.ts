@@ -40,11 +40,17 @@ function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
 
 function makeStore(runs: RunRecord[]): RunStore {
   return {
+    persistsClaims: true,
     get: async () => runs[0]!,
-    create: async () => runs[0]!,
+    create: async () => ({ run: runs[0]!, created: true }),
     update: async () => runs[0]!,
     list: async (workflowId?: string) =>
       workflowId !== undefined ? runs.filter((r) => r.workflow_id === workflowId) : runs,
+    // listRuns (the sole consumer under test here) never claims a step — this mock never needs
+    // a real implementation, only a type-complete stub.
+    claimStep: async () => {
+      throw new Error('claimStep is not used by listRuns');
+    },
   };
 }
 
@@ -845,8 +851,8 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
         params: {},
         trace_entry_count: 0,
       });
-      await fas.append(runId, serializeFailedAttemptLine(older).line);
-      await fas.append(runId, serializeFailedAttemptLine(latest).line);
+      await fas.append(runId, serializeFailedAttemptLine({ ...older }).line);
+      await fas.append(runId, serializeFailedAttemptLine({ ...latest }).line);
 
       const store = makeStore([run]);
       const result = await listRuns(undefined, store, undefined, true, undefined, fas);
@@ -878,7 +884,7 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
         trace_entry_count: 0,
       });
       const sidecarPath = join(dir, `${runId}.attempts.jsonl`);
-      const validLine = serializeFailedAttemptLine(validRec).line;
+      const validLine = serializeFailedAttemptLine({ ...validRec }).line;
       // Pad the file past FAILED_ATTEMPT_SIDECAR_MAX_BYTES so `read()`'s independent size≥ceiling
       // check reports capped:true — mirrors failed-attempt-store.test.ts's own ceiling-seeding
       // style. The padding line itself is not valid JSON and is silently skipped by the parser
@@ -939,8 +945,8 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
         params: {},
         trace_entry_count: 0,
       });
-      await fas.append(okRunId, serializeFailedAttemptLine(rec).line); // a normal, readable sidecar
-      await writeFile(sidecarPath, `${serializeFailedAttemptLine(rec).line}\n`, 'utf8');
+      await fas.append(okRunId, serializeFailedAttemptLine({ ...rec }).line); // a normal, readable sidecar
+      await writeFile(sidecarPath, `${serializeFailedAttemptLine({ ...rec }).line}\n`, 'utf8');
       // Deny read on the ONE sidecar — never run as root in this repo's CI/dev environment, so
       // this genuinely denies access rather than being silently bypassed (gc.test.ts precedent).
       await chmod(sidecarPath, 0o000);

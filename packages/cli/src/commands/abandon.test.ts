@@ -55,7 +55,7 @@ describe('realm run abandon (CLI command)', () => {
     expect(logSpy).toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
     // issue #302 (D-B, M2): the abandon kill-advisory, printed unconditionally on success.
-    const logged = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const logged = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(logged).toContain(
       "abandon is a kill — declared finalizers (if any) did NOT run; 'abort' is the graceful path.",
     );

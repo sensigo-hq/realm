@@ -50,7 +50,7 @@ describe('realm run attempts (CLI command)', () => {
   });
 
   function logged(): string {
-    return logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    return logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
   }
 
   function nextRunId(): string {

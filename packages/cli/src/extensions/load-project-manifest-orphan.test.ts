@@ -43,7 +43,16 @@ function writeManifest(dir: string): string {
 }
 
 /** Definition anchored with an explicit source_dir/trust_root span (the file-loaded shape). */
-function def(overrides: Partial<WorkflowDefinition> = {}): WorkflowDefinition {
+function def(
+  // issue #337: 2 call sites pass source_dir/trust_root explicitly `undefined` to ERASE the base
+  // defaults below (simulating no anchoring span at all) — see the identical fold in
+  // load-project-extensions.test.ts's makeDefinition for the full rationale.
+  overrides: Partial<Omit<WorkflowDefinition, 'source_dir' | 'trust_root'>> & {
+    source_dir?: string | undefined;
+    trust_root?: string | undefined;
+  } = {},
+): WorkflowDefinition {
+  const { source_dir: sourceDirOverride, trust_root: trustRootOverride, ...rest } = overrides;
   return {
     id: `wf-${counter++}`,
     name: 'Orphan WF',
@@ -51,9 +60,17 @@ function def(overrides: Partial<WorkflowDefinition> = {}): WorkflowDefinition {
     schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
     steps: { s1: { description: 'step', execution: 'agent' } },
     origin: 'human',
-    source_dir: workflowDir,
-    trust_root: root,
-    ...overrides,
+    ...(sourceDirOverride !== undefined
+      ? { source_dir: sourceDirOverride }
+      : 'source_dir' in overrides
+        ? {}
+        : { source_dir: workflowDir }),
+    ...(trustRootOverride !== undefined
+      ? { trust_root: trustRootOverride }
+      : 'trust_root' in overrides
+        ? {}
+        : { trust_root: root }),
+    ...rest,
   };
 }
 

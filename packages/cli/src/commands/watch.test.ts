@@ -49,7 +49,9 @@ function makeStore(): WorkflowRegistrar & { registered: WorkflowDefinition[] } {
       registered.push(def);
     },
     async get(id) {
-      const found = registered.findLast((d) => d.id === id);
+      // Behaviour-identical to `registered.findLast(...)`; `findLast` needs lib ES2023 and the
+      // repo's lib is ES2022 (a lib bump is out of scope for #337).
+      const found = [...registered].reverse().find((d) => d.id === id);
       if (!found) throw new Error(`Not found: ${id}`);
       return found;
     },

@@ -212,7 +212,9 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     await runDrainAction(run.id, {}, store, workflowStore, DEPS);
 
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(logSpy.mock.calls.some((c) => String(c[0]).includes('actionable'))).toBe(true);
+    expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('actionable'))).toBe(
+      true,
+    );
     const reloaded = await store.get(run.id);
     expect(reloaded.finalizer_ledger?.['fin']?.status).toBe('pending'); // untouched
   });
@@ -224,7 +226,9 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     await runDrainAction(run.id, {}, store, workflowStore, DEPS);
 
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(logSpy.mock.calls.some((c) => String(c[0]).includes('not terminal'))).toBe(true);
+    expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('not terminal'))).toBe(
+      true,
+    );
   });
 
   it('--void voids a pending finalizer with operator-provenance evidence and the never-leased disclosure', async () => {
@@ -241,7 +245,9 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     await runDrainAction(run.id, { void: 'fin' }, store, workflowStore, DEPS);
 
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(logSpy.mock.calls.some((c) => String(c[0]).includes('never executed'))).toBe(true);
+    expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('never executed'))).toBe(
+      true,
+    );
     const reloaded = await store.get(run.id);
     expect(reloaded.finalizer_ledger?.['fin']?.status).toBe('voided');
     const voidEvidence = reloaded.evidence.find((e) => e.step_id === 'fin');
@@ -265,7 +271,9 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     await expect(
       runDrainAction(run.id, { void: 'fin' }, store, workflowStore, DEPS),
     ).rejects.toThrow('process.exit');
-    expect(errSpy.mock.calls.some((c) => String(c[0]).includes('active drain lease'))).toBe(true);
+    expect(
+      errSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('active drain lease')),
+    ).toBe(true);
     const reloaded = await store.get(run.id);
     expect(reloaded.finalizer_ledger?.['fin']?.status).toBe('pending');
   });
@@ -306,7 +314,9 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     });
 
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(logSpy.mock.calls.some((c) => String(c[0]).includes('Drained run'))).toBe(true);
+    expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('Drained run'))).toBe(
+      true,
+    );
     const reloaded = await store.get(run.id);
     expect(reloaded.finalizer_ledger?.['fin']?.status).toBe('completed');
   });
@@ -363,7 +373,9 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     });
 
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(logSpy.mock.calls.some((c) => String(c[0]).includes('Drained 2/2'))).toBe(true);
+    expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('Drained 2/2'))).toBe(
+      true,
+    );
     const reloaded1 = await store.get(run1.id);
     const reloaded2 = await store.get(run2.id);
     expect(reloaded1.finalizer_ledger?.['fin']?.status).toBe('completed');

@@ -80,7 +80,7 @@ describe('AnthropicProvider.callStep', () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
     const provider = new AnthropicProvider('claude-sonnet-4-5');
     await provider.callStep('prompt');
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('response_format');
+    expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('response_format');
   });
 
   // issue #309 fix: the pre-#309 regex gave the claude-3.5 family's OWN hard cap (8192) to every
@@ -89,14 +89,14 @@ describe('AnthropicProvider.callStep', () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
     const provider = new AnthropicProvider('claude-sonnet-4-5');
     await provider.callStep('prompt');
-    expect(mockCreate.mock.calls[0][0].max_tokens).toBe(16384);
+    expect(mockCreate.mock.calls[0]![0].max_tokens).toBe(16384);
   });
 
   it('callStep sends max_tokens: 4096 for claude-3-opus-20240229', async () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
     const provider = new AnthropicProvider('claude-3-opus-20240229');
     await provider.callStep('prompt');
-    expect(mockCreate.mock.calls[0][0].max_tokens).toBe(4096);
+    expect(mockCreate.mock.calls[0]![0].max_tokens).toBe(4096);
   });
 
   // issue #309: the four resolveMaxTokens buckets, pinned explicitly (design record's own
@@ -105,13 +105,13 @@ describe('AnthropicProvider.callStep', () => {
     it('claude-3.5 family ⇒ 8192 (its own hard output cap)', async () => {
       mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
       await new AnthropicProvider('claude-3-5-sonnet-20241022').callStep('prompt');
-      expect(mockCreate.mock.calls[0][0].max_tokens).toBe(8192);
+      expect(mockCreate.mock.calls[0]![0].max_tokens).toBe(8192);
     });
 
     it('bare legacy claude-3 (non-3.5) ⇒ 4096', async () => {
       mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
       await new AnthropicProvider('claude-3-opus-20240229').callStep('prompt');
-      expect(mockCreate.mock.calls[0][0].max_tokens).toBe(4096);
+      expect(mockCreate.mock.calls[0]![0].max_tokens).toBe(4096);
     });
 
     it.each(['claude-3-7-sonnet-20250219', 'claude-sonnet-4-6', 'claude-opus-5'])(
@@ -119,14 +119,14 @@ describe('AnthropicProvider.callStep', () => {
       async (model) => {
         mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
         await new AnthropicProvider(model).callStep('prompt');
-        expect(mockCreate.mock.calls[0][0].max_tokens).toBe(16384);
+        expect(mockCreate.mock.calls[0]![0].max_tokens).toBe(16384);
       },
     );
 
     it('an invented future model id ⇒ 16384 (fail-forward, never under-budgeted)', async () => {
       mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
       await new AnthropicProvider('claude-turbo-9000-preview').callStep('prompt');
-      expect(mockCreate.mock.calls[0][0].max_tokens).toBe(16384);
+      expect(mockCreate.mock.calls[0]![0].max_tokens).toBe(16384);
     });
   });
 
@@ -145,8 +145,8 @@ describe('AnthropicProvider.callStep', () => {
     const result = await provider.callStep('prompt', schema);
 
     expect(result).toEqual({ category: 'billing' });
-    expect(mockCreate.mock.calls[0][0].tool_choice).toEqual({ type: 'auto' }); // never forced
-    expect(mockCreate.mock.calls[0][0].tools).toEqual([
+    expect(mockCreate.mock.calls[0]![0].tool_choice).toEqual({ type: 'auto' }); // never forced
+    expect(mockCreate.mock.calls[0]![0].tools).toEqual([
       expect.objectContaining({ name: '__realm_submit__', input_schema: schema }),
     ]);
   });
@@ -155,8 +155,8 @@ describe('AnthropicProvider.callStep', () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
     const provider = new AnthropicProvider('claude-sonnet-4-5');
     await provider.callStep('prompt'); // no schema
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('tools');
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('tool_choice');
+    expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('tools');
+    expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('tool_choice');
   });
 
   // -----------------------------------------------------------------------
@@ -243,7 +243,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
         required: ['answer'],
       },
     });
-    expect(mockCreate.mock.calls[0][0].max_tokens).toBe(16384);
+    expect(mockCreate.mock.calls[0]![0].max_tokens).toBe(16384);
   });
 
   // -----------------------------------------------------------------------
@@ -269,8 +269,8 @@ describe('AnthropicProvider.callStepWithTools', () => {
 
     expect(result.output).toEqual({ summary: 'ok' });
     expect(result.toolCalls).toHaveLength(1);
-    expect(result.toolCalls[0].tool).toBe('get_file');
-    expect(result.toolCalls[0].server_id).toBe('github');
+    expect(result.toolCalls[0]!.tool).toBe('get_file');
+    expect(result.toolCalls[0]!.server_id).toBe('github');
     expect(executor).toHaveBeenCalledWith('github:get_file', { path: 'README.md' });
   });
 
@@ -300,7 +300,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
 
     // tool_use.input arrives pre-parsed — no parse step.
     expect(result.output).toEqual({ answer: 'done' });
-    const finalCallOpts = mockCreate.mock.calls[1][0];
+    const finalCallOpts = mockCreate.mock.calls[1]![0];
     expect(finalCallOpts.tool_choice).toEqual({ type: 'auto' }); // never forced — preserves reasoning
     expect(finalCallOpts.tools).toEqual([
       expect.objectContaining({ name: '__realm_submit__', input_schema: schema }),
@@ -321,7 +321,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
 
     // No schema → can't type a tool → falls straight to the extractor on plain text.
     expect(result.output).toEqual({ answer: 'done' });
-    const finalCallOpts = mockCreate.mock.calls[1][0];
+    const finalCallOpts = mockCreate.mock.calls[1]![0];
     expect(finalCallOpts.tool_choice).toEqual({ type: 'none' });
     expect(finalCallOpts).not.toHaveProperty('tools');
     expect(finalCallOpts).not.toHaveProperty('response_format');
@@ -432,10 +432,10 @@ describe('AnthropicProvider.callStepWithTools', () => {
     // Final extraction resolved via tool_use.input this time — no parse step.
     expect(result.output).toEqual({ done: true });
     expect(result.toolCalls).toHaveLength(1);
-    expect(result.toolCalls[0].error).toBeDefined();
+    expect(result.toolCalls[0]!.error).toBeDefined();
 
     // The tool_result block in the user message must echo the tool_use_id
-    const secondCallMsgs = mockCreate.mock.calls[1][0].messages as Array<{
+    const secondCallMsgs = mockCreate.mock.calls[1]![0].messages as Array<{
       role: string;
       content: unknown;
     }>;
@@ -446,8 +446,8 @@ describe('AnthropicProvider.callStepWithTools', () => {
     expect(toolResult?.tool_use_id).toBe('toolu_timeout');
 
     // Final extraction call offers the submit tool at tool_choice:'auto' (schema present).
-    expect(mockCreate.mock.calls[1][0].tool_choice).toEqual({ type: 'auto' });
-    expect(mockCreate.mock.calls[1][0].tools).toEqual([
+    expect(mockCreate.mock.calls[1]![0].tool_choice).toEqual({ type: 'auto' });
+    expect(mockCreate.mock.calls[1]![0].tools).toEqual([
       expect.objectContaining({ name: '__realm_submit__' }),
     ]);
   });
@@ -465,8 +465,8 @@ describe('AnthropicProvider.callStepWithTools', () => {
     const result = await provider.callStepWithTools('prompt', [oneTool()], failExecutor, {});
 
     expect(result.output).toEqual({ result: 'ok' });
-    expect(result.toolCalls[0].error).toBe('upstream failure');
-    expect(result.toolCalls[0].result).toBeNull();
+    expect(result.toolCalls[0]!.error).toBe('upstream failure');
+    expect(result.toolCalls[0]!.result).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -482,7 +482,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
     const provider = new AnthropicProvider('claude-sonnet-4-5');
     await provider.callStepWithTools('prompt', [oneTool()], executor, {});
 
-    const msgs = mockCreate.mock.calls[1][0].messages as Array<{ role: string; content: unknown }>;
+    const msgs = mockCreate.mock.calls[1]![0].messages as Array<{ role: string; content: unknown }>;
     const userMsg = msgs.find((m) => m.role === 'user' && Array.isArray(m.content));
     const blocks = userMsg?.content as Array<{ type?: string; tool_use_id?: string }> | undefined;
     const toolResult = blocks?.find((b) => b.type === 'tool_result');
@@ -502,7 +502,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
     const provider = new AnthropicProvider('claude-sonnet-4-5');
     await provider.callStepWithTools('prompt', [oneTool()], executor, {});
 
-    const msgs = mockCreate.mock.calls[1][0].messages as Array<{ role: string; content: unknown }>;
+    const msgs = mockCreate.mock.calls[1]![0].messages as Array<{ role: string; content: unknown }>;
     const userMsg = msgs.find((m) => m.role === 'user' && Array.isArray(m.content));
     const blocks = userMsg?.content as Array<{ type?: string; content?: string }> | undefined;
     const toolResult = blocks?.find((b) => b.type === 'tool_result');
@@ -522,7 +522,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
     const provider = new AnthropicProvider('claude-sonnet-4-5');
     await provider.callStepWithTools('prompt', [oneTool()], executor, {});
 
-    const msgs = mockCreate.mock.calls[1][0].messages as Array<{ role: string; content: unknown }>;
+    const msgs = mockCreate.mock.calls[1]![0].messages as Array<{ role: string; content: unknown }>;
     const userMsg = msgs.find((m) => m.role === 'user' && Array.isArray(m.content));
     const blocks = userMsg?.content as Array<{ type?: string; content?: string }> | undefined;
     const toolResult = blocks?.find((b) => b.type === 'tool_result');
@@ -542,7 +542,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
     const provider = new AnthropicProvider('claude-sonnet-4-5');
     await provider.callStepWithTools('prompt', [oneTool()], failExecutor, {});
 
-    const msgs = mockCreate.mock.calls[1][0].messages as Array<{ role: string; content: unknown }>;
+    const msgs = mockCreate.mock.calls[1]![0].messages as Array<{ role: string; content: unknown }>;
     const userMsg = msgs.find((m) => m.role === 'user' && Array.isArray(m.content));
     const blocks = userMsg?.content as Array<{ type?: string; content?: string }> | undefined;
     const toolResult = blocks?.find((b) => b.type === 'tool_result');
@@ -576,7 +576,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
 
     // Second call's messages: [user:prompt, assistant:[3 tool_use], user:[3 tool_result]]
     // Length MUST be 3, not 5 (which interleaved turns would produce).
-    const secondCallMsgs = mockCreate.mock.calls[1][0].messages as Array<{
+    const secondCallMsgs = mockCreate.mock.calls[1]![0].messages as Array<{
       role: string;
       content: unknown;
     }>;
@@ -617,7 +617,7 @@ describe('AnthropicProvider.callStepWithTools', () => {
     expect(result.output).toEqual({ final: true }); // extracted from the fenced text block
 
     // The second call's messages must contain a user message with 3 tool_result blocks + text
-    const secondCallMsgs = mockCreate.mock.calls[1][0].messages as Array<{
+    const secondCallMsgs = mockCreate.mock.calls[1]![0].messages as Array<{
       role: string;
       content: unknown;
     }>;
@@ -640,8 +640,8 @@ describe('AnthropicProvider.callStepWithTools', () => {
     expect(textBlock?.text).toContain('maximum number of tool calls');
 
     // Final extraction call now offers __realm_submit__ at tool_choice:'auto' (schema present).
-    expect(mockCreate.mock.calls[1][0].tool_choice).toEqual({ type: 'auto' });
-    expect(mockCreate.mock.calls[1][0].tools).toEqual([
+    expect(mockCreate.mock.calls[1]![0].tool_choice).toEqual({ type: 'auto' });
+    expect(mockCreate.mock.calls[1]![0].tools).toEqual([
       expect.objectContaining({ name: '__realm_submit__', input_schema: schema }),
     ]);
   });
@@ -655,9 +655,9 @@ describe('AnthropicProvider.callStepWithTools', () => {
     const result = await provider.callStep('verify callStep unchanged');
     expect(result).toEqual({ stable: true });
     // callStep uses the simple messages API shape — no tools, no tool_choice
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('tools');
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('tool_choice');
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('response_format');
+    expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('tools');
+    expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('tool_choice');
+    expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('response_format');
   });
 
   // -----------------------------------------------------------------------
@@ -687,8 +687,8 @@ describe('AnthropicProvider.callStepWithTools', () => {
     // Only the first start_run should have been executed; second was budget-blocked
     expect(executor).toHaveBeenCalledTimes(1);
     // Final extraction offers __realm_submit__ at tool_choice:'auto' (schema present).
-    expect(mockCreate.mock.calls[1][0].tool_choice).toEqual({ type: 'auto' });
-    expect(mockCreate.mock.calls[1][0].tools).toEqual([
+    expect(mockCreate.mock.calls[1]![0].tool_choice).toEqual({ type: 'auto' });
+    expect(mockCreate.mock.calls[1]![0].tools).toEqual([
       expect.objectContaining({ name: '__realm_submit__' }),
     ]);
   });
@@ -798,7 +798,7 @@ describe('AnthropicProvider.callStepWithTools — issue #224 in-conversation AJV
     // [user:prompt(string), assistant:[tool_use], user:[tool_result], assistant:response.content,
     // user:correctionMessage(string)]) — the FIRST string-content user message is the original
     // prompt itself, not the correction, so take the last match, not the first.
-    const thirdCallMsgs = mockCreate.mock.calls[2][0].messages as Array<{
+    const thirdCallMsgs = mockCreate.mock.calls[2]![0].messages as Array<{
       role: string;
       content: unknown;
     }>;
@@ -1003,9 +1003,9 @@ describe('AnthropicProvider.callStepWithTools — issue #224 shared-budget chara
     expect(mockCreate).toHaveBeenCalledTimes(3);
     // performFinalExtraction is the ONLY call carrying `tool_choice` (the main loop never sets it —
     // it only sets `tools` when tools are offered, and lets the API default `tool_choice`).
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('tool_choice');
-    expect(mockCreate.mock.calls[1][0]).not.toHaveProperty('tool_choice');
-    expect(mockCreate.mock.calls[2][0]).toHaveProperty('tool_choice');
+    expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('tool_choice');
+    expect(mockCreate.mock.calls[1]![0]).not.toHaveProperty('tool_choice');
+    expect(mockCreate.mock.calls[2]![0]).toHaveProperty('tool_choice');
     expect(result.output).toEqual({ category: 'billing' });
 
     const breadcrumbs = errorSpy.mock.calls
@@ -1033,7 +1033,7 @@ describe('AnthropicProvider.callStepWithTools — issue #224 shared-budget chara
     expect(result.toolCalls).toHaveLength(1);
     expect(result.correctionCount).toBe(1);
     expect(mockCreate).toHaveBeenCalledTimes(3);
-    expect(mockCreate.mock.calls[2][0]).toHaveProperty('tool_choice'); // performFinalExtraction
+    expect(mockCreate.mock.calls[2]![0]).toHaveProperty('tool_choice'); // performFinalExtraction
     expect(result.output).toEqual({ category: 'billing' });
 
     const breadcrumbs = errorSpy.mock.calls

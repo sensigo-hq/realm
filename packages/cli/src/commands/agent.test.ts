@@ -120,7 +120,12 @@ const errorWorkflow: WorkflowDefinition = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeDeps(overrides: Partial<AgentDeps> = {}): AgentDeps & { store: InMemoryStore } {
+// `store` is excluded from the override type so the declared `store: InMemoryStore` return stays
+// honest: every call site takes the InMemoryStore built here (no caller overrides it), and a
+// `Partial<AgentDeps>` override would widen it back to the bare `RunStore` interface.
+function makeDeps(
+  overrides: Omit<Partial<AgentDeps>, 'store'> = {},
+): AgentDeps & { store: InMemoryStore } {
   const store = new InMemoryStore();
   return {
     store,

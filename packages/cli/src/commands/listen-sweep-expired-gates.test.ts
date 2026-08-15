@@ -132,7 +132,9 @@ describe('sweepExpiredGates (issue #291, Deliverable 4f)', () => {
     const runStore = new InMemoryStore();
     const def = wf();
     const workflowStore = makeWorkflowStore([def]);
-    const gate = makeGate({ on_expiry: undefined });
+    // makeGate's base carries NO on_expiry, so omitting the override yields the same finding-only
+    // gate the explicit `on_expiry: undefined` produced (nothing is being erased here).
+    const gate = makeGate();
     const run = await seedGatedRun(runStore, def, gate);
 
     const result = await sweepExpiredGates({ runStore, workflowStore, logger: silentLogger }, NOW);
@@ -218,9 +220,10 @@ describe('sweepExpiredGates (issue #291, Deliverable 4f)', () => {
   it('dormant when the store declares no settleStep at all — a fast no-op', async () => {
     const def = wf();
     const workflowStore = makeWorkflowStore([def]);
+    // `settleStep` OMITTED (the Pick keeps it optional) — the store genuinely "declares no
+    // settleStep at all", which is exactly what the dormancy check reads.
     const runStore: Pick<ListenDeps['runStore'], 'list' | 'settleStep'> = {
       list: vi.fn(),
-      settleStep: undefined,
     };
     const result = await sweepExpiredGates(
       { runStore: runStore as ListenDeps['runStore'], workflowStore, logger: silentLogger },

@@ -449,7 +449,23 @@ function makeMinimalDefinition(): WorkflowDefinition {
   return { id: 'wf1', name: 'Test WF', version: '1', steps: {} } as unknown as WorkflowDefinition;
 }
 
-function makeGateParams(overrides: Partial<BidirectionalGateParams> = {}): BidirectionalGateParams {
+// issue #337: `slackSigningSecret`'s override is widened (not plain `Partial<T>`) to admit an
+// EXPLICIT `undefined` — several call sites deliberately pass `slackSigningSecret: undefined` to
+// erase the base fixture's value and exercise the "secret absent" path (e.g. Socket Mode
+// selection). Under exactOptionalPropertyTypes, `Partial<T>` only admits "present or omitted",
+// never an explicit `undefined` for an optional field — and OMITTING the override key instead
+// (case-(a) fix) would silently fall back to the base's `slackSigningSecret: 'secret'`, turning
+// the "absent" test into a duplicate of the "present" one. Scoped to just this one field (unlike
+// a repo-wide `Partial<T>` mapped-type widening) because widening every field breaks the base
+// object literal's own type inference below — `{...defaults, ...overrides}`'s merged property
+// types include `undefined` for every widened field, which then conflicts with this function's
+// own non-optional return fields (e.g. `gate: PendingGate`) even when no override is passed.
+function makeGateParams(
+  overrides: Partial<Omit<BidirectionalGateParams, 'slackSigningSecret'>> & {
+    slackSigningSecret?: string | undefined;
+  } = {},
+): BidirectionalGateParams {
+  const { slackSigningSecret: secretOverride, ...restOverrides } = overrides;
   return {
     gate: {
       gate_id: 'g1',
@@ -467,12 +483,22 @@ function makeGateParams(overrides: Partial<BidirectionalGateParams> = {}): Bidir
     slackBotToken: 'xoxb-test',
     slackChannelId: 'C123',
     gateThreadTs: '1234567890.000',
-    slackSigningSecret: 'secret',
+    // issue #337: three-way handling, not a plain field — 'secret' overridden with a real value
+    // (spread it), overridden explicitly to `undefined` (OMIT the key — the source under test
+    // only ever does `slackSigningSecret !== undefined`, so an omitted key and an explicit
+    // `undefined` value are runtime-indistinguishable to it), or not mentioned at all (the base
+    // default). Never assign `slackSigningSecret: undefined` directly — that violates
+    // exactOptionalPropertyTypes for this optional-without-`|undefined` field.
+    ...(secretOverride !== undefined
+      ? { slackSigningSecret: secretOverride }
+      : 'slackSigningSecret' in overrides
+        ? {}
+        : { slackSigningSecret: 'secret' }),
     slackEventsPort: 3100,
     gateReminderIntervalMs: 999_999,
     gateEscalationThresholdMs: 999_999,
     pollIntervalMs: 0,
-    ...overrides,
+    ...restOverrides,
   };
 }
 
@@ -536,7 +562,7 @@ describe('handleBidirectionalGate', () => {
     await promise;
 
     // Only one clarification reply should have been sent (dedupe is working).
-    const replyCalls = fetchSpy.mock.calls.filter(([url]: [string]) =>
+    const replyCalls = fetchSpy.mock.calls.filter(([url]) =>
       (url as string).includes('postMessage'),
     );
     expect(replyCalls).toHaveLength(1);
@@ -594,11 +620,11 @@ describe('handleBidirectionalGate', () => {
 
     await promise;
 
-    const replyCalls = mockFetch.mock.calls.filter(([url]: [string]) =>
+    const replyCalls = mockFetch.mock.calls.filter(([url]) =>
       (url as string).includes('postMessage'),
     );
     expect(replyCalls.length).toBeGreaterThan(0);
-    const replyBody = JSON.parse(replyCalls[replyCalls.length - 1][1].body as string) as {
+    const replyBody = JSON.parse(replyCalls[replyCalls.length - 1]![1].body as string) as {
       text: string;
     };
     expect(replyBody.text).toContain('approve');
@@ -636,11 +662,11 @@ describe('handleBidirectionalGate', () => {
     // The finally's bounded drain guarantees in-flight replies have landed — no wall-clock barrier.
     await promise;
 
-    const replyCalls = mockFetch.mock.calls.filter(([url]: [string]) =>
+    const replyCalls = mockFetch.mock.calls.filter(([url]) =>
       (url as string).includes('postMessage'),
     );
     expect(replyCalls).toHaveLength(1); // EXACT — the drain closes the dedupe-masking window
-    const replyBody = JSON.parse(replyCalls[replyCalls.length - 1][1].body as string) as {
+    const replyBody = JSON.parse(replyCalls[replyCalls.length - 1]![1].body as string) as {
       text: string;
     };
     expect(replyBody.text).toContain('approve');
@@ -690,11 +716,11 @@ describe('handleBidirectionalGate', () => {
 
     await promise; // bounded drain guarantees the reply landed — no wall-clock barrier
 
-    const replyCalls = mockFetch.mock.calls.filter(([url]: [string]) =>
+    const replyCalls = mockFetch.mock.calls.filter(([url]) =>
       (url as string).includes('postMessage'),
     );
     expect(replyCalls).toHaveLength(1); // the confirmation reply (only posted on submit success)
-    const body = JSON.parse(replyCalls[0][1].body as string) as { text: string };
+    const body = JSON.parse(replyCalls[0]![1].body as string) as { text: string };
     expect(body.text).toContain('approve');
   });
 
@@ -717,7 +743,11 @@ describe('handleBidirectionalGate', () => {
     };
     // fetch (used by postSlackReply's confirmation) never resolves → processCandidate hangs after
     // the store write; the finally's bounded drain must give up after DRAIN_TIMEOUT_MS.
-    const mockFetch = vi.fn(() => new Promise(() => {}));
+    // issue #337: a zero-arg implementation narrows vi.fn()'s inferred Args to `[]`, which makes
+    // `.mock.calls` a `[][]` — the `[url]` destructure below then has no element to read. The rest
+    // param widens Args to `unknown[]` (matching every other mockFetch in this file) with zero
+    // change to runtime behaviour — the implementation still ignores whatever it's called with.
+    const mockFetch = vi.fn((..._args: unknown[]) => new Promise(() => {}));
     vi.stubGlobal('fetch', mockFetch);
 
     let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
@@ -832,11 +862,11 @@ describe('handleBidirectionalGate', () => {
 
     await promise;
 
-    const replyCalls = mockFetch.mock.calls.filter(([url]: [string]) =>
+    const replyCalls = mockFetch.mock.calls.filter(([url]) =>
       (url as string).includes('postMessage'),
     );
     expect(replyCalls).toHaveLength(1); // exactly one error reply — never posts twice
-    const body = JSON.parse(replyCalls[0][1].body as string) as { text: string };
+    const body = JSON.parse(replyCalls[0]![1].body as string) as { text: string };
     expect(body.text).toContain("Couldn't record your response");
     // Not a confirmation → the success branch (confirmation + abort) did NOT run; gate not resolved.
     expect(body.text).not.toContain('run continuing');

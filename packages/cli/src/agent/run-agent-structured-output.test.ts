@@ -410,7 +410,9 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
       name: 'SO Tools',
       version: 1,
       schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-      mcp_servers: [{ id: 'github', command: 'npx', args: ['-y', 'mcp-github'] }],
+      mcp_servers: [
+        { id: 'github', transport: 'stdio', command: 'npx', args: ['-y', 'mcp-github'] },
+      ],
       steps: {
         classify: {
           description: 'Classify',
