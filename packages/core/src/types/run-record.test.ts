@@ -7,13 +7,17 @@ describe('RunRecord', () => {
       id: '123e4567-e89b-12d3-a456-426614174000',
       workflow_id: 'test-workflow',
       workflow_version: 1,
-      state: 'created',
       version: 0,
       params: { input: 'value' },
       evidence: [],
       created_at: '2026-04-01T00:00:00.000Z',
       updated_at: '2026-04-01T00:00:00.000Z',
       terminal_state: false,
+      completed_steps: [],
+      in_progress_steps: [],
+      failed_steps: [],
+      skipped_steps: [],
+      run_phase: 'running',
     };
     expect(record.id).toBe('123e4567-e89b-12d3-a456-426614174000');
     expect(record.evidence).toHaveLength(0);
@@ -40,13 +44,17 @@ describe('RunRecord', () => {
       id: 'run-1',
       workflow_id: 'wf',
       workflow_version: 1,
-      state: 'init',
       version: 0,
       params: {},
       evidence: [],
       created_at: '2026-04-01T00:00:00.000Z',
       updated_at: '2026-04-01T00:00:00.000Z',
       terminal_state: false,
+      completed_steps: [],
+      in_progress_steps: [],
+      failed_steps: [],
+      skipped_steps: [],
+      run_phase: 'running',
     };
     const parsed: RunRecord = JSON.parse(JSON.stringify(record)) as RunRecord;
     expect(parsed).toEqual(record);

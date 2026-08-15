@@ -244,9 +244,9 @@ describe("GorgiasAdapter fetch('get_ticket')", () => {
   it('mock returns 429 with Retry-After: 5 → throws SERVICE_RATE_LIMITED, wait_and_proceed, retry_after: 5', async () => {
     respond(429, { error: 'Too Many Requests' }, { 'Retry-After': '5' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('get_ticket', { ticket_id: 1 }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
     expect(err.agentAction).toBe('wait_and_proceed');
@@ -257,9 +257,9 @@ describe("GorgiasAdapter fetch('get_ticket')", () => {
   it('mock returns 429 without Retry-After header → retry_after is undefined (resolved by callAdapter)', async () => {
     respond(429, { error: 'Too Many Requests' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('get_ticket', { ticket_id: 1 }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
     expect(err.agentAction).toBe('wait_and_proceed');
@@ -279,9 +279,9 @@ describe("GorgiasAdapter fetch('get_ticket')", () => {
   it('mock returns non-JSON body with 404 → throws SERVICE_HTTP_4XX with body in details.body', async () => {
     respondText(404, 'not found');
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('get_ticket', { ticket_id: 1 }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_HTTP_4XX');
     expect(err.details['body']).toBe('not found');
@@ -294,9 +294,9 @@ describe("GorgiasAdapter fetch('get_ticket')", () => {
   it('4xx body containing an email → details.body is redacted, not the raw email', async () => {
     respond(400, { error: 'Invalid request', email: 'customer@example.com' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('get_ticket', { ticket_id: 1 }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     const body = err.details['body'] as string;
     expect(body).toContain('[REDACTED_EMAIL]');
@@ -955,9 +955,9 @@ describe("GorgiasAdapter create('create_message')", () => {
   it('mock returns 403 → throws SERVICE_HTTP_4XX with message containing "permission"', async () => {
     respond(403, { error: 'Forbidden' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .create('create_message', { ticket_id: 42, body_html: '<p>hi</p>' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_HTTP_4XX');
     expect(err.message).toContain('permission');

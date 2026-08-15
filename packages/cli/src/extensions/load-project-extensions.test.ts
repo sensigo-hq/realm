@@ -40,7 +40,19 @@ function writeModule(source: string, dir: string = distDir): { file: string; dec
   return { file, declared: `../../dist/${file.split('/').pop()!}` };
 }
 
-function makeDefinition(overrides: Partial<WorkflowDefinition> = {}): WorkflowDefinition {
+function makeDefinition(
+  // issue #337: several call sites pass `source_dir`/`trust_root` explicitly `undefined` to ERASE
+  // the base defaults set below (simulating "no source_dir/trust_root at all") — under
+  // exactOptionalPropertyTypes an omitted key would instead let `...overrides` leave the base
+  // default untouched, silently vitiating those tests. Widen ONLY these two fields (not the whole
+  // type — a blanket mapped-type widening would leak `| undefined` into the return object's
+  // required fields via the `...overrides` spread) to admit explicit undefined.
+  overrides: Partial<Omit<WorkflowDefinition, 'source_dir' | 'trust_root'>> & {
+    source_dir?: string | undefined;
+    trust_root?: string | undefined;
+  } = {},
+): WorkflowDefinition {
+  const { source_dir: sourceDirOverride, trust_root: trustRootOverride, ...rest } = overrides;
   return {
     id: 'ext-wf',
     name: 'Extensions WF',
@@ -48,9 +60,17 @@ function makeDefinition(overrides: Partial<WorkflowDefinition> = {}): WorkflowDe
     schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
     steps: { s1: { description: 'step', execution: 'agent' } },
     origin: 'human',
-    source_dir: workflowDir,
-    trust_root: root,
-    ...overrides,
+    ...(sourceDirOverride !== undefined
+      ? { source_dir: sourceDirOverride }
+      : 'source_dir' in overrides
+        ? {}
+        : { source_dir: workflowDir }),
+    ...(trustRootOverride !== undefined
+      ? { trust_root: trustRootOverride }
+      : 'trust_root' in overrides
+        ? {}
+        : { trust_root: root }),
+    ...rest,
   };
 }
 

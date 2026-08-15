@@ -207,9 +207,9 @@ describe('ParcelPanelAdapter param validation', () => {
 
   it('throws ADAPTER_VALIDATION_FAILED with details.store for unknown store', async () => {
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('get_tracking', { store: 'unknown', order_number: '1234' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('ADAPTER_VALIDATION_FAILED');
     expect(err.details['store']).toBe('unknown');
@@ -307,9 +307,9 @@ describe('ParcelPanelAdapter HTTP error classification', () => {
   it('HTTP 429 with Retry-After header → SERVICE_RATE_LIMITED, wait_and_proceed, retry_after: 30', async () => {
     respond(429, { errors: 'Too Many Requests' }, { 'Retry-After': '30' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('get_tracking', { store: 'mystore', order_number: '1234' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
     expect(err.agentAction).toBe('wait_and_proceed');
@@ -320,9 +320,9 @@ describe('ParcelPanelAdapter HTTP error classification', () => {
   it('HTTP 429 without Retry-After header → retry_after is undefined (resolved by callAdapter)', async () => {
     respond(429, { errors: 'Too Many Requests' });
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('get_tracking', { store: 'mystore', order_number: '1234' }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('SERVICE_RATE_LIMITED');
     expect(err.agentAction).toBe('wait_and_proceed');
@@ -588,9 +588,9 @@ describe('ParcelPanelAdapter fetch(get_tracking_by_id)', () => {
 
   it('unknown store → ADAPTER_VALIDATION_FAILED with details.store', async () => {
     const adapter = makeAdapter();
-    const err = await adapter
+    const err = (await adapter
       .fetch('get_tracking_by_id', { store: 'no-such-store', order_id: 6140516335690 }, {})
-      .catch((e: unknown) => e as WorkflowError);
+      .catch((e: unknown) => e)) as WorkflowError;
     expect(err).toBeInstanceOf(WorkflowError);
     expect(err.code).toBe('ADAPTER_VALIDATION_FAILED');
     expect(err.details['store']).toBe('no-such-store');

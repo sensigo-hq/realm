@@ -36,7 +36,21 @@ const def: WorkflowDefinition = {
   },
 };
 
-function makeGrandfathered(overrides: Partial<RunRecord> = {}): RunRecord {
+function makeGrandfathered(
+  // issue #337: the "LIVE at the pre-CS get" call site erases BOTH terminal_reason and
+  // pending_gate to simulate a genuinely-live run reusing this fixture's shape — widen only these
+  // two fields to admit explicit undefined (see the identical fold in
+  // settlement-282-cli-integration.test.ts's makeGrandfatheredFixture for the full rationale).
+  overrides: Partial<Omit<RunRecord, 'terminal_reason' | 'pending_gate'>> & {
+    terminal_reason?: string | undefined;
+    pending_gate?: RunRecord['pending_gate'] | undefined;
+  } = {},
+): RunRecord {
+  const {
+    terminal_reason: terminalReasonOverride,
+    pending_gate: pendingGateOverride,
+    ...rest
+  } = overrides;
   return {
     id: 'g1',
     workflow_id: def.id,
@@ -52,15 +66,25 @@ function makeGrandfathered(overrides: Partial<RunRecord> = {}): RunRecord {
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
     terminal_state: true,
-    terminal_reason: 'Workflow completed.',
-    pending_gate: {
-      gate_id: 'stale',
-      step_name: 'a',
-      preview: {},
-      choices: ['approve', 'reject'],
-      opened_at: '2026-01-01T00:00:00.000Z',
-    },
-    ...overrides,
+    ...(terminalReasonOverride !== undefined
+      ? { terminal_reason: terminalReasonOverride }
+      : 'terminal_reason' in overrides
+        ? {}
+        : { terminal_reason: 'Workflow completed.' }),
+    ...(pendingGateOverride !== undefined
+      ? { pending_gate: pendingGateOverride }
+      : 'pending_gate' in overrides
+        ? {}
+        : {
+            pending_gate: {
+              gate_id: 'stale',
+              step_name: 'a',
+              preview: {},
+              choices: ['approve', 'reject'],
+              opened_at: '2026-01-01T00:00:00.000Z',
+            },
+          }),
+    ...rest,
   };
 }
 

@@ -640,8 +640,8 @@ describe('testStepHandler', () => {
       },
     };
     const result = await testStepHandler(handler, { params: { msg: 'hello' } });
-    expect(result.data['echo']).toBe('hello');
-    expect(result.data['run']).toBe('test-run');
+    expect(result.data!['echo']).toBe('hello');
+    expect(result.data!['run']).toBe('test-run');
   });
 });
 

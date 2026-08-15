@@ -95,7 +95,16 @@ function makeRes(): ServerResponse & {
   jsonBody: () => Record<string, unknown>;
 } {
   let raw = '';
-  const res = {
+  // The literal is typed up front so `this` inside writeHead resolves to the mock's own shape.
+  // (Untyped, TS infers `this: {}` — the methods' mutual reference makes the inference circular.)
+  interface MockRes {
+    headersSent: boolean;
+    statusCode: number;
+    writeHead(status: number): MockRes;
+    end(chunk?: string): void;
+    jsonBody(): Record<string, unknown>;
+  }
+  const res: MockRes = {
     headersSent: false,
     statusCode: 0,
     writeHead(status: number) {
@@ -109,8 +118,11 @@ function makeRes(): ServerResponse & {
     jsonBody() {
       return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
     },
-  } as unknown as ServerResponse & { statusCode: number; jsonBody: () => Record<string, unknown> };
-  return res;
+  };
+  return res as unknown as ServerResponse & {
+    statusCode: number;
+    jsonBody: () => Record<string, unknown>;
+  };
 }
 
 const JSON_CT = { 'content-type': 'application/json' };

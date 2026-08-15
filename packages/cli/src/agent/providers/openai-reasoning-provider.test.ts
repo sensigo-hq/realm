@@ -70,7 +70,7 @@ describe('OpenAIReasoningProvider.callStep', () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
     const provider = new OpenAIReasoningProvider('o1-mini');
     await provider.callStep('prompt');
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('response_format');
+    expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('response_format');
   });
 
   // -----------------------------------------------------------------------
@@ -80,8 +80,8 @@ describe('OpenAIReasoningProvider.callStep', () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
     const provider = new OpenAIReasoningProvider('o1-mini');
     await provider.callStep('prompt');
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('max_tokens');
-    expect(mockCreate.mock.calls[0][0]).toHaveProperty('max_completion_tokens');
+    expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('max_tokens');
+    expect(mockCreate.mock.calls[0]![0]).toHaveProperty('max_completion_tokens');
   });
 
   // -----------------------------------------------------------------------
@@ -91,7 +91,7 @@ describe('OpenAIReasoningProvider.callStep', () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
     const provider = new OpenAIReasoningProvider('o1-mini');
     await provider.callStep('prompt');
-    expect(mockCreate.mock.calls[0][0].max_completion_tokens).toBe(65536);
+    expect(mockCreate.mock.calls[0]![0].max_completion_tokens).toBe(65536);
   });
 
   // -----------------------------------------------------------------------
@@ -101,7 +101,7 @@ describe('OpenAIReasoningProvider.callStep', () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
     const provider = new OpenAIReasoningProvider('o1');
     await provider.callStep('prompt');
-    expect(mockCreate.mock.calls[0][0].max_completion_tokens).toBe(32768);
+    expect(mockCreate.mock.calls[0]![0].max_completion_tokens).toBe(32768);
   });
 
   // -----------------------------------------------------------------------
@@ -111,7 +111,7 @@ describe('OpenAIReasoningProvider.callStep', () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
     const provider = new OpenAIReasoningProvider('o1-mini');
     await provider.callStep('do something');
-    const msgs = mockCreate.mock.calls[0][0].messages as Array<{ role: string; content: string }>;
+    const msgs = mockCreate.mock.calls[0]![0].messages as Array<{ role: string; content: string }>;
     expect(msgs.every((m) => m.role !== 'system')).toBe(true);
     const firstMsg = msgs[0]!;
     expect(firstMsg.role).toBe('user');
@@ -126,7 +126,7 @@ describe('OpenAIReasoningProvider.callStep', () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"answer":"yes"}'));
     const provider = new OpenAIReasoningProvider('o1-mini');
     await provider.callStep('prompt', schema);
-    const msgs = mockCreate.mock.calls[0][0].messages as Array<{ role: string; content: string }>;
+    const msgs = mockCreate.mock.calls[0]![0].messages as Array<{ role: string; content: string }>;
     const firstMsg = msgs[0]!;
     expect(firstMsg.content).toContain(JSON.stringify(schema));
   });

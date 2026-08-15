@@ -11,7 +11,11 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         project: ['./tsconfig.eslint.json'],
-        tsconfigRootDir: import.meta.dirname,
+        // issue #337: `import.meta.dirname` is ESM-only syntax (TS1470) — this file is
+        // CJS-classified by tsc (module: NodeNext, root package.json has no "type" field).
+        // `__dirname` is the CJS-native equivalent and resolves identically here (jiti loads
+        // this config as CommonJS at lint time, where `__dirname` is always defined).
+        tsconfigRootDir: __dirname,
       },
     },
     rules: {

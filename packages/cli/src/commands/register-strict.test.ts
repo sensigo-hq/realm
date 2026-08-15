@@ -55,7 +55,7 @@ steps:
     await registerCommand.parseAsync([wfDir, '--strict'], { from: 'user' });
 
     expect(exitSpy).not.toHaveBeenCalled();
-    const printed = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(printed).toContain('Registered: clean-reg v1 (1 steps)');
     rmSync(wfDir, { recursive: true, force: true });
   });
@@ -81,9 +81,11 @@ steps:
     );
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-    const errored = errSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(errored).toContain('refusing to register due to --strict');
-    expect(logSpy.mock.calls.map((c) => String(c[0])).join('\n')).not.toContain('Registered:');
+    expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).not.toContain(
+      'Registered:',
+    );
     rmSync(wfDir, { recursive: true, force: true });
   });
 
@@ -106,9 +108,9 @@ steps:
     await registerCommand.parseAsync([wfDir], { from: 'user' });
 
     expect(exitSpy).not.toHaveBeenCalled();
-    const printed = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(printed).toContain('Registered: typo-reg-lenient v1 (1 steps)');
-    const warned = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(warned).toContain("unknown key 'dependson'");
     rmSync(wfDir, { recursive: true, force: true });
   });

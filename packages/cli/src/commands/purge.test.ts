@@ -92,7 +92,7 @@ async function appendSidecarLine(store: FailedAttemptStore, runId: string): Prom
     params: {},
     trace_entry_count: 0,
   });
-  await store.append(runId, serializeFailedAttemptLine(rec).line);
+  await store.append(runId, serializeFailedAttemptLine({ ...rec }).line);
 }
 
 const ONE_DAY_AGO = new Date(Date.now() - 2 * 86_400_000).toISOString();

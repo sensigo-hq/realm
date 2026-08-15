@@ -10,14 +10,17 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
 function makeDefinition(
   workflow_context: WorkflowDefinition['workflow_context'],
 ): WorkflowDefinition {
-  return {
+  const base: WorkflowDefinition = {
     id: 'ctx-test',
     name: 'Context Test',
     version: 1,
     schema_version: 1,
     steps: {},
-    workflow_context,
   };
+  // `makeDefinition(undefined)` is a real case (the "no workflow_context at all" test), so the key
+  // is OMITTED rather than set to undefined — which is what an absent block looks like on a
+  // loaded definition.
+  return workflow_context === undefined ? base : { ...base, workflow_context };
 }
 
 describe('loadWorkflowContext', () => {

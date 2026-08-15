@@ -27,13 +27,20 @@ function makeRun(evidence: EvidenceSnapshot[], workflowId = 'wf1'): RunRecord {
     id: 'run_' + Math.random().toString(36).slice(2),
     workflow_id: workflowId,
     workflow_version: 1,
-    state: 'completed',
     version: 1,
     params: {},
     evidence,
     created_at: '2024-01-01T00:00:00.000Z',
     updated_at: '2024-01-01T00:00:01.000Z',
     terminal_state: true,
+    // The DAG step sets + derived phase are required on RunRecord (they replaced the old scalar
+    // `state` field this fixture still carried). diffRuns reads only `evidence`, so they are inert
+    // here — present so the fixture is a structurally valid completed run.
+    completed_steps: [],
+    in_progress_steps: [],
+    failed_steps: [],
+    skipped_steps: [],
+    run_phase: 'completed',
   };
 }
 

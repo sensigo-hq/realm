@@ -29,7 +29,7 @@ const mcpWorkflow: WorkflowDefinition = {
   name: 'MCP Workflow',
   version: 1,
   schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-  mcp_servers: [{ id: 'github', command: 'npx', args: ['-y', 'mcp-github'] }],
+  mcp_servers: [{ id: 'github', transport: 'stdio', command: 'npx', args: ['-y', 'mcp-github'] }],
   steps: {
     research: {
       description: 'Research step with tools',
@@ -103,7 +103,6 @@ describe('runAgent — MCP tools integration', () => {
         args: { pr: 1 },
         result: 'PR data',
         duration_ms: 50,
-        started_at: new Date().toISOString(),
       },
     ];
     const provider = new (class extends ToolCapableLlmProvider {
@@ -141,7 +140,6 @@ describe('runAgent — MCP tools integration', () => {
         args: { pr: 42 },
         result: 'PR body',
         duration_ms: 100,
-        started_at: new Date().toISOString(),
       },
     ];
     const provider = new (class extends ToolCapableLlmProvider {
@@ -258,8 +256,8 @@ describe('runAgent — MCP tools integration', () => {
       version: 1,
       schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
       mcp_servers: [
-        { id: 'server1', command: 'npx', args: ['-y', 'mcp-server1'] },
-        { id: 'server2', command: 'npx', args: ['-y', 'mcp-server2'] },
+        { id: 'server1', transport: 'stdio', command: 'npx', args: ['-y', 'mcp-server1'] },
+        { id: 'server2', transport: 'stdio', command: 'npx', args: ['-y', 'mcp-server2'] },
       ],
       steps: {
         analyse: {
@@ -399,7 +397,9 @@ describe('runAgent — MCP tools integration', () => {
     const deps: AgentDeps = {
       store,
       workflowStore: makeWorkflowStore(),
-      provider: { callStep: vi.fn() },
+      provider: new (class extends LlmProvider {
+        callStep = vi.fn();
+      })(),
       registry: createDefaultRegistry(),
     };
 
@@ -654,7 +654,9 @@ describe('runAgent — effective output schema routing (#robust-anthropic-provid
       name: 'Output Only (tools)',
       version: 1,
       schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-      mcp_servers: [{ id: 'github', command: 'npx', args: ['-y', 'mcp-github'] }],
+      mcp_servers: [
+        { id: 'github', transport: 'stdio', command: 'npx', args: ['-y', 'mcp-github'] },
+      ],
       steps: {
         classify: {
           description: 'Classify',
@@ -668,6 +670,7 @@ describe('runAgent — effective output schema routing (#robust-anthropic-provid
       },
     };
     const provider = new (class extends ToolCapableLlmProvider {
+      callStep = vi.fn();
       callStepWithTools = vi
         .fn()
         .mockResolvedValue({ output: { category: 'billing' }, toolCalls: [] });
@@ -724,7 +727,7 @@ function toolsWorkflow(): WorkflowDefinition {
     name: 'Tools Repair WF',
     version: 1,
     schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-    mcp_servers: [{ id: 'github', command: 'npx', args: ['-y', 'mcp-github'] }],
+    mcp_servers: [{ id: 'github', transport: 'stdio', command: 'npx', args: ['-y', 'mcp-github'] }],
     steps: {
       draft: {
         description: 'Draft',
@@ -1184,9 +1187,9 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
 
     it('the parseArg itself throws InvalidArgumentError for non-numeric/negative input, and defaults to the numeric 2', () => {
       const opt = agentCommand.options.find((o) => o.long === '--schema-retries')!;
-      expect(() => opt.parseArg('abc', undefined)).toThrow(InvalidArgumentError);
-      expect(() => opt.parseArg('-1', undefined)).toThrow(InvalidArgumentError);
-      expect(opt.parseArg('5', undefined)).toBe(5);
+      expect(() => opt.parseArg!('abc', undefined)).toThrow(InvalidArgumentError);
+      expect(() => opt.parseArg!('-1', undefined)).toThrow(InvalidArgumentError);
+      expect(opt.parseArg!('5', undefined)).toBe(5);
       // issue #217 correction: `agentCommand.opts()` reads the SHARED singleton's last-parsed
       // state, which the two parseAsync sub-tests above already mutated (order-coupled) — read
       // the Option's own static `defaultValue` instead, which is set once at Command construction
@@ -1224,6 +1227,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
   it('test 8a: tools path, zero toolCalls on the invalid attempt ⇒ repair fires and succeeds', async () => {
     const def = toolsWorkflow();
     const provider = new (class extends ToolCapableLlmProvider {
+      callStep = vi.fn();
       callStepWithTools = vi
         .fn()
         .mockResolvedValueOnce({ output: { category: 'WRONG' }, toolCalls: [] })
@@ -1255,10 +1259,10 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
         args: {},
         result: 'x',
         duration_ms: 1,
-        started_at: '2026-01-01T00:00:00.000Z',
       },
     ];
     const provider = new (class extends ToolCapableLlmProvider {
+      callStep = vi.fn();
       callStepWithTools = vi.fn().mockResolvedValue({ output: { category: 'WRONG' }, toolCalls });
     })();
     const mockClient = makeMockMcpClient();
@@ -1299,10 +1303,10 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
         args: {},
         result: 'x',
         duration_ms: 1,
-        started_at: '2026-01-01T00:00:00.000Z',
       },
     ];
     const provider = new (class extends ToolCapableLlmProvider {
+      callStep = vi.fn();
       callStepWithTools = vi.fn().mockResolvedValue({ output: { category: 'WRONG' }, toolCalls });
     })();
     const mockClient = makeMockMcpClient();
@@ -1334,6 +1338,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
   it("D4(b) mutation-probe comparison: a THROWN provider error (the pre-#224 posture) is NEVER counted — validation_rejections stays unset, because run-agent's catch block returns 'failed' without ever reaching executeChain", async () => {
     const def = toolsWorkflow();
     const provider = new (class extends ToolCapableLlmProvider {
+      callStep = vi.fn();
       callStepWithTools = vi
         .fn()
         .mockRejectedValue(new Error('max_tool_calls reached; schema-invalid'));

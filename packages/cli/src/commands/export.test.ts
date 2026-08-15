@@ -73,7 +73,7 @@ async function appendSidecarLine(store: FailedAttemptStore, runId: string): Prom
     params: {},
     trace_entry_count: 0,
   });
-  await store.append(runId, serializeFailedAttemptLine(rec).line);
+  await store.append(runId, serializeFailedAttemptLine({ ...rec }).line);
 }
 
 describe('buildExportBundle', () => {

@@ -110,9 +110,10 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
     // error envelope BEFORE the WAL-cleanup section is ever reached (it lives inside the
     // applied:true branch only), so the same persist-gate invariant holds under the new
     // mechanism: WAL cleanup never fires when the settle itself never committed.
+    // `JsonFileStore.settleStep` is a concrete method — spied directly, no key/value casts.
     const settleStepSpy = vi
-      .spyOn(store, 'settleStep' as never)
-      .mockRejectedValue(new Error('simulated persist failure') as never);
+      .spyOn(store, 'settleStep')
+      .mockRejectedValue(new Error('simulated persist failure'));
 
     try {
       const envelope = await executeStep(store, agentDef, {

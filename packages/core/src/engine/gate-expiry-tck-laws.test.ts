@@ -124,7 +124,6 @@ describe('EXPIRE_ARM_MATRIX (issue #291, O7)', () => {
 
   it('a DIFFERENT terminal cause on the record REFUSES run_terminal, never resurrecting or re-terminalizing', () => {
     const run = makeRun({
-      pending_gate: undefined,
       in_progress_steps: [],
       completed_steps: ['gated'],
       terminal_state: true,
@@ -181,8 +180,8 @@ describe('EXPIRE_ABORT_CASCADE (issue #291, O7)', () => {
     const result = applySettlement(run, delta, def, { now: PAST_EXPIRY });
     expect(result.applied).toBe(true);
     if (!result.applied) return;
-    expect(result.run.skip_details?.['gated'].kind).toBe('gate_expired');
-    expect(result.run.skip_details?.['gated'].kind).not.toBe('gate_cancelled_by_abort');
+    expect(result.run.skip_details?.['gated']!.kind).toBe('gate_expired');
+    expect(result.run.skip_details?.['gated']!.kind).not.toBe('gate_cancelled_by_abort');
   });
 
   it('never stamps defaulted_steps on the abort edge, even though it terminalizes (the FM-5/#232 guard)', () => {

@@ -45,7 +45,7 @@ steps:
     await validateCommand.parseAsync([wfPath, '--strict'], { from: 'user' });
 
     expect(exitSpy).not.toHaveBeenCalled();
-    const printed = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(printed).toContain('Valid: clean-wf v1 (1 steps)');
     expect(printed).not.toContain('warning(s)');
   });
@@ -71,11 +71,11 @@ steps:
     ).rejects.toThrow('process.exit');
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-    const printed = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(printed).toContain(
       'Valid: typo-wf v1 (1 steps) — 1 warning(s); failing due to --strict',
     );
-    const warned = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(warned).toContain("unknown key 'dependson'");
   });
 
@@ -98,10 +98,10 @@ steps:
     await validateCommand.parseAsync([wfPath], { from: 'user' });
 
     expect(exitSpy).not.toHaveBeenCalled();
-    const printed = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(printed).toContain('Valid: typo-wf-lenient v1 (1 steps)');
     expect(printed).not.toContain('warning(s)');
-    const warned = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(warned).toContain("unknown key 'dependson'");
   });
 });
@@ -150,11 +150,11 @@ steps:
       // --strict exits 1 for this fixture; we only care about the count below.
     });
 
-    const warned = warnSpy.mock.calls.map((c) => String(c[0]));
+    const warned: string[] = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]));
     const unknownKeyWarnings = warned.filter((line) => line.includes("unknown key 'dependson'"));
     expect(unknownKeyWarnings).toHaveLength(1);
 
-    const printed = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(printed).toContain('1 warning(s); failing due to --strict');
   });
 });
@@ -204,9 +204,9 @@ steps:
     ).rejects.toThrow('process.exit');
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-    const printed = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(printed).toContain('2 warning(s); failing due to --strict');
-    const warned = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(warned).toContain("unknown key 'dependson'");
     expect(warned).toContain("declares 'retry' but no 'timeout_seconds'");
   });

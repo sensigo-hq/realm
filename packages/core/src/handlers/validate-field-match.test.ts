@@ -9,7 +9,11 @@ function makeContext(config: Record<string, unknown>, fieldValue?: unknown): Ste
     run_id: 'test-run',
     run_params: {},
     config,
-    resources: fieldValue !== undefined ? { some_step: { some_field: fieldValue } } : undefined,
+    // issue #337: `resources` is `Record<...>|undefined` optional (no `| undefined` in its own
+    // type) — under exactOptionalPropertyTypes, explicitly assigning `undefined` is a type error
+    // distinct from omitting the key. Conditional spread omits it entirely when fieldValue is
+    // undefined, matching the #293 precedent — `ctx.resources` reads as `undefined` either way.
+    ...(fieldValue !== undefined ? { resources: { some_step: { some_field: fieldValue } } } : {}),
   };
 }
 
@@ -110,25 +114,25 @@ describe('ValidateFieldMatchHandler', () => {
     it('returns matched: true when value equals pattern exactly', async () => {
       const ctx = makeDefaultCtx('expected');
       const result = await handler.execute({ params: {} }, ctx);
-      expect(result.data.matched).toBe(true);
+      expect(result.data!.matched).toBe(true);
     });
 
     it('returns matched: false when value does not equal pattern', async () => {
       const ctx = makeDefaultCtx('not-expected');
       const result = await handler.execute({ params: {} }, ctx);
-      expect(result.data.matched).toBe(false);
+      expect(result.data!.matched).toBe(false);
     });
 
     it('defaults to exact mode when config.mode is absent', async () => {
       const ctx = makeDefaultCtx('expected');
       const result = await handler.execute({ params: {} }, ctx);
-      expect(result.data.mode).toBe('exact');
+      expect(result.data!.mode).toBe('exact');
     });
 
     it('is case-sensitive', async () => {
       const ctx = makeDefaultCtx('Expected');
       const result = await handler.execute({ params: {} }, ctx);
-      expect(result.data.matched).toBe(false);
+      expect(result.data!.matched).toBe(false);
     });
   });
 
@@ -146,7 +150,7 @@ describe('ValidateFieldMatchHandler', () => {
         resources: { some_step: { some_field: 'hello world' } },
       };
       const result = await handler.execute({ params: {} }, ctx);
-      expect(result.data.matched).toBe(true);
+      expect(result.data!.matched).toBe(true);
     });
 
     it('returns matched: false when value does not start with pattern', async () => {
@@ -162,7 +166,7 @@ describe('ValidateFieldMatchHandler', () => {
         resources: { some_step: { some_field: 'hello world' } },
       };
       const result = await handler.execute({ params: {} }, ctx);
-      expect(result.data.matched).toBe(false);
+      expect(result.data!.matched).toBe(false);
     });
   });
 
@@ -180,7 +184,7 @@ describe('ValidateFieldMatchHandler', () => {
         resources: { some_step: { some_field: '12345' } },
       };
       const result = await handler.execute({ params: {} }, ctx);
-      expect(result.data.matched).toBe(true);
+      expect(result.data!.matched).toBe(true);
     });
 
     it('returns matched: false when value does not match the regex pattern', async () => {
@@ -196,7 +200,7 @@ describe('ValidateFieldMatchHandler', () => {
         resources: { some_step: { some_field: 'hello' } },
       };
       const result = await handler.execute({ params: {} }, ctx);
-      expect(result.data.matched).toBe(false);
+      expect(result.data!.matched).toBe(false);
     });
 
     it('returns matched: false (not throws) when pattern is not a valid regex', async () => {
@@ -212,7 +216,7 @@ describe('ValidateFieldMatchHandler', () => {
         resources: { some_step: { some_field: 'hello' } },
       };
       const result = await handler.execute({ params: {} }, ctx);
-      expect(result.data.matched).toBe(false);
+      expect(result.data!.matched).toBe(false);
     });
   });
 
@@ -230,15 +234,15 @@ describe('ValidateFieldMatchHandler', () => {
         resources: { some_step: { some_field: 'hello world' } },
       };
       const result = await handler.execute({ params: {} }, ctx);
-      expect(result.data.value).toBe('hello world');
-      expect(result.data.pattern).toBe('hello');
-      expect(result.data.mode).toBe('prefix');
+      expect(result.data!.value).toBe('hello world');
+      expect(result.data!.pattern).toBe('hello');
+      expect(result.data!.mode).toBe('prefix');
     });
 
     it('data.mode reflects the resolved mode (i.e. "exact" when defaulted)', async () => {
       const ctx = makeDefaultCtx('expected');
       const result = await handler.execute({ params: {} }, ctx);
-      expect(result.data.mode).toBe('exact');
+      expect(result.data!.mode).toBe('exact');
     });
   });
 });

@@ -126,13 +126,19 @@ describe('applyResume — RESUME_CLEARS_SETTLED (issue #279, increment 1, PR-B)'
   it('re-derives skipped_steps/skip_details from scratch (a step skipped only because of the now-resumed failure becomes eligible again)', () => {
     const snapshot = baseRun({
       skipped_steps: ['b'],
-      skip_details: { b: { kind: 'trigger_rule_unsatisfiable' } },
+      skip_details: {
+        b: {
+          kind: 'trigger_rule_unsatisfiable',
+          rule: 'all_success',
+          blocking_deps: [{ dep: 'a', state: 'failed' }],
+        },
+      },
     });
     const { run } = applyResume(snapshot, 'a', def);
     // 'b' has no dependency on 'a' in this fixture, so propagateSkips should NOT re-skip it —
     // proving the skip state is genuinely RE-DERIVED, not merely carried forward stale.
     expect(run.skipped_steps).not.toContain('b');
-    expect(run.skip_details['b']).toBeUndefined();
+    expect(run.skip_details!['b']).toBeUndefined();
   });
 
   it('releases a genuinely DANGLING claim (non-empty in_progress_steps/claims — the actual R1-wedge shape, a crash mid-execution with no settle ever reached), not merely a fixture that is already empty', () => {

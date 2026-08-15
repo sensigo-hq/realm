@@ -48,3 +48,13 @@ jobs:
       - run: npm run lint
       - run: npm run test
       - run: npm run build
+      # issue #337 — type-check the test files. `tsconfig.eslint.json` is the only project that
+      # includes `*.test.ts` (the per-package build tsconfigs exclude them), so until now tsc never
+      # saw them and 351 type errors had accumulated unseen — including assertions that could not
+      # fail. The same "make the invisible visible, then gate it" move as #293's typed store seam.
+      #
+      # MUST run AFTER `npm run build`: this typecheck resolves `@sensigo/realm` to
+      # packages/core/dist/index.d.ts through the package exports map. On a fresh runner with no
+      # dist it reds on a wall of TS2307 even with every fix in place. (`lint` survives beside it
+      # only because typescript-eslint doesn't surface TS2307.) ~9-11s.
+      - run: npm run typecheck:tests

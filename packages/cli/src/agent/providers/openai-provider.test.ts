@@ -84,7 +84,7 @@ describe('OpenAIProvider.callStep', () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
     const provider = new OpenAIProvider('gpt-4o');
     await provider.callStep('prompt');
-    expect(mockCreate.mock.calls[0][0]).toMatchObject({
+    expect(mockCreate.mock.calls[0]![0]).toMatchObject({
       response_format: { type: 'json_object' },
     });
   });
@@ -93,7 +93,7 @@ describe('OpenAIProvider.callStep', () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
     const provider = new OpenAIProvider('gpt-4o', 'https://compat.endpoint.com');
     await provider.callStep('prompt');
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('response_format');
+    expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('response_format');
   });
 
   // -----------------------------------------------------------------------
@@ -142,8 +142,8 @@ describe('OpenAIProvider.callStepWithTools', () => {
 
     expect(result.output).toEqual({ summary: 'ok' });
     expect(result.toolCalls).toHaveLength(1);
-    expect(result.toolCalls[0].tool).toBe('get_file');
-    expect(result.toolCalls[0].server_id).toBe('github');
+    expect(result.toolCalls[0]!.tool).toBe('get_file');
+    expect(result.toolCalls[0]!.server_id).toBe('github');
     expect(executor).toHaveBeenCalledWith('github:get_file', { path: 'README.md' });
   });
 
@@ -163,7 +163,7 @@ describe('OpenAIProvider.callStepWithTools', () => {
 
     expect(result.output).toEqual({ answer: 'done' });
     // Verify the final extraction user message was appended before the second API call
-    const secondCallMsgs = mockCreate.mock.calls[1][0].messages as Array<{
+    const secondCallMsgs = mockCreate.mock.calls[1]![0].messages as Array<{
       role: string;
       content: string;
     }>;
@@ -230,9 +230,9 @@ describe('OpenAIProvider.callStepWithTools', () => {
     });
 
     expect(result.toolCalls).toHaveLength(1);
-    expect(result.toolCalls[0].error).toBeDefined();
+    expect(result.toolCalls[0]!.error).toBeDefined();
 
-    const msgs = mockCreate.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+    const msgs = mockCreate.mock.calls[1]![0].messages as Array<Record<string, unknown>>;
     const toolMsg = msgs.find((m) => m['role'] === 'tool') as Record<string, unknown>;
     expect(toolMsg['tool_call_id']).toBe('tc_timeout');
     expect(String(toolMsg['content'])).toMatch(/Error:/);
@@ -251,8 +251,8 @@ describe('OpenAIProvider.callStepWithTools', () => {
     const result = await provider.callStepWithTools('prompt', [oneTool()], failExecutor, {});
 
     expect(result.output).toEqual({ result: 'ok' });
-    expect(result.toolCalls[0].error).toBe('upstream failure');
-    expect(result.toolCalls[0].result).toBeNull();
+    expect(result.toolCalls[0]!.error).toBe('upstream failure');
+    expect(result.toolCalls[0]!.result).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -268,7 +268,7 @@ describe('OpenAIProvider.callStepWithTools', () => {
     const provider = new OpenAIProvider('gpt-4o');
     await provider.callStepWithTools('prompt', [oneTool()], executor, {});
 
-    const msgs = mockCreate.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+    const msgs = mockCreate.mock.calls[1]![0].messages as Array<Record<string, unknown>>;
     const toolMsg = msgs.find((m) => m['role'] === 'tool') as Record<string, unknown>;
     expect(toolMsg['tool_call_id']).toBe(verbatimId);
   });
@@ -286,7 +286,7 @@ describe('OpenAIProvider.callStepWithTools', () => {
     const provider = new OpenAIProvider('gpt-4o');
     await provider.callStepWithTools('prompt', [oneTool()], executor, {});
 
-    const msgs = mockCreate.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+    const msgs = mockCreate.mock.calls[1]![0].messages as Array<Record<string, unknown>>;
     const toolMsg = msgs.find((m) => m['role'] === 'tool') as Record<string, unknown>;
     expect(toolMsg['content']).toBe(JSON.stringify(objResult));
   });
@@ -304,7 +304,7 @@ describe('OpenAIProvider.callStepWithTools', () => {
     const provider = new OpenAIProvider('gpt-4o');
     await provider.callStepWithTools('prompt', [oneTool()], executor, {});
 
-    const msgs = mockCreate.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+    const msgs = mockCreate.mock.calls[1]![0].messages as Array<Record<string, unknown>>;
     const toolMsg = msgs.find((m) => m['role'] === 'tool') as Record<string, unknown>;
     expect(String(toolMsg['content'])).not.toContain('secrettoken123');
     expect(String(toolMsg['content'])).toContain('[REDACTED]');
@@ -323,7 +323,7 @@ describe('OpenAIProvider.callStepWithTools', () => {
     const provider = new OpenAIProvider('gpt-4o');
     await provider.callStepWithTools('prompt', [oneTool()], failExecutor, {});
 
-    const msgs = mockCreate.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+    const msgs = mockCreate.mock.calls[1]![0].messages as Array<Record<string, unknown>>;
     const toolMsg = msgs.find((m) => m['role'] === 'tool') as Record<string, unknown>;
     expect(toolMsg['content']).toBe('Error: (redacted)');
   });
@@ -352,7 +352,7 @@ describe('OpenAIProvider.callStepWithTools', () => {
     );
 
     expect(result.toolCalls).toHaveLength(3);
-    const msgs = mockCreate.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+    const msgs = mockCreate.mock.calls[1]![0].messages as Array<Record<string, unknown>>;
     const toolMsgs = msgs.filter((m) => m['role'] === 'tool');
     expect(toolMsgs).toHaveLength(3);
   });
@@ -384,14 +384,14 @@ describe('OpenAIProvider.callStepWithTools', () => {
     expect(result.toolCalls).toHaveLength(1);
     expect(result.output).toEqual({ final: true });
 
-    const msgs = mockCreate.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+    const msgs = mockCreate.mock.calls[1]![0].messages as Array<Record<string, unknown>>;
     const toolMsgs = msgs.filter((m) => m['role'] === 'tool');
     // All 3 must have tool responses (no orphaned tool_call_ids)
     expect(toolMsgs).toHaveLength(3);
-    expect(toolMsgs[1]['tool_call_id']).toBe('x2');
-    expect(toolMsgs[1]['content']).toBe('Error: tool call budget exhausted');
-    expect(toolMsgs[2]['tool_call_id']).toBe('x3');
-    expect(toolMsgs[2]['content']).toBe('Error: tool call budget exhausted');
+    expect(toolMsgs[1]!['tool_call_id']).toBe('x2');
+    expect(toolMsgs[1]!['content']).toBe('Error: tool call budget exhausted');
+    expect(toolMsgs[2]!['tool_call_id']).toBe('x3');
+    expect(toolMsgs[2]!['content']).toBe('Error: tool call budget exhausted');
 
     // Final extraction user message was appended
     const userMsgs = msgs.filter((m) => m['role'] === 'user') as Array<{ content: string }>;
@@ -412,7 +412,7 @@ describe('OpenAIProvider.callStepWithTools', () => {
     const provider = new OpenAIProvider('gpt-4o');
     await provider.callStepWithTools('prompt', [], NOOP_EXECUTOR, { inputSchema: schema });
 
-    expect(mockCreate.mock.calls[0][0].response_format).toEqual({ type: 'json_object' });
+    expect(mockCreate.mock.calls[0]![0].response_format).toEqual({ type: 'json_object' });
   });
 
   // -----------------------------------------------------------------------
@@ -424,7 +424,7 @@ describe('OpenAIProvider.callStepWithTools', () => {
     const provider = new OpenAIProvider('gpt-4o', 'https://compat.endpoint.com');
     await provider.callStepWithTools('prompt', [], NOOP_EXECUTOR, {});
 
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('response_format');
+    expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('response_format');
   });
 
   // -----------------------------------------------------------------------
@@ -436,7 +436,7 @@ describe('OpenAIProvider.callStepWithTools', () => {
     const provider = new OpenAIProvider('gpt-4o');
     await provider.callStepWithTools('prompt', [], NOOP_EXECUTOR, {});
 
-    expect(mockCreate.mock.calls[0][0].response_format).toEqual({ type: 'json_object' });
+    expect(mockCreate.mock.calls[0]![0].response_format).toEqual({ type: 'json_object' });
   });
 
   // -----------------------------------------------------------------------
@@ -449,9 +449,9 @@ describe('OpenAIProvider.callStepWithTools', () => {
     const result = await provider.callStep('verify callStep unchanged');
 
     expect(result).toEqual({ stable: true });
-    expect(mockCreate.mock.calls[0][0].response_format).toEqual({ type: 'json_object' });
+    expect(mockCreate.mock.calls[0]![0].response_format).toEqual({ type: 'json_object' });
     // callStepWithTools-style fields must NOT be present in callStep requests
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('tools');
+    expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('tools');
   });
 
   // -----------------------------------------------------------------------
@@ -580,7 +580,7 @@ describe('OpenAIProvider.callStepWithTools — issue #224 in-conversation AJV co
     // Third call's messages: [system, user:prompt, assistant:tool_calls, tool:result,
     // assistant:wrong-type-text, user:correction] — the FIRST string-content user message is the
     // original prompt, not the correction; take the LAST match.
-    const thirdCallMsgs = mockCreate.mock.calls[2][0].messages as Array<{
+    const thirdCallMsgs = mockCreate.mock.calls[2]![0].messages as Array<{
       role: string;
       content: unknown;
     }>;
@@ -756,7 +756,7 @@ describe('OpenAIProvider.callStepWithTools — issue #224 shared-budget characte
     expect(result.correctionCount).toBe(2);
     expect(mockCreate).toHaveBeenCalledTimes(3);
     // The 3rd call is performFinalExtraction — it appends the over-budget prompt as the last user msg.
-    const finalMsgs = mockCreate.mock.calls[2][0].messages as Array<{
+    const finalMsgs = mockCreate.mock.calls[2]![0].messages as Array<{
       role: string;
       content: string;
     }>;
@@ -789,7 +789,7 @@ describe('OpenAIProvider.callStepWithTools — issue #224 shared-budget characte
     expect(result.toolCalls).toHaveLength(1);
     expect(result.correctionCount).toBe(1);
     expect(mockCreate).toHaveBeenCalledTimes(3);
-    const finalMsgs = mockCreate.mock.calls[2][0].messages as Array<{
+    const finalMsgs = mockCreate.mock.calls[2]![0].messages as Array<{
       role: string;
       content: string;
     }>;
@@ -834,7 +834,7 @@ describe('OpenAIProvider.capabilities', () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":1}'));
     const provider = new OpenAIProvider('some-model', 'https://compat.example.com');
     await provider.callStep('prompt');
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('response_format');
+    expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('response_format');
   });
 
   // -----------------------------------------------------------------------
@@ -846,6 +846,6 @@ describe('OpenAIProvider.capabilities', () => {
     await provider.callStepWithTools('prompt', [], NOOP_EXECUTOR, {
       inputSchema: { required: ['x'] },
     });
-    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('response_format');
+    expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('response_format');
   });
 });

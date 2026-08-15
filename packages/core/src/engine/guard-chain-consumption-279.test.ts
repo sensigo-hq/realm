@@ -308,7 +308,7 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
             {
               kind: 'open_gate',
               step: 'gated_step',
-              claimToken: claimed.claims?.['gated_step']?.token,
+              claimToken: claimed.claims!['gated_step']!.token!,
               pendingGate: {
                 gate_id: 'sibling-gate',
                 step_name: 'gated_step',

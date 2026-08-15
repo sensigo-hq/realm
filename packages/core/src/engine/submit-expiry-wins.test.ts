@@ -309,9 +309,12 @@ describe('submitHumanResponse — composeExpiredGateEnvelope gate_id discriminat
     ) {
       if (delta.kind === 'expire_gate') {
         const current = await this.inner.get(runId);
+        // Gate cleared by REST-DESTRUCTURING, mirroring the engine's own idiom
+        // (`const { pending_gate: _droppedGate, ...withoutGate } = aborted;` in settlement.ts) —
+        // spreading `current` and re-setting the key to undefined is what the engine avoids.
+        const { pending_gate: _clearedGate, ...withoutGate } = current;
         await this.inner.update({
-          ...current,
-          pending_gate: undefined,
+          ...withoutGate,
           terminal_state: true,
           terminal_reason:
             "Gate 'other-step' expired and the run aborted per the workflow's declared on_expiry.",

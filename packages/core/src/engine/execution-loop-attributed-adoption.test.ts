@@ -330,13 +330,13 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
     // MIGRATED path commits via settleStep, not store.update. Track that instead; the ordering
     // invariant under test (seal strictly AFTER the settling commit) is unchanged by the migration.
     const calls: string[] = [];
-    const originalSettleStep = store.settleStep!.bind(store);
-    vi.spyOn(store, 'settleStep' as never).mockImplementation((async (...args: unknown[]) => {
+    // `JsonFileStore.settleStep` is a concrete method, so the spy needs no key/value casts: the
+    // args and return type are inferred from the real signature.
+    const originalSettleStep = store.settleStep.bind(store);
+    vi.spyOn(store, 'settleStep').mockImplementation(async (...args) => {
       calls.push('settleStep');
-      return (
-        originalSettleStep as (...a: unknown[]) => ReturnType<NonNullable<typeof store.settleStep>>
-      )(...args);
-    }) as never);
+      return originalSettleStep(...args);
+    });
     const originalSeal = traceBufferStore.sealFenced.bind(traceBufferStore);
     vi.spyOn(traceBufferStore, 'sealFenced').mockImplementation(async (...args) => {
       calls.push('sealFenced');

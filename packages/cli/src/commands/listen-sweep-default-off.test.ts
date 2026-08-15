@@ -26,11 +26,18 @@ function makeDeps(): ListenDeps {
         throw new Error('n/a');
       },
       list: async () => [],
-      settleStep: undefined,
+      // `settleStep` is OMITTED, not set to undefined: `Pick<RunStore, …>` keeps it optional, and
+      // the sweeper's dormancy check is by value (`settleStep === undefined`, listen.ts), so an
+      // absent key and an explicit-undefined key are indistinguishable to the code under test.
     },
     dedupStoreFor: () => ({
-      check: async () => false,
-      record: async () => {},
+      // The real DedupStore contract is entirely SYNCHRONOUS (check/record/cleanup) and `check`
+      // is consumed synchronously (`if (dedupStore.check(...))`, listen.ts) — an async double
+      // would hand that `if` an always-truthy Promise. `cleanup` is required and was absent.
+      // This path is not exercised by this test, but the double must not lie about the contract.
+      check: () => false,
+      record: () => {},
+      cleanup: () => {},
     }),
     spawnAgent: () => ({ pid: 1 }),
     clock: () => Date.now(),

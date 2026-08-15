@@ -30,9 +30,18 @@ const def: WorkflowDefinition = {
 /** A "G" (#282-class) fixture: genuinely terminal, but the persisted `run_phase` field is STALE
  *  ('gate_waiting'-shaped leftover) and a `pending_gate` was never cleared — a grandfathered
  *  record from before this closure (or a mixed-fleet old-binary writer). */
-function makeGrandfatheredFixture(overrides: Partial<RunRecord> & { id?: string }): RunRecord {
+function makeGrandfatheredFixture(
+  // issue #337: some call sites pass `terminal_reason: undefined` to ERASE the base default below
+  // (simulating a grandfathered record whose stale write never carried a terminal_reason at all —
+  // the "fail∧gate shape" case) — widen only this field to admit explicit undefined.
+  overrides: Partial<Omit<RunRecord, 'terminal_reason'>> & {
+    id?: string;
+    terminal_reason?: string | undefined;
+  },
+): RunRecord {
   const id = overrides.id ?? uuidv4();
   const now = new Date().toISOString();
+  const { terminal_reason: terminalReasonOverride, ...rest } = overrides;
   return {
     id,
     workflow_id: def.id,
@@ -48,7 +57,11 @@ function makeGrandfatheredFixture(overrides: Partial<RunRecord> & { id?: string 
     created_at: now,
     updated_at: now,
     terminal_state: true,
-    terminal_reason: 'Workflow completed.',
+    ...(terminalReasonOverride !== undefined
+      ? { terminal_reason: terminalReasonOverride }
+      : 'terminal_reason' in overrides
+        ? {}
+        : { terminal_reason: 'Workflow completed.' }),
     pending_gate: {
       gate_id: 'stale',
       step_name: 'a',
@@ -56,7 +69,7 @@ function makeGrandfatheredFixture(overrides: Partial<RunRecord> & { id?: string 
       choices: ['approve', 'reject'],
       opened_at: now,
     },
-    ...overrides,
+    ...rest,
   };
 }
 

@@ -4,6 +4,7 @@
 // prompt's own C1-C14 table verbatim so the mapping is auditable.
 import { describe, it, expect } from 'vitest';
 import { assessStructuredOutputEligibility } from './structured-output-eligibility.js';
+import type { JsonSchema } from '../types/workflow-definition.js';
 
 describe('assessStructuredOutputEligibility — Phase A (step-definition entry)', () => {
   // C1: AP-missing-only (else clean; 2 required, 1 optional) ⇒ ineligible(G1), sole failure.
@@ -190,7 +191,7 @@ describe('assessStructuredOutputEligibility — Phase A (step-definition entry)'
 
   // C11: 25 optionals ⇒ G3.
   it('C11: 25 optional properties ⇒ ineligible(too_many_optionals)', () => {
-    const properties: Record<string, unknown> = {};
+    const properties: Record<string, JsonSchema> = {};
     for (let i = 0; i < 25; i++) properties[`field_${i}`] = { type: 'string' };
     const v = assessStructuredOutputEligibility({
       output_schema: { type: 'object', additionalProperties: false, properties },
@@ -237,7 +238,7 @@ describe('assessStructuredOutputEligibility — Phase A (step-definition entry)'
 
   // C13: 16+1 (17) union-typed ⇒ G3.
   it('C13: 17 union-typed (anyOf) optional properties ⇒ ineligible(too_many_unions)', () => {
-    const properties: Record<string, unknown> = {};
+    const properties: Record<string, JsonSchema> = {};
     for (let i = 0; i < 17; i++) {
       properties[`u_${i}`] = { anyOf: [{ type: 'string' }, { type: 'integer' }] };
     }
@@ -250,7 +251,7 @@ describe('assessStructuredOutputEligibility — Phase A (step-definition entry)'
   });
 
   it('C13-boundary: exactly 16 union-typed properties ⇒ eligible (with the optional_emission caveat)', () => {
-    const properties: Record<string, unknown> = {};
+    const properties: Record<string, JsonSchema> = {};
     for (let i = 0; i < 16; i++) {
       properties[`u_${i}`] = { anyOf: [{ type: 'string' }, { type: 'integer' }] };
     }

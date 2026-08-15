@@ -10,6 +10,7 @@
     "build": "turbo run build",
     "test": "turbo run test --concurrency=2",
     "lint": "turbo run lint",
+    "typecheck:tests": "tsc --noEmit -p tsconfig.eslint.json",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:versions": "node scripts/check-versions.mjs",

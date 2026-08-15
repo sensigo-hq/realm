@@ -78,7 +78,7 @@ describe('connectSocketMode', () => {
   });
 
   it('calls onEvent for a valid human reply in the gate thread', async () => {
-    const onEvent = vi.fn<[SlackGateEvent], void>();
+    const onEvent = vi.fn<(event: SlackGateEvent) => void>();
     connectSocketMode({ appToken: 'xapp-test', threadTs: 'gate.ts', onEvent });
 
     await flushPromises();
@@ -94,7 +94,7 @@ describe('connectSocketMode', () => {
   });
 
   it('sends ACK with envelope_id after receiving a message', async () => {
-    const onEvent = vi.fn<[SlackGateEvent], void>();
+    const onEvent = vi.fn<(event: SlackGateEvent) => void>();
     connectSocketMode({ appToken: 'xapp-test', threadTs: 'gate.ts', onEvent });
 
     await flushPromises();

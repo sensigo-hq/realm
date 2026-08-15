@@ -877,7 +877,13 @@ describe('JsonFileStore re-encounter policy', () => {
     });
     await store.update({
       ...run,
-      pending_gate: { gate_id: 'g', step_name: 's', preview: {}, choices: ['ok'] },
+      pending_gate: {
+        gate_id: 'g',
+        step_name: 's',
+        preview: {},
+        choices: ['ok'],
+        opened_at: '2026-01-01T00:00:00.000Z',
+      },
     });
     await expect(
       store.create({
