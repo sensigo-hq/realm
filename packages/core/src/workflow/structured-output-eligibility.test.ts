@@ -126,9 +126,12 @@ describe('assessStructuredOutputEligibility — Phase A (step-definition entry)'
     expect(v.reasons[0]?.code).toBe('missing_additional_properties');
   });
 
-  // C8: tools-bearing step ⇒ G6 exactly (no other reasons/caveats even though the schema would
-  // otherwise also be flagged).
-  it('C8: tools-bearing step ⇒ ineligible(G6) exactly — short-circuits everything else', () => {
+  // C8 (INVERTED by issue #311): a tools-bearing step is ACCEPTED at Phase A with the
+  // `tools_runtime_assessed` nudge instead of being rejected. This doubles as the COMPOSITE cell
+  // — the step-level output_schema here would ALSO be G1+G2-hard, and the tools arm must still
+  // short-circuit BEFORE the schema walk, because that schema is never grammar-constrained on
+  // the tools fork. Exactly one caveat, no reasons, and no walk-derived findings leak in.
+  it('C8: tools-bearing step ⇒ eligible_with_caveats(tools_runtime_assessed) exactly — short-circuits the schema walk even when that schema is itself ineligible', () => {
     const v = assessStructuredOutputEligibility({
       output_schema: {
         type: 'object',
@@ -137,11 +140,12 @@ describe('assessStructuredOutputEligibility — Phase A (step-definition entry)'
       },
       tools: ['srv:tool'],
     });
-    expect(v.verdict).toBe('ineligible');
-    if (v.verdict !== 'ineligible') throw new Error('unreachable');
-    expect(v.reasons).toHaveLength(1);
-    expect(v.reasons[0]?.code).toBe('unsupported_context_tools');
-    expect(v.caveats).toBeUndefined();
+    expect(v.verdict).toBe('eligible_with_caveats');
+    if (v.verdict !== 'eligible_with_caveats') throw new Error('unreachable');
+    expect(v.caveats).toHaveLength(1);
+    expect(v.caveats[0]?.code).toBe('tools_runtime_assessed');
+    // The walk never ran, so no optional count is reported (never a false 0).
+    expect(v.optional_count).toBeUndefined();
   });
 
   // C9: pattern (supported subset) + enum ⇒ caveat(G5) — enum here is simple, no G2-hard.
@@ -314,7 +318,10 @@ describe('assessStructuredOutputEligibility — Phase A (step-definition entry)'
         properties: { category: { type: 'string' } },
       },
     });
-    expect(v).toEqual({ verdict: 'eligible' });
+    // issue #311: `optional_count` is an additive verdict field (0 here — every property is
+    // required); the budget walk in run-agent consumes it to sum optionals across strict-attached
+    // tools without re-walking each schema.
+    expect(v).toEqual({ verdict: 'eligible', optional_count: 0 });
   });
 
   it('input_schema is used when output_schema is absent (the effective-schema collapse)', () => {
@@ -326,7 +333,7 @@ describe('assessStructuredOutputEligibility — Phase A (step-definition entry)'
         properties: { x: { type: 'string' } },
       },
     });
-    expect(v).toEqual({ verdict: 'eligible' });
+    expect(v).toEqual({ verdict: 'eligible', optional_count: 0 });
   });
 
   it('output_schema wins over input_schema when both are declared', () => {
@@ -356,7 +363,13 @@ describe('assessStructuredOutputEligibility — Phase B ({schema, tools} entry)'
     expect(phaseB).toEqual(phaseA);
   });
 
-  it('Phase B: tools:true ⇒ G6, mirroring Phase A', () => {
+  // issue #311: Phase B NO LONGER mirrors Phase A here — the assertion is unchanged, the premise
+  // is not. Phase A now accepts a tools-bearing step with a caveat (strict applies to tool-call
+  // ARGUMENTS); Phase B asks the different, runtime question "may realm grammar-constrain THIS
+  // STEP's output?", whose answer on the tools fork is still no. Zero production callers pass
+  // `tools: true` today — this arm stays defensive, and it is what the #332
+  // `unsupported_context_tools` mint discloses.
+  it('Phase B: tools:true ⇒ G6 ineligible (the step-OUTPUT question — deliberately NOT mirroring Phase A since #311)', () => {
     const v = assessStructuredOutputEligibility({ schema: { type: 'object' }, tools: true });
     expect(v.verdict).toBe('ineligible');
     if (v.verdict !== 'ineligible') throw new Error('unreachable');

@@ -128,6 +128,9 @@ export interface RunHealthFinding {
     // a degraded-assurance disclosure (outputs were still validated post-hoc, L1), never an
     // error. Excludes `external_agent`-attributed downgrades (an MCP-driven run's synthesized
     // stamp is never realm's own doing to report on) — see `findStructuredOutputDowngrades`.
+    // issue #311: for a strict step that also declares tools this fires on EVERY run by design
+    // (permanent `unsupported_context_tools` baseline for the OUTPUT dimension) — read the
+    // reason list, not the finding's presence. See the detector's own scope notes.
     | 'structured_output_downgraded';
   /** The affected step, when the finding is step-scoped. Absent for `never_claimed_idle` — a
    *  run-level observation (no step is claimed at all). */
@@ -198,16 +201,48 @@ function findGateCorruption(run: RunRecord): RunHealthFinding | undefined {
  * Checked from BOTH branches of {@link classifyRunHealth}, mirroring {@link findGateCorruption}'s
  * own dual-branch pattern — a live run's evidence and a terminal run's evidence are read exactly
  * the same way; only WHERE the caller is standing differs.
+ *
+ * issue #311 — TWO scope notes an operator needs before reading this finding:
+ *
+ * 1. EXPECTED FIRE, not an anomaly. Every run of a step that declares `structured_output: strict`
+ *    AND declares tools now fires this finding with `unsupported_context_tools`, on every run,
+ *    permanently — that step's OUTPUT is produced on the tools path, which has no
+ *    grammar-constrained submit call. It is a true statement about the output dimension, and it
+ *    is a baseline, not a regression signal. Do not tune alerting on the finding's mere presence
+ *    for such steps; look at the reason list.
+ * 2. The finding is OUTPUT-dimension-first. The tool-ARGUMENTS dimension contributes exactly one
+ *    marked literal, `tool_args:api_rejected_schema` (see the loop below). A tools step can be
+ *    running strict successfully on most of its tools while this finding reports
+ *    `unsupported_context_tools` — those are not in contradiction. Per-tool detail is deliberately
+ *    NOT surfaced here (it belongs to `realm run inspect`/`export`); MCP pollers see this narrow
+ *    finding only.
  */
 function findStructuredOutputDowngrades(run: RunRecord): RunHealthFinding | undefined {
   const reasonsByStep = new Map<string, Set<string>>();
   for (const entry of run.evidence) {
     const meta = entry.diagnostics?.structured_output;
     if (meta === undefined) continue;
-    if (meta.downgrade_reason === undefined || meta.downgrade_reason === 'external_agent') continue;
-    const reasons = reasonsByStep.get(entry.step_id) ?? new Set<string>();
-    reasons.add(meta.downgrade_reason);
-    reasonsByStep.set(entry.step_id, reasons);
+    if (meta.downgrade_reason !== undefined && meta.downgrade_reason !== 'external_agent') {
+      const reasons = reasonsByStep.get(entry.step_id) ?? new Set<string>();
+      reasons.add(meta.downgrade_reason);
+      reasonsByStep.set(entry.step_id, reasons);
+    }
+    // issue #311 — the NARROW tool-arguments widening. Only ONE class from the tool-args
+    // dimension is admitted: `api_rejected_schema`, the event where the API actively REJECTED a
+    // strict tool schema realm had assessed as eligible. That is the trigger #346 watches for,
+    // and it is the only tool-args outcome an operator can act on. Everything else in
+    // `tool_args.reasons` (`budget_excluded`, the eligibility verdict codes, the 503 labels) is
+    // routine, expected, and would drown the finding — it stays visible via inspect/export.
+    //
+    // The literal is DIMENSION-MARKED (`tool_args:` prefix) so it can never be confused with the
+    // step-OUTPUT reason of the same name, and so the #346 trigger greps cleanly against the
+    // permanent `unsupported_context_tools` baseline every opted-in tools step now carries.
+    for (const tool of meta.tool_args?.tools ?? []) {
+      if (!(tool.reasons ?? []).includes('api_rejected_schema')) continue;
+      const reasons = reasonsByStep.get(entry.step_id) ?? new Set<string>();
+      reasons.add('tool_args:api_rejected_schema');
+      reasonsByStep.set(entry.step_id, reasons);
+    }
   }
   if (reasonsByStep.size === 0) return undefined;
 

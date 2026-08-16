@@ -465,10 +465,26 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
     expect(provider.callStepWithTools).toHaveBeenCalledOnce();
     const runs = await store.list();
     const meta = lastEvidenceMeta(runs[0]!);
+    // issue #311 COEXIST: the OUTPUT-dimension trio is unchanged and still asserted exactly — the
+    // step's own answer is still not grammar-constrained, so #332's disclosure stays true
+    // verbatim. What is new is the second, independent dimension riding alongside it: this mock
+    // tool's schema is `{type:'object'}` with no `additionalProperties: false`, so it is G1-
+    // ineligible (the census's near-universal blocker) and rides unconstrained, reported per tool.
+    // Kept as a FULL-object equality so a stray extra field on either dimension reds here.
     expect(meta).toEqual({
       requested: true,
       sent: false,
       downgrade_reason: 'unsupported_context_tools',
+      tool_args: {
+        tools: [
+          {
+            name: 'get_pull_request',
+            strict_requested: true,
+            strict_sent: false,
+            reasons: ['missing_additional_properties'],
+          },
+        ],
+      },
     });
     expect(meta?.downgrade_reason).not.toBe('external_agent');
   });

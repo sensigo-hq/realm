@@ -6,6 +6,25 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- `structured_output: strict` is now accepted on agent steps that declare `tools`, where it constrains
+  the **tool-call arguments** realm's model passes to each MCP tool (issue #311). Strict is assessed and
+  attached **per tool, only where the tool's published schema is compliant as written** — realm never
+  rewrites a third-party schema — with non-compliant tools riding unconstrained in the same request, and
+  a declared-order budget walk honouring Anthropic's 20-strict-tool / 24-summed-optional limits. The
+  step's own output is unaffected: it stays post-hoc validated (L1) and continues to disclose
+  `unsupported_context_tools`, which is now an output-dimension statement rather than "strict was
+  unavailable". Evidence gains a per-tool `tool_args` block (which tools carried strict, which were
+  skipped and why, and any mid-attempt 400/503 drop), and the `structured_output_downgraded` run-health
+  finding gains exactly one dimension-marked reason, `tool_args:api_rejected_schema`.
+  **Honest yield:** measured against 238 real tools across 14 public MCP servers, only **8.8%** are
+  strict-attachable as written today — **0.5%** excluding one server whose pass is an accident of its
+  schema converter's defaults (GitHub's 116-tool server: 0%). The near-universal blocker is a missing
+  explicit `additionalProperties: false`, which is the publishing server's to fix, not yours. This
+  ships as an evidence-first capability whose ceiling rises as upstream schemas improve (issue #344);
+  on most servers today, opting in will attach strict to few or no tools — and will say so per tool.
+
 ### Changed
 
 - `realm listen`'s webhook dedup store default base directory now resolves via `homedir()` instead of

@@ -403,6 +403,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       name: string;
       description: string;
       input_schema: Record<string, unknown>;
+      strict?: boolean; // issue #311 — per-tool, set only for run-agent-selected tools
     }> = [];
     for (const tool of tools) {
       if (toolIdMap.has(tool.name)) {
@@ -415,6 +416,10 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         name: tool.name,
         description: tool.description,
         input_schema: tool.inputSchema, // note: input_schema, not parameters
+        // issue #311: per-tool strict, same spread SHAPE as buildSubmitTool's own `strict` option
+        // — the key only ever appears when run-agent selected this tool, so a non-selected tool's
+        // wire entry stays byte-identical to today's.
+        ...(tool.strict === true ? { strict: true } : {}),
       });
     }
 
@@ -431,9 +436,15 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     let correction_count = 0;
     const tool_call_records: ToolCallRecord[] = [];
     const system = buildSystemPrompt(options.inputSchema, options.agentProfileInstructions);
-    /** Attaches `correctionCount` to a result only when at least one correction happened. */
-    const withCorrectionCount = (result: StepWithToolsResult): StepWithToolsResult =>
-      correction_count > 0 ? { ...result, correctionCount: correction_count } : result;
+    /** Attaches `correctionCount` to a result only when at least one correction happened, plus
+     *  (issue #311) the tool-args drop facts when the ladder below dropped strict mid-attempt.
+     *  This is the single result chokepoint for `callStepWithTools` — every successful return
+     *  goes through it, so neither field can be forgotten on a new exit path. */
+    const withCorrectionCount = (result: StepWithToolsResult): StepWithToolsResult => ({
+      ...result,
+      ...(correction_count > 0 ? { correctionCount: correction_count } : {}),
+      ...(toolArgsStrictDrop !== undefined ? { toolArgsStrictDrop } : {}),
+    });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const history: any[] = [{ role: 'user', content: prompt }];
@@ -445,8 +456,82 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         system,
         messages: history,
       };
-      if (anthropicTools.length > 0) opts['tools'] = anthropicTools;
+      if (anthropicTools.length > 0) {
+        // issue #311: once strict has been dropped, every later turn sends STRIPPED COPIES rather
+        // than the mutated originals. Mutating the shared objects in place would retroactively
+        // rewrite the request objects already handed to the SDK for earlier turns — an aliasing
+        // hazard, and it makes the wire history unreadable (a request that genuinely carried
+        // strict would appear never to have). Pre-drop — which includes every step that never
+        // opted in — the original array is passed exactly as before, with no copy.
+        opts['tools'] = toolArgsStrictStripped
+          ? anthropicTools.map(({ strict: _strict, ...rest }) => rest)
+          : anthropicTools;
+      }
       return opts;
+    };
+
+    // -----------------------------------------------------------------------------------------
+    // issue #311 — the tool-arguments fallback ladder. ONE wrap point on the main agentic loop's
+    // only `messages.create`, which covers every turn of the loop including the #224
+    // in-conversation correction turns.
+    //
+    // Deliberately SEPARATE from the #236 ladder above (which owns the step-OUTPUT dimension on
+    // the callStep/callStepWithMeta path): the two dimensions fail independently, and the
+    // stickiness rules differ (see below). Status-only, exactly like #236 — the arm keys on HTTP
+    // status ∧ strict-carried, NEVER on message text.
+    // -----------------------------------------------------------------------------------------
+    let toolArgsStrictActive = anthropicTools.some((t) => t.strict === true);
+    let toolArgsStrictStripped = false;
+    let strictTurnsBeforeDrop = 0;
+    let toolArgsStrictDrop: StepWithToolsResult['toolArgsStrictDrop'];
+
+    /** Stops sending strict for the REST of this invocation (the immediate retry included). */
+    const dropToolArgsStrict = (): void => {
+      toolArgsStrictActive = false;
+      toolArgsStrictStripped = true;
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const createMainTurn = async (): Promise<any> => {
+      const carriedStrict = toolArgsStrictActive;
+      try {
+        const response = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (client.messages.create as (opts: Record<string, unknown>) => Promise<any>)(
+          buildMainCallOpts(),
+        );
+        // Only a strict-DECORATED request that came back 200 counts toward the disclosed
+        // "turns before drop" — that is exactly what the number claims.
+        if (carriedStrict) strictTurnsBeforeDrop += 1;
+        return response;
+      } catch (err) {
+        // A turn that carried NO strict is none of this ladder's business: its 400 is a real
+        // failure of the request itself and must propagate untouched, never be re-attributed to
+        // structured output.
+        if (!carriedStrict) throw err;
+        const status = extractHttpStatus(err);
+        if (status !== 400 && status !== 503) throw err; // unrelated failure — never engage
+        const api_message = extractErrorMessage(err);
+        const reason =
+          status === 400
+            ? 'api_rejected_schema'
+            : api_message.includes(GRAMMAR_UNAVAILABLE_TEXT)
+              ? 'grammar_unavailable'
+              : 'service_unavailable';
+        // Recorded BEFORE the drop so `strict_turns_before_drop` reports the 200s that preceded
+        // this rejection (0 = the first strict-carrying turn of the attempt was rejected).
+        toolArgsStrictDrop = {
+          reason,
+          api_message,
+          strict_turns_before_drop: strictTurnsBeforeDrop,
+        };
+        dropToolArgsStrict();
+        // Retry the SAME turn once, unconstrained. A failure here is a genuine call failure and
+        // propagates — realm does not swallow it behind the ladder.
+        return await // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (client.messages.create as (opts: Record<string, unknown>) => Promise<any>)(
+          buildMainCallOpts(),
+        );
+      }
     };
 
     // Forces a final answer: offers the __realm_submit__ tool at tool_choice:'auto' when a schema is
@@ -456,11 +541,20 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // history ends with a valid user turn. NOT restructuring the agentic loop / MCP tools array —
     // this synthetic tool only ever appears on this ONE isolated extraction call.
     const performFinalExtraction = async (): Promise<StepWithToolsResult> => {
-      // issue #236: buildSubmitTool's `strict` option is never threaded here — BY CONSTRUCTION,
-      // not by omission. This call site lives inside callStepWithTools, which only ever runs for
-      // tools-bearing steps; G6 makes every tools-bearing step ineligible for strict end-to-end
-      // in v1 (design §4 [CG]), so run-agent structurally never has a `true` to pass down this
-      // path. No end-to-end pin is possible here — do not add one.
+      // issue #236 + #311: buildSubmitTool's `strict` option is never threaded here — BY DESIGN
+      // now, no longer by construction.
+      //
+      // The old reasoning was that G6 made every tools-bearing step ineligible for strict, so a
+      // `true` could never reach this path at all. #311 killed that premise: a tools-bearing step
+      // CAN now be strict-declared, and its tools do carry strict on the wire. What #311 does NOT
+      // change is this call: the final extraction asks the model for the STEP'S OUTPUT, which on
+      // the tools fork is deliberately never grammar-constrained (that is precisely what the
+      // step-level `unsupported_context_tools` disclosure reports). Constraining it here would
+      // make that disclosure a lie.
+      //
+      // The old "no end-to-end pin is possible here — do not add one" instruction is therefore
+      // obsolete and is REPLACED: the pin is now both possible and required (test plan pin 15 —
+      // on an opted-in tools step, this call's opts never contain `strict`).
       const finalSubmitTool =
         options.inputSchema !== undefined ? buildSubmitTool(options.inputSchema) : undefined;
       const finalOpts: Record<string, unknown> = {
@@ -528,10 +622,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     };
 
     while (true) {
-      const response = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (client.messages.create as (opts: Record<string, unknown>) => Promise<any>)(
-        buildMainCallOpts(),
-      );
+      const response = await createMainTurn();
       const toolUseBlocks = (
         response.content as Array<{ type: string; id?: string; name?: string; input?: unknown }>
       ).filter((b) => b.type === 'tool_use');

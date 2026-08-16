@@ -62,6 +62,21 @@ regardless (it is never deleted on seal), and `realm run inspect` always shows i
 a live-visibility improvement, not a replacement for inspecting a terminal run's evidence when
 that matters.
 
+**Strict tool-call arguments (issue #311):** a step declaring both `structured_output: strict` and
+`tools` gets strict on its TOOL-CALL ARGUMENTS (per tool, assessed at runtime), while its own
+output stays unconstrained. Two consequences for an MCP consumer:
+
+- That step fires `structured_output_downgraded` with `unsupported_context_tools` on EVERY run, by
+  design — the output dimension genuinely is unconstrained. Treat it as a baseline; alert on the
+  reason list rather than on the finding being present.
+- The tool-arguments dimension contributes exactly ONE marked literal,
+  `tool_args:api_rejected_schema`, and only when the API rejected a tool schema realm had assessed
+  as eligible. The full per-tool block (`diagnostics.structured_output.tool_args` — which tools
+  carried strict, which were skipped and why, and any mid-attempt drop) is evidence-only and
+  therefore reachable via `realm run inspect`/`realm run export`, not `get_run_state`. This is the
+  same per-step-evidence gap described above, and the narrow finding is the deliberate remedy: the
+  per-tool detail would drown a poller in routine outcomes.
+
 ---
 
 ## Standard loop
