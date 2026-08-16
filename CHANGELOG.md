@@ -8,6 +8,28 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- OpenAI structured-output parity — the TOOL-ARGUMENTS dimension, completing issue #313. A
+  strict-declared tools step driven by `--provider openai` now sends grammar-constrained ARGUMENTS
+  per tool: eligible tools carry `strict` on OpenAI's wire, assessed under the OpenAI profile, and
+  ineligible ones ride unconstrained in the same request (mixing is legal). There is no budget walk
+  on this provider — OpenAI publishes no strict-tool or optional cap (128 strict tools in one
+  request were executed successfully), so every eligible tool is marked; `budget_excluded` is an
+  Anthropic-only outcome. A compat endpoint without `--strict-base-url` reports `compat_endpoint`
+  per tool, and a tools-fork 400 drops strict, retries the turn once, and records the drop with the
+  provider's own `api_param`/`api_code`. A new conformance suite makes the capability a checked
+  promise rather than a claim: every provider declaring `toolArgsStrict` must provably place it on
+  the wire, and a provider added without a table row fails the suite.
+  **Measured yield, corpus-qualified** (262 tools across 17 public MCP servers, both profiles run
+  against the same corpus): **5.3% (14/262) strict-attachable as written under OpenAI's rules, vs
+  20.6% (54/262) under Anthropic's** — the difference is not ecosystem drift but OpenAI's stricter
+  structural requirement, since all 40 profile flips are Anthropic-pass→OpenAI-fail and every one
+  of them is `not_all_required`. The entire OpenAI fail mass is structural: a missing explicit
+  `additionalProperties: false` (82.3% of ineligibles) and properties outside `required` (68.1%),
+  with **zero** keyword failures and **zero** cap failures. GitHub's own 116-tool server: 0% under
+  both. On the subset shaped like the original #311 corpus the earlier 8.8% figure reproduces
+  (9.7%, playwright having grown 20→24 tools). Injecting `additionalProperties: false` alone would
+  lift Anthropic to 77.1% but OpenAI only to 35.5% — the all-required rule is an independent second
+  barrier, which is why no transform ships.
 - OpenAI structured-output parity — the OUTPUT dimension (issue #313). A `structured_output: strict`
   step driven by `--provider openai` is now genuinely grammar-enforced via Chat Completions
   `response_format: json_schema` (with `strict` always explicit — omitting it is a silent
@@ -28,7 +50,15 @@ All notable changes to this project are documented here.
   which fires on Anthropic drives too, where such steps were previously silent.
   **Tool-call ARGUMENTS on OpenAI are unchanged in this release** and still report
   `provider_unsupported` per tool — accurate, since that wire path still ignores the per-tool
-  marker. Parity for that dimension lands in the follow-up PR.
+  marker. Parity for that dimension lands in the follow-up PR (now shipped — see the tool-arguments
+  entry above).
+
+### Changed
+
+- The per-tool `provider_unsupported` disclosure now names third-party `--provider-module` providers
+  specifically (issue #313). Both in-repo tool-capable providers place the per-tool strict marker on
+  their own wire, so on OpenAI a tool that rides unconstrained now reports the real reason — its own
+  eligibility verdict, or `compat_endpoint` — instead of "this provider doesn't support it".
 
 ### Fixed
 

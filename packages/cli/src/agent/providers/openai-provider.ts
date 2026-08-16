@@ -81,14 +81,15 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
    * capability-discovery API exists — so realm defaults to not sending strict there and
    * discloses `compat_endpoint` rather than risk a silent non-enforcement.
    *
-   * NOTE: `toolArgsStrict` is deliberately NOT declared yet — this provider's tools wire builder
-   * still ignores the per-tool marker, so declaring it would resurrect exactly the falsity the
-   * #350 capability guard fixed. It flips in the tool-args PR, together with the wire support.
+   * `toolArgsStrict` is declared because this provider's tools wire builder genuinely consumes
+   * `ToolDefinition.strict` (see `callStepWithTools` below) — the two ship together by design,
+   * and the conformance suite asserts the pairing so a declaration can never outrun the wire.
    */
   capabilities(): ProviderCapabilities {
     return {
       jsonMode: this.baseUrl === undefined,
       providerId: 'openai',
+      toolArgsStrict: true,
       ...(this.baseUrl !== undefined && !this.strictBaseUrl
         ? { strictGate: 'compat_endpoint' as const }
         : {}),
@@ -324,7 +325,12 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     const toolIdMap = new Map<string, string>();
     const openaiTools: Array<{
       type: 'function';
-      function: { name: string; description: string; parameters: Record<string, unknown> };
+      function: {
+        name: string;
+        description: string;
+        parameters: Record<string, unknown>;
+        strict?: boolean; // issue #313 — OpenAI's per-tool strict lives INSIDE `function`
+      };
     }> = [];
     for (const tool of tools) {
       if (toolIdMap.has(tool.name)) {
@@ -339,6 +345,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
           name: tool.name,
           description: tool.description,
           parameters: tool.inputSchema,
+          // issue #313: per-tool strict, consumed from the marker run-agent set. The key only
+          // appears for a selected tool, so an unmarked tool's wire entry is byte-identical to
+          // pre-#313 — and mixing marked with unmarked in one request is legal (probe P4).
+          ...(tool.strict === true ? { strict: true } : {}),
         },
       });
     }
@@ -356,8 +366,14 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     let correction_count = 0;
     const tool_call_records: ToolCallRecord[] = [];
     /** Attaches `correctionCount` to a result only when at least one correction happened. */
-    const withCorrectionCount = (result: StepWithToolsResult): StepWithToolsResult =>
-      correction_count > 0 ? { ...result, correctionCount: correction_count } : result;
+    /** Attaches `correctionCount` when corrections happened, plus (issue #313) the tool-args drop
+     *  facts when the ladder dropped strict mid-attempt. The single result chokepoint for this
+     *  method, so neither field can be forgotten on a new exit path. */
+    const withCorrectionCount = (result: StepWithToolsResult): StepWithToolsResult => ({
+      ...result,
+      ...(correction_count > 0 ? { correctionCount: correction_count } : {}),
+      ...(toolArgsStrictDrop !== undefined ? { toolArgsStrictDrop } : {}),
+    });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const history: any[] = [
@@ -370,9 +386,66 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
 
     const buildMainCallOpts = (): Record<string, unknown> => {
       const opts: Record<string, unknown> = { model: this.model, messages: history };
-      if (openaiTools.length > 0) opts['tools'] = openaiTools;
+      if (openaiTools.length > 0) {
+        // issue #313: after a drop, later turns send STRIPPED COPIES rather than the mutated
+        // originals. Mutating in place would retroactively rewrite the request objects already
+        // handed to the SDK for earlier turns — the aliasing hazard #311 hit on the Anthropic
+        // side, which also makes the wire history unreadable. Pre-drop the original array is
+        // passed with no copy at all.
+        opts['tools'] = toolArgsStrictStripped
+          ? openaiTools.map((t) => {
+              const { strict: _strict, ...fn } = t.function;
+              return { ...t, function: fn };
+            })
+          : openaiTools;
+      }
       if (responseFormat !== undefined) opts['response_format'] = responseFormat;
       return opts;
+    };
+
+    // -------------------------------------------------------------------------------------------
+    // issue #313 — the TOOLS-fork ladder. Deliberately SIMPLER than the output ladder and simpler
+    // than Anthropic's tools ladder, and the evidence says so: OpenAI has no 503-grammar analog,
+    // so ONLY a 400 on a strict-carrying request drops. 5xx, transport errors and timeouts
+    // propagate untouched — first-call schema-compile latency must be retried as the transport
+    // event it is, never recorded as a schema failure.
+    //
+    // A second 400 after the drop propagates PLAINLY. That is the shipped tools-fork discipline
+    // (the meta-carrying error device belongs to the OUTPUT dimension, where run-agent has a
+    // no-result arm to consume it; the tools path has none).
+    // -------------------------------------------------------------------------------------------
+    let toolArgsStrictActive = openaiTools.some((t) => t.function.strict === true);
+    let toolArgsStrictStripped = false;
+    let strictTurnsBeforeDrop = 0;
+    let toolArgsStrictDrop: StepWithToolsResult['toolArgsStrictDrop'];
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const createMainTurn = async (): Promise<any> => {
+      const carriedStrict = toolArgsStrictActive;
+      try {
+        const response = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (client.chat.completions.create as (opts: Record<string, unknown>) => Promise<any>)(
+          buildMainCallOpts(),
+        );
+        if (carriedStrict) strictTurnsBeforeDrop += 1;
+        return response;
+      } catch (err) {
+        // A turn that carried no strict is none of this ladder's business.
+        if (!carriedStrict) throw err;
+        if (extractHttpStatus(err) !== 400) throw err;
+        toolArgsStrictDrop = {
+          reason: 'api_rejected_schema',
+          api_message: err instanceof Error ? err.message : String(err),
+          strict_turns_before_drop: strictTurnsBeforeDrop,
+          ...extractApiErrorFields(err),
+        };
+        toolArgsStrictActive = false;
+        toolArgsStrictStripped = true;
+        return await // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (client.chat.completions.create as (opts: Record<string, unknown>) => Promise<any>)(
+          buildMainCallOpts(),
+        );
+      }
     };
 
     const buildFinalCallOpts = (): Record<string, unknown> => {
@@ -415,10 +488,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     };
 
     while (true) {
-      const response = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (client.chat.completions.create as (opts: Record<string, unknown>) => Promise<any>)(
-        buildMainCallOpts(),
-      );
+      const response = await createMainTurn();
       const message = response.choices[0].message as {
         content: string | null;
         tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;

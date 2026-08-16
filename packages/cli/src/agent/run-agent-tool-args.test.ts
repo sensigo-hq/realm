@@ -679,4 +679,195 @@ describe('runAgent — strict tool-call arguments (issue #311)', () => {
       { name: 'a', strict_requested: true, strict_sent: false, reasons: ['provider_unsupported'] },
     ]);
   });
+  // ===========================================================================================
+  // issue #313 — the OpenAI profile on the tools dimension: no budget, OpenAI rules per tool,
+  // the endpoint gate, and the precedence between the three arms.
+  // ===========================================================================================
+  /**
+   * A capability-declaring double parameterised by providerId, so the SAME fixture can be driven
+   * under either rule profile. `strictGate` models a compat endpoint.
+   */
+  function profiledProvider(
+    providerId: 'anthropic' | 'openai',
+    opts: {
+      strictGate?: 'compat_endpoint';
+      toolArgsStrict?: boolean;
+      drop?: StepWithToolsResult['toolArgsStrictDrop'];
+    } = {},
+  ) {
+    const seen: ToolDefinition[][] = [];
+    const provider = new (class extends ToolCapableLlmProvider {
+      capabilities() {
+        return {
+          jsonMode: false,
+          providerId,
+          ...(opts.toolArgsStrict === false ? {} : { toolArgsStrict: true }),
+          ...(opts.strictGate !== undefined ? { strictGate: opts.strictGate } : {}),
+        };
+      }
+      callStep = vi.fn();
+      callStepWithTools = vi.fn(async (_prompt: string, tools: ToolDefinition[]) => {
+        seen.push(tools.map((t) => ({ ...t })));
+        return {
+          output: { category: 'billing' },
+          toolCalls: [],
+          ...(opts.drop !== undefined ? { toolArgsStrictDrop: opts.drop } : {}),
+        };
+      });
+    })();
+    return { provider, seen };
+  }
+
+  // (a) THE BUDGET FORK. Same 21-tool fixture, both profiles — Anthropic's 20-strict cap bites,
+  // OpenAI has no such cap (executed: 128 strict tools in one request ⇒ 200).
+  const TWENTY_ONE = Array.from({ length: 21 }, (_, i) => `t${i}`);
+
+  it('(a) OpenAI profile: NO budget — all 21 eligible tools are marked and sent', async () => {
+    const def = toolsWorkflow(
+      TWENTY_ONE.map((n) => `srv:${n}`),
+      { strict: true },
+    );
+    const client = mockClient(
+      Object.fromEntries(TWENTY_ONE.map((n) => [n, ELIGIBLE_NO_OPTIONALS_SCHEMA])),
+    );
+    const { provider, seen } = profiledProvider('openai');
+
+    const { meta } = await drive(def, client, provider);
+
+    expect(strictNames(seen)).toHaveLength(21);
+    const tools = (meta!.tool_args as ToolArgs).tools;
+    expect(tools.every((t) => t.strict_sent)).toBe(true);
+    // `budget_excluded` is never minted under this profile.
+    expect(tools.flatMap((t) => t.reasons ?? [])).toEqual([]);
+  });
+
+  it('(a-control) Anthropic profile, IDENTICAL fixture: the 20-cap bites and the 21st is budget_excluded', async () => {
+    const def = toolsWorkflow(
+      TWENTY_ONE.map((n) => `srv:${n}`),
+      { strict: true },
+    );
+    const client = mockClient(
+      Object.fromEntries(TWENTY_ONE.map((n) => [n, ELIGIBLE_NO_OPTIONALS_SCHEMA])),
+    );
+    const { provider, seen } = profiledProvider('anthropic');
+
+    const { meta } = await drive(def, client, provider);
+
+    expect(strictNames(seen)).toHaveLength(20);
+    const tools = (meta!.tool_args as ToolArgs).tools;
+    expect(tools[20]).toMatchObject({ strict_sent: false, reasons: ['budget_excluded'] });
+  });
+
+  // (b1) THE PROFILE-THREADING PAIR. One fixture, two profiles — this is what proves `profile`
+  // actually reaches the PER-TOOL assess call rather than only the step-output one.
+  const OPTIONAL_BEARING_TOOL = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['id'],
+    properties: { id: { type: 'string' }, note: { type: 'string' } },
+  };
+
+  it('(b1) OpenAI profile: an optional-bearing TOOL schema is not_all_required and is NOT marked', async () => {
+    const def = toolsWorkflow(['srv:a'], { strict: true });
+    const { provider, seen } = profiledProvider('openai');
+
+    const { meta } = await drive(def, mockClient({ a: OPTIONAL_BEARING_TOOL }), provider);
+
+    expect(strictNames(seen)).toEqual([]);
+    expect((meta!.tool_args as ToolArgs).tools[0]).toMatchObject({
+      strict_sent: false,
+      reasons: ['not_all_required'],
+    });
+  });
+
+  it('(b1-control) Anthropic profile, SAME tool schema: eligible with optional_emission, and MARKED', async () => {
+    const def = toolsWorkflow(['srv:a'], { strict: true });
+    const { provider, seen } = profiledProvider('anthropic');
+
+    const { meta } = await drive(def, mockClient({ a: OPTIONAL_BEARING_TOOL }), provider);
+
+    expect(strictNames(seen)).toEqual(['a']);
+    expect((meta!.tool_args as ToolArgs).tools[0]).toMatchObject({
+      strict_sent: true,
+      caveats: ['optional_emission'],
+    });
+  });
+
+  it('(b2) OpenAI profile: an all-required null-union tool schema is caveated AND still marked', async () => {
+    const def = toolsWorkflow(['srv:a'], { strict: true });
+    const nullUnion = {
+      type: 'object',
+      additionalProperties: false,
+      required: ['id', 'note'],
+      properties: { id: { type: 'string' }, note: { type: ['string', 'null'] } },
+    };
+    const { provider, seen } = profiledProvider('openai');
+
+    const { meta } = await drive(def, mockClient({ a: nullUnion }), provider);
+
+    expect(strictNames(seen)).toEqual(['a']); // caveats never block strict
+    expect((meta!.tool_args as ToolArgs).tools[0]).toMatchObject({
+      strict_sent: true,
+      caveats: ['null_union_emission'],
+    });
+  });
+
+  // (c) THE GATE ARM, and (d) its precedence against the capability arm.
+  it('(c) compat endpoint: per-tool compat_endpoint entries in DECLARED order, wire untouched, no walk', async () => {
+    const def = toolsWorkflow(INTERLEAVED, { strict: true, servers: INTERLEAVED_SERVERS });
+    const { provider, seen } = profiledProvider('openai', { strictGate: 'compat_endpoint' });
+
+    const { meta } = await drive(def, mockClient(INTERLEAVED_SCHEMAS), provider);
+
+    for (const t of seen[0]!) expect(t).not.toHaveProperty('strict');
+    expect(seen[0]!.map((t) => t.name)).toEqual(['a1', 'a2', 'b1']); // as-built wire order
+    expect((meta!.tool_args as ToolArgs).tools).toEqual([
+      { name: 'a1', strict_requested: true, strict_sent: false, reasons: ['compat_endpoint'] },
+      { name: 'b1', strict_requested: true, strict_sent: false, reasons: ['compat_endpoint'] },
+      { name: 'a2', strict_requested: true, strict_sent: false, reasons: ['compat_endpoint'] },
+    ]);
+  });
+
+  it('(c-discriminator) the two literals never conflate: a NON-declaring provider reports provider_unsupported, not compat_endpoint', async () => {
+    const def = toolsWorkflow(['srv:a'], { strict: true });
+    const { provider } = profiledProvider('openai', { toolArgsStrict: false });
+
+    const { meta } = await drive(def, mockClient({ a: ELIGIBLE_NO_OPTIONALS_SCHEMA }), provider);
+
+    expect((meta!.tool_args as ToolArgs).tools[0]!.reasons).toEqual(['provider_unsupported']);
+  });
+
+  it('(d) precedence: a gate WITHOUT the capability still reports provider_unsupported — "cannot send" outranks "chose not to"', async () => {
+    const def = toolsWorkflow(['srv:a'], { strict: true });
+    const { provider } = profiledProvider('openai', {
+      toolArgsStrict: false,
+      strictGate: 'compat_endpoint',
+    });
+
+    const { meta } = await drive(def, mockClient({ a: ELIGIBLE_NO_OPTIONALS_SCHEMA }), provider);
+
+    expect((meta!.tool_args as ToolArgs).tools[0]!.reasons).toEqual(['provider_unsupported']);
+  });
+
+  it('(e) gate present ⇒ a reported drop is IGNORED (no dropped_mid_attempt, no flip)', async () => {
+    const def = toolsWorkflow(['srv:a'], { strict: true });
+    const { provider } = profiledProvider('openai', {
+      strictGate: 'compat_endpoint',
+      drop: DROP_400,
+    });
+
+    const { meta } = await drive(def, mockClient({ a: ELIGIBLE_NO_OPTIONALS_SCHEMA }), provider);
+
+    expect((meta!.tool_args as ToolArgs).dropped_mid_attempt).toBeUndefined();
+    expect((meta!.tool_args as ToolArgs).tools[0]!.reasons).toEqual(['compat_endpoint']);
+  });
+
+  it('(e-control) NO gate ⇒ the same reported drop IS consumed', async () => {
+    const def = toolsWorkflow(['srv:a'], { strict: true });
+    const { provider } = profiledProvider('openai', { drop: DROP_400 });
+
+    const { meta } = await drive(def, mockClient({ a: ELIGIBLE_NO_OPTIONALS_SCHEMA }), provider);
+
+    expect((meta!.tool_args as ToolArgs).dropped_mid_attempt).toEqual(DROP_400);
+  });
 });

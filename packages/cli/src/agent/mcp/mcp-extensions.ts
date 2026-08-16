@@ -69,8 +69,13 @@ export interface StepWithToolsResult {
   toolArgsStrictDrop?: {
     /** Status-derived label ONLY — never parsed out of the message body. */
     reason: 'api_rejected_schema' | 'grammar_unavailable' | 'service_unavailable';
-    /** The raw API error text, verbatim, for the operator to compare against Anthropic's own. */
+    /** The raw API error text, verbatim, for the operator to compare against the provider's own. */
     api_message?: string;
+    /** Issue #313: the provider's machine-readable error fields, captured verbatim. `null` is
+     *  preserved and meaningful (OpenAI returns both null for the model-unsupported class).
+     *  Never keyed on — capture-only, same discipline as the step-level pair. */
+    api_param?: string | null;
+    api_code?: string | null;
     /** Strict-decorated requests that returned 200 before the drop; 0 = the first one was rejected. */
     strict_turns_before_drop: number;
   };

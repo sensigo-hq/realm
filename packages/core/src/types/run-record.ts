@@ -230,11 +230,20 @@ export interface StructuredOutputMeta {
        * - `grammar_unavailable` — a live 503 matching the grammar-compilation-unavailable text.
        * - `service_unavailable` — a live 503 that did not match it (fail-safe generic label).
        * - `provider_unsupported` — the configured provider does not place per-tool strict on the
-       *   wire at all (today: every provider except Anthropic), so strict was never attached to
-       *   ANY tool on this attempt and no per-tool eligibility was assessed. Reuses the
-       *   step-level literal of the same name; issue #313 tracks OpenAI parity.
+       *   wire at all, so strict was never attached to ANY tool on this attempt and no per-tool
+       *   eligibility was assessed. Since issue #313 both in-repo tool-capable providers DO place
+       *   it, so at the per-tool level this now names third-party `--provider-module` providers
+       *   specifically. Reuses the step-level literal of the same name.
+       * - `compat_endpoint` (issue #313) — the provider is pointed at an OpenAI-compatible
+       *   endpoint without the `--strict-base-url` attestation, so no tool was sent strict. An
+       *   ENDPOINT fact, never conflated with `provider_unsupported`: this provider CAN place the
+       *   marker, realm chose not to have it do so here.
        * - `not_all_required` (issue #313) — an OpenAI-profile verdict code: a property outside
-       *   `required`. Reachable on the tools path once OpenAI consumes the per-tool marker.
+       *   `required`. Reached on the tools path whenever an OpenAI-driven step assesses a tool
+       *   schema; it is the dominant per-tool ineligibility code on that profile.
+       * - `exceeds_provider_limit` (issue #313) — an OpenAI-profile verdict code: the schema
+       *   exceeds a documented size limit (nesting depth, property count, total characters, or
+       *   enum values). The specific limit and measured value are in the verdict's remediation.
        */
       reasons?: string[];
       /** Caveat codes from this tool's own eligibility verdict (e.g. `unenforced_keyword`,
@@ -255,7 +264,7 @@ export interface StructuredOutputMeta {
       api_message?: string;
       /** Issue #313 — the provider's machine-readable error fields, captured verbatim beside
        *  `api_message` (same capture-only, never-keyed discipline as the step-level pair).
-       *  TYPE-ONLY in PR-1: the tools dimension starts minting these in the follow-up PR. */
+       *  Minted by the OpenAI tools ladder; `null` is preserved and meaningful. */
       api_param?: string | null;
       api_code?: string | null;
       /** How many strict-decorated requests returned 200 before the drop. `0` means the very
