@@ -818,7 +818,11 @@ describe('OpenAIProvider.capabilities', () => {
     const provider = new OpenAIProvider('gpt-4o');
     // issue #313: a native endpoint carries NO strictGate — exact-match, so a gate leaking onto
     // the native path (which would silently disable strict everywhere) reds here.
-    expect(provider.capabilities()).toEqual({ jsonMode: true, providerId: 'openai' });
+    expect(provider.capabilities()).toEqual({
+      jsonMode: true,
+      providerId: 'openai',
+      toolArgsStrict: true,
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -831,6 +835,7 @@ describe('OpenAIProvider.capabilities', () => {
     expect(provider.capabilities()).toEqual({
       jsonMode: false,
       providerId: 'openai',
+      toolArgsStrict: true,
       strictGate: 'compat_endpoint',
     });
   });

@@ -296,7 +296,11 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
   it('flag-travel (i): --strict-base-url ARRIVES at the provider — an attested compat endpoint carries NO strictGate', async () => {
     const p = await resolveProvider('openai', 'gpt-4o', 'https://compat.example.com', true);
     // Deep-equal, so a strictGate surviving the attestation reds here.
-    expect(p.capabilities()).toEqual({ jsonMode: false, providerId: 'openai' });
+    expect(p.capabilities()).toEqual({
+      jsonMode: false,
+      providerId: 'openai',
+      toolArgsStrict: true,
+    });
   });
 
   it('flag-travel (ii): the discriminating counterpart — the SAME call without the attestation IS gated', async () => {
@@ -309,6 +313,7 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
     expect(explicitFalse.capabilities()).toEqual({
       jsonMode: false,
       providerId: 'openai',
+      toolArgsStrict: true,
       strictGate: 'compat_endpoint',
     });
     // …and omitted entirely (the CLI passes nothing when the flag is absent).
@@ -316,6 +321,7 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
     expect(omitted.capabilities()).toEqual({
       jsonMode: false,
       providerId: 'openai',
+      toolArgsStrict: true,
       strictGate: 'compat_endpoint',
     });
   });

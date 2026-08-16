@@ -260,6 +260,16 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // Anthropic profile — realm cannot know a module's dialect — and the `provider` field above is
   // what makes that assumption visible if the module in fact targets a different API.
   const profile = caps.providerId === 'openai' ? ('openai' as const) : ('anthropic' as const);
+  // issue #313 (D-3 precedence rule 1): the endpoint gate is only MEANINGFUL for a provider that
+  // could otherwise place the marker on the wire. A gate on a non-consuming provider says nothing
+  // extra — `provider_unsupported` is already the whole truth there — so it is resolved to
+  // undefined rather than allowed to compete with that literal.
+  // Does this provider actually place per-tool strict on the wire? Read from the same one-shot
+  // `caps` as the rest of the drive-level facts (issue #350's guard; hoisted here in #313 so the
+  // gate below can be derived from it — same value, one read instead of one per step). Both
+  // in-repo tool-capable providers declare it; third-party modules do not.
+  const strictCapable = caps.toolArgsStrict === true;
+  const gate = strictCapable ? caps.strictGate : undefined;
 
   // Load or use provided definition.
   const definition: WorkflowDefinition =
@@ -600,9 +610,6 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             let toolsResult;
             // issue #311: hoisted so the evidence assembly below the try/catch can read them.
             const toolArgsEntries: NonNullable<StructuredOutputMeta['tool_args']>['tools'] = [];
-            // Does this provider actually place per-tool strict on the wire? (The interim
-            // capability guard ahead of #313 — see the selection block below.)
-            const strictCapable = deps.provider.capabilities().toolArgsStrict === true;
             try {
               const toolDefs: ToolDefinition[] = [];
               const barenameOwner = new Map<string, string>(); // bareName → serverId of first registration
@@ -655,14 +662,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               //   1. the step's own strict declaration — a step that never opted in takes none of
               //      this, so its `toolDefs` array (contents AND order) reaches the provider
               //      byte-identical to pre-#311; and
-              //   2. the PROVIDER's `toolArgsStrict` capability (the interim guard ahead of
-              //      #313). Marking tools is only meaningful for a provider that actually reads
-              //      `ToolDefinition.strict` and threads it onto the request. Anthropic does;
-              //      every other provider today ignores the marker entirely, so marking there
-              //      would place nothing on the wire while `tool_args.strict_sent: true` claimed
-              //      realm had — the exact falsity this guard exists to prevent. Conservative by
-              //      default: an absent capability reads as false, so third-party
-              //      `--provider-module` providers are safe without declaring anything.
+              //   2. the PROVIDER's `toolArgsStrict` capability. Marking tools is only
+              //      meaningful for a provider that actually reads `ToolDefinition.strict` and
+              //      threads it onto the request. BOTH in-repo tool-capable providers now do
+              //      (Anthropic on the tool object, OpenAI inside `function`); a third-party
+              //      `--provider-module` that does not would otherwise get `strict_sent: true`
+              //      evidence against a wire carrying nothing — the falsity this guard exists to
+              //      prevent. Conservative by default: an absent capability reads as false, so
+              //      such modules are safe without declaring anything, and the conformance suite
+              //      holds each declarer to actually placing it on the wire.
               // ---------------------------------------------------------------------------
               if (stepDef.structured_output === 'strict' && !strictCapable) {
                 // The provider cannot consume the marker. Do NOT re-sort (the wire keeps its
@@ -688,6 +696,31 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     strict_requested: true,
                     strict_sent: false,
                     reasons: ['provider_unsupported'],
+                  });
+                }
+              } else if (stepDef.structured_output === 'strict' && gate !== undefined) {
+                // issue #313 — the ENDPOINT gate, on the tools dimension. Ordered AFTER the
+                // capability arm on purpose (D-3 precedence): a provider that cannot consume the
+                // marker reports `provider_unsupported` even when it also carries a gate, because
+                // "this provider never sends strict" is the more fundamental fact and the two
+                // literals must never conflate.
+                //
+                // Same shape as the arm above — declared-order entries from a sorted copy, wire
+                // untouched, no walk — because the reason is likewise endpoint-level, not
+                // per-schema: assessing tools here would report eligibility findings about
+                // schemas that were never going to be sent strict at all.
+                const declaredIndex = new Map(stepDef.tools.map((id, i) => [id, i]));
+                const declaredOrder = [...toolDefs].sort(
+                  (a, b) =>
+                    (declaredIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+                    (declaredIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+                );
+                for (const tool of declaredOrder) {
+                  toolArgsEntries.push({
+                    name: tool.name,
+                    strict_requested: true,
+                    strict_sent: false,
+                    reasons: ['compat_endpoint'],
                   });
                 }
               } else if (stepDef.structured_output === 'strict') {
@@ -716,6 +749,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     schema: tool.inputSchema,
                     tools: false,
                     subject: 'tool_args',
+                    profile,
                   });
                   const caveats =
                     verdict.verdict === 'ineligible'
@@ -740,6 +774,16 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     // schemas would earn the same rejection, so this attempt starts unconstrained
                     // and every eligible tool reports the ORIGINAL reason verbatim.
                     entry.reasons = [sticky.reason];
+                  } else if (profile === 'openai') {
+                    // issue #313: NO budget walk under the OpenAI profile. Anthropic publishes a
+                    // 20-strict-tool and 24-summed-optional per-request budget; OpenAI publishes
+                    // NEITHER (executed: 128 strict tools in one request ⇒ 200, and the only
+                    // ceiling found is the generic 128-element tools ARRAY cap, which authoring
+                    // hits long before this walk would). So every eligible tool is marked, and
+                    // `budget_excluded` is never minted under this profile — inventing a budget
+                    // here would withhold strict for a limit that does not exist.
+                    tool.strict = true;
+                    entry.strict_sent = true;
                   } else {
                     // Greedy-skip in declared order, INCLUSIVE boundaries (landing exactly on a
                     // limit fits). A tool that doesn't fit is SKIPPED and the walk CONTINUES —
@@ -872,7 +916,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               // reporting one must not be able to mint a `dropped_mid_attempt` record, flip any
               // entry, or arm the sticky map — the run-record contract says that record is absent
               // on an attempt that never attached strict.
-              const drop = strictCapable ? toolsResult.toolArgsStrictDrop : undefined;
+              // issue #313 extends the #350 conjunct with the gate: on a gated endpoint strict
+              // was never attached either, so a reported drop must not mint a record here.
+              const drop =
+                strictCapable && gate === undefined ? toolsResult.toolArgsStrictDrop : undefined;
               if (drop !== undefined) {
                 // DROP TRUTH: flip ONLY the entries strict was actually attached to. An entry that
                 // was ineligible or budget-excluded never carried strict, so the drop says nothing

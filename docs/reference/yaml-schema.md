@@ -964,16 +964,16 @@ a cached one — so this is a note for large schemas, not a general expectation.
 The full downgrade-reason vocabulary an
 attempt's evidence (`diagnostics.structured_output.downgrade_reason`) can carry:
 
-| `downgrade_reason`          | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gate_ineligible`           | The runtime (Phase B) verdict was `ineligible` — strict was never attempted at all.                                                                                                                                                                                                                                                                                                                                                                                    |
-| `api_rejected_schema`       | A live `400` on a strict-carrying request.                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `grammar_unavailable`       | A live `503` whose message matched the captured grammar-compilation text.                                                                                                                                                                                                                                                                                                                                                                                              |
-| `service_unavailable`       | A live `503` that did not match — the generic fallback label.                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `provider_unsupported`      | The configured LLM provider does not support the strict path in question. At the STEP level: it doesn't implement the strict-aware call path (a third-party `--provider-module` implementing only the base `callStep`). In a `tool_args` entry: it doesn't place per-tool strict on the wire — today every provider except Anthropic, including `OpenAIProvider`, which DOES implement `callStepWithTools` but ignores the per-tool marker (issue #313 tracks parity). |
-| `unsupported_context_tools` | The step declares `tools`, so its OUTPUT is produced on the tools path, which has no grammar-constrained submit call. Since issue #311 this does **not** mean strict was unavailable to the step: its tool-call ARGUMENTS may well have been grammar-constrained on the same attempt — see `tool_args` below.                                                                                                                                                          |
-| `compat_endpoint`           | (issue #313) The provider is pointed at an OpenAI-compatible endpoint via `--base-url` and the author has not attested that it enforces strict. Realm declines to send strict rather than send it somewhere that may accept and ignore it. Remedy: `--strict-base-url`, or a native endpoint.                                                                                                                                                                          |
-| `external_agent`            | The step declared `structured_output: strict` but was driven by something other than `realm agent` — e.g. an external agent calling `execute_step` over MCP directly. realm cannot know whether strict was honored on that path at all; it says so rather than staying silent.                                                                                                                                                                                         |
+| `downgrade_reason`          | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `gate_ineligible`           | The runtime (Phase B) verdict was `ineligible` — strict was never attempted at all.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `api_rejected_schema`       | A live `400` on a strict-carrying request.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `grammar_unavailable`       | A live `503` whose message matched the captured grammar-compilation text.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `service_unavailable`       | A live `503` that did not match — the generic fallback label.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `provider_unsupported`      | The configured LLM provider does not support the strict path in question. At the STEP level: it doesn't implement the strict-aware call path (a third-party `--provider-module` implementing only the base `callStep`). In a `tool_args` entry: it doesn't place per-tool strict on the wire. Both in-repo tool-capable providers (Anthropic and OpenAI) now do, so at the per-tool level this names third-party `--provider-module` providers specifically. A conformance suite holds every provider declaring the capability to actually placing it on the wire. |
+| `unsupported_context_tools` | The step declares `tools`, so its OUTPUT is produced on the tools path, which has no grammar-constrained submit call. Since issue #311 this does **not** mean strict was unavailable to the step: its tool-call ARGUMENTS may well have been grammar-constrained on the same attempt — see `tool_args` below.                                                                                                                                                                                                                                                      |
+| `compat_endpoint`           | (issue #313) The provider is pointed at an OpenAI-compatible endpoint via `--base-url` and the author has not attested that it enforces strict. Realm declines to send strict rather than send it somewhere that may accept and ignore it. Remedy: `--strict-base-url`, or a native endpoint.                                                                                                                                                                                                                                                                      |
+| `external_agent`            | The step declared `structured_output: strict` but was driven by something other than `realm agent` — e.g. an external agent calling `execute_step` over MCP directly. realm cannot know whether strict was honored on that path at all; it says so rather than staying silent.                                                                                                                                                                                                                                                                                     |
 
 **Sticky within a drive (Anthropic):** once a step's strict attempt downgrades (a live 400/503), `realm agent`
 remembers it for that step for the rest of the drive session — every later attempt (a retried LLM
@@ -1173,14 +1173,22 @@ Notion's tools are the clearest example, modelling deliberately open property ba
 ineligible and must stay so: they are not oversights, and "fixing" them would silently narrow a
 documented API.
 
-**Budgets are best-effort; the API is the acceptor of record.** Anthropic caps a request at 20
-strict tools and 24 summed optional properties across them. realm walks the declared tools in
-order, attaches strict while both limits hold (inclusive — landing exactly on a limit fits), and
-SKIPS a tool that would exceed one while continuing with the rest (a skipped tool reports
-`budget_excluded`). Ineligible tools consume zero budget. This arithmetic mirrors the documented
-limits, but it is **best-effort**: if the API rejects the request anyway, that 400 is the acceptor
-of record — realm drops strict for the step's tools, retries the turn once unconstrained, and
-discloses what happened. Reorder your `tools:` list to change which tools win the budget.
+**Budgets are per-provider, best-effort, and the API is always the acceptor of record.**
+
+_Anthropic_ caps a request at 20 strict tools and 24 summed optional properties across them. realm
+walks the declared tools in order, attaches strict while both limits hold (inclusive — landing
+exactly on a limit fits), and SKIPS a tool that would exceed one while continuing with the rest (a
+skipped tool reports `budget_excluded`). Ineligible tools consume zero budget. Reorder your
+`tools:` list to change which tools win the budget.
+
+_OpenAI_ publishes **no** strict-tool count and no optional budget — 128 strict tools in a single
+request were executed successfully — so realm runs no budget walk there and marks EVERY eligible
+tool; `budget_excluded` is never reported under that profile. The only ceiling is the generic
+128-element tools array cap, which authoring hits long before this ever would.
+
+Either way the arithmetic is **best-effort**: if the API rejects the request anyway, that 400 is
+the acceptor of record — realm drops strict for the step's tools, retries the turn once
+unconstrained, and discloses what happened.
 
 **Tool descriptions matter.** Grammar quality is description-sensitive, and realm's MCP client
 defaults a missing tool description to the empty string. A server that publishes tools without
@@ -1188,9 +1196,12 @@ descriptions gives the model less to work with, strict or not.
 
 **Failure handling is status-only.** A 400 on a strict-carrying request drops strict for that
 step's tools and is **sticky** for the rest of the drive (the same schemas would be rejected
-again). A 503 drops strict for that attempt only and is deliberately **not** sticky — transient
-overload must not disable the feature for a whole session. realm never parses error message text
-to make these decisions; it keys on HTTP status, with the message captured verbatim as evidence.
+again). On _Anthropic_, a 503 additionally drops strict for that attempt only and is deliberately
+**not** sticky — transient overload must not disable the feature for a whole session. The _OpenAI_
+tools fork is **400-only**: it has no 503-grammar analog, so 5xx responses, transport errors and
+timeouts propagate untouched and never drop or stick (a slow first call compiling a large schema
+is a transport event, not a schema failure). realm never parses error message text to make these
+decisions; it keys on HTTP status, with the message captured verbatim as evidence.
 
 **Disclosure.** The attempt's evidence carries a `tool_args` block listing every DECLARED tool
 with `strict_requested`, `strict_sent` (the attempt's final posture), and its `reasons`/`caveats`,
@@ -1199,15 +1210,25 @@ is visible via `realm run inspect`/`realm run export`. Run-health surfaces only 
 class, as the dimension-marked `tool_args:api_rejected_schema`.
 
 **Provider support.** Attaching per-tool strict requires a provider that places the marker on its
-own wire format. Today that is Anthropic only. On any other provider — including `OpenAIProvider`,
-which drives tools but ignores the marker — no tool carries strict, no per-tool eligibility is
-assessed (those verdicts encode the Anthropic profile), and every `tool_args` entry reports
-`provider_unsupported`. The step still runs normally; only the tool-arguments dimension is
-inert. Issue #313 tracks OpenAI parity.
+own wire format — Anthropic on the tool object, OpenAI inside `function`. Both in-repo tool-capable
+providers do, and each tool schema is assessed under ITS provider's profile (so the same tool can
+be eligible on one and not the other — see [Provider profiles](#provider-profiles-issue-313)).
+
+A third-party `--provider-module` provider does not: no tool carries strict, no per-tool
+eligibility is assessed (running the assessment would report one provider's rules at a provider
+that could never send strict anyway), and every `tool_args` entry reports `provider_unsupported`.
+The step still runs normally; only the tool-arguments dimension is inert.
+
+Separately, a **compat endpoint** without `--strict-base-url` reports `compat_endpoint` per tool.
+The two literals never conflate: `provider_unsupported` means this provider _cannot_ send the
+marker, `compat_endpoint` means it can but realm chose not to have it.
 
 `examples/09-webhook-pr-review/workflow.yaml`'s agent steps declare `tools` and deliberately do
-NOT declare `structured_output` — with today's yield, opting in would attach strict to few or no
-tools on most public servers.
+NOT declare `structured_output`. Measured across 262 tools from 17 public MCP servers: 20.6% are
+strict-attachable as written under the Anthropic profile and 5.3% under OpenAI's — and 0% on
+GitHub's own 116-tool server under either. Opting in is honest either way (every tool reports why
+it was or was not constrained), but on most public servers today it attaches strict to few tools
+or none.
 
 ---
 

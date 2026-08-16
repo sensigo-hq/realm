@@ -1053,6 +1053,66 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
     });
   });
 
+  // issue #313: the tool-args widening is PROVIDER-AGNOSTIC by construction — it reads the
+  // per-tool `reasons`, never the provider. This cell pins that an OpenAI tools-fork drop fires
+  // exactly as an Anthropic one does, so no code change was needed to cover the second provider.
+  it('issue #313: an OpenAI tools-fork drop fires the finding with the same dimension-marked literal', () => {
+    const run = makeRun({
+      run_phase: 'running',
+      updated_at: NOW.toISOString(),
+      evidence: [
+        snap({
+          step_id: 'classify',
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'unsupported_context_tools',
+              provider: 'openai',
+              tool_args: {
+                tools: [
+                  {
+                    name: 'search',
+                    strict_requested: true,
+                    strict_sent: false,
+                    reasons: ['api_rejected_schema'],
+                  },
+                  {
+                    name: 'lookup',
+                    strict_requested: true,
+                    strict_sent: false,
+                    reasons: ['not_all_required'],
+                  },
+                ],
+                dropped_mid_attempt: {
+                  reason: 'api_rejected_schema',
+                  api_message: "Invalid schema for function 'search'",
+                  api_param: 'tools[0].function.parameters',
+                  api_code: 'invalid_function_parameters',
+                  strict_turns_before_drop: 1,
+                },
+              },
+            },
+          },
+        }),
+      ],
+    });
+    const findings = classifyRunHealth(run, { now: NOW });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.evidence).toEqual({
+      steps: [
+        {
+          step: 'classify',
+          reasons: ['unsupported_context_tools', 'tool_args:api_rejected_schema'],
+        },
+      ],
+    });
+    // The OpenAI-profile verdict code stays OUT of the finding — routine, not actionable.
+    expect(JSON.stringify(findings[0]!.evidence)).not.toContain('not_all_required');
+  });
+
   it('pin 14 (iii): two tools rejected in the same attempt contribute the marked literal ONCE', () => {
     const run = makeRun({
       run_phase: 'running',

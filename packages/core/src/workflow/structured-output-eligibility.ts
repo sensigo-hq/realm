@@ -251,13 +251,17 @@ const OPENAI_SUPPORTED_KEYWORDS = new Set([
  *
  * - `allOf`              — 400-EXECUTED (probe P3a: "In context=('properties','x'), 'allOf' is
  *                          not permitted", param=response_format).
- * - `not`                — DOCS-DERIVED-CONSERVATIVE.
- * - `dependentRequired`  — DOCS-DERIVED-CONSERVATIVE.
- * - `dependentSchemas`   — DOCS-DERIVED-CONSERVATIVE.
- * - `if` / `then` / `else` — DOCS-DERIVED-CONSERVATIVE.
+ * - `not`                — 400-EXECUTED ("Unsupported keywords ('not',)").
+ * - `dependentRequired`  — 400-EXECUTED (the keyword is named in the message).
+ * - `dependentSchemas`   — 400-EXECUTED (the keyword is named in the message).
+ * - `if` / `then` / `else` — 400-EXECUTED (fires for if/then AND if/then/else).
  *
- * The class posture (reject-on-unsupported, rather than Anthropic's silent strip) was confirmed
- * on the one executed member; the rest ride that confirmation conservatively.
+ * END STATE: every member is executed against the live API, each 400 naming its own keyword. The
+ * class posture (reject-on-unsupported, rather than Anthropic's silent strip) therefore no longer
+ * rests on a single confirmed member. This matters because the failure direction is asymmetric: a
+ * keyword wrongly present here would cost a SILENT capability loss (fallback to json_object with
+ * nobody told), whereas one wrongly absent is caught loudly by the live 400 arm. Adding a member
+ * on documentation alone would re-open that hazard — probe first.
  */
 const OPENAI_UNSUPPORTED_KEYWORDS = new Set([
   'allOf',
@@ -285,13 +289,14 @@ const OPENAI_LIMITS = {
   /** Nesting depth. BOUNDARY-EXECUTED: depth 10 ⇒ 200, depth 11 ⇒ 400 ("11 levels of nesting
    *  exceeds limit of 10"). Measured in OBJECT nesting levels — see walkNode. */
   maxDepth: 10,
-  /** Total properties across the schema. DOCS-DERIVED-CONSERVATIVE — unprobed at this scale;
-   *  drift is caught by the live 400 arm, not by this number. */
+  /** Total properties across the schema. BOUNDARY-EXECUTED both sides: 5000 ⇒ 200, 5001 ⇒ 400
+   *  ("5001 parameters exceeds limit of 5000"). */
   maxProperties: 5000,
   /** Total characters across property names, enum values and const values.
-   *  DOCS-DERIVED-CONSERVATIVE — unprobed at this scale. Note the counted set is names + enum +
-   *  const; whether descriptions count is unstated upstream and they are deliberately NOT
-   *  counted here (counting them would reject more schemas on an assumption). */
+   *  DOCS-DERIVED-CONSERVATIVE for the 120k figure itself — no exact-boundary cell was
+   *  constructed. The COUNTED SET, however, is executed fact: descriptions are PROVEN excluded
+   *  (~135k of description text behind tiny names/enums ⇒ 200), which is why they are not
+   *  counted here. */
   maxChars: 120_000,
   /** Values in a single enum. BOUNDARY-EXECUTED: 1000 ⇒ 200, 1001 ⇒ 400 (the error names the
    *  limit and the received count). */
