@@ -194,6 +194,10 @@ export interface StructuredOutputMeta {
        *   this step's tools.
        * - `grammar_unavailable` — a live 503 matching the grammar-compilation-unavailable text.
        * - `service_unavailable` — a live 503 that did not match it (fail-safe generic label).
+       * - `provider_unsupported` — the configured provider does not place per-tool strict on the
+       *   wire at all (today: every provider except Anthropic), so strict was never attached to
+       *   ANY tool on this attempt and no per-tool eligibility was assessed. Reuses the
+       *   step-level literal of the same name; issue #313 tracks OpenAI parity.
        */
       reasons?: string[];
       /** Caveat codes from this tool's own eligibility verdict (e.g. `unenforced_keyword`,

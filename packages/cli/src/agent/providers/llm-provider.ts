@@ -14,6 +14,20 @@ export interface ProviderCapabilities {
    * This is the universal baseline — all providers work without json_object mode.
    */
   jsonMode: boolean;
+  /**
+   * Whether this provider READS `ToolDefinition.strict` and places per-tool strict on the wire
+   * (issue #311's per-tool grammar-constrained tool arguments).
+   *
+   * Additive-optional and CONSERVATIVE BY DEFAULT: absent reads as false, so the base
+   * `capabilities()` below, every existing override, and every third-party `--provider-module`
+   * provider are all correctly reported as non-consumers without touching them. Only a provider
+   * that actually threads the marker onto its request may declare `true`.
+   *
+   * This is load-bearing for evidence honesty, not just dispatch: `tool_args.strict_sent` claims
+   * realm placed strict on the request handed to the SDK, so run-agent must not mark tools (or
+   * record them as sent) for a provider whose wire builder ignores the marker entirely.
+   */
+  toolArgsStrict?: boolean;
 }
 
 /**

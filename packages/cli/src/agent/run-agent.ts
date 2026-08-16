@@ -553,8 +553,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             }
 
             let toolsResult;
-            // issue #311: hoisted so the evidence assembly below the try/catch can read it.
+            // issue #311: hoisted so the evidence assembly below the try/catch can read them.
             const toolArgsEntries: NonNullable<StructuredOutputMeta['tool_args']>['tools'] = [];
+            // Does this provider actually place per-tool strict on the wire? (The interim
+            // capability guard ahead of #313 — see the selection block below.)
+            const strictCapable = deps.provider.capabilities().toolArgsStrict === true;
             try {
               const toolDefs: ToolDefinition[] = [];
               const barenameOwner = new Map<string, string>(); // bareName → serverId of first registration
@@ -603,11 +606,46 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               }
 
               // ---------------------------------------------------------------------------
-              // issue #311 — per-tool strict selection. ENTIRELY gated on the step's own strict
-              // declaration: a step that never opted in takes none of this, so its `toolDefs`
-              // array (contents AND order) reaches the provider byte-identical to before.
+              // issue #311 — per-tool strict selection. Gated on TWO things:
+              //   1. the step's own strict declaration — a step that never opted in takes none of
+              //      this, so its `toolDefs` array (contents AND order) reaches the provider
+              //      byte-identical to pre-#311; and
+              //   2. the PROVIDER's `toolArgsStrict` capability (the interim guard ahead of
+              //      #313). Marking tools is only meaningful for a provider that actually reads
+              //      `ToolDefinition.strict` and threads it onto the request. Anthropic does;
+              //      every other provider today ignores the marker entirely, so marking there
+              //      would place nothing on the wire while `tool_args.strict_sent: true` claimed
+              //      realm had — the exact falsity this guard exists to prevent. Conservative by
+              //      default: an absent capability reads as false, so third-party
+              //      `--provider-module` providers are safe without declaring anything.
               // ---------------------------------------------------------------------------
-              if (stepDef.structured_output === 'strict') {
+              if (stepDef.structured_output === 'strict' && !strictCapable) {
+                // The provider cannot consume the marker. Do NOT re-sort (the wire keeps its
+                // as-built server order — the pre-#311 shape for these providers), do NOT mark,
+                // and deliberately do NOT run the eligibility walk: those verdicts encode the
+                // ANTHROPIC strict profile, so reporting their reasons/caveats for a provider
+                // that could never send strict anyway would be misleading precision.
+                //
+                // Evidence still lands, and it is the honest version: one entry per DECLARED
+                // tool, in DECLARED order (the run-record contract), each saying plainly that
+                // strict was requested and not sent because this provider does not support it.
+                // The entries are built from a SORTED COPY — the wire array itself must stay in
+                // as-built order, so entry order and wire order legitimately differ here.
+                const declaredIndex = new Map(stepDef.tools.map((id, i) => [id, i]));
+                const declaredOrder = [...toolDefs].sort(
+                  (a, b) =>
+                    (declaredIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+                    (declaredIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+                );
+                for (const tool of declaredOrder) {
+                  toolArgsEntries.push({
+                    name: tool.name,
+                    strict_requested: true,
+                    strict_sent: false,
+                    reasons: ['provider_unsupported'],
+                  });
+                }
+              } else if (stepDef.structured_output === 'strict') {
                 // Re-sort into the author's DECLARED order. The assembly above walks server by
                 // server, so the wire order otherwise depends on MCP server grouping and each
                 // server's own listing order — neither of which the author controls. The budget
@@ -784,7 +822,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // step's own answer was not grammar-constrained), and it stays true no matter how many
             // tools carried strict. This block adds the independent per-tool story.
             if (stepDef.structured_output === 'strict' && toolArgsEntries.length > 0) {
-              const drop = toolsResult.toolArgsStrictDrop;
+              // The drop machinery is capability-gated too. On the capability-false arm strict was
+              // never attached, so there is nothing to drop: a (misbehaving or future) provider
+              // reporting one must not be able to mint a `dropped_mid_attempt` record, flip any
+              // entry, or arm the sticky map — the run-record contract says that record is absent
+              // on an attempt that never attached strict.
+              const drop = strictCapable ? toolsResult.toolArgsStrictDrop : undefined;
               if (drop !== undefined) {
                 // DROP TRUTH: flip ONLY the entries strict was actually attached to. An entry that
                 // was ineligible or budget-excluded never carried strict, so the drop says nothing
