@@ -32,22 +32,54 @@ export interface StructuredOutputReason {
 }
 
 /** A caveat: the schema is eligible, but this feature is enforced post-hoc by realm (Ajv), not
- *  by the grammar itself — silently ignored or rejected by the API either way. */
+ *  by the grammar itself — silently ignored or rejected by the API either way.
+ *
+ *  Issue #311: `tools_runtime_assessed` is the Phase-A nudge row for a strict-declared,
+ *  tools-bearing step. It is a CAVEAT code, never a WarningCode — a new WarningCode would
+ *  auto-fail `validate --strict` (validate.ts's own rail), which would turn an informational
+ *  nudge into a build break. */
 export interface StructuredOutputCaveat {
-  code: 'unenforced_keyword' | 'unenforced_format' | 'unenforced_pattern' | 'optional_emission';
+  code:
+    | 'unenforced_keyword'
+    | 'unenforced_format'
+    | 'unenforced_pattern'
+    | 'optional_emission'
+    | 'tools_runtime_assessed';
   path: string;
   remediation: string;
 }
 
+/**
+ * Issue #311: which subject this assessment is about. Default (`step_output`) is the #236
+ * behaviour — the step's own output schema, which realm DOES post-hoc validate with Ajv.
+ * `tool_args` assesses a third-party MCP tool's `inputSchema` for per-tool strict attachment;
+ * there is NO Ajv on the tools path, so enforcement-class caveats must not claim realm enforces
+ * anything, and every remediation's fix-owner is the MCP SERVER, never the workflow author.
+ */
+export type StructuredOutputSubject = 'step_output' | 'tool_args';
+
+/**
+ * Issue #311: `optional_count` is the walk's own optional-property tally, exported so the
+ * per-tool budget walk (run-agent.ts) can sum optionals across strict-attached tools against the
+ * API's 24 limit without re-walking each schema. Present IFF the schema walk actually ran — the
+ * short-circuit arms (G0 no-schema/non-object root, Phase-B G6, and the Phase-A
+ * `tools_runtime_assessed` row) return before any counting, so the field is absent there rather
+ * than falsely reporting 0.
+ */
 export type StructuredOutputVerdict =
-  | { verdict: 'eligible' }
-  | { verdict: 'eligible_with_caveats'; caveats: StructuredOutputCaveat[] }
+  | { verdict: 'eligible'; optional_count?: number }
+  | {
+      verdict: 'eligible_with_caveats';
+      caveats: StructuredOutputCaveat[];
+      optional_count?: number;
+    }
   // The ineligible arm CARRIES caveat findings too (C2/C4 pin this) — the nudge prints the full
   // delta even for an ineligible schema; Phase B ignores `caveats` here since strict is never sent.
   | {
       verdict: 'ineligible';
       reasons: StructuredOutputReason[];
       caveats?: StructuredOutputCaveat[];
+      optional_count?: number;
     };
 
 /**
@@ -67,6 +99,9 @@ type PhaseAInput = Pick<StepDefinition, 'output_schema' | 'input_schema' | 'tool
 interface PhaseBInput {
   schema: unknown;
   tools: boolean;
+  /** Issue #311: `tool_args` forks the remediation vocabulary (fix-owner = the MCP server) and
+   *  the enforcement-class caveat text (no Ajv on the tools path). Default `step_output`. */
+  subject?: StructuredOutputSubject;
 }
 
 function isPhaseB(input: PhaseAInput | PhaseBInput): input is PhaseBInput {
@@ -82,6 +117,8 @@ function isPhaseB(input: PhaseAInput | PhaseBInput): input is PhaseBInput {
  * this comment is a direct transcription:
  *   "All basic types: object, array, string, integer, number, boolean, null" (the `type` keyword)
  *   `enum` · `const` · `anyOf` and `allOf` · `$ref`, `$def`, and `definitions` · `default` ·
+ *     ^ `$def` (singular) is transcribed VERBATIM from Anthropic's own list — see the entry's own
+ *       comment below; it is not a typo in this file.
  *   `required` and `additionalProperties` · string `format` (10 values — gated separately, G4) ·
  *   array `minItems`.
  * A keyword present on a schema node but absent from this set is NOT necessarily rejected by the
@@ -100,6 +137,13 @@ export const STRICT_SUPPORTED_KEYWORDS = new Set([
   'anyOf',
   'allOf',
   '$ref',
+  // Issue #311 ride-along (ledger R7), re-verified against Anthropic's CURRENT published docs on
+  // 2026-08-16: the source list still reads "`$ref`, `$def`, and `definitions`" — `$def`
+  // SINGULAR, with no `$defs` anywhere in the document. This entry therefore transcribes upstream
+  // faithfully (upstream's own apparent typo — JSON Schema's real keyword is `$defs`), which is
+  // why it is kept rather than "corrected". It is inert either way: the real `$defs` key is
+  // handled STRUCTURALLY by NON_KEYWORD_KEYS below, so it never reaches this allowlist at all.
+  // Dead but harmless — do not delete it as dead code without re-reading the upstream list.
   '$def',
   'definitions',
   'default',
@@ -136,6 +180,29 @@ interface Ctx {
   optionalCount: number;
   unionCount: number;
   seenUnenforcedKeywords: Set<string>;
+  /** Issue #311: drives the enforcement-class caveat wording + remediation fix-owner. */
+  subject: StructuredOutputSubject;
+}
+
+/**
+ * Issue #311: the enforcement-class clause, forked by subject. On the step-output path realm's
+ * own Ajv still enforces the keyword after the model answers, so each row keeps its EXISTING
+ * wording verbatim (passed in — the two rows word it differently today and both are pinned). On
+ * the tools path there is NO Ajv at all — the arguments go straight to the MCP server — so
+ * claiming realm enforces them would be a lie; enforcement genuinely falls to the server.
+ */
+function enforcementClause(subject: StructuredOutputSubject, stepOutputClause: string): string {
+  return subject === 'tool_args'
+    ? 'is not grammar-enforced and NOT post-hoc enforced by realm — enforcement falls to the MCP server at call time'
+    : stepOutputClause;
+}
+
+/** Issue #311: who fixes it. A third-party tool's schema is never the workflow author's to edit,
+ *  so every tool-args remediation retargets the fix-owner to the publishing MCP server. */
+function fixOwnerHint(subject: StructuredOutputSubject): string {
+  return subject === 'tool_args'
+    ? " (this schema is published by the MCP server — the fix belongs to that server's maintainer, not this workflow)"
+    : '';
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -224,7 +291,10 @@ function walkNode(node: unknown, path: string, ctx: Ctx): void {
       ctx.hardReasons.push({
         code: 'unsupported_keyword',
         path,
-        remediation: `'${kw}' at '${path || '(root)'}' is not supported by strict mode — remove it (Ajv still enforces it at submission time) or drop 'structured_output: strict' for this step`,
+        remediation:
+          ctx.subject === 'tool_args'
+            ? `'${kw}' at '${path || '(root)'}' is not supported by strict mode — this tool rides unconstrained${fixOwnerHint(ctx.subject)}`
+            : `'${kw}' at '${path || '(root)'}' is not supported by strict mode — remove it (Ajv still enforces it at submission time) or drop 'structured_output: strict' for this step`,
       });
     }
   }
@@ -245,7 +315,7 @@ function walkNode(node: unknown, path: string, ctx: Ctx): void {
     ctx.caveats.push({
       code: 'unenforced_format',
       path,
-      remediation: `'format: ${format}' at '${path || '(root)'}' is silently ignored or rejected by the API — enforced post-hoc by realm's own validation only`,
+      remediation: `'format: ${format}' at '${path || '(root)'}' ${enforcementClause(ctx.subject, "is silently ignored or rejected by the API — enforced post-hoc by realm's own validation only")}${fixOwnerHint(ctx.subject)}`,
     });
   }
 
@@ -254,7 +324,7 @@ function walkNode(node: unknown, path: string, ctx: Ctx): void {
     ctx.caveats.push({
       code: 'unenforced_pattern',
       path,
-      remediation: `'pattern' at '${path || '(root)'}' is silently ignored or rejected by the API — enforced post-hoc by realm's own validation only`,
+      remediation: `'pattern' at '${path || '(root)'}' ${enforcementClause(ctx.subject, "is silently ignored or rejected by the API — enforced post-hoc by realm's own validation only")}${fixOwnerHint(ctx.subject)}`,
     });
   }
 
@@ -269,7 +339,7 @@ function walkNode(node: unknown, path: string, ctx: Ctx): void {
     ctx.caveats.push({
       code: 'unenforced_keyword',
       path,
-      remediation: `'${key}' at '${path || '(root)'}' is silently ignored or rejected by the API — either way enforced post-hoc by realm`,
+      remediation: `'${key}' at '${path || '(root)'}' ${enforcementClause(ctx.subject, 'is silently ignored or rejected by the API — either way enforced post-hoc by realm')}${fixOwnerHint(ctx.subject)}`,
     });
   }
 
@@ -279,7 +349,7 @@ function walkNode(node: unknown, path: string, ctx: Ctx): void {
       ctx.hardReasons.push({
         code: 'missing_additional_properties',
         path,
-        remediation: `add 'additionalProperties: false' at '${path || 'the schema root'}'`,
+        remediation: `add 'additionalProperties: false' at '${path || 'the schema root'}'${fixOwnerHint(ctx.subject)}`,
       });
     }
   }
@@ -344,7 +414,10 @@ function walkNode(node: unknown, path: string, ctx: Ctx): void {
  *   incl. root `$ref:'#'`, external `$ref`, complex enum members) ⇒ ineligible; any other
  *   off-allowlist keyword ⇒ caveat · G3 >24 optional properties / >16 union-typed ⇒ ineligible ·
  *   G4 unsupported `format` value ⇒ caveat · G5 `pattern` present ⇒ caveat · G6 `tools`-bearing
- *   step ⇒ ineligible (checked FIRST, short-circuits everything else) · G7' (Amendment 2) ANY
+ *   step ⇒ checked FIRST, short-circuits everything else, and FORKS BY PHASE (issue #311):
+ *   Phase A ⇒ caveat `tools_runtime_assessed` (strict applies to tool-call arguments, assessed
+ *   per tool at runtime), Phase B ⇒ ineligible `unsupported_context_tools` (the step's own
+ *   output is still never grammar-constrained on the tools fork) · G7' (Amendment 2) ANY
  *   optional properties on an otherwise-eligible schema ⇒ caveat `optional_emission` (strict
  *   measurably suppresses optional-field emission — see the benchmark cited in the docs section;
  *   the remedy is making consumer-load-bearing fields `required`).
@@ -354,20 +427,54 @@ export function assessStructuredOutputEligibility(
 ): StructuredOutputVerdict {
   const phaseB = isPhaseB(input);
   const schema: unknown = phaseB ? input.schema : (input.output_schema ?? input.input_schema);
+  const subject: StructuredOutputSubject = phaseB
+    ? (input.subject ?? 'step_output')
+    : 'step_output';
   const toolsFlag = phaseB
     ? input.tools === true
     : Array.isArray(input.tools) && input.tools.length > 0;
 
-  // G6 — checked FIRST; short-circuits every other row (fixture C8: "⇒ G6 exactly", no caveats).
+  // G6 — checked FIRST; short-circuits every other row (fixture C8). Issue #311 forks it BY PHASE:
+  //
+  // Phase A (authoring: loader/validate/register/create_workflow) now ACCEPTS a strict-declared
+  // tools-bearing step with an INFO-channel nudge instead of rejecting it. Strict is real on this
+  // fork — it just applies to the TOOL-CALL ARGUMENTS, per third-party tool, assessed at runtime
+  // (the tool schemas are not the author's to fix, and are not even known until the MCP servers
+  // are contacted). The step's own output stays post-hoc validated (L1), never grammar-
+  // constrained. The nudge is a CAVEAT row, never a WarningCode — a new WarningCode would
+  // auto-fail `validate --strict` and turn an informational nudge into a build break.
+  //
+  // The short-circuit is retained deliberately: the step-level output schema is never
+  // grammar-constrained on the tools fork, so walking it here would report findings about a
+  // schema that is never sent to a grammar — including on the composite cell (strict + tools +
+  // an ineligible step-level output_schema), which must NOT reject.
+  //
+  // Phase B (`tools: true`) keeps the #236 `ineligible` verdict verbatim: it is the RUNTIME
+  // step-output question ("may realm grammar-constrain THIS step's output?"), whose answer on a
+  // tools-bearing step is still no — that is what the #332 `unsupported_context_tools` mint
+  // discloses. It has zero production callers today and stays defensive.
   if (toolsFlag) {
+    if (phaseB) {
+      return {
+        verdict: 'ineligible',
+        reasons: [
+          {
+            code: 'unsupported_context_tools',
+            path: '',
+            remediation:
+              'this step declares tools — structured_output: strict is not supported on tools-bearing steps in v1; remove tools or drop structured_output',
+          },
+        ],
+      };
+    }
     return {
-      verdict: 'ineligible',
-      reasons: [
+      verdict: 'eligible_with_caveats',
+      caveats: [
         {
-          code: 'unsupported_context_tools',
+          code: 'tools_runtime_assessed',
           path: '',
           remediation:
-            'this step declares tools — structured_output: strict is not supported on tools-bearing steps in v1; remove tools or drop structured_output',
+            'this step declares tools — strict applies to tool-call arguments here, not to the step output; tool schemas are third-party and are assessed per tool at runtime (a tool whose schema is not strict-compatible simply rides unconstrained), and this step output stays post-hoc validated by realm',
         },
       ],
     };
@@ -407,6 +514,7 @@ export function assessStructuredOutputEligibility(
     optionalCount: 0,
     unionCount: 0,
     seenUnenforcedKeywords: new Set(),
+    subject,
   };
   walkNode(schema, '', ctx);
 
@@ -430,6 +538,7 @@ export function assessStructuredOutputEligibility(
       verdict: 'ineligible',
       reasons: ctx.hardReasons,
       ...(ctx.caveats.length > 0 ? { caveats: ctx.caveats } : {}),
+      optional_count: ctx.optionalCount,
     };
   }
 
@@ -442,15 +551,21 @@ export function assessStructuredOutputEligibility(
     ctx.caveats.push({
       code: 'optional_emission',
       path: '',
-      remediation:
-        'under strict, the model emitted an optional field in 4/24 runs vs 24/24 unconstrained on a measured schema (see docs) — make fields your consumers rely on `required`',
+      // Issue #311: the G7' propensity text is subject-independent (it is a fact about strict
+      // itself, measured on a step-output schema but applying to any grammar-constrained
+      // arguments); only the FIX-OWNER retargets on the tools path.
+      remediation: `under strict, the model emitted an optional field in 4/24 runs vs 24/24 unconstrained on a measured schema (see docs) — make fields your consumers rely on \`required\`${fixOwnerHint(ctx.subject)}`,
     });
   }
 
   if (ctx.caveats.length > 0) {
-    return { verdict: 'eligible_with_caveats', caveats: ctx.caveats };
+    return {
+      verdict: 'eligible_with_caveats',
+      caveats: ctx.caveats,
+      optional_count: ctx.optionalCount,
+    };
   }
-  return { verdict: 'eligible' };
+  return { verdict: 'eligible', optional_count: ctx.optionalCount };
 }
 
 /** Renders a step's structured_output declaration into a plain-English author message, combining

@@ -85,6 +85,15 @@ export interface TraceNormalizationSummary {
  * that the API enforced it). Per-attempt: a retry-configured step's evidence array can carry a
  * different value per attempt. `requested` is always `true` when this object is present at all —
  * it exists ONLY on a step that declared `structured_output: 'strict'`.
+ *
+ * SCOPE (issue #311 truth pass): every field on this object EXCEPT `tool_args` describes ONE
+ * dimension — the step's own OUTPUT request (the submit tool realm sends for the step's answer).
+ * That was the only dimension #236 shipped, so the original wording did not need to say so;
+ * it does now. `tool_args` describes the independent TOOL-ARGUMENTS dimension, and the two
+ * legitimately disagree on the same attempt: a tools-bearing step is permanently
+ * `sent: false` / `unsupported_context_tools` at the OUTPUT level while simultaneously carrying
+ * genuine per-tool `strict_sent: true` entries under `tool_args`. When reading a single field,
+ * check which dimension it belongs to before concluding "strict was off".
  */
 export interface StructuredOutputMeta {
   /** Always `true` — this object's mere presence already implies it; kept explicit so a reader
@@ -119,8 +128,11 @@ export interface StructuredOutputMeta {
    *   — fail-safe default label for any non-matching 503).
    * - `provider_unsupported` — the configured LLM provider does not implement `callStepWithMeta`
    *   (a third-party `--provider-module` that only implements the base `callStep`).
-   * - `unsupported_context_tools` — the step declares `tools` (G6 — v1 never supports strict on
-   *   a tools-bearing step).
+   * - `unsupported_context_tools` — the step declares `tools`, so its OUTPUT is produced on the
+   *   tools path, which has no grammar-constrained submit call. Issue #311 truth pass: this no
+   *   longer means "strict is unsupported on this step" — strict may well have been attached to
+   *   that step's TOOL-CALL ARGUMENTS on the very same attempt (see `tool_args`). It means only
+   *   that the step's own output was not grammar-constrained.
    * - `external_agent` — the step declared `structured_output: 'strict'` but was driven by
    *   something other than `realm agent` (e.g. an external agent calling `execute_step` over
    *   MCP directly) — no `stepMeta.structuredOutput` was ever attached, so realm cannot know
@@ -141,6 +153,70 @@ export interface StructuredOutputMeta {
    *  extracted text — the standing dodge detector (design record R-B): a schema shaped to make
    *  the model prefer a text answer over the strict-constrained tool would show up here. */
   submission_channel?: 'tool' | 'text';
+  /**
+   * Issue #311 — the TOOL-ARGUMENTS dimension. Present only on a `structured_output: 'strict'`
+   * step that ran the tools path with at least one declared tool.
+   *
+   * Read this alongside the step-level fields above, which describe a DIFFERENT question. The
+   * step-level `sent`/`downgrade_reason` answer "did realm grammar-constrain this step's own
+   * OUTPUT?" — on the tools path that answer is permanently no (`unsupported_context_tools`),
+   * because the step's output still arrives through the unconstrained submit/extraction path.
+   * `tool_args` answers "did realm grammar-constrain the ARGUMENTS realm's model passes to each
+   * MCP tool?", which on the same attempt can be yes for some tools and no for others. The two
+   * co-occur by design; neither supersedes the other.
+   *
+   * Enforcement caveat: a strict grammar constrains what the model can EMIT. There is no Ajv on
+   * the tools path — realm does not post-hoc validate tool arguments — so for any tool that
+   * rides unconstrained, enforcement falls entirely to the MCP server at call time. Strict's
+   * guarantee also covers tool-NAME selection, not arguments alone.
+   *
+   * One entry per DECLARED tool, in declared order, whether or not strict was attached to it.
+   */
+  tool_args?: {
+    tools: Array<{
+      /** The bare tool name as declared by the MCP server (the wire name). */
+      name: string;
+      /** Always `true` — present iff this entry exists (house style, mirroring `requested`). */
+      strict_requested: true;
+      /** Whether realm placed `strict: true` on THIS tool in the request it handed to the SDK —
+       *  the FINAL posture of the attempt (a mid-attempt drop rewrites this to `false`). Same
+       *  observables-only discipline as `sent`: never a claim that the API honored it. */
+      strict_sent: boolean;
+      /**
+       * Why strict was not attached (or was dropped). Plural — codes co-occur. Values are the
+       * verdict codes from `assessStructuredOutputEligibility` verbatim
+       * (`no_schema` | `missing_additional_properties` | `unsupported_keyword` |
+       * `too_many_optionals` | `too_many_unions` | `unsupported_context_tools`), plus these
+       * non-verdict literals:
+       * - `budget_excluded` — eligible, but the API's per-request limits (≤20 strict tools,
+       *   ≤24 summed optional properties) were already spent by earlier declared tools.
+       * - `api_rejected_schema` — a live 400 on a strict-carrying request dropped strict for
+       *   this step's tools.
+       * - `grammar_unavailable` — a live 503 matching the grammar-compilation-unavailable text.
+       * - `service_unavailable` — a live 503 that did not match it (fail-safe generic label).
+       */
+      reasons?: string[];
+      /** Caveat codes from this tool's own eligibility verdict (e.g. `unenforced_keyword`,
+       *  `optional_emission`) — an eligibility-time fact about the tool's schema, independent of
+       *  what the live attempt then did. */
+      caveats?: string[];
+    }>;
+    /**
+     * Present only when a live 400/503 dropped strict PART-WAY THROUGH this attempt. Absent on
+     * an attempt that never attached strict at all — including every attempt after a sticky 400
+     * (there was no drop to describe; the tools simply started unconstrained).
+     */
+    dropped_mid_attempt?: {
+      /** `api_rejected_schema` | `grammar_unavailable` | `service_unavailable`. */
+      reason: string;
+      /** The raw API error message, verbatim. Lives HERE, never on the step-level
+       *  `api_message` — that field describes the step-output dimension only. */
+      api_message?: string;
+      /** How many strict-decorated requests returned 200 before the drop. `0` means the very
+       *  first strict-carrying turn of this attempt was rejected. */
+      strict_turns_before_drop: number;
+    };
+  };
 }
 
 /** Diagnostic metadata captured during step execution. Written once; read by inspect. */

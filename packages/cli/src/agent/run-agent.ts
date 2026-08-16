@@ -229,6 +229,19 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     }
   >();
 
+  // issue #311 — the TOOL-ARGUMENTS sticky map. Deliberately PARALLEL to (never merged with)
+  // `structuredOutputSticky` above: the two dimensions fail independently, and merging them would
+  // let a step-output downgrade silently disable tool-args strict (or vice versa). Nothing reads
+  // this map except the tools path, and nothing reads that map except the non-tools path.
+  //
+  // Same key (step name) and same invocation scope. The ARMING RULE differs by design (D3 §5,
+  // the named R10 divergence from #236's accepted R-Q residual): only a 400
+  // (`api_rejected_schema`) arms this map, because a rejected schema will be rejected identically
+  // on every later attempt — retrying it is pure waste. A 503 does NOT arm it: overload is
+  // transient, and letting it disable tool-args strict for the rest of the drive session would
+  // trade a momentary blip for a session-long silent capability loss.
+  const toolArgsSticky = new Map<string, { reason: string; api_message?: string }>();
+
   // Load or use provided definition.
   const definition: WorkflowDefinition =
     options.definition !== undefined
@@ -540,6 +553,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             }
 
             let toolsResult;
+            // issue #311: hoisted so the evidence assembly below the try/catch can read it.
+            const toolArgsEntries: NonNullable<StructuredOutputMeta['tool_args']>['tools'] = [];
             try {
               const toolDefs: ToolDefinition[] = [];
               const barenameOwner = new Map<string, string>(); // bareName → serverId of first registration
@@ -584,6 +599,83 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     description: mcpTool.description,
                     inputSchema: mcpTool.inputSchema,
                   });
+                }
+              }
+
+              // ---------------------------------------------------------------------------
+              // issue #311 — per-tool strict selection. ENTIRELY gated on the step's own strict
+              // declaration: a step that never opted in takes none of this, so its `toolDefs`
+              // array (contents AND order) reaches the provider byte-identical to before.
+              // ---------------------------------------------------------------------------
+              if (stepDef.structured_output === 'strict') {
+                // Re-sort into the author's DECLARED order. The assembly above walks server by
+                // server, so the wire order otherwise depends on MCP server grouping and each
+                // server's own listing order — neither of which the author controls. The budget
+                // walk below is order-sensitive (it is greedy), so "which tools got strict" must
+                // be a function of something the author can see and reorder: their own list.
+                const declaredIndex = new Map(stepDef.tools.map((id, i) => [id, i]));
+                toolDefs.sort(
+                  (a, b) =>
+                    (declaredIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+                    (declaredIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+                );
+
+                const sticky = toolArgsSticky.get(stepName);
+                // The API's own per-request limits. NOTE: the 20 here is the strict-tool cap and
+                // has nothing to do with `maxToolCalls`'s unrelated default of 20 — never conflate.
+                const MAX_STRICT_TOOLS = 20;
+                const MAX_SUMMED_OPTIONALS = 24;
+                let strictCount = 0;
+                let optionalSum = 0;
+
+                for (const tool of toolDefs) {
+                  const verdict = assessStructuredOutputEligibility({
+                    schema: tool.inputSchema,
+                    tools: false,
+                    subject: 'tool_args',
+                  });
+                  const caveats =
+                    verdict.verdict === 'ineligible'
+                      ? (verdict.caveats ?? []).map((c) => c.code)
+                      : verdict.verdict === 'eligible_with_caveats'
+                        ? verdict.caveats.map((c) => c.code)
+                        : [];
+                  const entry: (typeof toolArgsEntries)[number] = {
+                    name: tool.name,
+                    strict_requested: true,
+                    strict_sent: false,
+                    ...(caveats.length > 0 ? { caveats } : {}),
+                  };
+
+                  if (verdict.verdict === 'ineligible') {
+                    // Ineligible tools consume ZERO budget: the API's 24-optional sum spans the
+                    // schemas strict is actually ATTACHED to, so charging a tool that never gets
+                    // strict would starve later, eligible tools for no reason.
+                    entry.reasons = verdict.reasons.map((r) => r.code);
+                  } else if (sticky !== undefined) {
+                    // A previous attempt for this step took a live 400. Re-sending the same
+                    // schemas would earn the same rejection, so this attempt starts unconstrained
+                    // and every eligible tool reports the ORIGINAL reason verbatim.
+                    entry.reasons = [sticky.reason];
+                  } else {
+                    // Greedy-skip in declared order, INCLUSIVE boundaries (landing exactly on a
+                    // limit fits). A tool that doesn't fit is SKIPPED and the walk CONTINUES —
+                    // stopping at the first miss would let one fat schema disable strict for
+                    // every tool behind it.
+                    const optionals = verdict.optional_count ?? 0;
+                    if (
+                      strictCount + 1 <= MAX_STRICT_TOOLS &&
+                      optionalSum + optionals <= MAX_SUMMED_OPTIONALS
+                    ) {
+                      tool.strict = true;
+                      entry.strict_sent = true;
+                      strictCount += 1;
+                      optionalSum += optionals;
+                    } else {
+                      entry.reasons = ['budget_excluded'];
+                    }
+                  }
+                  toolArgsEntries.push(entry);
                 }
               }
 
@@ -685,6 +777,43 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 sent: false,
                 downgrade_reason: 'unsupported_context_tools',
               };
+            }
+
+            // issue #311 — the TOOL-ARGUMENTS evidence block. COEXISTS with the #332 mint above,
+            // which is left exactly as it was: that mint states the OUTPUT-dimension truth (this
+            // step's own answer was not grammar-constrained), and it stays true no matter how many
+            // tools carried strict. This block adds the independent per-tool story.
+            if (stepDef.structured_output === 'strict' && toolArgsEntries.length > 0) {
+              const drop = toolsResult.toolArgsStrictDrop;
+              if (drop !== undefined) {
+                // DROP TRUTH: flip ONLY the entries strict was actually attached to. An entry that
+                // was ineligible or budget-excluded never carried strict, so the drop says nothing
+                // about it — overwriting its reasons here would erase why it was really skipped.
+                for (const entry of toolArgsEntries) {
+                  if (!entry.strict_sent) continue;
+                  entry.strict_sent = false; // `strict_sent` = FINAL posture of the attempt
+                  entry.reasons = [drop.reason];
+                }
+              }
+              structuredOutputMetaForStep = {
+                ...structuredOutputMetaForStep,
+                requested: true,
+                tool_args: {
+                  tools: toolArgsEntries,
+                  // PER-ATTEMPT, and absent on a sticky attempt by construction: a sticky attempt
+                  // never attaches strict, so the provider has nothing to drop and reports no
+                  // drop. `api_message` lives here, never on the step-level meta.
+                  ...(drop !== undefined ? { dropped_mid_attempt: drop } : {}),
+                },
+              };
+              // Arm the tool-args sticky on a 400 ONLY (see the map's own comment for why a 503
+              // deliberately does not arm it).
+              if (drop?.reason === 'api_rejected_schema' && !toolArgsSticky.has(stepName)) {
+                toolArgsSticky.set(stepName, {
+                  reason: drop.reason,
+                  ...(drop.api_message !== undefined ? { api_message: drop.api_message } : {}),
+                });
+              }
             }
           } else {
             // Retry the LLM call once on failure before giving up.

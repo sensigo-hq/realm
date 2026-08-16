@@ -18,6 +18,16 @@ export interface ToolDefinition {
   name: string; // bare tool name as declared by the MCP server — use this for LLM API wire format
   description: string;
   inputSchema: Record<string, unknown>;
+  /**
+   * Issue #311: attach `strict: true` to THIS tool on the wire. Additive-optional; absent (the
+   * default) is today's behaviour byte-identical.
+   *
+   * The SELECTION decision lives entirely in run-agent (per-tool eligibility verdict + the
+   * declared-order budget walk) and rides down per tool here, rather than as a name list in the
+   * options object, so the marker can never drift out of sync with the tools array it describes.
+   * A provider that ignores this field simply sends every tool unconstrained.
+   */
+  strict?: boolean;
 }
 
 // Executor function — implemented in run-agent.ts, passed into the provider
@@ -37,12 +47,33 @@ export interface StepWithToolsResult {
    */
   correctionCount?: number;
   /**
-   * Issue #236: additive, present only on the tools-path leg the design's by-construction-only
-   * coverage note describes (G6 makes every tools-bearing step ineligible for strict end-to-end,
-   * so this is never populated by AnthropicProvider in v1 — the field exists so a FUTURE
-   * provider/version can populate it without another interface change).
+   * Issue #236: additive, present only on the tools-path leg.
+   *
+   * Issue #311 truth-fix: the original note here claimed this "is never populated by
+   * AnthropicProvider in v1" because "G6 makes every tools-bearing step ineligible for strict
+   * end-to-end". That premise died with #311's Phase-A gate change — strict is now genuinely
+   * reachable on a tools-bearing step, applied to TOOL-CALL ARGUMENTS. This field still carries
+   * the step-OUTPUT meta only; the tool-arguments story is assembled by run-agent from the
+   * per-tool verdicts plus `toolArgsStrictDrop` below.
    */
   structuredOutput?: StructuredOutputMeta;
+  /**
+   * Issue #311: what the WIRE did to strict during this call, when a live 400/503 forced realm to
+   * drop it part-way through the attempt. Absent when nothing was dropped.
+   *
+   * The provider reports only what it observed (status class + captured message + how many
+   * strict-decorated requests had already returned 200); it never assembles evidence. run-agent
+   * owns the `tool_args` block, because only it knows the declared tool order, each tool's
+   * eligibility verdict, and which tools the budget walk selected.
+   */
+  toolArgsStrictDrop?: {
+    /** Status-derived label ONLY — never parsed out of the message body. */
+    reason: 'api_rejected_schema' | 'grammar_unavailable' | 'service_unavailable';
+    /** The raw API error text, verbatim, for the operator to compare against Anthropic's own. */
+    api_message?: string;
+    /** Strict-decorated requests that returned 200 before the drop; 0 = the first one was rejected. */
+    strict_turns_before_drop: number;
+  };
 }
 
 // McpClient interface — implemented in mcp-client.ts

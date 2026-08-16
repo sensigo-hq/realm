@@ -905,4 +905,160 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
       },
     ]);
   });
+
+  // -------------------------------------------------------------------------------------------
+  // issue #311, pin 14 — the NARROW tool-arguments widening, as TWO discriminating cells.
+  //
+  // Cell (i) is the permanent baseline: an opted-in tools step fires this finding on EVERY run
+  // with `unsupported_context_tools` alone (its OUTPUT is never grammar-constrained). Cell (ii)
+  // adds the one tool-args class that is admitted. Both use EXACT array equality: a substring
+  // check for `api_rejected_schema` would be satisfied by a mutant that strips the `tool_args:`
+  // dimension marker, which is precisely what must not happen — the marker is what keeps the
+  // #346 trigger greppable against the permanent baseline.
+  // -------------------------------------------------------------------------------------------
+  it('pin 14 (i) BASELINE: an opted-in tools step with NO tool 400 fires with EXACTLY [unsupported_context_tools]', () => {
+    const run = makeRun({
+      run_phase: 'running',
+      updated_at: NOW.toISOString(),
+      evidence: [
+        snap({
+          step_id: 'classify',
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'unsupported_context_tools',
+              tool_args: {
+                tools: [
+                  // A mix of routine outcomes — none of these is admitted to the finding.
+                  { name: 'strict_ok', strict_requested: true, strict_sent: true },
+                  {
+                    name: 'ineligible',
+                    strict_requested: true,
+                    strict_sent: false,
+                    reasons: ['missing_additional_properties'],
+                  },
+                  {
+                    name: 'skipped',
+                    strict_requested: true,
+                    strict_sent: false,
+                    reasons: ['budget_excluded'],
+                  },
+                  {
+                    name: 'overloaded',
+                    strict_requested: true,
+                    strict_sent: false,
+                    reasons: ['service_unavailable'],
+                  },
+                ],
+              },
+            },
+          },
+        }),
+      ],
+    });
+    const findings = classifyRunHealth(run, { now: NOW });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.evidence).toEqual({
+      steps: [{ step: 'classify', reasons: ['unsupported_context_tools'] }],
+    });
+  });
+
+  it('pin 14 (ii) WITH-400: a tool-args api_rejected_schema adds EXACTLY the dimension-marked literal', () => {
+    const run = makeRun({
+      run_phase: 'running',
+      updated_at: NOW.toISOString(),
+      evidence: [
+        snap({
+          step_id: 'classify',
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'unsupported_context_tools',
+              tool_args: {
+                tools: [
+                  {
+                    name: 'rejected',
+                    strict_requested: true,
+                    strict_sent: false,
+                    reasons: ['api_rejected_schema'],
+                  },
+                  {
+                    name: 'ineligible',
+                    strict_requested: true,
+                    strict_sent: false,
+                    reasons: ['missing_additional_properties'],
+                  },
+                ],
+                dropped_mid_attempt: {
+                  reason: 'api_rejected_schema',
+                  strict_turns_before_drop: 0,
+                },
+              },
+            },
+          },
+        }),
+      ],
+    });
+    const findings = classifyRunHealth(run, { now: NOW });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.evidence).toEqual({
+      steps: [
+        {
+          step: 'classify',
+          reasons: ['unsupported_context_tools', 'tool_args:api_rejected_schema'],
+        },
+      ],
+    });
+  });
+
+  it('pin 14 (iii): two tools rejected in the same attempt contribute the marked literal ONCE', () => {
+    const run = makeRun({
+      run_phase: 'running',
+      updated_at: NOW.toISOString(),
+      evidence: [
+        snap({
+          step_id: 'classify',
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'unsupported_context_tools',
+              tool_args: {
+                tools: [
+                  {
+                    name: 'a',
+                    strict_requested: true,
+                    strict_sent: false,
+                    reasons: ['api_rejected_schema'],
+                  },
+                  {
+                    name: 'b',
+                    strict_requested: true,
+                    strict_sent: false,
+                    reasons: ['api_rejected_schema'],
+                  },
+                ],
+              },
+            },
+          },
+        }),
+      ],
+    });
+    expect(classifyRunHealth(run, { now: NOW })[0]!.evidence).toEqual({
+      steps: [
+        {
+          step: 'classify',
+          reasons: ['unsupported_context_tools', 'tool_args:api_rejected_schema'],
+        },
+      ],
+    });
+  });
 });

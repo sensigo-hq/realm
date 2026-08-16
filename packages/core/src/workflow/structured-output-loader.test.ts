@@ -1,6 +1,6 @@
 // Loader validation for `structured_output: 'strict'` (issue #236, Deliverable 2 — Phase A).
 import { describe, it, expect } from 'vitest';
-import { loadWorkflowFromString } from './yaml-loader.js';
+import { loadWorkflowFromString, loadWorkflowFromStringWithDiagnostics } from './yaml-loader.js';
 import { WorkflowError } from '../types/workflow-error.js';
 
 const CLEAN_SCHEMA_YAML = `
@@ -74,7 +74,13 @@ steps:
     expect(() => loadWorkflowFromString(yaml)).not.toThrow();
   });
 
-  it('rejects a tools-bearing step (G6) with the unsupported_context_tools remediation', () => {
+  // INVERTED by issue #311: the loader used to reject this. Strict on a tools-bearing step is now
+  // a supported, meaningful declaration (it constrains TOOL-CALL ARGUMENTS, per tool, assessed at
+  // runtime), so Phase A returns a caveat rather than an ineligible verdict — and the loader
+  // errors only on ineligible verdicts, which is why it needs no diff of its own. The nudge is
+  // delivered on validate's INFO channel; it is deliberately NOT a LoaderWarning, because a new
+  // WarningCode would auto-fail `validate --strict`.
+  it('ACCEPTS a tools-bearing step (issue #311: strict now targets tool-call arguments) — no throw, and no warning that could fail --strict', () => {
     const yaml = `
 id: g6-tools-wf
 name: G6 Tools
@@ -96,8 +102,11 @@ steps:
       properties:
         category: { type: string }
 `;
-    expectMessage(yaml, 'not eligible for this step');
-    expectMessage(yaml, 'tools-bearing');
+    expect(() => loadWorkflowFromString(yaml)).not.toThrow();
+    // The `--strict` rail: the acceptance must not smuggle in a LoaderWarning, since `failsStrict`
+    // escalates EVERY warning code to an error.
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(yaml);
+    expect(warnings).toEqual([]);
   });
 
   it('a step with no structured_output key is entirely unaffected (default-OFF posture)', () => {
