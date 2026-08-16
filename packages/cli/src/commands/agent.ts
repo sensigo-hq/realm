@@ -6,7 +6,7 @@
 // (with its drift identity attached) flows directly into the run. Gate-notifier config is
 // sourced from `manifest.notifiers.slack_gate` (the nine SLACK_* env reads are deleted).
 import { Command, InvalidArgumentError } from 'commander';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadWorkflowFromFile, JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
 import type { RunStore, WorkflowDefinition, ExtensionRegistry } from '@sensigo/realm';
@@ -86,6 +86,12 @@ export const agentCommand = new Command('agent')
     'Base URL for OpenAI-compatible endpoints (e.g. DeepSeek, Qwen, Groq)',
   )
   .option(
+    '--strict-base-url',
+    'Attest that the --base-url endpoint genuinely enforces structured-output strict mode. ' +
+      'Without this, strict is never sent to a compat endpoint (it may accept and ignore it) ' +
+      'and every strict-declared step records compat_endpoint.',
+  )
+  .option(
     '--provider-module <path>',
     'Path to a custom LlmProvider module (default export must be an instance extending LlmProvider)',
   )
@@ -123,6 +129,7 @@ export const agentCommand = new Command('agent')
       provider?: string;
       model?: string;
       baseUrl?: string;
+      strictBaseUrl?: boolean;
       providerModule?: string;
       register?: boolean;
       extensionsModule?: string;
@@ -153,14 +160,19 @@ export const agentCommand = new Command('agent')
         const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
         const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath);
         let provider: LlmProvider;
+        // issue #313: a third-party provider cannot declare a `providerId` capability (realm
+        // does not know its dialect), so its identity travels separately and evidence can still
+        // name it. In-repo providers declare their own and this stays undefined.
+        let moduleProviderId: `module:${string}` | undefined;
         if (opts.providerModule !== undefined) {
           if (
             opts.provider !== undefined ||
             opts.model !== undefined ||
-            opts.baseUrl !== undefined
+            opts.baseUrl !== undefined ||
+            opts.strictBaseUrl === true
           ) {
             console.error(
-              'Error: --provider-module cannot be combined with --provider, --model, or --base-url',
+              'Error: --provider-module cannot be combined with --provider, --model, --base-url, or --strict-base-url',
             );
             process.exit(1);
           }
@@ -183,11 +195,22 @@ export const agentCommand = new Command('agent')
             process.exit(1);
           }
           provider = mod.default;
+          moduleProviderId = `module:${basename(modulePath)}`;
         } else {
+          // issue #313 (dead-config cell 1): the attestation only means anything for a compat
+          // endpoint. Silently accepting it alone would let an author believe they had changed
+          // something when nothing changed at all.
+          if (opts.strictBaseUrl === true && opts.baseUrl === undefined) {
+            console.error(
+              '  ⚠ --strict-base-url has no effect without --base-url — it attests that a ' +
+                'COMPAT endpoint enforces strict, and native OpenAI endpoints already do.',
+            );
+          }
           provider = await resolveProvider(
             opts.provider as ProviderName | undefined,
             opts.model,
             opts.baseUrl,
+            opts.strictBaseUrl === true,
           );
         }
         // `realm agent` is operator-launched: cwd is a legitimate deployment-root default.
@@ -221,6 +244,7 @@ export const agentCommand = new Command('agent')
               store,
               workflowStore,
               provider,
+              ...(moduleProviderId !== undefined ? { providerId: moduleProviderId } : {}),
               registry: loaded.registry,
               traceBufferStore,
               // issue #197 PR-2: default OFF; the strict-flip (REALM_REQUIRE_WRITER_NONCE) force-
@@ -267,6 +291,7 @@ export const agentCommand = new Command('agent')
               store,
               workflowStore,
               provider,
+              ...(moduleProviderId !== undefined ? { providerId: moduleProviderId } : {}),
               registry: loaded.registry,
               traceBufferStore,
               // issue #197 PR-2: default OFF; the strict-flip (REALM_REQUIRE_WRITER_NONCE) force-

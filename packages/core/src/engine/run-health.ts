@@ -202,7 +202,7 @@ function findGateCorruption(run: RunRecord): RunHealthFinding | undefined {
  * own dual-branch pattern — a live run's evidence and a terminal run's evidence are read exactly
  * the same way; only WHERE the caller is standing differs.
  *
- * issue #311 — TWO scope notes an operator needs before reading this finding:
+ * THREE scope notes an operator needs before reading this finding:
  *
  * 1. EXPECTED FIRE, not an anomaly. Every run of a step that declares `structured_output: strict`
  *    AND declares tools now fires this finding with `unsupported_context_tools`, on every run,
@@ -216,6 +216,15 @@ function findGateCorruption(run: RunRecord): RunHealthFinding | undefined {
  *    `unsupported_context_tools` — those are not in contradiction. Per-tool detail is deliberately
  *    NOT surfaced here (it belongs to `realm run inspect`/`export`); MCP pollers see this narrow
  *    finding only.
+ * 3. (issue #313) A SECOND expected-fire baseline: a strict-declared step driven through an
+ *    OpenAI-COMPATIBLE endpoint (`--base-url`) without the `--strict-base-url` attestation fires
+ *    this finding on every run with `compat_endpoint`. Realm declined to send strict rather than
+ *    send it into an endpoint that might accept and ignore it — a deliberate choice, correctly
+ *    reported. Baseline, not regression; the operator remedy is either `--strict-base-url` (if
+ *    the endpoint genuinely enforces strict) or a native endpoint. Note this is INCLUDED while
+ *    `external_agent` is excluded, and the distinction is epistemic, not cosmetic: realm cannot
+ *    KNOW what an external driver did, whereas compat is realm's own decision — the same footing
+ *    as `unsupported_context_tools`, which is also included.
  */
 function findStructuredOutputDowngrades(run: RunRecord): RunHealthFinding | undefined {
   const reasonsByStep = new Map<string, Set<string>>();

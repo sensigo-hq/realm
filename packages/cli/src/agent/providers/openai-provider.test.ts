@@ -816,7 +816,9 @@ describe('OpenAIProvider.capabilities', () => {
   // -----------------------------------------------------------------------
   it('capabilities() returns jsonMode: true for native OpenAI (no baseUrl)', () => {
     const provider = new OpenAIProvider('gpt-4o');
-    expect(provider.capabilities()).toEqual({ jsonMode: true });
+    // issue #313: a native endpoint carries NO strictGate — exact-match, so a gate leaking onto
+    // the native path (which would silently disable strict everywhere) reds here.
+    expect(provider.capabilities()).toEqual({ jsonMode: true, providerId: 'openai' });
   });
 
   // -----------------------------------------------------------------------
@@ -824,7 +826,13 @@ describe('OpenAIProvider.capabilities', () => {
   // -----------------------------------------------------------------------
   it('capabilities() returns jsonMode: false when baseUrl is set', () => {
     const provider = new OpenAIProvider('gpt-4o', 'https://compat.example.com');
-    expect(provider.capabilities()).toEqual({ jsonMode: false });
+    // issue #313: the compat SHAPE pin — a compat endpoint declares the strictGate by default,
+    // which is what makes strict default-off there.
+    expect(provider.capabilities()).toEqual({
+      jsonMode: false,
+      providerId: 'openai',
+      strictGate: 'compat_endpoint',
+    });
   });
 
   // -----------------------------------------------------------------------

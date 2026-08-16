@@ -1,6 +1,6 @@
 // openai-reasoning-provider.ts — OpenAI reasoning model provider (o1-series) for realm agent.
 // Extends LlmProvider (not ToolCapableLlmProvider) — o1-series models do not support the tools parameter.
-import { LlmProvider } from './llm-provider.js';
+import { LlmProvider, type ProviderCapabilities } from './llm-provider.js';
 import { buildSystemPrompt, extractJsonObject, sanitizeError } from './agent-utils.js';
 
 /**
@@ -32,6 +32,16 @@ export class OpenAIReasoningProvider extends LlmProvider {
   constructor(model: string) {
     super();
     this.model = model;
+  }
+
+  /**
+   * Issue #313: DECLARATION ONLY. `jsonMode` keeps the base value (this provider enforces JSON
+   * through the prompt), and `providerId` exists so evidence names the provider honestly and so
+   * the eligibility profile resolves explicitly rather than by accident. No `response_format`
+   * work here: the o1 family's structured-output support is deliberately out of scope (#351).
+   */
+  capabilities(): ProviderCapabilities {
+    return { jsonMode: false, providerId: 'openai-reasoning' };
   }
 
   async callStep(

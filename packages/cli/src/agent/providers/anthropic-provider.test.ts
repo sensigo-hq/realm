@@ -1056,6 +1056,10 @@ describe('AnthropicProvider.capabilities', () => {
   // disable per-tool strict on the one provider that implements it.
   it('capabilities() returns jsonMode: false and declares toolArgsStrict', () => {
     const provider = new AnthropicProvider('claude-sonnet-4-5');
-    expect(provider.capabilities()).toEqual({ jsonMode: false, toolArgsStrict: true });
+    expect(provider.capabilities()).toEqual({
+      jsonMode: false,
+      toolArgsStrict: true,
+      providerId: 'anthropic',
+    });
   });
 });

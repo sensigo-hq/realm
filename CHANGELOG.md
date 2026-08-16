@@ -6,6 +6,30 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- OpenAI structured-output parity — the OUTPUT dimension (issue #313). A `structured_output: strict`
+  step driven by `--provider openai` is now genuinely grammar-enforced via Chat Completions
+  `response_format: json_schema` (with `strict` always explicit — omitting it is a silent
+  non-enforcement mode, not a neutral default), where it previously fell back to prompt-only JSON.
+  Schemas are assessed against an OpenAI-specific rule profile built from executed probes, because
+  the two providers disagree in both directions: OpenAI accepts and enforces `minLength`/`pattern`/
+  numeric bounds and supports recursion, but requires EVERY property to be in `required` and rejects
+  `allOf`/`not`/`dependent*`/`if-then-else` outright. The sanctioned fix for optional fields —
+  keeping them required and widening to a null union — ships with its measured behaviour rather than
+  reassurance: over 24 real inputs a load-bearing field stayed filled 24/24 while a low-salience one
+  shifted to null 21/24, so consumers must treat null as equivalent to absent.
+  Also: `--strict-base-url`, an author attestation that an OpenAI-compatible `--base-url` endpoint
+  actually enforces strict (without it, strict is never sent there and every attempt records the new
+  `compat_endpoint` disclosure, which the run-health downgrade finding includes); a `provider` field
+  on every attempt's evidence, naming `anthropic`/`openai`/`openai-reasoning`/`module:<name>`; the
+  provider's own `api_param`/`api_code` captured verbatim beside `api_message`; and a drive-time
+  stderr nudge that prints the remediation when a strict-declared step is downgraded or caveated —
+  which fires on Anthropic drives too, where such steps were previously silent.
+  **Tool-call ARGUMENTS on OpenAI are unchanged in this release** and still report
+  `provider_unsupported` per tool — accurate, since that wire path still ignores the per-tool
+  marker. Parity for that dimension lands in the follow-up PR.
+
 ### Fixed
 
 - Per-tool strict evidence no longer claims wire placement on providers that cannot deliver it

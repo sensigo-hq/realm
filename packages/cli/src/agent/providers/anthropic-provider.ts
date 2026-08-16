@@ -22,6 +22,7 @@ import {
   buildSystemPrompt,
   summarizeAgentValidationErrors,
   renderValidationSummaryEntry,
+  extractHttpStatus,
 } from './agent-utils.js';
 
 /** The tool offered at `tool_choice:'auto'` so the model can return structured output directly —
@@ -91,16 +92,8 @@ function resolveMaxTokens(model: string): number {
  *  non-matching message degrades to the generic `service_unavailable` label (fail-safe). */
 const GRAMMAR_UNAVAILABLE_TEXT = 'Grammar compilation is temporarily unavailable';
 
-/** Duck-typed extraction — the `@anthropic-ai/sdk` package is a consumer-supplied peer dependency
- *  (absent from this repo and CI), so its real error class can never be imported/instanceof-
- *  checked here. `.status`/`.message` are the SDK's own long-stable public `APIError` contract. */
-function extractHttpStatus(err: unknown): number | undefined {
-  if (typeof err === 'object' && err !== null && 'status' in err) {
-    const status = (err as { status?: unknown }).status;
-    if (typeof status === 'number') return status;
-  }
-  return undefined;
-}
+// Issue #313: `extractHttpStatus` now lives in agent-utils.ts, shared with the OpenAI ladder —
+// a pure move, zero behaviour change. `extractErrorMessage` deliberately stays local.
 
 function extractErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -208,7 +201,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
    * via a `response_format` json_object mode.
    */
   capabilities(): ProviderCapabilities {
-    return { jsonMode: false, toolArgsStrict: true };
+    return { jsonMode: false, toolArgsStrict: true, providerId: 'anthropic' };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

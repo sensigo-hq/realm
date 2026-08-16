@@ -136,7 +136,7 @@ describe('OpenAIReasoningProvider.callStep', () => {
   // -----------------------------------------------------------------------
   it('capabilities() returns jsonMode: false', () => {
     const provider = new OpenAIReasoningProvider('o1-mini');
-    expect(provider.capabilities()).toEqual({ jsonMode: false });
+    expect(provider.capabilities()).toEqual({ jsonMode: false, providerId: 'openai-reasoning' });
   });
 
   // -----------------------------------------------------------------------

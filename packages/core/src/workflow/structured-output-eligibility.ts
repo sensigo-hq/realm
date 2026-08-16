@@ -25,7 +25,16 @@ export interface StructuredOutputReason {
     | 'unsupported_keyword'
     | 'too_many_optionals'
     | 'too_many_unions'
-    | 'unsupported_context_tools';
+    | 'unsupported_context_tools'
+    // Issue #313, OpenAI profile only — PROBE-DERIVED (the S1 discriminator: an executed 400
+    // naming the all-required rule in isolation). OpenAI requires EVERY property to appear in
+    // `required`; the sanctioned way to express an optional field is a null union.
+    | 'not_all_required'
+    // Issue #313, OpenAI profile only. One code for all four documented size limits (nesting
+    // depth, property count, total schema characters, enum-value count) — the specific limit,
+    // the measured value, and the fix live in `remediation`, which is where this module always
+    // puts the actionable detail.
+    | 'exceeds_provider_limit';
   /** Schema-relative path to the offending node (`''` = root; e.g. `properties.address`). */
   path: string;
   remediation: string;
@@ -44,10 +53,26 @@ export interface StructuredOutputCaveat {
     | 'unenforced_format'
     | 'unenforced_pattern'
     | 'optional_emission'
-    | 'tools_runtime_assessed';
+    | 'tools_runtime_assessed'
+    // Issue #313, OpenAI profile only — the measured counterpart to `optional_emission`. Under
+    // OpenAI strict every property is required, so Anthropic's OMISSION hazard is structurally
+    // impossible; what replaces it is null-propensity on low-salience fields (P5, measured).
+    | 'null_union_emission';
   path: string;
   remediation: string;
 }
+
+/**
+ * Issue #313: which PROVIDER's strict rules to assess against. Phase A (authoring) is
+ * deliberately provider-blind — it cannot know the drive-time provider — so this is a Phase-B
+ * concern only, and it defaults to `'anthropic'`, making every pre-#313 call site zero-diff.
+ *
+ * The two profiles are NOT subset-related: OpenAI's keyword allowlist is WIDER (pattern, format,
+ * numeric bounds, minLength and recursion are all first-class), while its structural rules are
+ * STRICTER (every property must be required). Only the enumerated rows below fork; every other
+ * #236 rule applies unchanged under both.
+ */
+export type StructuredOutputProfile = 'anthropic' | 'openai';
 
 /**
  * Issue #311: which subject this assessment is about. Default (`step_output`) is the #236
@@ -102,6 +127,10 @@ interface PhaseBInput {
   /** Issue #311: `tool_args` forks the remediation vocabulary (fix-owner = the MCP server) and
    *  the enforcement-class caveat text (no Ajv on the tools path). Default `step_output`. */
   subject?: StructuredOutputSubject;
+  /** Issue #313: which provider's strict RULES to assess against. Default `anthropic` — every
+   *  pre-#313 call site is therefore byte-identical. Phase A never passes this (authoring is
+   *  provider-blind by design); only the drive-time Phase-B call knows the provider. */
+  profile?: StructuredOutputProfile;
 }
 
 function isPhaseB(input: PhaseAInput | PhaseBInput): input is PhaseBInput {
@@ -174,6 +203,84 @@ const OWN_ROW_KEYWORDS = new Set(['format', 'pattern']);
 /** Keys that are never schema keywords themselves — traversal structure, not gate subjects. */
 const NON_KEYWORD_KEYS = new Set(['properties', 'items', '$defs', 'definitions']);
 
+/**
+ * Issue #313 — the OpenAI profile's keyword allowlist. WIDER than Anthropic's: every keyword
+ * Anthropic hard-rejects or silently ignores in the numeric/string-constraint family is
+ * first-class here, and `$ref` recursion is supported outright.
+ *
+ * Provenance (api-facts-lane + MA-executed probes, 2026-08-16): the docs were wrong in BOTH
+ * directions for both vendors, so acceptance is probe-anchored, never docs-derived. P2 in
+ * particular FLIPPED the expectation — `minLength` is accepted AND enforced (a 2-char answer
+ * came back padded to exactly 10 characters: the constrained-decoding signature), the exact
+ * opposite of Anthropic's live-proven accept-and-ignore of the same keyword.
+ */
+const OPENAI_SUPPORTED_KEYWORDS = new Set([
+  // structural
+  'type',
+  'properties',
+  'items',
+  'description',
+  'title',
+  'required',
+  'additionalProperties',
+  '$ref',
+  '$defs',
+  'definitions',
+  'default',
+  // value constraints — all first-class under OpenAI strict
+  'enum',
+  'const',
+  'anyOf',
+  'pattern',
+  'format',
+  'minLength',
+  'maxLength',
+  'minimum',
+  'maximum',
+  'exclusiveMinimum',
+  'exclusiveMaximum',
+  'multipleOf',
+  'minItems',
+  'maxItems',
+]);
+
+/**
+ * Issue #313 — the OpenAI profile's HARD rejection set, with PER-MEMBER provenance labels
+ * (final-gate correction 1). Misclassifying a member here costs only the safe json_object
+ * fallback — never a falsity — which is why the docs-derived members are kept conservative:
+ *
+ * - `allOf`              — 400-EXECUTED (probe P3a: "In context=('properties','x'), 'allOf' is
+ *                          not permitted", param=response_format).
+ * - `not`                — DOCS-DERIVED-CONSERVATIVE.
+ * - `dependentRequired`  — DOCS-DERIVED-CONSERVATIVE.
+ * - `dependentSchemas`   — DOCS-DERIVED-CONSERVATIVE.
+ * - `if` / `then` / `else` — DOCS-DERIVED-CONSERVATIVE.
+ *
+ * The class posture (reject-on-unsupported, rather than Anthropic's silent strip) was confirmed
+ * on the one executed member; the rest ride that confirmation conservatively.
+ */
+const OPENAI_UNSUPPORTED_KEYWORDS = new Set([
+  'allOf',
+  'not',
+  'dependentRequired',
+  'dependentSchemas',
+  'if',
+  'then',
+  'else',
+]);
+
+/** Issue #313 — OpenAI's documented, probe-boundary-confirmed schema size limits. */
+const OPENAI_LIMITS = {
+  /** Nesting depth. Boundary-executed: depth 10 ⇒ 200, depth 11 ⇒ 400. */
+  maxDepth: 10,
+  /** Total properties across the schema. */
+  maxProperties: 5000,
+  /** Total characters across property names, enum values and const values. */
+  maxChars: 120_000,
+  /** Values in a single enum. Executed: 1000 ⇒ 200, 1001 ⇒ 400. */
+  maxEnumValues: 1000,
+} as const;
+
 interface Ctx {
   hardReasons: StructuredOutputReason[];
   caveats: StructuredOutputCaveat[];
@@ -182,6 +289,17 @@ interface Ctx {
   seenUnenforcedKeywords: Set<string>;
   /** Issue #311: drives the enforcement-class caveat wording + remediation fix-owner. */
   subject: StructuredOutputSubject;
+  /** Issue #313: drives which provider's RULE CONTENT applies (vs `subject`, which forks only
+   *  wording). Per-row conditionals below — deliberately one walk, never a forked copy. */
+  profile: StructuredOutputProfile;
+  /** Issue #313 (OpenAI limits) — accumulated while walking. Unused under 'anthropic'. */
+  maxDepthSeen: number;
+  propertyCount: number;
+  charCount: number;
+  maxEnumValuesSeen: number;
+  /** Issue #313 (OpenAI) — a property that is null-union-typed, i.e. the sanctioned way to
+   *  express "optional" under a profile that requires every property to be required. */
+  nullUnionCount: number;
 }
 
 /**
@@ -262,20 +380,57 @@ function hasDefsCycle(defs: Record<string, unknown>): boolean {
 
 /** Recursively walks one schema node, mutating `ctx` with every G1/G2/G4/G5 finding + the G3
  *  optional/union counts. `path` is the schema-relative dotted path to THIS node. */
-function walkNode(node: unknown, path: string, ctx: Ctx): void {
+function walkNode(node: unknown, path: string, ctx: Ctx, depth = 1): void {
   if (!isPlainObject(node)) return;
+
+  const openai = ctx.profile === 'openai';
+  // Depth is measured in OBJECT nesting levels — the unit OpenAI's own limit is stated in. A
+  // scalar leaf (`{type: 'string'}`) is a nested schema node but not a nested level, so counting
+  // every node would reject at 9 real levels and silently cost strict on schemas the API accepts.
+  if ((node['type'] === 'object' || node['properties'] !== undefined) && depth > ctx.maxDepthSeen) {
+    ctx.maxDepthSeen = depth;
+  }
+
+  // issue #313 (OpenAI hard set): keywords the API rejects outright with a 400. Checked BEFORE
+  // the generic allowlist walk so they never degrade to the caveat class.
+  if (openai) {
+    for (const kw of Object.keys(node)) {
+      if (!OPENAI_UNSUPPORTED_KEYWORDS.has(kw)) continue;
+      ctx.hardReasons.push({
+        code: 'unsupported_keyword',
+        path,
+        remediation: `'${kw}' at '${path || '(root)'}' is not supported by OpenAI strict mode and is rejected with a 400 — restructure without it (for '${kw}' inside a composition, express the shape directly or use 'anyOf')${fixOwnerHint(ctx.subject)}`,
+      });
+    }
+    // Enum-value cap is per-enum, so it is measured here rather than summed.
+    const enumForCap = node['enum'];
+    if (Array.isArray(enumForCap) && enumForCap.length > ctx.maxEnumValuesSeen) {
+      ctx.maxEnumValuesSeen = enumForCap.length;
+    }
+    // Character budget: property names + enum values + const values.
+    for (const v of Array.isArray(enumForCap) ? enumForCap : []) {
+      ctx.charCount += String(v).length;
+    }
+    if (node['const'] !== undefined) ctx.charCount += String(node['const']).length;
+  }
 
   // G2-hard: root self-reference ('#') — the API neither enforces nor cleanly rejects this edge
   // (premise-probe-raw.md §Live-probe: silent-prune when optional, a persistent 503 when
   // required) — it must NEVER fall to the generic caveat class.
+  //
+  // issue #313: OpenAI supports `$ref` recursion FIRST-CLASS (api-facts lane), so the recursive
+  // arm is Anthropic-only. The external-$ref arm applies to BOTH — an unresolvable reference is
+  // unresolvable everywhere.
   const ref = node['$ref'];
   if (typeof ref === 'string') {
     if (ref === '#') {
-      ctx.hardReasons.push({
-        code: 'unsupported_keyword',
-        path,
-        remediation: `recursive schema at '${path || '(root)'}' ($ref: '#') is not supported — remove the self-reference or restructure without recursion`,
-      });
+      if (!openai) {
+        ctx.hardReasons.push({
+          code: 'unsupported_keyword',
+          path,
+          remediation: `recursive schema at '${path || '(root)'}' ($ref: '#') is not supported — remove the self-reference or restructure without recursion`,
+        });
+      }
     } else if (!ref.startsWith('#')) {
       ctx.hardReasons.push({
         code: 'unsupported_keyword',
@@ -285,8 +440,10 @@ function walkNode(node: unknown, path: string, ctx: Ctx): void {
     }
   }
 
-  // G2-hard: numeric constraints.
-  for (const kw of ['minimum', 'maximum', 'multipleOf'] as const) {
+  // G2-hard: numeric constraints. ANTHROPIC ONLY — OpenAI supports the whole numeric-bound
+  // family first-class (api-facts lane), so flagging them under 'openai' would reject schemas
+  // the API accepts and enforces.
+  for (const kw of openai ? [] : (['minimum', 'maximum', 'multipleOf'] as const)) {
     if (kw in node) {
       ctx.hardReasons.push({
         code: 'unsupported_keyword',
@@ -309,8 +466,9 @@ function walkNode(node: unknown, path: string, ctx: Ctx): void {
     });
   }
 
-  // G4: format.
-  const format = node['format'];
+  // G4: format. ANTHROPIC ONLY — under OpenAI, `format` is supported and NOT flagged (the
+  // profile's deltas are enumerated; inventing a suppression-or-flag beyond them is banned).
+  const format = openai ? undefined : node['format'];
   if (typeof format === 'string' && !SUPPORTED_FORMATS.has(format)) {
     ctx.caveats.push({
       code: 'unenforced_format',
@@ -319,8 +477,10 @@ function walkNode(node: unknown, path: string, ctx: Ctx): void {
     });
   }
 
-  // G5: pattern — always a caveat when present, regardless of regex complexity.
-  if (typeof node['pattern'] === 'string') {
+  // G5: pattern — always a caveat when present, regardless of regex complexity. ANTHROPIC ONLY:
+  // OpenAI accepts `pattern` and (P2, INFERRED-strong) genuinely enforces it via constrained
+  // decoding, so a "realm enforces this post-hoc, the grammar doesn't" caveat would be false.
+  if (!openai && typeof node['pattern'] === 'string') {
     ctx.caveats.push({
       code: 'unenforced_pattern',
       path,
@@ -333,7 +493,11 @@ function walkNode(node: unknown, path: string, ctx: Ctx): void {
   for (const key of Object.keys(node)) {
     if (NON_KEYWORD_KEYS.has(key) || OWN_ROW_KEYWORDS.has(key)) continue;
     if (key === 'minimum' || key === 'maximum' || key === 'multipleOf' || key === 'enum') continue; // already handled (hard or allowlisted)
-    if (STRICT_SUPPORTED_KEYWORDS.has(key)) continue;
+    // issue #313: each profile walks its OWN allowlist. Under 'openai' the hard set was already
+    // rejected above, so anything still off-allowlist here is the genuine unknown-keyword class.
+    if (openai) {
+      if (OPENAI_SUPPORTED_KEYWORDS.has(key) || OPENAI_UNSUPPORTED_KEYWORDS.has(key)) continue;
+    } else if (STRICT_SUPPORTED_KEYWORDS.has(key)) continue;
     if (ctx.seenUnenforcedKeywords.has(`${path}:${key}`)) continue;
     ctx.seenUnenforcedKeywords.add(`${path}:${key}`);
     ctx.caveats.push({
@@ -363,6 +527,12 @@ function walkNode(node: unknown, path: string, ctx: Ctx): void {
       : new Set<string>();
     for (const [propName, propSchema] of Object.entries(properties)) {
       const propPath = joinPath(path, `properties.${propName}`);
+      ctx.propertyCount += 1;
+      if (openai) ctx.charCount += propName.length;
+      const isNullUnion =
+        isPlainObject(propSchema) &&
+        Array.isArray(propSchema['type']) &&
+        (propSchema['type'] as unknown[]).includes('null');
       if (!required.has(propName)) {
         ctx.optionalCount += 1;
         if (
@@ -372,18 +542,30 @@ function walkNode(node: unknown, path: string, ctx: Ctx): void {
         ) {
           ctx.unionCount += 1;
         }
+        // issue #313 (OpenAI): EVERY property must be listed in `required` — probe-derived, the
+        // S1 discriminator isolated it from the additionalProperties rule P1 had conflated it
+        // with. The sanctioned way to express "may be absent" is a null union + required.
+        if (openai) {
+          ctx.hardReasons.push({
+            code: 'not_all_required',
+            path: propPath,
+            remediation: `'${propName}' is not listed in 'required' at '${path || 'the schema root'}' — OpenAI strict requires EVERY property to be required. Add it to 'required'; if it genuinely may be absent, keep it required and widen its type to a null union (e.g. type: ['string', 'null']). Measured (gpt-4o, 24 runs): load-bearing fields stayed filled 24/24 under this rewrite, while a low-salience optional shifted to null 21/24 — so consumers must treat null as equivalent to absent${fixOwnerHint(ctx.subject)}`,
+          });
+        }
+      } else if (openai && isNullUnion) {
+        ctx.nullUnionCount += 1;
       }
-      walkNode(propSchema, propPath, ctx);
+      walkNode(propSchema, propPath, ctx, depth + 1);
     }
   }
 
   const items = node['items'];
-  if (items !== undefined) walkNode(items, joinPath(path, 'items'), ctx);
+  if (items !== undefined) walkNode(items, joinPath(path, 'items'), ctx, depth + 1);
 
   for (const branchKey of ['anyOf', 'allOf'] as const) {
     const branches = node[branchKey];
     if (Array.isArray(branches)) {
-      branches.forEach((b, i) => walkNode(b, joinPath(path, `${branchKey}[${i}]`), ctx));
+      branches.forEach((b, i) => walkNode(b, joinPath(path, `${branchKey}[${i}]`), ctx, depth + 1));
     }
   }
 
@@ -430,6 +612,9 @@ export function assessStructuredOutputEligibility(
   const subject: StructuredOutputSubject = phaseB
     ? (input.subject ?? 'step_output')
     : 'step_output';
+  // Phase A is provider-blind by design (authoring cannot know the drive-time provider), so it
+  // always assesses under the default profile — separation in TIME, not a trade-off.
+  const profile: StructuredOutputProfile = phaseB ? (input.profile ?? 'anthropic') : 'anthropic';
   const toolsFlag = phaseB
     ? input.tools === true
     : Array.isArray(input.tools) && input.tools.length > 0;
@@ -515,22 +700,63 @@ export function assessStructuredOutputEligibility(
     unionCount: 0,
     seenUnenforcedKeywords: new Set(),
     subject,
+    profile,
+    maxDepthSeen: 0,
+    propertyCount: 0,
+    charCount: 0,
+    maxEnumValuesSeen: 0,
+    nullUnionCount: 0,
   };
   walkNode(schema, '', ctx);
 
-  if (ctx.optionalCount > 24) {
-    ctx.hardReasons.push({
-      code: 'too_many_optionals',
-      path: '',
-      remediation: `this schema has ${ctx.optionalCount} optional properties (limit: 24) — reduce the optional-property count or make more fields required`,
-    });
-  }
-  if (ctx.unionCount > 16) {
-    ctx.hardReasons.push({
-      code: 'too_many_unions',
-      path: '',
-      remediation: `this schema has ${ctx.unionCount} union-typed properties (limit: 16) — reduce the anyOf/multi-type property count`,
-    });
+  // The two size caps below are ANTHROPIC's (G3). OpenAI publishes no strict-count or optional
+  // budget at all; its limits are structural size limits, applied instead — see below.
+  if (profile === 'anthropic') {
+    if (ctx.optionalCount > 24) {
+      ctx.hardReasons.push({
+        code: 'too_many_optionals',
+        path: '',
+        remediation: `this schema has ${ctx.optionalCount} optional properties (limit: 24) — reduce the optional-property count or make more fields required`,
+      });
+    }
+    if (ctx.unionCount > 16) {
+      ctx.hardReasons.push({
+        code: 'too_many_unions',
+        path: '',
+        remediation: `this schema has ${ctx.unionCount} union-typed properties (limit: 16) — reduce the anyOf/multi-type property count`,
+      });
+    }
+  } else {
+    // issue #313 — OpenAI's documented size limits (depth boundary and enum-count boundary both
+    // executed against the live API; the other two are documented and untested at that scale).
+    if (ctx.maxDepthSeen > OPENAI_LIMITS.maxDepth) {
+      ctx.hardReasons.push({
+        code: 'exceeds_provider_limit',
+        path: '',
+        remediation: `this schema nests ${ctx.maxDepthSeen} levels deep (OpenAI strict limit: ${OPENAI_LIMITS.maxDepth}) — flatten the deepest branch`,
+      });
+    }
+    if (ctx.propertyCount > OPENAI_LIMITS.maxProperties) {
+      ctx.hardReasons.push({
+        code: 'exceeds_provider_limit',
+        path: '',
+        remediation: `this schema declares ${ctx.propertyCount} properties (OpenAI strict limit: ${OPENAI_LIMITS.maxProperties}) — split the schema or drop properties`,
+      });
+    }
+    if (ctx.charCount > OPENAI_LIMITS.maxChars) {
+      ctx.hardReasons.push({
+        code: 'exceeds_provider_limit',
+        path: '',
+        remediation: `this schema's property names, enum values and const values total ${ctx.charCount} characters (OpenAI strict limit: ${OPENAI_LIMITS.maxChars}) — shorten names or reduce enum members`,
+      });
+    }
+    if (ctx.maxEnumValuesSeen > OPENAI_LIMITS.maxEnumValues) {
+      ctx.hardReasons.push({
+        code: 'exceeds_provider_limit',
+        path: '',
+        remediation: `an enum in this schema has ${ctx.maxEnumValuesSeen} values (OpenAI strict limit: ${OPENAI_LIMITS.maxEnumValues}) — reduce the enum or model the field as a plain string`,
+      });
+    }
   }
 
   if (ctx.hardReasons.length > 0) {
@@ -547,7 +773,18 @@ export function assessStructuredOutputEligibility(
   // (benchmark-raw.md §Run 2) — emission propensity is schema-shape-dependent, so this is a
   // general caveat, not a reasoning-specific rule. The nudge additionally names the
   // reasoning-position instance as the sharpest example (validate.ts).
-  if (ctx.optionalCount > 0) {
+  // issue #313: G7' is ANTHROPIC-ONLY. Under OpenAI every property must be required, so a
+  // schema that reaches this point has no optionals at all and the omission hazard G7' warns
+  // about is structurally impossible. What replaces it is the MEASURED null-propensity of
+  // null-union properties — a different hazard needing different words and different numbers.
+  if (profile === 'openai' && ctx.nullUnionCount > 0) {
+    ctx.caveats.push({
+      code: 'null_union_emission',
+      path: '',
+      remediation: `this schema has ${ctx.nullUnionCount} null-union propert${ctx.nullUnionCount === 1 ? 'y' : 'ies'} (the OpenAI-sanctioned way to say "may be absent"). Measured over 24 real inputs: on gpt-4o a load-bearing field stayed filled 24/24 under strict, while a low-salience field shifted to null 21/24 (on gpt-4o-mini, 3/24 vs its own 2/24 unconstrained omission rate) — so a null here means "the model had nothing to say", not "the field is broken". Consumers MUST treat null as equivalent to absent${fixOwnerHint(ctx.subject)}`,
+    });
+  }
+  if (profile === 'anthropic' && ctx.optionalCount > 0) {
     ctx.caveats.push({
       code: 'optional_emission',
       path: '',
@@ -571,7 +808,11 @@ export function assessStructuredOutputEligibility(
 /** Renders a step's structured_output declaration into a plain-English author message, combining
  *  every reason's own remediation (`; `-joined) — the shared formatter both the loader's typed
  *  error and create_workflow's PRE-register rejection use, so the two surfaces never drift. */
-export function renderIneligibleMessage(reasons: StructuredOutputReason[]): string {
+// Issue #313: the parameter is widened ADDITIVELY to the structural minimum this function has
+// always used, so CAVEATS can feed it too (the drive-time remediation nudge prints for
+// ineligible AND caveated verdicts). Every existing caller passes `StructuredOutputReason[]`,
+// which remains assignable — verified at all three: validate.ts, create-workflow.ts, yaml-loader.ts.
+export function renderIneligibleMessage(reasons: Array<{ remediation: string }>): string {
   return reasons.map((r) => r.remediation).join('; ');
 }
 

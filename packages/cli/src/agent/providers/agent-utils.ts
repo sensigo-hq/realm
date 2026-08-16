@@ -303,3 +303,40 @@ export function rejectAfter(ms: number): Promise<never> {
     setTimeout(() => reject(new Error(`tool call timed out after ${ms}ms`)), ms),
   );
 }
+
+/**
+ * Issue #313: the ONE shared HTTP-status extractor, hoisted verbatim from anthropic-provider.ts
+ * so both provider ladders key on the same duck-type instead of maintaining a copy each.
+ *
+ * Duck-typed by necessity — both `@anthropic-ai/sdk` and `openai` are consumer-supplied peer
+ * dependencies (absent from this repo and CI), so neither SDK's real error class can be
+ * imported or `instanceof`-checked here. `.status` is the documented public `APIError` contract
+ * of both SDKs. ACCEPTED RESIDUAL, on record and owner-ratified: this shape cannot be verified
+ * in CI. It inherits exactly the class the owner ratified for the Anthropic SDK in #236 — if a
+ * future SDK major renamed the field, the ladder would stop engaging and every strict failure
+ * would surface as a plain error rather than a silent wrong downgrade (fail-loud, not fail-quiet).
+ */
+export function extractHttpStatus(err: unknown): number | undefined {
+  if (typeof err === 'object' && err !== null && 'status' in err) {
+    const status = (err as { status?: unknown }).status;
+    if (typeof status === 'number') return status;
+  }
+  return undefined;
+}
+
+/**
+ * Issue #313: the provider's machine-readable error fields, captured VERBATIM for evidence.
+ * `null` is preserved and meaningful — OpenAI returns `param: null, code: null` for the
+ * model-unsupported class, where the message is prose-only. Realm never keys on these.
+ */
+export function extractApiErrorFields(err: unknown): {
+  api_param?: string | null;
+  api_code?: string | null;
+} {
+  if (typeof err !== 'object' || err === null) return {};
+  const e = err as { param?: unknown; code?: unknown };
+  const out: { api_param?: string | null; api_code?: string | null } = {};
+  if ('param' in e) out.api_param = typeof e.param === 'string' ? e.param : null;
+  if ('code' in e) out.api_code = typeof e.code === 'string' ? e.code : null;
+  return out;
+}

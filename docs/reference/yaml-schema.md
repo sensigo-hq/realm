@@ -924,6 +924,12 @@ against this table:
 | **G6**  | The step declares `tools`                                                                                                                                                                                                                                                                                                                                                                      | **caveat `tools_runtime_assessed`** (issue #311 — was `ineligible` before it). Strict is ACCEPTED and applies to the step's **tool-call arguments**, assessed per tool at runtime; the step's own OUTPUT stays post-hoc validated (L1), never grammar-constrained. Nudge text: "strict applies to tool-call arguments; tool schemas are third-party, assessed at runtime; step output stays post-hoc validated". See [strict tool-call arguments](#strict-tool-call-arguments-issue-311). |
 | **G7'** | ANY optional property on an otherwise-eligible schema                                                                                                                                                                                                                                                                                                                                          | caveat `optional_emission` — **measured**: on a real cs1 production schema, strict emitted an optional field in **4 of 24** runs vs **24 of 24** unconstrained (same benchmark, same inputs) — grammar-constrained sampling measurably suppresses optional-field emission on some schema shapes. The remedy: make any field your consumers actually rely on `required` (a `required` field is grammar-forced — the model must emit _something_ for it).                                   |
 
+**The table above is the ANTHROPIC profile.** Since issue #313 the verdict function assesses
+against the provider actually driving the step, and the two profiles genuinely disagree in both
+directions — see [Provider profiles](#provider-profiles-issue-313) below. Authoring-time surfaces
+(`validate`, `register`, the loader) always use the Anthropic profile: they cannot know which
+provider a future drive will use.
+
 **Post-hoc-only, not silent:** every caveat above still gets realm's normal Ajv enforcement after
 the fact (a `pattern`/`format`/`minLength` violation is still caught and reaskable) — "caveat"
 means the GRAMMAR itself can't guarantee it, not that nothing guarantees it.
@@ -940,12 +946,22 @@ gap: authoring-time is where a human can fix the schema; runtime's job is to kee
 ### The fallback ladder (live API failures the static gate could not predict)
 
 Even an eligible schema can 400 or 503 on a live request (the two undocumented-from-schema classes
-above). Any `400` on a request that carried `strict: true` — or a `503` — drops strict, discloses,
-and retries **once** (never a message-text match; the arm keys on HTTP status and whether strict
+above). **Anthropic's ladder:** any `400` on a request that carried `strict: true` — or a `503` —
+drops strict, discloses, and retries **once** (never a message-text match; the arm keys on HTTP status and whether strict
 was actually sent). A **503** additionally gets a label: if its message matches Anthropic's own
 captured grammar-compilation-unavailable text, the disclosure reads `grammar_unavailable`;
 otherwise it reads the generic `service_unavailable` (fail-safe — a non-matching message never
-silently degrades to a false-specific label). The full downgrade-reason vocabulary an
+silently degrades to a false-specific label).
+
+**OpenAI's ladder is 400-only.** There is no 503-grammar analog on that API, so only a `400` on a
+strict-carrying request drops strict and retries once; `5xx`, transport errors and timeouts
+propagate untouched and never drop, never stick. That distinction is deliberate: OpenAI documents
+added latency on the FIRST request compiling a large schema, so a client timeout there must be
+retried as the transport event it is, never recorded as a schema failure. (Measured at realm's
+typical schema scale, the effect was not observable — a novel schema took 834ms against 928ms for
+a cached one — so this is a note for large schemas, not a general expectation.)
+
+The full downgrade-reason vocabulary an
 attempt's evidence (`diagnostics.structured_output.downgrade_reason`) can carry:
 
 | `downgrade_reason`          | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -956,13 +972,16 @@ attempt's evidence (`diagnostics.structured_output.downgrade_reason`) can carry:
 | `service_unavailable`       | A live `503` that did not match — the generic fallback label.                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `provider_unsupported`      | The configured LLM provider does not support the strict path in question. At the STEP level: it doesn't implement the strict-aware call path (a third-party `--provider-module` implementing only the base `callStep`). In a `tool_args` entry: it doesn't place per-tool strict on the wire — today every provider except Anthropic, including `OpenAIProvider`, which DOES implement `callStepWithTools` but ignores the per-tool marker (issue #313 tracks parity). |
 | `unsupported_context_tools` | The step declares `tools`, so its OUTPUT is produced on the tools path, which has no grammar-constrained submit call. Since issue #311 this does **not** mean strict was unavailable to the step: its tool-call ARGUMENTS may well have been grammar-constrained on the same attempt — see `tool_args` below.                                                                                                                                                          |
+| `compat_endpoint`           | (issue #313) The provider is pointed at an OpenAI-compatible endpoint via `--base-url` and the author has not attested that it enforces strict. Realm declines to send strict rather than send it somewhere that may accept and ignore it. Remedy: `--strict-base-url`, or a native endpoint.                                                                                                                                                                          |
 | `external_agent`            | The step declared `structured_output: strict` but was driven by something other than `realm agent` — e.g. an external agent calling `execute_step` over MCP directly. realm cannot know whether strict was honored on that path at all; it says so rather than staying silent.                                                                                                                                                                                         |
 
-**Sticky within a drive:** once a step's strict attempt downgrades (a live 400/503), `realm agent`
+**Sticky within a drive (Anthropic):** once a step's strict attempt downgrades (a live 400/503), `realm agent`
 remembers it for that step for the rest of the drive session — every later attempt (a retried LLM
 call, an issue #217 schema-repair iteration) goes out without strict too, never re-attempting it.
 A non-grammar `503` therefore disables strict for that step for the whole session; the
-`service_unavailable` label makes this auditable rather than silent.
+`service_unavailable` label makes this auditable rather than silent. **On OpenAI only a `400`
+sticks** — a 5xx or a timeout leaves the next attempt free to try strict again, because nothing
+about the schema was in question.
 
 **The observables-only vocabulary, and why there is no `applied` field.** Every disclosed field
 describes what realm did, never what the API did: `sent` means **"realm placed `strict: true` on
@@ -1035,6 +1054,85 @@ actionable event — the API rejecting a tool schema realm had assessed as eligi
 outcomes (`budget_excluded`, eligibility verdicts, 503 labels) are deliberately not surfaced here;
 they would drown the finding. Per-tool detail lives in `realm run inspect`/`export`; MCP pollers
 see the narrow finding only.
+
+### Provider profiles (issue #313)
+
+`structured_output: strict` is not one feature — it is each provider's own constrained-decoding
+mechanism, and the rules differ. Realm assesses a schema against the profile of the provider
+actually driving the step (Anthropic via a `strict` submit tool; OpenAI via Chat Completions
+`response_format: json_schema`). Both profiles were built from EXECUTED probes, not from
+documentation: the published docs proved wrong in both directions for both vendors.
+
+The differences that matter:
+
+|                                                     | Anthropic                                             | OpenAI                                                                           |
+| --------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Optional properties                                 | allowed, with the measured `optional_emission` caveat | **ineligible** (`not_all_required`) — every property must be in `required`       |
+| Expressing "may be absent"                          | leave it optional                                     | keep it required, widen the type to a null union (`['string','null']`)           |
+| `minLength` / `pattern` / `format` / numeric bounds | rejected or silently ignored — caveated               | **supported and enforced**                                                       |
+| `allOf`, `not`, `dependent*`, `if`/`then`/`else`    | `allOf` allowed                                       | **rejected with a 400**                                                          |
+| Recursion (`$ref`)                                  | ineligible                                            | first-class                                                                      |
+| Size limits                                         | ≤24 optionals, ≤16 unions                             | ≤10 nesting levels, ≤5000 properties, ≤120k schema characters, ≤1000 enum values |
+
+**The null-union shift, measured.** Rewriting optionals as required null-unions is the OpenAI-
+sanctioned fix, and it is safe — but it does change behaviour, so realm states the numbers rather
+than reassuring. Over 24 real production inputs on gpt-4o: a load-bearing field stayed filled
+24/24 under strict, while a low-salience decorative field shifted to null 21/24 (on gpt-4o-mini,
+3/24 versus its own 2/24 unconstrained omission rate). Category agreement was flat across arms.
+**Consumers must treat `null` as equivalent to absent** — which the null-union contract already
+implies, but which real code often forgets. Numbers are model-labelled because propensity is
+model-dependent.
+
+**Third-party providers.** A `--provider-module` provider is assessed under the **Anthropic**
+profile: realm cannot know a module's strict dialect. If your module targets a different API, that
+assumption is visible in evidence — every attempt records a `provider` field, so a
+`module:my-provider.js` attempt assessed under Anthropic rules is detectable rather than silent.
+
+### Compat endpoints and `--strict-base-url` (issue #313)
+
+By default realm never sends strict to an OpenAI-**compatible** endpoint configured with
+`--base-url`. Such endpoints range from full grammar enforcement (vLLM, llama.cpp, LM Studio) to
+accepting `response_format` and quietly ignoring it, and no capability-discovery API exists to
+tell them apart. Rather than risk silent non-enforcement, realm declines and discloses
+`compat_endpoint` on every strict-declared attempt.
+
+`--strict-base-url` is the author's attestation that a specific endpoint genuinely enforces it.
+Two honest limits:
+
+- **It is an attestation, not a verification.** Realm cannot detect an endpoint that accepts
+  `strict` and ignores it — that is precisely why the default is off. If you opt in for an
+  endpoint that does not enforce, evidence will read `sent: true` and be telling the truth about
+  what realm did, while nothing was actually constrained.
+- **It lifts strict for opted-in steps only.** Steps without `structured_output: strict` are
+  unaffected and stay on prompt-only JSON enforcement; the flag does not change `jsonMode`.
+
+The flag warns when supplied without `--base-url` (it would attest about nothing), cannot be
+combined with `--provider-module`, and is ignored — loudly — by the o1 model family, which uses a
+dedicated provider that always talks to the native endpoint.
+
+### Evidence: provider provenance and API error fields (issue #313)
+
+Every attempt `realm agent` drives records which provider produced it:
+
+- `provider` — `anthropic` · `openai` · `openai-reasoning` · `module:<basename>` for a
+  `--provider-module`. Engine-synthesized `external_agent` stamps carry NO provider, by
+  construction: realm did not drive those attempts and has no provider to name.
+- `api_param` / `api_code` — the provider's own machine-readable error fields, captured verbatim
+  beside `api_message` when a live 400 drove a downgrade. `null` is preserved and meaningful:
+  OpenAI returns both as null for the model-unsupported class, where the message is prose-only —
+  so `api_rejected_schema` is a slightly imprecise label for that class, and `api_message` is
+  where the truth lives. Realm never makes decisions from these fields; they are for the operator.
+
+**Zero data retention.** OpenAI caches strict schemas server-side, and schemas sent this way are
+not eligible for zero-data-retention treatment. If a schema's SHAPE is itself sensitive (field
+names that reveal an unreleased product, a customer taxonomy), do not opt that step into strict.
+
+**Fine-tuned models.** They accept a narrower keyword set — a schema that works on a base model
+can 400 on a fine-tune, which the live 400 arm handles by dropping strict and retrying. One case
+is NOT covered by any arm: on fine-tuned models, strict is documented as disabled for turns making
+parallel tool calls. That is SILENT non-enforcement — a 200 with nothing to detect — and it is
+covered only by the observables-only vocabulary below: `sent` means realm placed strict on the
+request, never that the API enforced it.
 
 ### Strict tool-call arguments (issue #311)
 
