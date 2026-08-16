@@ -1049,10 +1049,13 @@ describe('AnthropicProvider.callStepWithTools — issue #224 shared-budget chara
 // =========================================================================
 describe('AnthropicProvider.capabilities', () => {
   // -----------------------------------------------------------------------
-  // 13. AnthropicProvider inherits jsonMode: false (regression guard)
+  // 13. jsonMode stays false; toolArgsStrict is DECLARED (issue #311 capability guard)
   // -----------------------------------------------------------------------
-  it('capabilities() returns jsonMode: false (inherits LlmProvider default)', () => {
+  // Exact-match, so it doubles as the declaration pin: run-agent only marks tools and records
+  // `strict_sent` for a provider declaring `toolArgsStrict` — dropping it here would silently
+  // disable per-tool strict on the one provider that implements it.
+  it('capabilities() returns jsonMode: false and declares toolArgsStrict', () => {
     const provider = new AnthropicProvider('claude-sonnet-4-5');
-    expect(provider.capabilities()).toEqual({ jsonMode: false });
+    expect(provider.capabilities()).toEqual({ jsonMode: false, toolArgsStrict: true });
   });
 });

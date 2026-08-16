@@ -443,6 +443,11 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
       async disconnect() {},
     };
     const provider = new (class extends ToolCapableLlmProvider {
+      // Declares the per-tool strict capability so this pin keeps exercising the real selection
+      // path (the assertion below is unchanged).
+      capabilities() {
+        return { jsonMode: false, toolArgsStrict: true };
+      }
       callStep = vi.fn();
       callStepWithTools = vi
         .fn()

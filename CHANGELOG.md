@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- Per-tool strict evidence no longer claims wire placement on providers that cannot deliver it
+  (issue #311, ahead of #313). Strict tool-call arguments shipped gated only on the step's
+  declaration, so a strict-declared tools step driven by any provider other than Anthropic
+  recorded `tool_args[].strict_sent: true` while that provider's wire builder ignored the marker
+  entirely — evidence asserting realm had placed strict on a request where it had not. Per-tool
+  strict is now gated on a new, conservative-by-default provider capability (`toolArgsStrict`,
+  declared only by `AnthropicProvider`): a provider that cannot consume the marker gets no
+  marking, no re-sorting, no eligibility assessment, and an honest `provider_unsupported` entry
+  per declared tool. Anthropic behaviour is unchanged.
+
+---
+
 ## [0.36.0] — 2026-08-16
 
 ### Added

@@ -6,7 +6,7 @@ import {
   type JsonSchema,
   type StructuredOutputMeta,
 } from '@sensigo/realm';
-import { ToolCapableLlmProvider } from './llm-provider.js';
+import { ToolCapableLlmProvider, type ProviderCapabilities } from './llm-provider.js';
 import type {
   ToolCallRecord,
   ToolDefinition,
@@ -195,6 +195,20 @@ async function createMessageWithLadder(
 export class AnthropicProvider extends ToolCapableLlmProvider {
   constructor(private readonly model: string) {
     super();
+  }
+
+  /**
+   * Issue #311 (capability guard). AnthropicProvider is the ONLY provider that reads
+   * `ToolDefinition.strict` and threads it onto the request (see the `anthropicTools.push` in
+   * `callStepWithTools`). Declaring `toolArgsStrict` here is what authorizes run-agent to mark
+   * tools and to record `strict_sent: true` in evidence — a provider whose wire builder ignores
+   * the marker must never produce that claim.
+   *
+   * `jsonMode` keeps the base value: this provider constrains output via the submit TOOL, never
+   * via a `response_format` json_object mode.
+   */
+  capabilities(): ProviderCapabilities {
+    return { jsonMode: false, toolArgsStrict: true };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

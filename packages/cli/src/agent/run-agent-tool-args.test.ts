@@ -90,6 +90,11 @@ function recordingProvider(
   const seen: ToolDefinition[][] = [];
   let call = 0;
   const provider = new (class extends ToolCapableLlmProvider {
+    // Per-tool strict is capability-gated: this double stands in for a provider that DOES place
+    // the marker on the wire (i.e. Anthropic), which is what every pin in this file is about.
+    capabilities() {
+      return { jsonMode: false, toolArgsStrict: true };
+    }
     callStep = vi.fn();
     callStepWithTools = vi.fn(async (_prompt: string, tools: ToolDefinition[]) => {
       // Snapshot the array AND each entry — run-agent must not be able to mutate history.
@@ -550,5 +555,128 @@ describe('runAgent — strict tool-call arguments (issue #311)', () => {
     const runs = await store.list();
     const meta = runs[0]!.evidence.at(-1)?.diagnostics?.structured_output;
     expect(meta?.tool_args).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // The provider CAPABILITY guard — per-tool strict is only meaningful for a provider that
+  // actually places the marker on its wire format.
+  //
+  // Without this gate, a strict-declared tools step on (say) OpenAI marked its tools and recorded
+  // `strict_sent: true` while OpenAI's wire builder ignored the marker completely — evidence
+  // claiming realm placed strict on a request where it demonstrably had not. Issue #313 is the
+  // full OpenAI parity work; this is the honest interim behaviour.
+  // -------------------------------------------------------------------------------------------
+  /**
+   * A tools-capable double that does NOT declare `toolArgsStrict` (the common case today).
+   * `outputs` supplies one answer per call (the last repeats) so a caller can drive the repair
+   * loop the same way `recordingProvider` does.
+   */
+  function incapableProvider(
+    drop?: StepWithToolsResult['toolArgsStrictDrop'],
+    outputs: Array<Record<string, unknown>> = [{ category: 'billing' }],
+  ) {
+    const seen: ToolDefinition[][] = [];
+    let call = 0;
+    const provider = new (class extends ToolCapableLlmProvider {
+      capabilities() {
+        return { jsonMode: false, toolArgsStrict: false };
+      }
+      callStep = vi.fn();
+      callStepWithTools = vi.fn(async (_prompt: string, tools: ToolDefinition[]) => {
+        seen.push(tools.map((t) => ({ ...t })));
+        const output = outputs[Math.min(call, outputs.length - 1)]!;
+        call += 1;
+        return {
+          output,
+          toolCalls: [],
+          ...(drop !== undefined ? { toolArgsStrictDrop: drop } : {}),
+        };
+      });
+    })();
+    return { provider, seen };
+  }
+
+  it('(a) capability-false provider: NO tool is marked, the wire keeps as-built order, and every DECLARED tool reports provider_unsupported', async () => {
+    // Interleaved servers so wire order (server-grouped) and declared order genuinely differ.
+    const def = toolsWorkflow(INTERLEAVED, { strict: true, servers: INTERLEAVED_SERVERS });
+    const { provider, seen } = incapableProvider();
+
+    const { meta } = await drive(def, mockClient(INTERLEAVED_SCHEMAS), provider);
+
+    // Nothing marked — the marker would place nothing on such a provider's wire.
+    for (const t of seen[0]!) expect(t).not.toHaveProperty('strict');
+    // The wire keeps its AS-BUILT (server-grouped) order: no re-sort happens on this arm.
+    expect(seen[0]!.map((t) => t.name)).toEqual(['a1', 'a2', 'b1']);
+    // Evidence still lands, in DECLARED order per the run-record contract — so entry order and
+    // wire order legitimately differ here.
+    expect((meta!.tool_args as ToolArgs).tools).toEqual([
+      { name: 'a1', strict_requested: true, strict_sent: false, reasons: ['provider_unsupported'] },
+      { name: 'b1', strict_requested: true, strict_sent: false, reasons: ['provider_unsupported'] },
+      { name: 'a2', strict_requested: true, strict_sent: false, reasons: ['provider_unsupported'] },
+    ]);
+    // The OUTPUT dimension is untouched by this guard.
+    expect(meta).toMatchObject({ sent: false, downgrade_reason: 'unsupported_context_tools' });
+  });
+
+  it('(a2) no Anthropic-profile eligibility reasons leak in — even for a schema that IS strict-eligible', async () => {
+    // The verdict machinery encodes the Anthropic strict profile; running it for a provider that
+    // could never send strict would report precise-sounding but irrelevant findings.
+    const def = toolsWorkflow(['srv:clean', 'srv:dirty'], { strict: true });
+    const { provider } = incapableProvider();
+
+    const { meta } = await drive(
+      def,
+      mockClient({
+        clean: ELIGIBLE_NO_OPTIONALS_SCHEMA,
+        dirty: GITHUB_LIST_PULL_REQUESTS_SCHEMA, // would be missing_additional_properties etc.
+      }),
+      provider,
+    );
+
+    for (const entry of (meta!.tool_args as ToolArgs).tools) {
+      expect(entry.reasons).toEqual(['provider_unsupported']);
+      expect(entry).not.toHaveProperty('caveats');
+    }
+  });
+
+  it('(b) capability-false provider: a reported drop is IGNORED — no dropped_mid_attempt, no sticky', async () => {
+    const def = toolsWorkflow(['srv:a'], { strict: true, outputSchema: RETRY_OUTPUT_SCHEMA });
+    // Attempt 1 answers off-enum so the repair loop drives a SECOND attempt — that second
+    // attempt is where a wrongly-armed sticky map would show itself.
+    const { provider, seen } = incapableProvider(DROP_400, [
+      { category: 'NOT_IN_ENUM' },
+      { category: 'billing' },
+    ]);
+
+    const { meta } = await drive(def, mockClient({ a: ELIGIBLE_NO_OPTIONALS_SCHEMA }), provider, {
+      schemaRetries: 1,
+    });
+
+    // Strict was never attached, so there is nothing to have dropped.
+    expect((meta!.tool_args as ToolArgs).dropped_mid_attempt).toBeUndefined();
+    expect((meta!.tool_args as ToolArgs).tools[0]!.reasons).toEqual(['provider_unsupported']);
+    // And the sticky map was never armed: the later attempt looks exactly like the first.
+    expect(seen.length).toBeGreaterThanOrEqual(2);
+    for (const call of seen) for (const t of call) expect(t).not.toHaveProperty('strict');
+  });
+
+  it('(c) a provider with NO capabilities() override at all takes the same path — conservative by default', async () => {
+    const def = toolsWorkflow(['srv:a'], { strict: true });
+    // Deliberately declares nothing: this is the third-party `--provider-module` shape.
+    const seen: ToolDefinition[][] = [];
+    const provider = new (class extends ToolCapableLlmProvider {
+      callStep = vi.fn();
+      callStepWithTools = vi.fn(async (_prompt: string, tools: ToolDefinition[]) => {
+        seen.push(tools.map((t) => ({ ...t })));
+        return { output: { category: 'billing' }, toolCalls: [] };
+      });
+    })();
+
+    const { meta } = await drive(def, mockClient({ a: ELIGIBLE_NO_OPTIONALS_SCHEMA }), provider);
+
+    for (const t of seen[0]!) expect(t).not.toHaveProperty('strict');
+    expect((meta!.tool_args as ToolArgs).tools).toEqual([
+      { name: 'a', strict_requested: true, strict_sent: false, reasons: ['provider_unsupported'] },
+    ]);
   });
 });
