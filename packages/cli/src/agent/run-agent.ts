@@ -15,6 +15,7 @@ import {
   WorkflowError,
   DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
   assessStructuredOutputEligibility,
+  renderIneligibleMessage,
   type RunStore,
   type WorkflowDefinition,
   type StepDefinition,
@@ -42,6 +43,13 @@ export interface AgentDeps {
   store: RunStore;
   workflowStore: WorkflowRegistrar;
   provider: LlmProvider;
+  /**
+   * Issue #313: the provenance identity for a third-party `--provider-module` provider, which
+   * cannot declare a `providerId` capability of its own. Typed as the template literal so the
+   * evidence field's union (which includes `module:${string}`) typechecks end-to-end with no
+   * casts. In-repo providers leave this unset — their own capabilities() answer wins.
+   */
+  providerId?: `module:${string}`;
   registry: ExtensionRegistry;
   /**
    * When set, called for every pending gate. The handler is responsible for notifying
@@ -241,6 +249,17 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // transient, and letting it disable tool-args strict for the rest of the drive session would
   // trade a momentary blip for a session-long silent capability loss.
   const toolArgsSticky = new Map<string, { reason: string; api_message?: string }>();
+
+  // issue #313 — read the provider's capabilities ONCE for the whole drive (they are constant
+  // per instance) and derive the three facts every dimension needs from them.
+  const caps = deps.provider.capabilities();
+  // Evidence provenance: an in-repo provider names itself; a third-party module cannot, so
+  // agent.ts supplies `module:<basename>` instead. Undefined only if neither applies.
+  const providerForEvidence = caps.providerId ?? deps.providerId;
+  // Which provider's strict RULES to assess schemas against. Module providers fall to the
+  // Anthropic profile — realm cannot know a module's dialect — and the `provider` field above is
+  // what makes that assumption visible if the module in fact targets a different API.
+  const profile = caps.providerId === 'openai' ? ('openai' as const) : ('anthropic' as const);
 
   // Load or use provided definition.
   const definition: WorkflowDefinition =
@@ -494,11 +513,37 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 send: false,
                 ineligibleMeta: { requested: true, sent: false, ...sticky },
               };
+            } else if (caps.strictGate !== undefined) {
+              // issue #313: an ENDPOINT-scoped refusal, checked AFTER sticky and BEFORE the
+              // verdict. Two consequences, both deliberate: the schema is never assessed (its
+              // eligibility is irrelevant when strict cannot be sent at all), and this arm sits
+              // structurally outside the sticky-arming path, so a compat endpoint can never arm
+              // sticky — nothing was attempted, so there is nothing to remember.
+              structuredOutputPlan = {
+                send: false,
+                ineligibleMeta: {
+                  requested: true,
+                  sent: false,
+                  downgrade_reason: caps.strictGate,
+                },
+              };
             } else {
               const verdict = assessStructuredOutputEligibility({
                 schema: inputSchema,
                 tools: false,
+                profile,
               });
+              // issue #313 — the remediation nudge. The plan below discards `reasons`, so this
+              // is the only place they still exist. Printed once per step (`repairsUsed === 0`),
+              // for ineligible AND caveated verdicts, on stderr: an author who opted into strict
+              // and silently did not get it is exactly who needs to know why.
+              if (repairsUsed === 0 && verdict.verdict !== 'eligible') {
+                const findings =
+                  verdict.verdict === 'ineligible' ? verdict.reasons : verdict.caveats;
+                console.error(
+                  `  ⚠ Step '${stepName}': structured_output: strict — ${renderIneligibleMessage(findings)}`,
+                );
+              }
               if (verdict.verdict === 'ineligible') {
                 structuredOutputPlan = {
                   send: false,
@@ -953,6 +998,19 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // Auto step — the engine dispatches to the service adapter directly.
           console.log(`→ [auto] ${stepName}`);
           stepInput = {};
+        }
+
+        // issue #313 — the PROVENANCE chokepoint. Every path above that mints a
+        // `structuredOutputMetaForStep` (gate, sticky, compat, live ladder, tools mint, the
+        // provider_unsupported synthesis) funnels through here, so stamping the provider once at
+        // this single point covers them all and cannot be forgotten on a new arm. The engine's
+        // OWN synthesized `external_agent` stamps never pass through here and therefore carry no
+        // provider — correctly, since realm did not drive those attempts.
+        if (structuredOutputMetaForStep !== undefined && providerForEvidence !== undefined) {
+          structuredOutputMetaForStep = {
+            ...structuredOutputMetaForStep,
+            provider: providerForEvidence,
+          };
         }
 
         result = await executeChain(deps.store, definition, {

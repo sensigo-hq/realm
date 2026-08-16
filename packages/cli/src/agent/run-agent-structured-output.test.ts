@@ -139,7 +139,12 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
 
     const runs = await store.list();
     const meta = lastEvidenceMeta(runs[0]!);
-    expect(meta).toEqual({ requested: true, sent: false, downgrade_reason: 'gate_ineligible' });
+    expect(meta).toEqual({
+      requested: true,
+      sent: false,
+      downgrade_reason: 'gate_ineligible',
+      provider: 'anthropic',
+    });
   });
 
   it('a third-party provider (base LlmProvider, callStep only) ⇒ provider_unsupported, NEVER external_agent [R2-3 synthesis rule]', async () => {
@@ -265,6 +270,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
       downgrade_reason: 'api_rejected_schema',
       api_message:
         "tools.0.custom: For 'object' type, 'additionalProperties' must be explicitly set to false",
+      provider: 'anthropic',
     });
   });
 
@@ -296,7 +302,12 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
     expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('tools');
     const runs = await store.list();
     const meta = lastEvidenceMeta(runs[0]!);
-    expect(meta).toEqual({ requested: true, sent: false, downgrade_reason: 'gate_ineligible' });
+    expect(meta).toEqual({
+      requested: true,
+      sent: false,
+      downgrade_reason: 'gate_ineligible',
+      provider: 'anthropic',
+    });
   });
 
   it("Phase-B G7' caveat carry: an eligible_with_caveats schema's caveats are carried into the disclosed meta when strict is actually sent", async () => {
@@ -401,6 +412,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
         "tools.0.custom: For 'object' type, 'additionalProperties' must be explicitly set to false",
       caveats: ['optional_emission'],
       submission_channel: 'tool',
+      provider: 'anthropic',
     });
   });
 

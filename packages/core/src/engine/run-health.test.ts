@@ -916,6 +916,42 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
   // dimension marker, which is precisely what must not happen — the marker is what keeps the
   // #346 trigger greppable against the permanent baseline.
   // -------------------------------------------------------------------------------------------
+  // issue #313 — the compat_endpoint INCLUSION pin. This REPLACES the old exclusion reading:
+  // `external_agent` is excluded because realm cannot KNOW what an external driver did, whereas
+  // a compat gate is realm's OWN decision not to send strict — epistemically the same footing as
+  // `unsupported_context_tools`, which has always been included. The predicate needed no change;
+  // this pin is what keeps it that way.
+  it('issue #313 INCLUSION: a compat-gated strict-declared run FIRES the finding, with compat_endpoint visible', () => {
+    const run = makeRun({
+      run_phase: 'running',
+      updated_at: NOW.toISOString(),
+      evidence: [
+        snap({
+          step_id: 'classify',
+          diagnostics: {
+            input_token_estimate: 10,
+            precondition_trace: [],
+            structured_output: {
+              requested: true,
+              sent: false,
+              downgrade_reason: 'compat_endpoint',
+              provider: 'openai',
+            },
+          },
+        }),
+      ],
+    });
+    const findings = classifyRunHealth(run, { now: NOW });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.kind).toBe('structured_output_downgraded');
+    expect(findings[0]!.evidence).toEqual({
+      steps: [{ step: 'classify', reasons: ['compat_endpoint'] }],
+    });
+    // The literal must be legible in the human-readable reason too — an operator reading the
+    // finding needs to know WHICH remedy applies (--strict-base-url vs a native endpoint).
+    expect(findings[0]!.reason).toContain('compat_endpoint');
+  });
+
   it('pin 14 (i) BASELINE: an opted-in tools step with NO tool 400 fires with EXACTLY [unsupported_context_tools]', () => {
     const run = makeRun({
       run_phase: 'running',

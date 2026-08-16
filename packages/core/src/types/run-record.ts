@@ -127,9 +127,15 @@ export interface StructuredOutputMeta {
    * - `service_unavailable` — a live 503 that did NOT match the grammar text (a generic overload
    *   — fail-safe default label for any non-matching 503).
    * - `provider_unsupported` — the configured LLM provider does not implement `callStepWithMeta`
-   *   (a third-party `--provider-module` that only implements the base `callStep`).
+   *   (a third-party `--provider-module` that only implements the base `callStep`). Both in-repo
+   *   strict-capable providers override it, so at the STEP level this now names third-party
+   *   modules specifically.
    * - `unsupported_context_tools` — the step declares `tools`, so its OUTPUT is produced on the
-   *   tools path, which has no grammar-constrained submit call. Issue #311 truth pass: this no
+   *   tools path, where realm sends no grammar-constrained submit call. That is a PER-PROVIDER
+   *   DESIGN DECISION, not an API limitation: composing a step-output grammar with strict tool
+   *   arguments in one request is unprobed on both providers, and doing it blind would make a
+   *   400 impossible to attribute to the right dimension. A future version wanting it starts
+   *   with the probe. Issue #311 truth pass: this no
    *   longer means "strict is unsupported on this step" — strict may well have been attached to
    *   that step's TOOL-CALL ARGUMENTS on the very same attempt (see `tool_args`). It means only
    *   that the step's own output was not grammar-constrained.
@@ -137,6 +143,12 @@ export interface StructuredOutputMeta {
    *   something other than `realm agent` (e.g. an external agent calling `execute_step` over
    *   MCP directly) — no `stepMeta.structuredOutput` was ever attached, so realm cannot know
    *   whether strict was honored at all.
+   * - `compat_endpoint` (issue #313) — the provider is pointed at an OpenAI-COMPATIBLE endpoint
+   *   via `--base-url`, and the author has not attested that it enforces strict. Realm declines
+   *   to send strict rather than send it into an endpoint that may accept and ignore it. The
+   *   remedy is `--strict-base-url` (an author attestation) or a native endpoint. Unlike
+   *   `external_agent`, this is realm's own CHOICE, which is why the run-health finding
+   *   includes it.
    */
   downgrade_reason?:
     | 'gate_ineligible'
@@ -145,10 +157,33 @@ export interface StructuredOutputMeta {
     | 'service_unavailable'
     | 'provider_unsupported'
     | 'unsupported_context_tools'
-    | 'external_agent';
+    | 'external_agent'
+    | 'compat_endpoint';
   /** The raw API error message, when a live 400/503 drove a downgrade — attached verbatim,
-   *  never rewritten, so an operator can compare against Anthropic's own documented error text. */
+   *  never rewritten, so an operator can compare against the provider's own documented error text. */
   api_message?: string;
+  /**
+   * Issue #313 — the provider's own machine-readable error fields, captured VERBATIM alongside
+   * `api_message` when a live 400 drove a downgrade. `null` is meaningful and preserved: OpenAI
+   * returns `param: null, code: null` for the model-unsupported class (probe P8), where the
+   * message is prose-only. Realm never KEYS any decision on these — they are capture-only, for
+   * an operator comparing against the provider's documented error taxonomy.
+   */
+  api_param?: string | null;
+  api_code?: string | null;
+  /**
+   * Issue #313 — which provider produced this attempt. Minted at a single run-agent chokepoint,
+   * so every meta run-agent writes carries it.
+   *
+   * The open `module:${string}` member names a third-party `--provider-module` by its module
+   * basename: such providers are assessed under the ANTHROPIC rule profile (realm cannot know a
+   * module's strict dialect), and this field is what makes that assumption detectable if the
+   * module in fact targets a different API.
+   *
+   * BY CONSTRUCTION absent on the engine's synthesized `external_agent` stamps: realm did not
+   * drive those attempts, so it has no provider to name.
+   */
+  provider?: 'anthropic' | 'openai' | 'openai-reasoning' | `module:${string}`;
   /** Whether the model's output arrived via the submit tool (`tool_use.input`, pre-parsed) or as
    *  extracted text — the standing dodge detector (design record R-B): a schema shaped to make
    *  the model prefer a text answer over the strict-constrained tool would show up here. */
@@ -198,6 +233,8 @@ export interface StructuredOutputMeta {
        *   wire at all (today: every provider except Anthropic), so strict was never attached to
        *   ANY tool on this attempt and no per-tool eligibility was assessed. Reuses the
        *   step-level literal of the same name; issue #313 tracks OpenAI parity.
+       * - `not_all_required` (issue #313) — an OpenAI-profile verdict code: a property outside
+       *   `required`. Reachable on the tools path once OpenAI consumes the per-tool marker.
        */
       reasons?: string[];
       /** Caveat codes from this tool's own eligibility verdict (e.g. `unenforced_keyword`,
@@ -216,6 +253,11 @@ export interface StructuredOutputMeta {
       /** The raw API error message, verbatim. Lives HERE, never on the step-level
        *  `api_message` — that field describes the step-output dimension only. */
       api_message?: string;
+      /** Issue #313 — the provider's machine-readable error fields, captured verbatim beside
+       *  `api_message` (same capture-only, never-keyed discipline as the step-level pair).
+       *  TYPE-ONLY in PR-1: the tools dimension starts minting these in the follow-up PR. */
+      api_param?: string | null;
+      api_code?: string | null;
       /** How many strict-decorated requests returned 200 before the drop. `0` means the very
        *  first strict-carrying turn of this attempt was rejected. */
       strict_turns_before_drop: number;

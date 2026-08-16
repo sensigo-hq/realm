@@ -270,6 +270,92 @@ describe('resolveProvider', () => {
 });
 
 // ---------------------------------------------------------------------------
+describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
+  let saved: string | undefined;
+  beforeEach(() => {
+    saved = process.env['OPENAI_API_KEY'];
+    process.env['OPENAI_API_KEY'] = 'test-key';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env['OPENAI_API_KEY'];
+    else process.env['OPENAI_API_KEY'] = saved;
+    vi.restoreAllMocks();
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // The FLAG-TRAVEL pin pair. Everything else about --strict-base-url is pinned on a REJECTION
+  // path (anthropic throws, o1 drops it) or by constructing OpenAIProvider directly. Neither
+  // touches the leg that makes the feature work: the flag actually reaching the constructor
+  // through resolveProvider. Without these two cells, replacing `strictBaseUrlFlag === true`
+  // with `false` at that call site kills the whole feature silently — every other test stays
+  // green, and strict is never sent to any attested endpoint again.
+  //
+  // A direct-ctor cell cannot substitute: it bypasses the seam under test.
+  // -------------------------------------------------------------------------------------------
+  it('flag-travel (i): --strict-base-url ARRIVES at the provider — an attested compat endpoint carries NO strictGate', async () => {
+    const p = await resolveProvider('openai', 'gpt-4o', 'https://compat.example.com', true);
+    // Deep-equal, so a strictGate surviving the attestation reds here.
+    expect(p.capabilities()).toEqual({ jsonMode: false, providerId: 'openai' });
+  });
+
+  it('flag-travel (ii): the discriminating counterpart — the SAME call without the attestation IS gated', async () => {
+    const explicitFalse = await resolveProvider(
+      'openai',
+      'gpt-4o',
+      'https://compat.example.com',
+      false,
+    );
+    expect(explicitFalse.capabilities()).toEqual({
+      jsonMode: false,
+      providerId: 'openai',
+      strictGate: 'compat_endpoint',
+    });
+    // …and omitted entirely (the CLI passes nothing when the flag is absent).
+    const omitted = await resolveProvider('openai', 'gpt-4o', 'https://compat.example.com');
+    expect(omitted.capabilities()).toEqual({
+      jsonMode: false,
+      providerId: 'openai',
+      strictGate: 'compat_endpoint',
+    });
+  });
+
+  it('dead-config 3: --strict-base-url with --provider anthropic is dead — anthropic already REFUSES --base-url, and the flag alone changes nothing', async () => {
+    process.env['ANTHROPIC_API_KEY'] = 'test-key';
+    try {
+      // The pre-existing hard refusal still governs the combination that CAN be expressed.
+      await expect(
+        resolveProvider('anthropic', 'claude-sonnet-4-5', 'https://x.example.com', true),
+      ).rejects.toThrow('--base-url is only supported with --provider openai');
+      // Flag alone: no --base-url to attest about, so the Anthropic provider is built normally
+      // and the attestation is inert (the CLI layer is what warns — cell 1).
+      const p = await resolveProvider('anthropic', 'claude-sonnet-4-5', undefined, true);
+      expect(p.capabilities().providerId).toBe('anthropic');
+      expect(p.capabilities().strictGate).toBeUndefined();
+    } finally {
+      delete process.env['ANTHROPIC_API_KEY'];
+    }
+  });
+
+  it('dead-config 4: the o1 branch DROPS --base-url/--strict-base-url and now says so (it silently ignored them before)', async () => {
+    const p = await resolveProvider('openai', 'o1-mini', 'https://compat.example.com', true);
+    expect(p.capabilities().providerId).toBe('openai-reasoning');
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('ignored for the o1 model family'),
+    );
+    const printed = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((c) => String(c[0]))
+      .join('\n');
+    expect(printed).toContain('--base-url');
+    expect(printed).toContain('--strict-base-url');
+  });
+
+  it('the o1 branch stays SILENT when neither flag was supplied', async () => {
+    await resolveProvider('openai', 'o1-mini', undefined, false);
+    expect(console.error).not.toHaveBeenCalled();
+  });
+});
+
 describe('agentCommand CLI guards', () => {
   beforeEach(() => {
     vi.spyOn(process, 'exit').mockImplementation((() => {}) as () => never);
@@ -292,6 +378,43 @@ describe('agentCommand CLI guards', () => {
       .catch(() => {});
     expect(process.exit).toHaveBeenCalledWith(1);
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining('mutually exclusive'));
+  });
+
+  // issue #313 — the four dead-config cells. Silently accepting a flag that changes nothing is
+  // the class the #291 F10 precedent says to warn about: the author believes they configured
+  // something. Cell 2 is an exit-1 ERROR (a genuine conflict); cells 1/3/4 are warns.
+  it('dead-config 1: --strict-base-url WITHOUT --base-url warns (it attests about a compat endpoint that was never configured)', async () => {
+    const saved = process.env['OPENAI_API_KEY'];
+    process.env['OPENAI_API_KEY'] = 'test-key';
+    try {
+      await agentCommand
+        .parseAsync(['node', 'realm', '--workflow', 'nope/none.yaml', '--strict-base-url'])
+        .catch(() => {});
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining('--strict-base-url has no effect without --base-url'),
+      );
+    } finally {
+      if (saved === undefined) delete process.env['OPENAI_API_KEY'];
+      else process.env['OPENAI_API_KEY'] = saved;
+    }
+  });
+
+  it('dead-config 2: --strict-base-url joins the --provider-module cannot-combine ERROR', async () => {
+    await agentCommand
+      .parseAsync([
+        'node',
+        'realm',
+        '--workflow',
+        'some/path',
+        '--provider-module',
+        './p.js',
+        '--strict-base-url',
+      ])
+      .catch(() => {});
+    expect(process.exit).toHaveBeenCalledWith(1);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('--provider-module cannot be combined'),
+    );
   });
 
   it('exits with 1 and prints error when --params is used with --run-id', async () => {

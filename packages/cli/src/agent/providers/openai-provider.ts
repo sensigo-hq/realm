@@ -1,6 +1,11 @@
 // openai-provider.ts — OpenAI LLM provider implementation for realm agent.
 // Requires openai >= 4.0.0 as an optional peer dependency (npm install openai).
-import { WorkflowError, validateAgentSubmission, type JsonSchema } from '@sensigo/realm';
+import {
+  WorkflowError,
+  validateAgentSubmission,
+  type JsonSchema,
+  type StructuredOutputMeta,
+} from '@sensigo/realm';
 import { ToolCapableLlmProvider, type ProviderCapabilities } from './llm-provider.js';
 import type {
   ToolCallRecord,
@@ -17,7 +22,35 @@ import {
   buildSystemPrompt,
   summarizeAgentValidationErrors,
   renderValidationSummaryEntry,
+  extractHttpStatus,
+  extractApiErrorFields,
 } from './agent-utils.js';
+
+/**
+ * Issue #313: the schema name OpenAI requires on `response_format.json_schema`. Must match
+ * `[a-zA-Z0-9_-]{1,64}`; it is an identifier for the schema, never shown to the model as content.
+ */
+const JSON_SCHEMA_NAME = 'realm_step_output';
+
+/**
+ * Issue #313 — the OpenAI analog of the Anthropic ladder's error: thrown when the drop-strict
+ * RETRY also fails, carrying the meta so run-agent's no-result arm can still arm sticky and
+ * disclose the downgrade for an attempt that produced no output at all. run-agent reads
+ * `.structuredOutput` duck-typed, so this deliberately does not import the Anthropic class —
+ * the two provider modules stay independently loadable (each SDK is an optional peer dep).
+ */
+export class OpenAIStructuredOutputLadderError extends Error {
+  readonly structuredOutput: StructuredOutputMeta;
+  constructor(
+    message: string,
+    structuredOutput: StructuredOutputMeta,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = 'OpenAIStructuredOutputLadderError';
+    this.structuredOutput = structuredOutput;
+  }
+}
 
 /**
  * OpenAI LLM provider for realm agent.
@@ -28,20 +61,38 @@ import {
 export class OpenAIProvider extends ToolCapableLlmProvider {
   private readonly model: string;
   private readonly baseUrl: string | undefined;
+  private readonly strictBaseUrl: boolean;
 
-  constructor(model: string, baseUrl?: string) {
+  constructor(model: string, baseUrl?: string, strictBaseUrl = false) {
     super();
     this.model = model;
     this.baseUrl = baseUrl;
+    this.strictBaseUrl = strictBaseUrl;
   }
 
   /**
    * Native OpenAI endpoints have a well-defined, tested capability surface that includes
    * json_object mode. Custom compat endpoints behind --base-url do not guarantee this feature.
    * Default to prompt-only enforcement for any unknown endpoint.
+   *
+   * Issue #313: `strictGate` is set on a compat endpoint UNLESS the author attested via
+   * `--strict-base-url`. Compat endpoints range from full grammar enforcement (vLLM,
+   * llama.cpp, LM Studio) to accepting `response_format` and quietly ignoring it, and no
+   * capability-discovery API exists — so realm defaults to not sending strict there and
+   * discloses `compat_endpoint` rather than risk a silent non-enforcement.
+   *
+   * NOTE: `toolArgsStrict` is deliberately NOT declared yet — this provider's tools wire builder
+   * still ignores the per-tool marker, so declaring it would resurrect exactly the falsity the
+   * #350 capability guard fixed. It flips in the tool-args PR, together with the wire support.
    */
   capabilities(): ProviderCapabilities {
-    return { jsonMode: this.baseUrl === undefined };
+    return {
+      jsonMode: this.baseUrl === undefined,
+      providerId: 'openai',
+      ...(this.baseUrl !== undefined && !this.strictBaseUrl
+        ? { strictGate: 'compat_endpoint' as const }
+        : {}),
+    };
   }
 
   async callStep(
@@ -106,6 +157,128 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     throw new Error(
       sanitizeError(`OpenAI returned non-JSON content after retry: ${retry.slice(0, 200)}`),
     );
+  }
+
+  /**
+   * Issue #313 — the structured_output-aware entry point (the #236 rail against an OpenAI
+   * override is formally overturned; see llm-provider.ts).
+   *
+   * Two paths, deliberately disjoint:
+   *
+   * - Strict NOT requested (a gate-ineligible, sticky, or compat-gated attempt, where run-agent
+   *   already holds the meta it will record): delegate to `callStep` VERBATIM. The json_object
+   *   path is therefore byte-identical to pre-#313 by construction, not by careful copying.
+   * - Strict requested: Chat Completions `response_format: json_schema` with `strict: true`
+   *   ALWAYS explicit. Omitting `strict` is NOT a neutral default — probe P1 executed it: an
+   *   omitted flag yields 200 with the schema unenforced, i.e. a silent non-enforcement mode.
+   *
+   * The ladder is status-keyed, never message-keyed: a 400 on a strict-carrying request drops
+   * strict and retries the turn once; a second 400 throws an error CARRYING the meta. Anything
+   * else — 5xx, transport, timeouts — propagates untouched and never drops or sticks, because
+   * OpenAI has no 503-grammar analog and a slow first strict call (schema compilation) must be
+   * retried as transport, never recorded as a schema failure.
+   */
+  async callStepWithMeta(
+    prompt: string,
+    inputSchema?: Record<string, unknown>,
+    agentProfileInstructions?: string,
+    opts?: { structuredOutputStrict?: boolean },
+  ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
+    if (opts?.structuredOutputStrict !== true || inputSchema === undefined) {
+      return { output: await this.callStep(prompt, inputSchema, agentProfileInstructions) };
+    }
+
+    // Dynamically import openai to keep it an optional peer dependency (same `moduleId` idiom as
+    // callStep — the indirection is what keeps the import out of static resolution).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let mod: any;
+    try {
+      const moduleId: string = 'openai';
+      mod = await import(moduleId);
+    } catch {
+      console.error('realm agent requires the openai package. Run: npm install openai');
+      process.exit(1);
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client = new (mod.default as new (opts: Record<string, unknown>) => any)({
+      apiKey: process.env['OPENAI_API_KEY'],
+      ...(this.baseUrl !== undefined ? { baseURL: this.baseUrl } : {}),
+    });
+
+    const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: prompt },
+    ];
+
+    const buildOpts = (strict: boolean): Record<string, unknown> => ({
+      model: this.model,
+      messages,
+      ...(strict
+        ? {
+            response_format: {
+              type: 'json_schema',
+              json_schema: { name: JSON_SCHEMA_NAME, strict: true, schema: inputSchema },
+            },
+          }
+        : this.capabilities().jsonMode
+          ? { response_format: { type: 'json_object' } }
+          : {}),
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const create = (o: Record<string, unknown>): Promise<any> =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (client.chat.completions.create as (x: Record<string, unknown>) => Promise<any>)(o);
+
+    /** Reads the answer, honouring the refusal field as an L1-class escape. */
+    const readContent = (response: {
+      choices?: Array<{ message?: { content?: string; refusal?: string | null } }>;
+    }): Record<string, unknown> => {
+      const message = response.choices?.[0]?.message;
+      const refusal = message?.refusal;
+      if (typeof refusal === 'string' && refusal.length > 0) {
+        // A refusal is a well-formed API response, not a transport failure: surface it the same
+        // way a non-JSON answer surfaces, so the existing validation/reask layer handles it.
+        throw new Error(sanitizeError(`OpenAI refused the request: ${refusal.slice(0, 200)}`));
+      }
+      const parsed = extractJsonObject(message?.content ?? '');
+      if (parsed !== null) return parsed;
+      throw new Error(
+        sanitizeError(
+          `OpenAI returned non-JSON content under strict decoding: ${(message?.content ?? '').slice(0, 200)}`,
+        ),
+      );
+    };
+
+    try {
+      const response = await create(buildOpts(true));
+      return { output: readContent(response), meta: { requested: true, sent: true } };
+    } catch (err) {
+      const status = extractHttpStatus(err);
+      // 5xx / transport / timeout: NEVER a downgrade and never sticky — the schema is not what
+      // failed. Propagates so the caller's own retry treats it as the transport error it is.
+      if (status !== 400) throw err;
+      const api_message = err instanceof Error ? err.message : String(err);
+      const meta: StructuredOutputMeta = {
+        requested: true,
+        sent: false,
+        downgrade_reason: 'api_rejected_schema',
+        api_message,
+        ...extractApiErrorFields(err),
+      };
+      try {
+        const retry = await create(buildOpts(false));
+        return { output: readContent(retry), meta };
+      } catch (retryErr) {
+        throw new OpenAIStructuredOutputLadderError(
+          retryErr instanceof Error ? retryErr.message : String(retryErr),
+          meta,
+          { cause: retryErr },
+        );
+      }
+    }
   }
 
   /**

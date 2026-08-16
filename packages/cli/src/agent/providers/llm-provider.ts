@@ -28,6 +28,28 @@ export interface ProviderCapabilities {
    * record them as sent) for a provider whose wire builder ignores the marker entirely.
    */
   toolArgsStrict?: boolean;
+  /**
+   * Issue #313: which provider this instance IS. In-repo providers declare it; third-party
+   * `--provider-module` providers omit it (agent.ts supplies a `module:<basename>` identity for
+   * those through `AgentDeps` instead).
+   *
+   * Two consumers: run-agent selects the eligibility RULE PROFILE from it (`'openai'` ⇒ the
+   * OpenAI profile, everything else ⇒ Anthropic), and it is minted into evidence as the
+   * attempt's provider provenance.
+   */
+  providerId?: 'anthropic' | 'openai' | 'openai-reasoning';
+  /**
+   * Issue #313: an ENDPOINT-scoped reason this provider instance must not be sent strict at all,
+   * even for a schema that passes eligibility. Set by `OpenAIProvider` when it is pointed at an
+   * OpenAI-compatible endpoint (`--base-url`) without the author's `--strict-base-url`
+   * attestation: compat endpoints vary from full grammar enforcement (vLLM, llama.cpp) to
+   * accepting the field and ignoring it, and no capability-discovery API exists to tell them
+   * apart. Fail-safe default-off, author opt-in.
+   *
+   * Read by BOTH dimensions (step output and, from the follow-up PR, tool arguments), which is
+   * why it is endpoint-scoped rather than named per-dimension.
+   */
+  strictGate?: 'compat_endpoint';
 }
 
 /**
@@ -48,9 +70,15 @@ export abstract class LlmProvider {
    * `--provider-module` that only implements `callStep` inherits a disclosed no-op BY
    * CONSTRUCTION — `{ output }`, no `meta` — WITHOUT needing to know this method exists (the
    * `instanceof` check at agent.ts is unaffected; a plugin author never has to override this).
-   * `AnthropicProvider` is the only override in this codebase — it actually honors
-   * `opts.structuredOutputStrict`. The OpenAI provider gets this SAME default no-op; it is never
-   * special-cased (design record §5, final gate: restored — do not add an OpenAI override).
+   *
+   * OVERRIDES (issue #313 — this paragraph replaces the #236 rail that once forbade an OpenAI
+   * override; that rail is formally OVERTURNED on the record by the #313 design record, which is
+   * the designed special-casing #236 deliberately deferred). `AnthropicProvider` and
+   * `OpenAIProvider` both override this method today — each honours `opts.structuredOutputStrict`
+   * through its OWN API's mechanism (Anthropic: a `strict` submit tool; OpenAI: Chat Completions
+   * `response_format: json_schema`), which is exactly why a single shared implementation was never
+   * possible. A provider that does NOT override still inherits the honest no-op above, and
+   * run-agent's synthesis rule reports that as `provider_unsupported`.
    */
   async callStepWithMeta(
     prompt: string,
@@ -135,6 +163,9 @@ export async function resolveProvider(
   providerFlag: ProviderName | undefined,
   modelFlag: string | undefined,
   baseUrlFlag?: string,
+  /** Issue #313: the author's attestation that the `--base-url` endpoint genuinely enforces
+   *  strict. Only meaningful together with `--base-url` on the OpenAI provider. */
+  strictBaseUrlFlag?: boolean,
 ): Promise<LlmProvider> {
   const hasOpenAI = process.env['OPENAI_API_KEY'] !== undefined;
   const hasAnthropic = process.env['ANTHROPIC_API_KEY'] !== undefined;
@@ -161,11 +192,24 @@ export async function resolveProvider(
     // function calling, so they route to OpenAIProvider.
     const REASONING_MODELS = /^o1(-|$)/i;
     if (modelFlag !== undefined && REASONING_MODELS.test(modelFlag)) {
+      // issue #313 (dead-config cell 4): this branch has always DROPPED --base-url silently —
+      // the o1 provider takes neither it nor the strict attestation. Silently ignoring an
+      // explicit flag is exactly the class the #291 F10 precedent says to warn about.
+      if (baseUrlFlag !== undefined || strictBaseUrlFlag === true) {
+        const dropped = [
+          ...(baseUrlFlag !== undefined ? ['--base-url'] : []),
+          ...(strictBaseUrlFlag === true ? ['--strict-base-url'] : []),
+        ].join(' and ');
+        console.error(
+          `  ⚠ ${dropped} ${baseUrlFlag !== undefined && strictBaseUrlFlag === true ? 'are' : 'is'} ignored for the o1 model family — ` +
+            `these models use a dedicated provider that always talks to the native OpenAI endpoint.`,
+        );
+      }
       const { OpenAIReasoningProvider } = await import('./openai-reasoning-provider.js');
       return new OpenAIReasoningProvider(modelFlag);
     }
     const { OpenAIProvider } = await import('./openai-provider.js');
-    return new OpenAIProvider(modelFlag ?? 'gpt-4o', baseUrlFlag);
+    return new OpenAIProvider(modelFlag ?? 'gpt-4o', baseUrlFlag, strictBaseUrlFlag === true);
   } else {
     const { AnthropicProvider } = await import('./anthropic-provider.js');
     return new AnthropicProvider(modelFlag ?? 'claude-sonnet-4-5');
