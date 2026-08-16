@@ -269,15 +269,32 @@ const OPENAI_UNSUPPORTED_KEYWORDS = new Set([
   'else',
 ]);
 
-/** Issue #313 — OpenAI's documented, probe-boundary-confirmed schema size limits. */
+/**
+ * Issue #313 — OpenAI's schema size limits, with PER-MEMBER PROVENANCE LABELS (the same
+ * discipline the keyword sets above carry, for the same reason: two of these four were executed
+ * against the live API and two were read off documentation that has already been wrong in both
+ * directions for both vendors).
+ *
+ * Misclassification cost is asymmetric and worth stating: a limit set too LOW silently withholds
+ * strict from a schema the API would have accepted (no error, no signal — the exact class this
+ * issue exists to remove), while a limit set too HIGH simply lets the request go and be caught by
+ * the live 400 arm, which drops strict, retries, and discloses. That is why the two unprobed
+ * members are kept at their documented values rather than tightened defensively.
+ */
 const OPENAI_LIMITS = {
-  /** Nesting depth. Boundary-executed: depth 10 ⇒ 200, depth 11 ⇒ 400. */
+  /** Nesting depth. BOUNDARY-EXECUTED: depth 10 ⇒ 200, depth 11 ⇒ 400 ("11 levels of nesting
+   *  exceeds limit of 10"). Measured in OBJECT nesting levels — see walkNode. */
   maxDepth: 10,
-  /** Total properties across the schema. */
+  /** Total properties across the schema. DOCS-DERIVED-CONSERVATIVE — unprobed at this scale;
+   *  drift is caught by the live 400 arm, not by this number. */
   maxProperties: 5000,
-  /** Total characters across property names, enum values and const values. */
+  /** Total characters across property names, enum values and const values.
+   *  DOCS-DERIVED-CONSERVATIVE — unprobed at this scale. Note the counted set is names + enum +
+   *  const; whether descriptions count is unstated upstream and they are deliberately NOT
+   *  counted here (counting them would reject more schemas on an assumption). */
   maxChars: 120_000,
-  /** Values in a single enum. Executed: 1000 ⇒ 200, 1001 ⇒ 400. */
+  /** Values in a single enum. BOUNDARY-EXECUTED: 1000 ⇒ 200, 1001 ⇒ 400 (the error names the
+   *  limit and the received count). */
   maxEnumValues: 1000,
 } as const;
 

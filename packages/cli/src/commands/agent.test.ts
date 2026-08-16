@@ -283,6 +283,43 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
     vi.restoreAllMocks();
   });
 
+  // -------------------------------------------------------------------------------------------
+  // The FLAG-TRAVEL pin pair. Everything else about --strict-base-url is pinned on a REJECTION
+  // path (anthropic throws, o1 drops it) or by constructing OpenAIProvider directly. Neither
+  // touches the leg that makes the feature work: the flag actually reaching the constructor
+  // through resolveProvider. Without these two cells, replacing `strictBaseUrlFlag === true`
+  // with `false` at that call site kills the whole feature silently — every other test stays
+  // green, and strict is never sent to any attested endpoint again.
+  //
+  // A direct-ctor cell cannot substitute: it bypasses the seam under test.
+  // -------------------------------------------------------------------------------------------
+  it('flag-travel (i): --strict-base-url ARRIVES at the provider — an attested compat endpoint carries NO strictGate', async () => {
+    const p = await resolveProvider('openai', 'gpt-4o', 'https://compat.example.com', true);
+    // Deep-equal, so a strictGate surviving the attestation reds here.
+    expect(p.capabilities()).toEqual({ jsonMode: false, providerId: 'openai' });
+  });
+
+  it('flag-travel (ii): the discriminating counterpart — the SAME call without the attestation IS gated', async () => {
+    const explicitFalse = await resolveProvider(
+      'openai',
+      'gpt-4o',
+      'https://compat.example.com',
+      false,
+    );
+    expect(explicitFalse.capabilities()).toEqual({
+      jsonMode: false,
+      providerId: 'openai',
+      strictGate: 'compat_endpoint',
+    });
+    // …and omitted entirely (the CLI passes nothing when the flag is absent).
+    const omitted = await resolveProvider('openai', 'gpt-4o', 'https://compat.example.com');
+    expect(omitted.capabilities()).toEqual({
+      jsonMode: false,
+      providerId: 'openai',
+      strictGate: 'compat_endpoint',
+    });
+  });
+
   it('dead-config 3: --strict-base-url with --provider anthropic is dead — anthropic already REFUSES --base-url, and the flag alone changes nothing', async () => {
     process.env['ANTHROPIC_API_KEY'] = 'test-key';
     try {
