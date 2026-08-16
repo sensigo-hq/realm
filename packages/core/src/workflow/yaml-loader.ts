@@ -21,6 +21,7 @@ import {
   findUnknownKeys,
   renderLoaderWarning,
   resolveSeverity,
+  closestKey,
   type LoaderWarning,
 } from './diagnostics.js';
 import { resolveTemplates } from './template-resolver.js';
@@ -1840,6 +1841,13 @@ function hasUseTemplateInSteps(steps: unknown): boolean {
  * Every leaf must be a non-empty string.
  * Maximum depth is 10.
  */
+/**
+ * Issue #287: the CLOSED set of input_map directives. The whole `$` prefix is reserved — a key
+ * starting with `$` that is not in this set is a load error, which is what keeps the namespace
+ * open for a future escape (e.g. key-doubling) without breaking anyone.
+ */
+const SUPPORTED_INPUT_MAP_DIRECTIVES = ['$literal'] as const;
+
 function validateInputMapNode(
   node: unknown,
   pathDesc: string,
@@ -1870,6 +1878,33 @@ function validateInputMapNode(
       // The $literal value is passed through verbatim by the runtime — it may be any JSON value
       // (string, number, boolean, null, array, or object). Do NOT recurse into it: an object value
       // is a literal subtree, not a nested template. Return without further validation.
+      return;
+    }
+
+    // issue #287 — the DIRECTIVE GATE. A `$`-prefixed key is unambiguous author intent: nobody
+    // writes a nested-map key starting with `$` by accident. Before this gate, an unknown one was
+    // accepted here, then resolved at runtime as a context PATH, yielding `undefined` — a param
+    // that looked set and was not. That produced a five-week production incident in which an
+    // Airtable query ran UNFILTERED and corrupted 907 records while every step reported success.
+    //
+    // The whole `$` prefix is reserved, not just the known names: erroring on `$$…` today is what
+    // keeps a future key-doubling ESCAPE backward-compatible, so this must stay a prefix check
+    // with no special cases. The wording says "supported directives:" rather than "the only
+    // escape", for the same reason.
+    //
+    // Placed AFTER the `$literal` block so `{$literal, $unknown}` still reports the sibling error
+    // first (that message names the more specific mistake), and BEFORE the nested-object
+    // recursion so the key is judged here rather than descended into.
+    for (const key of Object.keys(obj)) {
+      if (!key.startsWith('$')) continue;
+      const suggestion = closestKey(key, SUPPORTED_INPUT_MAP_DIRECTIVES);
+      errors.push(
+        `${pathDesc}: unknown directive '${key}' — supported directives: $literal.` +
+          (suggestion !== undefined ? ` Did you mean '${suggestion}'?` : '') +
+          ` To pass literal data containing $-keys, wrap the subtree in $literal.` +
+          ` input_map values are context paths, nested maps, or $literal — templated strings are` +
+          ` not supported.`,
+      );
       return;
     }
 

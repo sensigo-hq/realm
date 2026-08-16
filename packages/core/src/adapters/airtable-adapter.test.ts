@@ -205,6 +205,60 @@ describe('AirtableAdapter get_record', () => {
 // ---------------------------------------------------------------------------
 
 describe('AirtableAdapter list_records', () => {
+  // issue #287 — the incident's own site. A mistyped filter used to be silently dropped, so the
+  // query ran UNFILTERED and reported success; now it throws before any request is made.
+  it('(#287) a mistyped filter_by_formula THROWS instead of silently querying unfiltered', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch(
+        'list_records',
+        { table: 'Tickets', filter_by_formula: { $template: 'x' } },
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+      message:
+        "adapter 'airtable' operation 'list_records': param 'filter_by_formula' — expected string, found object",
+    });
+    // Nothing was sent: the guard runs before the request, so no unfiltered query escapes.
+    expect(handlers).toHaveLength(0);
+  });
+
+  it('(#287) a CORRECT filter_by_formula produces the byte-identical request as before', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ records: [] }));
+    });
+    const adapter = makeAdapter();
+    await adapter.fetch(
+      'list_records',
+      { table: 'Tickets', filter_by_formula: "{id}='x'", view: 'Grid', max_records: 5 },
+      {},
+    );
+    expect(capturedUrl).toContain('filterByFormula=%7Bid%7D%3D%27x%27');
+    expect(capturedUrl).toContain('view=Grid');
+    expect(capturedUrl).toContain('maxRecords=5');
+  });
+
+  it('(#287) an ABSENT or NULL param is still omitted, never thrown (the nullish arm)', async () => {
+    let capturedUrl = '';
+    handlers.push((req, res) => {
+      capturedUrl = req.url ?? '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ records: [] }));
+    });
+    const adapter = makeAdapter();
+    await adapter.fetch(
+      'list_records',
+      { table: 'Tickets', filter_by_formula: null, view: undefined },
+      {},
+    );
+    expect(capturedUrl).not.toContain('filterByFormula');
+    expect(capturedUrl).not.toContain('view=');
+  });
+
   it('uses GET; returns records array and passes offset through when present', async () => {
     respondCapturingMethod(200, RECORDS_WITH_OFFSET_FIXTURE);
     const adapter = makeAdapter();

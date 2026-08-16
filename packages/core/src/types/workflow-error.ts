@@ -102,6 +102,11 @@ export type ErrorCode =
   | 'STEP_NOT_FOUND'
   | 'GUARD_RESOLUTION_ERROR'
   | 'INPUT_MAP_DEPTH_EXCEEDED'
+  // Issue #287: an input_map node carries a `$`-prefixed key that is not a supported directive,
+  // or `$literal` with sibling keys. The loader rejects both at authoring; this code is the
+  // RUNTIME mirror, which is what catches an ALREADY-REGISTERED workflow (a stored definition
+  // re-executes its corruption on every run) and any raw-parse path that bypasses the loader.
+  | 'INPUT_MAP_UNKNOWN_DIRECTIVE'
   // RESOURCE
   | 'RESOURCE_FETCH_FAILED'
   | 'RESOURCE_TOO_LARGE'

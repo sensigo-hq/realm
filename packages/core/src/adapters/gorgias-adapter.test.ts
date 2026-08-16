@@ -1092,6 +1092,48 @@ describe("GorgiasAdapter create('create_customer')", () => {
 // Tests: update()
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// issue #287 — the converted get_messages params
+// ---------------------------------------------------------------------------
+
+describe('GorgiasAdapter get_messages — mistyped params (issue #287)', () => {
+  it('a mistyped limit THROWS instead of silently falling back to the default page budget', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('get_messages', { ticket_id: 10, limit: '5' }, {}),
+    ).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+      message:
+        "adapter 'gorgias' operation 'get_messages': param 'limit' — expected number, found string",
+    });
+  });
+
+  it('a mistyped order_by THROWS instead of being dropped from the query', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('get_messages', { ticket_id: 10, order_by: 5 }, {}),
+    ).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+      message:
+        "adapter 'gorgias' operation 'get_messages': param 'order_by' — expected string, found number",
+    });
+  });
+
+  it("THE CONJUNCT PIN: `limit: 0` is well-typed, so it keeps today's default behaviour — only the TYPE check became loud", async () => {
+    // The original guard was `typeof limit === 'number' && limit > 0`. The conversion must
+    // preserve the positivity half exactly: a non-positive limit still falls through to the
+    // per-ticket default rather than throwing or being honoured as zero.
+    respond(200, { data: [makeMsg(1), makeMsg(2)], meta: { next_cursor: null } });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10, limit: 0 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    // limit: 0 is ignored (non-positive ⇒ the default budget), so BOTH messages come back —
+    // it is neither honoured as "zero messages" nor rejected as mistyped.
+    expect(data.messages).toHaveLength(2);
+    expect(data.truncated).toBe(false);
+  });
+});
+
 describe('GorgiasAdapter update()', () => {
   it('any call throws ADAPTER_OP_UNSUPPORTED', async () => {
     const adapter = makeAdapter();

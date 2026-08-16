@@ -122,7 +122,7 @@ function levenshteinDistance(a: string, b: string): number {
  * On a tie, the first allow-list entry (in its declared order) at the minimum distance wins —
  * deterministic, not alphabetical.
  */
-function closestKey(key: string, allowList: readonly string[]): string | undefined {
+export function closestKey(key: string, allowList: readonly string[]): string | undefined {
   const threshold = Math.min(2, Math.floor(key.length / 3) + 1);
   let best: string | undefined;
   let bestDistance = Infinity;

@@ -723,7 +723,11 @@ Single-page ticket search. `GET /tickets?{params}`.
 | ------------- | ----------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
 | scalar params | `string \| number \| boolean` | No       | Any scalar param (`status`, `assignee_id`, `limit`, `cursor`, etc.) forwarded as query string. |
 
-Non-scalar values (arrays, objects) are silently dropped — there is no multi-value filter syntax.
+Non-scalar values (arrays, objects) raise `ADAPTER_VALIDATION_FAILED` — there is no multi-value
+filter syntax, and a dropped filter would silently over-broaden the result set. `null`/`undefined`
+still mean "not set" and are omitted. (This line previously said such values were _silently
+dropped_; that stopped being true when the loud guard shipped, and the correction is recorded here
+rather than left to mislead.)
 
 **Pagination:** the response includes `meta.next_cursor`. Pass it back as `cursor` for the next page. The caller manages the loop.
 
