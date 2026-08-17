@@ -261,4 +261,92 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
     expect(after.run_phase).not.toBe('aborted');
     expect(after.completed_steps).toContain('guard_step');
   });
+  // ===============================================================================================
+  // issue #305 — DECLARATIVE ROUTING on the failed marker, for an ORDINARY step.
+  //
+  // A single-dep version of this would be redundant with `trigger_rule: one_failed`, which already
+  // routes on "some dep failed". The marker's genuine increment is knowing WHICH dep failed, so the
+  // fixture is deliberately MULTI-DEP: cleanup compensates `extract` specifically.
+  // ===============================================================================================
+  describe('(#305) $settlement.<dep>.failed routes an ordinary multi-dep step', () => {
+    function routingDef(withTriggerRule: boolean): WorkflowDefinition {
+      return {
+        id: 'settlement-305-wf',
+        name: 'Settlement 305',
+        version: 1,
+        steps: {
+          extract: { description: 'Extract', execution: 'auto', depends_on: [] },
+          transform: { description: 'Transform', execution: 'auto', depends_on: [] },
+          cleanup: {
+            description: 'Compensate extract specifically',
+            execution: 'auto',
+            depends_on: ['extract', 'transform'],
+            // LOAD-BEARING, not decorative — see the negative control below.
+            ...(withTriggerRule ? { trigger_rule: 'all_done' as const } : {}),
+            when: ['$settlement.extract.failed == true'],
+          },
+        },
+      };
+    }
+
+    /** Drives extract (optionally failing it) and transform, then attempts cleanup. */
+    async function drive(
+      def: WorkflowDefinition,
+      opts: { failExtract: boolean },
+    ): Promise<{ envelope: Awaited<ReturnType<typeof executeStep>>; runId: string }> {
+      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      await executeStep(store, def, {
+        runId: run.id,
+        command: 'extract',
+        input: {},
+        dispatcher: opts.failExtract
+          ? async () => {
+              throw new Error('extract exploded');
+            }
+          : echoDispatcher,
+      });
+      await executeStep(store, def, {
+        runId: run.id,
+        command: 'transform',
+        input: {},
+        dispatcher: echoDispatcher,
+      });
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'cleanup',
+        input: {},
+        dispatcher: echoDispatcher,
+      });
+      return { envelope, runId: run.id };
+    }
+
+    it('(b2-fires) extract FAILED ⇒ the when is true ⇒ cleanup runs', async () => {
+      const { envelope, runId } = await drive(routingDef(true), { failExtract: true });
+      expect(envelope.status).toBe('ok');
+      const after = await store.get(runId);
+      expect(after.failed_steps).toContain('extract');
+      expect(after.completed_steps).toContain('cleanup');
+    });
+
+    it('(b2-skips) clean run ⇒ the SAME step skips with when_false — the condition is the sole discriminator', async () => {
+      const { envelope, runId } = await drive(routingDef(true), { failExtract: false });
+      expect(envelope.status).not.toBe('ok');
+      const after = await store.get(runId);
+      expect(after.failed_steps).not.toContain('extract');
+      expect(after.skipped_steps).toContain('cleanup');
+      expect(after.skip_details?.['cleanup']?.kind).toBe('when_false');
+    });
+
+    it('(b3-negative-control) WITHOUT trigger_rule the step never becomes eligible on the mixed run — the docs caveat is honest', async () => {
+      // The default `all_success` requires zero failed deps, so the trigger gate marks cleanup
+      // unsatisfiable BEFORE `when` is ever evaluated. Without the caveat an author would write
+      // this and watch their compensation silently never run.
+      const { envelope, runId } = await drive(routingDef(false), { failExtract: true });
+      expect(envelope.status).not.toBe('ok');
+      const after = await store.get(runId);
+      expect(after.completed_steps).not.toContain('cleanup');
+      // Skipped by TRIGGER RULE, not by the condition — a different mechanism from (b2-skips).
+      expect(after.skip_details?.['cleanup']?.kind).not.toBe('when_false');
+    });
+  });
 });

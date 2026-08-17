@@ -1283,6 +1283,7 @@ or via a declared `validation_exhaustion.mode: 'default'` fallback:
 ```
 $settlement.<step>.settled_by_default   →  boolean
 $settlement.<step>.validation_rejections →  integer (count of schema rejections before settling)
+$settlement.<step>.failed                →  boolean (issue #305 — did this step FAIL?)
 ```
 
 An entry exists **only** for a step in `completed_steps ∪ failed_steps` — a skipped step, a
@@ -1291,18 +1292,34 @@ in-flight gate preview) has **no** `$settlement` entry at all; absence is never 
 For a settled step that never used `mode: 'default'`, `settled_by_default` is explicitly `false`
 (never merely absent) and `validation_rejections` is `0` if it never accrued any.
 
+**`failed` (issue #305)** is `true` for a step in `failed_steps` and `false` for one in
+`completed_steps`. Together with absence, the three settlement outcomes are distinguishable:
+
+| Outcome                           | How to read it                                                      |
+| --------------------------------- | ------------------------------------------------------------------- |
+| Failed                            | `failed: true`                                                      |
+| Completed on its declared default | `failed: false` **and** `settled_by_default: true`                  |
+| Skipped                           | **no entry at all** — test with `$settlement.<step>.failed == null` |
+
+It is deliberately STATUS only — never a message or a cause. Failure detail stays on the run
+record (`realm run inspect`), which is where every surveyed orchestrator keeps it: per-unit status
+is the in-band floor, detail in a declarative payload is shipped nowhere. `failed` also clears on
+resume, since a resumed step leaves `failed_steps` — it reports the run's current truth, not a
+permanent brand.
+
 ### Per-root spelling
 
 `$settlement` is available on every evaluation surface, but the ROOT it hangs off differs, exactly
 like every other evidence reference on that surface:
 
-| Surface                                          | Spelling                                                  |
-| ------------------------------------------------ | --------------------------------------------------------- |
-| `when`                                           | `$settlement.<step>.settled_by_default`                   |
-| `abort_unless` (guard steps)                     | `$settlement.<step>.settled_by_default`                   |
-| `preconditions`                                  | `$settlement.<step>.settled_by_default`                   |
-| `input_map`                                      | `context.resources.$settlement.<step>.settled_by_default` |
-| Template filters (`{{ }}`, incl. `gate.message`) | `context.resources.$settlement.<step>.settled_by_default` |
+| Surface                                          | Spelling                                                                                 |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `when`                                           | `$settlement.<step>.settled_by_default`                                                  |
+| `abort_unless` (guard steps)                     | `$settlement.<step>.settled_by_default`                                                  |
+| `preconditions`                                  | `$settlement.<step>.settled_by_default`                                                  |
+| `input_map`                                      | `context.resources.$settlement.<step>.settled_by_default`                                |
+| Template filters (`{{ }}`, incl. `gate.message`) | `context.resources.$settlement.<step>.settled_by_default`                                |
+| `execution: finalizer` (handler code)            | `ctx.resources['$settlement'][<step>].failed` — **not** a declarative surface; see below |
 
 ```yaml
 route:
@@ -1321,6 +1338,57 @@ notify:
   input_map:
     was_fallback: 'context.resources.$settlement.classify.settled_by_default'
 ```
+
+### Routing a cleanup step on which dep failed (issue #305)
+
+`trigger_rule: one_failed` already routes on "_some_ dependency failed". What `$settlement` adds
+is **which one** — the thing a multi-dependency cleanup actually needs:
+
+```yaml
+cleanup:
+  execution: auto
+  depends_on: [extract, transform]
+  trigger_rule: all_done # LOAD-BEARING — see the caveat below
+  when: ['$settlement.extract.failed == true']
+  handler: compensate_extract
+```
+
+**The `trigger_rule` is not optional here.** The trigger gate is evaluated BEFORE `when`, so with
+the default `all_success` (or `none_failed`) the step is marked unsatisfiable the moment a
+dependency fails — your condition never runs, and the compensation silently never fires. Use
+`all_done` (or `all_failed`). `one_failed` also reaches the failure case, but then a clean run
+skips the step by TRIGGER RULE rather than by your condition, which makes the two paths harder to
+tell apart when debugging.
+
+As with any `$settlement` reference on `when`, the one-hop rule below applies: `extract` must be in
+this step's `depends_on`.
+
+### Finalizers read the marker in handler code (issue #305)
+
+A step with `execution: finalizer` cannot use `when`, `depends_on`, or `input_map` — all three are
+**refused at load time** on finalizers. A finalizer therefore selects _whether it runs_ with
+`on_outcome`, and branches on _what happened_ inside its handler:
+
+```ts
+export default {
+  id: 'compensate',
+  async execute(inputs, ctx) {
+    const settlement = ctx.resources['$settlement'] ?? {};
+    if (settlement['extract']?.failed === true) {
+      // compensate the extract step specifically
+    }
+  },
+};
+```
+
+This is a **v1 scope** decision, not an architectural limit — the loader's own note reads
+"handler-only in v1", and the documented deadlock rationale for finalizer dependencies concerns
+only the reverse direction (a domain step depending on a finalizer). Finalizers branch in handler
+code **today**; widening this is under discussion in issue #360.
+
+One ordering note: finalizers settle into `failed_steps` too, so a finalizer that failed earlier in
+the drain appears with `failed: true` to later-ranked finalizers. A finalizer's view reflects the
+drain up to its own rank.
 
 ### One-hop rule (load-time enforced on `when`/`abort_unless`/`preconditions`)
 

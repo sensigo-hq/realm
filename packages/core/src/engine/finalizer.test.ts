@@ -618,3 +618,109 @@ describe('finalizer drain — abandon runs no finalizers', () => {
     expect(abandoned.evidence.some((e) => e.step_id === 'cleanup')).toBe(false);
   });
 });
+
+// =================================================================================================
+// issue #305 — THE INCIDENT CELL. A finalizer HANDLER can see WHICH steps failed.
+//
+// The reported shape: a run that seals `complete` while carrying failed steps, whose cleanup
+// finalizer had no way to tell what had gone wrong. #302 already fixed the TRIGGER half (such a
+// run can now select fail-class finalizers via `completed_with_failed_steps`), but a finalizer
+// that fires still saw only {settled_by_default, validation_rejections} per step — status-blind.
+//
+// `ctx.resources['$settlement']` is the ONLY engine-provided route here: `StepContext` carries no
+// RunRecord, and `when`/`depends_on`/`input_map` are all load-refused on `execution: finalizer`,
+// so a finalizer branches in handler code today (issue #360 tracks widening that).
+// =================================================================================================
+describe('finalizer handler sees the failed marker (issue #305)', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-fin-305-'));
+    store = new JsonFileStore(dir);
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('a completed-with-failed-steps run drains a finalizer whose handler reads failed:true for the failed step and failed:false for the completed one', async () => {
+    // What the finalizer handler actually observed, captured from inside its own execution.
+    let observed: Record<string, { failed?: boolean }> | undefined;
+
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'h_boom', {
+      id: 'h_boom',
+      execute: vi.fn(async () => {
+        throw new Error('extract exploded');
+      }),
+    });
+    registry.register('handler', 'h_ok', {
+      id: 'h_ok',
+      execute: vi.fn(async () => ({ data: {} })),
+    });
+    registry.register('handler', 'h_cleanup', {
+      id: 'h_cleanup',
+      execute: vi.fn(async (_inputs: unknown, ctx: unknown) => {
+        const resources = (ctx as { resources?: Record<string, unknown> }).resources ?? {};
+        observed = resources['$settlement'] as Record<string, { failed?: boolean }>;
+        return { data: {} };
+      }),
+    });
+
+    const def: WorkflowDefinition = {
+      id: 'fin-305',
+      name: 'Finalizer 305',
+      version: 1,
+      steps: {
+        // `extract` fails; `transform` runs anyway (all_done) and succeeds, so the run seals
+        // COMPLETE while carrying a failed step — the incident's own shape.
+        extract: { description: 'Fails', execution: 'auto', depends_on: [], handler: 'h_boom' },
+        transform: {
+          description: 'Runs regardless',
+          execution: 'auto',
+          depends_on: ['extract'],
+          trigger_rule: 'all_done',
+          handler: 'h_ok',
+        },
+        cleanup: {
+          description: 'Cleanup finalizer',
+          execution: 'finalizer',
+          on_outcome: 'always',
+          handler: 'h_cleanup',
+        },
+      },
+    };
+
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    await executeChain(store, def, {
+      runId: run.id,
+      command: 'extract',
+      input: {},
+      dispatcher: echoDispatcher,
+      registry,
+    });
+    await executeChain(store, def, {
+      runId: run.id,
+      command: 'transform',
+      input: {},
+      dispatcher: echoDispatcher,
+      registry,
+    });
+
+    const final = await store.get(run.id);
+    // The incident precondition: sealed COMPLETE, yet carrying a failed step.
+    expect(final.run_phase).toBe('completed');
+    expect(final.failed_steps).toContain('extract');
+
+    // THE DELIVERABLE: the handler could tell which one broke.
+    expect(observed).toBeDefined();
+    expect(observed!['extract']).toMatchObject({ failed: true });
+    expect(observed!['transform']).toMatchObject({ failed: false });
+    // Status only, beside the settlement-honesty fields that were already there — no detail.
+    expect(observed!['extract']).toEqual({
+      settled_by_default: false,
+      validation_rejections: 0,
+      failed: true,
+    });
+  });
+});
