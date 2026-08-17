@@ -4,6 +4,43 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- The loader now REJECTS a failure condition that can never be true (issue #362). Writing
+  `when: ['$settlement.extract.failed == true']` on a step that depends on `extract` reads exactly
+  like "run this when extract fails" — and it never runs, because the trigger gate is evaluated
+  before the condition and the default `all_success` requires `extract` NOT to have failed. The run
+  record then blames `trigger_rule_unsatisfiable` and names the rule, never the condition, so the
+  diagnosis points away from the mistake. Such a workflow **no longer loads**: the error names the
+  step, the surface, the condition verbatim, the effective rule (saying "default" when it was
+  omitted, since that omission is the whole bug), what actually happens at runtime on that
+  particular surface, and the trigger rules that would genuinely run the step — computed for that
+  step, since `all_failed` is a valid remedy at one dependency and a trap at two. Guards get a
+  different message: they cannot declare a trigger rule at all, so the remedy there is an
+  `execution: finalizer` step rather than a rule change.
+  Scope is deliberately narrow: only the exactly-decidable case (`all_success`/`none_failed` with
+  the exact `$settlement.<dep>.failed` shape, where the dependency is declared). The subtler
+  `one_success`-at-one-dependency case and the `== false` mirror are tracked separately.
+  **Asymmetry worth knowing:** file-loaded paths (`run`, `agent`, `listen`, `register`, `validate`)
+  now hard-fail on this shape, while an already-registered workflow is read back without
+  re-validation. That is safe here only because `.failed` itself shipped in v0.38.0 the same day —
+  no stored workflow can carry the shape yet.
+
+### Fixed
+
+- Two documentation defects shipped in v0.38.0, both corrected loudly. The absence test
+  (`failed == null`) was documented surface-agnostically; it is **`when`-only** —
+  `preconditions` and `abort_unless` use an evaluator with no `null` literal, so the right-hand
+  side becomes the string `'null'`, which never matches: on `preconditions` the step never settles
+  and the run wedges, on `abort_unless` the guard aborts every run. And the multi-dependency
+  routing example recommended "use `all_done` (or `all_failed`)" — `all_failed` requires EVERY
+  dependency to fail, so on that two-dependency example it would not have fired when only one
+  failed, and the compensation would still never have run.
+
+---
+
 ## [0.38.0] — 2026-08-17
 
 ### Added

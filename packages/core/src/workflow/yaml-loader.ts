@@ -1587,6 +1587,124 @@ function parseWorkflowString(
       }
     }
 
+    // issue #362 — REJECT A PROVABLY-DEAD FAILURE CONDITION.
+    //
+    // `$settlement.<dep>.failed == true` under a trigger rule that structurally excludes a failed
+    // `<dep>` can never be true. The trigger gate runs BEFORE the condition gate, and both
+    // `all_success` and `none_failed` carry an explicit "no dep in failed_steps" conjunct — so if
+    // the rule is satisfied, `<dep>` did not fail, and the condition is false by construction.
+    //
+    // The author's compensation step therefore never runs. It is not silent at runtime — the run
+    // record says `trigger_rule_unsatisfiable` — but it names the RULE and the blocking dep, never
+    // the condition the author wrote, so the diagnosis points away from the mistake. This is an
+    // authoring-time error precisely because the fix is one word and no legitimate use of the
+    // shape exists.
+    dead_condition: {
+      const rule =
+        step['execution'] === 'guard' ? 'all_success' : (step['trigger_rule'] ?? 'all_success');
+      // A guard may not declare `trigger_rule` at all (it is a prohibited field), so a guard that
+      // declares one must NOT be able to suppress this check by doing so.
+      const ruleDeclared = step['execution'] !== 'guard' && step['trigger_rule'] !== undefined;
+      if (step['execution'] !== 'guard' && !VALID_TRIGGER_RULES.has(rule as TriggerRule)) {
+        break dead_condition; // an invalid rule already has its own error — adding noise helps nobody
+      }
+      if (rule !== 'all_success' && rule !== 'none_failed') break dead_condition;
+
+      const asLeaves = (v: unknown): string[] =>
+        Array.isArray(v)
+          ? v.filter((x): x is string => typeof x === 'string')
+          : typeof v === 'string'
+            ? [v]
+            : [];
+      const surfaces: Array<{ surface: ConditionSurface; leaves: string[] }> = [
+        { surface: 'when', leaves: asLeaves(step['when']) },
+        // `abort_unless` is only validated (and only meaningful) on guards; on anything else the
+        // loader leaves it alone and the engine never reads it.
+        {
+          surface: 'abort_unless',
+          leaves: step['execution'] === 'guard' ? asLeaves(step['abort_unless']) : [],
+        },
+        // `preconditions` is collected for EVERY step kind, but it is INERT on a guard: the sole
+        // `checkPreconditions` call site is `executeStep` (execution-loop.ts:1371), and a guard
+        // goes through `executeGuardStep`, which evaluates only `abort_unless`. That is why the
+        // guard arm's consequence below is forked — collapsing it back into one shared string
+        // would make the error claim a wedge that cannot happen. (The inertness itself is a real
+        // adjacent gap, tracked as issue #369; this check only refuses to lie about it.)
+        { surface: 'preconditions', leaves: asLeaves(step['preconditions']) },
+      ];
+
+      for (const { surface, leaves } of surfaces) {
+        for (const leaf of leaves) {
+          const split = splitComparison(leaf);
+          // Two spellings are equally dead: the explicit `== true`, and the BARE PATH, which the
+          // engine coerces with `Boolean()`. `preconditions` refuses bare paths anyway.
+          const lhsPath =
+            split.kind === 'comparison' && split.op === '==' && split.rhsRaw.trim() === 'true'
+              ? split.lhsPath
+              : split.kind === 'path'
+                ? split.path
+                : undefined;
+          if (lhsPath === undefined) continue;
+          // EXACTLY three segments. `$settlement.x.failed.deep` is also dead, but for a different
+          // reason, so the trigger-rule remedy would be wrong advice there.
+          const segments = lhsPath.trim().split('.');
+          if (segments.length !== 3 || segments[0] !== '$settlement' || segments[2] !== 'failed') {
+            continue;
+          }
+          const dep = segments[1]!;
+          // Without the dep actually being a dependency, the one-hop error fires on its own AND
+          // the trigger gate returns true unconditionally for a step with no deps — so the leaf
+          // is not dead-by-trigger here and the remedy would be false advice.
+          if (!dependsOn.includes(dep)) continue;
+
+          const ruleText = ruleDeclared ? `'${rule}'` : `the default '${rule}'`;
+          const guardPrecondition = step['execution'] === 'guard' && surface === 'preconditions';
+          const consequence =
+            surface === 'when'
+              ? `if '${dep}' fails the step is skipped as trigger_rule_unsatisfiable before the condition is evaluated; if '${dep}' succeeds the condition evaluates to false (when_false) — either way the step never runs`
+              : surface === 'preconditions'
+                ? guardPrecondition
+                  ? // NOT the wedge: an unevaluated condition cannot block anything.
+                    `the run behaves identically whether this condition is present or absent`
+                  : `the step never settles — the run WEDGES in a blocked envelope`
+                : `the guard aborts the run on every execution`;
+
+          if (step['execution'] === 'guard') {
+            // Guards cannot declare a trigger rule, so the trigger-rule remedy is wrong advice
+            // here. This is a v1 SCOPE narrowing, not an architectural statement — issue #366
+            // carries the design question.
+            //
+            // The middle clause forks with the consequence: "by the time this is evaluated" is
+            // itself false for `preconditions`, which a guard never evaluates at all.
+            const cause = guardPrecondition
+              ? `and on an execution: guard step it is never evaluated at all: a guard evaluates ` +
+                `only 'abort_unless', so this condition is inert (${consequence})`
+              : `a guard runs under ${ruleText} and 'trigger_rule' is not a valid field on ` +
+                `execution: guard steps, so '${dep}' has always succeeded by the time this is ` +
+                `evaluated (${consequence})`;
+            errors.push(
+              `Step '${stepName}': '${surface}' condition "${leaf}" can never be true — ${cause}. ` +
+                `Guards run only when their dependencies succeeded; for work that must happen AFTER a ` +
+                `failure, use an 'execution: finalizer' step (see issue #366 for widening guards).`,
+            );
+          } else {
+            const remedies = ['all_done', 'one_failed'];
+            if (new Set(dependsOn).size === 1) remedies.push('all_failed');
+            const tail =
+              new Set(dependsOn).size > 1
+                ? ` ('all_failed' fires only if EVERY dependency fails; 'one_success' only if at least one other dependency succeeds.)`
+                : '';
+            errors.push(
+              `Step '${stepName}': '${surface}' condition "${leaf}" can never be true — under ` +
+                `${ruleText} trigger rule, '${dep}' can never be in failed_steps when this step is ` +
+                `evaluated (${consequence}). To run this step when '${dep}' fails, set trigger_rule to ` +
+                `one of: ${remedies.join(', ')}.${tail}`,
+            );
+          }
+        }
+      }
+    }
+
     // Validate tools: only valid on execution: agent steps without handler.
     if (
       step['tools'] !== undefined &&

@@ -258,6 +258,10 @@ describe('replayRun', () => {
     // against the engine's" cell is unbuildable, and comparing the shared helper to itself would
     // stay green even if replay stopped calling it. A precondition VERDICT is observable, and it
     // dies the moment the field stops being minted.
+    // NOTE (issue #362): this definition carries the dead shape (`$settlement.<dep>.failed ==
+    // true` under the default `all_success`) and is now LOADER-REFUSED. It stays valid here
+    // because it is hand-built and `replayRun` never applies trigger rules — replay's coverage
+    // boundary is deliberately loader-free.
     const failedMarkerDef: WorkflowDefinition = {
       id: 'settlement-workflow',
       name: 'Settlement Workflow',
