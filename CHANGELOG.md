@@ -6,6 +6,24 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- `$settlement.<step>.failed` — a cleanup step can now see WHICH steps failed (issue #305). The
+  marker is a plain boolean beside the existing settlement fields, and it closes a real gap: a
+  finalizer HANDLER previously received `{settled_by_default, validation_rejections}` per step and
+  no failure status at all, so a run that sealed complete while carrying failed steps gave its
+  cleanup nothing to branch on. Finalizers read it as
+  `ctx.resources['$settlement'][<step>].failed` in handler code — `when`/`depends_on`/`input_map`
+  are refused on `execution: finalizer`, so branching is imperative there today (issue #360 tracks
+  widening that). Ordinary steps additionally gain declarative routing:
+  `when: ['$settlement.extract.failed == true']` on a multi-dependency step, which is the marker's
+  real increment over `trigger_rule: one_failed` — knowing which dependency failed, not merely that
+  one did. Such a step needs `trigger_rule: all_done`, since the default `all_success` marks it
+  unsatisfiable before the condition is ever evaluated; the docs say so.
+  Deliberately STATUS only — no messages, no causes. Per-unit status is the field's in-band floor;
+  failure detail in a declarative payload is shipped by no surveyed orchestrator, and it would fork
+  the truth away from the append-only run record. Detail stays in `realm run inspect`.
+
 ### Fixed
 
 - Unknown `$`-directives in an `input_map` no longer resolve silently to garbage (issue #287). A

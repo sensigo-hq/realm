@@ -1553,13 +1553,60 @@ describe('buildSettlementNamespace — the $settlement mint (issue #220 §4c)', 
     };
   }
 
+  // issue #305 — the discrimination trio in ONE cell. A cleanup handler has to tell three
+  // settlement outcomes apart, and the namespace answers all three with two fields plus absence.
+  // Keeping them in a single fixture is deliberate: it pins that they are distinguishable from
+  // each other, which three separate cells would not.
+  it('(#305) failed / completed-defaulted / skipped are discriminable: failed:true · failed:false+settled_by_default:true · NO ENTRY', () => {
+    const run = makeRun({
+      completed_steps: ['defaulted_step'],
+      failed_steps: ['broken_step'],
+      skipped_steps: ['skipped_step'],
+      evidence: [
+        snap({
+          step_id: 'defaulted_step',
+          diagnostics: {
+            input_token_estimate: 1,
+            precondition_trace: [],
+            settled_by_default: true,
+          },
+        }),
+        snap({ step_id: 'broken_step', status: 'error' }),
+        snap({ step_id: 'skipped_step' }),
+      ],
+    });
+
+    const result = buildSettlementNamespace(run);
+
+    // 1. FAILED — the #305 marker.
+    expect(result['broken_step']).toEqual({
+      settled_by_default: false,
+      validation_rejections: 0,
+      failed: true,
+    });
+    // 2. COMPLETED ON ITS DEFAULT — settled, not failed, and honest about how it settled.
+    expect(result['defaulted_step']).toEqual({
+      settled_by_default: true,
+      validation_rejections: 0,
+      failed: false,
+    });
+    // 3. SKIPPED — absent entirely, even though it HAS evidence. Absence is the signal, and a
+    // `when` author tests it with the load-legal `$settlement.skipped_step.failed == null`.
+    expect(result).not.toHaveProperty('skipped_step');
+    expect(result['skipped_step']?.failed).toBeUndefined();
+  });
+
   it('(ff) membership-gated presence: a clean-settled dep gets a PRESENT entry with settled_by_default === false', () => {
     const run = makeRun({
       completed_steps: ['clean_step'],
       evidence: [snap({ step_id: 'clean_step' })], // no diagnostics at all
     });
     const result = buildSettlementNamespace(run);
-    expect(result['clean_step']).toEqual({ settled_by_default: false, validation_rejections: 0 });
+    expect(result['clean_step']).toEqual({
+      settled_by_default: false,
+      validation_rejections: 0,
+      failed: false,
+    });
   });
 
   it('(ff) membership-gated presence: an UNSETTLED step with evidence (compensating-unclaim audit / guard-abort) gets NO entry — an evidence-derived-domain mutant would fabricate one', () => {
@@ -1619,12 +1666,22 @@ describe('buildSettlementNamespace — the $settlement mint (issue #220 §4c)', 
     });
     expect(() => buildSettlementNamespace(run)).not.toThrow();
     const result = buildSettlementNamespace(run);
-    expect(result['guard_pass']).toEqual({ settled_by_default: false, validation_rejections: 0 });
+    expect(result['guard_pass']).toEqual({
+      settled_by_default: false,
+      validation_rejections: 0,
+      failed: false,
+    });
     expect(result['guard_resolution_error']).toEqual({
       settled_by_default: false,
       validation_rejections: 0,
+      // This fixture's step is in failed_steps — the polarity is per-cell, never blanket.
+      failed: true,
     });
-    expect(result['finalizer_ok']).toEqual({ settled_by_default: false, validation_rejections: 0 });
+    expect(result['finalizer_ok']).toEqual({
+      settled_by_default: false,
+      validation_rejections: 0,
+      failed: false,
+    });
   });
 
   it('THE gate-response inversion: for a step with an EXECUTION snapshot (settled_by_default: true) followed chronologically by a gate_response snapshot (no diagnostics), the mint reads the EXECUTION snapshot — NOT "the last snapshot"', () => {
@@ -1676,6 +1733,7 @@ describe('buildSettlementNamespace — the $settlement mint (issue #220 §4c)', 
     expect((evidenceByStep['$settlement'] as Record<string, unknown>)['real_step']).toEqual({
       settled_by_default: true,
       validation_rejections: 3,
+      failed: false,
     });
   });
 

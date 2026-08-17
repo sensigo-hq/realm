@@ -374,24 +374,58 @@ export function buildEvidenceByStep(run: RunRecord): Record<string, Record<strin
  * namespace from the live run record — the shared helper is what makes replay's verdict
  * structurally unable to diverge from the live engine's for a `$settlement`-referencing
  * precondition (issue #220 §4c-M7).
+ *
+ * **`failed` (issue #305) — STATUS ONLY, deliberately.** The entry says THAT a step failed, never
+ * why. Failure detail (messages, causes) stays on the run record, which is where every surveyed
+ * orchestrator keeps it: status enumeration is the field's in-band floor (GitHub Actions'
+ * `needs.<job>.result`; Step Functions and Airflow make it query-reachable), while detail in a
+ * declarative cleanup payload is shipped nowhere. Detail here would also fork the truth away from
+ * the append-only record, and these payloads feed AGENT PROMPTS — provider-generated text of
+ * unbounded size is not something to inject by default.
+ *
+ * **`failed` is a POSITION fact.** It is derived from WHICH half of the domain walk produced the
+ * entry (`completed_steps` ⇒ false, `failed_steps` ⇒ true), not from a lookup. Any future
+ * refactor that flattens those two loops back into one spread MUST re-derive the flag explicitly
+ * — a flattened walk silently marks every entry with whichever literal it inherits.
+ *
+ * **Reading the three settlement outcomes.** A consumer distinguishes them with two fields plus
+ * ABSENCE: a failed step has `failed: true`; a step that completed on its declared default has
+ * `failed: false, settled_by_default: true`; a SKIPPED step has NO ENTRY AT ALL (skipped steps are
+ * deliberately outside this namespace, pinned three ways). In a `when`/precondition, absence is
+ * testable with the load-legal bare presence spelling `$settlement.<dep>.failed == null`, which is
+ * true exactly when the step is absent — so authors are not left unable to discriminate.
+ *
+ * **`failed` is live, not a fossil.** `applyResume` strips a resumed step out of `failed_steps`,
+ * so the marker clears on resume rather than permanently branding a step that has since re-run.
  */
 export function buildSettlementNamespace(
   run: RunRecord,
-): Record<string, { settled_by_default: boolean; validation_rejections: number }> {
+): Record<string, { settled_by_default: boolean; validation_rejections: number; failed: boolean }> {
   const lastDiag: Record<string, StepDiagnostics | undefined> = {};
   for (const snap of run.evidence) {
     if (snap.kind !== 'gate_response') {
       lastDiag[snap.step_id] = snap.diagnostics;
     }
   }
-  const result: Record<string, { settled_by_default: boolean; validation_rejections: number }> = {};
-  for (const step of [...run.completed_steps, ...run.failed_steps]) {
+  const result: Record<
+    string,
+    { settled_by_default: boolean; validation_rejections: number; failed: boolean }
+  > = {};
+  // issue #305: `failed` is derived from LOOP POSITION, not from a membership set built beside
+  // the walk. The domain here IS `completed_steps` then `failed_steps`, so splitting the single
+  // spread into its two halves makes the flag and the membership the same fact — they cannot
+  // drift, and no second structure has to be kept in sync. It also keeps the O(1)-per-step
+  // contract above intact (no set construction, no lookup).
+  const write = (step: string, failed: boolean): void => {
     const diag = lastDiag[step];
     result[step] = {
       settled_by_default: diag?.settled_by_default ?? false,
       validation_rejections: diag?.validation_rejections ?? 0,
+      failed,
     };
-  }
+  };
+  for (const step of run.completed_steps) write(step, false);
+  for (const step of run.failed_steps) write(step, true);
   return result;
 }
 

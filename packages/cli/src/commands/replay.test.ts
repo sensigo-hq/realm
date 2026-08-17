@@ -253,6 +253,67 @@ describe('replayRun', () => {
       },
     };
 
+    // issue #305 — REPLAY LIVENESS for the `failed` marker, built on replay's ACTUAL observable
+    // surface. `replayRun` never returns the namespace, so a "deep-equal replay's namespace
+    // against the engine's" cell is unbuildable, and comparing the shared helper to itself would
+    // stay green even if replay stopped calling it. A precondition VERDICT is observable, and it
+    // dies the moment the field stops being minted.
+    const failedMarkerDef: WorkflowDefinition = {
+      id: 'settlement-workflow',
+      name: 'Settlement Workflow',
+      version: 1,
+      steps: {
+        broken: { description: 'Broken', execution: 'agent' },
+        cleanup: {
+          description: 'Compensates the failed dep',
+          execution: 'auto',
+          // The one-hop rule: `$settlement.<step>` must be a declared dependency.
+          depends_on: ['broken'],
+          preconditions: ['$settlement.broken.failed == true'],
+        },
+      },
+    };
+
+    function makeFailedRun(): RunRecord {
+      return {
+        id: 'run_failed1',
+        workflow_id: 'settlement-workflow',
+        workflow_version: 1,
+        completed_steps: [],
+        in_progress_steps: [],
+        failed_steps: ['broken'],
+        skipped_steps: [],
+        run_phase: 'failed',
+        version: 3,
+        params: {},
+        evidence: [
+          {
+            step_id: 'broken',
+            started_at: '2024-01-01T00:00:00.000Z',
+            completed_at: '2024-01-01T00:00:01.000Z',
+            duration_ms: 100,
+            input_summary: {},
+            output_summary: {},
+            status: 'error',
+            evidence_hash: 'h1',
+          },
+        ],
+        created_at: '2024-01-01T00:00:00.000Z',
+        updated_at: '2024-01-01T00:00:02.000Z',
+        terminal_state: true,
+      };
+    }
+
+    it('(#305) replay mints the `failed` marker: a precondition on $settlement.<faileddep>.failed evaluates TRUE through replay', () => {
+      const results = replayRun(makeFailedRun(), failedMarkerDef, []);
+      const cleanupRow = results.find((r) => r.step_id === 'cleanup')!;
+      // If replay stopped minting `failed`, the LHS would be undefined and this verdict would
+      // flip — which is exactly what mutation probe (i) demonstrates.
+      expect(cleanupRow.has_preconditions).toBe(true);
+      expect(cleanupRow.preconditions_original).toBe(true);
+      expect(cleanupRow.preconditions_replay).toBe(true);
+    });
+
     it('MINT-DEPENDENT-TRUE: replay reproduces the live verdict for a $settlement-referencing precondition (a both-absent vacuous pass is impossible — step1 genuinely default-settled)', () => {
       const run = makeSettlementRun();
       const results = replayRun(run, settlementDef, []);
