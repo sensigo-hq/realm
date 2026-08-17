@@ -268,6 +268,19 @@ describe('NotionAdapter get_page', () => {
 // ---------------------------------------------------------------------------
 
 describe('NotionAdapter list_block_children', () => {
+  // issue #287: a mistyped pagination param used to be dropped, silently resetting paging to the
+  // first page — a quiet correctness bug in any loop that relied on the cursor.
+  it('(#287) a mistyped start_cursor THROWS instead of silently restarting pagination', async () => {
+    const adapter = makeAdapter();
+    await expect(
+      adapter.fetch('list_block_children', { block_id: 'b1', start_cursor: 123 }, {}),
+    ).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+      message:
+        "adapter 'notion' operation 'list_block_children': param 'start_cursor' — expected string, found number",
+    });
+  });
+
   it('uses correct URL path: /v1/blocks/{block_id}/children', async () => {
     respond(200, LIST_FIXTURE);
     const adapter = makeAdapter();

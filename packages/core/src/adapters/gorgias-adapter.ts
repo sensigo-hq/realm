@@ -1,7 +1,7 @@
 // GorgiasAdapter — communicates with the Gorgias REST API.
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
-import { parseRetryAfterHeader, redactErrorBody } from './adapter-utils.js';
+import { parseRetryAfterHeader, redactErrorBody, takeParam } from './adapter-utils.js';
 
 /**
  * Configuration for GorgiasAdapter.
@@ -337,12 +337,15 @@ export class GorgiasAdapter implements ServiceAdapter {
       // owns the size/cost tradeoff) — the guard applies ONLY when no limit is given.
       const PER_TICKET_DEFAULT = 500; // no-limit default for a per-ticket fetch (safety guard, not a cap)
       const GLOBAL_SCAN_DEFAULT = 30; // ticket_id omitted → unbounded corpus; keep a modest default
-      const explicitLimit =
-        typeof params['limit'] === 'number' && params['limit'] > 0 ? params['limit'] : undefined;
+      // issue #287: the TYPE check becomes loud; the POSITIVITY filter is preserved exactly —
+      // a non-positive limit still falls back to the default, only a mistyped one now throws.
+      const listCtx = { adapter: 'gorgias', operation };
+      const limitParam = takeParam(params, 'limit', 'number', listCtx);
+      const explicitLimit = limitParam !== undefined && limitParam > 0 ? limitParam : undefined;
       const effectiveLimit =
         explicitLimit ?? (ticketId !== null ? PER_TICKET_DEFAULT : GLOBAL_SCAN_DEFAULT);
 
-      const orderBy = typeof params['order_by'] === 'string' ? params['order_by'] : undefined;
+      const orderBy = takeParam(params, 'order_by', 'string', listCtx);
       const stableParts: string[] = [`limit=${PAGE_SIZE}`];
       if (orderBy !== undefined) stableParts.push(`order_by=${encodeURIComponent(orderBy)}`);
 

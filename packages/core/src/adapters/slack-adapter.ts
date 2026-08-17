@@ -1,5 +1,6 @@
 // SlackAdapter — posts messages to a Slack channel via Incoming Webhooks.
 import { WorkflowError } from '../types/workflow-error.js';
+import { takeParam } from './adapter-utils.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
 
 export interface SlackAdapterConfig {
@@ -46,7 +47,12 @@ export class SlackAdapter implements ServiceAdapter {
       });
     }
 
-    if (typeof params['text'] !== 'string') {
+    // issue #287: `text` is REQUIRED here — this was never a silent-drop site, and its
+    // absent ⇒ throw contract is preserved exactly (same code, same `provide_input`, same
+    // message). What changes is only the MISTYPED case, which now reports expected/found
+    // through the shared helper instead of collapsing into "is required".
+    const text = takeParam(params, 'text', 'string', { adapter: 'slack', operation });
+    if (text === undefined) {
       throw new WorkflowError('SlackAdapter: text is required for post_message', {
         code: 'ADAPTER_VALIDATION_FAILED',
         category: 'ENGINE',
@@ -55,7 +61,7 @@ export class SlackAdapter implements ServiceAdapter {
       });
     }
 
-    const body: Record<string, unknown> = { text: params['text'] };
+    const body: Record<string, unknown> = { text };
     if (params['blocks'] !== undefined) {
       body['blocks'] = params['blocks'];
     }

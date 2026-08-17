@@ -98,6 +98,48 @@ A `$literal` node must have exactly one key (`$literal`); sibling keys are a loa
 
 **One constraint:** a **bare array** as an `input_map` node value is not allowed — wrap it in `$literal` (`tags: { $literal: ['a', 'b'] }`, not `tags: ['a', 'b']`). A bare array is ambiguous between a literal and a future templated-array feature, so it is rejected at load time.
 
+### The `$` prefix is reserved (issue #287)
+
+`$literal` is currently the **only** supported directive, and the entire `$` prefix is reserved for
+directives. Any `input_map` object key starting with `$` that is not a supported directive is an
+error — at **both** layers:
+
+- **Load time** — `loadWorkflowFromFile` / `validate` / `register` reject the workflow, naming the
+  step, the param path, the offending key, the supported set, and the fix (with a did-you-mean
+  suggestion for a near miss like `$litteral`).
+- **Run time** — `resolveInputMapNode` throws `INPUT_MAP_UNKNOWN_DIRECTIVE`, failing the step
+  loudly. This layer exists for definitions **already registered** before the gate shipped: a
+  stored workflow re-executes its own corruption on every run, so authoring-time validation alone
+  would leave it producing garbage indefinitely.
+
+The same applies to `$literal` carrying sibling keys — legal-looking, and previously resolved as a
+path under a key literally named `$literal`.
+
+**Why so strict.** An unknown directive used to be accepted, then resolved as a context path,
+yielding `undefined`; the adapter then dropped the mistyped param and the step reported success. A
+production workflow shipped `filter_by_formula: { $template: "…" }` — a directive that has never
+existed — and queried Airtable **unfiltered** for five weeks, corrupting 907 downstream records
+while every layer looked healthy. A `$`-prefixed key is unambiguous author intent, so guessing is
+never the right response to one.
+
+**To pass literal data that contains `$`-keys**, wrap the subtree in `$literal` — the loader does
+not recurse into it, so its keys are data:
+
+```yaml
+input_map:
+  payload:
+    $literal:
+      $template: 'this is just a string key' # data, not a directive
+```
+
+Note there is **no templating in `input_map`**: values are context paths, nested maps, or
+`$literal`. Building a string from parts is not supported (tracked separately).
+
+**Mistyped adapter params fail loudly too.** A scalar param that is _present but of the wrong type_
+now raises `ADAPTER_VALIDATION_FAILED` naming the adapter, operation, param, expected type and
+found type, instead of being dropped. An **absent, `null`, or `undefined`** param is still simply
+omitted — unresolved optional paths arrive that way routinely, so that arm must never throw.
+
 ---
 
 ## Execution modes

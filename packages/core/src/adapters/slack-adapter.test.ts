@@ -42,6 +42,26 @@ describe('SlackAdapter', () => {
     expect(body['text']).toBe('msg');
   });
 
+  // issue #287: `text` is REQUIRED here, so this was never a silent-drop site. The absent
+  // contract above is PRESERVED verbatim; only the mistyped case gains the expected/found
+  // grammar (it used to collapse into the same "is required" message).
+  it('(#287) a MISTYPED text reports expected/found, and still uses ADAPTER_VALIDATION_FAILED', async () => {
+    const adapter = new SlackAdapter('slack', { webhook_url: WEBHOOK_URL });
+    await expect(adapter.create('post_message', { text: 42 }, {})).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+      message:
+        "adapter 'slack' operation 'post_message': param 'text' — expected string, found number",
+    });
+  });
+
+  it('(#287) a NULL text is treated as absent — the required-param message, not a type error', async () => {
+    const adapter = new SlackAdapter('slack', { webhook_url: WEBHOOK_URL });
+    await expect(adapter.create('post_message', { text: null }, {})).rejects.toMatchObject({
+      code: 'ADAPTER_VALIDATION_FAILED',
+      message: 'SlackAdapter: text is required for post_message',
+    });
+  });
+
   it('create(post_message, {}) throws ADAPTER_VALIDATION_FAILED when text is absent', async () => {
     const adapter = new SlackAdapter('slack', { webhook_url: WEBHOOK_URL });
     await expect(adapter.create('post_message', {}, {})).rejects.toMatchObject({

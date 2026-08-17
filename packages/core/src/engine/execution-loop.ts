@@ -295,6 +295,50 @@ function resolveInputMapNode(
     return (node as LiteralNode).$literal;
   }
 
+  // issue #287 — the RUNTIME MIRROR of the loader's directive gate. The loader stops new
+  // registrations; this stops the ones already stored. That distinction is the whole point: a
+  // registered realm workflow RE-EXECUTES its corruption on every run, so validating only at
+  // authoring would leave existing definitions quietly producing garbage forever.
+  //
+  // Two cases, one code:
+  //   (a) any `$`-prefixed key that is not a supported directive;
+  //   (b) `$literal` WITH sibling keys — which the sole-key conjunct above lets fall through to
+  //       nested-map recursion, where the literal's own VALUE gets resolved as a context path
+  //       under a result key literally named "$literal". Silent garbage, and reachable today.
+  //
+  // Failing loudly here costs a step failure; not failing costs plausible-looking success, which
+  // is what turned the originating incident into five weeks of corrupted records.
+  const REMEDY =
+    `To pass literal data containing $-keys, wrap the subtree in $literal. input_map values ` +
+    `are context paths, nested maps, or $literal — templated strings are not supported.`;
+  const DIRECTIVE_ERROR_OPTS = {
+    code: 'INPUT_MAP_UNKNOWN_DIRECTIVE',
+    category: 'ENGINE',
+    agentAction: 'report_to_user',
+    retryable: false,
+  } as const;
+
+  // (b) `$literal` with siblings. Named accurately rather than as an "unknown directive" — the
+  // directive is fine, its company is not, and that is the mistake the author has to see.
+  if ('$literal' in node) {
+    const siblings = Object.keys(node).filter((k) => k !== '$literal');
+    throw new WorkflowError(
+      `input_map path "${keyChain}": $literal node must have exactly one key ($literal); found ` +
+        `sibling keys: ${siblings.join(', ')}. ${REMEDY}`,
+      DIRECTIVE_ERROR_OPTS,
+    );
+  }
+
+  // (a) any other reserved-prefix key.
+  for (const key of Object.keys(node)) {
+    if (!key.startsWith('$')) continue;
+    throw new WorkflowError(
+      `input_map path "${keyChain}": unknown directive '${key}' — supported directives: $literal. ` +
+        REMEDY,
+      DIRECTIVE_ERROR_OPTS,
+    );
+  }
+
   // Nested object — recurse.
   const result: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(node)) {

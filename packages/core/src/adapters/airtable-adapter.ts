@@ -1,7 +1,7 @@
 // AirtableAdapter — wraps the Airtable REST API for record-level operations.
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
-import { parseRetryAfterHeader } from './adapter-utils.js';
+import { parseRetryAfterHeader, takeParam } from './adapter-utils.js';
 
 const AIRTABLE_DEFAULT_BASE_URL = 'https://api.airtable.com';
 
@@ -315,22 +315,29 @@ export class AirtableAdapter implements ServiceAdapter {
 
       const url = this.buildUrl(table);
 
-      if (typeof params['filter_by_formula'] === 'string') {
-        url.searchParams.set('filterByFormula', params['filter_by_formula']);
+      // issue #287: present-but-mistyped now throws instead of silently omitting. A dropped
+      // `filter_by_formula` is the incident shape — the query runs UNFILTERED and reports success.
+      const ctx = { adapter: 'airtable', operation };
+      const filterByFormula = takeParam(params, 'filter_by_formula', 'string', ctx);
+      if (filterByFormula !== undefined) {
+        url.searchParams.set('filterByFormula', filterByFormula);
       }
-      if (typeof params['view'] === 'string') {
-        url.searchParams.set('view', params['view']);
+      const view = takeParam(params, 'view', 'string', ctx);
+      if (view !== undefined) {
+        url.searchParams.set('view', view);
       }
-      if (typeof params['max_records'] === 'number') {
-        url.searchParams.set('maxRecords', String(params['max_records']));
+      const maxRecords = takeParam(params, 'max_records', 'number', ctx);
+      if (maxRecords !== undefined) {
+        url.searchParams.set('maxRecords', String(maxRecords));
       }
       if (Array.isArray(params['fields'])) {
         for (const f of params['fields'] as unknown[]) {
           url.searchParams.append('fields[]', String(f));
         }
       }
-      if (typeof params['offset'] === 'string') {
-        url.searchParams.set('offset', params['offset']);
+      const offset = takeParam(params, 'offset', 'string', ctx);
+      if (offset !== undefined) {
+        url.searchParams.set('offset', offset);
       }
       // Malformed sort entries are skipped silently, consistent with the permissive
       // param handling in this branch (e.g. non-string view is ignored, not an error).
@@ -519,11 +526,15 @@ export class AirtableAdapter implements ServiceAdapter {
 
       const url = this.buildUrl(table);
       url.searchParams.set('filterByFormula', formula);
-      if (typeof params['view'] === 'string') {
-        url.searchParams.set('view', params['view']);
+      // issue #287 — same conversion on the upsert/find path.
+      const findCtx = { adapter: 'airtable', operation };
+      const findView = takeParam(params, 'view', 'string', findCtx);
+      if (findView !== undefined) {
+        url.searchParams.set('view', findView);
       }
-      if (typeof params['max_records'] === 'number') {
-        url.searchParams.set('maxRecords', String(params['max_records']));
+      const findMaxRecords = takeParam(params, 'max_records', 'number', findCtx);
+      if (findMaxRecords !== undefined) {
+        url.searchParams.set('maxRecords', String(findMaxRecords));
       }
 
       const response = await this.executeRequest(url, 'GET', undefined, signal);

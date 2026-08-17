@@ -922,4 +922,162 @@ describe('input_map', () => {
       expect.any(AbortSignal),
     );
   });
+  // =============================================================================================
+  // issue #287 — the RUNTIME MIRROR of the loader's directive gate.
+  //
+  // This layer exists for the definitions the loader can no longer help: a workflow REGISTERED
+  // before the gate shipped re-executes its corruption on every run, and raw-parse paths bypass
+  // the loader entirely. Failing loudly here costs a step failure; not failing costs
+  // plausible-looking success, which is what made the originating incident last five weeks.
+  //
+  // These are also the FIRST tests to exercise the resolveInputMapNode throw path at all
+  // (INPUT_MAP_DEPTH_EXCEEDED has shipped untested) — so they pin the surfacing, not just the
+  // throw: the step must FAIL and the code must reach the failure envelope and the evidence.
+  // =============================================================================================
+  /** Drives one auto step whose input_map is supplied raw, bypassing the loader entirely. */
+  async function runWithRawInputMap(
+    inputMap: Record<string, unknown>,
+  ): Promise<{ envelope: Awaited<ReturnType<typeof executeStep>>; run: unknown }> {
+    const def: WorkflowDefinition = {
+      id: 'imap-wf',
+      name: 'InputMap Workflow',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        query: {
+          description: 'Auto step with a raw input_map',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+          // The cast is deliberate and is the POINT of this harness: it injects a raw
+          // input_map the loader would now reject, standing in for a workflow registered
+          // before the gate shipped. NonNullable because the property is optional and
+          // exactOptionalPropertyTypes forbids assigning a possibly-undefined value.
+          input_map: inputMap as NonNullable<WorkflowDefinition['steps'][string]['input_map']>,
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { query: { status: 200, data: {} } });
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const { run } = await store.create({
+      workflowId: 'imap-wf',
+      workflowVersion: 1,
+      params: { id: 'rec789' },
+    });
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 'query',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+    return { envelope, run: await store.get(run.id) };
+  }
+
+  it('(c) an already-registered workflow carrying an unknown $-directive FAILS LOUDLY at execution', async () => {
+    const { envelope, run } = await runWithRawInputMap({
+      filter_by_formula: { $template: '{ticket_id}="{{run.params.id}}"' },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(JSON.stringify(envelope)).toContain('INPUT_MAP_UNKNOWN_DIRECTIVE');
+    expect(JSON.stringify(envelope)).toContain('$template');
+    // The step is genuinely failed on the record — not silently completed with a broken param.
+    expect((run as { failed_steps: string[] }).failed_steps).toContain('query');
+  });
+
+  it('(c) `$literal` WITH sibling keys fails with the same code — today it silently resolved the literal value as a path', async () => {
+    const { envelope } = await runWithRawInputMap({
+      x: { $literal: 5, extra: 'run.params.id' },
+    });
+
+    expect(envelope.status).toBe('error');
+    expect(JSON.stringify(envelope)).toContain('INPUT_MAP_UNKNOWN_DIRECTIVE');
+    // The message names the real mistake (siblings), not "unknown directive '$literal'".
+    expect(JSON.stringify(envelope)).toContain('exactly one key');
+  });
+
+  it('(c-deep) the mirror applies at EVERY level — a directive nested below the top is refused, with the deep path named', async () => {
+    // The loader has deep cells; the runtime needs its own, and not by symmetry-argument: this
+    // layer exists for trees the loader never sees, and a registered workflow can carry the
+    // directive at any depth. A top-level-only check would pass every other cell in this file.
+    const { envelope } = await runWithRawInputMap({
+      payload: { inner: { $template: 'x' } },
+    });
+
+    expect(envelope.status).toBe('error');
+    const text = JSON.stringify(envelope);
+    expect(text).toContain('INPUT_MAP_UNKNOWN_DIRECTIVE');
+    // The DEEP keyChain, verified by execution — not "payload" and not just the key.
+    expect(text).toContain('input_map path \\"payload.inner\\"');
+  });
+
+  // Ride-along (boy-scout, labeled; NOT the reported gap): the depth arm had zero coverage on
+  // EITHER layer. It ships beside the directive gate because it is the same shape — a structural
+  // input_map refusal that must surface as an attributed step failure — and because a throw path
+  // nobody exercises is a throw path nobody knows still works.
+  it('(ride-along) input_map nested past the maximum depth fails the step with INPUT_MAP_DEPTH_EXCEEDED', async () => {
+    let node: unknown = 'run.params.id';
+    for (let i = 0; i < 12; i += 1) node = { k: node };
+    const { envelope } = await runWithRawInputMap({ top: node as Record<string, unknown> });
+
+    expect(envelope.status).toBe('error');
+    const text = JSON.stringify(envelope);
+    expect(text).toContain('INPUT_MAP_DEPTH_EXCEEDED');
+    expect(text).toContain('exceeded maximum nesting depth of 10');
+  });
+
+  it('(c) valid trees resolve UNCHANGED — the gate is inert for everything legal', async () => {
+    const def: WorkflowDefinition = {
+      id: 'imap-wf',
+      name: 'InputMap Workflow',
+      version: 1,
+      services: { svc: { adapter: 'mock', trust: 'engine_delivered' } },
+      steps: {
+        query: {
+          description: 'Valid input_map',
+          execution: 'auto',
+          depends_on: [],
+          uses_service: 'svc',
+          input_map: {
+            id: 'run.params.id',
+            nested: { a: 'run.params.id' },
+            lit: { $literal: { $template: 'not a directive here' } },
+          },
+        },
+      },
+    };
+    const adapter = new MockAdapter('mock', { query: { status: 200, data: {} } });
+    const fetchSpy = vi.spyOn(adapter, 'fetch');
+    const registry = new ExtensionRegistry();
+    registry.register('adapter', 'mock', adapter);
+    const store = new JsonFileStore(dir);
+    const { run } = await store.create({
+      workflowId: 'imap-wf',
+      workflowVersion: 1,
+      params: { id: 'rec789' },
+    });
+
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'query',
+      input: {},
+      dispatcher: noOpDispatcher,
+      registry,
+    });
+
+    // Note the $literal subtree: its OWN `$template` key is data, never a directive.
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'query',
+      {
+        id: 'rec789',
+        nested: { a: 'rec789' },
+        lit: { $template: 'not a directive here' },
+      },
+      expect.any(Object),
+      expect.any(AbortSignal),
+    );
+  });
 });

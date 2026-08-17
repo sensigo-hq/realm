@@ -1,7 +1,7 @@
 // NotionAdapter — wraps the Notion REST API for page, block, and search operations.
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
-import { parseRetryAfterHeader } from './adapter-utils.js';
+import { parseRetryAfterHeader, takeParam } from './adapter-utils.js';
 
 const NOTION_API_VERSION = '2026-03-11';
 const NOTION_BASE_URL = 'https://api.notion.com';
@@ -312,11 +312,15 @@ export class NotionAdapter implements ServiceAdapter {
       }
 
       const url = this.buildUrl(`/v1/blocks/${encodeURIComponent(blockId)}/children`);
-      if (typeof params['start_cursor'] === 'string') {
-        url.searchParams.set('start_cursor', params['start_cursor']);
+      // issue #287: mistyped pagination params now throw instead of silently resetting paging.
+      const ctx = { adapter: 'notion', operation };
+      const startCursor = takeParam(params, 'start_cursor', 'string', ctx);
+      if (startCursor !== undefined) {
+        url.searchParams.set('start_cursor', startCursor);
       }
-      if (typeof params['page_size'] === 'number') {
-        url.searchParams.set('page_size', String(params['page_size']));
+      const pageSize = takeParam(params, 'page_size', 'number', ctx);
+      if (pageSize !== undefined) {
+        url.searchParams.set('page_size', String(pageSize));
       }
 
       const response = await this.executeRequest(url, 'GET', undefined, signal);

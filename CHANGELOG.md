@@ -4,6 +4,42 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- Unknown `$`-directives in an `input_map` no longer resolve silently to garbage (issue #287). A
+  key like `{ $template: "…" }` — a directive that has never existed — was accepted at load, then
+  resolved as a context path yielding `undefined`, and finally dropped by the adapter's type guard,
+  so the step reported success with the param effectively unset. In production this ran an Airtable
+  query **unfiltered** for five weeks and corrupted 907 downstream records while every layer looked
+  healthy. Three layers now close it: the loader rejects an unknown `$`-key (naming the step, the
+  param path, the key, the supported set, and the fix, with a did-you-mean for near misses); the
+  runtime refuses it as a loud attributed step failure (`INPUT_MAP_UNKNOWN_DIRECTIVE`), which is
+  what catches workflows registered before this shipped; and `$literal` with sibling keys — which
+  previously fell through and resolved the literal's own value as a path — is refused at both.
+- Adapter scalar params that are **present but mistyped** now raise `ADAPTER_VALIDATION_FAILED`
+  naming the adapter, operation, param, expected type and found type, instead of being silently
+  omitted (issue #287). Ten sites across the Airtable, Notion and Gorgias adapters read params
+  through a shared helper that generalizes the discipline the Gorgias list params already used. An
+  absent, `null`, or `undefined` param is still simply omitted — unresolved optional `input_map`
+  paths arrive that way routinely — and Slack's `text` keeps its required-param contract unchanged.
+  A source-sweep test keeps the class dead: it fails on any new bare `typeof params[…]` guard in an
+  adapter. **Honest boundary:** that kills the scalar-typeof drop class only; two `Array.isArray`
+  drops (Airtable's `fields` and `sort`) remain and are tracked separately.
+
+### Changed
+
+- Workflows **already registered** that carry an unknown `$`-directive in an `input_map` now FAIL
+  LOUDLY at execution rather than running with a silently-broken param. This is deliberate: such a
+  workflow was already producing wrong results, and a stored definition re-executes that on every
+  run. Recommended sequence after upgrading: run `realm validate` against every workflow you still
+  have the source for — that is now a free fleet-wide detector — then resume runs. Be aware that
+  `realm validate` is file-based: a workflow registered without its YAML retained cannot be checked
+  ahead of time and will instead surface at its first execution via the runtime refusal.
+
+---
+
 ## [0.37.0] — 2026-08-16
 
 ### Added
