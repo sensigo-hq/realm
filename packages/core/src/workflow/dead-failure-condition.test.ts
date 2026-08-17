@@ -11,8 +11,15 @@
 // This is an ERROR rather than a warning for two reasons that are specific, not stylistic: no
 // legitimate use of this shape exists (unlike `#if 0`-style dead code, which is why compilers warn
 // there), and `.failed` shipped the same day, so no workflow anywhere can already carry it.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { loadWorkflowFromString } from './yaml-loader.js';
+import { executeStep, executeChain } from '../engine/execution-loop.js';
+import type { StepDispatcher } from '../engine/execution-loop.js';
+import { JsonFileStore } from '../store/json-file-store.js';
+import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
 /** A two-step workflow: `extract`, then `cleanup` with the caller's body. */
 function wf(cleanupBody: string, extraSteps = ''): string {
@@ -256,5 +263,284 @@ describe('dead failure condition — loader rejection (issue #362)', () => {
     );
     expect(message).toContain('"$settlement.extract.failed == true"');
     expect(message).not.toContain('"$settlement.extract.settled_by_default == false" can never');
+  });
+});
+
+// =================================================================================================
+// CORRECTION (issue #362) — the message must not make a claim that cannot happen.
+//
+// Rev 1 emitted, for a guard carrying a dead `preconditions` leaf, "the step never settles — the
+// run WEDGES in a blocked envelope". That is FALSE: `checkPreconditions` has exactly one call site
+// (execution-loop.ts:1371, inside `executeStep`), and a guard goes through `executeGuardStep`,
+// which evaluates only `abort_unless`. Nothing wedges, because nothing is evaluated.
+//
+// The defect class is the same one this whole PR exists to prevent — a confident sentence about a
+// runtime consequence, unbacked by execution. So the guard fork is pinned here, and the four
+// runtime claims the message makes are pinned BEHAVIOURALLY below.
+// =================================================================================================
+
+/** The consequence clause each (surface × step kind) combination is entitled to — and only it. */
+const WHEN_SKIPS = 'either way the step never runs';
+const PRECONDITION_WEDGES = 'the run WEDGES in a blocked envelope';
+const GUARD_ABORTS = 'the guard aborts the run on every execution';
+const GUARD_PRECONDITION_INERT =
+  'the run behaves identically whether this condition is present or absent';
+
+describe('dead failure condition — the message tells the truth about guards (issue #362)', () => {
+  it('a guard `preconditions` leaf gets the INERT consequence, never the wedge', () => {
+    // Asserted on the WHOLE emitted string: a clause silently rewritten to something false would
+    // slip past any substring check, and a false clause is precisely the defect being corrected.
+    expect(
+      loadError(
+        guardWf(
+          "    abort_unless: ['$settlement.extract.settled_by_default == false']\n" +
+            "    preconditions: ['$settlement.extract.failed == true']",
+        ),
+      ),
+    ).toBe(
+      'Invalid workflow: ' +
+        `Step 'check': 'preconditions' condition "$settlement.extract.failed == true" can never be ` +
+        `true — and on an execution: guard step it is never evaluated at all: a guard evaluates ` +
+        `only 'abort_unless', so this condition is inert (${GUARD_PRECONDITION_INERT}). Guards run ` +
+        `only when their dependencies succeeded; for work that must happen AFTER a failure, use an ` +
+        `'execution: finalizer' step (see issue #366 for widening guards).`,
+    );
+  });
+
+  it('the three guard surfaces produce three DIFFERENT consequences — a shared string would fail here', () => {
+    const messages = {
+      when: loadError(
+        guardWf(
+          "    when: ['$settlement.extract.failed == true']\n" +
+            "    abort_unless: ['$settlement.extract.settled_by_default == false']",
+        ),
+      ),
+      abort_unless: loadError(guardWf("    abort_unless: ['$settlement.extract.failed == true']")),
+      preconditions: loadError(
+        guardWf(
+          "    abort_unless: ['$settlement.extract.settled_by_default == false']\n" +
+            "    preconditions: ['$settlement.extract.failed == true']",
+        ),
+      ),
+    };
+    const owned = {
+      when: WHEN_SKIPS,
+      abort_unless: GUARD_ABORTS,
+      preconditions: GUARD_PRECONDITION_INERT,
+    };
+    const all = [WHEN_SKIPS, GUARD_ABORTS, GUARD_PRECONDITION_INERT, PRECONDITION_WEDGES];
+    for (const [surface, message] of Object.entries(messages)) {
+      const mine = owned[surface as keyof typeof owned];
+      expect(message).toContain(mine);
+      for (const other of all.filter((c) => c !== mine)) {
+        expect(message).not.toContain(other);
+      }
+    }
+  });
+});
+
+// =================================================================================================
+// BEHAVIOURAL PINS — every runtime claim the error message makes, EXECUTED.
+//
+// The error tells an author what happens if they ship this shape. Rev 1's guard/preconditions
+// clause proves that asserting the WORDING is not enough: it was pinned, green, and false. So each
+// claimed consequence is driven through the real engine here.
+//
+// These definitions are hand-built `WorkflowDefinition` objects on purpose. The loader now REFUSES
+// every one of them — that is the feature — so the only way to observe the behaviour the refusal
+// describes is to bypass the loader. Same precedent as the `settlement-namespace.test.ts` and
+// `replay.test.ts` fixtures, which carry the identical note.
+// =================================================================================================
+describe('dead failure condition — the claimed consequences, executed (issue #362)', () => {
+  const echo: StepDispatcher = async (_step, input) => ({ ...input });
+  const explode: StepDispatcher = async () => {
+    throw new Error('work exploded');
+  };
+  let store: JsonFileStore;
+
+  beforeEach(async () => {
+    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dead-cond-')));
+  });
+
+  /** `work`, then a dependent `cleanup` carrying the dead leaf on the caller's surface. */
+  function def(surface: 'when' | 'preconditions'): WorkflowDefinition {
+    return {
+      id: 'dead-behaviour-wf',
+      name: 'Dead Behaviour',
+      version: 1,
+      steps: {
+        work: { description: 'Work', execution: 'auto', depends_on: [] },
+        cleanup: {
+          description: 'Cleanup',
+          execution: 'auto',
+          depends_on: ['work'],
+          // No `trigger_rule` — the default `all_success` IS the trap.
+          [surface]: ['$settlement.work.failed == true'],
+        },
+      },
+    };
+  }
+
+  async function drive(
+    definition: WorkflowDefinition,
+    opts: { failWork: boolean },
+  ): Promise<string> {
+    const { run } = await store.create({
+      workflowId: definition.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeStep(store, definition, {
+      runId: run.id,
+      command: 'work',
+      input: {},
+      dispatcher: opts.failWork ? explode : echo,
+    });
+    await executeStep(store, definition, {
+      runId: run.id,
+      command: 'cleanup',
+      input: {},
+      dispatcher: echo,
+    });
+    return run.id;
+  }
+
+  // CLAIM: "if <dep> fails the step is skipped as trigger_rule_unsatisfiable before the condition
+  // is evaluated; if <dep> succeeds the condition evaluates to false (when_false)". BOTH halves.
+  it('`when`, non-guard: a FAILED dep skips the step as trigger_rule_unsatisfiable', async () => {
+    const after = await store.get(await drive(def('when'), { failWork: true }));
+    expect(after.failed_steps).toContain('work');
+    expect(after.skip_details?.['cleanup']?.kind).toBe('trigger_rule_unsatisfiable');
+    expect(after.completed_steps).not.toContain('cleanup');
+  });
+
+  it('`when`, non-guard: a SUCCEEDED dep skips the step as when_false — the other half of the claim', async () => {
+    const after = await store.get(await drive(def('when'), { failWork: false }));
+    expect(after.completed_steps).toContain('work');
+    expect(after.skip_details?.['cleanup']?.kind).toBe('when_false');
+    expect(after.completed_steps).not.toContain('cleanup');
+  });
+
+  // CLAIM: "the step never settles — the run WEDGES in a blocked envelope". Pin the OBSERVABLE,
+  // not the adjective: blocked envelope + unsettled step + a run that is still going nowhere.
+  it('`preconditions`, non-guard: the step never settles and the run wedges in a blocked envelope', async () => {
+    const { run } = await store.create({
+      workflowId: 'dead-behaviour-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const definition = def('preconditions');
+    await executeStep(store, definition, {
+      runId: run.id,
+      command: 'work',
+      input: {},
+      dispatcher: echo,
+    });
+    const envelope = await executeStep(store, definition, {
+      runId: run.id,
+      command: 'cleanup',
+      input: {},
+      dispatcher: echo,
+    });
+    expect(envelope.status).toBe('blocked');
+    // It is offered as eligible and refused on every attempt — that is the wedge, not a skip.
+    expect(envelope.blocked_reason?.eligible_steps).toContain('cleanup');
+    const after = await store.get(run.id);
+    expect(after.completed_steps).not.toContain('cleanup');
+    expect(after.failed_steps).not.toContain('cleanup');
+    expect(after.skipped_steps).not.toContain('cleanup');
+    expect(after.terminal_state).toBe(false);
+  });
+
+  // CLAIM: "the guard aborts the run on every execution". Guards run inline in the chain, so this
+  // needs executeChain — a bare executeStep never reaches the guard at all.
+  it('`abort_unless`, guard: the run aborts', async () => {
+    const definition: WorkflowDefinition = {
+      id: 'dead-guard-wf',
+      name: 'Dead Guard',
+      version: 1,
+      steps: {
+        work: { description: 'Work', execution: 'auto', depends_on: [] },
+        check: {
+          description: 'Check',
+          execution: 'guard',
+          depends_on: ['work'],
+          abort_unless: ['$settlement.work.failed == true'],
+        },
+        tail: { description: 'Tail', execution: 'auto', depends_on: ['check'] },
+      },
+    };
+    const { run } = await store.create({
+      workflowId: definition.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeChain(store, definition, {
+      runId: run.id,
+      command: 'work',
+      input: {},
+      dispatcher: echo,
+    });
+    const after = await store.get(run.id);
+    expect(after.aborted_at).toBeDefined();
+    expect(after.run_phase).toBe('aborted');
+    expect(after.completed_steps).not.toContain('tail');
+  });
+
+  // CLAIM (the one this correction adds): on a guard, `preconditions` is never evaluated, so the
+  // run behaves identically whether it is present or absent. Executed, not asserted.
+  it('`preconditions`, guard: present and absent produce byte-identical outcomes — the leaf is inert', async () => {
+    const guardDef = (withPreconditions: boolean): WorkflowDefinition => ({
+      id: 'dead-guard-pre-wf',
+      name: 'Dead Guard Pre',
+      version: 1,
+      steps: {
+        work: { description: 'Work', execution: 'auto', depends_on: [] },
+        check: {
+          description: 'Check',
+          execution: 'guard',
+          depends_on: ['work'],
+          // Deliberately SATISFIED, so the guard actually executes. With an abort_unless that
+          // failed, the run would abort before the precondition could matter and the comparison
+          // would be vacuous — identical outcomes proving nothing.
+          abort_unless: ['$settlement.work.settled_by_default == false'],
+          ...(withPreconditions ? { preconditions: ['$settlement.work.failed == true'] } : {}),
+        },
+        tail: { description: 'Tail', execution: 'auto', depends_on: ['check'] },
+      },
+    });
+
+    const outcomes: string[] = [];
+    for (const withPreconditions of [true, false]) {
+      const definition = guardDef(withPreconditions);
+      const { run } = await store.create({
+        workflowId: definition.id,
+        workflowVersion: 1,
+        params: {},
+      });
+      const envelope = await executeChain(store, definition, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echo,
+      });
+      const after = await store.get(run.id);
+      outcomes.push(
+        JSON.stringify({
+          envelope: envelope.status,
+          completed: after.completed_steps,
+          failed: after.failed_steps,
+          skipped: after.skipped_steps,
+          skip_details: after.skip_details,
+          aborted: after.aborted_at !== undefined,
+          run_phase: after.run_phase,
+          terminal_state: after.terminal_state,
+        }),
+      );
+    }
+    expect(outcomes[0]).toBe(outcomes[1]);
+    // Non-vacuity: the guard and everything behind it genuinely RAN in both arms. Without this,
+    // two runs that both died early would compare equal and "inert" would be unproven.
+    expect(outcomes[0]).toContain('"completed":["work","check","tail"]');
   });
 });

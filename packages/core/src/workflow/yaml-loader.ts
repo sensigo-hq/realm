@@ -1624,6 +1624,12 @@ function parseWorkflowString(
           surface: 'abort_unless',
           leaves: step['execution'] === 'guard' ? asLeaves(step['abort_unless']) : [],
         },
+        // `preconditions` is collected for EVERY step kind, but it is INERT on a guard: the sole
+        // `checkPreconditions` call site is `executeStep` (execution-loop.ts:1371), and a guard
+        // goes through `executeGuardStep`, which evaluates only `abort_unless`. That is why the
+        // guard arm's consequence below is forked — collapsing it back into one shared string
+        // would make the error claim a wedge that cannot happen. (The inertness itself is a real
+        // adjacent gap, tracked as issue #369; this check only refuses to lie about it.)
         { surface: 'preconditions', leaves: asLeaves(step['preconditions']) },
       ];
 
@@ -1652,21 +1658,32 @@ function parseWorkflowString(
           if (!dependsOn.includes(dep)) continue;
 
           const ruleText = ruleDeclared ? `'${rule}'` : `the default '${rule}'`;
+          const guardPrecondition = step['execution'] === 'guard' && surface === 'preconditions';
           const consequence =
             surface === 'when'
               ? `if '${dep}' fails the step is skipped as trigger_rule_unsatisfiable before the condition is evaluated; if '${dep}' succeeds the condition evaluates to false (when_false) — either way the step never runs`
               : surface === 'preconditions'
-                ? `the step never settles — the run WEDGES in a blocked envelope`
+                ? guardPrecondition
+                  ? // NOT the wedge: an unevaluated condition cannot block anything.
+                    `the run behaves identically whether this condition is present or absent`
+                  : `the step never settles — the run WEDGES in a blocked envelope`
                 : `the guard aborts the run on every execution`;
 
           if (step['execution'] === 'guard') {
             // Guards cannot declare a trigger rule, so the trigger-rule remedy is wrong advice
             // here. This is a v1 SCOPE narrowing, not an architectural statement — issue #366
             // carries the design question.
+            //
+            // The middle clause forks with the consequence: "by the time this is evaluated" is
+            // itself false for `preconditions`, which a guard never evaluates at all.
+            const cause = guardPrecondition
+              ? `and on an execution: guard step it is never evaluated at all: a guard evaluates ` +
+                `only 'abort_unless', so this condition is inert (${consequence})`
+              : `a guard runs under ${ruleText} and 'trigger_rule' is not a valid field on ` +
+                `execution: guard steps, so '${dep}' has always succeeded by the time this is ` +
+                `evaluated (${consequence})`;
             errors.push(
-              `Step '${stepName}': '${surface}' condition "${leaf}" can never be true — a guard runs ` +
-                `under ${ruleText} and 'trigger_rule' is not a valid field on execution: guard steps, ` +
-                `so '${dep}' has always succeeded by the time this is evaluated (${consequence}). ` +
+              `Step '${stepName}': '${surface}' condition "${leaf}" can never be true — ${cause}. ` +
                 `Guards run only when their dependencies succeeded; for work that must happen AFTER a ` +
                 `failure, use an 'execution: finalizer' step (see issue #366 for widening guards).`,
             );
