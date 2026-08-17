@@ -9,11 +9,18 @@
 // Ten such sites were converted to `takeParam`, which throws on present-but-mistyped. This test
 // keeps them converted: it reads every adapter's source and fails if the pattern comes back.
 //
-// HONEST BOUNDARY — what this does and does not kill. It kills the SCALAR-typeof drop class.
-// It does NOT cover `Array.isArray(params[...])` drops, of which two remain by design
-// (airtable's `fields` and `sort`); those are boarded on #357, whose per-operation Ajv param
-// schemas subsume this whole approach. A green run here means "no new scalar-typeof drop", never
-// "no silent drops anywhere".
+// TWO banned shapes, because the boundary is ENFORCED rather than merely documented:
+//   1. the SCALAR shape (`typeof params[…]`) — zero occurrences, permanently;
+//   2. the ARRAY shape (`Array.isArray(params[…])`) — two GRANDFATHERED residents, allow-listed
+//      by file and param below. Any NEW one reds.
+//
+// Shape 2 is allow-listed rather than banned outright because `takeParam` has no array overload
+// today, so an author with an array param has nowhere to go: without this arm, the obvious
+// improvisation is a bare `Array.isArray` drop, invisible to the sweep and identical in effect to
+// the class this whole PR exists to kill. The allowlist makes the residual finite and visible.
+//
+// A green run means "no NEW silent drop of either shape", never "no silent drops anywhere" — the
+// two grandfathered entries are still real drops.
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -49,6 +56,49 @@ describe('adapter guards — the scalar-typeof silent-drop class stays dead (iss
         `nullish param and THROWS on a present-but-mistyped one. A bare typeof guard silently ` +
         `drops the mistyped value, which reads downstream as "not provided" (issue #287).`,
     ).toEqual([]);
+  });
+
+  it('no adapter introduces a NEW bare `Array.isArray(params[...])` drop', () => {
+    // GRANDFATHERED — the two known array-shaped drops, matched by file + PARAM rather than raw
+    // line number so an unrelated edit above them does not rot this list.
+    //
+    // #357's job is to EMPTY this allowlist: its per-operation Ajv param schemas validate array
+    // params properly and subsume both entries. Until then, these two are known, named, and
+    // deliberately not converted (takeParam is scalar-only by design).
+    const GRANDFATHERED: ReadonlyArray<{ file: string; param: string }> = [
+      { file: 'airtable-adapter.ts', param: 'fields' },
+      { file: 'airtable-adapter.ts', param: 'sort' },
+    ];
+    const BANNED = 'Array.isArray(params[';
+    const offenders: string[] = [];
+
+    for (const file of adapterSourceFiles()) {
+      const source = readFileSync(join(ADAPTERS_DIR, file), 'utf8');
+      source.split('\n').forEach((line, i) => {
+        if (!line.includes(BANNED)) return;
+        const allowed = GRANDFATHERED.some(
+          (g) =>
+            g.file === file &&
+            (line.includes(`params['${g.param}']`) || line.includes(`params["${g.param}"]`)),
+        );
+        if (!allowed) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+      });
+    }
+
+    expect(
+      offenders,
+      `A new array-shaped silent drop. takeParam is scalar-only, so there is no drop-in fix — ` +
+        `raise it with #357 (per-operation param schemas) rather than improvising a bare ` +
+        `Array.isArray guard, which drops a mistyped array exactly as issue #287 describes.`,
+    ).toEqual([]);
+  });
+
+  it('the array allowlist still describes REALITY — each grandfathered entry is actually present', () => {
+    // A stale allowlist is worse than none: it would silently permit a shape nobody is tracking.
+    // When #357 converts these, this cell reds and the entry must be REMOVED, not re-pointed.
+    const airtable = readFileSync(join(ADAPTERS_DIR, 'airtable-adapter.ts'), 'utf8');
+    expect(airtable).toContain("Array.isArray(params['fields'])");
+    expect(airtable).toContain("Array.isArray(params['sort'])");
   });
 
   it('the sweep actually reads adapter sources (guarding the guard against a silent empty glob)', () => {

@@ -999,6 +999,36 @@ describe('input_map', () => {
     expect(JSON.stringify(envelope)).toContain('exactly one key');
   });
 
+  it('(c-deep) the mirror applies at EVERY level — a directive nested below the top is refused, with the deep path named', async () => {
+    // The loader has deep cells; the runtime needs its own, and not by symmetry-argument: this
+    // layer exists for trees the loader never sees, and a registered workflow can carry the
+    // directive at any depth. A top-level-only check would pass every other cell in this file.
+    const { envelope } = await runWithRawInputMap({
+      payload: { inner: { $template: 'x' } },
+    });
+
+    expect(envelope.status).toBe('error');
+    const text = JSON.stringify(envelope);
+    expect(text).toContain('INPUT_MAP_UNKNOWN_DIRECTIVE');
+    // The DEEP keyChain, verified by execution — not "payload" and not just the key.
+    expect(text).toContain('input_map path \\"payload.inner\\"');
+  });
+
+  // Ride-along (boy-scout, labeled; NOT the reported gap): the depth arm had zero coverage on
+  // EITHER layer. It ships beside the directive gate because it is the same shape — a structural
+  // input_map refusal that must surface as an attributed step failure — and because a throw path
+  // nobody exercises is a throw path nobody knows still works.
+  it('(ride-along) input_map nested past the maximum depth fails the step with INPUT_MAP_DEPTH_EXCEEDED', async () => {
+    let node: unknown = 'run.params.id';
+    for (let i = 0; i < 12; i += 1) node = { k: node };
+    const { envelope } = await runWithRawInputMap({ top: node as Record<string, unknown> });
+
+    expect(envelope.status).toBe('error');
+    const text = JSON.stringify(envelope);
+    expect(text).toContain('INPUT_MAP_DEPTH_EXCEEDED');
+    expect(text).toContain('exceeded maximum nesting depth of 10');
+  });
+
   it('(c) valid trees resolve UNCHANGED — the gate is inert for everything legal', async () => {
     const def: WorkflowDefinition = {
       id: 'imap-wf',

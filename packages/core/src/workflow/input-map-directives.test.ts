@@ -98,6 +98,20 @@ describe('input_map directive gate — loader (issue #287)', () => {
     expect(far).toContain('wrap the subtree in $literal');
   });
 
+  // Ride-along (boy-scout, labeled; NOT the reported gap): the loader's DEPTH arm had zero suite
+  // coverage — the same shape as the runtime one pinned in engine/input-map.test.ts. Both layers
+  // refuse an over-nested input_map; neither was exercised until now.
+  it('(ride-along) an input_map nested past the maximum depth fails to LOAD, naming the path and the limit', () => {
+    // 11 levels below the param — one past the limit. VERIFIED by execution: 8 loads fine.
+    let body = '';
+    const DEPTH = 11;
+    for (let i = 0; i < DEPTH; i += 1) body += `${' '.repeat(8 + i * 2)}k${i}:\n`;
+    body += `${' '.repeat(8 + DEPTH * 2)}leaf: run.params.a`;
+    const message = loadError(`      top:\n${body}`);
+    expect(message).toContain('exceeded maximum nesting depth of 10');
+    expect(message).toContain('input_map path "top"');
+  });
+
   it('(b) the escape works: a literal subtree containing $-keys loads when wrapped in $literal', () => {
     // The remedy the error text recommends must actually be valid — otherwise the message sends
     // the author into a second failure.
