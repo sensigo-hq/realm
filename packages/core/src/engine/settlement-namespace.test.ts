@@ -269,6 +269,10 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
   // fixture is deliberately MULTI-DEP: cleanup compensates `extract` specifically.
   // ===============================================================================================
   describe('(#305) $settlement.<dep>.failed routes an ordinary multi-dep step', () => {
+    // NOTE (issue #362): the `withTriggerRule: false` arm below is exactly the shape the loader
+    // now REFUSES. It is deliberately hand-built rather than loaded, because its whole job is to
+    // prove the runtime consequence the loader error describes — that without `all_done` the step
+    // never becomes eligible. Loading it would now be impossible, which is the point.
     function routingDef(withTriggerRule: boolean): WorkflowDefinition {
       return {
         id: 'settlement-305-wf',

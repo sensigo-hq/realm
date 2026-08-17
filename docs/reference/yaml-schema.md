@@ -1295,11 +1295,11 @@ For a settled step that never used `mode: 'default'`, `settled_by_default` is ex
 **`failed` (issue #305)** is `true` for a step in `failed_steps` and `false` for one in
 `completed_steps`. Together with absence, the three settlement outcomes are distinguishable:
 
-| Outcome                           | How to read it                                                      |
-| --------------------------------- | ------------------------------------------------------------------- |
-| Failed                            | `failed: true`                                                      |
-| Completed on its declared default | `failed: false` **and** `settled_by_default: true`                  |
-| Skipped                           | **no entry at all** — test with `$settlement.<step>.failed == null` |
+| Outcome                           | How to read it                                                                                                |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Failed                            | `failed: true`                                                                                                |
+| Completed on its declared default | `failed: false` **and** `settled_by_default: true`                                                            |
+| Skipped                           | **no entry at all** — on `when`, test with `$settlement.<step>.failed == null` (see the surface caveat below) |
 
 It is deliberately STATUS only — never a message or a cause. Failure detail stays on the run
 record (`realm run inspect`), which is where every surveyed orchestrator keeps it: per-unit status
@@ -1320,6 +1320,17 @@ like every other evidence reference on that surface:
 | `input_map`                                      | `context.resources.$settlement.<step>.settled_by_default`                                |
 | Template filters (`{{ }}`, incl. `gate.message`) | `context.resources.$settlement.<step>.settled_by_default`                                |
 | `execution: finalizer` (handler code)            | `ctx.resources['$settlement'][<step>].failed` — **not** a declarative surface; see below |
+
+**The root is shared; the literal parser is not** (correction of a v0.38.0 documentation defect).
+The table above is about where `$settlement` hangs off — that part is genuinely uniform. What is
+NOT uniform is how each surface parses a right-hand-side literal. Only `when` understands the bare
+`null` token, so **`$settlement.<step>.failed == null` is a `when`-only absence test**. On
+`preconditions` and `abort_unless` the evaluator has no `null` branch and the right-hand side
+becomes the _string_ `'null'`, which is never equal to anything the namespace holds. The
+consequences differ by surface and none of them is what the author meant: on `preconditions` the
+leaf is universally false, so the step never settles and the run wedges; on `abort_unless` the
+guard aborts every run; and against a skipped dependency it raises a resolution error. Test for
+absence on `when`, or restructure so the question is asked where it can be answered.
 
 ```yaml
 route:
@@ -1353,15 +1364,57 @@ cleanup:
   handler: compensate_extract
 ```
 
-**The `trigger_rule` is not optional here.** The trigger gate is evaluated BEFORE `when`, so with
-the default `all_success` (or `none_failed`) the step is marked unsatisfiable the moment a
-dependency fails — your condition never runs, and the compensation silently never fires. Use
-`all_done` (or `all_failed`). `one_failed` also reaches the failure case, but then a clean run
-skips the step by TRIGGER RULE rather than by your condition, which makes the two paths harder to
-tell apart when debugging.
+**The `trigger_rule` is not optional here — and since issue #362 the loader enforces it.** The
+trigger gate is evaluated BEFORE `when`, so under the default `all_success` (or `none_failed`) the
+step is marked unsatisfiable the moment a dependency fails: your condition never runs and the
+compensation silently never fires. That combination is now a **load error** naming the step, the
+condition, the effective rule, and the rules that would actually run it.
+
+Use **`all_done`** or **`one_failed`** — those are the two that fire in every world where a
+dependency fails, at any dependency count.
+
+_Correction of a v0.38.0 documentation defect:_ this paragraph previously said "use `all_done` (or
+`all_failed`)". For the two-dependency example above that advice is **wrong** — `all_failed`
+requires EVERY dependency to fail, so it would not fire when only `extract` failed, and the
+compensation would still never run. `all_failed` is a valid remedy only when the step has exactly
+one distinct dependency. `one_failed` does reach the failure case at any count, with the tradeoff
+that a clean run then skips the step by TRIGGER RULE rather than by your condition, which makes the
+two paths harder to tell apart when debugging.
 
 As with any `$settlement` reference on `when`, the one-hop rule below applies: `extract` must be in
 this step's `depends_on`.
+
+### The dead-failure-condition load error (issue #362)
+
+A condition that can **never be true** is refused at load time:
+
+```
+Step 'cleanup': 'when' condition "$settlement.extract.failed == true" can never be true —
+under the default 'all_success' trigger rule, 'extract' can never be in failed_steps when this
+step is evaluated (…). To run this step when 'extract' fails, set trigger_rule to one of:
+all_done, one_failed, all_failed.
+```
+
+It fires when all of these hold: the leaf is `$settlement.<dep>.failed == true` (or the bare
+`$settlement.<dep>.failed`, which coerces the same way), `<dep>` is a declared dependency, and the
+step's effective trigger rule is `all_success` or `none_failed` — the two rules that structurally
+exclude a failed dependency. Nothing heuristic: those two rules each carry an explicit "no
+dependency in failed_steps" conjunct, so a satisfied gate _proves_ the condition false.
+
+**The remedy is computed for your step, not copied from a list.** `all_done` and `one_failed`
+always work. `all_failed` is offered only when the step has exactly one distinct dependency —
+with two or more it requires them ALL to fail, so recommending it would hand you a workflow that
+loads cleanly and still never runs. `one_success` is never a remedy.
+
+**Guards are different**, and the error says so. `trigger_rule` is not a valid field on
+`execution: guard`, so a guard always runs under `all_success` and there is no rule to widen. A
+guard runs only when its dependencies succeeded; for work that must happen after a failure, use an
+`execution: finalizer` step. That is a v1 scope narrowing rather than an architectural rule — issue
+#366 carries the question of widening it.
+
+Deliberately **not** covered in v1 (issue #364): `one_success` at a single dependency, which is
+dead for a subtler reason, and the `== false` mirror class. Those are decidable too, but each rests
+on a weaker argument and deserves its own decision rather than being folded in here.
 
 ### Finalizers read the marker in handler code (issue #305)
 
@@ -1401,7 +1454,11 @@ check — see the residual below.
 ### Per-surface consequence disparity (a bad FIELD name, e.g. a typo'd `settled_by_defalut`)
 
 Only the `<step>` segment is load-time-validated (the one-hop rule above); a typo in the FIELD
-segment is never load-refused anywhere, and its RUNTIME consequence differs by surface:
+segment is never load-refused anywhere, and its RUNTIME consequence differs by surface. (One
+narrow exception since issue #362: a _correctly spelled_ `failed` field is load-refused when the
+condition it forms can never be true under the step's trigger rule — that check keys on the exact
+three-segment `$settlement.<dep>.failed` shape, so a typo'd field falls outside it and still
+behaves as below.)
 
 | Surface                 | Consequence of an unresolvable field                                                       |
 | ----------------------- | ------------------------------------------------------------------------------------------ |
