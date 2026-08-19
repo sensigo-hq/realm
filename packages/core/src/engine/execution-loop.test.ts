@@ -16,6 +16,8 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
 import type { ServiceAdapter } from '../extensions/service-adapter.js';
 import type { StepHandler, StepHandlerInputs, StepContext } from '../extensions/step-handler.js';
+import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
+import type { RunRecord } from '../types/run-record.js';
 
 // Two-step workflow: step-one (auto) → step-two (agent).
 const definition: WorkflowDefinition = {
@@ -5246,5 +5248,112 @@ describe('submitHumanResponse — terminal-run guard', () => {
 
   it('cleanup', async () => {
     await rm(dir, { recursive: true, force: true });
+  });
+});
+
+// =================================================================================================
+// issue #373 — the LEGACY in-loop fail seal (execution-loop.ts's own site, the dormancy twin of
+// settlement.ts's). Reachable only through a store that does not declare `settleStep`, so the
+// double below is the instrument, not decoration: without it JsonFileStore takes the migrated path
+// and this site never executes.
+//
+// Cross-layer cells (byte-parity between the two seals, post-drain no-growth stability) live in
+// terminal-cause.test.ts beside their declaring-layer twins, where the comparison is visible.
+// =================================================================================================
+describe('#373 — the legacy fail seal names every failure', () => {
+  /** A real JsonFileStore with `settleStep` never implemented — own-property masking, so
+   *  `store.settleStep === undefined` holds and only the legacy path is reachable. */
+  class LegacyOnlyStore implements RunStore {
+    readonly persistsClaims: boolean;
+    constructor(private readonly inner: JsonFileStore) {
+      this.persistsClaims = inner.persistsClaims;
+    }
+    create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
+      return this.inner.create(options);
+    }
+    get(runId: string): Promise<RunRecord> {
+      return this.inner.get(runId);
+    }
+    update(record: RunRecord): Promise<RunRecord> {
+      return this.inner.update(record);
+    }
+    list(workflowId?: string): Promise<RunRecord[]> {
+      return this.inner.list(workflowId);
+    }
+    claimStep(runId: string, stepName: string, def: WorkflowDefinition): Promise<RunRecord> {
+      return this.inner.claimStep(runId, stepName, def);
+    }
+    // settleStep intentionally OMITTED.
+  }
+
+  const legacyDef: WorkflowDefinition = {
+    id: 'legacy-373-wf',
+    name: 'Legacy 373',
+    version: 1,
+    steps: {
+      fail_a: { description: 'A', execution: 'agent', depends_on: [] },
+      fail_b: { description: 'B', execution: 'agent', depends_on: [] },
+    },
+  };
+
+  async function driveLegacy(steps: readonly string[]): Promise<RunRecord> {
+    const legacyDir = await mkdtemp(join(tmpdir(), 'realm-legacy-373-'));
+    const store = new LegacyOnlyStore(new JsonFileStore(legacyDir));
+    const { run } = await store.create({
+      workflowId: legacyDef.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    for (const step of steps) {
+      await executeStep(store, legacyDef, {
+        runId: run.id,
+        command: step,
+        input: {},
+        dispatcher: async () => {
+          throw new Error(`${step} exploded`);
+        },
+      });
+    }
+    return store.get(run.id);
+  }
+
+  it('two failures through the legacy path ⇒ both named, sorted, order-independent', async () => {
+    const forward = await driveLegacy(['fail_a', 'fail_b']);
+    const reverse = await driveLegacy(['fail_b', 'fail_a']);
+    expect(forward.failed_steps).toEqual(['fail_a', 'fail_b']);
+    expect(reverse.failed_steps).toEqual(['fail_b', 'fail_a']); // settle order still differs
+    expect(forward.terminal_reason).toBe(
+      '2 steps failed: fail_a ("Dispatcher failed: fail_a exploded"), ' +
+        'fail_b ("Dispatcher failed: fail_b exploded").',
+    );
+    expect(reverse.terminal_reason).toBe(forward.terminal_reason);
+  });
+
+  it('ONE failure through the legacy path keeps the per-site template verbatim', async () => {
+    const singleDef: WorkflowDefinition = {
+      id: 'legacy-373-single',
+      name: 'Legacy 373 Single',
+      version: 1,
+      steps: { only: { description: 'Only', execution: 'agent', depends_on: [] } },
+    };
+    const legacyDir = await mkdtemp(join(tmpdir(), 'realm-legacy-373-single-'));
+    const store = new LegacyOnlyStore(new JsonFileStore(legacyDir));
+    const { run } = await store.create({
+      workflowId: singleDef.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeStep(store, singleDef, {
+      runId: run.id,
+      command: 'only',
+      input: {},
+      dispatcher: async () => {
+        throw new Error('only exploded');
+      },
+    });
+    const record = await store.get(run.id);
+    // This site has never carried settlement.ts's `?? 'unknown error'` fallback, and does not gain
+    // one here — the single-failure branch is the no-regression control.
+    expect(record.terminal_reason).toBe("Step 'only' failed: Dispatcher failed: only exploded");
   });
 });

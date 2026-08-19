@@ -429,6 +429,101 @@ function applyAbortEdge(
   };
 }
 
+// ---------------------------------------------------------------------------
+// The run's one-line fail cause (issue #373)
+// ---------------------------------------------------------------------------
+
+/** Per-message cap before the truncation marker. Not prior art — an in-house choice, sized so a
+ *  handful of messages fit inside {@link FAIL_CAUSE_SENTENCE_CAP} without any one of them
+ *  swallowing the sentence. */
+const FAIL_CAUSE_MESSAGE_CAP = 120;
+/** Hard cap on the WHOLE sentence, marker included — the returned string is never longer than
+ *  this. (Tekton caps its joined validation detail at 1024 + `"..."`, i.e. 1027 out; realm's cap
+ *  is inclusive, so an overflowing sentence lands at exactly 1024.) */
+const FAIL_CAUSE_SENTENCE_CAP = 1024;
+/** ASCII, not `…` — the marker travels through logs, terminals and a Postgres text column. */
+const FAIL_CAUSE_TRUNCATION = '...';
+
+/**
+ * Renders the run-level cause for a run with MORE THAN ONE distinct failed step (issue #373).
+ *
+ * PRECONDITION — callers gate on `new Set(failedSteps).size > 1`. The single-failure sentence is
+ * each call site's own template (`Step 'a' failed: …`, `Guard step 'g' failed: …`), deliberately
+ * left where it is: this function never emits a single-failure shape, so there is exactly one
+ * spelling of each.
+ *
+ * The defect it fixes: `failed_steps` is append-ordered by settlement commit, so naming one step
+ * as THE cause named whichever failure settled LAST — and under true concurrency the lock race
+ * decided the culprit. The sentence below is order-independent by construction:
+ *
+ * - **dedup, then sort lexically.** A domain step cannot appear twice today, but the post-seal
+ *   finalizer append across resume epochs has never been executed for duplication — dedup makes
+ *   the count honest either way. Sorting is the order rule (Tekton `sort.Strings`, rustc
+ *   `error_codes.sort()`); array order IS settle order, the instability this fix exists to kill.
+ * - **count first, no culprit, terminating verb.** The count is the one fact true regardless of
+ *   order.
+ * - **a missing message yields a bare step name.** Never fabricated — the string `undefined` must
+ *   not be constructible here.
+ */
+export function renderFailCause(
+  failedSteps: readonly string[],
+  messages: ReadonlyMap<string, string>,
+): string {
+  const distinct = [...new Set(failedSteps)].sort();
+  const rendered = distinct.map((step) => {
+    const message = messages.get(step);
+    if (message === undefined) return step;
+    const capped =
+      message.length > FAIL_CAUSE_MESSAGE_CAP
+        ? message.slice(0, FAIL_CAUSE_MESSAGE_CAP) + FAIL_CAUSE_TRUNCATION
+        : message;
+    return `${step} ("${capped}")`;
+  });
+  const sentence = `${distinct.length} steps failed: ${rendered.join(', ')}.`;
+  return sentence.length > FAIL_CAUSE_SENTENCE_CAP
+    ? sentence.slice(0, FAIL_CAUSE_SENTENCE_CAP - FAIL_CAUSE_TRUNCATION.length) +
+        FAIL_CAUSE_TRUNCATION
+    : sentence;
+}
+
+/**
+ * Last-`error`-snapshot-per-step, in one linear pass — the same last-per-step idiom
+ * `buildSettlementNamespace` already ships. `EvidenceSnapshot.error` is stored VERBATIM by
+ * `captureEvidence`, so these are the real per-step messages, not a reconstruction.
+ *
+ * A step can hold several error snapshots (retries, resume epochs); the LAST one is the message
+ * that describes the failure the record currently carries.
+ */
+export function failureMessagesFromEvidence(
+  evidence: readonly EvidenceSnapshot[],
+): Map<string, string> {
+  const messages = new Map<string, string>();
+  for (const snapshot of evidence) {
+    if (snapshot.error !== undefined) messages.set(snapshot.step_id, snapshot.error);
+  }
+  return messages;
+}
+
+/**
+ * The evidence walk plus the call site's OWN in-hand message for its own step.
+ *
+ * The overlay is load-bearing, not defensive, at the guard sites: a guard `resolution_error`
+ * records `error: "Guard resolution error on condition: …"` in evidence and puts the unresolvable
+ * path only in `output_summary`, so without the overlay the path text — the whole diagnostic
+ * value of that sentence — would not reach the rendered cause.
+ *
+ * `undefined` never clobbers an evidence message.
+ */
+export function failureMessagesWithOverlay(
+  evidence: readonly EvidenceSnapshot[],
+  step: string,
+  inHand: string | undefined,
+): Map<string, string> {
+  const messages = failureMessagesFromEvidence(evidence);
+  if (inHand !== undefined) messages.set(step, inHand);
+  return messages;
+}
+
 /** complete / fail: the TWO-DISJUNCT `isComplete` predicate (execution-loop.ts :2579-2583 /
  *  :2237-2241 — named, not implied). */
 function applyCompleteOrFailEdge(
@@ -450,6 +545,16 @@ function applyCompleteOrFailEdge(
       findEligibleSteps(definition, withSkipped).length === 0 &&
       findEligibleGuardSteps(definition, withSkipped).length === 0);
 
+  // issue #373: with MORE THAN ONE distinct failure the run has no single culprit, and naming one
+  // named whichever settled last. At exactly one failure the sentence is unchanged — including the
+  // `?? 'unknown error'` fallback, which is this site's shape and stays this site's shape.
+  const failCause =
+    new Set(withSkipped.failed_steps).size > 1
+      ? renderFailCause(
+          withSkipped.failed_steps,
+          failureMessagesWithOverlay(withSkipped.evidence, step, failureMessage),
+        )
+      : `Step '${step}' failed: ${failureMessage ?? 'unknown error'}`;
   const draft: RunRecord = {
     ...withSkipped,
     terminal_state: isComplete,
@@ -458,7 +563,7 @@ function applyCompleteOrFailEdge(
           terminal_reason:
             outcome === 'complete'
               ? 'Workflow completed.' // eligibility.ts:47 keys deriveRunPhase's 'completed' on this
-              : `Step '${step}' failed: ${failureMessage ?? 'unknown error'}`,
+              : failCause,
         }
       : {}),
   };
@@ -668,7 +773,7 @@ function applySettleGate(
     const draft: RunRecord = {
       ...withSkipped,
       terminal_state: isComplete,
-      // eligibility.ts:47 keys deriveRunPhase's 'completed' on this exact string.
+      // eligibility.ts:65 keys deriveRunPhase's 'completed' on this exact string.
       ...(isComplete ? { terminal_reason: 'Workflow completed.' } : {}),
     };
     const { run, transitioned } = applyTerminalPostconditions(
@@ -967,11 +1072,23 @@ function applySettleGuard(
       skipped_steps: propagated.skipped,
       skip_details: propagated.details,
     };
+    // issue #373: this site names the guard alone even when other steps had already failed
+    // (executed with failed_steps=["fail_a","g"]). At >1 distinct failure it renders the whole
+    // set; at exactly one the sentence below is byte-unchanged.
+    const guardPath = `unresolvable path '${resolutionError!.unresolvable_path}'`;
     const draft: RunRecord = {
       ...withSkipped,
       terminal_state: true,
-      // execution-loop.ts:3671 parity.
-      terminal_reason: `Guard step '${step}' failed: unresolvable path '${resolutionError!.unresolvable_path}'`,
+      // execution-loop.ts:4812 parity.
+      terminal_reason:
+        new Set(withSkipped.failed_steps).size > 1
+          ? renderFailCause(
+              withSkipped.failed_steps,
+              // LOAD-BEARING overlay: the guard's evidence `error` reads "Guard resolution error
+              // on condition: …" — the path text lives only in output_summary and here.
+              failureMessagesWithOverlay(withSkipped.evidence, step, guardPath),
+            )
+          : `Guard step '${step}' failed: ${guardPath}`,
     };
     const { run, transitioned } = applyTerminalPostconditions(draft, definition, 'fail', false);
     return {
@@ -1035,7 +1152,7 @@ function applySettleGuard(
   const draft: RunRecord = {
     ...withSkipped,
     terminal_state: isComplete,
-    // execution-loop.ts:3675-3705 parity; eligibility.ts:47 keys deriveRunPhase's 'completed' on
+    // execution-loop.ts:3675-3705 parity; eligibility.ts:65 keys deriveRunPhase's 'completed' on
     // this exact string.
     ...(isComplete ? { terminal_reason: 'Workflow completed.' } : {}),
   };
@@ -1215,9 +1332,25 @@ function applyMarkFinalizer(fresh: RunRecord, delta: MarkFinalizerDelta): Settle
           failed_steps: [...fresh.failed_steps, delta.finalizer],
           evidence: [...fresh.evidence, delta.evidence],
         };
+  const phase = deriveRunPhase(withLedgerAndEvidence);
+  // issue #373: the finalizer's OWN failure joins `failed_steps` here, AFTER the seal minted the
+  // sentence — which is how a sealed cause went stale and undercounted the record. Re-render from
+  // the grown record, but ONLY on the failed arm: on the completed arm nothing grew, and a
+  // re-render there would rebuild without the seal site's in-hand overlay (the guard sites' path
+  // text) and silently drop it.
+  const failedArmCause =
+    delta.result !== 'completed' &&
+    phase === 'failed' &&
+    new Set(withLedgerAndEvidence.failed_steps).size > 1
+      ? renderFailCause(
+          withLedgerAndEvidence.failed_steps,
+          failureMessagesFromEvidence(withLedgerAndEvidence.evidence),
+        )
+      : undefined;
   const run: RunRecord = {
     ...withLedgerAndEvidence,
-    run_phase: deriveRunPhase(withLedgerAndEvidence),
+    run_phase: phase,
+    ...(failedArmCause !== undefined ? { terminal_reason: failedArmCause } : {}),
   };
   return {
     applied: true,
