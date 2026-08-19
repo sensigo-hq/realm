@@ -99,6 +99,32 @@ export type ErrorCode =
   | 'STEP_ABORTED'
   | 'STEP_RETRY_EXHAUSTED'
   | 'STATE_STEP_PENDING'
+  // issue #367 — the seal-integrity boundary (`assertSealIntegrity`, installed in both in-repo
+  // stores' update AND settle write tails). All five THROW (retryable: false): this store already
+  // throws on write integrity (STATE_SNAPSHOT_MISMATCH / STATE_RUN_DIVERGED), and an advisory
+  // would persist the violating record into the permanent legacy population and report success on
+  // a write that violated its own invariant — the #183 fsync-gate sin. #119's WARN-never-gate
+  // governs advisory findings, not store integrity. The escape hatch is `abandon_run`, itself a
+  // stamped writer.
+  //
+  // A fresh seal (non-terminal -> terminal write) carries no `sealed_by` — a writer gap.
+  // Transition-scoped, so legacy terminal records re-written while terminal pass untouched.
+  | 'STATE_SEAL_UNSTAMPED'
+  // A non-terminal write RETAINS `sealed_by` across a terminal -> live transition — an in-version
+  // stripper bug (resume/re-drive paths must strip the stamp in the same write). Transition-scoped
+  // so a pre-existing orphan (an old binary's resume) is not wedged by every subsequent write.
+  | 'STATE_SEAL_ORPHANED'
+  // A terminal rewrite DROPS a previously-stored `sealed_by` — a field-enumerating rewriter
+  // silently draining the stamped population back to prose. Zero legacy cost: no pre-#367 stored
+  // record carries the field.
+  | 'STATE_SEAL_ERASED'
+  // `sealed_by.arm` is outside SEAL_ARMS — a foreign or corrupt stamp. The read side treats it as
+  // absent (falls through to the classifier); the write side refuses it loudly here.
+  | 'STATE_SEAL_UNKNOWN_ARM'
+  // A terminal write's stamp DISAGREES at phase level with what the record's own markers/prose
+  // classify to — a stale arm preserved by spread (the old-binary re-seal channel) or a
+  // mis-stamped writer.
+  | 'STATE_SEAL_INCOHERENT'
   | 'STEP_NOT_FOUND'
   | 'GUARD_RESOLUTION_ERROR'
   | 'INPUT_MAP_DEPTH_EXCEEDED'

@@ -670,9 +670,18 @@ terminal outcome). This is pure population hygiene, not a correctness fix — ev
 phase fresh on every read, so a stale on-disk value is cosmetic residue, invisible unless you read the
 raw JSON file directly. The heal writes each mismatched record back **unmodified**; the store's own
 versioned write tail corrects `run_phase` (plus `version`/`updated_at`) as its ordinary side effect —
-gc itself never constructs or edits a single field. Composable with `--older-than`: `--heal` alone runs
-without it (healing is safe at any age, no 1-hour floor applies), `--older-than` alone runs the temp/
-artifact sweeps as always, and both together run all three passes in one invocation.
+gc itself never constructs or edits a single field.
+
+> **Ordering trap after upgrading across #367 — read before running `--heal`.** The seal substrate
+> changed what `deriveRunPhase` computes for some legacy records: a startup death that used to
+> derive `abandoned` now derives `failed`. `--heal` rewrites exactly the records whose persisted
+> phase disagrees with the derivation, so on the first run after the upgrade it will rewrite that
+> whole population — and every rewrite resets the record's `updated_at`, which is the clock
+> `--older-than`, `cleanup` and your retention policy all read. **Until the stamp-seals migration
+> vehicle ships (the next PR), do NOT run `--heal` if retention clocks matter to you. Once it
+> ships, run `realm run migrate --stamp-seals` first.** Composable with `--older-than`: `--heal` alone runs
+> without it (healing is safe at any age, no 1-hour floor applies), `--older-than` alone runs the temp/
+> artifact sweeps as always, and both together run all three passes in one invocation.
 
 ```bash
 realm run gc --heal                        # dry-run: list records that WOULD be healed

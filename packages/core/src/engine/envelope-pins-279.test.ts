@@ -124,6 +124,7 @@ describe('run_terminal envelope — the composed cancelled-predicate (issue #279
         ...run,
         completed_steps: ['gate_step'],
         terminal_state: true,
+        sealed_by: { arm: 'complete' as const },
         terminal_reason: 'Workflow completed.',
         pending_gate: {
           gate_id: 'zombie-gate',

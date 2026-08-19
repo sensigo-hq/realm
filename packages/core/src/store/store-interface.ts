@@ -52,7 +52,11 @@ export type LoadBearingRunRecordField =
   | 'validation_rejections'
   | 'defaulted_steps'
   | 'settled'
-  | 'finalizer_ledger';
+  | 'finalizer_ledger'
+  // issue #367: the recorded seal fact. Its consumer profile is the strongest in this set — it is
+  // `deriveRunPhase`'s FIRST input, so a store that drops it silently changes what every reader
+  // believes the run's outcome was. A `settleStep`-declaring store MUST declare it.
+  | 'sealed_by';
 
 export interface CreateRunOptions {
   workflowId: string;

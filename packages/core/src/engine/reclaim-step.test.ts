@@ -97,6 +97,7 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
       claims: { work: { deadline: null } },
       completed_steps: ['other'],
       terminal_state: true,
+      sealed_by: { arm: 'complete' as const },
       terminal_reason: 'Workflow completed.',
     });
     await expect(reclaimStep(store, run.id, 'work')).rejects.toThrow(/terminal/i);

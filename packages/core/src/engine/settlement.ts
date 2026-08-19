@@ -12,7 +12,7 @@
 // packages/core/src/engine (outside this file) or packages/mcp-server calls `applySettlement` or
 // a store's `settleStep`. PR-B migrates the three legacy seal sites to construct `SettlementDelta`
 // values and call `store.settleStep` instead of `store.update` directly.
-import type { RunRecord, EvidenceSnapshot } from '../types/run-record.js';
+import type { RunRecord, SealArm, EvidenceSnapshot } from '../types/run-record.js';
 import type { WorkflowDefinition, FinalizerTrigger } from '../types/workflow-definition.js';
 import type {
   SettlementDelta,
@@ -28,6 +28,8 @@ import type {
   ExpireGateDelta,
 } from '../types/settlement.js';
 import {
+  assertSealMarkersAgree,
+  assertSealOutcomeCoherent,
   deriveRunPhase,
   isWorkflowComplete,
   findEligibleSteps,
@@ -276,19 +278,39 @@ function applyTerminalPostconditions(
   definition: WorkflowDefinition,
   mintOutcome: SettleStepOutcome,
   stampDefaulted: boolean,
+  /**
+   * issue #367: the ARM this settlement branch seals with — per-branch knowledge that exists
+   * exactly once, at the seal site, at seal time (re-inferring it later is lossy in principle:
+   * `guard_abort` and `handler_abort` differ only by writer-owned prose). Stamped IFF this apply
+   * TRANSITIONED; the eight call sites in this file are the whole settlement-transform writer
+   * census. A stale prior seal never survives a non-terminal fork — see the strip below.
+   */
+  seal: { arm: SealArm; step?: string },
 ): { run: RunRecord; transitioned: boolean } {
   const transitioned = record.terminal_state === true;
-  let sealed = record;
+  // issue #367: strip any stale prior seal FIRST, so a non-terminal fork can never carry one out.
+  const { sealed_by: _priorSeal, ...base } = record;
+  let sealed: RunRecord = transitioned
+    ? {
+        ...base,
+        sealed_by: { arm: seal.arm, ...(seal.step !== undefined ? { step: seal.step } : {}) },
+      }
+    : base;
   if (transitioned) {
     // On terminal false→true edge: mintFresh (§4.1), same atomic write.
-    const ledger = mintFresh(record, definition, mintOutcome);
-    sealed = { ...record, ...(ledger !== undefined ? { finalizer_ledger: ledger } : {}) };
+    const ledger = mintFresh(sealed, definition, mintOutcome);
+    sealed = { ...sealed, ...(ledger !== undefined ? { finalizer_ledger: ledger } : {}) };
     // defaulted_steps stamped IFF a COMPLETE-terminal edge (§4.2; the FM-5/#232 guard) — never on
     // a fail/abort seal, even one that terminalizes.
     if (stampDefaulted) {
       const defaultedSteps = deriveDefaultedSteps(sealed.evidence);
       if (defaultedSteps.length > 0) sealed = { ...sealed, defaulted_steps: defaultedSteps };
     }
+    // issue #367: the two transform-scoped congruence assertions, on the record THIS function
+    // produces — never universal (a universal marker law reds the published TERMINAL_STATE_ONLY
+    // fixture by construction).
+    assertSealMarkersAgree(sealed);
+    assertSealOutcomeCoherent(sealed);
   }
   const withPhase: RunRecord = { ...sealed, run_phase: deriveRunPhase(sealed) };
   return { run: withPhase, transitioned };
@@ -420,7 +442,10 @@ function applyAbortEdge(
   // §4 shared postconditions: abort NEVER stamps defaulted_steps (the FM-5/#232 guard — only the
   // complete edge does); `transitioned` is always true here (isTerminal(fresh) was already
   // refused above, and `aborted.terminal_state` is unconditionally true).
-  const { run, transitioned } = applyTerminalPostconditions(aborted, definition, 'abort', false);
+  const { run, transitioned } = applyTerminalPostconditions(aborted, definition, 'abort', false, {
+    arm: 'handler_abort',
+    step,
+  });
   return {
     applied: true,
     run,
@@ -580,6 +605,10 @@ function applyCompleteOrFailEdge(
     definition,
     outcome,
     outcome === 'complete' && isComplete,
+    // issue #367: validation exhaustion is deliberately NOT a distinct arm — a VALIDATION_EXHAUSTED
+    // fail seals 'step_failure' like any other; the distinction lives in defaulted_steps and the
+    // step diagnostics. Never re-introduce a failure-code ternary here.
+    { arm: outcome === 'complete' ? 'complete' : 'step_failure', step },
   );
   return {
     applied: true,
@@ -786,6 +815,7 @@ function applySettleGate(
       definition,
       'complete',
       isComplete,
+      { arm: 'gate_resolution_complete', step: stepName },
     );
     return {
       applied: true,
@@ -914,6 +944,7 @@ function applyExpireGate(
       definition,
       'complete',
       isComplete,
+      { arm: 'gate_expiry_default', step: stepName },
     );
     return {
       applied: true,
@@ -973,7 +1004,10 @@ function applyExpireGate(
   };
   // §4 shared postconditions: abort NEVER stamps defaulted_steps (the FM-5/#232 guard);
   // `transitioned` is always true (isTerminal(fresh) already refused above).
-  const { run, transitioned } = applyTerminalPostconditions(aborted, definition, 'abort', false);
+  const { run, transitioned } = applyTerminalPostconditions(aborted, definition, 'abort', false, {
+    arm: 'gate_expiry_abort',
+    step: stepName,
+  });
   return {
     applied: true,
     run,
@@ -1095,7 +1129,10 @@ function applySettleGuard(
             )
           : `Guard step '${step}' failed: ${guardPath}`,
     };
-    const { run, transitioned } = applyTerminalPostconditions(draft, definition, 'fail', false);
+    const { run, transitioned } = applyTerminalPostconditions(draft, definition, 'fail', false, {
+      arm: 'guard_resolution_error',
+      step,
+    });
     return {
       applied: true,
       run,
@@ -1128,7 +1165,10 @@ function applySettleGuard(
         ...(abort!.abort_message !== undefined ? { abort_message: abort!.abort_message } : {}),
       },
     };
-    const { run, transitioned } = applyTerminalPostconditions(draft, definition, 'abort', false);
+    const { run, transitioned } = applyTerminalPostconditions(draft, definition, 'abort', false, {
+      arm: 'guard_abort',
+      step,
+    });
     return {
       applied: true,
       run,
@@ -1166,6 +1206,7 @@ function applySettleGuard(
     definition,
     'complete',
     isComplete,
+    { arm: 'guard_pass_complete', step },
   );
   return {
     applied: true,

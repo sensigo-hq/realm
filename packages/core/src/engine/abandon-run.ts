@@ -4,7 +4,7 @@
 import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
-import { deriveRunPhase } from './eligibility.js';
+import { deriveRunPhase, sealRunLevel } from './eligibility.js';
 
 /**
  * Explicitly abandon a run by stamping the authoritative `abandoned_at` marker. The run's phase
@@ -71,12 +71,10 @@ export async function abandonRun(
 
   const abandonedReason = reason ?? 'Abandoned via abandon_run';
   try {
-    return await store.update({
-      ...run,
-      abandoned_at: new Date().toISOString(),
-      terminal_state: true,
-      terminal_reason: abandonedReason,
-    });
+    // issue #367: run-level seal through the ONE bypass-writer chokepoint — it stamps
+    // sealed_by {arm: 'abandon_requested'} alongside abandoned_at and terminal_state in the same
+    // object literal.
+    return await store.update(sealRunLevel(run, 'abandon_requested', abandonedReason));
   } catch (err) {
     if (err instanceof WorkflowError && err.code === 'STATE_SNAPSHOT_MISMATCH') {
       // The run changed under us — reload once.

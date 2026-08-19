@@ -6,11 +6,252 @@ import type {
   StepDefinition,
   TriggerRule,
 } from '../types/workflow-definition.js';
-import type { RunRecord, SkipDetail, StepDiagnostics } from '../types/run-record.js';
+import type { RunRecord, SealArm, SkipDetail, StepDiagnostics } from '../types/run-record.js';
+import { SEAL_ARMS } from '../types/run-record.js';
 import type { RunPhase } from '../types/run-record.js';
 import { resolvePath } from './render-template.js';
 import { splitComparison, type ComparisonOp } from './comparison-expr.js';
 import { boundResolvedValue } from '../utils/redaction.js';
+
+// ---------------------------------------------------------------------------
+// issue #367 — the recorded seal fact: mappings, the permanent legacy read oracle, the run-level
+// writer chokepoint, and the transform-scoped marker assertion.
+//
+// These mappings are the engine-owned TOTAL functions over the recorded value. Changing one
+// changes a JUDGEMENT; it never moves a stored record. The exhaustive no-default switches are the
+// one real compile guarantee this design claims: a 14th arm added to SEAL_ARMS without mappings
+// does not build.
+// ---------------------------------------------------------------------------
+
+/** `arm -> RunPhase`. Total, exhaustive, no default. */
+export function armToPhase(arm: SealArm): RunPhase {
+  switch (arm) {
+    case 'complete':
+    case 'gate_resolution_complete':
+    case 'guard_pass_complete':
+    case 'gate_expiry_default':
+      return 'completed';
+    case 'step_failure':
+    case 'guard_resolution_error':
+    case 'spawn_failure':
+    case 'extensions_load_failure':
+      return 'failed';
+    case 'handler_abort':
+    case 'guard_abort':
+    case 'gate_expiry_abort':
+      return 'aborted';
+    case 'abandon_requested':
+    case 'cleanup_sweep':
+      return 'abandoned';
+  }
+}
+
+/**
+ * `arm -> outcome class`. Total, exhaustive, no default. NOT read by `deriveEffectiveTriggers`
+ * (which keeps its own `mintOutcome` — the two may diverge by design); this exists for readers
+ * that need the class from a STORED record.
+ */
+export function armToOutcome(arm: SealArm): 'complete' | 'fail' | 'abort' | 'abandon' {
+  switch (arm) {
+    case 'complete':
+    case 'gate_resolution_complete':
+    case 'guard_pass_complete':
+    case 'gate_expiry_default':
+      return 'complete';
+    case 'step_failure':
+    case 'guard_resolution_error':
+    case 'spawn_failure':
+    case 'extensions_load_failure':
+      return 'fail';
+    case 'handler_abort':
+    case 'guard_abort':
+    case 'gate_expiry_abort':
+      return 'abort';
+    case 'abandon_requested':
+    case 'cleanup_sweep':
+      return 'abandon';
+  }
+}
+
+/** The marker each arm is REQUIRED to co-write (`SEAL_MARKERS_AGREE`'s expectation). */
+export function armMarker(arm: SealArm): 'aborted_at' | 'abandoned_at' | undefined {
+  const phase = armToPhase(arm);
+  if (phase === 'aborted') return 'aborted_at';
+  if (phase === 'abandoned') return 'abandoned_at';
+  return undefined;
+}
+
+const GUARD_RESOLUTION_PROSE = /^Guard step '.+' failed: unresolvable path/;
+/** issue #373's multi-failure shape rides here too — `N steps failed:` is a step-failure seal. */
+const FAIL_PROSE = [/^Step '.+' failed:/, /^\d+ steps? failed:/, /^Guard step '.+' failed:/];
+const CLEANUP_SWEEP_PROSE = 'Marked abandoned by realm cleanup';
+const HANDLER_ABORT_PROSE = /^Handler '.+' aborted the run:/;
+const GATE_EXPIRY_ABORT_PROSE = /^Gate '.+' expired and the run aborted/;
+
+/** The record shape both legacy classifiers read. */
+type ClassifiableRun = Pick<
+  RunRecord,
+  'terminal_state' | 'failed_steps' | 'terminal_reason' | 'aborted_at' | 'abandoned_at'
+>;
+
+/** The prose battery, reachable with NO markers — the marker-column-less store class. */
+function classifyByProse(run: ClassifiableRun): SealArm | undefined {
+  const reason = run.terminal_reason;
+  if (reason === 'Workflow completed.') return 'complete'; // gate/guard variants NOT recoverable
+  if (reason === 'spawn_failed') return 'spawn_failure';
+  if (reason === 'extensions_load_failed') return 'extensions_load_failure';
+  if (reason === CLEANUP_SWEEP_PROSE) return 'cleanup_sweep';
+  if (reason !== undefined) {
+    if (HANDLER_ABORT_PROSE.test(reason)) return 'handler_abort';
+    if (GATE_EXPIRY_ABORT_PROSE.test(reason)) return 'gate_expiry_abort';
+    // Order load-bearing: the resolution-error regex MUST run before the generic guard-failure
+    // member of FAIL_PROSE, which also matches it.
+    if (GUARD_RESOLUTION_PROSE.test(reason)) return 'guard_resolution_error';
+    if (FAIL_PROSE.some((re) => re.test(reason))) return 'step_failure';
+  }
+  if (run.failed_steps.length > 0) return 'step_failure';
+  return undefined;
+}
+
+/** The aborted-marker branch — shared by both classifier entry points (it stays live in both). */
+function classifyByAbortedMarker(run: ClassifiableRun): SealArm | undefined {
+  const reason = run.terminal_reason;
+  if (reason === undefined) return 'guard_abort'; // the ONLY reason-less abort
+  if (HANDLER_ABORT_PROSE.test(reason)) return 'handler_abort';
+  if (GATE_EXPIRY_ABORT_PROSE.test(reason)) return 'gate_expiry_abort';
+  return undefined; // an abort we do not recognise — never guess
+}
+
+/**
+ * Classify a LEGACY terminal record (one written before `sealed_by` existed) into the arm it would
+ * have carried. Returns `undefined` when the record cannot be placed — callers must then refuse to
+ * fabricate (`deriveRunPhase` falls back to the pre-#367 ladder; the future migrate vehicle buckets
+ * it `unclassifiable` and exits 1).
+ *
+ * A READ-PATH function, not only a migration function: an unhealed record reached through
+ * `store.get()` never passes through any sweep, so this is a PERMANENT oracle and correctness never
+ * depends on a migration having run.
+ *
+ * Structure (design rev 3 §4 + Amendment 1 defect 4): MARKERS AS A HINT, PROSE REACHABLE WITHOUT
+ * THEM. Markers are checked first when present (they are the strongest legacy signal, and the
+ * legacy ladder gives them precedence), but every prose-identifiable arm is classifiable from
+ * `terminal_reason` alone, because the only external store has no marker columns. That leaves just
+ * the two genuinely prose-less arms — `guard_abort` (reason-less by construction) and
+ * `abandon_requested` (free-text reason) — marker-dependent.
+ */
+export function classifyLegacySeal(run: ClassifiableRun): SealArm | undefined {
+  if (run.terminal_state !== true) return undefined;
+  if (run.abandoned_at !== undefined) {
+    return run.terminal_reason === CLEANUP_SWEEP_PROSE ? 'cleanup_sweep' : 'abandon_requested';
+  }
+  if (run.aborted_at !== undefined) return classifyByAbortedMarker(run);
+  return classifyByProse(run);
+}
+
+/**
+ * The comparator `SEAL_COHERENT` uses at the store boundary (Amendment 2 F2). It is
+ * {@link classifyLegacySeal} with EXACTLY ONE branch removed — the abandoned-marker branch, the
+ * sole measured false-positive source: a record legitimately carrying `abandoned_at` from an
+ * earlier life would classify `abandon_requested` and contradict an honest arm.
+ *
+ * The aborted-marker branch STAYS LIVE here on purpose. A prose-only comparator was the earlier,
+ * superseded bend, and it was refuted because it discards real coverage: the old-binary
+ * `guard_abort` re-seal is reason-less, so it is marker-only-visible, and the markers-first
+ * comparator is what catches it.
+ *
+ * Named blindness, on record: an old-binary `abandon_requested` re-seal carrying a stale arm is
+ * invisible here. Its observer is the migrate sweep's `incoherent` bucket, which uses the FULL
+ * classifier.
+ *
+ * SKIPPING MEANS ABSTAINING, and that distinction is load-bearing — measured, not reasoned. An
+ * abandoned-marker record that merely FALLS THROUGH to the prose battery does not go unjudged: an
+ * abandon reason is free text, so the battery reaches its `failed_steps.length > 0` fallback and
+ * returns `step_failure`. `abandonRun` on a run that already has a failed step — an ordinary
+ * production path — would then be refused by the boundary as incoherent. Executed: the full
+ * classifier says `abandon_requested`, the fall-through form says `step_failure`. So the presence
+ * of the marker ends the comparison here rather than redirecting it.
+ */
+export function classifyForCoherence(run: ClassifiableRun): SealArm | undefined {
+  if (run.terminal_state !== true) return undefined;
+  if (run.abandoned_at !== undefined) return undefined; // abstain — see above
+  if (run.aborted_at !== undefined) return classifyByAbortedMarker(run);
+  return classifyByProse(run);
+}
+
+/**
+ * issue #367 — `SEAL_MARKERS_AGREE`, TRANSFORM-SCOPED: asserted on the records
+ * `applyTerminalPostconditions` / `buildFinalizedSeal` THEMSELVES produce, where congruence is
+ * theirs to guarantee. Never universal, and ONE-DIRECTIONAL (`armMarker(arm)` present ⇒ assert;
+ * foreign markers are NOT forbidden): a transform's INPUT may legitimately carry a marker it did
+ * not write — the published `TERMINAL_STATE_ONLY` law seeds `abandoned_at`/`aborted_at` on a live
+ * run and settles it complete, in contract. A forbids-direction clause makes that record
+ * engine-unconstructible and reds the published law (measured).
+ *
+ * A violation is a transform contract bug, thrown as a plain Error (the `applySettlement`
+ * contract-violation precedent), never a predicate outcome.
+ */
+export function assertSealMarkersAgree(
+  run: Pick<RunRecord, 'id' | 'terminal_state' | 'sealed_by' | 'aborted_at' | 'abandoned_at'>,
+): void {
+  if (run.terminal_state !== true || run.sealed_by === undefined) return;
+  const marker = armMarker(run.sealed_by.arm);
+  if (marker === 'aborted_at' && run.aborted_at === undefined) {
+    throw new Error(
+      `SEAL_MARKERS_AGREE violated on run '${run.id}': arm '${run.sealed_by.arm}' requires aborted_at`,
+    );
+  }
+  if (marker === 'abandoned_at' && run.abandoned_at === undefined) {
+    throw new Error(
+      `SEAL_MARKERS_AGREE violated on run '${run.id}': arm '${run.sealed_by.arm}' requires abandoned_at`,
+    );
+  }
+}
+
+/**
+ * issue #367 — `SEAL_OUTCOME_COHERENT` (design §10.7), transform-scoped: a fail-class arm that
+ * names a STEP must have that failure on the record. The two startup arms
+ * (`spawn_failure`/`extensions_load_failure`) map to `failed` with an empty `failed_steps` and are
+ * exempt BY the predicate, honestly — no step ever ran.
+ */
+export function assertSealOutcomeCoherent(
+  run: Pick<RunRecord, 'id' | 'terminal_state' | 'sealed_by' | 'failed_steps'>,
+): void {
+  if (run.terminal_state !== true || run.sealed_by === undefined) return;
+  const arm = run.sealed_by.arm;
+  if (
+    (arm === 'step_failure' || arm === 'guard_resolution_error') &&
+    run.failed_steps.length === 0
+  ) {
+    throw new Error(
+      `SEAL_OUTCOME_COHERENT violated on run '${run.id}': arm '${arm}' with empty failed_steps`,
+    );
+  }
+}
+
+/**
+ * issue #367 — the ONE chokepoint for the four run-level BYPASS writers (`abandon-run.ts`,
+ * `cleanup.ts`, `listen.ts`, `run-attach.ts`): seals `run` with a run-scoped arm. It also retires
+ * those writers' fossil `run_phase` hand-writes — phase is derived at every store write tail, never
+ * hand-stamped (the #282 class). `step` is deliberately NOT accepted: every run-level arm is
+ * step-less by definition, so `SealedBy.step` stays ABSENT rather than becoming an `''` sentinel.
+ */
+export function sealRunLevel(
+  run: RunRecord,
+  arm: SealArm,
+  reason: string,
+  now: Date = new Date(),
+): RunRecord {
+  const { sealed_by: _priorSeal, ...base } = run;
+  // The carried run_phase may be stale here — every store write tail re-derives it
+  // (PHASE_IS_GENERATED), which is exactly why the callers' fossil hand-writes were deletable.
+  return {
+    ...base,
+    terminal_state: true,
+    sealed_by: { arm },
+    terminal_reason: reason,
+    ...(armMarker(arm) === 'abandoned_at' ? { abandoned_at: now.toISOString() } : {}),
+  };
+}
 
 /**
  * Derives the run_phase from the run record fields. Called after every store write to keep
@@ -43,25 +284,57 @@ export function deriveRunPhase(
     | 'terminal_reason'
     | 'aborted_at'
     | 'abandoned_at'
+    | 'sealed_by'
   >,
 ): RunPhase {
-  // abandoned_at is authoritative — explicit operator/cleanup abandonment wins over any field
-  // (failed_steps, pending_gate, terminal_reason, and now checked before the whole terminal
-  // cluster below too). It is only ever set on a running run (gate_waiting abandonment is refused
-  // by abandonRun), so it never co-occurs with pending_gate in practice; top placement is
-  // future-proof and mirrors the aborted_at promotion rationale below.
+  // issue #367: the RECORDED fact wins over every marker and over the prose. Markers are asserted
+  // congruent at the transforms (SEAL_MARKERS_AGREE) and at the store boundary (SEAL_COHERENT);
+  // they are no longer a second oracle once a stamp exists. Three conjuncts, each load-bearing:
+  //  - `terminal_state === true`: an ORPHAN (an old binary's resume keeps `sealed_by` while
+  //    flipping terminal_state:false — executed against the real v0.38 dist) must derive via the
+  //    LIVE ladder below, or both purge gates pass on a live run and destroy it.
+  //  - `sealed_by !== undefined`: the legacy population derives via the classifier + ladder.
+  //  - membership in SEAL_ARMS: an unknown arm (a future binary's record read by this one) falls
+  //    through to the classifier — never an `undefined` phase. Write-side loudness for that case
+  //    is the store boundary's STATE_SEAL_UNKNOWN_ARM.
+  if (
+    run.terminal_state === true &&
+    run.sealed_by !== undefined &&
+    (SEAL_ARMS as readonly string[]).includes(run.sealed_by.arm)
+  ) {
+    return armToPhase(run.sealed_by.arm);
+  }
+  if (run.terminal_state === true) {
+    // INV-CORPUS: every terminal record's cause is recoverable-or-honestly-unknown at read time.
+    // `classifyLegacySeal` is a PERMANENT read oracle — correctness never depends on migration.
+    const legacyArm = classifyLegacySeal(run);
+    if (legacyArm !== undefined) return armToPhase(legacyArm);
+  }
+  // ---- The pre-#367 ladder, UNCHANGED, and now the LEGACY-ONLY path ----
+  // What follows runs only for records with no usable arm: everything written before #367, plus
+  // the honestly-unclassifiable tail. These comments used to say the markers were "authoritative"
+  // for the whole derivation; since #367 that is false as stated — a stamped record never reaches
+  // here, and on the records that do, the markers are the strongest signal available rather than
+  // the primary oracle.
+  //
+  // abandoned_at: explicit operator/cleanup abandonment wins over any other legacy field
+  // (failed_steps, pending_gate, terminal_reason, and the whole terminal cluster below). It is
+  // only ever set on a running run (gate_waiting abandonment is refused by abandonRun), so it
+  // never co-occurs with pending_gate in practice; top placement is future-proof and mirrors the
+  // aborted_at rationale below.
   if (run.abandoned_at !== undefined) return 'abandoned';
-  // aborted_at is authoritative and is checked before pending_gate AND before the terminal_state
-  // split below. The only records that carry aborted_at are guard/handler-aborted runs (always
-  // written terminal_state:true); legitimately resumable runs (failed/abandoned) never carry it,
-  // and an aborted run's cancel-gate write (design record §3 applyAbortEdge) clears any OTHER
-  // step's pending_gate in the same write — but a grandfathered/legacy record could still carry
-  // both, and aborted_at must win regardless.
+  // aborted_at is checked before pending_gate AND before the terminal_state split below. The only
+  // records that carry aborted_at are guard/handler-aborted runs (always written
+  // terminal_state:true); legitimately resumable runs (failed/abandoned) never carry it, and an
+  // aborted run's cancel-gate write (design record §3 applyAbortEdge) clears any OTHER step's
+  // pending_gate in the same write — but a grandfathered/legacy record could still carry both,
+  // and aborted_at must win regardless.
   if (run.aborted_at !== undefined) return 'aborted';
   if (run.terminal_state) {
-    // A terminal run that completed successfully sets terminal_reason to 'Workflow completed.'.
-    // Recovery workflows end with failed_steps non-empty but are still considered completed
-    // when the final recovery step succeeds, so terminal_reason takes precedence over failed_steps.
+    // A legacy terminal run that completed successfully sets terminal_reason to
+    // 'Workflow completed.'. Recovery workflows end with failed_steps non-empty but are still
+    // considered completed when the final recovery step succeeds, so terminal_reason takes
+    // precedence over failed_steps. (For stamped records this distinction is the arm's job.)
     if (run.terminal_reason === 'Workflow completed.') return 'completed';
     if (run.failed_steps.length > 0) return 'failed';
     // terminal_state is true but the run neither completed normally nor failed — it was abandoned.

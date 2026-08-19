@@ -315,16 +315,29 @@ describe('append_trace terminal-run guard (issue #187)', () => {
     });
     const patch: Partial<RunRecord> =
       phase === 'completed'
-        ? { terminal_state: true, terminal_reason: 'Workflow completed.' }
+        ? {
+            terminal_state: true,
+            sealed_by: { arm: 'complete' as const },
+            terminal_reason: 'Workflow completed.',
+          }
         : phase === 'failed'
           ? {
               terminal_state: true,
+              sealed_by: { arm: 'step_failure' as const },
               terminal_reason: `Step 'step-agent' failed: boom`,
               failed_steps: ['step-agent'],
             }
           : phase === 'aborted'
-            ? { terminal_state: true, aborted_at: { step_id: 'step-agent' } }
-            : { terminal_state: true, abandoned_at: new Date().toISOString() };
+            ? {
+                terminal_state: true,
+                sealed_by: { arm: 'guard_abort' as const },
+                aborted_at: { step_id: 'step-agent' },
+              }
+            : {
+                terminal_state: true,
+                sealed_by: { arm: 'abandon_requested' as const },
+                abandoned_at: new Date().toISOString(),
+              };
     const updated = await runStore.update({ ...run, ...patch });
     expect(updated.run_phase).toBe(phase); // sanity: confirms the fixture actually reaches the phase under test
     return updated;

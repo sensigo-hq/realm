@@ -118,6 +118,7 @@ describe('abandon_run MCP tool', () => {
       ...run,
       completed_steps: ['review'],
       terminal_state: true,
+      sealed_by: { arm: 'complete' as const },
       terminal_reason: 'Workflow completed.',
     });
     const env = await callRegisteredAbandon(runStore, { run_id: run.id });
@@ -207,6 +208,7 @@ describe('get_run_state — next_actions_status', () => {
       ...run,
       completed_steps: ['review'],
       terminal_state: true,
+      sealed_by: { arm: 'complete' as const },
       terminal_reason: 'Workflow completed.',
     });
     const state = await handleGetRunState({ run_id: run.id }, { runStore, workflowStore });

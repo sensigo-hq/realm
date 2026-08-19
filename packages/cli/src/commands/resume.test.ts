@@ -64,6 +64,7 @@ describe('resumeRun', () => {
       run_phase: 'failed',
       failed_steps: ['step-one'],
       terminal_state: true,
+      sealed_by: { arm: 'step_failure' },
       terminal_reason: 'Something went wrong',
     });
 
@@ -83,6 +84,7 @@ describe('resumeRun', () => {
       ...run,
       run_phase: 'completed',
       terminal_state: true,
+      sealed_by: { arm: 'complete' },
       terminal_reason: 'Workflow completed.',
     });
 
@@ -106,6 +108,7 @@ describe('resumeRun', () => {
       run_phase: 'failed',
       failed_steps: ['step-one'],
       terminal_state: true,
+      sealed_by: { arm: 'step_failure' },
       terminal_reason: 'Something went wrong',
     });
 
@@ -132,6 +135,7 @@ describe('resumeRun', () => {
       failed_steps: ['step-a'],
       skipped_steps: ['step-b'],
       terminal_state: true,
+      sealed_by: { arm: 'step_failure' },
       terminal_reason: 'step-a failed',
     });
 
@@ -170,6 +174,7 @@ describe('resumeRun', () => {
         },
       },
       terminal_state: true,
+      sealed_by: { arm: 'step_failure' as const },
       terminal_reason: 'step-a failed',
     });
 
@@ -201,6 +206,11 @@ describe('resumeRun', () => {
         run_phase: 'failed',
         failed_steps: ['step-one'],
         terminal_state: true,
+        // issue #367: the arm records what actually sealed this run — a handler abort. The stale
+        // `run_phase: 'failed'` above is the deliberate lie this fixture is built on, and the arm
+        // must not repeat it (the store's coherence check refuses a stamp that contradicts the
+        // record's own abort marker).
+        sealed_by: { arm: 'handler_abort' as const },
         aborted_at: { step_id: 'step-one', abort_message: 'handler aborted' },
       });
 
@@ -231,6 +241,7 @@ describe('resumeRun', () => {
         run_phase: 'failed',
         failed_steps: ['fin'],
         terminal_state: true,
+        sealed_by: { arm: 'step_failure' },
       });
 
       await expect(resumeRun(run.id, 'fin', runStore, workflowStore)).rejects.toThrow(
@@ -250,6 +261,7 @@ describe('resumeRun', () => {
         run_phase: 'failed',
         failed_steps: ['step-one'],
         terminal_state: true,
+        sealed_by: { arm: 'step_failure' },
         finalizer_ledger: {
           fin: {
             status: 'pending',
@@ -281,6 +293,7 @@ describe('resumeRun', () => {
         run_phase: 'failed',
         failed_steps: ['step-one'],
         terminal_state: true,
+        sealed_by: { arm: 'step_failure' },
         finalizer_ledger: {
           fin: { status: 'pending', rank: 0, lease_token: 'dead-drainer', lease_deadline: past },
         },
@@ -304,6 +317,7 @@ describe('resumeRun', () => {
         run_phase: 'failed',
         failed_steps: ['step-one'],
         terminal_state: true,
+        sealed_by: { arm: 'step_failure' },
         in_progress_steps: ['other-step'],
         claims: { 'other-step': { deadline: farFuture, token: 'live-token' } },
       });
@@ -327,6 +341,7 @@ describe('resumeRun', () => {
         run_phase: 'failed',
         failed_steps: ['step-one'],
         terminal_state: true,
+        sealed_by: { arm: 'step_failure' },
         in_progress_steps: ['other-step'],
         claims: { 'other-step': { deadline: null, token: 'unknown-age-token' } },
       });
@@ -353,6 +368,7 @@ describe('resumeRun', () => {
         run_phase: 'failed',
         failed_steps: ['step-one'],
         terminal_state: true,
+        sealed_by: { arm: 'step_failure' },
         in_progress_steps: ['other-step'],
         claims: { 'other-step': { deadline: past, token: 'stale-token' } },
       });

@@ -590,6 +590,61 @@ export type SkipDetail =
    */
   | { kind: 'gate_expired'; gate_id: string };
 
+/**
+ * Issue #367: the closed, runtime-visible seal-arm vocabulary — the source of truth for
+ * {@link SealArm} (the `VALID_PHASES` pattern: the const array is the runtime enumeration, the
+ * type derives from it). One value per terminal seal-site function-branch in the 21-path census.
+ *
+ * APPEND-ONLY (the Tekton lesson, design rev 3 §3): an arm's meaning never changes; changed seal
+ * behaviour mints a NEW arm. That rule is what keeps every stored `sealed_by.arm` decodable
+ * forever, and what makes a future #378 resolution land as a mapping/arm ADDITION rather than as
+ * a rewrite of stored records.
+ */
+export const SEAL_ARMS = [
+  'complete',
+  'gate_resolution_complete',
+  'guard_pass_complete',
+  'gate_expiry_default',
+  'step_failure',
+  'guard_resolution_error',
+  'spawn_failure',
+  'extensions_load_failure',
+  'handler_abort',
+  'guard_abort',
+  'gate_expiry_abort',
+  'abandon_requested',
+  'cleanup_sweep',
+] as const;
+
+/**
+ * Issue #367: the MECHANICAL identity of the code edge that sealed a run. Never a judgement about
+ * whether the run was good or bad: `arm -> RunPhase` and `arm -> outcome` are engine-owned total
+ * functions over this value (`eligibility.ts`) — changing either changes a JUDGEMENT; it never
+ * moves a stored record.
+ */
+export type SealArm = (typeof SEAL_ARMS)[number];
+
+/**
+ * Issue #367: who sealed this run — the recorded FACT `deriveRunPhase` prefers over every marker
+ * and over the terminal-reason prose.
+ */
+export interface SealedBy {
+  arm: SealArm;
+  /**
+   * The step whose settlement closed the run. ABSENT (never an `''` sentinel — a fabricated value
+   * violates the false-attestation doctrine) for the run-scoped arms (`abandon_requested`,
+   * `cleanup_sweep`, `spawn_failure`, `extensions_load_failure`) and for any stamp whose step is
+   * unknowable.
+   */
+  step?: string;
+  /**
+   * Provenance: set by the MIGRATE VEHICLE only (`realm run migrate --stamp-seals`, a later PR),
+   * NEVER by a seal-site writer — a classifier-minted stamp must be distinguishable from a
+   * writer-asserted one forever. Nothing in this PR writes it; absent on every fresh seal.
+   */
+  classified?: true;
+}
+
 export interface RunRecord {
   id: string;
   workflow_id: string;
@@ -643,7 +698,10 @@ export interface RunRecord {
 
   /**
    * Derived convenience field — set by the engine on every write, read by CLI and get_run_state.
-   * Always computable from the four step sets, terminal_state, and pending_gate.
+   * NEVER an input to control flow: re-derive with `deriveRunPhase` rather than reading this
+   * (issue #279's PHASE_IS_GENERATED law; a persisted value can be stale).
+   * Issue #367: the derivation's FIRST input is now `sealed_by.arm`; the four step sets,
+   * `terminal_state`, `pending_gate` and the markers serve the legacy population beneath it.
    */
   run_phase: RunPhase;
 
@@ -677,12 +735,38 @@ export interface RunRecord {
   created_at: string;
   updated_at: string;
   terminal_state: boolean;
+  /**
+   * The run's one-line cause, as a HUMAN SENTENCE — rendered from what the sealing writer knew,
+   * for an operator to read. Issue #367: on records carrying {@link RunRecord.sealed_by} it is no
+   * longer a machine oracle; `deriveRunPhase` reads the arm. It stays the oracle for the legacy
+   * population only, via `classifyLegacySeal`, and every new consumer should key on the arm.
+   * Multi-failure runs list every failed step (issue #373).
+   */
   terminal_reason?: string;
+  /**
+   * Issue #367: which arm of the engine sealed this run — the recorded fact `deriveRunPhase`
+   * derives from FIRST, ahead of the markers and the terminal-reason prose (which are asserted
+   * congruent, not consulted, once a stamp exists). FLAT OPTIONAL: written in the SAME object
+   * literal as the `terminal_state: true` flip by every seal site; stripped in the same write by
+   * every resume/re-drive path; enforced at the store boundary (`assertSealIntegrity` — see the
+   * `STATE_SEAL_*` codes), never by the type system (a deleted writer stamp is 0 type errors —
+   * the dead-end class two earlier revisions died on). Absent on every record written before
+   * #367 — `classifyLegacySeal` is the permanent read oracle for those, so correctness never
+   * depends on a migration having run.
+   *
+   * The vocabulary is APPEND-ONLY (see {@link SEAL_ARMS}).
+   *
+   * NOT the finalizer-selection variable: `deriveEffectiveTriggers` remains `mintOutcome`-driven
+   * and the two may diverge by design.
+   */
+  sealed_by?: SealedBy;
   pending_gate?: PendingGate;
   /**
-   * Set by the engine when a guard step fires. Contains the name of the guard step
-   * that caused the abort and its evaluated conditions. Used by deriveRunPhase
-   * and surfaced by get_run_state.
+   * Set by the engine when a guard step fires. Contains the name of the guard step that caused
+   * the abort and its evaluated conditions, and is surfaced by get_run_state. Issue #367: it is
+   * ASSERTED CONGRUENT with `sealed_by` by the transforms (`SEAL_MARKERS_AGREE`) rather than read
+   * by `deriveRunPhase` — on a stamped record the arm derives the phase; on the legacy population
+   * this marker is still a derivation input via `classifyLegacySeal` and the ladder beneath it.
    */
   aborted_at?: {
     step_id: string;
@@ -691,8 +775,10 @@ export interface RunRecord {
   };
   /**
    * ISO timestamp set when a run is explicitly abandoned via `abandon_run` / `realm run abandon` /
-   * `realm run cleanup`. Authoritative for `deriveRunPhase`: its presence makes `abandoned` the
-   * derived phase regardless of `failed_steps` / `terminal_reason` (mirrors `aborted_at`).
+   * `realm run cleanup`. Issue #367: ASSERTED CONGRUENT with `sealed_by` by the transforms
+   * (`SEAL_MARKERS_AGREE`), not read by `deriveRunPhase` on a stamped record — the arm derives
+   * there. On the legacy population its presence still makes `abandoned` the derived phase
+   * regardless of `failed_steps` / `terminal_reason` (mirrors `aborted_at`).
    */
   abandoned_at?: string;
   /**

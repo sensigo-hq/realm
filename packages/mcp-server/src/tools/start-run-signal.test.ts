@@ -67,6 +67,7 @@ describe('start_run idempotency signal', () => {
       ...run,
       run_phase: 'aborted',
       terminal_state: true,
+      sealed_by: { arm: 'guard_abort' },
       terminal_reason: 'aborted by guard',
       aborted_at: { step_id: 'review' },
     });
@@ -149,6 +150,7 @@ describe('start_run_batch idempotency signal (per-item)', () => {
       completed_steps: ['review'],
       run_phase: 'completed',
       terminal_state: true,
+      sealed_by: { arm: 'complete' },
       terminal_reason: 'Workflow completed.',
     });
 
@@ -212,6 +214,7 @@ describe('start_run / start_run_batch re-encounter policy (#92 PR 2)', () => {
       completed_steps: ['review'],
       run_phase: 'completed',
       terminal_state: true,
+      sealed_by: { arm: 'complete' },
       terminal_reason: 'Workflow completed.',
     });
     return run.id;

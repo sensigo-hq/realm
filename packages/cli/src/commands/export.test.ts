@@ -83,6 +83,7 @@ describe('buildExportBundle', () => {
       const run = makeRun({
         run_phase: 'abandoned',
         terminal_state: true,
+        sealed_by: { arm: 'abandon_requested' },
         // issue #220 (R-EXTRAS): the counter rides the run record verbatim — no export-side
         // handling needed. Included here so the round-trip is proven explicitly, not just
         // implied by the whole-record `toEqual` below.
@@ -101,7 +102,7 @@ describe('buildExportBundle', () => {
       );
 
       expect(warning).toBeUndefined(); // terminal — no best-effort warning
-      expect(bundle.realm_export_version).toBe(3);
+      expect(bundle.realm_export_version).toBe(4);
       expect(bundle.exported_at).toBe(now.toISOString());
       expect(bundle.run).toEqual(run);
       // issue #220 (R-EXTRAS): the export bundle round-trips validation_rejections.
@@ -128,6 +129,7 @@ describe('buildExportBundle', () => {
       const run = makeRun({
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
         finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
       });
       await injectRun(dir, run);
@@ -142,7 +144,7 @@ describe('buildExportBundle', () => {
       expect(warning).toContain('1 finalizer(s) not yet delivered');
       expect(warning).toContain(`realm run drain ${run.id}`);
       // No bundle-version bump — run rides the export verbatim either way.
-      expect(bundle.realm_export_version).toBe(3);
+      expect(bundle.realm_export_version).toBe(4);
       expect(bundle.run.finalizer_ledger).toEqual(run.finalizer_ledger);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -155,6 +157,7 @@ describe('buildExportBundle', () => {
       const run = makeRun({
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
         finalizer_ledger: { fin: { status: 'completed', rank: 0 } },
       });
       await injectRun(dir, run);
@@ -525,7 +528,12 @@ describe('buildExportBundle', () => {
         params: {},
         idempotencyKey: 'k1',
       });
-      await runStore.update({ ...run, run_phase: 'completed', terminal_state: true });
+      await runStore.update({
+        ...run,
+        run_phase: 'completed',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+      });
 
       const { bundle } = await buildExportBundle(run.id, {
         runStore,

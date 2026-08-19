@@ -133,6 +133,7 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
     const run = makeRun({
       run_phase: 'abandoned',
       terminal_state: true,
+      sealed_by: { arm: 'abandon_requested' },
       in_progress_steps: ['charge'],
       claims: { charge: { deadline: FAR_FUTURE } },
     });
@@ -155,6 +156,7 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
     const run = makeRun({
       run_phase: 'abandoned',
       terminal_state: true,
+      sealed_by: { arm: 'abandon_requested' },
       in_progress_steps: ['charge'],
       claims: { charge: { deadline: null } },
     });
@@ -183,6 +185,7 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
       const run = makeRun({
         run_phase: 'abandoned',
         terminal_state: true,
+        sealed_by: { arm: 'abandon_requested' },
         in_progress_steps: ['charge'],
         claims: { charge: { deadline: PAST } },
       });
@@ -206,7 +209,12 @@ describe('purgeRuns — single-run mode', () => {
         params: {},
         idempotencyKey: 'k1',
       });
-      await runStore.update({ ...run, run_phase: 'abandoned', terminal_state: true });
+      await runStore.update({
+        ...run,
+        run_phase: 'abandoned',
+        terminal_state: true,
+        sealed_by: { arm: 'abandon_requested' },
+      });
       await appendSidecarLine(failedAttemptStore, run.id);
       await traceBufferStore.append(run.id, 'step-a', [{ event: 'crash-orphan' }]);
 
@@ -270,6 +278,7 @@ describe('purgeRuns — single-run mode', () => {
       const run = makeRun({
         run_phase: 'abandoned',
         terminal_state: true,
+        sealed_by: { arm: 'abandon_requested' },
         in_progress_steps: ['charge'],
         claims: { charge: { deadline: FAR_FUTURE } },
       });
@@ -292,6 +301,7 @@ describe('purgeRuns — single-run mode', () => {
       const run = makeRun({
         run_phase: 'abandoned',
         terminal_state: true,
+        sealed_by: { arm: 'abandon_requested' },
         in_progress_steps: ['charge'],
         claims: { charge: { deadline: null } },
       });
@@ -345,12 +355,14 @@ describe('purgeRuns — single-run mode', () => {
         id: 'r-failed',
         run_phase: 'failed',
         terminal_state: true,
+        sealed_by: { arm: 'step_failure' },
         failed_steps: ['step1'],
       });
       const completedRun = makeRun({
         id: 'r-completed',
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
         terminal_reason: 'Workflow completed.',
       });
       await injectRun(dir, failedRun);
@@ -392,6 +404,7 @@ describe('purgeRuns — batch mode (--older-than)', () => {
         id: 'old',
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
         updated_at: ONE_DAY_AGO,
       });
       const fresh = makeRun({ id: 'fresh', run_phase: 'completed', terminal_state: true }); // updated_at: now
@@ -440,6 +453,7 @@ describe('purgeRuns — batch mode (--older-than)', () => {
         id: 'blocked',
         run_phase: 'abandoned',
         terminal_state: true,
+        sealed_by: { arm: 'abandon_requested' },
         updated_at: ONE_DAY_AGO,
         in_progress_steps: ['s'],
         claims: { s: { deadline: FAR_FUTURE } },
@@ -448,6 +462,7 @@ describe('purgeRuns — batch mode (--older-than)', () => {
         id: 'ok',
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
         updated_at: ONE_DAY_AGO,
       });
       await injectRun(dir, blocked);
@@ -471,6 +486,7 @@ describe('purgeRuns — batch mode (--older-than)', () => {
         id: 'indeterminate',
         run_phase: 'abandoned',
         terminal_state: true,
+        sealed_by: { arm: 'abandon_requested' },
         updated_at: ONE_DAY_AGO,
         in_progress_steps: ['charge'],
         claims: { charge: { deadline: null } },
@@ -479,6 +495,7 @@ describe('purgeRuns — batch mode (--older-than)', () => {
         id: 'stale',
         run_phase: 'abandoned',
         terminal_state: true,
+        sealed_by: { arm: 'abandon_requested' },
         updated_at: ONE_DAY_AGO,
         in_progress_steps: ['charge'],
         claims: { charge: { deadline: PAST } },
@@ -506,18 +523,21 @@ describe('purgeRuns — batch mode (--older-than)', () => {
         id: 'ok',
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
         updated_at: ONE_DAY_AGO,
       });
       const vanishing = makeRun({
         id: 'vanishing',
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
         updated_at: ONE_DAY_AGO,
       });
       const broken = makeRun({
         id: 'broken',
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
         updated_at: ONE_DAY_AGO,
       });
       await injectRun(dir, ok);
@@ -625,7 +645,12 @@ describe('purgeRuns — supersede soundness (mutation-probe #2 companion, at the
         params: {},
         idempotencyKey: 'k1',
       });
-      await runStore.update({ ...oldRun, run_phase: 'completed', terminal_state: true });
+      await runStore.update({
+        ...oldRun,
+        run_phase: 'completed',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+      });
       const { run: newRun } = await runStore.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
@@ -657,6 +682,7 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
         id: 'resumed-under-lock',
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
       });
       await injectRun(dir, run);
 
@@ -820,6 +846,7 @@ describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
         id: 'fenced-happy-path',
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
       });
       await injectRun(dir, run);
       const traceBufferStore = new JsonTraceBufferStore(dir);
@@ -847,6 +874,7 @@ describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
         id: 'resumed-mid-purge',
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
       });
       await injectRun(dir, run);
       const traceBufferStore = new JsonTraceBufferStore(dir);
@@ -919,6 +947,7 @@ describe('purgeRuns — sealed artifacts (issue #197 PR-2, deliverable 3b: VERIF
         id: 'sealed-purge-target',
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
       });
       await injectRun(dir, run);
       const traceBufferStore = new JsonTraceBufferStore(dir);

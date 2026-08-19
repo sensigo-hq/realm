@@ -449,6 +449,9 @@ export interface SweepStalePhasesOptions {
       | 'terminal_reason'
       | 'aborted_at'
       | 'abandoned_at'
+      // issue #367: widened to match deriveRunPhase's own Pick — runtime unchanged (the real
+      // records passed here already carry the field when stamped).
+      | 'sealed_by'
     >,
   ) => RunPhase;
 }
@@ -688,6 +691,12 @@ function printGcReport(
 
     if (nothingToReportHeal) {
       console.log('\nNo stale-phase records found to heal.');
+      console.log(
+        'Note (issue #367): after upgrading across the seal substrate, a first heal rewrites every\n' +
+          'legacy record whose derived phase moved — and each rewrite resets updated_at, the clock\n' +
+          'retention reads. Until `realm run migrate --stamp-seals` ships, skip --heal if those\n' +
+          'clocks matter; once it ships, run the migration first.',
+      );
     } else if (dryRun) {
       console.log(`\n${healResult.would_heal.length} stale-phase record(s) WOULD be healed:`);
       for (const e of healResult.would_heal) {

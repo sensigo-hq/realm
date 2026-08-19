@@ -96,7 +96,11 @@ describe('get_run_state — blocked_on_capability (#134)', () => {
   });
 
   it('self-suppresses once the blocked step settles (terminal run → no advisory)', async () => {
-    const id = await blockedRun({ completed_steps: ['blocked'], terminal_state: true });
+    const id = await blockedRun({
+      completed_steps: ['blocked'],
+      terminal_state: true,
+      sealed_by: { arm: 'complete' as const },
+    });
     const state = await handleGetRunState({ run_id: id }, { runStore, workflowStore });
     expect(state.next_actions_status).not.toBe('blocked_on_capability');
     expect(state.capability_blocks).toBeUndefined();

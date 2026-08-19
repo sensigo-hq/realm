@@ -45,7 +45,12 @@ async function makeAdapter(): Promise<{
   // issue #184: deleteAllForRun now re-verifies terminal state under its own lock and refuses a
   // non-terminal run (the resurrect-race fix) — a fresh store.create() run is 'running' by
   // default, so mark it terminal before the TCK exercises deleteAllForRun against it.
-  await store.update({ ...run, run_phase: 'completed', terminal_state: true });
+  await store.update({
+    ...run,
+    run_phase: 'completed',
+    terminal_state: true,
+    sealed_by: { arm: 'complete' },
+  });
 
   const adapter: PerRunArtifactStoreContractAdapter = {
     store,

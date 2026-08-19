@@ -6,6 +6,31 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING (`@sensigo/realm`): a run now RECORDS which arm of the engine sealed it, and every
+  judgement about the run derives from that fact** (issue #367, part 1 — the substrate).
+  Until now realm's most important fact — did this run succeed — was not in the record. Two runs
+  identical in every field except `terminal_reason` derived opposite phases, because the oracle was
+  the English sentence `'Workflow completed.'`. That is why a startup death filed itself as
+  "abandoned" (issue #372), and why the answer could move when nothing about the run had.
+  Every terminal write now carries `sealed_by: { arm }` — one value per seal site, from a closed,
+  APPEND-ONLY vocabulary of 13 — and `run_phase` derives from it ahead of the markers and the prose.
+  Records written before this keep working forever: a permanent read-path classifier recovers their
+  arm, so correctness never depends on a migration having run.
+  Three things enforce it, because the type system cannot: the store boundary REFUSES a fresh seal
+  with no arm, a resume that keeps one, a terminal rewrite that drops one, an unknown arm, and a
+  stamp that contradicts the record's own markers (five new `STATE_SEAL_*` error codes, all
+  throwing). The published TCK gains laws for all four refusals plus a round-trip law, so a store
+  that silently drops the field fails conformance before it ships. And `get_run_state` and
+  `realm run inspect` now show the arm — `inspect` also shows the run's one-line cause for the
+  first time.
+  Export bundles are now `realm_export_version: 4`; in a v3 bundle the absence of `sealed_by` was
+  three-way ambiguous.
+  **Read before running `realm run gc --heal` after upgrading**: heal rewrites records whose
+  derived phase moved, and each rewrite resets `updated_at` — the clock retention reads. The
+  stamp-seals migration ships in the next PR; until then, skip `--heal` if those clocks matter.
+
 ### Fixed
 
 - A run that ends with several failures now says so, instead of blaming one of them (issue #373).

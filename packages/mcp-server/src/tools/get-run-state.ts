@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  SEAL_ARMS,
   JsonFileStore,
   JsonWorkflowStore,
   WorkflowError,
@@ -80,6 +81,16 @@ export interface RunStateSummary {
    * without needing the run-health surface this response deliberately does not inherit.
    */
   terminal_reason?: string;
+  /**
+   * Issue #367: WHICH arm of the engine sealed this run — the recorded fact, not a re-reading of
+   * the prose. Present on any terminal run written since #367; absent on a live run and on the
+   * legacy population (where `run_phase` is still recovered by the read-path classifier). An arm
+   * this binary does not recognise renders as `unrecognized arm '<value>'` rather than being
+   * omitted, so a newer writer's record is never silently reported as unsealed.
+   *
+   * Prefer this over parsing `terminal_reason`: the prose is for people.
+   */
+  sealed_by_arm?: string;
   completed_steps: string[];
   in_progress_steps: string[];
   failed_steps: string[];
@@ -317,6 +328,15 @@ export async function handleGetRunState(
     updated_at: run.updated_at,
     params: run.params,
     ...(run.terminal_reason !== undefined ? { terminal_reason: run.terminal_reason } : {}),
+    // issue #367: an unrecognised arm is DISCLOSED, never dropped — omitting it would report a
+    // sealed run as unsealed, which is the false attestation this whole change exists to end.
+    ...(run.sealed_by !== undefined
+      ? {
+          sealed_by_arm: (SEAL_ARMS as readonly string[]).includes(run.sealed_by.arm)
+            ? run.sealed_by.arm
+            : `unrecognized arm '${run.sealed_by.arm}'`,
+        }
+      : {}),
     ...(run.aborted_at !== undefined ? { abort_context: run.aborted_at } : {}),
     next_actions: nextActions,
     next_actions_status: nextActionsStatus,

@@ -51,9 +51,12 @@ export interface ExportBundle {
    * v1 bundle's completeness is UNKNOWN to a reader — it was written back when export was
    * all-or-nothing (any read failure meant no bundle at all), so v1's mere existence was itself a
    * (weaker) completeness signal, but nothing in a v1 bundle states it explicitly. v2 always
-   * states it explicitly via `complete`. Bumped 2 → 3 (issue #197 PR-2): adds `sealed`.
+   * states it explicitly via `complete`. Bumped 2 → 3 (issue #197 PR-2): adds `sealed`. Bumped
+   * 3 → 4 (issue #367): the run record now carries `sealed_by`, and its ABSENCE from a v3 bundle
+   * is three-way ambiguous — the run predates #367, or the exporter predates it, or the seal was
+   * genuinely never stamped. The version is what disambiguates.
    */
-  realm_export_version: 3;
+  realm_export_version: 4;
   /** ISO-8601, stamped by the CLI at assembly time. */
   exported_at: string;
   /** The full RunRecord — steps, evidence, skip_details, claims, etc. */
@@ -273,7 +276,7 @@ export async function buildExportBundle(
     : { wal, sealed };
 
   const bundle: ExportBundle = {
-    realm_export_version: 3,
+    realm_export_version: 4,
     exported_at: now.toISOString(),
     run,
     attempts,

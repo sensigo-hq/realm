@@ -1,7 +1,7 @@
 // cleanup command — marks idle non-terminal runs as abandoned.
 import { Command } from 'commander';
 import type { RunStore, RunRecord } from '@sensigo/realm';
-import { WAITING_PHASES } from '@sensigo/realm';
+import { WAITING_PHASES, sealRunLevel } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 
 /**
@@ -34,13 +34,12 @@ export async function cleanupRuns(
 
   if (!(options.dryRun ?? false)) {
     for (const run of affected) {
-      await runStore.update({
-        ...run,
-        abandoned_at: new Date().toISOString(),
-        run_phase: 'abandoned',
-        terminal_state: true,
-        terminal_reason: 'Marked abandoned by realm cleanup',
-      });
+      // issue #367: run-level seal through the ONE bypass-writer chokepoint — it stamps
+      // sealed_by {arm: 'cleanup_sweep'} alongside abandoned_at, and the fossil hand-written
+      // run_phase is retired (the store write tail derives it — the #282 class).
+      await runStore.update(
+        sealRunLevel(run, 'cleanup_sweep', 'Marked abandoned by realm cleanup'),
+      );
     }
   }
 

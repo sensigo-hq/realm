@@ -5109,6 +5109,7 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
       ...run,
       run_phase: 'aborted',
       terminal_state: true,
+      sealed_by: { arm: 'guard_abort' },
       terminal_reason: "Guard 'g' aborted the run",
       aborted_at: { step_id: 'step-one' },
     });
@@ -5142,6 +5143,7 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
       ...run,
       run_phase: 'completed',
       terminal_state: true,
+      sealed_by: { arm: 'complete' },
       terminal_reason: 'Workflow completed.',
       completed_steps: ['step-one', 'step-two'],
     });
@@ -5229,7 +5231,12 @@ describe('submitHumanResponse — terminal-run guard', () => {
     // Force the run terminal underneath the open gate (simulating a late abandon/completion path),
     // then attempt a late gate response.
     const gated = await store.get(run.id);
-    await store.update({ ...gated, terminal_state: true, abandoned_at: new Date().toISOString() });
+    await store.update({
+      ...gated,
+      terminal_state: true,
+      sealed_by: { arm: 'abandon_requested' as const },
+      abandoned_at: new Date().toISOString(),
+    });
     const before = await store.get(run.id);
 
     const envelope = await submitHumanResponse(store, gateWf, {

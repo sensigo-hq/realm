@@ -640,6 +640,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
             await super.update({
               ...rec,
               terminal_state: true,
+              sealed_by: { arm: 'complete' as const },
               terminal_reason: 'abandoned mid-count (test)',
             });
           }

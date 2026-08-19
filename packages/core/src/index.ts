@@ -59,7 +59,22 @@ export {
   buildSettlementNamespace,
   propagateSkips,
   isStepSettledOrInFlight,
+  // issue #367 — the recorded seal fact: the arm mappings (engine-owned total functions), the
+  // permanent legacy read oracle and its coherence-comparator sibling, the run-level bypass-writer
+  // chokepoint, and the two transform-scoped congruence assertions.
+  armToPhase,
+  armToOutcome,
+  armMarker,
+  classifyLegacySeal,
+  classifyForCoherence,
+  sealRunLevel,
+  assertSealMarkersAgree,
+  assertSealOutcomeCoherent,
 } from './engine/eligibility.js';
+
+// issue #367 — the L2 store-boundary enforcement, shared by both in-repo stores (InMemoryStore in
+// @sensigo/realm-testing imports it from here).
+export { assertSealIntegrity } from './store/seal-integrity.js';
 // The unified writer partition (issue #197 PR-2) — the ONE authoritative adoption predicate;
 // see trace-adoption.ts's own module doc for the full contract.
 export { adoptsLine, partitionBufferedEntries } from './engine/trace-adoption.js';

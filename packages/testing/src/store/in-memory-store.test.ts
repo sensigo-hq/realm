@@ -83,7 +83,11 @@ describe('InMemoryStore — RunStore fidelity TCK conformance (issue #188)', () 
     }
   });
 
-  const laws: RunStoreFidelityLaw[] = ['FIDELITY_HONESTY', 'CLAIM_SINGLE_OWNER'];
+  const laws: RunStoreFidelityLaw[] = [
+    'FIDELITY_HONESTY',
+    'CLAIM_SINGLE_OWNER',
+    'SEALED_BY_ROUNDTRIP',
+  ];
   for (const law of laws) {
     it(`conforms to ${law}`, async () => {
       const store = new InMemoryStore();
