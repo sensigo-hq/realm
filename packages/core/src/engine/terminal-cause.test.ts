@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { executeStep, executeChain } from './execution-loop.js';
 import { renderFailCause } from './settlement.js';
 import { applyResume } from './apply-resume.js';
+import { captureEvidence } from '../evidence/snapshot.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
@@ -271,10 +272,9 @@ describe('#373 — messages', () => {
     // dedup is defensive today and unreachable from any drive; if it is going to be in the render,
     // the rule has to be pinned where it can actually be exercised.
     expect(renderFailCause(['a', 'b', 'a'], new Map())).toBe('2 steps failed: a, b.');
-    // Dedup collapsing to ONE is a PRECONDITION VIOLATION (call sites gate on `> 1`), so this
-    // string is unreachable in production. Characterised, not endorsed — the ungrammatical "1
-    // steps" is what the function does today, and the report raises whether it should pluralise.
-    expect(renderFailCause(['a', 'a'], new Map([['a', 'msg']]))).toBe('1 steps failed: a ("msg").');
+    // Dedup collapsing to ONE is below the call sites' `> 1` gate, but the function is a public
+    // export and its output is grammatical at any count.
+    expect(renderFailCause(['a', 'a'], new Map([['a', 'msg']]))).toBe('1 step failed: a ("msg").');
   });
 
   it('(12) an exhaustion message nests "Step \'v\'" inside the entry — verbatim, accepted, pinned', async () => {
@@ -323,14 +323,26 @@ describe('#373 — messages', () => {
 
   it('(6) an overflowing sentence is capped at 1024, ends with "...", and still leads with the true count', () => {
     const steps = Array.from({ length: 30 }, (_, i) => `step_${String(i).padStart(2, '0')}`);
+    // Genuine overflow: every message is longer than the 256 per-message cap, and 30 of them
+    // blow past the sentence cap even after each is trimmed.
     const messages = new Map(steps.map((s) => [s, 'x'.repeat(400)]));
     const sentence = renderFailCause(steps, messages);
     expect(sentence.length).toBe(1024);
     expect(sentence.endsWith('...')).toBe(true);
     expect(sentence.startsWith('30 steps failed: ')).toBe(true);
     // Per-message cap fires independently of the sentence cap.
-    const perMessage = renderFailCause(['a', 'b'], new Map([['a', 'y'.repeat(200)]]));
-    expect(perMessage).toBe(`2 steps failed: a ("${'y'.repeat(120)}..."), b.`);
+    const perMessage = renderFailCause(['a', 'b'], new Map([['a', 'y'.repeat(300)]]));
+    expect(perMessage).toBe(`2 steps failed: a ("${'y'.repeat(256)}..."), b.`);
+  });
+
+  it('(6b) the LONGEST message in the real corpus (254 chars) travels untruncated', () => {
+    // The cap is sized from a measurement, so the witness is the measurement's own maximum: a
+    // 254-character message was the longest of 31 real evidence errors, and 19% of that corpus was
+    // being truncated at the previous unanchored 120.
+    const corpusMax = 'z'.repeat(254);
+    const sentence = renderFailCause(['a', 'b'], new Map([['a', corpusMax]]));
+    expect(sentence).toBe(`2 steps failed: a ("${corpusMax}"), b.`);
+    expect(sentence).not.toContain('...');
   });
 });
 
@@ -375,13 +387,13 @@ describe('#373 — the guard resolution_error site', () => {
       '2 steps failed: fail_a ("Dispatcher failed: a exploded"), ' +
         `g ("unresolvable path '$.nope.field'").`,
     );
-    // THE OVERLAY IS LOAD-BEARING, not defensive: the guard's own evidence `error` says something
-    // ELSE entirely, so without the overlay the path text could not reach the sentence.
+    // The guard's EVIDENCE carries the path too (issue #373 correction). That is what keeps the
+    // post-drain re-render — which rebuilds from evidence alone — from downgrading the diagnostic;
+    // see the composition cells below.
     const guardEvidence = record.evidence.filter((e) => e.step_id === 'g' && e.error !== undefined);
     expect(guardEvidence.at(-1)!.error).toBe(
-      'Guard resolution error on condition: $.nope.field == true',
+      "Guard resolution error on condition: $.nope.field == true — unresolvable path '$.nope.field'",
     );
-    expect(record.terminal_reason).not.toContain('Guard resolution error on condition');
   });
 });
 
@@ -411,6 +423,193 @@ describe('#373 — the two layers agree', () => {
     );
     expect(legacyDrained.terminal_reason).toBe(declaringDrained.terminal_reason);
     expect(legacyDrained.terminal_reason).toContain('3 steps failed:');
+  });
+});
+
+describe('#373 — a guard-sealed run whose finalizer ALSO fails keeps the path text', () => {
+  // THE COMPOSITION NO OTHER CELL COVERS, and the one that exposed a real downgrade: a guard seal
+  // puts the unresolvable path in the sentence via the call site's in-hand overlay, and then the
+  // post-drain re-render rebuilds from EVIDENCE ALONE. Before the correction the rebuild replaced
+  // the path with the generic condition text — the sentence got less useful as the run went on.
+  // Fixed at the source (the guard's evidence now carries the path), so both pins below assert
+  // LOSSLESSNESS rather than accepting a downgrade.
+
+  const guardDef: WorkflowDefinition = {
+    id: 'guard-drain-wf',
+    name: 'Guard Drain',
+    version: 1,
+    steps: {
+      fail_a: { description: 'A', execution: 'agent', depends_on: [] },
+      g: {
+        description: 'Guard',
+        execution: 'guard',
+        depends_on: [],
+        abort_unless: ['$.nope.field == true'],
+      },
+      fin: {
+        description: 'Finalizer',
+        execution: 'finalizer',
+        on_outcome: 'fail',
+        handler: 'fin-handler',
+      },
+    },
+  };
+
+  it('(D1) settlement layer: fail + guard resolution_error + failing finalizer ⇒ the path survives the drain', async () => {
+    const store = await freshStore();
+    const { run } = await store.create({
+      workflowId: guardDef.id,
+      workflowVersion: 1,
+      params: {},
+    });
+
+    // A real claim, so the settle carries a matching token — an unclaimed settle refuses with
+    // `claim_lost` and the whole fixture would silently prove nothing.
+    const claimed = await store.claimStep(run.id, 'fail_a', guardDef);
+    const claimToken = claimed.claims!['fail_a']!.token!;
+    const failed = await store.settleStep!(
+      run.id,
+      {
+        kind: 'settle_step',
+        step: 'fail_a',
+        outcome: 'fail',
+        claimToken,
+        evidence: [
+          captureEvidence({
+            stepId: 'fail_a',
+            startedAt: new Date(),
+            completedAt: new Date(),
+            input: {},
+            output: {},
+            error: 'Dispatcher failed: a exploded',
+          }),
+        ],
+        failureMessage: 'Dispatcher failed: a exploded',
+      },
+      guardDef,
+    );
+    if (!failed.applied) throw new Error(`fixture: fail(fail_a) refused — ${failed.reason}`);
+
+    // Mirrors executeGuardStep's own resolution_error snapshot, enriched string included — the
+    // production mint of that string is pinned by cell (8) and by the legacy cell below.
+    const sealed = await store.settleStep!(
+      run.id,
+      {
+        kind: 'settle_guard',
+        step: 'g',
+        outcome: 'resolution_error',
+        evidence: captureEvidence({
+          stepId: 'g',
+          startedAt: new Date(),
+          completedAt: new Date(),
+          input: {},
+          output: { error: 'Unresolvable path: $.nope.field' },
+          error:
+            "Guard resolution error on condition: $.nope.field == true — unresolvable path '$.nope.field'",
+        }),
+        resolutionError: {
+          condition: '$.nope.field == true',
+          unresolvable_path: '$.nope.field',
+        },
+      },
+      guardDef,
+    );
+    if (!sealed.applied) throw new Error(`fixture: guard settle refused — ${sealed.reason}`);
+    // SEAL TIME: the path is present, carried by the call site's overlay.
+    expect(sealed.run.terminal_reason).toBe(
+      '2 steps failed: fail_a ("Dispatcher failed: a exploded"), ' +
+        `g ("unresolvable path '$.nope.field'").`,
+    );
+
+    // The drain: lease, then mark the finalizer FAILED — the append that grows failed_steps and
+    // triggers the re-render.
+    const leaseToken = 'lease-d1';
+    const leased = await store.settleStep!(
+      run.id,
+      { kind: 'lease_finalizer', finalizer: 'fin', leaseToken, leaseSeconds: 60 },
+      guardDef,
+    );
+    if (!leased.applied) throw new Error(`fixture: lease refused — ${leased.reason}`);
+    const marked = await store.settleStep!(
+      run.id,
+      {
+        kind: 'mark_finalizer',
+        finalizer: 'fin',
+        leaseToken,
+        result: 'failed',
+        evidence: captureEvidence({
+          stepId: 'fin',
+          startedAt: new Date(),
+          completedAt: new Date(),
+          input: {},
+          output: {},
+          error: "Finalizer 'fin' failed: finalizer boom",
+        }),
+      },
+      guardDef,
+    );
+    if (!marked.applied) throw new Error(`fixture: mark refused — ${marked.reason}`);
+
+    const record = await store.get(run.id);
+    expect(record.failed_steps).toEqual(['fail_a', 'g', 'fin']);
+    expect(record.terminal_reason).toContain('3 steps failed:');
+    for (const step of ['fail_a', 'g', 'fin']) expect(record.terminal_reason).toContain(step);
+    expect(record.terminal_reason).toContain(`Finalizer 'fin' failed: finalizer boom`);
+    // THE LOSSLESS PIN: the diagnostic survives the rebuild. (The condition text may ride along —
+    // what must not happen is the path disappearing.)
+    expect(record.terminal_reason).toContain("unresolvable path '$.nope.field'");
+  });
+
+  it('(D2) legacy layer: the same composition through the real chain ⇒ the path survives the drain', async () => {
+    // Byte-parity with (D1) is NOT asserted — the inputs are not identical (this one runs a real
+    // handler, that one hand-builds the deltas). What must match is the polarity.
+    //
+    // The fixture carries an extra SUCCEEDING step, and that is not decoration: `executeChain`
+    // reaches its inline guard loop only after a step returns ok, so a chain driven by the failing
+    // step alone never runs the guard at all — the first draft of this cell proved exactly that,
+    // with `failed_steps` holding `fail_a` and nothing else.
+    const chainDef: WorkflowDefinition = {
+      ...guardDef,
+      id: 'guard-drain-chain-wf',
+      steps: {
+        ...guardDef.steps,
+        ok: { description: 'OK', execution: 'agent', depends_on: [] },
+        g: { ...guardDef.steps['g']!, depends_on: ['ok'] },
+      },
+    };
+    const store = new NonDeclaringStoreDouble(await freshStore());
+    const { run } = await store.create({
+      workflowId: chainDef.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const registry = finalizerRegistry(true);
+    await executeStep(store, chainDef, {
+      runId: run.id,
+      command: 'fail_a',
+      input: {},
+      dispatcher: explode('a exploded'),
+      registry,
+    });
+    // `ok` succeeds ⇒ the chain reaches the guard, whose resolution_error seals the run, and
+    // buildFinalizedSeal then drains `fin`, which throws and grows failed_steps.
+    await executeChain(store, chainDef, {
+      runId: run.id,
+      command: 'ok',
+      input: {},
+      dispatcher: succeed,
+      registry,
+    });
+
+    const record = await store.get(run.id);
+    expect(record.failed_steps).toContain('g');
+    expect(record.failed_steps).toContain('fin');
+    expect(record.terminal_reason).toContain('3 steps failed:');
+    expect(record.terminal_reason).toContain(`Finalizer 'fin' failed:`);
+    expect(record.terminal_reason).toContain("unresolvable path '$.nope.field'");
+    // And the enriched evidence really is minted by PRODUCTION here — not hand-shaped as in (D1).
+    const guardEvidence = record.evidence.filter((e) => e.step_id === 'g' && e.error !== undefined);
+    expect(guardEvidence.at(-1)!.error).toContain("unresolvable path '$.nope.field'");
   });
 });
 

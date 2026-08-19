@@ -433,10 +433,12 @@ function applyAbortEdge(
 // The run's one-line fail cause (issue #373)
 // ---------------------------------------------------------------------------
 
-/** Per-message cap before the truncation marker. Not prior art — an in-house choice, sized so a
- *  handful of messages fit inside {@link FAIL_CAUSE_SENTENCE_CAP} without any one of them
- *  swallowing the sentence. */
-const FAIL_CAUSE_MESSAGE_CAP = 120;
+/** Per-message cap before the truncation marker — sized from a real-corpus measurement
+ *  (2026-08-20, n=31 evidence error messages from a live runsDir: p50=21, p95=248, max=254 — 19%
+ *  of real messages were truncated at the previous unanchored 120; 256 keeps the whole observed
+ *  distribution verbatim). Re-measure before changing; the 1024 sentence cap remains the global
+ *  bound. */
+const FAIL_CAUSE_MESSAGE_CAP = 256;
 /** Hard cap on the WHOLE sentence, marker included — the returned string is never longer than
  *  this. (Tekton caps its joined validation detail at 1024 + `"..."`, i.e. 1027 out; realm's cap
  *  is inclusive, so an overflowing sentence lands at exactly 1024.) */
@@ -447,10 +449,10 @@ const FAIL_CAUSE_TRUNCATION = '...';
 /**
  * Renders the run-level cause for a run with MORE THAN ONE distinct failed step (issue #373).
  *
- * PRECONDITION — callers gate on `new Set(failedSteps).size > 1`. The single-failure sentence is
- * each call site's own template (`Step 'a' failed: …`, `Guard step 'g' failed: …`), deliberately
- * left where it is: this function never emits a single-failure shape, so there is exactly one
- * spelling of each.
+ * PRECONDITION — callers gate on `new Set(failedSteps).size > 1`. That gate is about which
+ * sentence SHAPE a call site wants, not about grammar safety: the single-failure sentence is each
+ * call site's own template (`Step 'a' failed: …`, `Guard step 'g' failed: …`), left where it is so
+ * there is exactly one spelling of each. Output below is grammatical at any count.
  *
  * The defect it fixes: `failed_steps` is append-ordered by settlement commit, so naming one step
  * as THE cause named whichever failure settled LAST — and under true concurrency the lock race
@@ -479,7 +481,10 @@ export function renderFailCause(
         : message;
     return `${step} ("${capped}")`;
   });
-  const sentence = `${distinct.length} steps failed: ${rendered.join(', ')}.`;
+  // Grammatical across the WHOLE input domain, not just the domain the call sites use — a public
+  // export that can emit "1 steps failed" is wrong output, precondition or no precondition
+  // (ninja's own discipline: "subcommand failed" / "subcommands failed").
+  const sentence = `${distinct.length} step${distinct.length === 1 ? '' : 's'} failed: ${rendered.join(', ')}.`;
   return sentence.length > FAIL_CAUSE_SENTENCE_CAP
     ? sentence.slice(0, FAIL_CAUSE_SENTENCE_CAP - FAIL_CAUSE_TRUNCATION.length) +
         FAIL_CAUSE_TRUNCATION
@@ -507,10 +512,10 @@ export function failureMessagesFromEvidence(
 /**
  * The evidence walk plus the call site's OWN in-hand message for its own step.
  *
- * The overlay is load-bearing, not defensive, at the guard sites: a guard `resolution_error`
- * records `error: "Guard resolution error on condition: …"` in evidence and puts the unresolvable
- * path only in `output_summary`, so without the overlay the path text — the whole diagnostic
- * value of that sentence — would not reach the rendered cause.
+ * At the guard sites the overlay is now DEFENSIVE, not load-bearing (issue #373 correction): the
+ * guard's evidence `error` carries the unresolvable path itself, so the path survives the evidence
+ * walk and the post-drain re-render alike. It is kept against caller-shaped evidence that might
+ * arrive without it.
  *
  * `undefined` never clobbers an evidence message.
  */
@@ -1084,8 +1089,8 @@ function applySettleGuard(
         new Set(withSkipped.failed_steps).size > 1
           ? renderFailCause(
               withSkipped.failed_steps,
-              // LOAD-BEARING overlay: the guard's evidence `error` reads "Guard resolution error
-              // on condition: …" — the path text lives only in output_summary and here.
+              // Defensive once evidence carries the path (issue #373 correction); kept against
+              // caller-shaped evidence that arrives without it.
               failureMessagesWithOverlay(withSkipped.evidence, step, guardPath),
             )
           : `Guard step '${step}' failed: ${guardPath}`,

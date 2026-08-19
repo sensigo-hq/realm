@@ -4810,7 +4810,12 @@ async function executeGuardStep(
       completedAt: now,
       input: {},
       output: { error: `Unresolvable path: ${outcome.unresolvable_path}` },
-      error: `Guard resolution error on condition: ${outcome.condition}`,
+      // issue #373 correction: the path is the DIAGNOSTIC, and it used to live only in
+      // `output_summary` + a transient seal-time overlay — so the post-drain re-render, which
+      // rebuilds the cause from evidence alone, replaced it with the generic condition text.
+      // Carrying it here makes every downstream read of this failure lossless. Sole production
+      // mint: the settlement delta reuses this exact snapshot via `guardOwnEvidence`.
+      error: `Guard resolution error on condition: ${outcome.condition} — unresolvable path '${outcome.unresolvable_path}'`,
     });
 
     const withFailed: RunRecord = {
@@ -4824,9 +4829,9 @@ async function executeGuardStep(
       skipped_steps: resolutionErrorPropagated.skipped,
       skip_details: resolutionErrorPropagated.details,
     };
-    // issue #373 — twin of settlement.ts's guard seal. The overlay is load-bearing: the evidence
-    // `error` above reads "Guard resolution error on condition: …", so the path text reaches the
-    // rendered cause only from here.
+    // issue #373 — twin of settlement.ts's guard seal. The overlay is DEFENSIVE once evidence
+    // carries the path (issue #373 correction, the `error` above); kept against caller-shaped
+    // evidence that arrives without it.
     const guardPath = `unresolvable path '${outcome.unresolvable_path}'`;
     return {
       ...withSkipped,
