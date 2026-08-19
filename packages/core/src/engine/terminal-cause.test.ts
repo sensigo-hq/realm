@@ -346,6 +346,74 @@ describe('#373 — messages', () => {
   });
 });
 
+it('(6c) a message longer than the cap keeps its DIAGNOSTIC — order beats size', async () => {
+  // The boundary the enrichment opened: the per-message cap slices from the HEAD, so whichever
+  // half of the guard message comes last is the half that disappears. With the path appended
+  // last, a long enough condition pushed it off the tail and the diagnostic was gone again —
+  // the same lossiness class, alive at the cap boundary. The path leads now.
+  //
+  // Deliberately a SHORT path with a LONG condition (a big right-hand literal): that isolates
+  // ORDER as the mechanism. A pathological long PATH still truncates itself — an accepted bound,
+  // and head-first truncation keeps its orienting prefix.
+  const condition = `$.nope.field == "${'y'.repeat(260)}"`;
+  const definition: WorkflowDefinition = {
+    id: 'guard-cap-wf',
+    name: 'Guard Cap',
+    version: 1,
+    steps: {
+      fail_a: { description: 'A', execution: 'agent', depends_on: [] },
+      ok: { description: 'OK', execution: 'agent', depends_on: [] },
+      g: {
+        description: 'Guard',
+        execution: 'guard',
+        depends_on: ['ok'],
+        abort_unless: [condition],
+      },
+      fin: {
+        description: 'Finalizer',
+        execution: 'finalizer',
+        on_outcome: 'fail',
+        handler: 'fin-handler',
+      },
+    },
+  };
+  const store = await freshStore();
+  const registry = finalizerRegistry(true);
+  const { run } = await store.create({
+    workflowId: definition.id,
+    workflowVersion: 1,
+    params: {},
+  });
+  await executeStep(store, definition, {
+    runId: run.id,
+    command: 'fail_a',
+    input: {},
+    dispatcher: explode('a exploded'),
+    registry,
+  });
+  await executeChain(store, definition, {
+    runId: run.id,
+    command: 'ok',
+    input: {},
+    dispatcher: succeed,
+    registry,
+  });
+
+  const record = await store.get(run.id);
+  const guardError = record.evidence
+    .filter((e) => e.step_id === 'g' && e.error !== undefined)
+    .at(-1)!.error!;
+  // Non-vacuity: without a message genuinely over the cap this cell would pass for the wrong
+  // reason — nothing would be truncated at all.
+  expect(guardError.length).toBeGreaterThan(256);
+
+  const entry = record.terminal_reason!.slice(record.terminal_reason!.indexOf('g ('));
+  expect(record.terminal_reason).toContain('3 steps failed:'); // post-drain, re-rendered
+  expect(entry).toContain('...'); // truncation really fired
+  expect(entry.endsWith('...").')).toBe(true); // and the wrapper survived it
+  expect(record.terminal_reason).toContain("unresolvable path '$.nope.field'"); // THE PIN
+});
+
 describe('#373 — the guard resolution_error site', () => {
   it('(8) a guard failing AFTER another step names BOTH, and the unresolvable path survives', async () => {
     const definition: WorkflowDefinition = {
@@ -392,7 +460,7 @@ describe('#373 — the guard resolution_error site', () => {
     // see the composition cells below.
     const guardEvidence = record.evidence.filter((e) => e.step_id === 'g' && e.error !== undefined);
     expect(guardEvidence.at(-1)!.error).toBe(
-      "Guard resolution error on condition: $.nope.field == true — unresolvable path '$.nope.field'",
+      "Guard resolution error: unresolvable path '$.nope.field' (condition: $.nope.field == true)",
     );
   });
 });
@@ -505,7 +573,7 @@ describe('#373 — a guard-sealed run whose finalizer ALSO fails keeps the path 
           input: {},
           output: { error: 'Unresolvable path: $.nope.field' },
           error:
-            "Guard resolution error on condition: $.nope.field == true — unresolvable path '$.nope.field'",
+            "Guard resolution error: unresolvable path '$.nope.field' (condition: $.nope.field == true)",
         }),
         resolutionError: {
           condition: '$.nope.field == true',

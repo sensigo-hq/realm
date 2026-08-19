@@ -4815,7 +4815,14 @@ async function executeGuardStep(
       // rebuilds the cause from evidence alone, replaced it with the generic condition text.
       // Carrying it here makes every downstream read of this failure lossless. Sole production
       // mint: the settlement delta reuses this exact snapshot via `guardOwnEvidence`.
-      error: `Guard resolution error on condition: ${outcome.condition} — unresolvable path '${outcome.unresolvable_path}'`,
+      //
+      // The path goes FIRST because the per-message cap slices from the head: with the path last,
+      // a long enough condition pushed it off the tail and the diagnostic vanished again. Honest
+      // bound: a pathological PATH over ~230 chars still truncates itself, which is accepted —
+      // head-first truncation keeps its prefix, and the prefix is the orienting part. ASCII
+      // parenthetical, not an em dash, for the same reason the truncation marker is ASCII (logs,
+      // terminals, a Postgres text column) — and a cut-off parenthetical reads as obviously partial.
+      error: `Guard resolution error: unresolvable path '${outcome.unresolvable_path}' (condition: ${outcome.condition})`,
     });
 
     const withFailed: RunRecord = {
