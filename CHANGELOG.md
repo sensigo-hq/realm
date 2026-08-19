@@ -6,6 +6,24 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- A run that ends with several failures now says so, instead of blaming one of them (issue #373).
+  `terminal_reason` named whichever step settled LAST — so the same two failures produced a
+  different named culprit depending on the order they finished in, and under real concurrency the
+  lock race picked it. The sentence now leads with the count and lists every failed step, deduped
+  and sorted lexically, each with its own message read verbatim from that step's evidence:
+  `2 steps failed: fail_a ("..."), fail_b ("...").` A step with no recorded message appears as a
+  bare name — never fabricated. Long output is capped (120 characters per message, 1024 for the
+  whole sentence, each ending in `...`), and the count always survives truncation.
+  The sentence also **re-renders when a finalizer's own failure joins the record**. A finalizer
+  runs after the seal, so its failure used to land in `failed_steps` beside a sentence that had
+  already been written and could no longer see it — a run could hold three failed steps while its
+  cause line named one. Both the guard `resolution_error` seal and the legacy dormancy path get the
+  same treatment, and the two layers emit byte-identical sentences.
+  **A run with exactly ONE failure is unchanged**, including the wording of the guard sentence — the
+  single-failure shape was never the bug.
+
 ### Added
 
 - The loader now REJECTS a failure condition that can never be true (issue #362). Writing

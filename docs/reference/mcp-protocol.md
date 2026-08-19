@@ -43,7 +43,8 @@ tool directly, for instance) never receives Anthropic grammar-constrained decodi
 mechanism is `realm agent`'s own provider layer, not part of the MCP protocol surface. The
 attempt's evidence still discloses this honestly (`downgrade_reason: 'external_agent'`, visible
 via `realm run inspect`) — but `get_run_state` does not carry per-step evidence at all, so an
-MCP-only consumer combines the run's `terminal_reason` + `failed_steps` + derived `run_phase`
+MCP-only consumer combines the run's `terminal_reason` (multi-failure runs list all failed
+steps) + `failed_steps` + derived `run_phase`
 instead of reading a per-attempt field. See
 [`structured_output`](yaml-schema.md#structured_output-anthropic-strict-decoding).
 

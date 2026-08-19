@@ -30,7 +30,14 @@ import { storeDeclaresSeal, storeDeclaresNonceCarriage } from '../store/trace-bu
 import { partitionBufferedEntries, type BufferedEntryPartition } from './trace-adoption.js';
 import { deriveDefaultedSteps } from './defaulted-steps.js';
 import { computeGateDueState } from './gate-timing.js';
-import { selectFinalizers, deriveEffectiveTriggers, applySettlement } from './settlement.js';
+import {
+  selectFinalizers,
+  deriveEffectiveTriggers,
+  applySettlement,
+  renderFailCause,
+  failureMessagesFromEvidence,
+  failureMessagesWithOverlay,
+} from './settlement.js';
 import type {
   SettleStepDelta,
   SettlementResult,
@@ -3053,13 +3060,24 @@ export async function executeStep(
       (withSkippedFail.in_progress_steps.length === 0 &&
         findEligibleSteps(definition, withSkippedFail).length === 0 &&
         findEligibleGuardSteps(definition, withSkippedFail).length === 0);
+    // Hoisted so the #373 message walk below reads the SAME evidence the record will carry —
+    // `withSkippedFail` does not yet include this attempt's snapshots.
+    const failEvidence = [...pendingRun.evidence, ...allEvidence];
+    // issue #373 — twin of settlement.ts's fail seal; both layers must emit byte-identical
+    // sentences for identical inputs. Single-failure shape unchanged (this site has never had the
+    // `?? 'unknown error'` fallback — `dispatchError.message` is always a string).
+    const failCause =
+      new Set(withSkippedFail.failed_steps).size > 1
+        ? renderFailCause(
+            withSkippedFail.failed_steps,
+            failureMessagesWithOverlay(failEvidence, options.command, dispatchError.message),
+          )
+        : `Step '${options.command}' failed: ${dispatchError.message}`;
     const failDraft: RunRecord = {
       ...withSkippedFail,
-      evidence: [...pendingRun.evidence, ...allEvidence],
+      evidence: failEvidence,
       terminal_state: isComplete,
-      ...(isComplete
-        ? { terminal_reason: `Step '${options.command}' failed: ${dispatchError.message}` }
-        : {}),
+      ...(isComplete ? { terminal_reason: failCause } : {}),
     };
     // On the terminal transition, drain the fail/always finalizers before the single seal.
     // Non-terminal failures (recovery steps remain) run no finalizers.
@@ -4792,7 +4810,19 @@ async function executeGuardStep(
       completedAt: now,
       input: {},
       output: { error: `Unresolvable path: ${outcome.unresolvable_path}` },
-      error: `Guard resolution error on condition: ${outcome.condition}`,
+      // issue #373 correction: the path is the DIAGNOSTIC, and it used to live only in
+      // `output_summary` + a transient seal-time overlay — so the post-drain re-render, which
+      // rebuilds the cause from evidence alone, replaced it with the generic condition text.
+      // Carrying it here makes every downstream read of this failure lossless. Sole production
+      // mint: the settlement delta reuses this exact snapshot via `guardOwnEvidence`.
+      //
+      // The path goes FIRST because the per-message cap slices from the head: with the path last,
+      // a long enough condition pushed it off the tail and the diagnostic vanished again. Honest
+      // bound: a pathological PATH over ~230 chars still truncates itself, which is accepted —
+      // head-first truncation keeps its prefix, and the prefix is the orienting part. ASCII
+      // parenthetical, not an em dash, for the same reason the truncation marker is ASCII (logs,
+      // terminals, a Postgres text column) — and a cut-off parenthetical reads as obviously partial.
+      error: `Guard resolution error: unresolvable path '${outcome.unresolvable_path}' (condition: ${outcome.condition})`,
     });
 
     const withFailed: RunRecord = {
@@ -4806,10 +4836,20 @@ async function executeGuardStep(
       skipped_steps: resolutionErrorPropagated.skipped,
       skip_details: resolutionErrorPropagated.details,
     };
+    // issue #373 — twin of settlement.ts's guard seal. The overlay is DEFENSIVE once evidence
+    // carries the path (issue #373 correction, the `error` above); kept against caller-shaped
+    // evidence that arrives without it.
+    const guardPath = `unresolvable path '${outcome.unresolvable_path}'`;
     return {
       ...withSkipped,
       terminal_state: true,
-      terminal_reason: `Guard step '${stepName}' failed: unresolvable path '${outcome.unresolvable_path}'`,
+      terminal_reason:
+        new Set(withSkipped.failed_steps).size > 1
+          ? renderFailCause(
+              withSkipped.failed_steps,
+              failureMessagesWithOverlay(withSkipped.evidence, stepName, guardPath),
+            )
+          : `Guard step '${stepName}' failed: ${guardPath}`,
     };
   }
 
@@ -4904,8 +4944,10 @@ async function executeGuardStep(
  * `withTimeout` honoring `timeout_seconds` (default `DRAIN_CEILING_SECONDS`). Success →
  * evidence + completed_steps; thrown error / STEP_TIMEOUT / handler `{ abort }` → evidence
  * marked failed + failed_steps, NON-FATAL (the drain continues). A finalizer NEVER mutates
- * `aborted_at`, `terminal_reason`, `terminal_state`, `skipped_steps`, or emits next_actions —
- * the terminal marks come from `sealDraft` and `deriveRunPhase` precedence keeps the phase.
+ * `aborted_at`, `terminal_state`, `skipped_steps`, or emits next_actions, and never changes the
+ * sealed OUTCOME — the terminal marks come from `sealDraft` and `deriveRunPhase` precedence keeps
+ * the phase. issue #373: a finalizer whose OWN failure grows `failed_steps` on a fail-class seal
+ * DOES re-render `terminal_reason`, so the one-line cause keeps agreeing with the record.
  */
 async function buildFinalizedSeal(
   definition: WorkflowDefinition,
@@ -4931,6 +4973,11 @@ async function buildFinalizedSeal(
     deriveEffectiveTriggers(outcome, sealDraft),
   );
 
+  // issue #373: the post-drain re-render fires only if the drain ACTUALLY appended a failure.
+  // The legacy seal is reached on every fail-class outcome, including one where every finalizer
+  // succeeds — re-rendering there would rebuild the sentence without the seal site's in-hand
+  // overlay (the guard sites' unresolvable-path text) and silently drop it.
+  const failedBeforeDrain = sealDraft.failed_steps.length;
   let record = sealDraft;
   for (const name of selected) {
     const step = definition.steps[name]!;
@@ -4953,8 +5000,10 @@ async function buildFinalizedSeal(
         name,
       );
       if (result.kind === 'abort') {
-        // A finalizer handler returning { abort } is a recorded NON-FATAL failure — it must
-        // never mutate aborted_at/terminal_reason (that would corrupt the sealed outcome).
+        // A finalizer handler returning { abort } is a recorded NON-FATAL failure — it must never
+        // mutate aborted_at or the sealed OUTCOME. (issue #373: it does join `failed_steps`, and
+        // the post-drain re-render below folds it into the one-line cause — that reports the
+        // outcome faithfully, it does not change it.)
         record = {
           ...record,
           evidence: [
@@ -5008,7 +5057,24 @@ async function buildFinalizedSeal(
     }
   }
 
-  return { ...record, terminal_state: true };
+  const drained: RunRecord = { ...record, terminal_state: true };
+  // Twin of applyMarkFinalizer's failed-arm re-render. `deriveRunPhase`, not `outcome`: an aborted
+  // run whose finalizer also failed keeps its abort sentence (aborted_at wins), and a
+  // complete-outcome run keeps the complete-seal literal untouched.
+  if (
+    record.failed_steps.length > failedBeforeDrain &&
+    deriveRunPhase(drained) === 'failed' &&
+    new Set(record.failed_steps).size > 1
+  ) {
+    return {
+      ...drained,
+      terminal_reason: renderFailCause(
+        record.failed_steps,
+        failureMessagesFromEvidence(record.evidence),
+      ),
+    };
+  }
+  return drained;
 }
 
 /** Every currently-`'pending'` finalizer in `run`'s ledger, ascending by rank — the order the
