@@ -37,6 +37,34 @@ agent/handler steps as `next_actions` plus a `next_actions_status` that classifi
 `auto_pending` vs an empty `ok` distinguishes a genuinely-parked run from one with no pending agent
 action. See [Operating & recovering runs](operating-runs.md).
 
+### The seal fields (issue #367)
+
+A terminal run's summary carries the recorded fact that ended it. `sealed_by_arm` is the first
+thing to read; three companions qualify it:
+
+| Field                   | Type   | Present when                                                                                                                 |
+| ----------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `sealed_by_arm`         | string | The run is sealed. An arm this binary does not recognise arrives as `unrecognized arm '<value>'` — disclosed, never dropped. |
+| `sealed_by_step`        | string | The arm makes the step the seal's IDENTITY — `guard_*`, `gate_*`, `handler_abort`. See the warning below.                    |
+| `sealed_by_classified`  | `true` | The run predates the seal substrate and its arm was recovered on read rather than read from a stamp.                         |
+| `sealed_by_adjudicated` | object | An operator has ruled on the seal. The full ruling verbatim: `{ by, at, previous_arm, reason? }`.                            |
+
+**Every key is ABSENT when its underlying field is absent — never `null`.** The one place `null`
+appears is _inside_ a ruling: `previous_arm: null` is a positive fact, meaning the ruling was the
+record's first stamp and there was no prior arm to name. Absence and null are different answers here
+and the surface keeps them different.
+
+**`sealed_by_step` is deliberately withheld on `complete` and `step_failure` seals even when the
+record carries a step.** On those arms the recorded step is whichever one settled last — a
+settle-order artifact, not a cause. A run that failed in three places has one such step recorded,
+and an agent reading it beside the run's outcome would take it as THE culprit. Read
+`terminal_reason` and `failed_steps` for what actually failed.
+
+**`by` is a recorded CLAIM of identity, not a verified one:** there is no auth model behind it, so
+treat it as attribution-by-assertion. A ruling never rewrites the run's own prose — `terminal_reason`
+remains what the engine said at the time, and the ruling resolves the disagreement without
+falsifying the record.
+
 **`structured_output` note (issue #236):** a step declaring `structured_output: strict` that is
 driven via `execute_step` by anything other than `realm agent` (an external agent calling the MCP
 tool directly, for instance) never receives Anthropic grammar-constrained decoding — that

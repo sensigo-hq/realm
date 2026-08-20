@@ -416,6 +416,39 @@ Evidence (3 steps):
      Diagnostics: ~2100 tokens | preconditions: draft_response.result.root_cause != "" → true (log_rot…)
 ```
 
+#### The seal, and any ruling on it (issue #367)
+
+A terminal run renders the recorded fact that ended it, directly above the evidence:
+
+```
+Sealed by: guard_abort (g)
+Cause: Guard 'g' aborted the run.
+```
+
+The step in parentheses appears only where the step IS the seal's identity — a guard, a gate, or a
+handler abort. A run that failed in several places does not name one of them here, because the step
+recorded on that kind of seal is whichever one settled last, and printing it directly above the
+cause line would read as the culprit.
+
+`(recovered by classifier)` after the arm means the run predates the seal substrate and the engine
+recovered its arm on read rather than reading a stamped one. Both are the truth about the run; the
+marker tells you which kind of truth it is.
+
+When an operator has adjudicated the seal, one further line records who and when:
+
+```
+Sealed by: complete
+Ruled: mihai at 2026-08-21T00:00:00.000Z (was step_failure) — the retry succeeded; the earlier failure is not the outcome
+```
+
+`(was <arm>)` names the arm the ruling replaced; a first stamp on a record that never had one reads
+`(first stamp — no prior arm existed)` instead. The reason, when the ruling carries one, is printed
+verbatim and never shortened.
+
+**`by` is a recorded CLAIM of identity, not a verified one:** there is no auth model behind it, so
+treat it as attribution-by-assertion. The run's own prose is never rewritten to match a ruling — it
+stays as the historical evidence of what the engine said at the time.
+
 **State colors:** green = completed, red = failed or abandoned, yellow = anything else (including gate_waiting and in-progress).
 
 **Output truncation:** Input and Output fields are truncated at 120 characters. A `…` suffix
@@ -691,9 +724,10 @@ a verified one: there is no auth model behind it, so treat it as attribution-by-
 An adjudication write is ordinary activity — unlike stamping, it advances `updated_at` and
 `version`.
 
-**Named residual:** a ruling is record-level provenance, and no read surface renders it yet —
-`inspect`, `get_run_state` and `list` do not show it. `export` carries it verbatim today; surfacing
-it rides a later increment.
+**Where a ruling shows up.** `realm run inspect` renders it as a `Ruled:` line (above), and
+`get_run_state` carries it as `sealed_by_adjudicated`. `export` carries the whole record verbatim,
+as it always has. `realm run list` renders none of it — that surface shows one line per run and
+rides a later increment.
 
 The operator verb itself ships when it has a customer. The record format will not change when it
 does.

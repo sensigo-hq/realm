@@ -143,6 +143,84 @@ describe('inspectRun — the seal fact (issue #367)', () => {
   });
 });
 
+describe('inspectRun — the ruling (issue #367 PR-5)', () => {
+  const RULED = {
+    arm: 'guard_abort' as const,
+    step: 'g',
+    adjudicated: {
+      by: 'mihai',
+      at: '2026-08-21T00:00:00.000Z',
+      previous_arm: 'complete' as const,
+      reason: 'the guard is what stopped this run',
+    },
+  };
+
+  /** Renders a terminal run carrying `sealed_by`, through the real renderer. */
+  async function render(sealedBy: NonNullable<RunRecord['sealed_by']>): Promise<string> {
+    const run = makeRun([], {
+      run_phase: 'aborted',
+      terminal_state: true,
+      aborted_at: { step_id: 'g' },
+      sealed_by: sealedBy,
+    });
+    return inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+  }
+
+  it('renders who ruled, when, what the arm was before — and the reason verbatim', async () => {
+    const out = await render(RULED);
+    expect(out).toContain(
+      'Ruled: mihai at 2026-08-21T00:00:00.000Z (was complete) — the guard is what stopped this run',
+    );
+  });
+
+  it('renders a ruling that carries no reason, without a dangling dash', async () => {
+    // `reason` is optional in the contract, so the renderer must not assume it. A trailing ' — '
+    // with nothing after it reads like the reason was lost in transit.
+    const { reason: _reason, ...noReason } = RULED.adjudicated;
+    const out = await render({ ...RULED, adjudicated: noReason });
+    expect(out).toContain('Ruled: mihai at 2026-08-21T00:00:00.000Z (was complete)');
+    expect(out).not.toContain('(was complete) —');
+  });
+
+  it('says "first stamp" for a null previous_arm — never "unclassifiable"', async () => {
+    // The boundary lawfully admits a null first-stamp on ANY already-terminal unstamped record,
+    // including ones whose prose classifies perfectly well. Calling it unclassifiable would be a
+    // claim wider than the condition that produced it.
+    const out = await render({
+      ...RULED,
+      adjudicated: { ...RULED.adjudicated, previous_arm: null },
+    });
+    expect(out).toContain(
+      'Ruled: mihai at 2026-08-21T00:00:00.000Z (first stamp — no prior arm existed)',
+    );
+    expect(out).not.toContain('unclassifiable');
+  });
+
+  it('marks a classifier-recovered seal, after the step and before any ruling', async () => {
+    const out = await render({ arm: 'guard_abort', step: 'g', classified: true });
+    expect(out).toContain('Sealed by: guard_abort (g) (recovered by classifier)');
+  });
+
+  it('renders NEITHER marker when the seal carries no ruling and no classifier flag', async () => {
+    // The control for "additive-only": a plain seal renders exactly what it rendered before PR-5.
+    const out = await render({ arm: 'guard_abort', step: 'g' });
+    expect(out).toContain('Sealed by: guard_abort (g)');
+    expect(out).not.toContain('Ruled:');
+    expect(out).not.toContain('recovered by classifier');
+  });
+
+  it('renders a ruling on an unrecognised arm — the ruling is data here, never re-validated', async () => {
+    // The two fallbacks compose: inspect must not swallow a ruling just because it cannot name the
+    // arm the ruling produced.
+    const out = await render({
+      arm: 'from_the_future',
+      adjudicated: RULED.adjudicated,
+    } as unknown as NonNullable<RunRecord['sealed_by']>);
+    expect(out).toContain("unrecognized arm 'from_the_future'");
+    expect(out).toContain('Ruled: mihai at 2026-08-21T00:00:00.000Z (was complete)');
+  });
+});
+
 describe('inspectRun', () => {
   it('shows run ID, workflow ID, state, and evidence steps for a completed run', async () => {
     const run = makeRun([makeSnapshot('step_one')]);

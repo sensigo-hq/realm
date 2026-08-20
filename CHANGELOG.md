@@ -8,6 +8,22 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **Operator rulings on a seal are now visible where operators look** (issue #367). `realm run
+inspect` renders a `Ruled: <who> at <when> (was <arm>)` line, with the ruling's reason verbatim
+  when it carries one, and marks a classifier-recovered seal as such. `get_run_state` gains
+  `sealed_by_adjudicated` (the whole ruling, field for field), `sealed_by_classified`, and
+  `sealed_by_step` — each key absent, never null, when its field is absent. `sealed_by_step` is
+  withheld on `complete`/`step_failure` seals even when the record carries a step: there the step
+  is whichever one settled last, and an agent would read it as the culprit of a run that may have
+  failed in several places. `by` remains a recorded claim of identity, not a verified one.
+  Until now a ruling was recorded and then invisible — an operator could adjudicate a run and have
+  no way to see that they had, short of exporting the record.
+- **A `SealedBy` field can no longer ship without a read surface or a written waiver** — the
+  standard is now a test. A disclosure-parity guard in each surface package fails to COMPILE when a
+  field is added to the type and not routed, and the assertion lives inside the routing entry, so
+  routing a field as "rendered" without asserting it is not possible either. A waiver needs a
+  reason a reader can weigh; an empty one fails at runtime. This class — provenance recorded, never
+  shown — was found by walking an operator's journey by hand, and now needs no walk to be caught.
 - **`realm run migrate --stamp-seals`** — writes down the seal arm that every legacy terminal run
   has always meant (issue #367). Records written before the seal substrate carry no `sealed_by`;
   the engine already recovers their arm on every read wherever one is recoverable, and the rest
