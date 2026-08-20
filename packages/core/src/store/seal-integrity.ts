@@ -101,29 +101,114 @@ export function assertSealIntegrity(stored: RunRecord, next: RunRecord): void {
       },
     );
   }
-  // Clause 6 — STATE_SEAL_REWRITTEN: a stored arm may not be CHANGED while the run stays
-  // terminal. Executed before this clause existed: a plain `update()` flipped `complete` to
-  // `gate_resolution_complete`, dropped the `classified` provenance marker and reset the retention
-  // clock, all silently — the re-attribution this design exists to end, live at its own boundary.
-  // Both arms must be present for this to fire, so the legacy population cannot trip it.
+  // Clause 6 — STATE_SEAL_REWRITTEN: a stored arm may not be CHANGED while the run stays terminal,
+  // EXCEPT by an adjudication write carrying truthful provenance. Executed before this clause
+  // existed: a plain `update()` flipped `complete` to `gate_resolution_complete`, dropped the
+  // `classified` marker and reset the retention clock, all silently — the re-attribution this
+  // design exists to end, live at its own boundary.
+  //
+  // The adjudication key is published as a day-one contract rather than added later, because the
+  // law that ships with the major says arm changes are refused; amending it afterwards would
+  // loosen a published guarantee under external implementers.
+  //
+  // The key opens THIS clause only. `SEAL_COHERENT` below still governs: a truthful CROSS-PHASE
+  // ruling on a record whose own prose still classifies elsewhere is refused as incoherent, by
+  // design — the operator verb must co-rewrite the prose/markers for a cross-phase ruling, or the
+  // record would end up contradicting itself in a new direction.
+  // Rule 3 lives OUTSIDE the both-terminal guard below, and that placement is the point: a FRESH
+  // seal is a non-terminal -> terminal write, so a rule scoped to both-terminal would never see the
+  // fabrication it exists to refuse. (It did not, until the cell for it reddened.)
   if (
-    stored.terminal_state === true &&
     next.terminal_state === true &&
-    stored.sealed_by !== undefined &&
-    next.sealed_by !== undefined &&
-    next.sealed_by.arm !== stored.sealed_by.arm
+    stored.sealed_by === undefined &&
+    next.sealed_by?.adjudicated !== undefined
   ) {
     throw new WorkflowError(
-      `Run '${next.id}' rewrites its seal arm ('${stored.sealed_by.arm}' -> ` +
-        `'${next.sealed_by.arm}') — a recorded seal is immutable while the run is terminal`,
+      `Run '${next.id}' carries adjudication provenance on a record that had no seal arm — ` +
+        `a first seal cannot have been adjudicated`,
       {
         code: 'STATE_SEAL_REWRITTEN',
         category: 'STATE',
         agentAction: 'report_to_user',
         retryable: false,
-        details: { runId: next.id, stored_arm: stored.sealed_by.arm, next_arm: next.sealed_by.arm },
+        details: {
+          runId: next.id,
+          claimed_previous_arm: next.sealed_by.adjudicated.previous_arm,
+        },
       },
     );
+  }
+  if (stored.terminal_state === true && next.terminal_state === true) {
+    const storedArm = stored.sealed_by?.arm;
+    const nextSeal = next.sealed_by;
+    const adjudication = nextSeal?.adjudicated;
+    const storedAdjudication = stored.sealed_by?.adjudicated;
+    // A ruling is NEW-OR-CHANGED when it is not byte-identical to the stored one; an untouched
+    // record spreading its own provenance forward is not making a claim.
+    const provenanceIsNew =
+      adjudication !== undefined &&
+      JSON.stringify(adjudication) !== JSON.stringify(storedAdjudication);
+
+    // (Rule 3 — no fabricated first-seal adjudication — is hoisted above; see its comment.)
+    // Rule 2 — truthfulness binds EVERY provenance write, same-arm included. Without this, a
+    // same-arm write could mint provenance naming any arm at all, and the "chain is one-step
+    // walkable" guarantee that justifies the single slot would be worthless.
+    if (storedArm !== undefined && provenanceIsNew && adjudication.previous_arm !== storedArm) {
+      throw new WorkflowError(
+        `Run '${next.id}' claims adjudication from '${adjudication.previous_arm}' but the stored ` +
+          `arm is '${storedArm}' — a seal rewrite is lawful only with TRUTHFUL provenance`,
+        {
+          code: 'STATE_SEAL_REWRITTEN',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: false,
+          details: {
+            runId: next.id,
+            stored_arm: storedArm,
+            claimed_previous_arm: adjudication.previous_arm,
+            ...(nextSeal !== undefined ? { next_arm: nextSeal.arm } : {}),
+          },
+        },
+      );
+    }
+    // Rule 4 — provenance is erase-proof while terminal, for the same reason the arm is: a ruling
+    // that can be quietly dropped is a ruling nobody can rely on afterwards.
+    if (storedAdjudication !== undefined && nextSeal !== undefined && adjudication === undefined) {
+      throw new WorkflowError(
+        `Run '${next.id}' drops its adjudication provenance (ruled by ` +
+          `'${storedAdjudication.by}') — a recorded ruling is erase-proof while terminal`,
+        {
+          code: 'STATE_SEAL_REWRITTEN',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: false,
+          details: { runId: next.id, erased_ruling_by: storedAdjudication.by },
+        },
+      );
+    }
+    // Rule 1 — the arm changed. Lawful only with truthful provenance, which rule 2 has already
+    // verified; anything else is the silent rewrite.
+    //
+    // (Rev 1 of this clause also carried a "stored had none, or differs" conjunct here. It is
+    // DELETED deliberately: once rule 2 binds every provenance write, the state it guarded is
+    // unreachable in any lawful history, and the conjunct was comparator-ambiguous dead code.
+    // Recorded so nobody re-adds it looking at the flip case alone.)
+    if (storedArm !== undefined && nextSeal !== undefined && nextSeal.arm !== storedArm) {
+      if (adjudication === undefined) {
+        throw new WorkflowError(
+          `Run '${next.id}' rewrites its seal arm ('${storedArm}' -> '${nextSeal.arm}') — a ` +
+            `recorded seal is immutable while the run is terminal, except by an adjudication ` +
+            `write carrying truthful provenance`,
+          {
+            code: 'STATE_SEAL_REWRITTEN',
+            category: 'STATE',
+            agentAction: 'report_to_user',
+            retryable: false,
+            details: { runId: next.id, stored_arm: storedArm, next_arm: nextSeal.arm },
+          },
+        );
+      }
+    }
   }
   // SEAL_COHERENT — on any terminal write carrying a stamp: the record's OWN markers/prose,
   // classified as if unstamped, must agree with the arm AT PHASE LEVEL (the classifier

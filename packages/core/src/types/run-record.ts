@@ -643,6 +643,38 @@ export interface SealedBy {
    * one forever. Absent on every fresh seal; present on every record the vehicle stamped.
    */
   classified?: true;
+  /**
+   * Issue #367: the record of a HUMAN RULING on this run's arm — and the only lawful way an arm
+   * changes while the run is terminal. Every other rewrite is refused (`STATE_SEAL_REWRITTEN`),
+   * because re-attributing what sealed a run is the silent re-attribution this design exists to
+   * end.
+   *
+   * This provenance IS the key that opens that refusal, so it is held to the same standard as the
+   * fact it explains: `previous_arm` must truthfully name the arm being overwritten, and a write
+   * whose `previous_arm` lies is refused exactly as hard as one carrying no provenance at all.
+   *
+   * A truthful SAME-arm adjudication is lawful and meaningful — it is the "I looked at this and
+   * ruled it stays as it is" acknowledgment, which is how a parked record that turns out to be
+   * correctly stamped gets closed out rather than re-examined forever.
+   *
+   * ONE SLOT, and the loss is deliberate: a second ruling overwrites the first. The chain stays
+   * one-step-walkable because `previous_arm` is enforced truthful, and a full ruling history is
+   * machinery with no customer today. Like the arm itself, this field is erase-proof while the run
+   * is terminal.
+   *
+   * Nothing in the engine writes it. The operator verb that will is boarded on #367; this contract
+   * ships with the major so that law never has to be loosened afterwards.
+   */
+  adjudicated?: {
+    /** Who ruled — the operator identity as given. Never fabricated, never defaulted. */
+    by: string;
+    /** ISO-8601 timestamp of the ruling. */
+    at: string;
+    /** The arm this ruling overwrote. Enforced truthful at the store boundary. */
+    previous_arm: SealArm;
+    /** The operator's stated reason, verbatim. */
+    reason?: string;
+  };
 }
 
 export interface RunRecord {

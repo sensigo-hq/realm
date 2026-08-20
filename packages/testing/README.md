@@ -29,6 +29,18 @@ Requires `@sensigo/realm` at the same version to be installed in your project.
 > Declaring `stampSeal` also means supplying the adapter's `seedLegacyTerminal` hook — without it
 > the laws can only observe refusals, and a store that never writes at all would conform.
 >
+> `SEAL_REWRITE_REFUSED` covers five directions, not one: a seal arm cannot be rewritten while the
+> run is terminal, EXCEPT by an adjudication write carrying truthful provenance — and provenance
+> that misnames the arm it overwrote, provenance minted on a same-arm write, provenance on a first
+> seal, and a rewrite that drops a stored ruling are all refused. The contract is published now,
+> with the major, so this law will not be loosened later under stores already built against it.
+>
+> `SEAL_REWRITE_REFUSED` covers five directions, not one: a seal arm cannot be rewritten while the
+> run is terminal, EXCEPT by an adjudication write carrying truthful provenance — and provenance
+> that misnames the arm it overwrote, provenance minted on a same-arm write, provenance on a first
+> seal, and a rewrite that drops a stored ruling are all refused. The contract is published now,
+> with the major, so this law will not be loosened later under stores already built against it.
+>
 > `assertFinalState` also now DERIVES the run phase instead of reading the persisted `run_phase`,
 > so a test whose fixture carried a stale label may start failing honestly.
 

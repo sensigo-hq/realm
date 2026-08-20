@@ -488,6 +488,164 @@ describe('#367 — the store boundary, clause by clause', () => {
     ).rejects.toMatchObject({ code: 'STATE_SEAL_REWRITTEN' });
   });
 
+  it('clause 6 — a flip WITH truthful provenance is ACCEPTED, and reads back byte-for-byte', async () => {
+    // The lawful key. Deliberately a SAME-PHASE arm pair: the record's prose still says
+    // 'Workflow completed.', so a cross-phase ruling would be refused by SEAL_COHERENT instead —
+    // see the composition cell below, which pins that on purpose.
+    const record = await sealed('complete');
+    const ruled = await store.update({
+      ...record,
+      sealed_by: {
+        arm: 'guard_pass_complete',
+        adjudicated: {
+          by: 'mihai',
+          at: '2026-08-20T00:00:00.000Z',
+          previous_arm: 'complete',
+          reason: 'the guard is what actually closed this run',
+        },
+      },
+    });
+    expect(ruled.sealed_by?.arm).toBe('guard_pass_complete');
+    const reread = await store.get(record.id);
+    expect(reread.sealed_by?.adjudicated).toEqual({
+      by: 'mihai',
+      at: '2026-08-20T00:00:00.000Z',
+      previous_arm: 'complete',
+      reason: 'the guard is what actually closed this run',
+    });
+  });
+
+  it('clause 6 — a flip whose `previous_arm` LIES is refused as hard as no provenance at all', async () => {
+    // The provenance is the key, so it is held to the standard of the fact it opens. A ruling that
+    // misnames what it overwrote makes the one-step chain — the whole justification for keeping a
+    // single slot — worthless.
+    const record = await sealed('complete');
+    await expect(
+      store.update({
+        ...record,
+        sealed_by: {
+          arm: 'guard_pass_complete',
+          adjudicated: { by: 'x', at: 'now', previous_arm: 'step_failure' },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'STATE_SEAL_REWRITTEN',
+      details: { claimed_previous_arm: 'step_failure', stored_arm: 'complete' },
+    });
+  });
+
+  it('clause 6 — a SAME-arm write minting LYING provenance is refused; a truthful one is the acknowledgment channel', async () => {
+    // Truthfulness binds every provenance write, not just the flips. Without that, a same-arm
+    // write could mint provenance naming any arm at all.
+    const record = await sealed('complete');
+    await expect(
+      store.update({
+        ...record,
+        sealed_by: {
+          arm: 'complete',
+          adjudicated: { by: 'x', at: 'now', previous_arm: 'guard_abort' },
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'STATE_SEAL_REWRITTEN' });
+
+    // And the lawful shape: "I looked at this and ruled it stays as it is" — how a parked record
+    // that turns out to be correctly stamped gets closed out instead of re-examined forever.
+    const acknowledged = await store.update({
+      ...record,
+      sealed_by: {
+        arm: 'complete',
+        adjudicated: {
+          by: 'mihai',
+          at: 'now',
+          previous_arm: 'complete',
+          reason: 'checked; stands',
+        },
+      },
+    });
+    expect(acknowledged.sealed_by?.adjudicated?.by).toBe('mihai');
+  });
+
+  it('clause 6 — a FRESH seal cannot claim to have been adjudicated', async () => {
+    // There was no prior ruling to overwrite, so the provenance would be fabricated on arrival.
+    const run = await live();
+    await expect(
+      store.update({
+        ...run,
+        terminal_state: true,
+        terminal_reason: 'Workflow completed.',
+        sealed_by: {
+          arm: 'complete',
+          adjudicated: { by: 'x', at: 'now', previous_arm: 'step_failure' },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'STATE_SEAL_REWRITTEN',
+      details: { claimed_previous_arm: 'step_failure' },
+    });
+  });
+
+  it('clause 6 — a stored ruling is ERASE-PROOF while terminal', async () => {
+    // A ruling that can be quietly dropped is a ruling nobody can rely on afterwards — the same
+    // reason the arm it explains is erase-proof.
+    const record = await sealed('complete');
+    const ruled = await store.update({
+      ...record,
+      sealed_by: {
+        arm: 'complete',
+        adjudicated: { by: 'mihai', at: 'now', previous_arm: 'complete' },
+      },
+    });
+    const { adjudicated: _dropped, ...armOnly } = ruled.sealed_by!;
+    await expect(store.update({ ...ruled, sealed_by: armOnly })).rejects.toMatchObject({
+      code: 'STATE_SEAL_REWRITTEN',
+      details: { erased_ruling_by: 'mihai' },
+    });
+  });
+
+  it('the key opens clause 6 ONLY — a truthful CROSS-PHASE ruling still meets SEAL_COHERENT', async () => {
+    // Pinned because it is a real constraint on the future verb, not an accident: this record's
+    // prose still classifies as `complete`, so ruling it a failure makes the record contradict
+    // itself in a new direction. The verb must co-rewrite the prose and markers for a cross-phase
+    // ruling; the boundary will not take one on its own.
+    const record = await sealed('complete');
+    await expect(
+      store.update({
+        ...record,
+        sealed_by: {
+          arm: 'step_failure',
+          adjudicated: { by: 'mihai', at: 'now', previous_arm: 'complete' },
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'STATE_SEAL_INCOHERENT' });
+  });
+
+  it('both provenance marks coexist — a vehicle-stamped record keeps `classified` when it is later ruled on', async () => {
+    // The record's full history stays legible: the arm was minted by the classifier, and then a
+    // human ruled on it. Losing either mark would erase half of that.
+    const run = await live();
+    const legacy = { ...run, terminal_state: true, terminal_reason: 'Workflow completed.' };
+    await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(legacy, null, 2));
+    const reread = await store.get(run.id);
+    const stamped = await store.stampSeal!(
+      run.id,
+      { arm: 'complete', classified: true },
+      reread.version,
+    );
+    expect(stamped.stamped).toBe(true);
+
+    const current = await store.get(run.id);
+    const ruled = await store.update({
+      ...current,
+      sealed_by: {
+        arm: 'guard_pass_complete',
+        classified: true,
+        adjudicated: { by: 'mihai', at: 'now', previous_arm: 'complete' },
+      },
+    });
+    expect(ruled.sealed_by?.classified).toBe(true);
+    expect(ruled.sealed_by?.adjudicated?.previous_arm).toBe('complete');
+  });
+
   it('clause 6 NEGATIVE CONTROL — a rewrite keeping the SAME arm passes', async () => {
     // Every ordinary terminal rewrite spreads the record, so this is the common case: without it
     // passing, clause 6 would wedge the whole engine.

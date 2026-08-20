@@ -667,6 +667,22 @@ those clocks matter to you.
 `version` is bumped on stamped records, so a writer holding a pre-stamp snapshot loses its
 compare-and-swap rather than silently erasing the stamp.
 
+**Parked incoherent records: the format for adjudicating them is already published.** A recorded
+seal arm is immutable while the run is terminal — every rewrite is refused — with exactly one lawful
+exception: an adjudication write carrying truthful provenance (`by`, `at`, `previous_arm`, and
+optionally `reason`). A ruling that misnames the arm it overwrote is refused exactly as hard as one
+carrying no provenance at all, which is what keeps the chain walkable a step at a time. A truthful
+SAME-arm ruling is legal too — that is how you close out a parked record you have examined and found
+correctly stamped.
+
+Two consequences worth knowing before building on it. There is ONE provenance slot, so a second
+ruling overwrites the first: the record tells you what the previous arm was, not the whole history
+of rulings, and that loss is deliberate. And a CROSS-PHASE ruling — one moving the run between
+`completed` and `failed`, say — is still refused by the coherence check unless the record's own
+prose and markers move with it; the operator verb will have to co-rewrite them.
+
+The verb itself ships when it has a customer. The record format will not change when it does.
+
 **Residue** is the count the report ends on: terminal runs that will still have no recorded arm when
 this run finishes. That is the unclassifiable ones plus any whose write failed — and, in a dry run,
 the ones that would have been stamped, since a dry run writes nothing. Skipped records are reported

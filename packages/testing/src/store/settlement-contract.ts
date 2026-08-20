@@ -1010,6 +1010,114 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
     },
     {
       law: 'SEAL_REWRITE_REFUSED',
+      name: `[${adapter.storeName}] a rewrite WITH truthful adjudication provenance is ACCEPTED`,
+      run: async () => {
+        // The lawful key, published day-one so this law never has to be loosened later. The arm
+        // pair is deliberately SAME-PHASE: a cross-phase ruling on a record whose prose still says
+        // otherwise is refused by SEAL_COHERENT instead, which is a different law's job.
+        const run = await freshRun('adjudicated');
+        const sealed = await adapter.store.update({
+          ...run,
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+          terminal_reason: 'Workflow completed.',
+        });
+        const ruled = await adapter.store.update({
+          ...sealed,
+          sealed_by: {
+            arm: 'guard_pass_complete',
+            adjudicated: { by: 'tck', at: '2026-01-01T00:00:00.000Z', previous_arm: 'complete' },
+          },
+        });
+        if (ruled.sealed_by?.arm !== 'guard_pass_complete') {
+          throw new Error(`the adjudicated arm did not land: ${JSON.stringify(ruled.sealed_by)}`);
+        }
+        const reread = await adapter.store.get(run.id);
+        if (reread.sealed_by?.adjudicated?.previous_arm !== 'complete') {
+          throw new Error(
+            `the ruling's provenance did not survive the round trip: ` +
+              `${JSON.stringify(reread.sealed_by)} — the chain must stay one-step walkable`,
+          );
+        }
+      },
+    },
+    {
+      law: 'SEAL_REWRITE_REFUSED',
+      name: `[${adapter.storeName}] a rewrite whose adjudication LIES about previous_arm is refused`,
+      run: async () => {
+        const run = await freshRun('adjudicated-lying');
+        const sealed = await adapter.store.update({
+          ...run,
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+          terminal_reason: 'Workflow completed.',
+        });
+        await expectRefusedWith('STATE_SEAL_REWRITTEN', 'a lying adjudication', () =>
+          adapter.store.update({
+            ...sealed,
+            sealed_by: {
+              arm: 'guard_pass_complete',
+              adjudicated: { by: 'tck', at: 'now', previous_arm: 'step_failure' },
+            },
+          }),
+        );
+      },
+    },
+    {
+      law: 'SEAL_REWRITE_REFUSED',
+      name: `[${adapter.storeName}] a SAME-arm write minting lying provenance is refused; a truthful acknowledgment is accepted`,
+      run: async () => {
+        const run = await freshRun('adjudicated-same');
+        const sealed = await adapter.store.update({
+          ...run,
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+          terminal_reason: 'Workflow completed.',
+        });
+        await expectRefusedWith('STATE_SEAL_REWRITTEN', 'a same-arm lying mint', () =>
+          adapter.store.update({
+            ...sealed,
+            sealed_by: {
+              arm: 'complete',
+              adjudicated: { by: 'tck', at: 'now', previous_arm: 'guard_abort' },
+            },
+          }),
+        );
+        // The acknowledgment channel: "looked at it, it stands."
+        await adapter.store.update({
+          ...sealed,
+          sealed_by: {
+            arm: 'complete',
+            adjudicated: { by: 'tck', at: 'now', previous_arm: 'complete' },
+          },
+        });
+      },
+    },
+    {
+      law: 'SEAL_REWRITE_REFUSED',
+      name: `[${adapter.storeName}] a terminal rewrite dropping stored adjudication provenance is refused`,
+      run: async () => {
+        const run = await freshRun('adjudicated-erase');
+        const sealed = await adapter.store.update({
+          ...run,
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+          terminal_reason: 'Workflow completed.',
+        });
+        const ruled = await adapter.store.update({
+          ...sealed,
+          sealed_by: {
+            arm: 'complete',
+            adjudicated: { by: 'tck', at: 'now', previous_arm: 'complete' },
+          },
+        });
+        await expectRefusedWith('STATE_SEAL_REWRITTEN', 'erasing a recorded ruling', () =>
+          adapter.store.update({ ...ruled, sealed_by: { arm: 'complete' } }),
+        );
+      },
+    },
+    {
+      law: 'SEAL_REWRITE_REFUSED',
       name: `[${adapter.storeName}] NEGATIVE CONTROL: a rewrite keeping the SAME arm passes`,
       run: async () => {
         const run = await freshRun('rewrite-control');
