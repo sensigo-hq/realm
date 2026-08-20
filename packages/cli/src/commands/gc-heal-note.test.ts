@@ -90,6 +90,50 @@ describe('gc --heal prints the retention-clock note on every branch (issue #367)
     expect(out).toContain(NOTE);
   });
 
+  it('a heal that a boundary refusal blocks points at migrate, not at raw internals', async () => {
+    // A parked incoherent record: heal tries to rewrite its phase, the seal boundary refuses, and
+    // without the pointer the operator gets internals and no way forward — re-running heal refuses
+    // again, forever. The remedy lives in a different command, so the message has to say so.
+    const now = new Date().toISOString();
+    await writeFile(
+      join(runsDir, 'parked.json'),
+      JSON.stringify(
+        {
+          id: 'parked',
+          workflow_id: 'wf',
+          workflow_version: 1,
+          completed_steps: [],
+          in_progress_steps: [],
+          failed_steps: ['a'],
+          skipped_steps: [],
+          skip_details: {},
+          claims: {},
+          run_phase: 'running', // STALE, so heal wants to rewrite it
+          version: 1,
+          params: {},
+          evidence: [],
+          created_at: now,
+          updated_at: now,
+          terminal_state: true,
+          terminal_reason: "Step 'a' failed: boom",
+          sealed_by: { arm: 'complete' }, // …and the arm contradicts that prose
+        },
+        null,
+        2,
+      ),
+    );
+    const out = await gc(['--heal', '--force']).catch(
+      (e: { stdout?: string; stderr?: string }) => `${e.stdout ?? ''}${e.stderr ?? ''}`,
+    );
+    expect(out).toContain('1 failed'); // non-vacuity: the boundary really did refuse the heal
+    expect(out).toContain('✗ parked:');
+    // Assert the POINTER's own words, not just the command name — the retention-clock note above
+    // also mentions `realm run migrate --stamp-seals`, so a name-only assertion would pass even
+    // with the pointer removed.
+    expect(out).toContain('Heal cannot fix that.');
+    expect(out).toContain('see it in the incoherent bucket with both verdicts, and adjudicate it');
+  });
+
   it('the nothing-to-heal branch — where it already printed, kept', async () => {
     const out = await gc(['--heal']);
     expect(out).toContain('No stale-phase records found to heal.');

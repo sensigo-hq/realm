@@ -59,6 +59,14 @@ const LAWS: SettlementLaw[] = [
   'SEAL_ORPHAN_REFUSED',
   'SEAL_ERASE_REFUSED',
   'SEAL_UNKNOWN_ARM_REFUSED',
+  // issue #367 (part 3) — the stampSeal verb.
+  'STAMP_PRESERVES_UPDATED_AT',
+  'STAMP_BUMPS_VERSION_ONCE',
+  'STAMP_REFUSES_ON_VERSION_MOVE',
+  'STAMP_RETURNS_NOT_THROWS_PREDICATES',
+  'STAMP_IDEMPOTENT',
+  'STAMP_CLASSIFIED_ROUNDTRIP',
+  'SEAL_REWRITE_REFUSED',
 ];
 
 describe('InMemoryStore — settlement TCK conformance (issue #279, increment 1 + 2)', () => {
@@ -76,6 +84,25 @@ describe('InMemoryStore — settlement TCK conformance (issue #279, increment 1 
         store,
         storeName: 'InMemoryStore',
         settlementFixture: defaultSettlementFixture,
+        // issue #367 (part 3): this store's own sanctioned channel — a direct map insert, which
+        // is the in-memory equivalent of writing the file behind the boundary's back.
+        seedLegacyTerminal: async (id) => {
+          const { run } = await store.create({
+            workflowId: `tck-seed-${id}`,
+            workflowVersion: 1,
+            params: {},
+          });
+          const legacy = {
+            ...run,
+            id,
+            completed_steps: ['a'],
+            terminal_state: true,
+            terminal_reason: 'Workflow completed.',
+            run_phase: 'completed' as const,
+          };
+          (store as unknown as { runs: Map<string, typeof legacy> }).runs.set(id, legacy);
+          return legacy;
+        },
       });
       const matching = cases.filter((c) => c.law === law);
       expect(matching.length).toBeGreaterThan(0);

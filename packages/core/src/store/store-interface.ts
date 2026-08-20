@@ -1,5 +1,5 @@
 // Interface for run record persistence — implemented by JsonFileStore (local) and future Postgres store.
-import type { RunRecord } from '../types/run-record.js';
+import type { RunRecord, SealedBy } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
 
@@ -200,4 +200,46 @@ export interface RunStore {
     definition: WorkflowDefinition,
     options?: { now?: Date },
   ): Promise<SettlementResult>;
+
+  /**
+   * Issue #367 (part 3): write a `sealed_by` stamp onto an ALREADY-TERMINAL record — the migration
+   * vehicle's only write verb. Optional and dormant, exactly like {@link RunStore.settleStep}: a
+   * store that does not declare it is refused by `realm run migrate --stamp-seals`, with a pointer
+   * to its own tooling, rather than silently doing nothing.
+   *
+   * Four checks, in this order:
+   *
+   * 1. `expectedVersion` must match the stored version, or it THROWS `STATE_SNAPSHOT_MISMATCH` —
+   *    `update()`-parity. A version move means someone else wrote while the sweep was reading, and
+   *    the sweep's classification was made against a record that no longer exists.
+   * 2. An already-stamped record RETURNS `{stamped: false, reason: 'already_stamped'}`.
+   * 3. A non-terminal record RETURNS `{stamped: false, reason: 'not_terminal'}`.
+   * 4. Anything else is a real write, and the store's own seal-integrity boundary runs on it like
+   *    on any other tail — so an incoherent stamp is refused there too.
+   *
+   * **Predicate refusals RETURN; infra THROWS** — the same rule stated for `settleStep` above. A
+   * record that is already stamped is not an exceptional condition.
+   *
+   * **`updated_at` is BYTE-PRESERVED, and `version` is bumped.** That split is the whole reason
+   * this verb exists instead of a plain `update()`. The two clocks have disjoint consumers:
+   * `version` is read only by the CAS protocol, `updated_at` only by retention, sorting and
+   * display. Preserving BOTH makes the stamp silently erasable — a writer holding a pre-stamp
+   * snapshot passes the CAS and wipes it (executed). Preserving NEITHER resets the retention
+   * clock on every record it touches, which is precisely the harm `gc --heal` causes and this
+   * vehicle exists to avoid. Stamping is not activity.
+   *
+   * `run_phase` is re-derived in the same write, like every other write tail. For the startup-death
+   * population whose derived phase MOVED with #367, that is the clock-preserving materialisation
+   * `--heal` cannot do.
+   */
+  stampSeal?(runId: string, sealedBy: SealedBy, expectedVersion: number): Promise<StampSealResult>;
 }
+
+/**
+ * Issue #367 (part 3): the outcome of a {@link RunStore.stampSeal} attempt. Both refusal reasons
+ * are PREDICATE outcomes, returned rather than thrown, and both carry the record as it stands so
+ * the caller can report on it without a second read.
+ */
+export type StampSealResult =
+  | { stamped: true; run: RunRecord }
+  | { stamped: false; reason: 'already_stamped' | 'not_terminal'; run: RunRecord };

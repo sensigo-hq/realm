@@ -188,11 +188,13 @@ const EXPECTED: Record<string, CensusEntry> = {
     reason: 'SEALED_BY_ROUNDTRIP seals a run properly to prove the arm survives a round trip.',
   },
   'packages/testing/src/store/settlement-contract.ts': {
-    count: 36,
+    count: 39,
     classes: ['fixture-input', 'string-literal'],
     reason:
       'The published settlement TCK: fixtures constructing the shapes its laws drive, plus law ' +
-      'names and assertion messages that mention the field.',
+      'names and assertion messages that mention the field. 36 → 39 across issue #367 part 3: the ' +
+      'stampSeal laws share one terminal fixture helper, and the two SEAL_REWRITE_REFUSED cases ' +
+      'each seal their own record.',
     suppression:
       'Inline at the SEAL_FRESH_WRITE_REFUSED fixture: that violation IS the law — the case ' +
       'exists to prove the store refuses an unstamped fresh seal.',
@@ -331,10 +333,10 @@ describe('#367 — the terminal-writer census', () => {
     expect(turbo.globalDependencies).toEqual(['eslint.config.ts', 'scripts/**/*.mjs']);
   });
 
-  it('the post-strip total is 68 across 13 files — the figure the map is built from', () => {
+  it('the post-strip total is 71 across 13 files — the figure the map is built from', () => {
     const scan = scanTerminalWriters(REPO_ROOT);
     const total = Object.values(scan.hits).reduce((n, l) => n + l.length, 0);
-    expect(total).toBe(68);
+    expect(total).toBe(71);
     expect(Object.keys(scan.hits)).toHaveLength(13);
   });
 });

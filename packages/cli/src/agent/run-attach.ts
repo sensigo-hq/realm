@@ -43,7 +43,14 @@ export async function resolveRunAttach(
   let run = await deps.store.get(runId);
 
   if (run.terminal_state) {
-    if (run.terminal_reason === EXTENSIONS_LOAD_FAILED) {
+    // issue #367 (part 3): key on the recorded ARM, with the prose literal as the fallback for
+    // records written before the arm existed. `||` and not `??` on purpose — the left side is
+    // always a boolean, so `??` would never fire and the legacy fallback would be dead code. The
+    // literal leaves for good once the corpus is swept.
+    if (
+      run.sealed_by?.arm === 'extensions_load_failure' ||
+      run.terminal_reason === EXTENSIONS_LOAD_FAILED
+    ) {
       // Pure retry: nothing executed pre-failure. Clear exactly this marker and proceed.
       // issue #367: `sealed_by` joins the strip — this is a resume-class write (terminal → live),
       // so the seal fact leaves in the SAME write that flips terminal_state:false.

@@ -469,6 +469,32 @@ describe('#367 — the store boundary, clause by clause', () => {
     ).rejects.toMatchObject({ code: 'STATE_SEAL_UNKNOWN_ARM' });
   });
 
+  it('clause 6 — a stored arm may NOT be changed while the run stays terminal', async () => {
+    // Executed before this clause existed: a plain `update()` flipped the arm, dropped the
+    // `classified` provenance marker and reset the retention clock, silently. Re-attributing what
+    // sealed a run is the exact class this design exists to end, and it was live at the boundary.
+    const record = await sealed('complete');
+    await expect(
+      store.update({ ...record, sealed_by: { arm: 'gate_resolution_complete' } }),
+    ).rejects.toMatchObject({ code: 'STATE_SEAL_REWRITTEN', retryable: false });
+  });
+
+  it('clause 6 — a flip is refused even when the NEW arm agrees with the record', async () => {
+    // The other flavour: agreeing with the prose does not make a rewrite honest. Nothing about
+    // what already happened changed, so neither may the record of it.
+    const record = await sealed('complete');
+    await expect(
+      store.update({ ...record, sealed_by: { arm: 'guard_pass_complete' } }),
+    ).rejects.toMatchObject({ code: 'STATE_SEAL_REWRITTEN' });
+  });
+
+  it('clause 6 NEGATIVE CONTROL — a rewrite keeping the SAME arm passes', async () => {
+    // Every ordinary terminal rewrite spreads the record, so this is the common case: without it
+    // passing, clause 6 would wedge the whole engine.
+    const record = await sealed('complete');
+    await expect(store.update({ ...record, updated_at: 'later' })).resolves.toBeDefined();
+  });
+
   it('SEAL_COHERENT — a stale arm preserved over a record whose prose says otherwise is REFUSED', async () => {
     // The old-binary re-seal channel: a spread carries a stale arm onto a record that has since
     // become something else. Caught at the next new-binary write.

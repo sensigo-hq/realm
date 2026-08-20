@@ -638,9 +638,9 @@ export interface SealedBy {
    */
   step?: string;
   /**
-   * Provenance: set by the MIGRATE VEHICLE only (`realm run migrate --stamp-seals`, a later PR),
-   * NEVER by a seal-site writer — a classifier-minted stamp must be distinguishable from a
-   * writer-asserted one forever. Nothing in this PR writes it; absent on every fresh seal.
+   * Provenance: set by the MIGRATE VEHICLE only (`realm run migrate --stamp-seals`), NEVER by a
+   * seal-site writer — a classifier-minted stamp must stay distinguishable from a writer-asserted
+   * one forever. Absent on every fresh seal; present on every record the vehicle stamped.
    */
   classified?: true;
 }

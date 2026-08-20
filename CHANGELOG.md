@@ -6,6 +6,47 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **`realm run migrate --stamp-seals`** — writes down the seal arm that every legacy terminal run
+  has always meant (issue #367). Records written before the seal substrate carry no `sealed_by`;
+  the engine already recovers their arm on every read wherever one is recoverable, and the rest
+  still derive correctly from the legacy ladder, so they are correct without this. What the
+  command adds is materialisation: the arm becomes visible to external readers, and the run's phase
+  on disk catches up with what the engine derives — including the startup deaths that used to file
+  themselves as "abandoned" and are really failures.
+  It is a dry run unless you pass `--force`, and it refuses to guess: a record it cannot classify
+  is printed and left alone, and a record whose recorded arm CONTRADICTS its own prose or markers
+  is printed for you to adjudicate and never rewritten. Both exit 1.
+  **It preserves `updated_at` on every record it touches, and that is the whole reason it exists.**
+  Stamping is not activity. `realm run gc --heal` materialises the same phases but resets the
+  retention clock on everything it rewrites — so run the migration FIRST if those clocks matter.
+  The heal note now says so, rather than promising a command that did not exist yet.
+- `RunStore.stampSeal` — the optional, dormant verb the migration writes through. A store that
+  does not implement it is refused with a pointer to its own tooling rather than silently doing
+  nothing. Version bumps so a stale writer loses its compare-and-swap instead of erasing the stamp;
+  `updated_at` does not. Five new conformance laws bind any store that declares it.
+
+- The loader now REJECTS a failure condition that can never be true (issue #362). Writing
+  `when: ['$settlement.extract.failed == true']` on a step that depends on `extract` reads exactly
+  like "run this when extract fails" — and it never runs, because the trigger gate is evaluated
+  before the condition and the default `all_success` requires `extract` NOT to have failed. The run
+  record then blames `trigger_rule_unsatisfiable` and names the rule, never the condition, so the
+  diagnosis points away from the mistake. Such a workflow **no longer loads**: the error names the
+  step, the surface, the condition verbatim, the effective rule (saying "default" when it was
+  omitted, since that omission is the whole bug), what actually happens at runtime on that
+  particular surface, and the trigger rules that would genuinely run the step — computed for that
+  step, since `all_failed` is a valid remedy at one dependency and a trap at two. Guards get a
+  different message: they cannot declare a trigger rule at all, so the remedy there is an
+  `execution: finalizer` step rather than a rule change.
+  Scope is deliberately narrow: only the exactly-decidable case (`all_success`/`none_failed` with
+  the exact `$settlement.<dep>.failed` shape, where the dependency is declared). The subtler
+  `one_success`-at-one-dependency case and the `== false` mirror are tracked separately.
+  **Asymmetry worth knowing:** file-loaded paths (`run`, `agent`, `listen`, `register`, `validate`)
+  now hard-fail on this shape, while an already-registered workflow is read back without
+  re-validation. That is safe here only because `.failed` itself shipped in v0.38.0 the same day —
+  no stored workflow can carry the shape yet.
+
 ### Changed
 
 - **BREAKING (`@sensigo/realm`): a run now RECORDS which arm of the engine sealed it, and every
@@ -29,7 +70,8 @@ All notable changes to this project are documented here.
   three-way ambiguous.
   **Read before running `realm run gc --heal` after upgrading**: heal rewrites records whose
   derived phase moved, and each rewrite resets `updated_at` — the clock retention reads. The
-  stamp-seals migration ships in the next PR; until then, skip `--heal` if those clocks matter.
+  stamp-seals migration is `realm run migrate --stamp-seals`, in this same release (see Added):
+  run it first, and `--heal` has nothing left to rewrite.
   `@sensigo/realm-testing` grows its published conformance suites in step; see that package's
   README for what a custom store must now declare and refuse.
 
@@ -53,8 +95,6 @@ All notable changes to this project are documented here.
 - Abandoning an already-abandoned run says so on both surfaces, instead of replying exactly as if
   it had just killed a live run.
 
-### Fixed
-
 - A run that ends with several failures now says so, instead of blaming one of them (issue #373).
   `terminal_reason` named whichever step settled LAST — so the same two failures produced a
   different named culprit depending on the order they finished in, and under real concurrency the
@@ -70,30 +110,6 @@ All notable changes to this project are documented here.
   same treatment, and the two layers emit byte-identical sentences.
   **A run with exactly ONE failure is unchanged**, including the wording of the guard sentence — the
   single-failure shape was never the bug.
-
-### Added
-
-- The loader now REJECTS a failure condition that can never be true (issue #362). Writing
-  `when: ['$settlement.extract.failed == true']` on a step that depends on `extract` reads exactly
-  like "run this when extract fails" — and it never runs, because the trigger gate is evaluated
-  before the condition and the default `all_success` requires `extract` NOT to have failed. The run
-  record then blames `trigger_rule_unsatisfiable` and names the rule, never the condition, so the
-  diagnosis points away from the mistake. Such a workflow **no longer loads**: the error names the
-  step, the surface, the condition verbatim, the effective rule (saying "default" when it was
-  omitted, since that omission is the whole bug), what actually happens at runtime on that
-  particular surface, and the trigger rules that would genuinely run the step — computed for that
-  step, since `all_failed` is a valid remedy at one dependency and a trap at two. Guards get a
-  different message: they cannot declare a trigger rule at all, so the remedy there is an
-  `execution: finalizer` step rather than a rule change.
-  Scope is deliberately narrow: only the exactly-decidable case (`all_success`/`none_failed` with
-  the exact `$settlement.<dep>.failed` shape, where the dependency is declared). The subtler
-  `one_success`-at-one-dependency case and the `== false` mirror are tracked separately.
-  **Asymmetry worth knowing:** file-loaded paths (`run`, `agent`, `listen`, `register`, `validate`)
-  now hard-fail on this shape, while an already-registered workflow is read back without
-  re-validation. That is safe here only because `.failed` itself shipped in v0.38.0 the same day —
-  no stored workflow can carry the shape yet.
-
-### Fixed
 
 - Two documentation defects shipped in v0.38.0, both corrected loudly. The absence test
   (`failed == null`) was documented surface-agnostically; it is **`when`-only** —

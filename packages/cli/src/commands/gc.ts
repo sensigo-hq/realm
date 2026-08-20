@@ -697,8 +697,8 @@ function printGcReport(
       console.log(
         '\nNote (issue #367): after upgrading across the seal substrate, a first heal rewrites every\n' +
           'legacy record whose derived phase moved — and each rewrite resets updated_at, the clock\n' +
-          'retention reads. Until `realm run migrate --stamp-seals` ships, skip --heal if those\n' +
-          'clocks matter; once it ships, run the migration first.',
+          'retention reads. Run `realm run migrate --stamp-seals` FIRST if those clocks matter: it\n' +
+          'materialises the same phases and preserves updated_at.',
       );
     };
 
@@ -737,6 +737,17 @@ function printGcReport(
     }
     for (const f of healResult.failed) {
       console.error(`  ✗ ${f.id}: ${f.error}`);
+      // A seal-coherence refusal is not a heal bug — it is a record whose recorded arm disagrees
+      // with its own evidence, and heal is the wrong tool for it. Without this pointer the
+      // operator sees raw boundary internals and has nowhere to go: re-running heal refuses
+      // again, forever.
+      if (f.error.includes('STATE_SEAL_INCOHERENT') || f.error.includes('disagrees with')) {
+        console.error(
+          `      This run's recorded seal arm disagrees with its own markers/prose. Heal cannot ` +
+            `fix that. Run \`realm run migrate --stamp-seals\` to see it in the incoherent bucket ` +
+            `with both verdicts, and adjudicate it there.`,
+        );
+      }
     }
     if (dryRun && !nothingToReportHeal) {
       console.log('Re-run with --force to actually heal.');
