@@ -25,6 +25,9 @@ import { listCommand } from './commands/list.js';
 import { mcpCommand } from './commands/mcp.js';
 import { serveCommand } from './commands/serve.js';
 import { migrateCommand } from './commands/migrate.js';
+// issue #367 (part 3): the run-scoped sibling of `realm workflow migrate` — different group, no
+// collision.
+import { runMigrateCommand } from './commands/run-migrate.js';
 import { agentCommand } from './commands/agent.js';
 import { webhookCommand } from './commands/webhook.js';
 import { listenCommand } from './commands/listen.js';
@@ -57,6 +60,7 @@ export const runCommands = [
   reconcileCommand,
   attemptsCommand,
   drainCommand,
+  runMigrateCommand,
 ];
 
 /** Top-level commands not nested under a subgroup. */

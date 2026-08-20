@@ -69,6 +69,12 @@ const LAWS: SettlementLaw[] = [
   'SEAL_ORPHAN_REFUSED',
   'SEAL_ERASE_REFUSED',
   'SEAL_UNKNOWN_ARM_REFUSED',
+  // issue #367 (part 3) — the stampSeal verb.
+  'STAMP_PRESERVES_UPDATED_AT',
+  'STAMP_BUMPS_VERSION_ONCE',
+  'STAMP_REFUSES_ON_VERSION_MOVE',
+  'STAMP_RETURNS_NOT_THROWS_PREDICATES',
+  'STAMP_IDEMPOTENT',
 ];
 
 describe('JsonFileStore — settlement TCK conformance (issue #279, increment 1 + 2)', () => {

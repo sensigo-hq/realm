@@ -105,14 +105,35 @@ describe('resolveRunAttach', () => {
     expect(after.version).toBe(before.version); // no write happened
   });
 
+  it('issue #367: a STAMPED record retries via the ARM — the prose is no longer the oracle', async () => {
+    // The arm discriminates now, so the retry gate keys on it. This record has NO
+    // `terminal_reason` at all, which is exactly what proves the arm is doing the work.
+    const store = new InMemoryStore();
+    const runId = await createRun(store);
+    const run = await store.get(runId);
+    run.terminal_state = true;
+    run.sealed_by = { arm: 'extensions_load_failure' };
+    await store.update(run);
+
+    const result = await resolveRunAttach(runId, {
+      store,
+      workflowStore: makeWorkflowStore(),
+      loadExtensions: okLoader(),
+    });
+    expect(result.definition.id).toBe('attach-wf');
+    const cleared = await store.get(runId);
+    expect(cleared.terminal_state).toBe(false);
+    expect(cleared.sealed_by).toBeUndefined();
+  });
+
   it("re-attach on terminal_reason 'extensions_load_failed' clears exactly that marker and proceeds", async () => {
     const store = new InMemoryStore();
     const runId = await createRun(store);
     const run = await store.get(runId);
     run.terminal_state = true;
     run.terminal_reason = EXTENSIONS_LOAD_FAILED;
-    // issue #367: a terminal record names its arm — this is the shape the real writer produces.
-    run.sealed_by = { arm: 'extensions_load_failure' };
+    // issue #367 (part 3): NO arm here on purpose — this is the LEGACY polarity, a record written
+    // before the arm existed. It must still retry, via the prose literal fallback.
     await store.update(run);
 
     const result = await resolveRunAttach(runId, {

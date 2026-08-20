@@ -697,8 +697,8 @@ function printGcReport(
       console.log(
         '\nNote (issue #367): after upgrading across the seal substrate, a first heal rewrites every\n' +
           'legacy record whose derived phase moved — and each rewrite resets updated_at, the clock\n' +
-          'retention reads. Until `realm run migrate --stamp-seals` ships, skip --heal if those\n' +
-          'clocks matter; once it ships, run the migration first.',
+          'retention reads. Run `realm run migrate --stamp-seals` FIRST if those clocks matter: it\n' +
+          'materialises the same phases and preserves updated_at.',
       );
     };
 

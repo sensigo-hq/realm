@@ -639,6 +639,37 @@ purging one destroys that path permanently.
 
 ---
 
+### `realm run migrate --stamp-seals`
+
+Materialises the recorded seal arm on every legacy terminal run (issue #367). Records written before
+the seal substrate carry no `sealed_by`; the engine recovers their arm on every read, so they are
+already correct — this command writes that arm down, which is what makes it visible to external
+readers and to the phase stored on disk.
+
+Dry-run by default; `--force` writes. Each run lands in exactly one bucket:
+
+| bucket          | meaning                                                                                                                        |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| stamped         | given its arm                                                                                                                  |
+| already stamped | had an arm, and it agrees with the record                                                                                      |
+| unclassifiable  | no arm and nothing to infer one from — **printed, never written**, exit 1                                                      |
+| incoherent      | has an arm that DISAGREES with its own prose or markers — **printed, never auto-rewritten**, exit 1. Adjudicate these yourself |
+| skipped         | a concurrent writer moved the record; their own next write path owns it                                                        |
+| failed          | an infrastructure error on one record; the sweep continues, exit 1                                                             |
+
+**`updated_at` is preserved on every record it touches, and that is the whole point.** Stamping is
+not activity. `realm run gc --heal` materialises the same phases but resets the retention clock on
+everything it rewrites, so **run this command BEFORE `--heal` after upgrading across #367** if
+those clocks matter to you.
+
+`version` is bumped on stamped records, so a writer holding a pre-stamp snapshot loses its
+compare-and-swap rather than silently erasing the stamp.
+
+> **One compatibility cost, owner-accepted and disclosed here once.** An export bundle taken BEFORE
+> a record was stamped, then re-imported AFTER the sweep, will fail with `STATE_RUN_DIVERGED`: the
+> bundle carries the pre-stamp version and the store has moved on. Re-export after migrating if you
+> keep bundles for round-tripping.
+
 ### `realm run gc`
 
 Sweeps orphaned atomic-write `.tmp` files — crash residue from a process that died between writing a
@@ -677,9 +708,9 @@ gc itself never constructs or edits a single field.
 > derive `abandoned` now derives `failed`. `--heal` rewrites exactly the records whose persisted
 > phase disagrees with the derivation, so on the first run after the upgrade it will rewrite that
 > whole population — and every rewrite resets the record's `updated_at`, which is the clock
-> `--older-than`, `cleanup` and your retention policy all read. **Until the stamp-seals migration
-> vehicle ships (the next PR), do NOT run `--heal` if retention clocks matter to you. Once it
-> ships, run `realm run migrate --stamp-seals` first.** Composable with `--older-than`: `--heal` alone runs
+> `--older-than`, `cleanup` and your retention policy all read. **Run
+> `realm run migrate --stamp-seals` FIRST if retention clocks matter to you** — it materialises the
+> same phases and leaves `updated_at` untouched, which is exactly what `--heal` cannot do. Composable with `--older-than`: `--heal` alone runs
 > without it (healing is safe at any age, no 1-hour floor applies), `--older-than` alone runs the temp/
 > artifact sweeps as always, and both together run all three passes in one invocation.
 

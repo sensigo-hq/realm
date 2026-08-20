@@ -9,6 +9,8 @@ import {
   applySettlement,
   assertSealIntegrity,
   type RunStore,
+  type SealedBy,
+  type StampSealResult,
   type RunRecord,
   type CreateRunOptions,
   type WorkflowDefinition,
@@ -243,6 +245,52 @@ export class InMemoryStore implements RunStore {
     };
     this.runs.set(updated.id, updated);
     return { ...outcome, run: updated };
+  }
+
+  /**
+   * Issue #367 (part 3): the stamp verb — see `RunStore.stampSeal` for the contract. Same shape as
+   * JsonFileStore's, including the one thing that makes this verb exist: `updated_at` is carried
+   * through byte-for-byte, because stamping is not activity.
+   */
+  async stampSeal(
+    runId: string,
+    sealedBy: SealedBy,
+    expectedVersion: number,
+  ): Promise<StampSealResult> {
+    const fresh = this.runs.get(runId);
+    if (fresh === undefined) {
+      throw new WorkflowError(`Run '${runId}' not found`, {
+        code: 'STATE_RUN_NOT_FOUND',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+      });
+    }
+    if (fresh.version !== expectedVersion) {
+      throw new WorkflowError('Version conflict — run was modified by another process', {
+        code: 'STATE_SNAPSHOT_MISMATCH',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: true,
+        details: { runId, expected: expectedVersion, actual: fresh.version },
+      });
+    }
+    if (fresh.sealed_by !== undefined) {
+      return { stamped: false, reason: 'already_stamped', run: fresh };
+    }
+    if (fresh.terminal_state !== true) {
+      return { stamped: false, reason: 'not_terminal', run: fresh };
+    }
+    const stamped: RunRecord = { ...fresh, sealed_by: sealedBy };
+    assertSealIntegrity(fresh, stamped);
+    const written: RunRecord = {
+      ...stamped,
+      run_phase: deriveRunPhase(stamped),
+      version: fresh.version + 1,
+      updated_at: fresh.updated_at, // DELIBERATELY unchanged.
+    };
+    this.runs.set(runId, written);
+    return { stamped: true, run: written };
   }
 
   async list(workflowId?: string): Promise<RunRecord[]> {

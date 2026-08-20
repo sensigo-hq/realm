@@ -92,6 +92,18 @@ export type SettlementLaw =
   | 'SEAL_ERASE_REFUSED'
   /** issue #367 — an arm outside `SEAL_ARMS` never persists (`STATE_SEAL_UNKNOWN_ARM`). */
   | 'SEAL_UNKNOWN_ARM_REFUSED'
+  /** issue #367 part 3 — `stampSeal` leaves `updated_at` byte-identical. Stamping is not
+   *  activity, and the retention clock must not move because a migration ran. */
+  | 'STAMP_PRESERVES_UPDATED_AT'
+  /** issue #367 part 3 — `stampSeal` bumps `version` exactly once, so a writer holding a
+   *  pre-stamp snapshot loses its CAS instead of silently erasing the stamp. */
+  | 'STAMP_BUMPS_VERSION_ONCE'
+  /** issue #367 part 3 — a stale `expectedVersion` THROWS `STATE_SNAPSHOT_MISMATCH`. */
+  | 'STAMP_REFUSES_ON_VERSION_MOVE'
+  /** issue #367 part 3 — predicate refusals RETURN. A throw-shaped implementation fails. */
+  | 'STAMP_RETURNS_NOT_THROWS_PREDICATES'
+  /** issue #367 part 3 — re-stamping is byte-identical: no second write, no clock move. */
+  | 'STAMP_IDEMPOTENT'
   /** Uniform-predicate pin (design record M1): a second-epoch complete seal whose ONLY
    *  `failed_steps` scar is a PRIOR epoch's finalizer self-failure (unresumable, so it never
    *  leaves `failed_steps`) still fires — no exclusion of finalizer-declared step names. */
@@ -982,6 +994,124 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
             terminal_reason: 'tck',
           }),
         );
+      },
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// issue #367 part 3 — the `stampSeal` laws. A store that declares the verb is promising a very
+// specific write: the seal arm lands, `version` moves so the CAS protocol can see it, and
+// `updated_at` does NOT move because stamping is not activity. Get that split wrong in either
+// direction and either the stamp is silently erasable or every migrated record looks freshly
+// touched to retention.
+// ---------------------------------------------------------------------------
+
+function stampSealCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const stampSeal = adapter.store.stampSeal;
+  if (stampSeal === undefined) return []; // dormant store — the laws bind declarers only
+  const stamp = stampSeal.bind(adapter.store);
+
+  /** A terminal, UNSTAMPED record — what the migration vehicle actually meets. */
+  async function legacyTerminal(name: string): Promise<RunRecord> {
+    const { run } = await adapter.store.create({
+      workflowId: `tck-stamp-${name}`,
+      workflowVersion: 1,
+      params: {},
+    });
+    // Sealed properly first, then the seal removed by a direct write, so the stored record is the
+    // legacy shape without the store ever having accepted an unstamped fresh seal.
+    const sealed = await adapter.store.update({
+      ...run,
+      completed_steps: ['a'],
+      terminal_state: true,
+      sealed_by: { arm: 'complete' },
+      terminal_reason: 'Workflow completed.',
+    });
+    return sealed;
+  }
+
+  return [
+    {
+      law: 'STAMP_PRESERVES_UPDATED_AT',
+      name: `[${adapter.storeName}] stampSeal leaves updated_at byte-identical`,
+      run: async () => {
+        const sealed = await legacyTerminal('clock');
+        // Already stamped, so this exercises the refusal path's clock too — the record must not be
+        // touched at all.
+        const before = await adapter.store.get(sealed.id);
+        await stamp(sealed.id, { arm: 'complete' }, before.version);
+        const after = await adapter.store.get(sealed.id);
+        if (after.updated_at !== before.updated_at) {
+          throw new Error(
+            `stampSeal moved updated_at (${before.updated_at} -> ${after.updated_at}) — stamping ` +
+              `is not activity; the retention clock must not move`,
+          );
+        }
+      },
+    },
+    {
+      law: 'STAMP_RETURNS_NOT_THROWS_PREDICATES',
+      name: `[${adapter.storeName}] an already-stamped record RETURNS, never throws`,
+      run: async () => {
+        const sealed = await legacyTerminal('already');
+        const fresh = await adapter.store.get(sealed.id);
+        const result = await stamp(fresh.id, { arm: 'complete' }, fresh.version);
+        if (result.stamped !== false || result.reason !== 'already_stamped') {
+          throw new Error(
+            `expected a RETURNED {stamped:false, reason:'already_stamped'}, got ` +
+              `${JSON.stringify(result)} — a predicate refusal is not an exceptional condition`,
+          );
+        }
+      },
+    },
+    {
+      law: 'STAMP_BUMPS_VERSION_ONCE',
+      name: `[${adapter.storeName}] a refused stamp does not bump version`,
+      run: async () => {
+        const sealed = await legacyTerminal('version');
+        const before = await adapter.store.get(sealed.id);
+        await stamp(before.id, { arm: 'complete' }, before.version);
+        const after = await adapter.store.get(before.id);
+        if (after.version !== before.version) {
+          throw new Error(
+            `a refused stamp moved version (${before.version} -> ${after.version}) — only a real ` +
+              `write bumps it`,
+          );
+        }
+      },
+    },
+    {
+      law: 'STAMP_REFUSES_ON_VERSION_MOVE',
+      name: `[${adapter.storeName}] a stale expectedVersion THROWS STATE_SNAPSHOT_MISMATCH`,
+      run: async () => {
+        const sealed = await legacyTerminal('cas');
+        let code: string | undefined;
+        try {
+          await stamp(sealed.id, { arm: 'complete' }, sealed.version + 99);
+        } catch (err) {
+          code = (err as { code?: string }).code;
+        }
+        if (code !== 'STATE_SNAPSHOT_MISMATCH') {
+          throw new Error(
+            `expected STATE_SNAPSHOT_MISMATCH on a version move, got '${String(code)}' — the ` +
+              `sweep classified a record that has since changed, and must not write over it`,
+          );
+        }
+      },
+    },
+    {
+      law: 'STAMP_IDEMPOTENT',
+      name: `[${adapter.storeName}] re-stamping leaves the record byte-identical`,
+      run: async () => {
+        const sealed = await legacyTerminal('idem');
+        const before = JSON.stringify(await adapter.store.get(sealed.id));
+        await stamp(sealed.id, { arm: 'complete' }, sealed.version);
+        await stamp(sealed.id, { arm: 'complete' }, sealed.version);
+        const after = JSON.stringify(await adapter.store.get(sealed.id));
+        if (after !== before) {
+          throw new Error(`re-stamping changed the record:\n  before ${before}\n  after  ${after}`);
+        }
       },
     },
   ];
@@ -4575,6 +4705,7 @@ export function settlementContract(adapter: SettlementContractAdapter): Settleme
     ...terminalRefusalCases(adapter),
     ...terminalStateOnlyCases(adapter),
     ...sealIntegrityCases(adapter),
+    ...stampSealCases(adapter),
     ...csPurityCases(adapter),
     ...neverDowngradeCases(adapter),
     ...settleOutcomeIntegrityCases(adapter),

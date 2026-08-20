@@ -7,11 +7,16 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { v4 as uuidv4 } from 'uuid';
 import lockfile from 'proper-lockfile';
-import type { RunRecord } from '../types/run-record.js';
+import type { RunRecord, SealedBy } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
 import { WorkflowError } from '../types/workflow-error.js';
-import type { RunStore, CreateRunOptions, LoadBearingRunRecordField } from './store-interface.js';
+import type {
+  RunStore,
+  CreateRunOptions,
+  LoadBearingRunRecordField,
+  StampSealResult,
+} from './store-interface.js';
 import type { PerRunArtifactStore } from './per-run-artifact-store.js';
 import {
   findEligibleSteps,
@@ -614,6 +619,76 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       };
       await atomicWriteFile(path, JSON.stringify(updated, null, 2));
       return { ...outcome, run: updated };
+    } finally {
+      await release();
+    }
+  }
+
+  /**
+   * Issue #367 (part 3): stamp a seal arm onto an already-terminal record — see
+   * {@link RunStore.stampSeal} for the contract. Note the ONE difference from every other write
+   * tail in this class: `updated_at` is carried through byte-for-byte. Stamping is not activity,
+   * and the retention clock must not move because a migration ran.
+   */
+  async stampSeal(
+    runId: string,
+    sealedBy: SealedBy,
+    expectedVersion: number,
+  ): Promise<StampSealResult> {
+    const path = this.filePath(runId);
+    if (!existsSync(path)) throw this.runNotFoundError(runId);
+
+    let release: () => Promise<void>;
+    try {
+      release = await lockfile.lock(path, { retries: LOCK_RETRIES });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw this.runNotFoundError(runId);
+      if ((err as NodeJS.ErrnoException).code === 'ELOCKED')
+        throw this.runBusyError(runId, 'locked');
+      throw err;
+    }
+    try {
+      let raw: string;
+      try {
+        raw = await readFile(path, 'utf8');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw this.runNotFoundError(runId);
+        throw err;
+      }
+      const fresh = JSON.parse(raw) as RunRecord;
+
+      // 1. Version move ⇒ THROW. The sweep classified a record that has since changed.
+      if (fresh.version !== expectedVersion) {
+        throw new WorkflowError('Version conflict — run was modified by another process', {
+          code: 'STATE_SNAPSHOT_MISMATCH',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: true,
+          details: { runId, expected: expectedVersion, actual: fresh.version },
+        });
+      }
+      // 2 + 3. Predicate refusals RETURN.
+      if (fresh.sealed_by !== undefined) {
+        return { stamped: false, reason: 'already_stamped', run: fresh };
+      }
+      if (fresh.terminal_state !== true) {
+        return { stamped: false, reason: 'not_terminal', run: fresh };
+      }
+
+      const stamped: RunRecord = { ...fresh, sealed_by: sealedBy };
+      // 4. The seal-integrity boundary runs here like on every other tail — an incoherent stamp is
+      // refused by it, not written.
+      assertSealIntegrity(fresh, stamped);
+
+      const written: RunRecord = {
+        ...stamped,
+        run_phase: deriveRunPhase(stamped),
+        version: fresh.version + 1,
+        // updated_at DELIBERATELY carried through unchanged — see the interface doc.
+        updated_at: fresh.updated_at,
+      };
+      await atomicWriteFile(path, JSON.stringify(written, null, 2));
+      return { stamped: true, run: written };
     } finally {
       await release();
     }
