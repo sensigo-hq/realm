@@ -5112,6 +5112,13 @@ async function buildFinalizedSeal(
   // Conditional spread, NOT `sealed_by: sealDraft.sealed_by`: under the flat optional plus
   // exactOptionalPropertyTypes the unconditional form does not compile. An unstamped draft passes
   // through honest-absent, and refusing it is the store boundary's job.
+  /* eslint-disable-next-line no-restricted-syntax --
+   * issue #367 (part 2), AUTHORIZED: the stamp IS in this literal, as a conditional spread —
+   * `exactOptionalPropertyTypes` forbids the unconditional `sealed_by: sealDraft.sealed_by` form,
+   * and a spread is not a `sealed_by` Property the selector can see. An unstamped draft passes
+   * through honest-absent on purpose; refusing it is the store boundary's job, per the comment
+   * directly above.
+   */
   const drained: RunRecord = {
     ...record,
     terminal_state: true,

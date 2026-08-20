@@ -41,7 +41,7 @@ describe('JsonWorkflowStore — construction-time home resolution (companion ass
     const fakeHome = await mkdtemp(join(tmpdir(), 'realm-285-workflowstore-pin-'));
     try {
       process.env['HOME'] = fakeHome;
-      // eslint-disable-next-line no-new -- the constructor's own mkdirSync side effect IS the assertion.
+      // The constructor's own mkdirSync side effect IS the assertion here.
       new JsonWorkflowStore();
       const { existsSync } = await import('node:fs');
       expect(existsSync(join(fakeHome, '.realm', 'workflows'))).toBe(true);

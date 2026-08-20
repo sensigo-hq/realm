@@ -1,5 +1,16 @@
 // settlement.ts — the atomic-settlement pure transform (issue #279, increment 1, PR-A).
 //
+/* eslint-disable no-restricted-syntax --
+ * issue #367 (part 2), AUTHORIZED per-file suppression. This layer stamps through the
+ * `applyTerminalPostconditions` CHOKEPOINT, which is two-stage BY DESIGN: each arm builds its
+ * draft (carrying `terminal_state`), and the chokepoint applies the seal. The same-object rule
+ * cannot see that architecture, so the eight drafts below would trip it while being compliant.
+ *
+ * What still binds this file: the terminal-writer census pins its writer COUNT, so a ninth writer
+ * that bypasses the chokepoint fails the guard; and the store boundary binds the fact itself at
+ * runtime, everywhere, unconditionally.
+ */
+//
 // Normative spec: plans/issue-279/design-d4-increment1.md (read in full before touching this file
 // — it is the specification; the JSDoc below cross-references it by section/line but does not
 // restate the predicate/transform pseudocode verbatim). This file implements §2-§4 EXACTLY,

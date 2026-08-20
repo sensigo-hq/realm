@@ -12,10 +12,14 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const run = promisify(execFile);
-const CLI = join(process.cwd(), 'dist', 'index.js');
+// Ride-along (boy-scout, not the reported problem): anchored to THIS file rather than to
+// `process.cwd()`, which made the path depend on where the runner happened to be invoked from.
+// packages/cli/src/commands → packages/cli.
+const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'index.js');
 
 /** The sentence every heal branch must carry. */
 const NOTE = 'Note (issue #367)';

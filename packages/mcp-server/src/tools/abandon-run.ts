@@ -57,6 +57,10 @@ export async function handleAbandonRun(
   const before = await runStore.get(args.run_id);
   const alreadyAbandoned = before.abandoned_at !== undefined;
   const run = await abandonRun(runStore, args.run_id, args.reason);
+  /* eslint-disable-next-line no-restricted-syntax --
+   * issue #367 (part 2), AUTHORIZED: an envelope ECHO of the stored record, not a writer. The
+   * write itself happened inside `abandonRun`, through the `sealRunLevel` chokepoint.
+   */
   return {
     run_id: run.id,
     // `run_phase` here is the PERSISTED value, which is correct on both paths: every record
