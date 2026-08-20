@@ -10,6 +10,17 @@ npm install --save-dev @sensigo/realm-testing
 
 Requires `@sensigo/realm` at the same version to be installed in your project.
 
+> **Version note (issue #367).** This release grows the published conformance suites, so a custom
+> `RunStore` that passed the previous version can fail this one — by design. A store declaring
+> `settleStep` must now also declare and round-trip `sealed_by` (the recorded seal arm), and must
+> REFUSE four write-integrity violations: an unstamped fresh seal, a resume that keeps the stamp, a
+> terminal rewrite that drops it, and an arm outside `SEAL_ARMS`. The new laws are
+> `SEAL_FRESH_WRITE_REFUSED`, `SEAL_ORPHAN_REFUSED`, `SEAL_ERASE_REFUSED`,
+> `SEAL_UNKNOWN_ARM_REFUSED` and `SEALED_BY_ROUNDTRIP`. They bind DECLARING stores only — a store
+> that declares neither `settleStep` nor the field passes them vacuously, exactly as before.
+> `assertFinalState` also now DERIVES the run phase instead of reading the persisted `run_phase`,
+> so a test whose fixture carried a stale label may start failing honestly.
+
 ## Usage — YAML Fixture Tests
 
 Fixture tests are the fastest way to test a complete workflow. Each fixture file declares the initial params, mock service responses, agent step outputs, and the expected final state. The `runFixtureTests` runner loads your workflow, drives it to completion using the fixture data, and returns a result for each fixture.

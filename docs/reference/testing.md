@@ -230,7 +230,7 @@ persisting X," never "this store lied about persisting X").
 **The capability it verifies:** `RunStore` carries an optional
 `persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>` (both exported from
 `@sensigo/realm`) — the set of load-bearing `RunRecord` fields a store guarantees to round-trip
-through `create`/`update`/`get`. `LoadBearingRunRecordField` is a closed set of three fields,
+through `create`/`update`/`get`. `LoadBearingRunRecordField` is a closed set of eight fields,
 each with a real engine read-site: `capability_blocks` (capability-block state),
 `workflow_context_snapshots` (context-snapshot history), and `extension_identity` (drift-detection
 baseline). The default is **fail-closed**: `undefined` (or a field simply absent from the

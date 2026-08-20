@@ -68,6 +68,7 @@ function makeRun(over: Partial<RunRecord>): RunRecord {
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
     terminal_state: true,
+    sealed_by: { arm: 'complete' },
     ...over,
   };
 }
@@ -205,6 +206,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
       ...run,
       run_phase: 'completed',
       terminal_state: true,
+      sealed_by: { arm: 'complete' },
       terminal_reason: 'Workflow completed.',
       finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
     });
@@ -238,6 +240,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
       ...run,
       run_phase: 'completed',
       terminal_state: true,
+      sealed_by: { arm: 'complete' },
       terminal_reason: 'Workflow completed.',
       finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
     });
@@ -262,6 +265,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
       ...run,
       run_phase: 'completed',
       terminal_state: true,
+      sealed_by: { arm: 'complete' },
       terminal_reason: 'Workflow completed.',
       finalizer_ledger: {
         fin: { status: 'pending', rank: 0, lease_token: 'live', lease_deadline: realFuture },
@@ -299,6 +303,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
       ...run,
       run_phase: 'completed',
       terminal_state: true,
+      sealed_by: { arm: 'complete' },
       terminal_reason: 'Workflow completed.',
       finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
     });
@@ -346,6 +351,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
       ...run1,
       run_phase: 'completed',
       terminal_state: true,
+      sealed_by: { arm: 'complete' },
       terminal_reason: 'Workflow completed.',
       finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
     });
@@ -358,6 +364,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
       ...run2,
       run_phase: 'completed',
       terminal_state: true,
+      sealed_by: { arm: 'complete' },
       terminal_reason: 'Workflow completed.',
       finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
     });

@@ -57,6 +57,10 @@ function makeGrandfatheredFixture(
     created_at: now,
     updated_at: now,
     terminal_state: true,
+    // issue #367: deliberately UNSTAMPED. This factory is injected by `injectRun`'s direct
+    // writeFile — the sanctioned channel for seeding pre-#367 shapes past the store boundary — and
+    // its whole purpose is to be a grandfathered record whose phase must be recovered by
+    // `classifyLegacySeal`. A stamp here would decide the phase the test exists to derive.
     ...(terminalReasonOverride !== undefined
       ? { terminal_reason: terminalReasonOverride }
       : 'terminal_reason' in overrides
@@ -180,6 +184,7 @@ describe('EXPORT_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
         ...run,
         completed_steps: ['a', 'b'],
         terminal_state: true,
+        sealed_by: { arm: 'complete' as const },
         terminal_reason: 'Workflow completed.',
       });
       const { warning } = await buildExportBundle(sealed.id, {

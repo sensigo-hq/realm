@@ -1,7 +1,7 @@
 // cleanup command — marks idle non-terminal runs as abandoned.
 import { Command } from 'commander';
 import type { RunStore, RunRecord } from '@sensigo/realm';
-import { WAITING_PHASES } from '@sensigo/realm';
+import { WAITING_PHASES, deriveRunPhase, sealRunLevel } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 
 /**
@@ -23,7 +23,15 @@ export async function cleanupRuns(
     if (run.terminal_state) {
       continue;
     }
-    if (WAITING_PHASES.has(run.run_phase)) {
+    // issue #367: DERIVE the phase, and check the gate directly. Keying the waiting-skip on the
+    // PERSISTED `run_phase` is the disposal-rule violation #282 exists to close — and it is not
+    // theoretical here: a record whose persisted phase is stale while a human is genuinely waiting
+    // on a live gate was being sealed `cleanup_sweep` with `pending_gate` still on the record, i.e.
+    // this command was freshly minting the very zombie shape #282 closed, and killing a run
+    // somebody was answering. The stale-phase population is exactly what `gc --heal` exists for,
+    // so cleanup-before-heal is an ordinary ordering. `abandonRun` already checks the gate; this
+    // brings its sweeping sibling in line.
+    if (run.pending_gate !== undefined || WAITING_PHASES.has(deriveRunPhase(run))) {
       continue;
     }
     const idleMs = now - new Date(run.updated_at).getTime();
@@ -34,13 +42,12 @@ export async function cleanupRuns(
 
   if (!(options.dryRun ?? false)) {
     for (const run of affected) {
-      await runStore.update({
-        ...run,
-        abandoned_at: new Date().toISOString(),
-        run_phase: 'abandoned',
-        terminal_state: true,
-        terminal_reason: 'Marked abandoned by realm cleanup',
-      });
+      // issue #367: run-level seal through the ONE bypass-writer chokepoint — it stamps
+      // sealed_by {arm: 'cleanup_sweep'} alongside abandoned_at, and the fossil hand-written
+      // run_phase is retired (the store write tail derives it — the #282 class).
+      await runStore.update(
+        sealRunLevel(run, 'cleanup_sweep', 'Marked abandoned by realm cleanup'),
+      );
     }
   }
 
@@ -65,6 +72,15 @@ export const cleanupCommand = new Command('cleanup')
       } else {
         console.log(`Marked ${n} run(s) as abandoned.`);
       }
+      // issue #367: name the runs, and say what abandoning them means. Both sibling surfaces ship
+      // this advisory unconditionally; the sweeping one printed a bare count, which is the harder
+      // case to check afterwards — an operator could not tell WHICH runs a sweep had killed.
+      for (const run of affected) {
+        console.log(`  • ${run.id}`);
+      }
+      console.log(
+        `abandon is a kill — declared finalizers (if any) did NOT run; 'abort' is the graceful path.`,
+      );
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);

@@ -53,6 +53,7 @@ describe('start_run / start_run_batch on a terminal aborted run (idempotency no-
       ...run,
       run_phase: 'aborted',
       terminal_state: true,
+      sealed_by: { arm: 'guard_abort' },
       terminal_reason: "Guard 'guard_step' aborted the run",
       aborted_at: { step_id: 'guard_step' },
       skipped_steps: ['guard_step'], // aborting step skipped, NOT failed

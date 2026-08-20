@@ -375,6 +375,11 @@ describe('makeListenHandler — request pipeline', () => {
     const run = await deps.runStore.get(body['run_id'] as string);
     expect(run.terminal_reason).toBe('spawn_failed');
     expect(run.terminal_state).toBe(true);
+    // issue #367 census path: a spawn death is a FAILURE, recorded as one. Before the substrate it
+    // derived `abandoned` — nothing had failed and the prose was not the completed literal — which
+    // is the #372 misfiling this closes.
+    expect(run.sealed_by).toEqual({ arm: 'spawn_failure' });
+    expect(run.run_phase).toBe('failed');
   });
 
   it('auth mode none → 202 without any header', async () => {

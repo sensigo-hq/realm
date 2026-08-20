@@ -316,6 +316,7 @@ describe('submitHumanResponse — composeExpiredGateEnvelope gate_id discriminat
         await this.inner.update({
           ...withoutGate,
           terminal_state: true,
+          sealed_by: { arm: 'guard_abort' as const },
           terminal_reason:
             "Gate 'other-step' expired and the run aborted per the workflow's declared on_expiry.",
           aborted_at: {

@@ -108,7 +108,16 @@ export function applyResume(
   // grandfathered/mixed-fleet record could still carry one), so this is defensive: it can never
   // silently strip a live decision out from under a human, only a stale, zombie one.
   const disclosures: string[] = [];
-  const { terminal_reason: _tr, abandoned_at: _aa, pending_gate: strippedGate, ...rest } = snapshot;
+  // issue #367: `sealed_by` joins the strip list — the resumed run is live again, so the seal fact
+  // must leave in the SAME write that flips terminal_state:false. The store boundary's ORPHANED
+  // clause is what catches a future regression of this line.
+  const {
+    terminal_reason: _tr,
+    abandoned_at: _aa,
+    sealed_by: _sb,
+    pending_gate: strippedGate,
+    ...rest
+  } = snapshot;
   if (strippedGate !== undefined) {
     disclosures.push(
       `zombie gate '${strippedGate.gate_id}' on '${strippedGate.step_name}' cleared by resume — step will re-drive`,

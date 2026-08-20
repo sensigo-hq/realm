@@ -1,4 +1,5 @@
 // Evidence assertion helpers — throw Error on failure (framework-agnostic).
+import { deriveRunPhase } from '@sensigo/realm';
 import type { RunRecord, EvidenceSnapshot, RunPhase } from '@sensigo/realm';
 
 /**
@@ -6,9 +7,13 @@ import type { RunRecord, EvidenceSnapshot, RunPhase } from '@sensigo/realm';
  * Use to verify the workflow reached the expected terminal phase.
  */
 export function assertFinalState(run: RunRecord, expectedPhase: RunPhase | string): void {
-  if (run.run_phase !== expectedPhase) {
+  // Ride-along (boy-scout, not the reported problem): this published assertion used to read the
+  // PERSISTED `run_phase`, which the disposal rule forbids — a persisted phase can be stale, and
+  // a test asserting on it can pass while the run's real phase is something else. Derive instead.
+  const phase = deriveRunPhase(run);
+  if (phase !== expectedPhase) {
     throw new Error(
-      `assertFinalState: expected phase '${expectedPhase}' but run is in phase '${run.run_phase}'`,
+      `assertFinalState: expected phase '${expectedPhase}' but run is in phase '${phase}'`,
     );
   }
 }

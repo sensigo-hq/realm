@@ -34,6 +34,9 @@ describe.each([
         ...run,
         failed_steps: ['a'],
         terminal_state: true,
+        // issue #367: the fixture is a hand-authored FAILED seal, so it names that arm. The stale
+        // `run_phase` below stays stale on purpose — that is what this test is about.
+        sealed_by: { arm: 'step_failure' as const },
         // Deliberately stale/wrong — a hand-authored fixture or a legacy writer that never learned
         // about deriveRunPhase's own reorder. pending_gate is a genuine leftover: never cleared.
         run_phase: 'gate_waiting',

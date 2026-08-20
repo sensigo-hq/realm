@@ -59,6 +59,7 @@ describe('purge ⟷ drain recovery closure (issue #279, increment 1, PR-B, verif
       ...run,
       run_phase: 'completed',
       terminal_state: true,
+      sealed_by: { arm: 'complete' },
       terminal_reason: 'Workflow completed.',
       finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
     });

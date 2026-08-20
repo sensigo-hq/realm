@@ -21,6 +21,7 @@ import {
   JsonWorkflowStore,
   validateInputSchema,
   WorkflowError,
+  sealRunLevel,
 } from '@sensigo/realm';
 import type {
   WorkflowDefinition,
@@ -406,13 +407,17 @@ export function makeListenHandler(
           error: String(spawnResult.error),
         });
         try {
-          run.terminal_state = true;
-          run.terminal_reason = 'spawn_failed';
-          run.run_phase = 'failed';
-          await deps.runStore.update(run);
+          // issue #367: run-level seal through the ONE bypass-writer chokepoint — it stamps
+          // sealed_by {arm: 'spawn_failure'}; the fossil hand-written run_phase is retired (the
+          // store write tail derives it) and the field-assignment writer shape is gone.
+          await deps.runStore.update(sealRunLevel(run, 'spawn_failure', 'spawn_failed'));
         } catch (err) {
+          // issue #367 residual: this catch used to swallow the store's throw anonymously. The
+          // seal-integrity boundary throws TYPED codes (STATE_SEAL_*), so log the code explicitly
+          // — a writer regression here must not read as a generic spawn bookkeeping failure.
           deps.logger.error('webhook: failed to mark spawn_failed', {
             run_id: run.id,
+            error_code: err instanceof WorkflowError ? err.code : undefined,
             error: String(err),
           });
         }

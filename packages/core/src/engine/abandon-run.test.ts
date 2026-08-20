@@ -103,6 +103,7 @@ describe('abandonRun (JsonFileStore)', () => {
       ...run,
       completed_steps: ['s'],
       terminal_state: true,
+      sealed_by: { arm: 'complete' as const },
       terminal_reason: 'Workflow completed.',
     });
     await expect(abandonRun(store, run.id)).rejects.toMatchObject({ code: 'STATE_RUN_TERMINAL' });
@@ -114,6 +115,7 @@ describe('abandonRun (JsonFileStore)', () => {
       ...run,
       failed_steps: ['s'],
       terminal_state: true,
+      sealed_by: { arm: 'step_failure' as const },
       terminal_reason: "Step 's' failed",
     });
     await expect(abandonRun(store, run.id)).rejects.toMatchObject({ code: 'STATE_RUN_TERMINAL' });
@@ -121,7 +123,12 @@ describe('abandonRun (JsonFileStore)', () => {
 
   it('aborted → STATE_RUN_TERMINAL', async () => {
     const run = await freshRunning();
-    await store.update({ ...run, terminal_state: true, aborted_at: { step_id: 'g' } });
+    await store.update({
+      ...run,
+      terminal_state: true,
+      sealed_by: { arm: 'guard_abort' as const },
+      aborted_at: { step_id: 'g' },
+    });
     await expect(abandonRun(store, run.id)).rejects.toMatchObject({ code: 'STATE_RUN_TERMINAL' });
   });
 
@@ -164,6 +171,7 @@ describe('abandonRun — CAS concurrency branch (deterministic stub store)', () 
     const reloaded = runningRecord({
       version: 1,
       terminal_state: true,
+      sealed_by: { arm: 'abandon_requested' },
       abandoned_at: '2026-06-26T00:00:00.000Z',
       run_phase: 'abandoned',
     });

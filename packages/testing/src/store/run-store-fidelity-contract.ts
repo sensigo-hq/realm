@@ -21,7 +21,11 @@ import {
 } from '@sensigo/realm';
 
 /** One of the two laws every `RunStore` implementation should be run against (issue #188). */
-export type RunStoreFidelityLaw = 'FIDELITY_HONESTY' | 'CLAIM_SINGLE_OWNER';
+export type RunStoreFidelityLaw =
+  | 'FIDELITY_HONESTY'
+  | 'CLAIM_SINGLE_OWNER'
+  /** issue #367 — the seal arm survives a proper terminal write byte-for-byte. */
+  | 'SEALED_BY_ROUNDTRIP';
 
 /**
  * A single, framework-agnostic contract case. `run()` throws (rejects) on failure — any test
@@ -63,6 +67,10 @@ export interface RunStoreFidelityContractAdapter {
 const SAMPLE_VALUES: {
   [K in LoadBearingRunRecordField]: NonNullable<RunRecord[K]>;
 } = {
+  // issue #367: present so the closed-map compile check stays satisfied. The GENERIC loop below
+  // deliberately skips this field — see SEALED_BY_ROUNDTRIP for why writing it the generic way
+  // would violate the boundary it shares a package with.
+  sealed_by: { arm: 'complete' },
   capability_blocks: {
     'tck-step': {
       requirement: { kind: 'handler', name: 'tck-handler' },
@@ -132,6 +140,12 @@ export function runStoreFidelityContract(
   const declaredFields =
     adapter.store.persistedRunRecordFields ?? new Set<LoadBearingRunRecordField>();
   for (const field of declaredFields) {
+    // issue #367: `sealed_by` cannot ride the generic loop. That loop writes its sample onto a
+    // LIVE record, and a live record carrying a seal is an orphan — the store boundary refuses it
+    // (STATE_SEAL_ORPHANED), so the case would red for a reason that has nothing to do with
+    // fidelity. It gets the dedicated SEALED_BY_ROUNDTRIP case below, which seals the run properly
+    // first and then asserts the arm survives byte-for-byte.
+    if (field === 'sealed_by') continue;
     cases.push({
       law: 'FIDELITY_HONESTY',
       name: `a store declaring '${field}' actually round-trips it (create → update → get)`,
@@ -152,6 +166,39 @@ export function runStoreFidelityContract(
             `store declares persistedRunRecordFields includes '${field}' but a round-trip did ` +
               `NOT preserve it — the declared fidelity is DISHONEST (issue #188). wrote: ` +
               `${wroteJson}, read back: ${readJson}`,
+          );
+        }
+      },
+    });
+  }
+
+  if (declaredFields.has('sealed_by')) {
+    cases.push({
+      law: 'SEALED_BY_ROUNDTRIP',
+      name: 'a store declaring sealed_by round-trips the seal arm through a PROPER terminal write',
+      run: async () => {
+        const { run } = await adapter.store.create({
+          workflowId: 'tck-fidelity-sealed-by',
+          workflowVersion: 1,
+          params: {},
+        });
+        // A real seal: terminal_state and sealed_by in the same write, exactly as every engine
+        // seal site does it.
+        await adapter.store.update({
+          ...run,
+          completed_steps: ['tck-step'],
+          terminal_state: true,
+          sealed_by: { arm: 'complete', step: 'tck-step' },
+          terminal_reason: 'Workflow completed.',
+        });
+        const reread = await adapter.store.get(run.id);
+        const wrote = JSON.stringify({ arm: 'complete', step: 'tck-step' });
+        const read = JSON.stringify(reread.sealed_by);
+        if (read !== wrote) {
+          throw new Error(
+            `store declares persistedRunRecordFields includes 'sealed_by' but a terminal ` +
+              `round-trip did NOT preserve it — the run's recorded outcome silently changed ` +
+              `(issue #367). wrote: ${wrote}, read back: ${read}`,
           );
         }
       },

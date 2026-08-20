@@ -7,6 +7,7 @@ import {
   computeClaimDeadline,
   isStepSettledOrInFlight,
   applySettlement,
+  assertSealIntegrity,
   type RunStore,
   type RunRecord,
   type CreateRunOptions,
@@ -36,6 +37,7 @@ export class InMemoryStore implements RunStore {
     // issue #279 (increment 1, PR-A): declared alongside settleStep — declaration-coherence.
     'settled',
     'finalizer_ledger',
+    'sealed_by', // issue #367 — declaration-coherence with settleStep
   ]);
 
   async create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
@@ -121,6 +123,9 @@ export class InMemoryStore implements RunStore {
         details: { runId: record.id, expected: record.version, actual: existing.version },
       });
     }
+    // issue #367: the seal-integrity boundary — identical to JsonFileStore's update tail (the
+    // measured update/settle asymmetry closed; the listen/run-attach suites drive THIS store).
+    assertSealIntegrity(existing, record);
     const updated: RunRecord = {
       ...record,
       run_phase: deriveRunPhase(record),
@@ -227,6 +232,9 @@ export class InMemoryStore implements RunStore {
     if (!outcome.applied) {
       return outcome; // refusal/noop — fresh state, NO write (version unchanged)
     }
+    // issue #367: the boundary on the settle tail too (both stores, both tails).
+    // `assertSealIntegrity` is pure and synchronous — the documented no-await stretch above holds.
+    assertSealIntegrity(fresh, outcome.run);
     const updated: RunRecord = {
       ...outcome.run,
       run_phase: deriveRunPhase(outcome.run),

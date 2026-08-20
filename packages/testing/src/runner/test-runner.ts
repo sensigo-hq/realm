@@ -260,7 +260,10 @@ async function runSingleFixture(
         if (mockErrors !== undefined && resumesDone < mockErrors.length) {
           stepResumeCount[nextStep] = resumesDone + 1;
           const failedRun = await store.get(runId);
-          const { terminal_reason: _tr, ...rest } = failedRun;
+          // issue #367: `sealed_by` joins the strip — this simulated resume flips the run live
+          // again, so the seal fact must leave in the same write (the ORPHANED boundary clause
+          // would otherwise refuse the update below).
+          const { terminal_reason: _tr, sealed_by: _sb, ...rest } = failedRun;
           const newFailedSteps = rest.failed_steps.filter((s) => s !== nextStep);
           // Recompute skipped_steps: the old skips were derived with nextStep in
           // failed_steps. Re-derive from scratch so steps that were only skipped

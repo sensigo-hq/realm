@@ -10,6 +10,7 @@
 //    spawn_failed mechanics) so listen-spawned children fail their runs visibly; if it HAS
 //    begun executing, propagate the error with NO run mutation — a failed bystander attach
 //    can never kill a healthy in-flight run.
+import { sealRunLevel } from '@sensigo/realm';
 import type { RunStore, WorkflowRegistrar, WorkflowDefinition } from '@sensigo/realm';
 import {
   loadProjectExtensions,
@@ -44,7 +45,9 @@ export async function resolveRunAttach(
   if (run.terminal_state) {
     if (run.terminal_reason === EXTENSIONS_LOAD_FAILED) {
       // Pure retry: nothing executed pre-failure. Clear exactly this marker and proceed.
-      const { terminal_reason: _cleared, ...rest } = run;
+      // issue #367: `sealed_by` joins the strip — this is a resume-class write (terminal → live),
+      // so the seal fact leaves in the SAME write that flips terminal_state:false.
+      const { terminal_reason: _cleared, sealed_by: _sb, ...rest } = run;
       await deps.store.update({ ...rest, terminal_state: false });
       run = await deps.store.get(runId);
     } else {
@@ -114,17 +117,26 @@ export async function resolveRunAttach(
         fresh.evidence.length === 0 &&
         fresh.pending_gate === undefined
       ) {
-        fresh.terminal_state = true;
-        fresh.terminal_reason = EXTENSIONS_LOAD_FAILED;
-        fresh.run_phase = 'failed';
-        fresh.extension_identity = [
-          ...(fresh.extension_identity ?? []),
-          errorExtensionIdentityEntry(
-            `extension load failed: ${err instanceof Error ? err.message : String(err)}`,
-            opts?.overrideModule !== undefined ? { overrideActive: true } : {},
+        // issue #367: run-level seal through the ONE bypass-writer chokepoint — it stamps
+        // sealed_by {arm: 'extensions_load_failure'}; the fossil hand-written run_phase is
+        // retired (the store write tail derives it) and the field-assignment writer shape is
+        // gone. The identity entry rides the same single write.
+        await deps.store.update(
+          sealRunLevel(
+            {
+              ...fresh,
+              extension_identity: [
+                ...(fresh.extension_identity ?? []),
+                errorExtensionIdentityEntry(
+                  `extension load failed: ${err instanceof Error ? err.message : String(err)}`,
+                  opts?.overrideModule !== undefined ? { overrideActive: true } : {},
+                ),
+              ],
+            },
+            'extensions_load_failure',
+            EXTENSIONS_LOAD_FAILED,
           ),
-        ];
-        await deps.store.update(fresh);
+        );
       }
     } catch (writeErr) {
       console.error(

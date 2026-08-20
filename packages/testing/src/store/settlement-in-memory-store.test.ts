@@ -54,6 +54,11 @@ const LAWS: SettlementLaw[] = [
   'EXPIRE_ARM_MATRIX',
   'EXPIRE_ABORT_CASCADE',
   'EXPIRE_DEFAULT_RESOLVE',
+  // issue #367 (the seal-integrity boundary).
+  'SEAL_FRESH_WRITE_REFUSED',
+  'SEAL_ORPHAN_REFUSED',
+  'SEAL_ERASE_REFUSED',
+  'SEAL_UNKNOWN_ARM_REFUSED',
 ];
 
 describe('InMemoryStore — settlement TCK conformance (issue #279, increment 1 + 2)', () => {

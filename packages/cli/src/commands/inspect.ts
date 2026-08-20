@@ -7,6 +7,7 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import {
+  SEAL_ARMS,
   classifyRunHealth,
   deriveDefaultedSteps,
   deriveRunPhase,
@@ -262,6 +263,32 @@ export async function inspectRun(
   lines.push(`Run: ${run.id}`);
   lines.push(`Workflow: ${workflowLabel}`);
   lines.push(`Phase: ${phaseLabel}`);
+  // issue #367: the recorded seal fact, beside the phase it derives. An unrecognised arm is shown
+  // rather than hidden — an operator reading a record written by a newer binary should see that
+  // there IS a seal, even if this binary cannot name it.
+  if (run.sealed_by !== undefined) {
+    const arm = (SEAL_ARMS as readonly string[]).includes(run.sealed_by.arm)
+      ? run.sealed_by.arm
+      : `unrecognized arm '${run.sealed_by.arm}'`;
+    // issue #367: the `(step)` suffix renders ONLY where the step is the arm's deterministic
+    // identity — a guard, a gate, or the handler that aborted. For `complete` and `step_failure`
+    // the recorded step is whichever one happened to settle LAST, a scheduling artifact: issue
+    // #373 deliberately stopped the cause line from naming a culprit, and printing that step one
+    // line above the culprit-free Cause would read as the culprit and undo exactly that. The
+    // RECORD is untouched — the step stays persisted and export carries it. Render fork only.
+    const stepIsDeterministic =
+      run.sealed_by.arm.startsWith('guard_') ||
+      run.sealed_by.arm.startsWith('gate_') ||
+      run.sealed_by.arm === 'handler_abort';
+    const stepSuffix =
+      stepIsDeterministic && run.sealed_by.step !== undefined ? ` (${run.sealed_by.step})` : '';
+    lines.push(`Sealed by: ${arm}${stepSuffix}`);
+  }
+  // The one-line cause has never been rendered here — four rounds of #367/#373 review kept
+  // finding that the operator's primary surface shows the failed SET but not why the run ended.
+  if (run.terminal_reason !== undefined) {
+    lines.push(`Cause: ${run.terminal_reason}`);
+  }
   lines.push(`Completed: ${run.completed_steps.join(', ') || '(none)'}`);
   lines.push(`In Progress: ${run.in_progress_steps.join(', ') || '(none)'}`);
   lines.push(`Failed: ${run.failed_steps.join(', ') || '(none)'}`);

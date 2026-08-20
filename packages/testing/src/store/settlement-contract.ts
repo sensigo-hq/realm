@@ -80,6 +80,18 @@ export type SettlementLaw =
   /** The new trigger never over-fires: a CLEAN complete (no `failed_steps`) does not select it;
    *  a PURE fail seal (never reaches `complete`) does not select it either. */
   | 'CWFS_NEGATIVES'
+  /** issue #367 — a fresh seal (non-terminal → terminal write) that names no arm is REFUSED
+   *  (`STATE_SEAL_UNSTAMPED`). Transition-scoped: re-writing an already-terminal legacy record
+   *  passes untouched, which is what keeps the pre-#367 population usable. */
+  | 'SEAL_FRESH_WRITE_REFUSED'
+  /** issue #367 — a terminal → live write that RETAINS the seal is REFUSED
+   *  (`STATE_SEAL_ORPHANED`): every resume/strip path must drop the fact in the same write. */
+  | 'SEAL_ORPHAN_REFUSED'
+  /** issue #367 — a terminal rewrite that DROPS a stored seal is REFUSED (`STATE_SEAL_ERASED`),
+   *  so a field-enumerating rewriter cannot silently drain the stamped population back to prose. */
+  | 'SEAL_ERASE_REFUSED'
+  /** issue #367 — an arm outside `SEAL_ARMS` never persists (`STATE_SEAL_UNKNOWN_ARM`). */
+  | 'SEAL_UNKNOWN_ARM_REFUSED'
   /** Uniform-predicate pin (design record M1): a second-epoch complete seal whose ONLY
    *  `failed_steps` scar is a PRIOR epoch's finalizer self-failure (unresumable, so it never
    *  leaves `failed_steps`) still fires — no exclusion of finalizer-declared step names. */
@@ -669,6 +681,10 @@ function terminalRefusalCases(adapter: SettlementContractAdapter): SettlementCon
         await adapter.store.update({
           ...run,
           terminal_state: true,
+          // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
+          // their opaque `tck` prose is deliberately unclassifiable, so the boundary's coherence
+          // check abstains and the fixture stays a pure terminal-precondition seeder.
+          sealed_by: { arm: 'complete' as const },
           terminal_reason: 'tck-terminal',
         });
         const result = await settleStep(
@@ -701,6 +717,23 @@ function terminalRefusalCases(adapter: SettlementContractAdapter): SettlementCon
 // Reintroducing either trio disjunct into `isTerminal` reds this law; genuine terminal refusal is
 // TERMINAL_REFUSAL's job (`terminal_state: true` — which abandon/abort ALWAYS set atomically,
 // abandon-run.ts:66-71 / execution-loop.ts:1803-1811).
+//
+// REPINNED 2026-08-20 (issue #367) — ARM-WINS. Each case below now also asserts the DERIVED PHASE
+// of its product record, and that phase CHANGED with #367: the run is settled `complete`, so it
+// stamps `sealed_by: {arm: 'complete'}`, and the recorded arm outranks the seeded marker. Before
+// #367 the same record derived `abandoned`/`aborted` from the marker alone.
+//
+// These two product records are the ONLY engine-constructible arm-vs-marker disagreements in the
+// suite, which makes them the keystone: revert the sealed-wins branch in `deriveRunPhase` and the
+// new assertions below are what reds. Nothing else observes that revert — the arm path and the
+// legacy path agree on every honest record.
+//
+// The seeded foreign marker violates nothing: `SEAL_MARKERS_AGREE` is transform-scoped and
+// ONE-DIRECTIONAL (an arm requires its own marker; it never forbids a marker it did not write).
+// Do not "fix" these fixtures by removing the marker — the disagreement IS the test.
+//
+// (The law's own premise comment above — "resume never strips abandoned_at" — has been stale since
+// #281; the honest production channel for this shape is a mixed-version fleet.)
 // ---------------------------------------------------------------------------
 
 function terminalStateOnlyCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
@@ -736,6 +769,16 @@ function terminalStateOnlyCases(adapter: SettlementContractAdapter): SettlementC
             `expected 'a' to land in completed_steps, got: ${JSON.stringify(result.run.completed_steps)}`,
           );
         }
+        // issue #367 KEYSTONE: the run sealed `complete`, so the recorded arm decides — even
+        // though `abandoned_at` is still on the record. Pre-#367 this derived 'abandoned'.
+        const phase = deriveRunPhase(result.run);
+        if (phase !== 'completed') {
+          throw new Error(
+            `arm-wins: expected derived phase 'completed' from sealed_by.arm '${String(
+              result.run.sealed_by?.arm,
+            )}' despite the seeded abandoned_at, got '${phase}'`,
+          );
+        }
       },
     },
     {
@@ -768,6 +811,15 @@ function terminalStateOnlyCases(adapter: SettlementContractAdapter): SettlementC
             `expected 'a' to land in completed_steps, got: ${JSON.stringify(result.run.completed_steps)}`,
           );
         }
+        // issue #367 KEYSTONE (the aborted half): same disagreement, other marker.
+        const phase = deriveRunPhase(result.run);
+        if (phase !== 'completed') {
+          throw new Error(
+            `arm-wins: expected derived phase 'completed' from sealed_by.arm '${String(
+              result.run.sealed_by?.arm,
+            )}' despite the seeded aborted_at, got '${phase}'`,
+          );
+        }
       },
     },
   ];
@@ -777,6 +829,157 @@ function terminalStateOnlyCases(adapter: SettlementContractAdapter): SettlementC
 // L7 CS-purity — structural: `options` carries VALUES only ({now}); no callback, no registry.
 // In-repo source-text guard (the calling test file greps applySettlement's own signature).
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// issue #367 — the seal-integrity boundary laws. An assertion-capable store (one declaring
+// `settleStep`) must REFUSE each of the four violations rather than persisting them: a record that
+// lies about how it ended is permanent, and an advisory would report success on a write that broke
+// its own invariant.
+// ---------------------------------------------------------------------------
+
+function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition } = adapter.settlementFixture!;
+  requireSettleStep(adapter.store); // assertion-capable stores only
+
+  /** Runs `write`, expecting it to reject with `code`. */
+  async function expectRefusedWith(
+    code: string,
+    what: string,
+    write: () => Promise<unknown>,
+  ): Promise<void> {
+    let threw: unknown;
+    try {
+      await write();
+    } catch (err) {
+      threw = err;
+    }
+    if (threw === undefined) {
+      throw new Error(`expected ${what} to be REFUSED with ${code}, but the write succeeded`);
+    }
+    const actual = (threw as { code?: string }).code;
+    if (actual !== code) {
+      throw new Error(`expected ${what} to be refused with ${code}, got '${String(actual)}'`);
+    }
+  }
+
+  async function freshRun(name: string): Promise<RunRecord> {
+    const def = minimalDefinition(['a']);
+    const { run } = await adapter.store.create({
+      workflowId: `${def.id}-${name}`,
+      workflowVersion: 1,
+      params: {},
+    });
+    return run;
+  }
+
+  return [
+    {
+      law: 'SEAL_FRESH_WRITE_REFUSED',
+      name: `[${adapter.storeName}] a live → terminal write carrying NO sealed_by is refused`,
+      run: async () => {
+        const run = await freshRun('unstamped');
+        await expectRefusedWith('STATE_SEAL_UNSTAMPED', 'an unstamped fresh seal', () =>
+          adapter.store.update({ ...run, terminal_state: true, terminal_reason: 'tck' }),
+        );
+      },
+    },
+    {
+      law: 'SEAL_FRESH_WRITE_REFUSED',
+      name: `[${adapter.storeName}] NEGATIVE CONTROL: re-writing an ALREADY-terminal unstamped record passes (the legacy population stays usable)`,
+      run: async () => {
+        const run = await freshRun('legacy-repersist');
+        const sealed = await adapter.store.update({
+          ...run,
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+          terminal_reason: 'tck',
+        });
+        // A terminal → terminal rewrite. The forward clause is transition-scoped, so this is fine.
+        await adapter.store.update({ ...sealed, terminal_reason: 'tck (touched)' });
+      },
+    },
+    {
+      law: 'SEAL_ORPHAN_REFUSED',
+      name: `[${adapter.storeName}] a terminal → live write that RETAINS sealed_by is refused`,
+      run: async () => {
+        const run = await freshRun('orphan');
+        const sealed = await adapter.store.update({
+          ...run,
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+          terminal_reason: 'tck',
+        });
+        await expectRefusedWith('STATE_SEAL_ORPHANED', 'a resume that kept the seal', () =>
+          adapter.store.update({ ...sealed, terminal_state: false }),
+        );
+      },
+    },
+    {
+      law: 'SEAL_ORPHAN_REFUSED',
+      name: `[${adapter.storeName}] NEGATIVE CONTROL: the same transition WITH the seal stripped passes`,
+      run: async () => {
+        const run = await freshRun('orphan-control');
+        const sealed = await adapter.store.update({
+          ...run,
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+          terminal_reason: 'tck',
+        });
+        const { sealed_by: _dropped, ...base } = sealed;
+        await adapter.store.update({ ...base, terminal_state: false });
+      },
+    },
+    {
+      law: 'SEAL_ERASE_REFUSED',
+      name: `[${adapter.storeName}] a terminal rewrite that DROPS a stored sealed_by is refused`,
+      run: async () => {
+        const run = await freshRun('erase');
+        const sealed = await adapter.store.update({
+          ...run,
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+          terminal_reason: 'tck',
+        });
+        const { sealed_by: _erased, ...withoutSeal } = sealed;
+        await expectRefusedWith('STATE_SEAL_ERASED', 'a terminal rewrite dropping the seal', () =>
+          adapter.store.update({ ...withoutSeal, terminal_reason: 'tck (erased)' }),
+        );
+      },
+    },
+    {
+      law: 'SEAL_ERASE_REFUSED',
+      name: `[${adapter.storeName}] NEGATIVE CONTROL: the same rewrite KEEPING the seal passes`,
+      run: async () => {
+        const run = await freshRun('erase-control');
+        const sealed = await adapter.store.update({
+          ...run,
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+          terminal_reason: 'tck',
+        });
+        await adapter.store.update({ ...sealed, terminal_reason: 'tck (kept)' });
+      },
+    },
+    {
+      law: 'SEAL_UNKNOWN_ARM_REFUSED',
+      name: `[${adapter.storeName}] an arm outside SEAL_ARMS never persists`,
+      run: async () => {
+        const run = await freshRun('unknown-arm');
+        await expectRefusedWith('STATE_SEAL_UNKNOWN_ARM', 'a foreign arm', () =>
+          adapter.store.update({
+            ...run,
+            terminal_state: true,
+            // Deliberately outside the closed set — the shape a record written by a FUTURE
+            // binary would have. The cast is the point: the type system cannot stop a foreign arm
+            // arriving from disk or from another version, which is why the boundary checks it.
+            sealed_by: { arm: 'from_the_future' } as unknown as NonNullable<RunRecord['sealed_by']>,
+            terminal_reason: 'tck',
+          }),
+        );
+      },
+    },
+  ];
+}
 
 function csPurityCases(_adapter: SettlementContractAdapter): SettlementContractCase[] {
   return [
@@ -1422,6 +1625,10 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
       const terminal = await adapter.store.update({
         ...run,
         terminal_state: true,
+        // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
+        // their opaque `tck` prose is deliberately unclassifiable, so the boundary's coherence
+        // check abstains and the fixture stays a pure terminal-precondition seeder.
+        sealed_by: { arm: 'complete' as const },
         terminal_reason: 'tck',
       });
       await expectRefusalUnchanged(
@@ -1519,6 +1726,10 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
       const terminal = await adapter.store.update({
         ...run,
         terminal_state: true,
+        // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
+        // their opaque `tck` prose is deliberately unclassifiable, so the boundary's coherence
+        // check abstains and the fixture stays a pure terminal-precondition seeder.
+        sealed_by: { arm: 'complete' as const },
         terminal_reason: 'tck',
       });
       await expectRefusalUnchanged(
@@ -1549,6 +1760,10 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
       const seeded = await adapter.store.update({
         ...run,
         terminal_state: true,
+        // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
+        // their opaque `tck` prose is deliberately unclassifiable, so the boundary's coherence
+        // check abstains and the fixture stays a pure terminal-precondition seeder.
+        sealed_by: { arm: 'complete' as const },
         terminal_reason: 'tck',
         finalizer_ledger: { fin: { status: 'completed', rank: 0 } },
       });
@@ -1575,6 +1790,10 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
       await adapter.store.update({
         ...run,
         terminal_state: true,
+        // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
+        // their opaque `tck` prose is deliberately unclassifiable, so the boundary's coherence
+        // check abstains and the fixture stays a pure terminal-precondition seeder.
+        sealed_by: { arm: 'complete' as const },
         terminal_reason: 'tck',
         finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
       });
@@ -1612,6 +1831,10 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
       const seeded = await adapter.store.update({
         ...run,
         terminal_state: true,
+        // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
+        // their opaque `tck` prose is deliberately unclassifiable, so the boundary's coherence
+        // check abstains and the fixture stays a pure terminal-precondition seeder.
+        sealed_by: { arm: 'complete' as const },
         terminal_reason: 'tck',
         finalizer_ledger: {
           first: { status: 'pending', rank: 0 },
@@ -1646,6 +1869,10 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
       await adapter.store.update({
         ...run,
         terminal_state: true,
+        // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
+        // their opaque `tck` prose is deliberately unclassifiable, so the boundary's coherence
+        // check abstains and the fixture stays a pure terminal-precondition seeder.
+        sealed_by: { arm: 'complete' as const },
         terminal_reason: 'tck',
         finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
       });
@@ -1680,6 +1907,10 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
       const terminal = await adapter.store.update({
         ...run,
         terminal_state: true,
+        // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
+        // their opaque `tck` prose is deliberately unclassifiable, so the boundary's coherence
+        // check abstains and the fixture stays a pure terminal-precondition seeder.
+        sealed_by: { arm: 'complete' as const },
         terminal_reason: 'tck',
       });
       await expectRefusalUnchanged(
@@ -1711,6 +1942,10 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
       await adapter.store.update({
         ...run,
         terminal_state: true,
+        // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
+        // their opaque `tck` prose is deliberately unclassifiable, so the boundary's coherence
+        // check abstains and the fixture stays a pure terminal-precondition seeder.
+        sealed_by: { arm: 'complete' as const },
         terminal_reason: 'tck',
         finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
       });
@@ -1753,6 +1988,10 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
       const seeded = await adapter.store.update({
         ...run,
         terminal_state: true,
+        // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
+        // their opaque `tck` prose is deliberately unclassifiable, so the boundary's coherence
+        // check abstains and the fixture stays a pure terminal-precondition seeder.
+        sealed_by: { arm: 'complete' as const },
         terminal_reason: 'tck',
         finalizer_ledger: { fin: { status: 'voided', rank: 0 } },
       });
@@ -1785,6 +2024,10 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
       await adapter.store.update({
         ...run,
         terminal_state: true,
+        // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
+        // their opaque `tck` prose is deliberately unclassifiable, so the boundary's coherence
+        // check abstains and the fixture stays a pure terminal-precondition seeder.
+        sealed_by: { arm: 'complete' as const },
         terminal_reason: 'tck',
         finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
       });
@@ -1937,8 +2180,13 @@ function mintFreshCases(adapter: SettlementContractAdapter): SettlementContractC
         // dropped, and the STILL-PENDING... there are none pending now (onFail was already
         // marked) — this fixture specifically exercises re-mint on a run with NO pending entries
         // left post-void, proving mintFresh re-arms fresh regardless of prior history.
+        // issue #367: a real `applyResume` STRIPS `sealed_by` in the same write that flips the run
+        // live — a live run carrying a seal is an orphan, and the store boundary refuses it. This
+        // hand-authored fixture mirrors that, or it would stop mirroring the function it stands in
+        // for.
+        const { sealed_by: _voidSeal, ...markedBase } = marked.run;
         const postResumeVoid = await adapter.store.update({
-          ...marked.run,
+          ...markedBase,
           terminal_state: false,
           in_progress_steps: [],
           failed_steps: [],
@@ -2706,6 +2954,10 @@ function gateMismatchCases(adapter: SettlementContractAdapter): SettlementContra
           ...run,
           completed_steps: ['a'],
           terminal_state: true,
+          // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
+          // their opaque `tck` prose is deliberately unclassifiable, so the boundary's coherence
+          // check abstains and the fixture stays a pure terminal-precondition seeder.
+          sealed_by: { arm: 'complete' as const },
           terminal_reason: 'Workflow completed.',
           pending_gate: {
             gate_id: gateId,
@@ -3584,8 +3836,11 @@ function cwfsSecondEpochCases(adapter: SettlementContractAdapter): SettlementCon
         // 'onFail' — a FINALIZER, unresumable — stays in failed_steps (the M1 scenario's own
         // premise). terminal_state:false / in_progress_steps:[] / settled:{} mirror the
         // mintFreshCases precedent's own void shape.
+        // issue #367: same as the mintFreshCases precedent — the seal fact leaves in the write
+        // that flips the run live again.
+        const { sealed_by: _voidSeal2, ...markedFailedBase } = markedFailed.run;
         const postResumeVoid = await adapter.store.update({
-          ...markedFailed.run,
+          ...markedFailedBase,
           terminal_state: false,
           in_progress_steps: [],
           failed_steps: ['onFail'],
@@ -4313,6 +4568,7 @@ export function settlementContract(adapter: SettlementContractAdapter): Settleme
     ...drainMarkDedupCases(adapter),
     ...terminalRefusalCases(adapter),
     ...terminalStateOnlyCases(adapter),
+    ...sealIntegrityCases(adapter),
     ...csPurityCases(adapter),
     ...neverDowngradeCases(adapter),
     ...settleOutcomeIntegrityCases(adapter),

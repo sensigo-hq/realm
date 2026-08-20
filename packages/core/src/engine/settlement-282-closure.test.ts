@@ -34,6 +34,7 @@ function baseRun(overrides: Partial<RunRecord> = {}): RunRecord {
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
     terminal_state: true,
+    sealed_by: { arm: 'complete' },
     ...overrides,
   };
 }
@@ -66,6 +67,7 @@ describe('#282 class closure — idempotency call-site derive (issue #279, incre
         ...original,
         completed_steps: ['a', 'b'],
         terminal_state: true,
+        sealed_by: { arm: 'complete' as const },
         terminal_reason: 'Workflow completed.',
         run_phase: 'gate_waiting', // deliberately wrong/stale — proves derivation, not trust
       });
@@ -102,6 +104,7 @@ describe('#282 class closure — ABANDON_TERMINAL_FIRST (issue #279, increment 2
         ...run,
         completed_steps: ['a', 'b'],
         terminal_state: true,
+        sealed_by: { arm: 'complete' as const },
         terminal_reason: 'Workflow completed.',
         pending_gate: {
           gate_id: 'zombie',
@@ -152,6 +155,7 @@ describe('#282 class closure — applyResume strips a carried pending_gate (issu
     const snapshot = baseRun({
       run_phase: 'failed',
       terminal_state: true,
+      sealed_by: { arm: 'step_failure' },
       failed_steps: ['a'],
       pending_gate: {
         gate_id: 'zombie-gate',
@@ -170,7 +174,12 @@ describe('#282 class closure — applyResume strips a carried pending_gate (issu
   });
 
   it('a run with no pending_gate at all resumes with an empty disclosures array (the common case)', () => {
-    const snapshot = baseRun({ run_phase: 'failed', terminal_state: true, failed_steps: ['a'] });
+    const snapshot = baseRun({
+      run_phase: 'failed',
+      terminal_state: true,
+      sealed_by: { arm: 'step_failure' as const },
+      failed_steps: ['a'],
+    });
     const { disclosures } = applyResume(snapshot, 'a', def);
     expect(disclosures).toEqual([]);
   });
@@ -189,6 +198,7 @@ describe('#282 class closure — PHASE_IS_GENERATED at the store write-tail (eng
         ...run,
         failed_steps: ['a'],
         terminal_state: true,
+        sealed_by: { arm: 'step_failure' as const },
         run_phase: 'gate_waiting', // deliberately wrong
       });
       expect(sealed.run_phase).toBe('failed');

@@ -222,7 +222,7 @@ steps:
 
 ### `execution: finalizer`
 
-A finalizer step runs at the run's terminal transition — a workflow-level try/catch/finally. It is never returned to the agent as work to execute; the engine dispatches it directly to a registered handler once the run seals. Declare one or more `on_outcome` triggers (below); every finalizer whose triggers match the sealing outcome runs, in declaration order, drain-ranked (a finalizer declared for BOTH a specific outcome and `always` runs once, via the specific-outcome group — never twice). Each finalizer runs **at most once per run** — a resumed/re-driven run never re-fires one that already settled. A finalizer handler's own failure (a thrown error, a timeout, or a handler returning `{ abort }`) is recorded as a **non-fatal** failure — it never mutates `aborted_at`, `terminal_state`, or `skipped_steps`, and never changes the sealed outcome; on a fail-class seal the one-line cause is re-rendered to include the finalizer's own failure, so the sentence and `failed_steps` agree (#373). The run's own already-sealed terminal outcome stands. An undrained finalizer (e.g. the process crashed between the terminal commit and delivery) is recoverable via `realm run drain`.
+A finalizer step runs at the run's terminal transition — a workflow-level try/catch/finally. It is never returned to the agent as work to execute; the engine dispatches it directly to a registered handler once the run seals. Declare one or more `on_outcome` triggers (below); every finalizer whose triggers match the sealing outcome runs, in declaration order, drain-ranked (a finalizer declared for BOTH a specific outcome and `always` runs once, via the specific-outcome group — never twice). Each finalizer runs **at most once per run** — a resumed/re-driven run never re-fires one that already settled. A finalizer handler's own failure (a thrown error, a timeout, or a handler returning `{ abort }`) is recorded as a **non-fatal** failure — it never mutates `aborted_at`, `terminal_state`, `sealed_by`, or `skipped_steps`, and never changes the sealed outcome (issue #367: WHICH arm sealed the run is fixed at the seal — a finalizer's own failure never rewrites it); on a fail-class seal the one-line cause is re-rendered to include the finalizer's own failure, so the sentence and `failed_steps` agree (#373). The run's own already-sealed terminal outcome stands. An undrained finalizer (e.g. the process crashed between the terminal commit and delivery) is recoverable via `realm run drain`.
 
 **v1 loader constraints:**
 
@@ -1069,7 +1069,8 @@ arm as the API itself; a **silently-stripping** proxy is exactly why the vocabul
 
 An opted-in step's attempt is disclosed in its evidence entry's `diagnostics.structured_output`
 (`realm run inspect`); `get_run_state` (MCP) does not carry per-step evidence at all by design, so
-an MCP consumer combines the run's own `terminal_reason` (multi-failure runs list all failed
+an MCP consumer combines the run's own `sealed_by_arm` (issue #367 — the recorded fact, read
+first) + `terminal_reason` (multi-failure runs list all failed
 steps) + `failed_steps` + derived `run_phase`
 instead (the same posture issue #304's `completed_with_failed_steps` finding already established).
 `realm validate` additionally prints a per-step adoption NUDGE on its own informational channel —

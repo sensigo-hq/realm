@@ -14,7 +14,11 @@ import { JsonFileStore } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { runStoreFidelityContract, type RunStoreFidelityLaw } from '@sensigo/realm-testing';
 
-const LAWS: RunStoreFidelityLaw[] = ['FIDELITY_HONESTY', 'CLAIM_SINGLE_OWNER'];
+const LAWS: RunStoreFidelityLaw[] = [
+  'FIDELITY_HONESTY',
+  'CLAIM_SINGLE_OWNER',
+  'SEALED_BY_ROUNDTRIP',
+];
 
 const agentWf: WorkflowDefinition = {
   id: 'run-store-fidelity-tck-wf',

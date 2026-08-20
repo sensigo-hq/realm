@@ -22,6 +22,7 @@ import { computeClaimDeadline } from '../engine/claim-liveness.js';
 import { applySettlement } from '../engine/settlement.js';
 import { TERMINAL_PHASES } from '../engine/lifecycle.js';
 import { hashParams } from './params-hash.js';
+import { assertSealIntegrity } from './seal-integrity.js';
 import { decideIdempotencyPolicy } from './idempotency-policy.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { readIfExists, deleteIfExists, toArtifactDeleteFailedError } from './fs-io.js';
@@ -159,6 +160,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     // (a store declaring settleStep MUST declare both; TCK-asserted).
     'settled',
     'finalizer_ledger',
+    'sealed_by',
   ]);
 
   constructor(runsDir?: string) {
@@ -438,6 +440,11 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
         });
       }
 
+      // issue #367: the seal-integrity boundary — the persisted fact and its TRANSITION, checked
+      // against the SAME `stored` snapshot the CAS above already holds (TOCTOU losers die on
+      // SNAPSHOT_MISMATCH first). Throws, never stamps.
+      assertSealIntegrity(stored, record);
+
       const updated: RunRecord = {
         ...record,
         run_phase: deriveRunPhase(record),
@@ -594,6 +601,10 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       if (!outcome.applied) {
         return outcome; // refusal/noop — fresh state, NO write (version unchanged)
       }
+
+      // issue #367: the boundary on the settle tail too — the transform's output is a write like
+      // any other (the measured update/settle asymmetry, closed).
+      assertSealIntegrity(fresh, outcome.run);
 
       const updated: RunRecord = {
         ...outcome.run,

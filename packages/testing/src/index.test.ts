@@ -236,6 +236,7 @@ describe('abandonRun parity (InMemoryStore)', () => {
       ...done,
       completed_steps: ['s'],
       terminal_state: true,
+      sealed_by: { arm: 'complete' as const },
       terminal_reason: 'Workflow completed.',
     });
     await expect(abandonRun(store, done.id)).rejects.toMatchObject({ code: 'STATE_RUN_TERMINAL' });
@@ -259,13 +260,28 @@ describe('InMemoryStore re-encounter policy', () => {
         ? {
             run_phase: 'completed' as const,
             terminal_state: true,
+            sealed_by: { arm: 'complete' as const },
             terminal_reason: 'Workflow completed.',
           }
         : phase === 'aborted'
-          ? { run_phase: 'aborted' as const, terminal_state: true, aborted_at: { step_id: 's' } }
+          ? {
+              run_phase: 'aborted' as const,
+              terminal_state: true,
+              sealed_by: { arm: 'guard_abort' as const },
+              aborted_at: { step_id: 's' },
+            }
           : phase === 'failed'
-            ? { run_phase: 'failed' as const, terminal_state: true, failed_steps: ['s'] }
-            : { run_phase: 'abandoned' as const, terminal_state: true };
+            ? {
+                run_phase: 'failed' as const,
+                terminal_state: true,
+                sealed_by: { arm: 'step_failure' as const },
+                failed_steps: ['s'],
+              }
+            : {
+                run_phase: 'abandoned' as const,
+                terminal_state: true,
+                sealed_by: { arm: 'abandon_requested' as const },
+              };
     await store.update({ ...run, ...patch });
     return run.id;
   }
@@ -561,14 +577,39 @@ describe('MockServiceRecorder', () => {
 // ---------------------------------------------------------------------------
 
 describe('assertFinalState', () => {
+  // These fixtures now describe the RUN, not just the persisted label. `assertFinalState` derives
+  // the phase (the ride-along fix), so a record whose `run_phase` says one thing while its own
+  // fields say another is judged by its fields — which is the point: the persisted value can be
+  // stale, and an assertion that trusted it could pass on a run that had actually ended otherwise.
   it('does not throw when phase matches', () => {
-    const run = makeRun({ run_phase: 'completed' });
+    const run = makeRun({
+      run_phase: 'completed',
+      terminal_state: true,
+      sealed_by: { arm: 'complete' as const },
+    });
     expect(() => assertFinalState(run, 'completed')).not.toThrow();
   });
 
   it('throws when phase does not match', () => {
-    const run = makeRun({ run_phase: 'failed' });
+    const run = makeRun({
+      run_phase: 'failed',
+      terminal_state: true,
+      sealed_by: { arm: 'step_failure' as const },
+      failed_steps: ['a'],
+    });
     expect(() => assertFinalState(run, 'completed')).toThrow(/assertFinalState/);
+  });
+
+  it('judges the RUN, not a stale label — a lying run_phase does not fool it', () => {
+    // The disposal-rule violation this ride-along fixes, made observable: before the fix this
+    // record asserted 'completed' successfully while the run had actually failed.
+    const lying = makeRun({
+      run_phase: 'completed',
+      terminal_state: true,
+      sealed_by: { arm: 'step_failure' as const },
+      failed_steps: ['a'],
+    });
+    expect(() => assertFinalState(lying, 'completed')).toThrow(/is in phase 'failed'/);
   });
 });
 

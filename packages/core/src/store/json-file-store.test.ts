@@ -529,6 +529,7 @@ describe('JsonFileStore pointer index', () => {
       idempotency_key: 'k1',
       run_phase: 'completed',
       terminal_state: true,
+      sealed_by: { arm: 'complete' },
       created_at: '2026-01-02T00:00:00.000Z',
     });
     const live = makeRunRecord({
@@ -591,6 +592,7 @@ describe('JsonFileStore.reconcileKeys()', () => {
       idempotency_key: 'k1',
       run_phase: 'completed',
       terminal_state: true,
+      sealed_by: { arm: 'complete' },
       created_at: '2026-01-01T00:00:00.000Z',
     });
     const b = makeRunRecord({
@@ -599,6 +601,7 @@ describe('JsonFileStore.reconcileKeys()', () => {
       idempotency_key: 'k1',
       run_phase: 'failed',
       terminal_state: true,
+      sealed_by: { arm: 'step_failure' },
       created_at: '2026-01-03T00:00:00.000Z', // newest → canonical
     });
     await writeFile(join(dir, 'aaa.json'), JSON.stringify(a, null, 2), 'utf8');
@@ -705,6 +708,7 @@ describe('JsonFileStore.save() index routing', () => {
       idempotency_key: 'k1',
       run_phase: 'completed',
       terminal_state: true,
+      sealed_by: { arm: 'complete' },
     });
     await store.save(terminalOwner);
     const replacement = makeRunRecord({
@@ -748,13 +752,28 @@ describe('JsonFileStore re-encounter policy', () => {
         ? {
             run_phase: 'completed' as const,
             terminal_state: true,
+            sealed_by: { arm: 'complete' as const },
             terminal_reason: 'Workflow completed.',
           }
         : phase === 'aborted'
-          ? { run_phase: 'aborted' as const, terminal_state: true, aborted_at: { step_id: 's' } }
+          ? {
+              run_phase: 'aborted' as const,
+              terminal_state: true,
+              sealed_by: { arm: 'guard_abort' as const },
+              aborted_at: { step_id: 's' },
+            }
           : phase === 'failed'
-            ? { run_phase: 'failed' as const, terminal_state: true, failed_steps: ['s'] }
-            : { run_phase: 'abandoned' as const, terminal_state: true };
+            ? {
+                run_phase: 'failed' as const,
+                terminal_state: true,
+                sealed_by: { arm: 'step_failure' as const },
+                failed_steps: ['s'],
+              }
+            : {
+                run_phase: 'abandoned' as const,
+                terminal_state: true,
+                sealed_by: { arm: 'abandon_requested' as const },
+              };
     await store.update({ ...run, ...patch });
     return run.id;
   }
@@ -945,6 +964,7 @@ describe('JsonFileStore re-encounter policy', () => {
       idempotency_key: 'k1',
       run_phase: 'failed',
       terminal_state: true,
+      sealed_by: { arm: 'step_failure' },
       failed_steps: ['s'],
     });
     await writeFile(join(dir, 'legacy-failed.json'), JSON.stringify(legacy, null, 2), 'utf8');
@@ -1119,7 +1139,12 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
       expect(existsSync(join(dir, `${run.id}.json`))).toBe(true);
       // issue #184: deleteAllForRun now re-verifies terminal state under its lock — a fresh
       // store.create() run is 'running' by default, so mark it terminal before purging it.
-      await store.update({ ...run, run_phase: 'completed', terminal_state: true });
+      await store.update({
+        ...run,
+        run_phase: 'completed',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+      });
 
       await store.deleteAllForRun(run.id);
 
@@ -1141,7 +1166,12 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
       const ptrPath = keyPointerPath(dir, 'wf-1', 'k1');
       expect(existsSync(ptrPath)).toBe(true);
       // issue #184: mark terminal before purging (see the sibling test above for why).
-      await store.update({ ...run, run_phase: 'completed', terminal_state: true });
+      await store.update({
+        ...run,
+        run_phase: 'completed',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+      });
 
       await store.deleteAllForRun(run.id);
 
@@ -1165,6 +1195,7 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
         ...oldRun,
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
         terminal_reason: 'Workflow completed.',
       });
       const { run: newRun } = await store.create({
@@ -1195,7 +1226,12 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
     try {
       const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
       // issue #184: mark terminal before purging (see the first test in this describe for why).
-      await store.update({ ...run, run_phase: 'completed', terminal_state: true });
+      await store.update({
+        ...run,
+        run_phase: 'completed',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+      });
 
       await store.deleteAllForRun(run.id);
 
@@ -1211,7 +1247,12 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
     try {
       const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
       // issue #184: mark terminal before purging (see the first test in this describe for why).
-      await store.update({ ...run, run_phase: 'completed', terminal_state: true });
+      await store.update({
+        ...run,
+        run_phase: 'completed',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+      });
 
       // A dirEntries hint that does NOT mention the run file at all — deleteAllForRun must still
       // find and delete it via its own exact path, proving the hint really is ignored.
@@ -1234,11 +1275,19 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
     const { store, dir } = await makeTmpStore();
     try {
       const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
-      await store.update({ ...run, run_phase: 'abandoned', terminal_state: true });
+      await store.update({
+        ...run,
+        run_phase: 'abandoned',
+        terminal_state: true,
+        sealed_by: { arm: 'abandon_requested' },
+      });
 
-      // The "concurrent resume" — mirrors resume.ts's own field flip exactly.
+      // The "concurrent resume" — mirrors resume.ts's own field flip exactly, which since #367
+      // includes STRIPPING `sealed_by` in the same write (a live run carrying a seal is an
+      // orphan, and the store boundary refuses it).
       const resumed = await store.get(run.id);
-      await store.update({ ...resumed, run_phase: 'running', terminal_state: false });
+      const { sealed_by: _sb, ...resumedBase } = resumed;
+      await store.update({ ...resumedBase, run_phase: 'running', terminal_state: false });
 
       await expect(store.deleteAllForRun(run.id)).rejects.toMatchObject({
         code: 'STATE_RUN_BUSY',
@@ -1267,6 +1316,7 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
         ...run,
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
         terminal_reason: 'Workflow completed.',
         finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
       });
@@ -1292,6 +1342,7 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
         ...run,
         run_phase: 'completed',
         terminal_state: true,
+        sealed_by: { arm: 'complete' },
         terminal_reason: 'Workflow completed.',
         finalizer_ledger: {
           done: { status: 'completed', rank: 0 },
@@ -1320,7 +1371,12 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
     const { store, dir } = await makeTmpStore();
     try {
       const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
-      await store.update({ ...run, run_phase: 'completed', terminal_state: true });
+      await store.update({
+        ...run,
+        run_phase: 'completed',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+      });
 
       const path = join(dir, `${run.id}.json`);
       const contentBefore = await readFile(path, 'utf8');
@@ -1366,7 +1422,12 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
         params: {},
         idempotencyKey: 'k1',
       });
-      await store.update({ ...run, run_phase: 'completed', terminal_state: true });
+      await store.update({
+        ...run,
+        run_phase: 'completed',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+      });
       const ptrPath = keyPointerPath(dir, 'wf-1', 'k1');
       expect(existsSync(ptrPath)).toBe(true);
 
@@ -1429,7 +1490,12 @@ describe('JsonFileStore ENOENT hardening (issue #107)', () => {
         });
         // issue #184: mark terminal before purging (deleteAllForRun now re-verifies terminal
         // state under its lock).
-        await store.update({ ...run, run_phase: 'completed', terminal_state: true });
+        await store.update({
+          ...run,
+          run_phase: 'completed',
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+        });
         ids.push(run.id);
       }
 
@@ -1481,7 +1547,12 @@ describe('JsonFileStore ENOENT hardening (issue #107)', () => {
       });
       // issue #184: mark the victim terminal before purging it (deleteAllForRun now re-verifies
       // terminal state under its lock).
-      await store.update({ ...victim, run_phase: 'completed', terminal_state: true });
+      await store.update({
+        ...victim,
+        run_phase: 'completed',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+      });
 
       const [, all] = await Promise.all([store.deleteAllForRun(victim.id), store.list()]);
       const ids = all.map((r) => r.id);

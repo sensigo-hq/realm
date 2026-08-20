@@ -83,6 +83,8 @@ import {
   buildEvidenceByStep,
   propagateSkips,
   deriveRunPhase,
+  armToOutcome,
+  assertSealMarkersAgree,
 } from './eligibility.js';
 import { requirementForStep } from './capability.js';
 import {
@@ -2361,6 +2363,8 @@ export async function executeStep(
           const abortDraft: RunRecord = {
             ...withAllSkipped,
             terminal_state: true,
+            // issue #367: the seal fields live in the SAME object literal as the terminal flip.
+            sealed_by: { arm: 'handler_abort', step: options.command },
             terminal_reason: `Handler '${options.command}' aborted the run: ${abortMessage}`,
             aborted_at: {
               step_id: options.command,
@@ -3073,12 +3077,25 @@ export async function executeStep(
             failureMessagesWithOverlay(failEvidence, options.command, dispatchError.message),
           )
         : `Step '${options.command}' failed: ${dispatchError.message}`;
-    const failDraft: RunRecord = {
-      ...withSkippedFail,
-      evidence: failEvidence,
-      terminal_state: isComplete,
-      ...(isComplete ? { terminal_reason: failCause } : {}),
-    };
+    // issue #367: seal fields staged FIRST in the SAME object literal, and a stale prior seal
+    // never survives either fork. #373's `failCause` (computed above) is untouched — the arm sits
+    // BESIDE the rendered sentence, never inside it. Validation exhaustion is deliberately NOT a
+    // distinct arm: a VALIDATION_EXHAUSTED failure seals 'step_failure' like any other terminal
+    // step failure, and the distinction lives in defaulted_steps/diagnostics.
+    const { sealed_by: _priorFailSeal, ...withSkippedFailBase } = withSkippedFail;
+    const failDraft: RunRecord = isComplete
+      ? {
+          ...withSkippedFailBase,
+          terminal_state: true,
+          sealed_by: { arm: 'step_failure', step: options.command },
+          evidence: failEvidence,
+          terminal_reason: failCause,
+        }
+      : {
+          ...withSkippedFailBase,
+          terminal_state: false,
+          evidence: failEvidence,
+        };
     // On the terminal transition, drain the fail/always finalizers before the single seal.
     // Non-terminal failures (recovery steps remain) run no finalizers.
     const failedRun: RunRecord = isComplete
@@ -3776,11 +3793,16 @@ export async function executeStep(
     (withSkippedComplete.in_progress_steps.length === 0 &&
       findEligibleSteps(definition, withSkippedComplete).length === 0 &&
       findEligibleGuardSteps(definition, withSkippedComplete).length === 0);
-  const completeDraft: RunRecord = {
-    ...withSkippedComplete,
-    terminal_state: isComplete,
-    ...(isComplete ? { terminal_reason: `Workflow completed.` } : {}),
-  };
+  // issue #367: seal fields staged first in the SAME object literal; stale prior seal stripped.
+  const { sealed_by: _priorCompleteSeal, ...withSkippedCompleteBase } = withSkippedComplete;
+  const completeDraft: RunRecord = isComplete
+    ? {
+        ...withSkippedCompleteBase,
+        terminal_state: true,
+        sealed_by: { arm: 'complete', step: options.command },
+        terminal_reason: `Workflow completed.`,
+      }
+    : { ...withSkippedCompleteBase, terminal_state: false };
   // On the terminal transition, drain the complete/always finalizers before the single seal.
   // issue #220 PR-2 (D6): stamp defaulted_steps onto the SEALED terminal record only — the
   // non-terminal branch (`completeDraft`) is never stamped (FM-5 guard: it must never leak onto a
@@ -4668,7 +4690,11 @@ export async function submitHumanResponse(
       : {}),
   };
 
-  const { pending_gate: _pg, terminal_reason: _tr, ...rest } = run;
+  // issue #367: `sealed_by` joins the strip list — this write re-derives the run's liveness from
+  // scratch, so a stale seal (a grandfathered/mixed-fleet record) must not survive it. The
+  // explicit `terminal_state: false` below keeps the strip inside the store boundary's ORPHANED
+  // exemption: a strip site flips non-terminal in the SAME write.
+  const { pending_gate: _pg, terminal_reason: _tr, sealed_by: _sb, ...rest } = run;
   const afterGate: RunRecord = {
     ...rest,
     in_progress_steps: rest.in_progress_steps.filter((s) => s !== gateStepName),
@@ -4693,11 +4719,16 @@ export async function submitHumanResponse(
     (withSkippedGate.in_progress_steps.length === 0 &&
       findEligibleSteps(definition, withSkippedGate).length === 0 &&
       findEligibleGuardSteps(definition, withSkippedGate).length === 0);
-  const gateDraft: RunRecord = {
-    ...withSkippedGate,
-    terminal_state: isComplete,
-    ...(isComplete ? { terminal_reason: `Workflow completed.` } : {}),
-  };
+  // issue #367: seal fields staged first (the prior seal was already stripped at the `afterGate`
+  // construction above, so this fork starts clean by construction).
+  const gateDraft: RunRecord = isComplete
+    ? {
+        ...withSkippedGate,
+        terminal_state: true,
+        sealed_by: { arm: 'gate_resolution_complete', step: gateStepName },
+        terminal_reason: `Workflow completed.`,
+      }
+    : { ...withSkippedGate, terminal_state: false };
   // On the gate-completion terminal transition, drain complete/always finalizers before seal.
   // issue #220 PR-2 (D6): stamp defaulted_steps onto the SEALED terminal record only (never the
   // non-terminal `gateDraft` — the FM-5 guard).
@@ -4843,6 +4874,8 @@ async function executeGuardStep(
     return {
       ...withSkipped,
       terminal_state: true,
+      // issue #367: the arm sits BESIDE #373's rendered sentence, never inside it.
+      sealed_by: { arm: 'guard_resolution_error', step: stepName },
       terminal_reason:
         new Set(withSkipped.failed_steps).size > 1
           ? renderFailCause(
@@ -4879,11 +4912,16 @@ async function executeGuardStep(
       (withSkipped.in_progress_steps.length === 0 &&
         findEligibleSteps(definition, withSkipped).length === 0 &&
         findEligibleGuardSteps(definition, withSkipped).length === 0);
-    return {
-      ...withSkipped,
-      terminal_state: isComplete,
-      ...(isComplete ? { terminal_reason: 'Workflow completed.' } : {}),
-    };
+    // issue #367: the stamp lives INSIDE the isComplete arm ONLY — a non-terminal guard pass must
+    // never carry a seal.
+    return isComplete
+      ? {
+          ...withSkipped,
+          terminal_state: true,
+          sealed_by: { arm: 'guard_pass_complete', step: stepName },
+          terminal_reason: 'Workflow completed.',
+        }
+      : { ...withSkipped, terminal_state: false };
   }
 
   // Guard fired — one or more conditions false; abort the run.
@@ -4918,6 +4956,10 @@ async function executeGuardStep(
   return {
     ...withAllSkipped,
     terminal_state: true,
+    // issue #367: same object literal as the terminal flip. terminal_reason stays ABSENT here (a
+    // guard abort is the one reason-less seal) — the phase now derives from the arm, and
+    // `aborted_at` is asserted congruent rather than consulted.
+    sealed_by: { arm: 'guard_abort', step: stepName },
     aborted_at: {
       step_id: stepName,
       conditions: outcome.conditions,
@@ -4973,6 +5015,8 @@ async function buildFinalizedSeal(
     deriveEffectiveTriggers(outcome, sealDraft),
   );
 
+  // issue #367: the draft already carries sealed_by (every caller stamps at construction), so the
+  // fast path above can never bypass the stamp.
   // issue #373: the post-drain re-render fires only if the drain ACTUALLY appended a failure.
   // The legacy seal is reached on every fail-class outcome, including one where every finalizer
   // succeeds — re-rendering there would rebuild the sentence without the seal site's in-hand
@@ -5057,7 +5101,25 @@ async function buildFinalizedSeal(
     }
   }
 
-  const drained: RunRecord = { ...record, terminal_state: true };
+  // issue #367: `sealed_by` is INHERITED from sealDraft, never re-derived here — a finalizer never
+  // changes which arm sealed the run, and re-deriving from `outcome` would re-couple the arm to
+  // mintOutcome, the exact coupling the recorded fact exists to break. `sealDraft` is terminal at
+  // every call site (all of them sit inside an isComplete/abort branch), so this narrow is total;
+  // it throws rather than fabricating an arm if a future caller violates that.
+  if (sealDraft.terminal_state !== true) {
+    throw new Error('buildFinalizedSeal called with a non-terminal sealDraft');
+  }
+  // Conditional spread, NOT `sealed_by: sealDraft.sealed_by`: under the flat optional plus
+  // exactOptionalPropertyTypes the unconditional form does not compile. An unstamped draft passes
+  // through honest-absent, and refusing it is the store boundary's job.
+  const drained: RunRecord = {
+    ...record,
+    terminal_state: true,
+    ...(sealDraft.sealed_by !== undefined ? { sealed_by: sealDraft.sealed_by } : {}),
+  };
+  // issue #367: SEAL_MARKERS_AGREE — transform-scoped assertion on the record THIS function
+  // produces (the second of the two transform homes; never universal).
+  assertSealMarkersAgree(drained);
   // Twin of applyMarkFinalizer's failed-arm re-render. `deriveRunPhase`, not `outcome`: an aborted
   // run whose finalizer also failed keeps its abort sentence (aborted_at wins), and a
   // complete-outcome run keeps the complete-seal literal untouched.
@@ -5638,13 +5700,35 @@ async function executeChainInternal(
     // (terminal_reason 'Workflow completed.', no aborted_at). `aborted_at ? 'abort' : 'fail'`
     // would wrongly run the catch finalizers on that success. When terminal, drain the
     // matching finalizers before the single seal write; non-terminal guard passes persist as-is.
-    const guardOutcome: 'complete' | 'fail' | 'abort' | undefined = guardResult.terminal_state
+    const guardProse: 'complete' | 'fail' | 'abort' | undefined = guardResult.terminal_state
       ? guardResult.aborted_at !== undefined
         ? 'abort'
         : guardResult.terminal_reason === 'Workflow completed.'
           ? 'complete'
           : 'fail'
       : undefined;
+    // issue #367: this classifier stays the PRODUCER of guardOutcome (it feeds buildFinalizedSeal,
+    // so a wrong answer here silently drains the wrong finalizers — the executed harm). It now
+    // prefers the RECORDED arm, keeps the prose branch as the fallback for an unstamped record,
+    // and throws if the two disagree: a future writer gap here is loud, never a silent loss.
+    const guardArmOutcome =
+      guardResult.terminal_state && guardResult.sealed_by !== undefined
+        ? armToOutcome(guardResult.sealed_by.arm)
+        : undefined;
+    if (guardArmOutcome === 'abandon') {
+      throw new Error(`guard seal on '${guardName}' produced a non-guard arm`);
+    }
+    if (
+      guardArmOutcome !== undefined &&
+      guardProse !== undefined &&
+      guardArmOutcome !== guardProse
+    ) {
+      throw new Error(
+        `sealed_by.arm (${guardArmOutcome}) disagrees with the prose classifier (${guardProse}) ` +
+          `on guard '${guardName}'`,
+      );
+    }
+    const guardOutcome: 'complete' | 'fail' | 'abort' | undefined = guardArmOutcome ?? guardProse;
     // issue #220 PR-2 (D6): stamp defaulted_steps ONLY on the 'complete' seal — a guard that FAILS
     // or ABORTS the run does not get the qualifier (the FM-5 guard: never on a non-complete
     // terminal, and never on the non-terminal `guardResult` passthrough).
