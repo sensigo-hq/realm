@@ -17,7 +17,9 @@ All notable changes to this project are documented here.
   themselves as "abandoned" and are really failures.
   It is a dry run unless you pass `--force`, and it refuses to guess: a record it cannot classify
   is printed and left alone, and a record whose recorded arm CONTRADICTS its own prose or markers
-  is printed for you to adjudicate and never rewritten. Both exit 1.
+  is printed for you to adjudicate and never rewritten. Neither is a command failure: both exit 0,
+  and `--detailed-exitcode` turns it into a three-way (0 clean, 1 the command failed, 2 residue
+  remains). A record you have ruled on stops appearing in the sweep.
   **It preserves `updated_at` on every record it touches, and that is the whole reason it exists.**
   Stamping is not activity. `realm run gc --heal` materialises the same phases but resets the
   retention clock on everything it rewrites — so run the migration FIRST if those clocks matter.
@@ -25,7 +27,7 @@ All notable changes to this project are documented here.
 - `RunStore.stampSeal` — the optional, dormant verb the migration writes through. A store that
   does not implement it is refused with a pointer to its own tooling rather than silently doing
   nothing. Version bumps so a stale writer loses its compare-and-swap instead of erasing the stamp;
-  `updated_at` does not. Five new conformance laws bind any store that declares it.
+  `updated_at` does not. Six new conformance laws bind any store that declares it.
 
 - The loader now REJECTS a failure condition that can never be true (issue #362). Writing
   `when: ['$settlement.extract.failed == true']` on a step that depends on `extract` reads exactly
@@ -60,10 +62,34 @@ All notable changes to this project are documented here.
   Records written before this keep working forever: a permanent read-path classifier recovers their
   arm, so correctness never depends on a migration having run.
   Three things enforce it, because the type system cannot: the store boundary REFUSES a fresh seal
-  with no arm, a resume that keeps one, a terminal rewrite that drops one, an unknown arm, and a
-  stamp that contradicts the record's own markers (five new `STATE_SEAL_*` error codes, all
-  throwing). The published TCK gains laws for all four refusals plus a round-trip law, so a store
-  that silently drops the field fails conformance before it ships. And `get_run_state` and
+  with no arm, a resume that keeps one, a terminal rewrite that drops one, an unknown arm, a stamp
+  that contradicts the record's own markers (unless the write carries an adjudication), and — once
+  written — any unlawful rewrite of the arm itself (**six** new `STATE_SEAL_*` error codes, all
+  throwing). That last one, `STATE_SEAL_REWRITTEN`,
+  closes the case that was still open: a plain update could quietly re-attribute what sealed a run,
+  dropping the provenance and resetting the retention clock with nothing refusing it.
+  **The lawful exception ships with it, day one:** an adjudication write carrying FRESH truthful
+  provenance — who ruled, when, and which arm it overwrote — is accepted, and a ruling that
+  misnames what it overwrote is refused exactly as hard as one carrying no provenance at all.
+  Changing an arm requires a new ruling; re-using a previous one's provenance is a rewrite. On a
+  parked record the classifier could never place, `previous_arm: null` is the truthful first-stamp
+  form — and only on a record that was already terminal.
+  **A ruling supersedes the record's own prose.** The coherence check is skipped once a seal
+  carries one, permanently, because that check exists to catch SILENT drift and a ruling is loud,
+  attributed and erase-proof while terminal. The prose is never rewritten to match: it stays as
+  historical evidence, and the ruling resolves the disagreement without falsifying it.
+  A ruling is record-level provenance and no read surface renders it yet — `export` carries it
+  verbatim; surfacing it in `inspect`/`get_run_state`/`list` rides a later increment.
+  And `realm resume` now DISCLOSES a ruling it discards. Resuming a run voids its seal, and the
+  ruling goes with it — which is correct, since the sealed state the operator ruled on no longer
+  exists — but it used to happen in silence while every voided finalizer and stripped zombie gate
+  got a line.
+  The operator verb that will write rulings is still to come; publishing the contract now means the
+  seal-immutability law never has to be loosened under implementations already built against it.
+  The published TCK gains a law family per refusal — five of them — plus a round-trip law, so a
+  store that silently drops the field fails conformance before it ships. (Coherence has NO law
+  family: it is enforced at the reference boundary, not published as a contract external stores are
+  held to.) And `get_run_state` and
   `realm run inspect` now show the arm — `inspect` also shows the run's one-line cause for the
   first time.
   Export bundles are now `realm_export_version: 4`; in a v3 bundle the absence of `sealed_by` was

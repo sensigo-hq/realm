@@ -558,6 +558,142 @@ describe('#367 part 3 — the report says no more than the branch it is printed 
   });
 });
 
+describe('#367 part 4 — the audit honors an operator ruling', () => {
+  /** A record already carrying an operator ruling. */
+  async function seedRuled(id: string, extra: Partial<RunRecord> = {}): Promise<void> {
+    await seed(id, {
+      terminal_reason: 'Workflow completed.',
+      run_phase: 'completed',
+      sealed_by: {
+        arm: 'complete',
+        adjudicated: { by: 'mihai', at: '2026-08-20T00:00:00.000Z', previous_arm: 'complete' },
+      },
+      ...extra,
+    });
+  }
+
+  it('an adjudicated-INCOHERENT record is `already_stamped {ruled}`, not `incoherent`', async () => {
+    // The closure the ruling exists to deliver: without the short-circuit, a record an operator has
+    // already ruled on re-parks as incoherent on EVERY future sweep, forever.
+    await seedRuled('ruled-scarred', {
+      terminal_reason: "Step 'a' failed: from an earlier epoch",
+      failed_steps: ['a'],
+      run_phase: 'failed',
+    });
+    const buckets = await migrateStampSeals(store, { force: true });
+    expect(buckets.incoherent).toEqual([]);
+    expect(buckets.already_stamped).toEqual([{ id: 'ruled-scarred', verified: true, ruled: true }]);
+  });
+
+  it('CONTROL: the SAME record without the ruling is still bucketed incoherent', async () => {
+    // The audit did not go blind — it defers to a ruling, and only to a ruling.
+    await seed('unruled-scarred', {
+      terminal_reason: "Step 'a' failed: from an earlier epoch",
+      failed_steps: ['a'],
+      run_phase: 'failed',
+      sealed_by: { arm: 'complete' },
+    });
+    const buckets = await migrateStampSeals(store, { force: true });
+    expect(buckets.incoherent.map((e) => e.id)).toEqual(['unruled-scarred']);
+    expect(buckets.already_stamped).toEqual([]);
+  });
+
+  it('the arithmetic holds: checked + ruled + unverifiable = the already-stamped total', async () => {
+    await seed('checked', {
+      terminal_reason: 'Workflow completed.',
+      run_phase: 'completed',
+      sealed_by: { arm: 'complete' },
+    });
+    await seedRuled('ruled');
+    await seed('abstained', {
+      terminal_reason: 'prose nothing recognises',
+      run_phase: 'completed',
+      sealed_by: { arm: 'complete' },
+    });
+    const { already_stamped: entries } = await migrateStampSeals(store, { force: true });
+    const X = entries.filter((e) => e.verified && e.ruled !== true).length;
+    const R = entries.filter((e) => e.ruled === true).length;
+    const U = entries.filter((e) => !e.verified).length;
+    expect([X, R, U]).toEqual([1, 1, 1]);
+    expect(X + R + U).toBe(entries.length);
+  });
+
+  it('R=0 — the line is byte-identical to what it was before rulings existed', async () => {
+    await seed('checked', {
+      terminal_reason: 'Workflow completed.',
+      run_phase: 'completed',
+      sealed_by: { arm: 'complete' },
+    });
+    const text = renderMigrateReport(await migrateStampSeals(store, { force: true }), {
+      force: true,
+    }).join('\n');
+    expect(text).toContain('1 run(s) already stamped, and their arms agree with the record.');
+  });
+
+  it('R>0 and U>0 — the split form shows both segments', async () => {
+    await seedRuled('ruled');
+    await seed('abstained', {
+      terminal_reason: 'prose nothing recognises',
+      run_phase: 'completed',
+      sealed_by: { arm: 'complete' },
+    });
+    const text = renderMigrateReport(await migrateStampSeals(store, { force: true }), {
+      force: true,
+    }).join('\n');
+    expect(text).toContain('1 ruled by an operator — the ruling stands');
+    expect(text).toContain('1 unverifiable — nothing in the record to check the arm against');
+    expect(text).not.toContain('their arms agree with the record');
+  });
+
+  it('R=N and U=0 — "agree with the record" is ABSENT and the ruled segment is PRESENT', async () => {
+    // Both halves asserted deliberately: the absence alone passes vacuously if the whole line
+    // stops printing, so the presence conjunct is what actually catches a lost segment.
+    await seedRuled('ruled-a');
+    await seedRuled('ruled-b');
+    const text = renderMigrateReport(await migrateStampSeals(store, { force: true }), {
+      force: true,
+    }).join('\n');
+    expect(text).not.toContain('their arms agree with the record');
+    expect(text).toContain(
+      '2 run(s) already stamped (2 ruled by an operator — the ruling stands).',
+    );
+  });
+
+  it('X>0, R>0, U=0 — the checked and ruled segments show, and the unverifiable one is omitted', async () => {
+    // The one segment-omission composition no other cell executes.
+    await seed('checked', {
+      terminal_reason: 'Workflow completed.',
+      run_phase: 'completed',
+      sealed_by: { arm: 'complete' },
+    });
+    await seedRuled('ruled');
+    const text = renderMigrateReport(await migrateStampSeals(store, { force: true }), {
+      force: true,
+    }).join('\n');
+    expect(text).toContain(
+      '2 run(s) already stamped (1 checked against the record, 1 ruled by an operator — the ruling stands).',
+    );
+    expect(text).not.toContain('unverifiable');
+  });
+
+  it('an arm this binary does not know renders as unknown, never as "phase undefined"', async () => {
+    // `armToPhase` is total over SEAL_ARMS and returns undefined for anything else; interpolated
+    // raw, that printed "(phase undefined)", which reads as a bug in this command rather than a
+    // record written by a newer version.
+    await seed('from-the-future', {
+      terminal_reason: "Step 'a' failed: boom",
+      failed_steps: ['a'],
+      run_phase: 'failed',
+      sealed_by: { arm: 'from_the_future' as never },
+    });
+    const text = renderMigrateReport(await migrateStampSeals(store, { force: true }), {
+      force: true,
+    }).join('\n');
+    expect(text).toContain('phase unknown to this binary (written by a newer version?)');
+    expect(text).not.toContain('phase undefined');
+  });
+});
+
 describe('#367 part 3 — the exit taxonomy, per bucket combination and per mode', () => {
   const E = (): Parameters<typeof migrateExitCode>[0] => ({
     stamped: [],

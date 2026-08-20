@@ -25,8 +25,13 @@ export interface MigrateBuckets {
    * abstains on a record whose own prose and markers place it nowhere, and an abstention is not a
    * finding of coherence. Reporting those as "coherent" would be the same false-confidence class
    * this program exists to remove.
+   *
+   * `ruled` means a HUMAN checked it — an operator's adjudication, which outranks the classifier.
+   * Those records are short-circuited before classification: without that, a lawfully ruled record
+   * whose prose still disagrees re-parks as `incoherent` on every future sweep, and the loop the
+   * ruling exists to close never closes.
    */
-  already_stamped: Array<{ id: string; verified: boolean }>;
+  already_stamped: Array<{ id: string; verified: boolean; ruled?: true }>;
   /** No arm, and the classifier refuses to guess one. Printed, never written. */
   unclassifiable: Array<{ id: string; why: string }>;
   /** Has an arm that DISAGREES with its own evidence. Printed, never auto-rewritten. */
@@ -127,6 +132,13 @@ export async function migrateStampSeals(
 
     // ARM 2 — already stamped: audit the arm against the record's own evidence.
     if (run.sealed_by !== undefined) {
+      // A ruled record is done. An operator looked at it and said what it is, which outranks
+      // anything the classifier can infer from prose — and re-examining it every sweep is exactly
+      // the loop the ruling was made to end.
+      if (run.sealed_by.adjudicated !== undefined) {
+        buckets.already_stamped.push({ id: run.id, verified: true, ruled: true });
+        continue;
+      }
       // The FULL markers-first classifier, deliberately: the store boundary's comparator abstains
       // on abandon-marker records, and those are exactly the stale arms nothing else observes.
       const classified = classifyLegacySeal(run);
@@ -192,6 +204,17 @@ export async function migrateStampSeals(
   return buckets;
 }
 
+/**
+ * `armToPhase` is total over `SEAL_ARMS`, and returns JS `undefined` for anything else — so an arm
+ * written by a NEWER binary interpolated straight into a report line as "phase undefined", which
+ * reads like a bug in this command rather than a record it cannot interpret.
+ */
+function phaseLabel(phase: string | undefined): string {
+  return phase === undefined
+    ? 'phase unknown to this binary (written by a newer version?)'
+    : `phase ${phase}`;
+}
+
 /** The ordering instruction, live since the vehicle exists. */
 export const ORDERING_LINE =
   'Run `realm run migrate --stamp-seals` BEFORE `realm run gc --heal` after upgrading across ' +
@@ -255,14 +278,30 @@ export function renderMigrateReport(
     // "Coherent" is a finding, and the audit cannot make it when the classifier abstains — a
     // record whose own evidence places it nowhere has an arm that stands UNVERIFIED, not one that
     // has been checked and agreed with.
-    const verified = buckets.already_stamped.filter((e) => e.verified).length;
-    const unverified = buckets.already_stamped.length - verified;
-    lines.push(
-      unverified === 0
-        ? `${buckets.already_stamped.length} run(s) already stamped, and their arms agree with the record.`
-        : `${buckets.already_stamped.length} run(s) already stamped (${verified} checked against ` +
-            `the record, ${unverified} unverifiable — nothing in the record to check the arm against).`,
-    );
+    // Three disjoint groups, and the arithmetic is pinned by a cell: X + R + U = N.
+    const ruled = buckets.already_stamped.filter((e) => e.ruled === true).length;
+    const checked = buckets.already_stamped.filter((e) => e.verified && e.ruled !== true).length;
+    const unverified = buckets.already_stamped.filter((e) => !e.verified).length;
+    if (ruled === 0 && unverified === 0) {
+      lines.push(
+        `${buckets.already_stamped.length} run(s) already stamped, and their arms agree with the record.`,
+      );
+    } else {
+      // "Their arms agree with the record" would be FALSE for a ruled record whose prose still
+      // disagrees — the ruling stands over that disagreement rather than resolving it. So any
+      // ruled record forces the split form, and the ruled segment always shows when there is one.
+      const segments: string[] = [];
+      if (checked > 0) segments.push(`${checked} checked against the record`);
+      if (ruled > 0) segments.push(`${ruled} ruled by an operator — the ruling stands`);
+      if (unverified > 0) {
+        segments.push(
+          `${unverified} unverifiable — nothing in the record to check the arm against`,
+        );
+      }
+      lines.push(
+        `${buckets.already_stamped.length} run(s) already stamped (${segments.join(', ')}).`,
+      );
+    }
   }
   if (buckets.unclassifiable.length > 0) {
     lines.push(
@@ -277,8 +316,8 @@ export function renderMigrateReport(
     );
     for (const e of buckets.incoherent) {
       lines.push(
-        `  • ${e.id}: recorded arm '${e.arm}' (phase ${e.arm_phase}), but the record's own ` +
-          `markers/prose read as '${e.classified}' (phase ${e.classified_phase})`,
+        `  • ${e.id}: recorded arm '${e.arm}' (${phaseLabel(e.arm_phase)}), but the record's own ` +
+          `markers/prose read as '${e.classified}' (${phaseLabel(e.classified_phase)})`,
       );
     }
   }
