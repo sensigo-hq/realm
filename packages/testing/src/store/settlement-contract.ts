@@ -879,6 +879,12 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
       run: async () => {
         const run = await freshRun('unstamped');
         await expectRefusedWith('STATE_SEAL_UNSTAMPED', 'an unstamped fresh seal', () =>
+          /* eslint-disable-next-line no-restricted-syntax --
+           * issue #367 (part 2), AUTHORIZED: this violation is the LAW. SEAL_FRESH_WRITE_REFUSED
+           * exists to prove the store refuses an unstamped fresh seal, so the fixture has to
+           * construct one. (This file is a published contract source, not a `.test.ts`, which is
+           * why the test-file scoping does not cover it.)
+           */
           adapter.store.update({ ...run, terminal_state: true, terminal_reason: 'tck' }),
         );
       },

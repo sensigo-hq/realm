@@ -312,6 +312,10 @@ export async function handleGetRunState(
   // complete-only stamping), via the SAME shared helper that stamping itself now calls.
   const defaultedSteps = deriveDefaultedSteps(run.evidence);
 
+  /* eslint-disable-next-line no-restricted-syntax --
+   * issue #367 (part 2), AUTHORIZED: this is an envelope ECHO of a stored value, not a writer.
+   * Nothing here reaches a store — the object is the MCP response shape.
+   */
   return {
     run_id: run.id,
     workflow_id: run.workflow_id,
