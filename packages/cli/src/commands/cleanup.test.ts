@@ -125,7 +125,21 @@ describe('cleanupRuns', () => {
     vi.setSystemTime(now);
 
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
-    const gateRun = makeRun({ updated_at: oldTime, run_phase: 'gate_waiting' });
+    // issue #367: the fixture now carries the GATE, not just the label. It used to set
+    // `run_phase: 'gate_waiting'` with no `pending_gate` behind it, which pinned the old
+    // label-trusting skip — a record claiming to wait on a gate that does not exist is the #282
+    // stale-label shape, and such a run is genuinely idle.
+    const gateRun = makeRun({
+      updated_at: oldTime,
+      run_phase: 'gate_waiting',
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 'step-one',
+        preview: {},
+        choices: ['approve', 'reject'],
+        opened_at: oldTime,
+      },
+    });
     await injectRun(dir, gateRun);
 
     const store = new JsonFileStore(dir);
@@ -134,8 +148,67 @@ describe('cleanupRuns', () => {
     expect(affected).toHaveLength(0);
 
     const unchanged = await store.get(gateRun.id);
-    expect(unchanged.run_phase).toBe('gate_waiting');
     expect(unchanged.terminal_state).toBe(false);
+  });
+
+  it('does not kill a run waiting on a LIVE gate whose persisted phase is STALE', async () => {
+    // The defect this closes: the waiting-skip keyed on the PERSISTED `run_phase`, so a record
+    // whose label had gone stale while a human was genuinely mid-gate got swept — sealed
+    // `cleanup_sweep` with `pending_gate` still on the terminal record, freshly minting the very
+    // zombie shape #282 closed. The stale-phase population is exactly what `gc --heal` exists for,
+    // so cleanup-before-heal is an ordinary ordering, not an exotic one.
+    const now = new Date('2024-06-01T12:00:00Z');
+    vi.setSystemTime(now);
+    const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
+    const staleGated = makeRun({
+      updated_at: oldTime,
+      run_phase: 'running', // STALE — a human is actually waiting on the gate below
+      pending_gate: {
+        gate_id: 'g-live',
+        step_name: 'step-one',
+        preview: {},
+        choices: ['approve', 'reject'],
+        opened_at: oldTime,
+      },
+    });
+    await injectRun(dir, staleGated);
+
+    const store = new JsonFileStore(dir);
+    const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
+    expect(affected).toHaveLength(0);
+
+    const unchanged = await store.get(staleGated.id);
+    expect(unchanged.terminal_state).toBe(false);
+    expect(unchanged.sealed_by).toBeUndefined();
+    expect(unchanged.pending_gate).toBeDefined();
+  });
+
+  it('a stale gate LABEL with no gate behind it is NOT protected — it is an idle run', async () => {
+    // The other polarity, so "skip anything that mentions a gate" cannot pass the cell above.
+    const now = new Date('2024-06-01T12:00:00Z');
+    vi.setSystemTime(now);
+    const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
+    const labelOnly = makeRun({ updated_at: oldTime, run_phase: 'gate_waiting' });
+    await injectRun(dir, labelOnly);
+
+    const store = new JsonFileStore(dir);
+    const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
+    expect(affected).toHaveLength(1);
+  });
+
+  it('the sweep seals arm `cleanup_sweep`, and says what it killed', async () => {
+    const now = new Date('2024-06-01T12:00:00Z');
+    vi.setSystemTime(now);
+    const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
+    const idle = makeRun({ updated_at: oldTime, run_phase: 'running' });
+    await injectRun(dir, idle);
+
+    const store = new JsonFileStore(dir);
+    await cleanupRuns({ olderThan: '1d' }, store);
+    const swept = await store.get(idle.id);
+    expect(swept.sealed_by).toEqual({ arm: 'cleanup_sweep' });
+    expect(swept.run_phase).toBe('abandoned');
+    expect(swept.terminal_state).toBe(true);
   });
 
   it('sets abandoned_at and derives abandoned (not failed) for an idle running run carrying failed_steps', async () => {

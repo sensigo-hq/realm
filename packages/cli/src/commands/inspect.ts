@@ -270,9 +270,19 @@ export async function inspectRun(
     const arm = (SEAL_ARMS as readonly string[]).includes(run.sealed_by.arm)
       ? run.sealed_by.arm
       : `unrecognized arm '${run.sealed_by.arm}'`;
-    lines.push(
-      `Sealed by: ${arm}${run.sealed_by.step !== undefined ? ` (${run.sealed_by.step})` : ''}`,
-    );
+    // issue #367: the `(step)` suffix renders ONLY where the step is the arm's deterministic
+    // identity — a guard, a gate, or the handler that aborted. For `complete` and `step_failure`
+    // the recorded step is whichever one happened to settle LAST, a scheduling artifact: issue
+    // #373 deliberately stopped the cause line from naming a culprit, and printing that step one
+    // line above the culprit-free Cause would read as the culprit and undo exactly that. The
+    // RECORD is untouched — the step stays persisted and export carries it. Render fork only.
+    const stepIsDeterministic =
+      run.sealed_by.arm.startsWith('guard_') ||
+      run.sealed_by.arm.startsWith('gate_') ||
+      run.sealed_by.arm === 'handler_abort';
+    const stepSuffix =
+      stepIsDeterministic && run.sealed_by.step !== undefined ? ` (${run.sealed_by.step})` : '';
+    lines.push(`Sealed by: ${arm}${stepSuffix}`);
   }
   // The one-line cause has never been rendered here — four rounds of #367/#373 review kept
   // finding that the operator's primary surface shows the failed SET but not why the run ended.

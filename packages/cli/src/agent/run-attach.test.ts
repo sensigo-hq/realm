@@ -76,6 +76,11 @@ describe('resolveRunAttach', () => {
     const run = await store.get(runId);
     expect(run.terminal_state).toBe(true);
     expect(run.terminal_reason).toBe(EXTENSIONS_LOAD_FAILED);
+    // issue #367 census path: an extensions-load death is a FAILURE and now records itself as one.
+    // Before the substrate it derived `abandoned` — nothing had failed and the prose was not the
+    // completed literal — which is the #372 misfiling this closes.
+    expect(run.sealed_by).toEqual({ arm: 'extensions_load_failure' });
+    expect(run.run_phase).toBe('failed');
   });
 
   it('load failure on a run WITH evidence entries rethrows with NO run mutation', async () => {
@@ -106,6 +111,8 @@ describe('resolveRunAttach', () => {
     const run = await store.get(runId);
     run.terminal_state = true;
     run.terminal_reason = EXTENSIONS_LOAD_FAILED;
+    // issue #367: a terminal record names its arm — this is the shape the real writer produces.
+    run.sealed_by = { arm: 'extensions_load_failure' };
     await store.update(run);
 
     const result = await resolveRunAttach(runId, {
@@ -115,6 +122,11 @@ describe('resolveRunAttach', () => {
     });
     expect(result.definition.id).toBe('attach-wf');
     const cleared = await store.get(runId);
+    // issue #367 STRIP PIN: the retry path flips the run live again, so the seal fact must leave
+    // in that same write. The store boundary would refuse the update otherwise — this asserts the
+    // read-back carries no orphan.
+    expect(cleared.sealed_by).toBeUndefined();
+    expect(cleared.terminal_state).toBe(false);
     expect(cleared.terminal_state).toBe(false);
     expect(cleared.terminal_reason).toBeUndefined();
     expect(cleared.run_phase).toBe('running');

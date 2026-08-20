@@ -9,9 +9,16 @@ export const abandonCommand = new Command('abandon')
     const { JsonFileStore, abandonRun } = await import('@sensigo/realm');
     const runStore = new JsonFileStore();
     try {
+      // issue #367: read first, so the output can say whether THIS call changed anything —
+      // abandoning an already-abandoned run is an idempotent no-op and used to print exactly the
+      // same line as a real kill.
+      const before = await runStore.get(runId);
+      const alreadyAbandoned = before.abandoned_at !== undefined;
       const run = await abandonRun(runStore, runId, opts.reason);
       console.log(
-        `Run '${runId}' abandoned (phase: '${run.run_phase}'). Reason: ${run.terminal_reason}.\n` +
+        `Run '${runId}' abandoned (phase: '${run.run_phase}').` +
+          (alreadyAbandoned ? ' Already abandoned (no change this call).' : '') +
+          ` Reason: ${run.terminal_reason}.\n` +
           `To re-run the same idempotency key, use start_run with on_terminal_match: 'rerun' (default 'reuse' returns this abandoned run).\n` +
           // issue #222 — the documented/advised abandon contract: unconditional, same wording as
           // the abandon_run MCP tool's `note` field (abandon-run.ts).

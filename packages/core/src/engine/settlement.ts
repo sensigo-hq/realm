@@ -592,7 +592,7 @@ function applyCompleteOrFailEdge(
       ? {
           terminal_reason:
             outcome === 'complete'
-              ? 'Workflow completed.' // eligibility.ts:47 keys deriveRunPhase's 'completed' on this
+              ? 'Workflow completed.' // the legacy-classifier leg keys 'completed' on this (#367)
               : failCause,
         }
       : {}),
@@ -807,7 +807,8 @@ function applySettleGate(
     const draft: RunRecord = {
       ...withSkipped,
       terminal_state: isComplete,
-      // eligibility.ts:65 keys deriveRunPhase's 'completed' on this exact string.
+      // The legacy-classifier leg of deriveRunPhase keys 'completed' on this exact string —
+      // for the LEGACY population only; on a stamped record the arm derives (issue #367).
       ...(isComplete ? { terminal_reason: 'Workflow completed.' } : {}),
     };
     const { run, transitioned } = applyTerminalPostconditions(
@@ -1197,7 +1198,7 @@ function applySettleGuard(
   const draft: RunRecord = {
     ...withSkipped,
     terminal_state: isComplete,
-    // execution-loop.ts:3675-3705 parity; eligibility.ts:65 keys deriveRunPhase's 'completed' on
+    // execution-loop.ts:3675-3705 parity; the legacy-classifier leg keys 'completed' on
     // this exact string.
     ...(isComplete ? { terminal_reason: 'Workflow completed.' } : {}),
   };

@@ -30,6 +30,28 @@ All notable changes to this project are documented here.
   **Read before running `realm run gc --heal` after upgrading**: heal rewrites records whose
   derived phase moved, and each rewrite resets `updated_at` — the clock retention reads. The
   stamp-seals migration ships in the next PR; until then, skip `--heal` if those clocks matter.
+  `@sensigo/realm-testing` grows its published conformance suites in step; see that package's
+  README for what a custom store must now declare and refuse.
+
+### Fixed
+
+- **`realm run cleanup` could kill a run somebody was answering** (issue #367). Its
+  skip-what's-waiting check read the run's PERSISTED phase label, so a record whose label had gone
+  stale while a human was genuinely mid-gate got swept — sealed abandoned with the open gate still
+  on it, which is the same zombie shape issue #282 closed, freshly minted. It now derives the phase
+  and checks the gate directly, matching what `realm run abandon` has always done. The stale-label
+  population is exactly what `gc --heal` exists for, so running cleanup before heal was an ordinary
+  way to hit this.
+- `realm run cleanup` now names the runs it abandoned and carries the same kill advisory its
+  sibling commands do, instead of printing only a count.
+- `realm run gc --heal`'s retention-clock warning now prints on every branch. It shipped inside the
+  nothing-to-heal branch — printed only when nothing was at stake, and silent in the `--force`
+  branch that actually resets the clocks it warns about.
+- `realm run gc --heal`'s conflict-skip line no longer claims a concurrent writer "heals them too".
+  That is true when another write moved the record, and false when a lock is merely held and
+  nothing was written; the wording now covers both.
+- Abandoning an already-abandoned run says so on both surfaces, instead of replying exactly as if
+  it had just killed a live run.
 
 ### Fixed
 

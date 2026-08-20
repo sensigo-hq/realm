@@ -159,9 +159,9 @@ export function classifyLegacySeal(run: ClassifiableRun): SealArm | undefined {
  * `guard_abort` re-seal is reason-less, so it is marker-only-visible, and the markers-first
  * comparator is what catches it.
  *
- * Named blindness, on record: an old-binary `abandon_requested` re-seal carrying a stale arm is
- * invisible here. Its observer is the migrate sweep's `incoherent` bucket, which uses the FULL
- * classifier.
+ * Named blindness, on record: a stale arm on a record carrying `abandoned_at` is invisible here —
+ * that is BOTH abandon-class arms, `abandon_requested` AND `cleanup_sweep`. Their observer is the
+ * migrate sweep's `incoherent` bucket, which uses the FULL classifier.
  *
  * SKIPPING MEANS ABSTAINING, and that distinction is load-bearing — measured, not reasoned. An
  * abandoned-marker record that merely FALLS THROUGH to the prose battery does not go unjudged: an

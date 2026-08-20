@@ -79,6 +79,105 @@ describe('#367 — the arm mappings are total and closed', () => {
   });
 });
 
+describe('#367 — the census completeness guard', () => {
+  // THE GUARD WHOSE ABSENCE LET A GAP SHIP. The first version of this PR had 13 of the 21 census
+  // paths celled, and a conformance mutant proved the cost: two same-phase WRONG ARMS
+  // (gate_expiry_default → gate_resolution_complete, cleanup_sweep → abandon_requested) sailed
+  // through 3880 green tests. Neither the boundary nor the coherence check can see a wrong arm of
+  // the right phase — behaviour cells are the only observer — so the coverage set itself has to be
+  // asserted, not assumed.
+  //
+  // Keyed to PATHS, not arms: several paths share an arm, and per-arm cells would leave siblings
+  // uncovered, which is the same blindness one level up.
+  const CENSUS_PATHS: Array<{ path: string; arm: SealArm; home: string }> = [
+    // settlement transform (8 call sites)
+    { path: 'settlement/complete', arm: 'complete', home: 'sealed-by-writers.test.ts' },
+    { path: 'settlement/step_failure', arm: 'step_failure', home: 'sealed-by-writers.test.ts' },
+    { path: 'settlement/handler_abort', arm: 'handler_abort', home: 'sealed-by-writers.test.ts' },
+    {
+      path: 'settlement/guard_resolution_error',
+      arm: 'guard_resolution_error',
+      home: 'sealed-by-writers.test.ts',
+    },
+    { path: 'settlement/guard_abort', arm: 'guard_abort', home: 'sealed-by-writers.test.ts' },
+    {
+      path: 'settlement/guard_pass_complete',
+      arm: 'guard_pass_complete',
+      home: 'sealed-by-writers.test.ts',
+    },
+    {
+      path: 'settlement/gate_resolution_complete',
+      arm: 'gate_resolution_complete',
+      home: 'sealed-by-writers.test.ts',
+    },
+    {
+      path: 'settlement/gate_expiry_default',
+      arm: 'gate_expiry_default',
+      home: 'sealed-by-writers.test.ts',
+    },
+    {
+      path: 'settlement/gate_expiry_abort',
+      arm: 'gate_expiry_abort',
+      home: 'sealed-by-writers.test.ts',
+    },
+    // legacy loop (the dormancy path, driven by a non-declaring store double)
+    { path: 'legacy/complete', arm: 'complete', home: 'sealed-by-writers.test.ts' },
+    { path: 'legacy/step_failure', arm: 'step_failure', home: 'sealed-by-writers.test.ts' },
+    { path: 'legacy/handler_abort', arm: 'handler_abort', home: 'sealed-by-writers.test.ts' },
+    {
+      path: 'legacy/guard_resolution_error',
+      arm: 'guard_resolution_error',
+      home: 'sealed-by-writers.test.ts',
+    },
+    { path: 'legacy/guard_abort', arm: 'guard_abort', home: 'sealed-by-writers.test.ts' },
+    {
+      path: 'legacy/guard_pass_complete',
+      arm: 'guard_pass_complete',
+      home: 'sealed-by-writers.test.ts',
+    },
+    // the deleted-ternary leg: exhaustion seals step_failure like any other failure
+    {
+      path: 'settlement/validation_exhaustion',
+      arm: 'step_failure',
+      home: 'sealed-by-writers.test.ts',
+    },
+    // gate expiry reached through the downstream-step enactment point
+    { path: 'expiry/enact_then_proceed', arm: 'complete', home: 'execute-step-expiry.test.ts' },
+    // run-level bypass writers (4)
+    {
+      path: 'bypass/abandon_requested',
+      arm: 'abandon_requested',
+      home: 'sealed-by-writers.test.ts',
+    },
+    { path: 'bypass/cleanup_sweep', arm: 'cleanup_sweep', home: 'cli/cleanup.test.ts' },
+    { path: 'bypass/spawn_failure', arm: 'spawn_failure', home: 'cli/listen.test.ts' },
+    {
+      path: 'bypass/extensions_load_failure',
+      arm: 'extensions_load_failure',
+      home: 'cli/run-attach.test.ts',
+    },
+  ];
+
+  it('the census holds all 21 terminal paths, and every one names its cell home', () => {
+    expect(CENSUS_PATHS).toHaveLength(21);
+    expect(new Set(CENSUS_PATHS.map((p) => p.path)).size).toBe(21); // no duplicate path keys
+    for (const entry of CENSUS_PATHS) expect(entry.home).not.toBe('');
+  });
+
+  it('every SEAL_ARMS member appears on at least one celled census path', () => {
+    // The direct observer of the gap: an arm nothing exercises has no wrong-arm detector at all.
+    const covered = new Set(CENSUS_PATHS.map((p) => p.arm));
+    const uncovered = SEAL_ARMS.filter((arm) => !covered.has(arm));
+    expect(uncovered).toEqual([]);
+  });
+
+  it('every census arm is a real SEAL_ARMS member — the census cannot drift into fiction', () => {
+    for (const entry of CENSUS_PATHS) {
+      expect((SEAL_ARMS as readonly string[]).includes(entry.arm)).toBe(true);
+    }
+  });
+});
+
 describe('#367 — deriveRunPhase: the three conjuncts of the sealed-wins branch', () => {
   it('(conjunct: sealed_by present) a stamped terminal record derives from the ARM, not the prose', () => {
     // The defect in one line: identical prose, opposite phases, decided by the recorded fact.
@@ -413,6 +512,25 @@ describe('#367 — the store boundary, clause by clause', () => {
     // shares the same store instance and record.
     const reread = await store.get(run.id);
     expect(reread.sealed_by?.arm).toBe('complete');
+  });
+});
+
+describe('#367 — operator-facing messages say no more than their branch guards', () => {
+  // The recurring defect class in this program: a message whose claim is wider than the condition
+  // that produces it. Each of these pins the TEXT against the branch it actually fires on.
+  it('the unstamped-seal message names the TRANSITION it guards, not "every terminal write"', async () => {
+    const store = await freshStore();
+    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    let message = '';
+    try {
+      await store.update({ ...run, terminal_state: true, terminal_reason: 'x' });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain('every fresh seal (non-terminal → terminal write)');
+    // The wider claim would be FALSE: an already-terminal legacy record re-persists fine, which
+    // the negative control above proves.
+    expect(message).not.toContain('every terminal write must name');
   });
 });
 

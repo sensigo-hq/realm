@@ -98,6 +98,51 @@ const basicDef: WorkflowDefinition = {
   },
 };
 
+describe('inspectRun — the seal fact (issue #367)', () => {
+  it("renders the arm, and the step ONLY where the step is the arm's deterministic identity", async () => {
+    // A guard IS the step that sealed the run — naming it is the whole diagnostic.
+    const guarded = makeRun([], {
+      run_phase: 'aborted',
+      terminal_state: true,
+      aborted_at: { step_id: 'g' },
+      sealed_by: { arm: 'guard_abort', step: 'g' },
+    });
+    // A guard abort is the one reason-less seal — drop the factory's default so the fixture is
+    // the shape the real writer produces.
+    delete (guarded as { terminal_reason?: string }).terminal_reason;
+    const out = await inspectRun('run_test1', makeRunStore(guarded), makeWorkflowStore(basicDef));
+    expect(out).toContain('Sealed by: guard_abort (g)');
+  });
+
+  it('does NOT render the step for a multi-failure step_failure seal — that step is a settle-order artifact', async () => {
+    // The step on a `step_failure` seal is whichever one settled LAST, which is exactly the
+    // instability issue #373 removed from the cause line. Printed one line above that culprit-free
+    // Cause, it would read as the culprit and undo the fix. The RECORD still carries it.
+    const multi = makeRun([], {
+      run_phase: 'failed',
+      terminal_state: true,
+      failed_steps: ['alpha', 'beta'],
+      sealed_by: { arm: 'step_failure', step: 'beta' },
+      terminal_reason: '2 steps failed: alpha ("boom"), beta ("bang").',
+    });
+    const out = await inspectRun('run_test1', makeRunStore(multi), makeWorkflowStore(basicDef));
+    expect(out).toContain('Sealed by: step_failure');
+    expect(out).not.toContain('Sealed by: step_failure (beta)');
+    // The cause line IS rendered — first time inspect has ever shown it.
+    expect(out).toContain('Cause: 2 steps failed: alpha ("boom"), beta ("bang").');
+  });
+
+  it('renders an unrecognised arm rather than hiding it', async () => {
+    const future = makeRun([], {
+      // The cast is the point: a foreign arm arrives from disk or from a newer binary, and the
+      // type system cannot stop it — so the surface must not pretend the run is unsealed.
+      sealed_by: { arm: 'from_the_future' } as unknown as NonNullable<RunRecord['sealed_by']>,
+    });
+    const out = await inspectRun('run_test1', makeRunStore(future), makeWorkflowStore(basicDef));
+    expect(out).toContain("unrecognized arm 'from_the_future'");
+  });
+});
+
 describe('inspectRun', () => {
   it('shows run ID, workflow ID, state, and evidence steps for a completed run', async () => {
     const run = makeRun([makeSnapshot('step_one')]);

@@ -73,7 +73,8 @@ export interface RunStateSummary {
    * The run's own terminal-seal reason string, verbatim (issue #302 — disclosure gaps), e.g.
    * `'Workflow completed.'`. Present only when the underlying `RunRecord.terminal_reason` is set —
    * absent on a live (non-terminal) run, never a synthesized/default string. This is what
-   * `deriveRunPhase` itself keys the `'completed'` phase on (eligibility.ts:65), so an MCP
+   * `deriveRunPhase`'s LEGACY leg keys the `'completed'` phase on — on a stamped record the arm
+   * derives and this string is read by nobody (issue #367) — so an MCP
    * consumer that wants to distinguish "completed cleanly" from "completed with failed_steps
    * carried" (issue #302's `completed_with_failed_steps` run-health class — CLI-only; this run's
    * own `get_run_state` terminal guard below stays byte-untouched, see `run_health`'s own doc)
@@ -83,10 +84,14 @@ export interface RunStateSummary {
   terminal_reason?: string;
   /**
    * Issue #367: WHICH arm of the engine sealed this run — the recorded fact, not a re-reading of
-   * the prose. Present on any terminal run written since #367; absent on a live run and on the
-   * legacy population (where `run_phase` is still recovered by the read-path classifier). An arm
-   * this binary does not recognise renders as `unrecognized arm '<value>'` rather than being
-   * omitted, so a newer writer's record is never silently reported as unsealed.
+   * the prose. Present on any terminal run written since #367, and absent on the legacy population
+   * (where `run_phase` is recovered by the read-path classifier instead). Normally absent on a
+   * live run — with ONE honest exception: an ORPHANED stamp awaiting self-heal, which an old
+   * binary's resume produces by flipping the run live while keeping the seal. Such a record
+   * renders an arm beside `run_phase: 'running'`, and that IS the truth about it; the derivation
+   * deliberately ignores the stamp there, and the next settle write strips it. An arm this binary
+   * does not recognise renders as `unrecognized arm '<value>'` rather than being omitted, so a
+   * newer writer's record is never silently reported as unsealed.
    *
    * Prefer this over parsing `terminal_reason`: the prose is for people.
    */

@@ -689,19 +689,28 @@ function printGcReport(
       healResult.skipped_conflict.length === 0 &&
       healResult.failed.length === 0;
 
-    if (nothingToReportHeal) {
-      console.log('\nNo stale-phase records found to heal.');
+    // issue #367: the retention-clock note belongs on EVERY heal branch, and most of all on the
+    // ones that actually rewrite records. It first shipped inside the nothing-to-heal branch —
+    // i.e. printed only when nothing was at stake, and silent in the --force branch that
+    // measurably resets updated_at on every healed record.
+    const printRetentionClockNote = (): void => {
       console.log(
-        'Note (issue #367): after upgrading across the seal substrate, a first heal rewrites every\n' +
+        '\nNote (issue #367): after upgrading across the seal substrate, a first heal rewrites every\n' +
           'legacy record whose derived phase moved — and each rewrite resets updated_at, the clock\n' +
           'retention reads. Until `realm run migrate --stamp-seals` ships, skip --heal if those\n' +
           'clocks matter; once it ships, run the migration first.',
       );
+    };
+
+    if (nothingToReportHeal) {
+      console.log('\nNo stale-phase records found to heal.');
+      printRetentionClockNote();
     } else if (dryRun) {
       console.log(`\n${healResult.would_heal.length} stale-phase record(s) WOULD be healed:`);
       for (const e of healResult.would_heal) {
         console.log(`  • ${e.id}: persisted '${e.persisted_phase}' → derived '${e.derived_phase}'`);
       }
+      printRetentionClockNote();
     } else {
       console.log(
         `\nHealed ${healResult.healed.length} stale-phase record(s). ` +
@@ -710,13 +719,17 @@ function printGcReport(
       for (const e of healResult.healed) {
         console.log(`  • ${e.id}: persisted '${e.persisted_phase}' → derived '${e.derived_phase}'`);
       }
+      printRetentionClockNote();
     }
-    // A concurrent writer's own write ALSO heals the phase — benign, exit-code-neutral, never
-    // `failed` (mirrors the orphan-artifact sweep's own `resurrected` bucket precedent above).
+    // Benign, exit-code-neutral, never `failed` (mirrors the orphan-artifact sweep's own
+    // `resurrected` bucket precedent above). The wording covers BOTH legs honestly: a
+    // SNAPSHOT_MISMATCH skip means someone else's write already moved the record (and healed the
+    // phase with it), while a RUN_BUSY skip means a lock is HELD and nothing was written — the
+    // record is still stale, and it heals on that writer's own next write, not on this one.
     if (healResult.skipped_conflict.length > 0) {
       console.log(
-        `(${healResult.skipped_conflict.length} record(s) skipped — a concurrent writer already ` +
-          `touched them, which heals them too.)`,
+        `(${healResult.skipped_conflict.length} record(s) skipped — a concurrent writer holds or ` +
+          `just moved them; their own next write heals them.)`,
       );
       for (const e of healResult.skipped_conflict) {
         console.log(`  • ${e.id}  (skipped — concurrent write)`);

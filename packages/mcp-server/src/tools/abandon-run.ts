@@ -36,6 +36,9 @@ const ABANDON_ADVISORY =
   'abandon is a kill — declared finalizers (if any) did NOT run; ' +
   "'abort' is the graceful path.";
 
+/** issue #367: prefixed to the note when this call found the run ALREADY abandoned. */
+const ABANDON_NO_OP_NOTE = 'already abandoned (no change this call).';
+
 /**
  * Business logic for the abandon_run tool. Abandons a non-terminal run via the shared core
  * primitive and returns a minimal state summary.
@@ -45,13 +48,25 @@ export async function handleAbandonRun(
   stores?: HandleAbandonRunStores,
 ): Promise<AbandonRunSummary> {
   const runStore = stores?.runStore ?? new JsonFileStore();
+  // issue #367: read first, so the response can say whether THIS call changed anything. Core's
+  // `abandonRun` is idempotent — a second abandon returns the stored record untouched — and the
+  // response used to be byte-identical either way, leaving an operator unable to tell a no-op from
+  // a kill. Exact for the sequential case; if another writer abandons between these two lines this
+  // call reports a fresh abandon for someone else's write, which is a rare and one-way misread of
+  // WHOSE write it was, never of the run's state.
+  const before = await runStore.get(args.run_id);
+  const alreadyAbandoned = before.abandoned_at !== undefined;
   const run = await abandonRun(runStore, args.run_id, args.reason);
   return {
     run_id: run.id,
+    // `run_phase` here is the PERSISTED value, which is correct on both paths: every record
+    // returned by `abandonRun` comes out of a store write tail, which derives it (issue #367's
+    // disposal rule — read this comment before copying the pattern anywhere that lacks that
+    // guarantee).
     run_phase: run.run_phase,
     terminal_state: run.terminal_state,
     terminal_reason: run.terminal_reason,
-    note: ABANDON_ADVISORY,
+    note: alreadyAbandoned ? `${ABANDON_NO_OP_NOTE} ${ABANDON_ADVISORY}` : ABANDON_ADVISORY,
   };
 }
 

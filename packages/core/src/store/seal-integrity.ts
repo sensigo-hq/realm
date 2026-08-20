@@ -32,7 +32,8 @@ export function assertSealIntegrity(stored: RunRecord, next: RunRecord): void {
     next.sealed_by === undefined
   ) {
     throw new WorkflowError(
-      `Run '${next.id}' sealed without sealed_by — every terminal write must name its seal arm`,
+      `Run '${next.id}' sealed without sealed_by — every fresh seal (non-terminal → terminal ` +
+        `write) must name its seal arm`,
       {
         code: 'STATE_SEAL_UNSTAMPED',
         category: 'STATE',
@@ -111,9 +112,10 @@ export function assertSealIntegrity(stored: RunRecord, next: RunRecord): void {
   // abandoned-marker branch, the sole measured false-positive source (a record legitimately
   // carrying `abandoned_at` from an earlier life would contradict an honest arm). The
   // aborted-marker branch stays live, because the reason-less `guard_abort` re-seal is
-  // marker-only-visible and would otherwise go uncaught. Named blindness: an old-binary
-  // `abandon_requested` re-seal carrying a stale arm is invisible here; its observer is the
-  // migrate sweep's incoherent bucket in a later PR.
+  // marker-only-visible and would otherwise go uncaught. Named blindness: a stale arm on a record
+  // carrying `abandoned_at` is invisible here — that is BOTH abandon-class arms,
+  // `abandon_requested` AND `cleanup_sweep`. Their observer is the migrate sweep's incoherent
+  // bucket in a later PR, which uses the FULL classifier.
   if (next.terminal_state === true && next.sealed_by !== undefined) {
     const { sealed_by: _stamp, ...sansStamp } = next;
     const classified = classifyForCoherence(sansStamp);

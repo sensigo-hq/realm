@@ -245,6 +245,130 @@ describe('#367 — the writer census: every terminal path persists its own arm',
     await expect(declaring.update(resumed)).resolves.toBeDefined();
   });
 
+  // --- the gate arms: three sites, three arms, all previously un-celled ---
+  function gateDef(gate: Record<string, unknown>): WorkflowDefinition {
+    return {
+      id: 'seal-gate-wf',
+      name: 'Seal Gate',
+      version: 1,
+      steps: {
+        approve: {
+          description: 'Approve',
+          execution: 'auto',
+          trust: 'human_confirmed',
+          depends_on: [],
+          gate,
+        },
+      },
+    } as unknown as WorkflowDefinition;
+  }
+
+  it('a human gate resolution that COMPLETES the run persists arm `gate_resolution_complete`', async () => {
+    const d = gateDef({ choices: ['approve', 'reject'] });
+    const { run } = await declaring.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    await executeStep(declaring, d, {
+      runId: run.id,
+      command: 'approve',
+      input: {},
+      dispatcher: succeed,
+    });
+    const gate = (await declaring.get(run.id)).pending_gate!;
+    expect(gate).toBeDefined(); // non-vacuity: the gate really opened
+    await submitHumanResponse(declaring, d, {
+      runId: run.id,
+      gateId: gate.gate_id,
+      choice: 'approve',
+    });
+    const record = await declaring.get(run.id);
+    expect(record.sealed_by).toEqual({ arm: 'gate_resolution_complete', step: 'approve' });
+    expect(record.run_phase).toBe('completed');
+  });
+
+  it('a gate expiring into its DEFAULT that completes the run persists arm `gate_expiry_default`', async () => {
+    const d = gateDef({
+      choices: ['approve'],
+      timeout_seconds: 1,
+      on_expiry: 'settle_default',
+      default_choice: 'approve',
+    });
+    const { run } = await declaring.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    await executeStep(declaring, d, {
+      runId: run.id,
+      command: 'approve',
+      input: {},
+      dispatcher: succeed,
+    });
+    const gate = (await declaring.get(run.id)).pending_gate!;
+    const future = new Date(new Date(gate.expires_at!).getTime() + 1000);
+    await executeStep(declaring, d, {
+      runId: run.id,
+      command: 'approve',
+      input: {},
+      dispatcher: succeed,
+      now: future,
+    });
+    const record = await declaring.get(run.id);
+    expect(record.sealed_by).toEqual({ arm: 'gate_expiry_default', step: 'approve' });
+    expect(record.run_phase).toBe('completed');
+  });
+
+  it('a gate expiring into ABORT persists arm `gate_expiry_abort`', async () => {
+    const d = gateDef({ choices: ['approve'], timeout_seconds: 1, on_expiry: 'abort' });
+    const { run } = await declaring.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    await executeStep(declaring, d, {
+      runId: run.id,
+      command: 'approve',
+      input: {},
+      dispatcher: succeed,
+    });
+    const gate = (await declaring.get(run.id)).pending_gate!;
+    const future = new Date(new Date(gate.expires_at!).getTime() + 1000);
+    await executeStep(declaring, d, {
+      runId: run.id,
+      command: 'approve',
+      input: {},
+      dispatcher: succeed,
+      now: future,
+    });
+    const record = await declaring.get(run.id);
+    expect(record.sealed_by).toEqual({ arm: 'gate_expiry_abort', step: 'approve' });
+    expect(record.run_phase).toBe('aborted');
+    expect(record.aborted_at).toBeDefined();
+  });
+
+  // --- the deleted-ternary leg: exhaustion is NOT a distinct arm ---
+  it('a validation-exhausted run persists arm `step_failure` — exhaustion is deliberately not its own arm', async () => {
+    // The distinction lives in defaulted_steps and the step diagnostics, not in the seal
+    // vocabulary. Without this cell the deleted ternary could come back and nothing would notice.
+    const d: WorkflowDefinition = {
+      id: 'exhaust-seal-wf',
+      name: 'Exhaust',
+      version: 1,
+      steps: {
+        v: {
+          description: 'V',
+          execution: 'agent',
+          depends_on: [],
+          output_schema: { type: 'object', required: ['x'], properties: { x: { type: 'string' } } },
+        },
+      },
+    } as unknown as WorkflowDefinition;
+    const { run } = await declaring.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await executeStep(declaring, d, {
+        runId: run.id,
+        command: 'v',
+        input: {},
+        dispatcher: succeed,
+      });
+      if ((await declaring.get(run.id)).terminal_state) break;
+    }
+    const record = await declaring.get(run.id);
+    expect(record.terminal_state).toBe(true); // non-vacuity: the budget really did run out
+    expect(record.sealed_by?.arm).toBe('step_failure');
+    expect(record.run_phase).toBe('failed');
+  });
+
   it('the gate-response strip clears a stale seal on the same write', async () => {
     // submitHumanResponse re-derives liveness from scratch, so a grandfathered/mixed-fleet seal
     // must not survive it.

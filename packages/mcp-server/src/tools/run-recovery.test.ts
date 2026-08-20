@@ -64,6 +64,24 @@ describe('abandon_run MCP tool', () => {
     expect(summary.run_phase).toBe('abandoned');
     expect(summary.terminal_state).toBe(true);
     expect(summary.terminal_reason).toBe('stale');
+    // issue #367: a FRESH abandon must not carry the no-change clause — otherwise the clause below
+    // would be meaningless.
+    expect(summary.note).not.toContain('no change this call');
+  });
+
+  it('issue #367: re-abandoning an already-abandoned run says so — it is a no-op, and looked identical before', async () => {
+    const { run } = await runStore.create({
+      workflowId: 'agentflow',
+      workflowVersion: 1,
+      params: {},
+    });
+    await handleAbandonRun({ run_id: run.id, reason: 'first' }, { runStore });
+    const second = await handleAbandonRun({ run_id: run.id, reason: 'second' }, { runStore });
+    expect(second.note).toContain('already abandoned (no change this call)');
+    // And it really was a no-op: the reason from the FIRST call still stands.
+    expect(second.terminal_reason).toBe('first');
+    // The kill advisory still rides along — it is unconditional on every success response.
+    expect(second.note).toContain('abandon is a kill');
   });
 
   // issue #302 (D-B, M2): the abandon kill-advisory — unconditional on every success response.

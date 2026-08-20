@@ -83,6 +83,9 @@ describe('executeStep — pre-refusal enact-then-proceed (issue #291)', () => {
       expect(finalRun.pending_gate).toBeUndefined();
       expect(finalRun.completed_steps).toEqual(expect.arrayContaining(['approve', 'after']));
       expect(finalRun.settled?.['approve']).toMatchObject({ resolved_by: 'timeout' });
+      // issue #367 census path: this run's seal comes from the LAST step, not the gate — the gate
+      // expiry resolved the gate, and `after` then completed the run.
+      expect(finalRun.sealed_by).toEqual({ arm: 'complete', step: 'after' });
     });
   });
 
