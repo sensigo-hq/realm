@@ -11,6 +11,51 @@
 // It is fail-closed in both directions. A new hit in an unmapped file fails; a mapped count that
 // drops fails too, because a writer disappearing silently is how coverage rots.
 //
+// ---------------------------------------------------------------------------
+// WHICH VERIFICATION TASKS TRUST WHICH HASH (issue #367 part 2, the class sweep)
+//
+// Turbo caches every task. A task that READS files outside its own hash universe can therefore be
+// served a cached green while the thing it checks has changed. That hole was found twice, one
+// instance at a time, so here is the whole enumeration — every test that resolves above its own
+// directory, classified. The rule for adding a row: if your guard reads something, say where that
+// something lives in the hash.
+//
+// | reader                                   | reads                        | why it is safe                                    |
+// |------------------------------------------|------------------------------|---------------------------------------------------|
+// | purge-guard / store-fs-guard / list      | all four packages' src       | COVERED TRANSITIVELY: cli's test depends on cli's  |
+// | capability-warn-enumeration (all in cli) |                              | build, which depends on ^build, so a change in any |
+// |                                          |                              | dependency's src re-hashes cli's test. Executed:   |
+// |                                          |                              | edit core/src ⇒ cli test "0 cached, 5 total".      |
+// | THIS census (cli)                        | all four packages' src       | same chain …                                      |
+// |                                          | + root `scripts/**/*.mjs`    | … EXCEPT root scripts/, which no package hashes —  |
+// |                                          |                              | now in `globalDependencies`. Executed as a real    |
+// |                                          |                              | hole first: a writer added to a script served a    |
+// |                                          |                              | cached green.                                      |
+// | the `lint` task                          | root `eslint.config.ts`      | the task's hash never saw it — a mutated rule      |
+// |                                          |                              | served "FULL TURBO" green. Now in                  |
+// |                                          |                              | `globalDependencies`.                              |
+// | settlement.test.ts (in CORE)             | core/src/engine +            | DOCUMENTED-COLD, and the one row that is not       |
+// |                                          | mcp-server/src               | closed. Core is the base package, so nothing flows |
+// |                                          |                              | upward: an mcp-server change does NOT re-hash      |
+// |                                          |                              | core's test (executed: "2 cached, 2 total"). CI is |
+// |                                          |                              | safe because it runs with an EMPTY turbo cache —   |
+// |                                          |                              | no remote cache is configured and `.turbo/` is     |
+// |                                          |                              | gitignored — so the guard always runs there. The   |
+// |                                          |                              | residual is LOCAL staleness only. Not added to     |
+// |                                          |                              | `globalDependencies` because mcp-server/src is a   |
+// |                                          |                              | frequently-changing tree and the entry would       |
+// |                                          |                              | re-hash every task on every edit. See the report.  |
+// | own-package readers (provider-conformance| their own package's src      | covered by that package's own hash, by definition. |
+// | agent-manifest-gate, claim-liveness,     | or its own dist              |                                                    |
+// | json-trace-buffer-store-lock-guard,      |                              |                                                    |
+// | read-only-no-extensions, github-adapter, |                              |                                                    |
+// | gc-heal-note, validate-extensions,       |                              |                                                    |
+// | validate-orphan-manifest,                |                              |                                                    |
+// | listen-extensions-child, server.entry)   |                              |                                                    |
+//
+// Nothing reads `examples/`, `docs/`, or a root config at runtime — the two apparent hits are
+// string assertions about a docs PATH inside generated content, not file reads (verified).
+// ---------------------------------------------------------------------------
 // HOME: the cli package on purpose. Turbo hashes a package's own sources, so a core-side guard
 // would go stale-green locally whenever core changed without cli changing. cli depends on all
 // three sibling packages, so its test task invalidates on any of their src edits.
@@ -33,10 +78,16 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..'
 const SCANNED_PACKAGES = ['core', 'cli', 'mcp-server', 'testing'];
 
 /**
- * Any quoting form, and an assignment that is not a comparison. `=(?!=)` is deliberate: the naive
- * `[:=]` form matches `===` comparisons and floods the census with reads.
+ * Any quoting form, bracketed or not, and an assignment that is not a comparison.
+ *
+ * `=(?!=)` is deliberate: the naive `[:=]` form matches `===` comparisons and floods the census
+ * with reads. The optional `[` / `]` are deliberate too — without them a `]` sits between the
+ * quote and the `:` or `=`, so `{['terminal_state']: true}` and `o['terminal_state'] = true` slid
+ * past this token entirely. The lint rules do catch both, but inside the five files where those
+ * rules are suppressed by authorization they were invisible to BOTH source-text layers, leaving
+ * only the store boundary to catch them at runtime. Closed here.
  */
-const TOKEN = /['"`]?terminal_state['"`]?\s*(:|=(?!=))/;
+const TOKEN = /\[?['"`]?terminal_state['"`]?\]?\s*(:|=(?!=))/;
 
 /** A suppression of the seal-writer rules, in any of eslint's disable spellings. */
 const DISABLE = /eslint-disable(?:-next-line|-line)?\s+[^\n]*no-restricted-syntax/;
@@ -269,6 +320,17 @@ describe('#367 — the terminal-writer census', () => {
     expect(claimed).toHaveLength(5);
   });
 
+  it("turbo.json globalDependencies matches the sweep table's join-list", () => {
+    // A text pin is weak, but it makes a silent removal red something. Both entries are here
+    // because each was EXECUTED as a real cache hole: without them, a mutated lint rule and a new
+    // writer in `scripts/` both served cached greens. If a row in the table above moves into the
+    // join-list, it moves here too — that is what stops the table drifting from the config.
+    const turbo = JSON.parse(readFileSync(join(REPO_ROOT, 'turbo.json'), 'utf8')) as {
+      globalDependencies?: string[];
+    };
+    expect(turbo.globalDependencies).toEqual(['eslint.config.ts', 'scripts/**/*.mjs']);
+  });
+
   it('the post-strip total is 68 across 13 files — the figure the map is built from', () => {
     const scan = scanTerminalWriters(REPO_ROOT);
     const total = Object.values(scan.hits).reduce((n, l) => n + l.length, 0);
@@ -413,24 +475,35 @@ describe('#367 — the census guard catches what it claims to', () => {
     );
   });
 
-  it("every BRACKET form is deliberately L1's job, not the census token's", () => {
-    // A `]` sits between the quote and the `:` or `=`, so this token matches neither
-    // `{['terminal_state']: true}` nor `o['terminal_state'] = true`. That is the documented
-    // division, not an oversight: the lint rules' `key.value` and `left.property.value` twins
-    // catch both forms at authoring time (execution-verified against a 17-shape matrix).
-    //
-    // Pinned here so the boundary is visible where someone would come looking after being
-    // surprised by it, instead of reading as a hole in the census. The residual it leaves is
-    // named in the report: a bracket-form writer inside a lint-SUPPRESSED file would be invisible
-    // to both layers, and only the store boundary would catch it — at runtime.
+  it('BRACKET forms are caught too — the seam that used to reach only the store boundary', () => {
+    // These forms slid past the earlier token, and inside the five lint-suppressed files that made
+    // them invisible to BOTH source-text layers. The census sees them now, so a bracket-form write
+    // is caught wherever it is written.
     withScratchTree(
       {
         'packages/core/src/engine/computed.ts':
           "const a = { ['terminal_state']: true };\no['terminal_state'] = true;\n",
       },
       (root) => {
+        expect(scanTerminalWriters(root).hits['packages/core/src/engine/computed.ts']).toEqual([
+          1, 2,
+        ]);
+      },
+    );
+  });
+
+  it('only truly DYNAMIC name construction escapes both instruments', () => {
+    // The honest floor, pinned so nobody reads the widening as total. A name assembled at runtime
+    // is not a token any regex can see, and no AST selector can resolve it either — the store
+    // boundary is the observer for that one, at runtime.
+    withScratchTree(
+      {
+        'packages/core/src/engine/dynamic.ts':
+          "const k = 'terminal_' + 'state';\nconst a = { [k]: true };\n",
+      },
+      (root) => {
         expect(
-          scanTerminalWriters(root).hits['packages/core/src/engine/computed.ts'],
+          scanTerminalWriters(root).hits['packages/core/src/engine/dynamic.ts'],
         ).toBeUndefined();
       },
     );
