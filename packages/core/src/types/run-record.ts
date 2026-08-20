@@ -657,10 +657,18 @@ export interface SealedBy {
    * ruled it stays as it is" acknowledgment, which is how a parked record that turns out to be
    * correctly stamped gets closed out rather than re-examined forever.
    *
+   * **A ruling SUPERSEDES the record's own prose.** The coherence audit exists to catch SILENT
+   * drift; a ruling is none of those things — it is loud, attributed, and erase-proof while
+   * terminal — so a seal carrying one is exempt from that audit permanently, not just on the write
+   * that records it. The prose is NEVER rewritten to match: it is historical evidence of what the
+   * engine said at the time, and the ruling resolves the disagreement without falsifying it.
+   *
    * ONE SLOT, and the loss is deliberate: a second ruling overwrites the first. The chain stays
    * one-step-walkable because `previous_arm` is enforced truthful, and a full ruling history is
-   * machinery with no customer today. Like the arm itself, this field is erase-proof while the run
-   * is terminal.
+   * machinery with no customer today. Like the arm itself, this field is erase-proof WHILE
+   * TERMINAL — and that scope is the whole claim: resuming a run lawfully voids the seal, and the
+   * ruling goes with it, because the sealed state it ruled on no longer exists. Resume discloses
+   * that rather than doing it silently.
    *
    * Nothing in the engine writes it. The operator verb that will is boarded on #367; this contract
    * ships with the major so that law never has to be loosened afterwards.
@@ -670,8 +678,16 @@ export interface SealedBy {
     by: string;
     /** ISO-8601 timestamp of the ruling. */
     at: string;
-    /** The arm this ruling overwrote. Enforced truthful at the store boundary. */
-    previous_arm: SealArm;
+    /**
+     * The arm this ruling overwrote, enforced truthful at the store boundary.
+     *
+     * `null` is the truthful statement "no arm existed before this ruling" — an operator's FIRST
+     * stamp of a parked record the classifier refused to place. It is not a wildcard: `null` on a
+     * record that HAD an arm is a lie, and the boundary refuses it exactly like any other lie. It
+     * is lawful only on a record that was ALREADY terminal; a live run's first seal can never have
+     * been adjudicated.
+     */
+    previous_arm: SealArm | null;
     /** The operator's stated reason, verbatim. */
     reason?: string;
   };

@@ -111,10 +111,15 @@ export function assertSealIntegrity(stored: RunRecord, next: RunRecord): void {
   // law that ships with the major says arm changes are refused; amending it afterwards would
   // loosen a published guarantee under external implementers.
   //
-  // The key opens THIS clause only. `SEAL_COHERENT` below still governs: a truthful CROSS-PHASE
-  // ruling on a record whose own prose still classifies elsewhere is refused as incoherent, by
-  // design — the operator verb must co-rewrite the prose/markers for a cross-phase ruling, or the
-  // record would end up contradicting itself in a new direction.
+  // A RULING SUPERSEDES THE RECORD'S OWN PROSE. The key opens this clause AND exempts the
+  // coherence audit below — permanently, on any write of a seal that carries a ruling, not just on
+  // the write that records it. The earlier reading (key opens clause 6 only; the verb co-rewrites
+  // prose for cross-phase rulings) was reversed on executed evidence: a truthful same-arm
+  // acknowledgment on a scarred record — the commonest parked case — was refused as incoherent, so
+  // the channel built for closing parked records could not touch its main customer.
+  //
+  // The prose is never rewritten to match a ruling. It is historical evidence of what the engine
+  // said at the time; the ruling resolves the disagreement without falsifying the record.
   // Rule 3 lives OUTSIDE the both-terminal guard below, and that placement is the point: a FRESH
   // seal is a non-terminal -> terminal write, so a rule scoped to both-terminal would never see the
   // fabrication it exists to refuse. (It did not, until the cell for it reddened.)
@@ -123,31 +128,53 @@ export function assertSealIntegrity(stored: RunRecord, next: RunRecord): void {
     stored.sealed_by === undefined &&
     next.sealed_by?.adjudicated !== undefined
   ) {
-    throw new WorkflowError(
-      `Run '${next.id}' carries adjudication provenance on a record that had no seal arm — ` +
-        `a first seal cannot have been adjudicated`,
-      {
-        code: 'STATE_SEAL_REWRITTEN',
-        category: 'STATE',
-        agentAction: 'report_to_user',
-        retryable: false,
-        details: {
-          runId: next.id,
-          claimed_previous_arm: next.sealed_by.adjudicated.previous_arm,
+    // Two scopes, and BOTH are load-bearing:
+    //
+    // `previous_arm: null` is the ONLY truthful provenance for a first stamp — there was no prior
+    // arm, and saying so is the operator's honest claim when they place a record the classifier
+    // refused to place. Any non-null claim here is a fabrication.
+    //
+    // And it is lawful only on a record that was ALREADY TERMINAL — the parked-legacy population.
+    // A live run reaching its first seal cannot have been ruled on — nothing had happened yet to
+    // rule on. Without this half, `null` would legalise adjudication provenance on every fresh
+    // seal in the engine.
+    const claimed = next.sealed_by.adjudicated.previous_arm;
+    if (claimed !== null || stored.terminal_state !== true) {
+      throw new WorkflowError(
+        claimed !== null
+          ? `Run '${next.id}' claims adjudication from '${claimed}' on a record that had no seal ` +
+              `arm — a first stamp's only truthful provenance is previous_arm: null`
+          : `Run '${next.id}' carries adjudication provenance on a LIVE run's first seal — only ` +
+              `an already-terminal record can have been ruled on`,
+        {
+          code: 'STATE_SEAL_REWRITTEN',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: false,
+          details: { runId: next.id, claimed_previous_arm: claimed },
         },
-      },
-    );
+      );
+    }
   }
   if (stored.terminal_state === true && next.terminal_state === true) {
     const storedArm = stored.sealed_by?.arm;
     const nextSeal = next.sealed_by;
     const adjudication = nextSeal?.adjudicated;
     const storedAdjudication = stored.sealed_by?.adjudicated;
-    // A ruling is NEW-OR-CHANGED when it is not byte-identical to the stored one; an untouched
+    // A ruling is NEW-OR-CHANGED when any of its fields differ from the stored one; an untouched
     // record spreading its own provenance forward is not making a claim.
+    //
+    // FIELD-WISE, not by serialised bytes: a store whose round trip reorders JSON keys — Postgres
+    // `jsonb` does exactly this, and it is a consumer on the punch list — would otherwise see an
+    // honest spread as a fresh claim and refuse it. A ruling's identity is what it says, not the
+    // byte order it came back in.
     const provenanceIsNew =
       adjudication !== undefined &&
-      JSON.stringify(adjudication) !== JSON.stringify(storedAdjudication);
+      (storedAdjudication === undefined ||
+        adjudication.by !== storedAdjudication.by ||
+        adjudication.at !== storedAdjudication.at ||
+        adjudication.previous_arm !== storedAdjudication.previous_arm ||
+        adjudication.reason !== storedAdjudication.reason);
 
     // (Rule 3 — no fabricated first-seal adjudication — is hoisted above; see its comment.)
     // Rule 2 — truthfulness binds EVERY provenance write, same-arm included. Without this, a
@@ -194,6 +221,26 @@ export function assertSealIntegrity(stored: RunRecord, next: RunRecord): void {
     // unreachable in any lawful history, and the conjunct was comparator-ambiguous dead code.
     // Recorded so nobody re-adds it looking at the flip case alone.)
     if (storedArm !== undefined && nextSeal !== undefined && nextSeal.arm !== storedArm) {
+      // Riding a PRIOR ruling's provenance is a rewrite, not an adjudication. Without this, a
+      // write could flip the arm while spreading the stored ruling forward untouched and pass
+      // every other rule — and once the coherence audit stops blocking such a write (it is exempt
+      // now, by design), nothing else would. A genuine ruling mints fresh provenance, which rule 2
+      // has already checked for truthfulness. Honest spreads never change the arm, so no lawful
+      // path is affected.
+      if (adjudication !== undefined && !provenanceIsNew) {
+        throw new WorkflowError(
+          `Run '${next.id}' changes its seal arm ('${storedArm}' -> '${nextSeal.arm}') while ` +
+            `carrying a PRIOR ruling unchanged — an arm change must carry a NEW ruling; riding a ` +
+            `prior ruling's provenance is a rewrite`,
+          {
+            code: 'STATE_SEAL_REWRITTEN',
+            category: 'STATE',
+            agentAction: 'report_to_user',
+            retryable: false,
+            details: { runId: next.id, stored_arm: storedArm, next_arm: nextSeal.arm },
+          },
+        );
+      }
       if (adjudication === undefined) {
         throw new WorkflowError(
           `Run '${next.id}' rewrites its seal arm ('${storedArm}' -> '${nextSeal.arm}') — a ` +
@@ -225,7 +272,22 @@ export function assertSealIntegrity(stored: RunRecord, next: RunRecord): void {
   // carrying `abandoned_at` is invisible here — that is BOTH abandon-class arms,
   // `abandon_requested` AND `cleanup_sweep`. Their observer is the migrate sweep's incoherent
   // bucket in a later PR, which uses the FULL classifier.
-  if (next.terminal_state === true && next.sealed_by !== undefined) {
+  //
+  // EXEMPTION (issue #367 part 4): a seal carrying an adjudication is skipped entirely. This audit
+  // exists to catch SILENT drift — a stale arm riding a spread, a mis-stamped writer. A ruling is
+  // the opposite of silent: loud, attributed, and erase-proof while terminal. It is PERMANENT
+  // rather than scoped to the ruling write, because a ruled-but-scarred record has to stay
+  // writable afterwards; exempting only the ruling write would wedge the record one write later.
+  //
+  // NAMED BLINDNESS, beside the abandoned-marker one: prose drift on an already-adjudicated record
+  // is unwatched here AND at the migrate audit, which short-circuits ruled records too. Accepted —
+  // the ruling supersedes prose by contract, and store-level tampering is outside this threat
+  // model. A fabricated ruling is not silent: it names who made it and when.
+  if (
+    next.terminal_state === true &&
+    next.sealed_by !== undefined &&
+    next.sealed_by.adjudicated === undefined
+  ) {
     const { sealed_by: _stamp, ...sansStamp } = next;
     const classified = classifyForCoherence(sansStamp);
     if (classified !== undefined && armToPhase(classified) !== armToPhase(next.sealed_by.arm)) {

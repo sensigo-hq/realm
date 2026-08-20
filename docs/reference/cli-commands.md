@@ -650,14 +650,14 @@ readers and to the phase stored on disk.
 
 Dry-run by default; `--force` writes. Each run lands in exactly one bucket:
 
-| bucket          | meaning                                                                                                                                                                |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| stamped         | given its arm                                                                                                                                                          |
-| already stamped | had an arm. The report splits these: how many were checked against the record, and how many are unverifiable because the record holds nothing to check the arm against |
-| unclassifiable  | no arm and nothing to infer one from — **printed, never written**, exit 1                                                                                              |
-| incoherent      | has an arm that DISAGREES with its own prose or markers — **printed, never auto-rewritten**, exit 1. Adjudicate these yourself                                         |
-| skipped         | a concurrent writer moved the record; their own next write path owns it                                                                                                |
-| failed          | an infrastructure error on one record; the sweep continues, exit 1                                                                                                     |
+| bucket          | meaning                                                                                                                                                                                                                     |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| stamped         | given its arm                                                                                                                                                                                                               |
+| already stamped | had an arm. The report splits these three ways: checked against the record, **ruled by an operator** (a human looked at it — the ruling stands), and unverifiable because the record holds nothing to check the arm against |
+| unclassifiable  | no arm and nothing to infer one from — **printed, never written**. Exit 0 (2 with `--detailed-exitcode`)                                                                                                                    |
+| incoherent      | has an arm that DISAGREES with its own prose or markers — **printed, never auto-rewritten**. Exit 0 (2 with `--detailed-exitcode`). Adjudicate these yourself; a ruled record stops appearing here                          |
+| skipped         | a concurrent writer moved the record; their own next write path owns it                                                                                                                                                     |
+| failed          | an infrastructure error on one record; the sweep continues, exit 1                                                                                                                                                          |
 
 **`updated_at` is preserved on every record it touches, and that is the whole point.** Stamping is
 not activity. `realm run gc --heal` materialises the same phases but resets the retention clock on
@@ -675,13 +675,28 @@ carrying no provenance at all, which is what keeps the chain walkable a step at 
 SAME-arm ruling is legal too — that is how you close out a parked record you have examined and found
 correctly stamped.
 
-Two consequences worth knowing before building on it. There is ONE provenance slot, so a second
-ruling overwrites the first: the record tells you what the previous arm was, not the whole history
-of rulings, and that loss is deliberate. And a CROSS-PHASE ruling — one moving the run between
-`completed` and `failed`, say — is still refused by the coherence check unless the record's own
-prose and markers move with it; the operator verb will have to co-rewrite them.
+**A ruling supersedes the record's own prose.** The coherence check that normally guards a stamp is
+skipped once a seal carries a ruling — permanently, not just on the write that records it — because
+that check exists to catch SILENT drift and a ruling is the opposite of silent. The prose is never
+rewritten to match: it is the historical evidence of what the engine said at the time, and the
+ruling resolves the disagreement without falsifying it. A ruled record also stops appearing in this
+command's incoherent bucket, which is what actually closes the loop.
 
-The verb itself ships when it has a customer. The record format will not change when it does.
+Three consequences worth knowing before building on it. There is ONE provenance slot, so a second
+ruling overwrites the first: the record tells you what the previous arm was, not the whole history
+of rulings, and that loss is deliberate. Changing an arm requires a FRESH ruling — re-using a
+previous one's provenance is a rewrite, not a ruling. And `by` is a recorded CLAIM of identity, not
+a verified one: there is no auth model behind it, so treat it as attribution-by-assertion.
+
+An adjudication write is ordinary activity — unlike stamping, it advances `updated_at` and
+`version`.
+
+**Named residual:** a ruling is record-level provenance, and no read surface renders it yet —
+`inspect`, `get_run_state` and `list` do not show it. `export` carries it verbatim today; surfacing
+it rides a later increment.
+
+The operator verb itself ships when it has a customer. The record format will not change when it
+does.
 
 **Residue** is the count the report ends on: terminal runs that will still have no recorded arm when
 this run finishes. That is the unclassifiable ones plus any whose write failed — and, in a dry run,

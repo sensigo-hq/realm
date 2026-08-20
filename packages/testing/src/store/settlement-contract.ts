@@ -1026,17 +1026,30 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
           ...sealed,
           sealed_by: {
             arm: 'guard_pass_complete',
-            adjudicated: { by: 'tck', at: '2026-01-01T00:00:00.000Z', previous_arm: 'complete' },
+            adjudicated: {
+              by: 'tck-operator',
+              at: '2026-01-01T00:00:00.000Z',
+              previous_arm: 'complete',
+              reason: 'the guard closed this run',
+            },
           },
         });
         if (ruled.sealed_by?.arm !== 'guard_pass_complete') {
           throw new Error(`the adjudicated arm did not land: ${JSON.stringify(ruled.sealed_by)}`);
         }
         const reread = await adapter.store.get(run.id);
-        if (reread.sealed_by?.adjudicated?.previous_arm !== 'complete') {
+        // The FULL object, field by field: a store that drops `by` or `reason` keeps the ruling's
+        // arm and loses who made it and why, which is most of what a ruling IS.
+        const expected = {
+          by: 'tck-operator',
+          at: '2026-01-01T00:00:00.000Z',
+          previous_arm: 'complete',
+          reason: 'the guard closed this run',
+        };
+        if (JSON.stringify(reread.sealed_by?.adjudicated) !== JSON.stringify(expected)) {
           throw new Error(
-            `the ruling's provenance did not survive the round trip: ` +
-              `${JSON.stringify(reread.sealed_by)} — the chain must stay one-step walkable`,
+            `the ruling did not survive the round trip in full: ` +
+              `${JSON.stringify(reread.sealed_by?.adjudicated)} — expected ${JSON.stringify(expected)}`,
           );
         }
       },
@@ -1113,6 +1126,143 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
         });
         await expectRefusedWith('STATE_SEAL_REWRITTEN', 'erasing a recorded ruling', () =>
           adapter.store.update({ ...ruled, sealed_by: { arm: 'complete' } }),
+        );
+      },
+    },
+    // --- Direction 6: an operator's FIRST stamp of a parked record, three legs. ---
+    ...(adapter.seedLegacyTerminal === undefined
+      ? []
+      : [
+          {
+            law: 'SEAL_REWRITE_REFUSED' as const,
+            name: `[${adapter.storeName}] a terminal UNSTAMPED record accepts a first stamp with previous_arm: null`,
+            run: async (): Promise<void> => {
+              // The parked-unclassifiable population's only attributed landing channel. `null` is
+              // the truthful statement "no arm existed before this ruling".
+              const seeded = await adapter.seedLegacyTerminal!('tck-adjudicate-first');
+              const ruled = await adapter.store.update({
+                ...seeded,
+                sealed_by: {
+                  arm: 'complete',
+                  adjudicated: {
+                    by: 'tck-operator',
+                    at: '2026-01-01T00:00:00.000Z',
+                    previous_arm: null,
+                    reason: 'operator judgement',
+                  },
+                },
+              });
+              if (ruled.sealed_by?.adjudicated?.previous_arm !== null) {
+                throw new Error(
+                  `the null first-stamp provenance did not land: ${JSON.stringify(ruled.sealed_by)}`,
+                );
+              }
+              const reread = await adapter.store.get(seeded.id);
+              if (reread.sealed_by?.adjudicated?.by !== 'tck-operator') {
+                throw new Error(
+                  `the ruling did not survive the round trip: ${JSON.stringify(reread.sealed_by)}`,
+                );
+              }
+            },
+          },
+          {
+            law: 'SEAL_REWRITE_REFUSED' as const,
+            name: `[${adapter.storeName}] a first stamp claiming a NON-NULL previous_arm is refused`,
+            run: async (): Promise<void> => {
+              const seeded = await adapter.seedLegacyTerminal!('tck-adjudicate-first-lying');
+              await expectRefusedWith(
+                'STATE_SEAL_REWRITTEN',
+                'a fabricated first-stamp claim',
+                () =>
+                  adapter.store.update({
+                    ...seeded,
+                    sealed_by: {
+                      arm: 'complete',
+                      adjudicated: { by: 'tck', at: 'now', previous_arm: 'step_failure' },
+                    },
+                  }),
+              );
+            },
+          },
+        ]),
+    {
+      law: 'SEAL_REWRITE_REFUSED',
+      name: `[${adapter.storeName}] a LIVE run's first seal cannot claim adjudication, even with null`,
+      run: async () => {
+        // The terminal-scope half of the first-stamp rule: nothing had happened yet to rule on.
+        const run = await freshRun('adjudicate-live');
+        await expectRefusedWith('STATE_SEAL_REWRITTEN', 'adjudication on a live first seal', () =>
+          adapter.store.update({
+            ...run,
+            terminal_state: true,
+            terminal_reason: 'Workflow completed.',
+            sealed_by: {
+              arm: 'complete',
+              adjudicated: { by: 'tck', at: 'now', previous_arm: null },
+            },
+          }),
+        );
+      },
+    },
+    {
+      law: 'SEAL_REWRITE_REFUSED',
+      name: `[${adapter.storeName}] a ruling SUPERSEDES the record's own prose, and keeps doing so`,
+      run: async () => {
+        // Direction 7. The scar rides the ruling write because the boundary itself refuses
+        // parked-scar creation through public channels — that population is minted by old binaries
+        // this suite cannot reproduce. The stored-scar half is pinned in the engine's own cells.
+        const run = await freshRun('adjudicate-supersedes');
+        const sealed = await adapter.store.update({
+          ...run,
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+          terminal_reason: 'Workflow completed.',
+        });
+        const ruled = await adapter.store.update({
+          ...sealed,
+          failed_steps: ['x'],
+          terminal_reason: 'a scar this classifier cannot place',
+          sealed_by: {
+            arm: 'complete',
+            adjudicated: { by: 'tck-operator', at: 'now', previous_arm: 'complete' },
+          },
+        });
+        if (ruled.terminal_reason !== 'a scar this classifier cannot place') {
+          throw new Error('the prose was rewritten — a ruling must never falsify the record');
+        }
+        // Leg 2: the exemption is PERMANENT. A store exempting only the ruling write wedges the
+        // operator on every later spread of the same record.
+        await adapter.store.update({ ...ruled, updated_at: '2099-01-01T00:00:00.000Z' });
+      },
+    },
+    {
+      law: 'SEAL_REWRITE_REFUSED',
+      name: `[${adapter.storeName}] an arm change RIDING a prior ruling is refused — a change needs a FRESH ruling`,
+      run: async () => {
+        // Direction 8.
+        const run = await freshRun('adjudicate-riding');
+        const sealed = await adapter.store.update({
+          ...run,
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+          terminal_reason: 'Workflow completed.',
+        });
+        const ruled = await adapter.store.update({
+          ...sealed,
+          sealed_by: {
+            arm: 'complete',
+            adjudicated: {
+              by: 'tck-operator',
+              at: '2026-02-02T00:00:00.000Z',
+              previous_arm: 'complete',
+            },
+          },
+        });
+        await expectRefusedWith('STATE_SEAL_REWRITTEN', 'an arm change riding a prior ruling', () =>
+          adapter.store.update({
+            ...ruled,
+            sealed_by: { arm: 'guard_pass_complete', adjudicated: ruled.sealed_by!.adjudicated! },
+          }),
         );
       },
     },
@@ -4932,6 +5082,28 @@ function expireDefaultResolveCases(adapter: SettlementContractAdapter): Settleme
  */
 export function settlementContract(adapter: SettlementContractAdapter): SettlementContractCase[] {
   if (adapter.store.settleStep === undefined) {
+    // A store that declares NEITHER verb genuinely has nothing here to conform to — the
+    // established optional-capability idiom, and a real vacuous pass.
+    //
+    // But a store declaring `stampSeal` WITHOUT `settleStep` would also have received zero cases,
+    // so its stamp and seal-integrity conformance — every law in this file that binds it — would
+    // report green while never running. That is a wiring gap wearing a vacuous pass's clothes.
+    if (adapter.store.stampSeal !== undefined) {
+      return [
+        {
+          law: 'ADAPTER_WIRING',
+          name: `[${adapter.storeName}] declares RunStore.stampSeal but NOT settleStep — every law in this suite would pass without running`,
+          run: async () => {
+            throw new Error(
+              `[${adapter.storeName}] settlementContract: the store declares stampSeal but not ` +
+                'settleStep, and this suite is gated on settleStep — so it would return zero ' +
+                'cases and report green having tested nothing. Declare settleStep, or run the ' +
+                'stamp laws through a suite that binds them on their own.',
+            );
+          },
+        },
+      ];
+    }
     return [];
   }
   if (adapter.settlementFixture === undefined) {

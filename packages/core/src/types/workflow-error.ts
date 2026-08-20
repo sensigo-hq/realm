@@ -124,13 +124,22 @@ export type ErrorCode =
   // A terminal write's stamp DISAGREES at phase level with what the record's own markers/prose
   // classify to — a stale arm preserved by spread (the old-binary re-seal channel) or a
   // mis-stamped writer.
+  //
+  // EXEMPT: a seal carrying an adjudication. This check catches SILENT drift, and an operator's
+  // ruling is loud, attributed and erase-proof while terminal — it supersedes the record's prose
+  // rather than contradicting it, and the prose is never rewritten to match.
   | 'STATE_SEAL_INCOHERENT'
-  // A terminal rewrite CHANGES a stored `sealed_by.arm` to a different arm. Stamps are immutable
-  // while the run is terminal: which arm sealed a run is a fact about something that already
-  // happened, and quietly re-attributing it is the silent re-attribution this whole design exists
-  // to end. Zero legacy cost — both arms must be present for the clause to fire. If an
-  // adjudication verb for parked incoherent records is ever built, it gets a DESIGNED bypass;
-  // never this path.
+  // A stored `sealed_by.arm` is rewritten unlawfully. Which arm sealed a run is a fact about
+  // something that already happened, so quietly re-attributing it is the silent re-attribution
+  // this design exists to end — and the exception is the opposite of quiet.
+  //
+  // The ONE lawful way an arm changes while terminal is an adjudication write carrying FRESH
+  // truthful provenance: `previous_arm` naming the arm being replaced, or `null` on a first stamp
+  // of a record that was already terminal (the parked-legacy channel). Riding a prior ruling's
+  // provenance is a rewrite, not a ruling. A lying claim, a fabricated first-seal ruling on a live
+  // run, and dropping a stored ruling are all refused under this code too.
+  //
+  // Zero legacy cost: no pre-#367 record carries either field.
   | 'STATE_SEAL_REWRITTEN'
   | 'STEP_NOT_FOUND'
   | 'GUARD_RESOLUTION_ERROR'

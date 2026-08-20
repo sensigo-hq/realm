@@ -11,35 +11,41 @@ npm install --save-dev @sensigo/realm-testing
 Requires `@sensigo/realm` at the same version to be installed in your project.
 
 > **Version note (issue #367).** This release grows the published conformance suites, so a custom
-> `RunStore` that passed the previous version can fail this one — by design. A store declaring
-> `settleStep` must now also declare and round-trip `sealed_by` (the recorded seal arm), and must
-> REFUSE four write-integrity violations: an unstamped fresh seal, a resume that keeps the stamp, a
-> terminal rewrite that drops it, and an arm outside `SEAL_ARMS`. The new laws are
-> `SEAL_FRESH_WRITE_REFUSED`, `SEAL_ORPHAN_REFUSED`, `SEAL_ERASE_REFUSED`,
-> `SEAL_UNKNOWN_ARM_REFUSED` and `SEALED_BY_ROUNDTRIP`. They bind DECLARING stores only — a store
-> that declares neither `settleStep` nor the field passes them vacuously, exactly as before.
+> `RunStore` that passed the previous version can fail this one — by design.
+>
+> A store declaring `settleStep` must now also declare and round-trip `sealed_by` (the recorded
+> seal arm), and must REFUSE five classes of write-integrity violation: an unstamped fresh seal, a
+> resume that keeps the stamp, a terminal rewrite that drops it, an arm outside `SEAL_ARMS`, and an
+> unlawful rewrite of a stored arm. The laws are `SEAL_FRESH_WRITE_REFUSED`, `SEAL_ORPHAN_REFUSED`,
+> `SEAL_ERASE_REFUSED`, `SEAL_UNKNOWN_ARM_REFUSED`, `SEAL_REWRITE_REFUSED` and
+> `SEALED_BY_ROUNDTRIP`. They bind DECLARING stores only — a store that declares neither
+> `settleStep` nor the field passes them vacuously, exactly as before.
+>
+> `SEAL_REWRITE_REFUSED` covers eight directions, not one. A stored arm cannot be rewritten while
+> the run is terminal, with ONE lawful exception: an adjudication write carrying fresh, truthful
+> provenance — who ruled, when, and which arm it replaced. What is refused around that exception:
+> provenance that misnames the arm it overwrote; a same-arm write whose provenance LIES (a truthful
+> same-arm ruling is legal — it is how an operator closes out a record they have examined); a
+> ruling claimed on a live run's first seal; a first stamp claiming a non-null previous arm
+> (`previous_arm: null` is the truthful form there, and only on a record that was already
+> terminal); an arm change riding a PRIOR ruling's provenance rather than a fresh one; and a
+> rewrite that drops a stored ruling.
+>
+> **A ruling supersedes the record's own prose.** A seal carrying one is exempt from the coherence
+> audit permanently — not just on the write that records it — because that audit catches SILENT
+> drift and a ruling is loud, attributed, and erase-proof while terminal. Prose is never rewritten
+> to match. A ruling's identity is judged FIELD-WISE, never by serialisation bytes: a store whose
+> round trip reorders JSON keys must not treat an honest spread as a fresh claim.
+>
 > A store that also declares `stampSeal` (the migration verb behind
-> `realm run migrate --stamp-seals`) must honour five more: `STAMP_PRESERVES_UPDATED_AT`,
+> `realm run migrate --stamp-seals`) must honour six more: `STAMP_PRESERVES_UPDATED_AT`,
 > `STAMP_BUMPS_VERSION_ONCE`, `STAMP_REFUSES_ON_VERSION_MOVE`,
-> `STAMP_RETURNS_NOT_THROWS_PREDICATES` and `STAMP_IDEMPOTENT`, plus
-> `STAMP_CLASSIFIED_ROUNDTRIP` and `SEAL_REWRITE_REFUSED`. In short: the stamp lands and its
-> `classified` provenance marker survives the round trip, `version` bumps so a stale writer loses
-> its compare-and-swap, `updated_at` does NOT move because stamping is not activity, predicate
-> refusals RETURN rather than throw, and a stored arm can never be rewritten to a different one.
-> Declaring `stampSeal` also means supplying the adapter's `seedLegacyTerminal` hook — without it
-> the laws can only observe refusals, and a store that never writes at all would conform.
->
-> `SEAL_REWRITE_REFUSED` covers five directions, not one: a seal arm cannot be rewritten while the
-> run is terminal, EXCEPT by an adjudication write carrying truthful provenance — and provenance
-> that misnames the arm it overwrote, provenance minted on a same-arm write, provenance on a first
-> seal, and a rewrite that drops a stored ruling are all refused. The contract is published now,
-> with the major, so this law will not be loosened later under stores already built against it.
->
-> `SEAL_REWRITE_REFUSED` covers five directions, not one: a seal arm cannot be rewritten while the
-> run is terminal, EXCEPT by an adjudication write carrying truthful provenance — and provenance
-> that misnames the arm it overwrote, provenance minted on a same-arm write, provenance on a first
-> seal, and a rewrite that drops a stored ruling are all refused. The contract is published now,
-> with the major, so this law will not be loosened later under stores already built against it.
+> `STAMP_RETURNS_NOT_THROWS_PREDICATES`, `STAMP_IDEMPOTENT` and `STAMP_CLASSIFIED_ROUNDTRIP`. In
+> short: the stamp lands and its `classified` provenance marker survives the round trip, `version`
+> bumps so a stale writer loses its compare-and-swap, `updated_at` does NOT move because stamping
+> is not activity, and predicate refusals RETURN rather than throw. Declaring `stampSeal` also
+> means supplying the adapter's `seedLegacyTerminal` hook — without it the laws can only observe
+> refusals, and a store that never writes at all would conform.
 >
 > `assertFinalState` also now DERIVES the run phase instead of reading the persisted `run_phase`,
 > so a test whose fixture carried a stale label may start failing honestly.

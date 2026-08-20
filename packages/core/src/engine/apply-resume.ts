@@ -123,6 +123,17 @@ export function applyResume(
       `zombie gate '${strippedGate.gate_id}' on '${strippedGate.step_name}' cleared by resume — step will re-drive`,
     );
   }
+  // issue #367 (part 4): the STRIP above is lawful and stays exactly as it is — a live run may not
+  // carry a seal. The silence was the defect: an operator's attributed ruling on this run's
+  // outcome vanished without a line, in a system whose whole argument is evidence honesty, while
+  // every voided finalizer and every stripped zombie gate got one.
+  const strippedRuling = snapshot.sealed_by?.adjudicated;
+  if (strippedRuling !== undefined) {
+    disclosures.push(
+      `operator ruling by '${strippedRuling.by}' (at ${strippedRuling.at}) discarded by resume — ` +
+        `the sealed state it ruled on no longer exists`,
+    );
+  }
 
   // Strip terminal_reason + abandoned_at (issue #281); release ALL remaining claims
   // unconditionally (the CLI refusals guarantee none are healthy by the time this runs).
