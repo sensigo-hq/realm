@@ -10,7 +10,7 @@
 // core index, so wiring it here creates no new, let alone circular, dependency. This file and its
 // InMemoryStore sibling therefore live together in this package, per the hand-off prompt's D4.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from '@sensigo/realm';
@@ -75,6 +75,8 @@ const LAWS: SettlementLaw[] = [
   'STAMP_REFUSES_ON_VERSION_MOVE',
   'STAMP_RETURNS_NOT_THROWS_PREDICATES',
   'STAMP_IDEMPOTENT',
+  'STAMP_CLASSIFIED_ROUNDTRIP',
+  'SEAL_REWRITE_REFUSED',
 ];
 
 describe('JsonFileStore — settlement TCK conformance (issue #279, increment 1 + 2)', () => {
@@ -99,6 +101,26 @@ describe('JsonFileStore — settlement TCK conformance (issue #279, increment 1 
           store,
           storeName: 'JsonFileStore',
           settlementFixture: defaultSettlementFixture,
+          // issue #367 (part 3): the sanctioned channel for seeding a pre-#367 shape past the
+          // store's own boundary — a direct file write. The stamp laws' SUCCESS legs need a
+          // record the boundary would refuse if it were written through it.
+          seedLegacyTerminal: async (id) => {
+            const { run } = await store.create({
+              workflowId: `tck-seed-${id}`,
+              workflowVersion: 1,
+              params: {},
+            });
+            const legacy = {
+              ...run,
+              id,
+              completed_steps: ['a'],
+              terminal_state: true,
+              terminal_reason: 'Workflow completed.',
+              run_phase: 'completed' as const,
+            };
+            await writeFile(join(dir, `${id}.json`), JSON.stringify(legacy, null, 2));
+            return legacy;
+          },
         });
         const matching = cases.filter((c) => c.law === law);
         expect(matching.length).toBeGreaterThan(0);

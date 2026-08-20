@@ -101,6 +101,30 @@ export function assertSealIntegrity(stored: RunRecord, next: RunRecord): void {
       },
     );
   }
+  // Clause 6 — STATE_SEAL_REWRITTEN: a stored arm may not be CHANGED while the run stays
+  // terminal. Executed before this clause existed: a plain `update()` flipped `complete` to
+  // `gate_resolution_complete`, dropped the `classified` provenance marker and reset the retention
+  // clock, all silently — the re-attribution this design exists to end, live at its own boundary.
+  // Both arms must be present for this to fire, so the legacy population cannot trip it.
+  if (
+    stored.terminal_state === true &&
+    next.terminal_state === true &&
+    stored.sealed_by !== undefined &&
+    next.sealed_by !== undefined &&
+    next.sealed_by.arm !== stored.sealed_by.arm
+  ) {
+    throw new WorkflowError(
+      `Run '${next.id}' rewrites its seal arm ('${stored.sealed_by.arm}' -> ` +
+        `'${next.sealed_by.arm}') — a recorded seal is immutable while the run is terminal`,
+      {
+        code: 'STATE_SEAL_REWRITTEN',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: { runId: next.id, stored_arm: stored.sealed_by.arm, next_arm: next.sealed_by.arm },
+      },
+    );
+  }
   // SEAL_COHERENT — on any terminal write carrying a stamp: the record's OWN markers/prose,
   // classified as if unstamped, must agree with the arm AT PHASE LEVEL (the classifier
   // legitimately cannot tell `complete` from `gate_resolution_complete` — that granularity is

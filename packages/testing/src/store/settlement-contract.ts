@@ -104,6 +104,11 @@ export type SettlementLaw =
   | 'STAMP_RETURNS_NOT_THROWS_PREDICATES'
   /** issue #367 part 3 — re-stamping is byte-identical: no second write, no clock move. */
   | 'STAMP_IDEMPOTENT'
+  /** issue #367 part 3 — a `classified: true` stamp survives write → read byte-for-byte, so a
+   *  classifier-minted stamp stays distinguishable from a writer-asserted one forever. */
+  | 'STAMP_CLASSIFIED_ROUNDTRIP'
+  /** issue #367 part 3 — a stored arm may not be CHANGED while the run stays terminal. */
+  | 'SEAL_REWRITE_REFUSED'
   /** Uniform-predicate pin (design record M1): a second-epoch complete seal whose ONLY
    *  `failed_steps` scar is a PRIOR epoch's finalizer self-failure (unresumable, so it never
    *  leaves `failed_steps`) still fires — no exclusion of finalizer-declared step names. */
@@ -204,6 +209,15 @@ export interface SettlementContractAdapter {
    * shapes may supply its own.
    */
   settlementFixture?: SettlementFixture;
+  /**
+   * Issue #367 (part 3): raw-seed an UNSTAMPED terminal record and return it — the shape the
+   * migration vehicle actually meets, and one the store's own boundary would refuse if written
+   * through it. Each store supplies its sanctioned channel (a direct file write, a direct map
+   * insert). The ADAPTER_WIRING idiom applies: a `stampSeal`-declaring store that omits this gets
+   * a failing wiring case rather than a silent pass, because the stamp laws' SUCCESS legs are
+   * unobservable without it — and a store that never writes at all would otherwise conform.
+   */
+  seedLegacyTerminal?: (id: string) => Promise<RunRecord>;
 }
 
 // ---------------------------------------------------------------------------
@@ -979,6 +993,38 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
       },
     },
     {
+      law: 'SEAL_REWRITE_REFUSED',
+      name: `[${adapter.storeName}] a stored arm may NOT be changed while the run stays terminal`,
+      run: async () => {
+        const run = await freshRun('rewrite');
+        const sealed = await adapter.store.update({
+          ...run,
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+          terminal_reason: 'Workflow completed.',
+        });
+        await expectRefusedWith('STATE_SEAL_REWRITTEN', 'a seal-arm rewrite', () =>
+          adapter.store.update({ ...sealed, sealed_by: { arm: 'guard_pass_complete' } }),
+        );
+      },
+    },
+    {
+      law: 'SEAL_REWRITE_REFUSED',
+      name: `[${adapter.storeName}] NEGATIVE CONTROL: a rewrite keeping the SAME arm passes`,
+      run: async () => {
+        const run = await freshRun('rewrite-control');
+        const sealed = await adapter.store.update({
+          ...run,
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+          terminal_reason: 'Workflow completed.',
+        });
+        // Every ordinary terminal rewrite spreads the record — without this passing, the clause
+        // would wedge the engine.
+        await adapter.store.update({ ...sealed, terminal_reason: 'Workflow completed. (touched)' });
+      },
+    },
+    {
       law: 'SEAL_UNKNOWN_ARM_REFUSED',
       name: `[${adapter.storeName}] an arm outside SEAL_ARMS never persists`,
       run: async () => {
@@ -1012,23 +1058,24 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
   if (stampSeal === undefined) return []; // dormant store — the laws bind declarers only
   const stamp = stampSeal.bind(adapter.store);
 
-  /** A terminal, UNSTAMPED record — what the migration vehicle actually meets. */
-  async function legacyTerminal(name: string): Promise<RunRecord> {
+  /**
+   * A terminal, ALREADY-STAMPED record — the refusal legs' fixture. (An earlier version of this
+   * comment claimed the seal was "then removed by a direct write"; no such removal existed, and
+   * the boundary's ERASED clause would refuse one. Corrected rather than reworded.)
+   */
+  async function stampedTerminal(name: string): Promise<RunRecord> {
     const { run } = await adapter.store.create({
       workflowId: `tck-stamp-${name}`,
       workflowVersion: 1,
       params: {},
     });
-    // Sealed properly first, then the seal removed by a direct write, so the stored record is the
-    // legacy shape without the store ever having accepted an unstamped fresh seal.
-    const sealed = await adapter.store.update({
+    return adapter.store.update({
       ...run,
       completed_steps: ['a'],
       terminal_state: true,
       sealed_by: { arm: 'complete' },
       terminal_reason: 'Workflow completed.',
     });
-    return sealed;
   }
 
   return [
@@ -1036,7 +1083,7 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
       law: 'STAMP_PRESERVES_UPDATED_AT',
       name: `[${adapter.storeName}] stampSeal leaves updated_at byte-identical`,
       run: async () => {
-        const sealed = await legacyTerminal('clock');
+        const sealed = await stampedTerminal('clock');
         // Already stamped, so this exercises the refusal path's clock too — the record must not be
         // touched at all.
         const before = await adapter.store.get(sealed.id);
@@ -1050,11 +1097,110 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
         }
       },
     },
+    // --- SUCCESS legs. These need an UNSTAMPED terminal record, which is why the seed hook
+    // exists: without them a store that NEVER WRITES conforms to all five laws.
+    ...(adapter.seedLegacyTerminal === undefined
+      ? [
+          {
+            law: 'STAMP_PRESERVES_UPDATED_AT' as const,
+            name: `[${adapter.storeName}] ADAPTER_WIRING: a stampSeal-declaring store must supply seedLegacyTerminal`,
+            run: async (): Promise<void> => {
+              throw new Error(
+                'This store declares stampSeal but the adapter has no `seedLegacyTerminal` hook, ' +
+                  'so the laws cannot observe an ACTUAL stamp — only its refusals. A store that ' +
+                  'never writes would pass. Supply the hook.',
+              );
+            },
+          },
+        ]
+      : [
+          {
+            law: 'STAMP_PRESERVES_UPDATED_AT' as const,
+            name: `[${adapter.storeName}] a SUCCESSFUL stamp leaves updated_at byte-identical`,
+            run: async (): Promise<void> => {
+              const seeded = await adapter.seedLegacyTerminal!('tck-stamp-success-clock');
+              const result = await stamp(
+                seeded.id,
+                { arm: 'complete', classified: true },
+                seeded.version,
+              );
+              if (!result.stamped) {
+                throw new Error(
+                  `expected an unstamped terminal record to be STAMPED, got refusal ` +
+                    `'${result.reason}' — a store that never writes is not conformant`,
+                );
+              }
+              const after = await adapter.store.get(seeded.id);
+              if (after.sealed_by?.arm !== 'complete') {
+                throw new Error(`the arm did not land: ${JSON.stringify(after.sealed_by)}`);
+              }
+              if (after.updated_at !== seeded.updated_at) {
+                throw new Error(
+                  `stamping moved updated_at (${seeded.updated_at} -> ${after.updated_at}) — ` +
+                    `stamping is not activity`,
+                );
+              }
+            },
+          },
+          {
+            law: 'STAMP_BUMPS_VERSION_ONCE' as const,
+            name: `[${adapter.storeName}] a SUCCESSFUL stamp bumps version exactly once`,
+            run: async (): Promise<void> => {
+              const seeded = await adapter.seedLegacyTerminal!('tck-stamp-success-version');
+              await stamp(seeded.id, { arm: 'complete', classified: true }, seeded.version);
+              const after = await adapter.store.get(seeded.id);
+              if (after.version !== seeded.version + 1) {
+                throw new Error(
+                  `expected version ${seeded.version + 1}, got ${after.version} — the CAS ` +
+                    `protocol is what stops a stale writer erasing the stamp`,
+                );
+              }
+            },
+          },
+          {
+            law: 'STAMP_CLASSIFIED_ROUNDTRIP' as const,
+            name: `[${adapter.storeName}] a \`classified: true\` stamp survives write → read byte-for-byte`,
+            run: async (): Promise<void> => {
+              // The provenance marker is what keeps a classifier-minted stamp distinguishable from
+              // a writer's own assertion FOREVER. A store that drops it looks conformant on every
+              // other law while quietly destroying that distinction.
+              const seeded = await adapter.seedLegacyTerminal!('tck-stamp-classified');
+              await stamp(seeded.id, { arm: 'complete', classified: true }, seeded.version);
+              const after = await adapter.store.get(seeded.id);
+              if (after.sealed_by?.classified !== true) {
+                throw new Error(
+                  `the \`classified\` provenance marker did not survive the round trip: ` +
+                    `${JSON.stringify(after.sealed_by)} — a vehicle-minted stamp must stay ` +
+                    `distinguishable from a writer-asserted one`,
+                );
+              }
+            },
+          },
+        ]),
+    {
+      law: 'STAMP_RETURNS_NOT_THROWS_PREDICATES',
+      name: `[${adapter.storeName}] a NON-TERMINAL record RETURNS 'not_terminal', never throws`,
+      run: async () => {
+        // No seed hook needed: `create()` makes a live record, which is exactly the shape.
+        const { run } = await adapter.store.create({
+          workflowId: 'tck-stamp-live',
+          workflowVersion: 1,
+          params: {},
+        });
+        const result = await stamp(run.id, { arm: 'complete' }, run.version);
+        if (result.stamped !== false || result.reason !== 'not_terminal') {
+          throw new Error(
+            `expected a RETURNED {stamped:false, reason:'not_terminal'}, got ` +
+              `${JSON.stringify(result)}`,
+          );
+        }
+      },
+    },
     {
       law: 'STAMP_RETURNS_NOT_THROWS_PREDICATES',
       name: `[${adapter.storeName}] an already-stamped record RETURNS, never throws`,
       run: async () => {
-        const sealed = await legacyTerminal('already');
+        const sealed = await stampedTerminal('already');
         const fresh = await adapter.store.get(sealed.id);
         const result = await stamp(fresh.id, { arm: 'complete' }, fresh.version);
         if (result.stamped !== false || result.reason !== 'already_stamped') {
@@ -1069,7 +1215,7 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
       law: 'STAMP_BUMPS_VERSION_ONCE',
       name: `[${adapter.storeName}] a refused stamp does not bump version`,
       run: async () => {
-        const sealed = await legacyTerminal('version');
+        const sealed = await stampedTerminal('version');
         const before = await adapter.store.get(sealed.id);
         await stamp(before.id, { arm: 'complete' }, before.version);
         const after = await adapter.store.get(before.id);
@@ -1085,7 +1231,7 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
       law: 'STAMP_REFUSES_ON_VERSION_MOVE',
       name: `[${adapter.storeName}] a stale expectedVersion THROWS STATE_SNAPSHOT_MISMATCH`,
       run: async () => {
-        const sealed = await legacyTerminal('cas');
+        const sealed = await stampedTerminal('cas');
         let code: string | undefined;
         try {
           await stamp(sealed.id, { arm: 'complete' }, sealed.version + 99);
@@ -1104,7 +1250,7 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
       law: 'STAMP_IDEMPOTENT',
       name: `[${adapter.storeName}] re-stamping leaves the record byte-identical`,
       run: async () => {
-        const sealed = await legacyTerminal('idem');
+        const sealed = await stampedTerminal('idem');
         const before = JSON.stringify(await adapter.store.get(sealed.id));
         await stamp(sealed.id, { arm: 'complete' }, sealed.version);
         await stamp(sealed.id, { arm: 'complete' }, sealed.version);

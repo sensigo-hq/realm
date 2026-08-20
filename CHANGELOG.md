@@ -10,7 +10,8 @@ All notable changes to this project are documented here.
 
 - **`realm run migrate --stamp-seals`** — writes down the seal arm that every legacy terminal run
   has always meant (issue #367). Records written before the seal substrate carry no `sealed_by`;
-  the engine already recovers their arm on every read, so they are correct without this. What the
+  the engine already recovers their arm on every read wherever one is recoverable, and the rest
+  still derive correctly from the legacy ladder, so they are correct without this. What the
   command adds is materialisation: the arm becomes visible to external readers, and the run's phase
   on disk catches up with what the engine derives — including the startup deaths that used to file
   themselves as "abandoned" and are really failures.
@@ -69,7 +70,8 @@ All notable changes to this project are documented here.
   three-way ambiguous.
   **Read before running `realm run gc --heal` after upgrading**: heal rewrites records whose
   derived phase moved, and each rewrite resets `updated_at` — the clock retention reads. The
-  stamp-seals migration ships in the next PR; until then, skip `--heal` if those clocks matter.
+  stamp-seals migration is `realm run migrate --stamp-seals`, in this same release (see Added):
+  run it first, and `--heal` has nothing left to rewrite.
   `@sensigo/realm-testing` grows its published conformance suites in step; see that package's
   README for what a custom store must now declare and refuse.
 

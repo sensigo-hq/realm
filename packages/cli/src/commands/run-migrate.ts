@@ -20,8 +20,13 @@ import { classifyLegacySeal, armToPhase } from '@sensigo/realm';
 export interface MigrateBuckets {
   /** Newly given its arm. */
   stamped: Array<{ id: string; arm: SealArm; phase_before: string; phase_after: string }>;
-  /** Already had an arm, and it agrees with the record. */
-  already_stamped: string[];
+  /**
+   * Already had an arm. `verified` says whether the audit could actually CHECK it: the classifier
+   * abstains on a record whose own prose and markers place it nowhere, and an abstention is not a
+   * finding of coherence. Reporting those as "coherent" would be the same false-confidence class
+   * this program exists to remove.
+   */
+  already_stamped: Array<{ id: string; verified: boolean }>;
   /** No arm, and the classifier refuses to guess one. Printed, never written. */
   unclassifiable: Array<{ id: string; why: string }>;
   /** Has an arm that DISAGREES with its own evidence. Printed, never auto-rewritten. */
@@ -67,16 +72,31 @@ function whyUnclassifiable(run: RunRecord): string {
 }
 
 /**
- * Exit 1 when the sweep found something an operator must act on: a record nobody can classify, a
- * record whose arm contradicts itself, or a write that failed. Merely finding records to stamp is
- * not a failure, and neither is a conflict — the other writer owns that record's next write.
+ * The exit taxonomy, aligned with the house rule every other sweep command follows (`gc`'s own,
+ * gc.ts): **exit 1 means THIS COMMAND failed to do its job.** A write that errored is that. A
+ * record nobody can classify is not — the command did exactly what it should, and said so loudly.
+ *
+ * That distinction matters more here than usual, because residue is CHRONIC: an unclassifiable
+ * record stays unclassifiable, so a nonzero exit on residue would make every scheduled run of this
+ * command fail forever, and the first thing an operator does with a chronic alarm is silence it.
+ *
+ * Automation that genuinely wants to gate on residue opts in with `--detailed-exitcode`, which
+ * turns the two outcomes into a three-way: 0 clean · 1 the command failed · 2 succeeded, residue
+ * remains. Same shape as `grep`, `git diff --exit-code` and Terraform's `-detailed-exitcode` — a
+ * machine-readable answer that needs no prose parsing, and that naive pipelines never inherit.
  */
-export function migrateExitCode(buckets: MigrateBuckets): number {
-  return buckets.unclassifiable.length > 0 ||
-    buckets.incoherent.length > 0 ||
-    buckets.failed.length > 0
-    ? 1
-    : 0;
+export function migrateExitCode(
+  buckets: MigrateBuckets,
+  options: { detailed?: boolean } = {},
+): number {
+  if (buckets.failed.length > 0) return 1;
+  if (
+    options.detailed === true &&
+    (buckets.unclassifiable.length > 0 || buckets.incoherent.length > 0)
+  ) {
+    return 2;
+  }
+  return 0;
 }
 
 /**
@@ -94,7 +114,8 @@ export async function migrateStampSeals(
     throw new Error(
       'This store does not implement stampSeal, so `realm run migrate --stamp-seals` cannot ' +
         'write to it. Records stay readable and correct without migrating — the read path ' +
-        'recovers a legacy arm on every read. To materialise the arms, use the tooling that owns ' +
+        'recovers a legacy arm wherever one is recoverable, and the rest still derive correctly from ' +
+        'the legacy ladder. To materialise the arms, use the tooling that owns ' +
         'this store.',
     );
   }
@@ -112,8 +133,11 @@ export async function migrateStampSeals(
       // PHASE level, not arm level. The classifier can only ever recover `complete` from a
       // completed run's prose, so comparing arms would report every `gate_resolution_complete` and
       // `guard_pass_complete` stamp as a disagreement.
-      if (classified === undefined || armToPhase(classified) === armToPhase(run.sealed_by.arm)) {
-        buckets.already_stamped.push(run.id);
+      if (classified === undefined) {
+        // Abstained: nothing to compare against. The arm stands, unverified.
+        buckets.already_stamped.push({ id: run.id, verified: false });
+      } else if (armToPhase(classified) === armToPhase(run.sealed_by.arm)) {
+        buckets.already_stamped.push({ id: run.id, verified: true });
       } else {
         buckets.incoherent.push({
           id: run.id,
@@ -150,7 +174,8 @@ export async function migrateStampSeals(
           phase_after: result.run.run_phase,
         });
       } else {
-        buckets.already_stamped.push(run.id);
+        // The record gained an arm between the sweep's read and this write; nothing to verify.
+        buckets.already_stamped.push({ id: run.id, verified: false });
       }
     } catch (err) {
       const code = (err as { code?: string }).code;
@@ -188,6 +213,17 @@ export function renderMigrateReport(
     buckets.skipped_conflict.length === 0 &&
     buckets.failed.length === 0;
 
+  // "every terminal run already carries its seal arm" is a UNIVERSAL claim, and four different
+  // buckets can each falsify it: a record nobody could classify, one whose write failed, one whose
+  // arm contradicts itself, and one a concurrent writer moved. It may only be appended when all
+  // four are empty. It shipped appended unconditionally, printed directly above the very records
+  // that disprove it.
+  const everyRunArmed =
+    buckets.unclassifiable.length === 0 &&
+    buckets.incoherent.length === 0 &&
+    buckets.failed.length === 0 &&
+    buckets.skipped_conflict.length === 0;
+
   if (nothing) {
     lines.push('No terminal runs found to migrate.');
   } else if (buckets.stamped.length > 0) {
@@ -202,13 +238,31 @@ export function renderMigrateReport(
       lines.push(`  • ${e.id}: ${e.arm} (phase ${phase})`);
     }
   } else if (force) {
-    lines.push('Nothing to stamp — every terminal run already carries its seal arm.');
+    lines.push(
+      everyRunArmed
+        ? 'Nothing to stamp — every terminal run already carries its seal arm.'
+        : 'Nothing was stamped.',
+    );
   } else {
-    lines.push('Nothing would be stamped — every terminal run already carries its seal arm.');
+    lines.push(
+      everyRunArmed
+        ? 'Nothing would be stamped — every terminal run already carries its seal arm.'
+        : 'Nothing would be stamped.',
+    );
   }
 
   if (buckets.already_stamped.length > 0) {
-    lines.push(`${buckets.already_stamped.length} run(s) already stamped and coherent.`);
+    // "Coherent" is a finding, and the audit cannot make it when the classifier abstains — a
+    // record whose own evidence places it nowhere has an arm that stands UNVERIFIED, not one that
+    // has been checked and agreed with.
+    const verified = buckets.already_stamped.filter((e) => e.verified).length;
+    const unverified = buckets.already_stamped.length - verified;
+    lines.push(
+      unverified === 0
+        ? `${buckets.already_stamped.length} run(s) already stamped, and their arms agree with the record.`
+        : `${buckets.already_stamped.length} run(s) already stamped (${verified} checked against ` +
+            `the record, ${unverified} unverifiable — nothing in the record to check the arm against).`,
+    );
   }
   if (buckets.unclassifiable.length > 0) {
     lines.push(
@@ -236,12 +290,26 @@ export function renderMigrateReport(
     for (const id of buckets.skipped_conflict)
       lines.push(`  • ${id}  (skipped — concurrent write)`);
   }
-  for (const f of buckets.failed) lines.push(`  ✗ ${f.id}: ${f.error}`);
+  if (buckets.failed.length > 0) {
+    lines.push(`${buckets.failed.length} run(s) FAILED to stamp and still have no seal arm:`);
+    for (const f of buckets.failed) lines.push(`  ✗ ${f.id}: ${f.error}`);
+  }
 
-  if (!force && !nothing) lines.push('Re-run with --force to actually stamp.');
-  // The residue metric — how much of the corpus still has no recorded arm.
-  const residue = buckets.unclassifiable.length + (force ? 0 : buckets.stamped.length);
-  lines.push(`Residue: ${residue} terminal run(s) still without a recorded seal arm.`);
+  // Only offer the next step when there IS one: on a corpus of nothing but unclassifiable records,
+  // `--force` stamps exactly nothing, and inviting the operator to run it is a wasted round trip.
+  if (!force && buckets.stamped.length > 0) lines.push('Re-run with --force to actually stamp.');
+
+  // RESIDUE = terminal runs that will still have no recorded arm when this run ends. A failed
+  // write leaves the record armless just as surely as an unclassifiable one does — omitting it
+  // printed "Residue: 0" directly above a record that had failed to stamp. In a dry run nothing is
+  // written, so the would-be-stamped records still count.
+  const residue =
+    buckets.unclassifiable.length + buckets.failed.length + (force ? 0 : buckets.stamped.length);
+  const skipped =
+    buckets.skipped_conflict.length > 0
+      ? ` (+${buckets.skipped_conflict.length} skipped — arm state unknown until their own writer settles)`
+      : '';
+  lines.push(`Residue: ${residue} terminal run(s) still without a recorded seal arm.${skipped}`);
   lines.push(ORDERING_LINE);
   return lines;
 }
@@ -250,7 +318,13 @@ export const runMigrateCommand = new Command('migrate')
   .description('Materialise recorded seal arms on legacy terminal runs (issue #367)')
   .requiredOption('--stamp-seals', 'Stamp each terminal run with the seal arm it has always meant')
   .option('--force', 'Actually write the stamps (without this, the sweep is a dry run)')
-  .action(async (opts: { force?: boolean }) => {
+  .option(
+    '--detailed-exitcode',
+    'Three-way exit for automation: 0 clean, 1 the command failed, 2 succeeded but residue ' +
+      'remains (the shape grep, `git diff --exit-code` and Terraform use). Opt-in, so a naive ' +
+      'pipeline never inherits a chronic alarm from records that can never be classified.',
+  )
+  .action(async (opts: { force?: boolean; detailedExitcode?: boolean }) => {
     const { JsonFileStore } = await import('@sensigo/realm');
     const runStore = new JsonFileStore();
     try {
@@ -258,9 +332,13 @@ export const runMigrateCommand = new Command('migrate')
       for (const line of renderMigrateReport(buckets, { force: opts.force ?? false })) {
         console.log(line);
       }
-      process.exitCode = migrateExitCode(buckets);
+      process.exitCode = migrateExitCode(buckets, { detailed: opts.detailedExitcode ?? false });
     } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
+      // The batch never started, or stopped before writing — say so, rather than emitting a bare
+      // errno an operator has to guess the scope of.
+      console.error(
+        `migrate ABORTED before writing anything: ${err instanceof Error ? err.message : String(err)}`,
+      );
       process.exit(1);
     }
   });

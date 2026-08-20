@@ -642,20 +642,22 @@ purging one destroys that path permanently.
 ### `realm run migrate --stamp-seals`
 
 Materialises the recorded seal arm on every legacy terminal run (issue #367). Records written before
-the seal substrate carry no `sealed_by`; the engine recovers their arm on every read, so they are
+the seal substrate carry no `sealed_by`; the engine recovers their arm on every read wherever one
+is recoverable — and where it is not, the run's phase still derives correctly from the legacy
+ladder — so they are
 already correct — this command writes that arm down, which is what makes it visible to external
 readers and to the phase stored on disk.
 
 Dry-run by default; `--force` writes. Each run lands in exactly one bucket:
 
-| bucket          | meaning                                                                                                                        |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| stamped         | given its arm                                                                                                                  |
-| already stamped | had an arm, and it agrees with the record                                                                                      |
-| unclassifiable  | no arm and nothing to infer one from — **printed, never written**, exit 1                                                      |
-| incoherent      | has an arm that DISAGREES with its own prose or markers — **printed, never auto-rewritten**, exit 1. Adjudicate these yourself |
-| skipped         | a concurrent writer moved the record; their own next write path owns it                                                        |
-| failed          | an infrastructure error on one record; the sweep continues, exit 1                                                             |
+| bucket          | meaning                                                                                                                                                                |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| stamped         | given its arm                                                                                                                                                          |
+| already stamped | had an arm. The report splits these: how many were checked against the record, and how many are unverifiable because the record holds nothing to check the arm against |
+| unclassifiable  | no arm and nothing to infer one from — **printed, never written**, exit 1                                                                                              |
+| incoherent      | has an arm that DISAGREES with its own prose or markers — **printed, never auto-rewritten**, exit 1. Adjudicate these yourself                                         |
+| skipped         | a concurrent writer moved the record; their own next write path owns it                                                                                                |
+| failed          | an infrastructure error on one record; the sweep continues, exit 1                                                                                                     |
 
 **`updated_at` is preserved on every record it touches, and that is the whole point.** Stamping is
 not activity. `realm run gc --heal` materialises the same phases but resets the retention clock on
@@ -664,6 +666,20 @@ those clocks matter to you.
 
 `version` is bumped on stamped records, so a writer holding a pre-stamp snapshot loses its
 compare-and-swap rather than silently erasing the stamp.
+
+**Residue** is the count the report ends on: terminal runs that will still have no recorded arm when
+this run finishes. That is the unclassifiable ones plus any whose write failed — and, in a dry run,
+the ones that would have been stamped, since a dry run writes nothing. Skipped records are reported
+separately and never counted: their arm state is genuinely unknown until their own writer settles.
+
+**Exit codes.** `0` means the command did its job — including when it found residue and said so.
+`1` means the command FAILED at its job: a write errored, or the batch was refused. Residue is
+chronic by nature (an unclassifiable record stays unclassifiable), so a nonzero exit on residue
+would make every scheduled run fail forever, and a chronic alarm is one that gets silenced.
+Automation that wants to gate on residue opts in with **`--detailed-exitcode`**, which makes it a
+three-way: `0` clean, `1` the command failed, `2` succeeded but residue remains — the same contract
+`grep`, `git diff --exit-code` and Terraform's `-detailed-exitcode` use, and opt-in for the same
+reason they made theirs explicit.
 
 > **One compatibility cost, owner-accepted and disclosed here once.** An export bundle taken BEFORE
 > a record was stamped, then re-imported AFTER the sweep, will fail with `STATE_RUN_DIVERGED`: the

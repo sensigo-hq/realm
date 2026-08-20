@@ -737,6 +737,17 @@ function printGcReport(
     }
     for (const f of healResult.failed) {
       console.error(`  ✗ ${f.id}: ${f.error}`);
+      // A seal-coherence refusal is not a heal bug — it is a record whose recorded arm disagrees
+      // with its own evidence, and heal is the wrong tool for it. Without this pointer the
+      // operator sees raw boundary internals and has nowhere to go: re-running heal refuses
+      // again, forever.
+      if (f.error.includes('STATE_SEAL_INCOHERENT') || f.error.includes('disagrees with')) {
+        console.error(
+          `      This run's recorded seal arm disagrees with its own markers/prose. Heal cannot ` +
+            `fix that. Run \`realm run migrate --stamp-seals\` to see it in the incoherent bucket ` +
+            `with both verdicts, and adjudicate it there.`,
+        );
+      }
     }
     if (dryRun && !nothingToReportHeal) {
       console.log('Re-run with --force to actually heal.');

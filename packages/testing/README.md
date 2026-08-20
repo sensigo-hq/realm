@@ -18,6 +18,17 @@ Requires `@sensigo/realm` at the same version to be installed in your project.
 > `SEAL_FRESH_WRITE_REFUSED`, `SEAL_ORPHAN_REFUSED`, `SEAL_ERASE_REFUSED`,
 > `SEAL_UNKNOWN_ARM_REFUSED` and `SEALED_BY_ROUNDTRIP`. They bind DECLARING stores only — a store
 > that declares neither `settleStep` nor the field passes them vacuously, exactly as before.
+> A store that also declares `stampSeal` (the migration verb behind
+> `realm run migrate --stamp-seals`) must honour five more: `STAMP_PRESERVES_UPDATED_AT`,
+> `STAMP_BUMPS_VERSION_ONCE`, `STAMP_REFUSES_ON_VERSION_MOVE`,
+> `STAMP_RETURNS_NOT_THROWS_PREDICATES` and `STAMP_IDEMPOTENT`, plus
+> `STAMP_CLASSIFIED_ROUNDTRIP` and `SEAL_REWRITE_REFUSED`. In short: the stamp lands and its
+> `classified` provenance marker survives the round trip, `version` bumps so a stale writer loses
+> its compare-and-swap, `updated_at` does NOT move because stamping is not activity, predicate
+> refusals RETURN rather than throw, and a stored arm can never be rewritten to a different one.
+> Declaring `stampSeal` also means supplying the adapter's `seedLegacyTerminal` hook — without it
+> the laws can only observe refusals, and a store that never writes at all would conform.
+>
 > `assertFinalState` also now DERIVES the run phase instead of reading the persisted `run_phase`,
 > so a test whose fixture carried a stale label may start failing honestly.
 

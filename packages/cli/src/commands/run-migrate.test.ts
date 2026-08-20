@@ -8,7 +8,7 @@
 // — because these are pre-#367 shapes the store boundary would refuse if they were written through
 // it. That is the point: they are what real legacy records look like.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp, writeFile, readFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, mkdir, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from '@sensigo/realm';
@@ -17,6 +17,7 @@ import {
   migrateStampSeals,
   migrateExitCode,
   renderMigrateReport,
+  runMigrateCommand,
   ORDERING_LINE,
 } from './run-migrate.js';
 
@@ -246,7 +247,12 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
     const buckets = await migrateStampSeals(store, { force: true });
     expect(buckets.unclassifiable.map((e) => e.id)).toEqual(['unclassifiable']);
     expect(await onDisk('unclassifiable')).toEqual(before); // byte-identical
-    expect(migrateExitCode(buckets)).toBe(1);
+    // Exit 0 by default: the command did its job and said so loudly. Residue is chronic — an
+    // unclassifiable record stays unclassifiable — so a nonzero exit here would make every
+    // scheduled run fail forever, and a chronic alarm gets silenced.
+    expect(migrateExitCode(buckets)).toBe(0);
+    // Automation that wants to gate on residue opts in.
+    expect(migrateExitCode(buckets, { detailed: true })).toBe(2);
   });
 
   it('BOTH incoherent shapes are bucketed and never auto-rewritten', async () => {
@@ -256,7 +262,8 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
     const ids = buckets.incoherent.map((e) => e.id).sort();
     expect(ids).toEqual(['incoherent-abandon', 'incoherent-prose']);
     expect(await onDisk('incoherent-abandon')).toEqual(before);
-    expect(migrateExitCode(buckets)).toBe(1);
+    expect(migrateExitCode(buckets)).toBe(0);
+    expect(migrateExitCode(buckets, { detailed: true })).toBe(2);
   });
 
   it('the abandon-marker stale arm: the STORE accepts it, and the vehicle catches it', async () => {
@@ -298,7 +305,7 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
     expect(second.stamped).toEqual([]);
     // Every previously-stamped record now enters the STAMPED arm, agrees, and reports so.
     for (const [id] of SHAPES) {
-      expect(second.already_stamped).toContain(id);
+      expect(second.already_stamped.map((e) => e.id)).toContain(id);
       expect(await onDisk(id)).toEqual(snapshot[id]);
     }
   });
@@ -373,7 +380,10 @@ describe('#367 part 3 — the report says no more than the branch it is printed 
     const text = renderMigrateReport(buckets, { force: true }).join('\n');
     expect(text).toContain('• mystery: terminal reason "who knows" matches no known seal shape');
     expect(text).toContain('left untouched');
-    expect(migrateExitCode(buckets)).toBe(1);
+    // The universal clause must NOT appear — this record is the counterexample to it.
+    expect(text).not.toContain('every terminal run already carries its seal arm');
+    expect(migrateExitCode(buckets)).toBe(0);
+    expect(migrateExitCode(buckets, { detailed: true })).toBe(2);
   });
 
   it('incoherent: BOTH oracles named on the line, and nothing was rewritten', async () => {
@@ -388,7 +398,9 @@ describe('#367 part 3 — the report says no more than the branch it is printed 
     expect(text).toContain("recorded arm 'complete' (phase completed)");
     expect(text).toContain("read as 'step_failure' (phase failed)");
     expect(text).toContain('adjudicate these yourself; nothing was rewritten');
-    expect(migrateExitCode(buckets)).toBe(1);
+    expect(text).not.toContain('every terminal run already carries its seal arm');
+    expect(migrateExitCode(buckets)).toBe(0);
+    expect(migrateExitCode(buckets, { detailed: true })).toBe(2);
   });
 
   it('skipped_conflict: the honest wording — the other writer owns it, this run did not heal it', async () => {
@@ -403,8 +415,12 @@ describe('#367 part 3 — the report says no more than the branch it is printed 
 
   it('failed: an infra error is reported per record, the sweep continued, and the exit code is 1', async () => {
     const buckets = { ...emptyForRender(), failed: [{ id: 'broken', error: 'EACCES' }] };
-    expect(renderMigrateReport(buckets, { force: true }).join('\n')).toContain('✗ broken: EACCES');
+    const text = renderMigrateReport(buckets, { force: true }).join('\n');
+    expect(text).toContain('1 run(s) FAILED to stamp and still have no seal arm:'); // its header
+    expect(text).toContain('✗ broken: EACCES');
+    // A failed WRITE is the command failing at its job — exit 1 in both modes.
     expect(migrateExitCode(buckets)).toBe(1);
+    expect(migrateExitCode(buckets, { detailed: true })).toBe(1);
   });
 
   it('a MIXED batch composes: residue counts and exit code account for every bucket', async () => {
@@ -415,7 +431,88 @@ describe('#367 part 3 — the report says no more than the branch it is printed 
     expect(text).toContain('1 run(s) could NOT be classified');
     expect(text).toContain('2 run(s) carry an arm that disagrees');
     expect(text).toContain('Residue: 1 terminal run(s) still without a recorded seal arm.');
+    expect(migrateExitCode(buckets)).toBe(0);
+    expect(migrateExitCode(buckets, { detailed: true })).toBe(2);
+  });
+
+  it('LEG 1 executed: force + a REAL unclassifiable record, driven through the store', async () => {
+    await seed('mystery', { terminal_reason: 'who knows', run_phase: 'abandoned' });
+    const text = renderMigrateReport(await migrateStampSeals(store, { force: true }), {
+      force: true,
+    }).join('\n');
+    expect(text).not.toContain('every terminal run already carries its seal arm');
+  });
+
+  it('LEG 1 executed: force + a REAL failed write (a FRESH lock the sweep cannot take)', async () => {
+    // The lock must be FRESH: proper-lockfile steals a stale one, and the stamp would then
+    // SUCCEED — the fixture would prove nothing. `mkdir` + a current mtime is what makes the
+    // acquisition genuinely fail.
+    await seed('locked', { terminal_reason: 'Workflow completed.', run_phase: 'completed' });
+    await mkdir(join(dir, 'locked.json.lock'), { recursive: true });
+    const now = new Date();
+    await utimes(join(dir, 'locked.json.lock'), now, now);
+
+    const buckets = await migrateStampSeals(store, { force: true });
+    expect(buckets.failed).toHaveLength(1); // non-vacuity: the write really did fail
+    const text = renderMigrateReport(buckets, { force: true }).join('\n');
+    expect(text).not.toContain('every terminal run already carries its seal arm');
+    // LEG 2: a failed write leaves the record armless, so it IS residue.
+    expect(text).toContain('Residue: 1 terminal run(s) still without a recorded seal arm.');
+    expect((await onDisk('locked')).sealed_by).toBeUndefined();
     expect(migrateExitCode(buckets)).toBe(1);
+    // The lock-retry backoff is real time — this cell waits it out rather than mocking it, so the
+    // failure it observes is the one an operator would actually hit.
+  }, 30_000);
+
+  it('LEG 1 executed: DRY RUN + an unclassifiable record', async () => {
+    await seed('mystery', { terminal_reason: 'who knows', run_phase: 'abandoned' });
+    const text = renderMigrateReport(await migrateStampSeals(store), {}).join('\n');
+    expect(text).not.toContain('every terminal run already carries its seal arm');
+    // LEG 3.1: force would stamp nothing here, so do not invite the operator to run it.
+    expect(text).not.toContain('Re-run with --force');
+  });
+
+  it('LEG 1 executed: skipped-only — a writer that moves the version between list and stamp', async () => {
+    await seed('moving', { terminal_reason: 'Workflow completed.', run_phase: 'completed' });
+    const shifting = {
+      ...store,
+      persistsClaims: store.persistsClaims,
+      list: store.list.bind(store),
+      get: store.get.bind(store),
+      create: store.create.bind(store),
+      update: store.update.bind(store),
+      claimStep: store.claimStep.bind(store),
+      // Someone else wrote between the sweep's read and this call.
+      stampSeal: async (
+        id: string,
+        sealedBy: Parameters<typeof store.stampSeal>[1],
+        version: number,
+      ) => store.stampSeal(id, sealedBy, version + 1),
+    } as unknown as RunStore;
+
+    const buckets = await migrateStampSeals(shifting, { force: true });
+    expect(buckets.skipped_conflict).toEqual(['moving']);
+    const text = renderMigrateReport(buckets, { force: true }).join('\n');
+    expect(text).not.toContain('every terminal run already carries its seal arm');
+    // LEG 2: a skipped record's arm state is UNKNOWN — disclosed, never counted as residue.
+    expect(text).toContain('(+1 skipped — arm state unknown until their own writer settles)');
+    expect(text).toContain('Residue: 0 terminal run(s)');
+    expect(migrateExitCode(buckets)).toBe(0); // the other writer owns it; this command did its job
+  });
+
+  it('LEG 3.2: an arm the audit could NOT check is reported as unverifiable, never as coherent', async () => {
+    // The classifier abstains on this record — its prose places it nowhere — so the audit has
+    // nothing to compare the arm against. "Coherent" would be a finding it never made.
+    await seed('abstained', {
+      terminal_reason: 'prose nothing recognises',
+      run_phase: 'completed',
+      sealed_by: { arm: 'complete' },
+    });
+    const buckets = await migrateStampSeals(store, { force: true });
+    expect(buckets.already_stamped).toEqual([{ id: 'abstained', verified: false }]);
+    const text = renderMigrateReport(buckets, { force: true }).join('\n');
+    expect(text).toContain('1 unverifiable — nothing in the record to check the arm against');
+    expect(text).not.toContain('agree with the record');
   });
 
   it('the SECOND run reports everything already stamped', async () => {
@@ -424,8 +521,107 @@ describe('#367 part 3 — the report says no more than the branch it is printed 
     const text = renderMigrateReport(await migrateStampSeals(store, { force: true }), {
       force: true,
     }).join('\n');
-    expect(text).toContain('Nothing to stamp');
-    expect(text).toContain('run(s) already stamped and coherent.');
+    // This corpus still holds an unclassifiable record and two incoherent ones, so the universal
+    // clause must NOT appear — those records are its counterexamples.
+    expect(text).toContain('Nothing was stamped.');
+    expect(text).not.toContain('every terminal run already carries its seal arm');
+    expect(text).toContain('run(s) already stamped');
+  });
+
+  it('the universal clause appears ONLY when all four falsifying buckets are empty', () => {
+    // The other polarity. Without this, "never print the clause" would pass every cell above.
+    const clean = { ...emptyForRender(), already_stamped: [{ id: 'a', verified: true }] };
+    expect(renderMigrateReport(clean, { force: true }).join('\n')).toContain(
+      'Nothing to stamp — every terminal run already carries its seal arm.',
+    );
+    for (const falsifier of [
+      { unclassifiable: [{ id: 'u', why: 'w' }] },
+      { failed: [{ id: 'f', error: 'e' }] },
+      {
+        incoherent: [
+          {
+            id: 'i',
+            arm: 'complete' as const,
+            classified: 'step_failure' as const,
+            arm_phase: 'completed',
+            classified_phase: 'failed',
+          },
+        ],
+      },
+      { skipped_conflict: ['s'] },
+    ]) {
+      const text = renderMigrateReport({ ...clean, ...falsifier }, { force: true }).join('\n');
+      expect(text, JSON.stringify(falsifier)).not.toContain(
+        'every terminal run already carries its seal arm',
+      );
+    }
+  });
+});
+
+describe('#367 part 3 — the exit taxonomy, per bucket combination and per mode', () => {
+  const E = (): Parameters<typeof migrateExitCode>[0] => ({
+    stamped: [],
+    already_stamped: [],
+    unclassifiable: [],
+    incoherent: [],
+    skipped_conflict: [],
+    failed: [],
+  });
+  const U = { ...E(), unclassifiable: [{ id: 'u', why: 'w' }] };
+  const I = {
+    ...E(),
+    incoherent: [
+      {
+        id: 'i',
+        arm: 'complete' as const,
+        classified: 'step_failure' as const,
+        arm_phase: 'completed',
+        classified_phase: 'failed',
+      },
+    ],
+  };
+  const F = { ...E(), failed: [{ id: 'f', error: 'e' }] };
+  const S = { ...E(), skipped_conflict: ['s'] };
+
+  it.each([
+    ['clean', E(), 0, 0],
+    ['unclassifiable', U, 0, 2],
+    ['incoherent', I, 0, 2],
+    ['unclassifiable + incoherent', { ...U, incoherent: I.incoherent }, 0, 2],
+    ['skipped only', S, 0, 0],
+    ['failed', F, 1, 1],
+    ['failed + unclassifiable', { ...F, unclassifiable: U.unclassifiable }, 1, 1],
+  ])('%s ⇒ default %i, --detailed-exitcode %i', (_label, buckets, plain, detailed) => {
+    expect(migrateExitCode(buckets)).toBe(plain);
+    expect(migrateExitCode(buckets, { detailed: true })).toBe(detailed);
+  });
+
+  it('THE CRY-WOLF COMPOSITION: a parked corpus exits 0 on every repeat run, and 2 under the flag', async () => {
+    // The reason residue is not exit 1. An unclassifiable record stays unclassifiable and an
+    // incoherent one stays parked until a human adjudicates it, so a nonzero default would make
+    // every scheduled run of this command fail forever — and a chronic alarm is one that gets
+    // silenced, taking the real failures with it.
+    await seed('mystery', { terminal_reason: 'who knows', run_phase: 'abandoned' });
+    await seed('parked', {
+      terminal_reason: "Step 'a' failed: boom",
+      failed_steps: ['a'],
+      run_phase: 'failed',
+      sealed_by: { arm: 'complete' },
+    });
+    for (let runNumber = 1; runNumber <= 3; runNumber += 1) {
+      const buckets = await migrateStampSeals(store, { force: true });
+      expect(buckets.unclassifiable, `run ${runNumber}`).toHaveLength(1);
+      expect(buckets.incoherent, `run ${runNumber}`).toHaveLength(1);
+      expect(migrateExitCode(buckets), `run ${runNumber} default`).toBe(0);
+      expect(migrateExitCode(buckets, { detailed: true }), `run ${runNumber} strict`).toBe(2);
+    }
+  });
+
+  it('the required flag: `realm run migrate` with no --stamp-seals is refused by Commander', () => {
+    // DQ2's gap from the base report. The gc `requiredOption` precedent: the flag is required, so
+    // the bare command is an error rather than a silent no-op.
+    const option = runMigrateCommand.options.find((o) => o.long === '--stamp-seals');
+    expect(option?.required || option?.mandatory).toBe(true);
   });
 });
 

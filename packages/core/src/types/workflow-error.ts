@@ -125,6 +125,13 @@ export type ErrorCode =
   // classify to — a stale arm preserved by spread (the old-binary re-seal channel) or a
   // mis-stamped writer.
   | 'STATE_SEAL_INCOHERENT'
+  // A terminal rewrite CHANGES a stored `sealed_by.arm` to a different arm. Stamps are immutable
+  // while the run is terminal: which arm sealed a run is a fact about something that already
+  // happened, and quietly re-attributing it is the silent re-attribution this whole design exists
+  // to end. Zero legacy cost — both arms must be present for the clause to fire. If an
+  // adjudication verb for parked incoherent records is ever built, it gets a DESIGNED bypass;
+  // never this path.
+  | 'STATE_SEAL_REWRITTEN'
   | 'STEP_NOT_FOUND'
   | 'GUARD_RESOLUTION_ERROR'
   | 'INPUT_MAP_DEPTH_EXCEEDED'
