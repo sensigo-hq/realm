@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspectRun } from './inspect.js';
+import { classBError } from '../agent/providers/agent-utils.js';
 import { computeExtensionIdentity, sha256HexOf } from '../extensions/extension-identity.js';
 import type {
   RunStore,
@@ -306,6 +307,60 @@ describe('inspectRun', () => {
     const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
     expect(result).toContain('[github:get_pull_request]  87ms');
     expect(result).toContain('Tool calls (1)');
+  });
+
+  /** The captured Class-B shape (see the providers' test files for full provenance). */
+  const CLASS_B_RESULT = {
+    content: [{ type: 'text', text: 'Error: Workflow not found: no-such-workflow-345' }],
+    isError: true,
+  };
+
+  it('a Class-B failure is VISIBLY failed on the tool-call line (issue #345)', async () => {
+    // The operator half of #345. A call that failed politely used to be recorded with no `error`
+    // field, so this line rendered identically to a success — the failure was in `result`, only
+    // visible under --verbose, and only to someone who read the JSON. Now the record carries
+    // `error` and inspect's existing suffix does the rest: no render change was needed, the
+    // surface was simply never reached before.
+    const snap = makeSnapshot('research', {
+      tool_calls: [
+        {
+          tool: 'get_workflow_protocol',
+          server_id: 'realm',
+          args: { workflow_id: 'no-such-workflow-345' },
+          result: '{"content":[{"type":"text","text":"Error: Workflow not found"}],"isError":true}',
+          duration_ms: 12,
+          // Built through the REAL helper, not a hardcoded string. A literal here would keep
+          // passing if the detection were deleted — the record would just be one an author wrote
+          // by hand, proving nothing about what the providers actually mint.
+          ...(classBError(CLASS_B_RESULT) !== undefined
+            ? { error: classBError(CLASS_B_RESULT)! }
+            : {}),
+        },
+      ],
+    });
+    const run = makeRun([snap]);
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).toContain(
+      '[realm:get_workflow_protocol]  12ms  error: Error: Workflow not found: no-such-workflow-345',
+    );
+  });
+
+  it('CONTROL — a successful call still renders with no error suffix (issue #345)', async () => {
+    const snap = makeSnapshot('research', {
+      tool_calls: [
+        {
+          tool: 'get_pull_request',
+          server_id: 'github',
+          args: { pr: 42 },
+          result: 'PR body',
+          duration_ms: 87,
+        },
+      ],
+    });
+    const run = makeRun([snap]);
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).toContain('[github:get_pull_request]  87ms');
+    expect(result).not.toContain('error:');
   });
 
   it('renders verbose tool args and result when verbose is true', async () => {

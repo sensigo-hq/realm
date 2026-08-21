@@ -14,6 +14,7 @@ import type {
   StepWithToolsResult,
 } from '../mcp/mcp-extensions.js';
 import {
+  classBError,
   sanitizeError,
   serializeToolResult,
   parseNamespacedId,
@@ -527,12 +528,19 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
               rejectAfter(options.toolTimeoutMs ?? 30000),
             ]);
             const serialized = serializeToolResult(rawResult);
+            // issue #345: a call that RETURNED with `isError: true` failed politely — Class B. The
+            // record gains `error` so it stops reading as a success; `result` keeps the full
+            // serialized payload (evidence is never discarded) and `resultContent` — what the
+            // MODEL sees — is byte-untouched, because how the model is told is a conversation
+            // decision this fix has no business changing.
+            const classB = classBError(rawResult);
             record = {
               server_id: serverId,
               tool: toolName,
               args,
               result: serialized,
               duration_ms: Date.now() - start,
+              ...(classB !== undefined ? { error: classB } : {}),
             };
             resultContent = serialized;
           } catch (err) {

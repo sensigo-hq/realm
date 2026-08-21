@@ -1,6 +1,8 @@
 // agent-utils.test.ts — Tests for shared agent utility functions.
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import {
+  classBError,
+  CLASS_B_NO_TEXT_MARKER,
   buildSystemPrompt,
   sanitizeError,
   serializeToolResult,
@@ -151,5 +153,80 @@ describe('extractJsonObject (mandate test 3 — the P1 robust extractor)', () =>
   it('falls back to the raw text when a fenced block contains no usable object', () => {
     const text = '```\nno object in here\n```\nBut the answer is {"c":3}';
     expect(extractJsonObject(text)).toEqual({ c: 3 });
+  });
+});
+
+// =========================================================================
+// issue #345 — classBError: the helper both providers mint through
+//
+// One helper rather than two hand-rolled copies, because two copies is how one of them drifts.
+// These cells drive it directly; the provider files carry the end-to-end mint cells.
+// =========================================================================
+describe('classBError (issue #345)', () => {
+  it('joins multiple text blocks with a newline', () => {
+    // The separator is specified, not incidental: two providers mint through this, and a
+    // different join would make the same failure read differently depending on which one ran.
+    expect(
+      classBError({
+        content: [
+          { type: 'text', text: 'first' },
+          { type: 'text', text: 'second' },
+        ],
+        isError: true,
+      }),
+    ).toBe('first\nsecond');
+  });
+
+  it('skips non-text blocks rather than stringifying them into the error', () => {
+    expect(
+      classBError({
+        content: [
+          { type: 'text', text: 'kept' },
+          { type: 'image', data: 'x', mimeType: 'image/png' },
+        ],
+        isError: true,
+      }),
+    ).toBe('kept');
+  });
+
+  it('returns undefined for everything that is not a Class-B result', () => {
+    expect(classBError({ content: [{ type: 'text', text: 'ok' }] })).toBeUndefined();
+    expect(classBError({ isError: false, content: [] })).toBeUndefined();
+    expect(classBError('a bare string result')).toBeUndefined();
+    expect(classBError(null)).toBeUndefined();
+    expect(classBError(undefined)).toBeUndefined();
+    expect(classBError(42)).toBeUndefined();
+  });
+
+  it('tolerates a missing or non-array content field', () => {
+    expect(classBError({ isError: true })).toBe(CLASS_B_NO_TEXT_MARKER);
+    expect(classBError({ isError: true, content: 'not an array' })).toBe(CLASS_B_NO_TEXT_MARKER);
+  });
+
+  it('the marker fires on whitespace-only joined text, not just on the empty string', () => {
+    // The case that caught a real defect in the first implementation: TWO empty blocks join to
+    // '\n', which is length 1 — so a `length === 0` check passed it through and produced an
+    // `error` that is truthy and visually nothing. Same invisible failure, different hat.
+    expect(classBError({ content: [{ type: 'text', text: '' }], isError: true })).toBe(
+      CLASS_B_NO_TEXT_MARKER,
+    );
+    expect(
+      classBError({
+        content: [
+          { type: 'text', text: '' },
+          { type: 'text', text: '' },
+        ],
+        isError: true,
+      }),
+    ).toBe(CLASS_B_NO_TEXT_MARKER);
+    expect(classBError({ content: [{ type: 'text', text: '   ' }], isError: true })).toBe(
+      CLASS_B_NO_TEXT_MARKER,
+    );
+  });
+
+  it('does NOT trim a real error — only the emptiness question is trimmed', () => {
+    expect(
+      classBError({ content: [{ type: 'text', text: '  real failure  ' }], isError: true }),
+    ).toBe('  real failure  ');
   });
 });

@@ -3,6 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AnthropicProvider } from './anthropic-provider.js';
 import { WorkflowError } from '@sensigo/realm';
+import { CLASS_B_NO_TEXT_MARKER } from './agent-utils.js';
 import type { ToolDefinition } from '../mcp/mcp-extensions.js';
 
 // ---------- shared mock for the @anthropic-ai/sdk package -----------------
@@ -1061,5 +1062,142 @@ describe('AnthropicProvider.capabilities', () => {
       toolArgsStrict: true,
       providerId: 'anthropic',
     });
+  });
+});
+
+// =========================================================================
+// issue #345 — Class-B tool failures (a call that RETURNS `isError: true`)
+//
+// MCP gives a tool two ways to fail. It can make the transport reject — Class A, an exception,
+// which the catch branch has always recorded honestly. Or it can RETURN normally carrying
+// `isError: true`: Class B, the polite failure the spec defines for a tool reporting its own
+// error back to the model. Class B used to mint a SUCCESS-shaped record — no `error` field, the
+// failure text buried in `result` — which made ToolCallRecord's own doc contract false and made
+// every tool-reliability count read those failures as successes.
+//
+// The twin of this block lives in the OTHER provider's test file. Both mints are structural
+// twins, so a cell on one proves nothing about the other.
+// =========================================================================
+
+/**
+ * THE CAPTURED CLASS-B SHAPE — not hand-authored.
+ *
+ * Provenance: realm's OWN MCP server (dogfood, no external service), tool
+ * `get_workflow_protocol`, arguments `{ workflow_id: 'no-such-workflow-345' }`, captured
+ * 2026-08-21 over the real SDK stdio client against `packages/mcp-server/dist/server.js`. That is
+ * realm's one genuine `isError` site (get-workflow-protocol.ts:62-68).
+ *
+ * REDACTION-INERT by construction: no `$HOME` path, no environment value, so it passes through
+ * `sanitizeError` unchanged and the probe red-sets stay exact. Redaction has its own cell with a
+ * purpose-built token fixture.
+ *
+ * A THIRD CLASS EXISTS AND IS NOT THIS ONE. Most realm MCP tools report failure as an in-band
+ * SUCCESS-shaped envelope — `status: 'error'` inside the text, no `isError` key — which is realm's
+ * designed agent-legible protocol, and incidentally the same invisibility shape this PR fixes one
+ * level up. Nobody should "fix" that envelope into `isError` without a design decision.
+ */
+const CLASS_B_CAPTURED = {
+  content: [{ type: 'text', text: 'Error: Workflow not found: no-such-workflow-345' }],
+  isError: true,
+};
+const CLASS_B_TEXT = 'Error: Workflow not found: no-such-workflow-345';
+
+describe('AnthropicProvider.callStepWithTools — Class-B tool failures (issue #345)', () => {
+  beforeEach(() => mockCreate.mockReset());
+
+  /** Runs one tool call whose executor resolves `value`, and returns its ToolCallRecord. */
+  async function recordFor(value: unknown) {
+    mockCreate
+      .mockResolvedValueOnce(makeToolUseResponse([{ id: 't1', name: 'op' }]))
+      .mockResolvedValueOnce(makeTextResponse('{"result":"ok"}'));
+    const result = await new AnthropicProvider('claude-sonnet-4-5').callStepWithTools(
+      'prompt',
+      [oneTool()],
+      vi.fn().mockResolvedValue(value),
+      {},
+    );
+    return result.toolCalls[0]!;
+  }
+
+  it('a Class-B result is recorded as a FAILURE, carrying the tool own text', async () => {
+    expect((await recordFor(CLASS_B_CAPTURED)).error).toBe(CLASS_B_TEXT);
+  });
+
+  it('`result` still carries the full serialized payload — evidence is never discarded', async () => {
+    const record = await recordFor(CLASS_B_CAPTURED);
+    expect(record.result).toBe(JSON.stringify(CLASS_B_CAPTURED));
+    // The Class A / Class B distinction as an assertion: a call that RETURNED has a result; a
+    // call that THREW does not.
+    expect(record.result).not.toBeNull();
+  });
+
+  it('CONTROL — a plain success is untouched: no error, result verbatim', async () => {
+    const ok = { content: [{ type: 'text', text: 'fine' }] };
+    const record = await recordFor(ok);
+    expect(record.error).toBeUndefined();
+    expect(record.result).toBe(JSON.stringify(ok));
+  });
+
+  it('CONTROL — the CONVERSATION payload is byte-untouched by this fix', async () => {
+    // What the MODEL sees is a conversation decision this fix has no business changing. The
+    // natural drift is to route Class B through the catch branch's `'Error: ' + text` shape,
+    // which would silently change what every agent reads mid-tool-loop.
+    await recordFor(CLASS_B_CAPTURED);
+    const followUp = JSON.stringify(mockCreate.mock.calls[1]![0]);
+    // The serialized payload as it appears EMBEDDED in the request — JSON-escaped, since it is a
+    // string inside a string. Asserted whole rather than by prefix: a partial match would pass on
+    // a payload that had been rewritten after the first forty characters.
+    const embedded = JSON.stringify(JSON.stringify(CLASS_B_CAPTURED)).slice(1, -1);
+    expect(followUp).toContain(embedded);
+    // And specifically NOT the catch branch's shape, which is where this would drift to.
+    expect(followUp).not.toContain('Error: Error: Workflow not found');
+  });
+
+  it('MARKER — no text blocks at all', async () => {
+    expect((await recordFor({ content: [], isError: true })).error).toBe(CLASS_B_NO_TEXT_MARKER);
+  });
+
+  it('MARKER — non-text blocks only', async () => {
+    const record = await recordFor({
+      content: [{ type: 'image', data: 'x', mimeType: 'image/png' }],
+      isError: true,
+    });
+    expect(record.error).toBe(CLASS_B_NO_TEXT_MARKER);
+  });
+
+  it('MARKER — text blocks present but ALL EMPTY (the one that would render as unfailed)', async () => {
+    // `text: ''` is transport-legal. An empty `error` would be falsy, so inspect's truthiness
+    // check would hide it and a politely-failed call would render as a success — the exact defect,
+    // reconstituted. The marker fires on the JOINED text being empty, not on blocks being absent.
+    const record = await recordFor({
+      content: [
+        { type: 'text', text: '' },
+        { type: 'text', text: '' },
+      ],
+      isError: true,
+    });
+    expect(record.error).toBe(CLASS_B_NO_TEXT_MARKER);
+    expect(record.error!.length).toBeGreaterThan(0);
+  });
+
+  it('STRICT BOOLEAN — a non-boolean `isError` is recorded as a SUCCESS', async () => {
+    // FIXTURE-ONLY: this wire state cannot occur. The SDK zod-validates every callTool response
+    // (`CallToolResultSchema`, `isError: z.boolean().optional()`), so a non-boolean value fails
+    // the parse, the promise rejects, and the call lands in the catch branch as Class A — recorded
+    // WITH an error either way. The strict check therefore cannot swallow a real failure. This
+    // pins the choice, not a reachable case; the premise breaks only if realm moves to
+    // `CompatibilityCallToolResultSchema` or a transport that skips validation.
+    const record = await recordFor({ ...CLASS_B_CAPTURED, isError: 'yes' });
+    expect(record.error).toBeUndefined();
+  });
+
+  it('SANITIZE — Class-B text goes through the same redaction pass as a thrown error', async () => {
+    // The two failure classes must not differ in what they leak.
+    const record = await recordFor({
+      content: [{ type: 'text', text: 'auth failed for Bearer sk-live-abcdef123456' }],
+      isError: true,
+    });
+    expect(record.error).toBe('auth failed for Bearer [REDACTED]');
+    expect(record.error).not.toContain('sk-live-abcdef123456');
   });
 });

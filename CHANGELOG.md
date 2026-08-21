@@ -27,6 +27,23 @@ All notable changes to this project are documented here.
   No new dependency: the map is built by the parser already in use, during the parse the loader
   already performs.
 
+### Fixed
+
+- **A tool call that fails politely is now recorded as a failure** (issue #345). MCP lets a tool
+  report its own error by RETURNING a result with `isError: true` rather than by throwing. realm
+  recorded those as successes: the `ToolCallRecord` carried no `error` field and the failure text
+  sat inside `result`, where nothing looked for it. The record type's own documentation said the
+  opposite, `realm run inspect` showed the call as unremarkable, and anything counting tool
+  reliability read the failure as a success.
+  The record now carries `error` for both failure classes — a thrown error and a returned
+  `isError` — with `result` still holding the full serialized payload, because evidence is never
+  discarded to tidy a record. **What the model sees is unchanged**: how a failing tool is reported
+  back into the conversation is a separate decision this fix does not touch.
+  **Consequence worth knowing before you compare numbers:** tool-reliability measurements
+  (issues #344 and #347) now read this class honestly, and records written by earlier versions
+  under-report failures. Records are append-only and are not migrated — this entry is the
+  version-keyed disclosure, so any measurement spanning this release has to segment on it.
+
 ### Changed
 
 **BREAKING — three classes of silently-accepted, meaningless input are now load errors.** Each one
