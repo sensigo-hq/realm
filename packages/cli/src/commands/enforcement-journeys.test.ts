@@ -94,6 +94,43 @@ steps:
   });
 });
 
+describe('J-A2 — the same typo, one level up: a workflow-level key (#170)', () => {
+  // #170 flipped TWO codes, and J-A above only ever drives one of them. The step-level and
+  // workflow-level unknown-key paths are separate `findUnknownKeys` call sites feeding separate
+  // scopes, so a change that reached one and not the other would be invisible: reverting
+  // UNKNOWN_WORKFLOW_KEY alone to 'warn' left every cli cell green before this one existed.
+  //
+  // One cell, three layers for the twin: the boundary refuses, the render corrects its own
+  // "— ignored" claim, and the author gets the suggestion that makes it a one-edit fix.
+  const withTypo = `
+id: journey-a2
+name: Journey A2
+version: 1
+descriptoin: what this workflow does
+steps:
+  step_one:
+    description: First step
+    execution: auto
+`;
+
+  it('validate refuses a top-level typo, suggests the real key, and does not call it ignored', async () => {
+    const first = await validate(write(withTypo));
+    expect(first.refused).toBe(true);
+    expect(first.out).toContain('escalated to an error by policy');
+    expect(first.out).toContain("unknown key 'descriptoin'");
+    expect(first.out).toContain("did you mean 'description'?");
+    expect(first.out).not.toContain('ignored');
+    expect(first.out).toContain('REFUSED below');
+    // The scope is named too — "workflow 'journey-a2'", not a step — so the author knows which
+    // level to look at. A step-scoped message here would send them hunting in the wrong place.
+    expect(first.out).toContain("workflow 'journey-a2': unknown key 'descriptoin'");
+
+    const second = await validate(write(withTypo.replace('descriptoin', 'description')));
+    expect(second.refused).toBe(false);
+    expect(second.out).toContain('Valid: journey-a2 v1 (1 steps)');
+  });
+});
+
 describe('J-B — an author puts `preconditions` on a guard (#369)', () => {
   const guardWith = (extra: string): string => `
 id: journey-b

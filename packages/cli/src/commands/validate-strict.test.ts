@@ -13,6 +13,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateCommand } from './validate.js';
+import { printLoaderWarnings } from '../lib/loader-warnings.js';
+import type { LoaderWarning } from '@sensigo/realm';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 
 describe('validate --strict (issue #169)', () => {
@@ -120,6 +122,46 @@ steps:
     expect(warned).not.toContain('ignored');
     expect(warned).toContain('REFUSED below');
     expect(warned).toContain("did you mean 'depends_on'?");
+  });
+
+  it('the render substitution covers BOTH flipped codes, not just the step-level one', () => {
+    // Unit-level, driving printLoaderWarnings directly, because the two flipped codes travel
+    // different paths to get here and the cell above only exercises one of them. Narrowing the
+    // substitution to exclude UNKNOWN_WORKFLOW_KEY left the entire cli suite green before this
+    // existed — a conjunct pinned for one member of a set and no other.
+    const both: LoaderWarning[] = [
+      {
+        code: 'UNKNOWN_WORKFLOW_KEY',
+        severity: 'error',
+        message: "workflow 'w': unknown key 'descriptoin' — ignored (did you mean 'description'?)",
+        scope: 'workflow',
+        id: 'w',
+        key: 'descriptoin',
+        did_you_mean: 'description',
+      },
+      {
+        code: 'UNKNOWN_STEP_KEY',
+        severity: 'error',
+        message: "step 's': unknown key 'dependson' — ignored (did you mean 'depends_on'?)",
+        scope: 'step',
+        step: 's',
+        key: 'dependson',
+        did_you_mean: 'depends_on',
+      },
+    ];
+
+    printLoaderWarnings(both);
+
+    const lines = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(lines).toHaveLength(2);
+    for (const line of lines) {
+      expect(line).toContain('REFUSED below');
+      expect(line).not.toContain('— ignored');
+      // The suggestion survives the substitution — it is the useful half of the line.
+      expect(line).toContain('did you mean');
+    }
+    // And the workflow-scoped one is genuinely present, so this cannot pass on two step lines.
+    expect(lines.join('\n')).toContain("workflow 'w'");
   });
 
   it('without --strict, an unknown key is now REFUSED by the default policy alone', async () => {
