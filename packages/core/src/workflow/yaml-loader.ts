@@ -24,6 +24,7 @@ import {
   closestKey,
   type LoaderWarning,
 } from './diagnostics.js';
+import { createSourcePositionCollector, type SourcePositionMap } from './source-positions.js';
 import { resolveTemplates } from './template-resolver.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
@@ -48,6 +49,13 @@ function validateConditionLeaf(
   stepName: string,
   dependsOn: string[],
   errors: string[],
+  /**
+   * Appends the step's source line to a message (issue #392). REQUIRED rather than optional so
+   * the compiler names every call site if this ever gains another one — an omitted resolver
+   * would silently drop positions, which is exactly the kind of quiet gap this repo keeps
+   * finding the hard way.
+   */
+  withLine: (stepName: string, message: string) => string,
 ): void {
   const split = splitComparison(leaf);
 
@@ -56,15 +64,21 @@ function validateConditionLeaf(
       const kw = split.reason === 'compound_and' ? 'and' : 'or';
       const listForm = (split.parts ?? [leaf]).map((p) => `    - "${p}"`).join('\n');
       errors.push(
-        `Step '${stepName}': '${surface}' uses unsupported '${kw}' — write it as a list:\n` +
-          `  ${surface}:\n${listForm}`,
+        withLine(
+          stepName,
+          `Step '${stepName}': '${surface}' uses unsupported '${kw}' — write it as a list:\n` +
+            `  ${surface}:\n${listForm}`,
+        ),
       );
     } else if (split.reason === 'multiple_operators') {
       errors.push(
-        `Step '${stepName}': '${surface}' leaf '${leaf}' has multiple comparison operators — each leaf must be a single comparison.`,
+        withLine(
+          stepName,
+          `Step '${stepName}': '${surface}' leaf '${leaf}' has multiple comparison operators — each leaf must be a single comparison.`,
+        ),
       );
     } else {
-      errors.push(`Step '${stepName}': '${surface}' leaf must not be empty.`);
+      errors.push(withLine(stepName, `Step '${stepName}': '${surface}' leaf must not be empty.`));
     }
     return;
   }
@@ -77,7 +91,10 @@ function validateConditionLeaf(
     // $settlement leaf must use the comparison spelling).
     if (surface === 'preconditions') {
       errors.push(
-        `Step '${stepName}': precondition '${leaf}' must be a comparison (e.g. "step.field >= 1").`,
+        withLine(
+          stepName,
+          `Step '${stepName}': precondition '${leaf}' must be a comparison (e.g. "step.field >= 1").`,
+        ),
       );
       return;
     }
@@ -88,31 +105,47 @@ function validateConditionLeaf(
     // `surface === 'when'` — an arm there would never fire for abort_unless/preconditions). This
     // fires on ALL THREE surfaces since it runs BEFORE the generic isPathShaped check below.
     if (split.path.split('.')[0] === '$settlement') {
-      validateSettlementReference(split.path, surface, leaf, stepName, dependsOn, errors);
+      validateSettlementReference(split.path, surface, leaf, stepName, dependsOn, errors, withLine);
       return;
     }
     if (!isPathShaped(split.path)) {
       errors.push(
-        `Step '${stepName}': '${surface}' leaf '${leaf}' is not a valid path or comparison.`,
+        withLine(
+          stepName,
+          `Step '${stepName}': '${surface}' leaf '${leaf}' is not a valid path or comparison.`,
+        ),
       );
       return;
     }
-    if (surface === 'when') validateWhenReference(split.path, stepName, dependsOn, errors);
+    if (surface === 'when')
+      validateWhenReference(split.path, stepName, dependsOn, errors, withLine);
     return;
   }
 
   // comparison
   if (split.lhsPath.split('.')[0] === '$settlement') {
-    validateSettlementReference(split.lhsPath, surface, leaf, stepName, dependsOn, errors);
+    validateSettlementReference(
+      split.lhsPath,
+      surface,
+      leaf,
+      stepName,
+      dependsOn,
+      errors,
+      withLine,
+    );
     return;
   }
   if (!isPathShaped(split.lhsPath)) {
     errors.push(
-      `Step '${stepName}': '${surface}' leaf '${leaf}' must have a path on the left-hand side (got '${split.lhsPath}').`,
+      withLine(
+        stepName,
+        `Step '${stepName}': '${surface}' leaf '${leaf}' must have a path on the left-hand side (got '${split.lhsPath}').`,
+      ),
     );
     return;
   }
-  if (surface === 'when') validateWhenReference(split.lhsPath, stepName, dependsOn, errors);
+  if (surface === 'when')
+    validateWhenReference(split.lhsPath, stepName, dependsOn, errors, withLine);
 }
 
 /**
@@ -130,6 +163,13 @@ function validateSettlementReference(
   stepName: string,
   dependsOn: string[],
   errors: string[],
+  /**
+   * Appends the step's source line to a message (issue #392). REQUIRED rather than optional so
+   * the compiler names every call site if this ever gains another one — an omitted resolver
+   * would silently drop positions, which is exactly the kind of quiet gap this repo keeps
+   * finding the hard way.
+   */
+  withLine: (stepName: string, message: string) => string,
 ): void {
   // Path-shape: a NARROWING for this ONE prefix only (never a general `$` allowance) — the
   // remainder after `$settlement` must itself be path-shaped. Rejects `$foo`, a bare `$`, and
@@ -144,8 +184,11 @@ function validateSettlementReference(
   // only on pathological consecutive dots (`$settlement.dep..field`), which is more correct.
   if (!/^\$settlement(\.[A-Za-z_][A-Za-z0-9_-]*)*$/.test(path)) {
     errors.push(
-      `Step '${stepName}': '${surface}' leaf '${leaf}' has an invalid '$settlement' reference ` +
-        `'${path}' — expected '$settlement.<dep>.<field>'.`,
+      withLine(
+        stepName,
+        `Step '${stepName}': '${surface}' leaf '${leaf}' has an invalid '$settlement' reference ` +
+          `'${path}' — expected '$settlement.<dep>.<field>'.`,
+      ),
     );
     return;
   }
@@ -153,16 +196,22 @@ function validateSettlementReference(
   const dep = path.split('.')[1];
   if (dep === undefined) {
     errors.push(
-      `Step '${stepName}': '${surface}' leaf '${leaf}' references '$settlement' with no ` +
-        `dependency segment — expected '$settlement.<dep>.<field>' where '<dep>' is a direct dependency.`,
+      withLine(
+        stepName,
+        `Step '${stepName}': '${surface}' leaf '${leaf}' references '$settlement' with no ` +
+          `dependency segment — expected '$settlement.<dep>.<field>' where '<dep>' is a direct dependency.`,
+      ),
     );
     return;
   }
   if (!dependsOn.includes(dep)) {
     errors.push(
-      `Step '${stepName}': '${surface}' references '$settlement.${dep}' — '${dep}' is not in ` +
-        `its depends_on [${dependsOn.join(', ')}]. '$settlement' paths must reference a direct ` +
-        `dependency (one-hop rule).`,
+      withLine(
+        stepName,
+        `Step '${stepName}': '${surface}' references '$settlement.${dep}' — '${dep}' is not in ` +
+          `its depends_on [${dependsOn.join(', ')}]. '$settlement' paths must reference a direct ` +
+          `dependency (one-hop rule).`,
+      ),
     );
   }
 }
@@ -177,19 +226,32 @@ function validateWhenReference(
   stepName: string,
   dependsOn: string[],
   errors: string[],
+  /**
+   * Appends the step's source line to a message (issue #392). REQUIRED rather than optional so
+   * the compiler names every call site if this ever gains another one — an omitted resolver
+   * would silently drop positions, which is exactly the kind of quiet gap this repo keeps
+   * finding the hard way.
+   */
+  withLine: (stepName: string, message: string) => string,
 ): void {
   const first = path.split('.')[0]!;
   if (first === 'run') {
     if (!(path === 'run.params' || path.startsWith('run.params.'))) {
       errors.push(
-        `Step '${stepName}': 'when' references '${path}' — only 'run.params.*' is available from 'run'.`,
+        withLine(
+          stepName,
+          `Step '${stepName}': 'when' references '${path}' — only 'run.params.*' is available from 'run'.`,
+        ),
       );
     }
     return;
   }
   if (!dependsOn.includes(first)) {
     errors.push(
-      `Step '${stepName}': 'when' references step '${first}' which is not in its depends_on [${dependsOn.join(', ')}]. Add it to depends_on or use 'run.params.*'.`,
+      withLine(
+        stepName,
+        `Step '${stepName}': 'when' references step '${first}' which is not in its depends_on [${dependsOn.join(', ')}]. Add it to depends_on or use 'run.params.*'.`,
+      ),
     );
   }
 }
@@ -595,9 +657,14 @@ function parseWorkflowString(
   opts: { allowExtensions: boolean },
 ): { definition: WorkflowDefinition; warnings: LoaderWarning[] } {
   // Step 1: Parse YAML
+  //
+  // issue #392: the position collector rides THIS parse via js-yaml's own listener — there is no
+  // second parse and no parser change. If the parse throws, `finish()` is never reached and every
+  // position is simply absent, which is the correct answer for a file that did not parse.
+  const positions = createSourcePositionCollector();
   let raw: unknown;
   try {
-    raw = load(content);
+    raw = load(content, { listener: positions.listener });
   } catch (err) {
     throw new WorkflowError(
       `YAML parse error: ${err instanceof Error ? err.message : String(err)}`,
@@ -612,6 +679,17 @@ function parseWorkflowString(
 
   const errors: string[] = [];
   const warnings: LoaderWarning[] = [];
+  // Finalised after the parse succeeded; resolves a semantic path to its place in the source.
+  const sourceMap: SourcePositionMap = positions.finish();
+  /**
+   * Appends ` (line N)` when the step's own key can be placed, and nothing when it cannot
+   * (issue #392). Used at PUSH time, never at join time — once messages are joined into one
+   * string the step each came from is no longer recoverable.
+   */
+  const withStepLine = (stepName: string, message: string): string => {
+    const line = sourceMap.posOf(['steps', stepName])?.line;
+    return line === undefined ? message : `${message} (line ${line})`;
+  };
 
   // Step 2: Top-level validation
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -639,6 +717,7 @@ function parseWorkflowString(
         scope: 'workflow',
         code: 'UNKNOWN_WORKFLOW_KEY',
         id: workflowId,
+        positionOf: (key) => sourceMap.posOf([key]),
       }),
     );
   }
@@ -708,7 +787,7 @@ function parseWorkflowString(
   // Step 3: Per-step validation
   for (const [stepName, stepRaw] of Object.entries(stepsRaw)) {
     if (typeof stepRaw !== 'object' || stepRaw === null || Array.isArray(stepRaw)) {
-      errors.push(`Step '${stepName}' must be an object`);
+      errors.push(withStepLine(stepName, `Step '${stepName}' must be an object`));
       continue;
     }
     const step = stepRaw as Record<string, unknown>;
@@ -732,6 +811,7 @@ function parseWorkflowString(
         scope: 'step',
         code: 'UNKNOWN_STEP_KEY',
         step: stepName,
+        positionOf: (key) => sourceMap.posOf(['steps', stepName, key]),
       }),
     );
 
@@ -755,13 +835,18 @@ function parseWorkflowString(
     const REQUIRED_STEP = ['description', 'execution'];
     for (const field of REQUIRED_STEP) {
       if (!(field in step)) {
-        errors.push(`Step '${stepName}': missing required field '${field}'`);
+        errors.push(
+          withStepLine(stepName, `Step '${stepName}': missing required field '${field}'`),
+        );
       }
     }
 
     if ('execution' in step && !VALID_EXECUTIONS.has(step['execution'] as string)) {
       errors.push(
-        `Step '${stepName}': invalid execution value '${String(step['execution'])}'; must be 'auto', 'agent', 'guard', or 'finalizer'`,
+        withStepLine(
+          stepName,
+          `Step '${stepName}': invalid execution value '${String(step['execution'])}'; must be 'auto', 'agent', 'guard', or 'finalizer'`,
+        ),
       );
     }
 
@@ -784,34 +869,50 @@ function parseWorkflowString(
       ];
       for (const field of prohibited) {
         if (step[field] !== undefined) {
-          errors.push(`Step '${stepName}': '${field}' is not valid on execution: finalizer steps`);
+          errors.push(
+            withStepLine(
+              stepName,
+              `Step '${stepName}': '${field}' is not valid on execution: finalizer steps`,
+            ),
+          );
         }
       }
       // A finalizer must not gate — reject any human-gate trust level.
       if (step['trust'] !== undefined && step['trust'] !== 'auto') {
         errors.push(
-          `Step '${stepName}': 'trust: ${String(step['trust'])}' is not valid on execution: finalizer steps (a finalizer must not gate)`,
+          withStepLine(
+            stepName,
+            `Step '${stepName}': 'trust: ${String(step['trust'])}' is not valid on execution: finalizer steps (a finalizer must not gate)`,
+          ),
         );
       }
       // v1 is handler-only.
       if (step['handler'] === undefined) {
         errors.push(
-          `Step '${stepName}': execution: finalizer requires 'handler' (handler-only in v1)`,
+          withStepLine(
+            stepName,
+            `Step '${stepName}': execution: finalizer requires 'handler' (handler-only in v1)`,
+          ),
         );
       }
       // on_outcome is required, non-empty, every value in the FinalizerTrigger enum.
       const rawOutcome = step['on_outcome'];
       if (rawOutcome === undefined) {
-        errors.push(`Step '${stepName}': execution: finalizer requires 'on_outcome'`);
+        errors.push(
+          withStepLine(stepName, `Step '${stepName}': execution: finalizer requires 'on_outcome'`),
+        );
       } else {
         const outcomes = Array.isArray(rawOutcome) ? rawOutcome : [rawOutcome];
         if (outcomes.length === 0) {
-          errors.push(`Step '${stepName}': 'on_outcome' must not be empty`);
+          errors.push(withStepLine(stepName, `Step '${stepName}': 'on_outcome' must not be empty`));
         }
         for (const o of outcomes) {
           if (typeof o !== 'string' || !VALID_FINALIZER_TRIGGERS.has(o)) {
             errors.push(
-              `Step '${stepName}': invalid on_outcome value '${String(o)}'; must be one of ${[...VALID_FINALIZER_TRIGGERS].join(', ')}`,
+              withStepLine(
+                stepName,
+                `Step '${stepName}': invalid on_outcome value '${String(o)}'; must be one of ${[...VALID_FINALIZER_TRIGGERS].join(', ')}`,
+              ),
             );
           }
         }
@@ -820,7 +921,12 @@ function parseWorkflowString(
 
     // on_outcome is only valid on execution: finalizer steps.
     if (step['on_outcome'] !== undefined && step['execution'] !== 'finalizer') {
-      errors.push(`Step '${stepName}': 'on_outcome' is only valid on execution: finalizer steps`);
+      errors.push(
+        withStepLine(
+          stepName,
+          `Step '${stepName}': 'on_outcome' is only valid on execution: finalizer steps`,
+        ),
+      );
     }
 
     // Guard step constraints.
@@ -841,11 +947,18 @@ function parseWorkflowString(
       ];
       for (const field of prohibited) {
         if (step[field] !== undefined) {
-          errors.push(`Step '${stepName}': '${field}' is not valid on execution: guard steps`);
+          errors.push(
+            withStepLine(
+              stepName,
+              `Step '${stepName}': '${field}' is not valid on execution: guard steps`,
+            ),
+          );
         }
       }
       if (step['abort_unless'] === undefined) {
-        errors.push(`Step '${stepName}': execution: guard requires 'abort_unless'`);
+        errors.push(
+          withStepLine(stepName, `Step '${stepName}': execution: guard requires 'abort_unless'`),
+        );
       }
       // issue #369: `preconditions` gets its OWN error rather than joining `prohibited` above,
       // because the generic message ("'x' is not valid on execution: guard steps") would not say
@@ -858,33 +971,56 @@ function parseWorkflowString(
       // never reaches. A test pins that count so a second call site reds this message.
       if (step['preconditions'] !== undefined) {
         errors.push(
-          `Step '${stepName}': 'preconditions' is not valid on execution: guard steps — the ` +
-            `engine never evaluates it there (a guard's execution evaluates only 'abort_unless'), ` +
-            `so the run would LOOK guarded while the declared check never ran. Move the condition ` +
-            `into 'abort_unless'. Whether guards gain a live condition surface is an open design ` +
-            `question (issue #366) — if admitted later, existing workflows are unaffected.`,
+          withStepLine(
+            stepName,
+            `Step '${stepName}': 'preconditions' is not valid on execution: guard steps — the ` +
+              `engine never evaluates it there (a guard's execution evaluates only 'abort_unless'), ` +
+              `so the run would LOOK guarded while the declared check never ran. Move the condition ` +
+              `into 'abort_unless'. Whether guards gain a live condition surface is an open design ` +
+              `question (issue #366) — if admitted later, existing workflows are unaffected.`,
+          ),
         );
       }
     }
 
     // abort_unless and abort_message are only valid on execution: guard steps.
     if (step['abort_unless'] !== undefined && step['execution'] !== 'guard') {
-      errors.push(`Step '${stepName}': 'abort_unless' is only valid on execution: guard steps`);
+      errors.push(
+        withStepLine(
+          stepName,
+          `Step '${stepName}': 'abort_unless' is only valid on execution: guard steps`,
+        ),
+      );
     }
     if (step['abort_message'] !== undefined && step['execution'] !== 'guard') {
-      errors.push(`Step '${stepName}': 'abort_message' is only valid on execution: guard steps`);
+      errors.push(
+        withStepLine(
+          stepName,
+          `Step '${stepName}': 'abort_message' is only valid on execution: guard steps`,
+        ),
+      );
     }
 
     // agent_profile is only valid on agent steps.
     if ('agent_profile' in step && step['execution'] !== 'agent') {
-      errors.push(`Step '${stepName}': 'agent_profile' is only valid on execution: agent steps`);
+      errors.push(
+        withStepLine(
+          stepName,
+          `Step '${stepName}': 'agent_profile' is only valid on execution: agent steps`,
+        ),
+      );
     }
 
     // idempotent (issue #101 Phase 2) is only valid on execution: auto steps — the reliably
     // time-boundable, deadline-carrying class. It is inert (no concrete deadline is ever written)
     // on agent/guard/finalizer, so it is rejected there rather than silently ignored.
     if (step['idempotent'] !== undefined && step['execution'] !== 'auto') {
-      errors.push(`Step '${stepName}': 'idempotent' is only valid on execution: auto steps`);
+      errors.push(
+        withStepLine(
+          stepName,
+          `Step '${stepName}': 'idempotent' is only valid on execution: auto steps`,
+        ),
+      );
     }
     // WARN (do not reject): an idempotent auto step in a finalizer-bearing workflow gets
     // `deadline: null` (issue #101), so the RECLAIM function is inert — `realm run reclaim --all`
@@ -919,7 +1055,12 @@ function parseWorkflowString(
 
     // output_schema is only valid on execution: agent steps.
     if (step['output_schema'] !== undefined && step['execution'] !== 'agent') {
-      errors.push(`Step '${stepName}': 'output_schema' is only valid on execution: agent steps`);
+      errors.push(
+        withStepLine(
+          stepName,
+          `Step '${stepName}': 'output_schema' is only valid on execution: agent steps`,
+        ),
+      );
     }
 
     // issue #236 (L0 prevention layer): structured_output is only valid on execution: agent
@@ -931,11 +1072,17 @@ function parseWorkflowString(
     if (step['structured_output'] !== undefined) {
       if (step['execution'] !== 'agent') {
         errors.push(
-          `Step '${stepName}': 'structured_output' is only valid on execution: agent steps`,
+          withStepLine(
+            stepName,
+            `Step '${stepName}': 'structured_output' is only valid on execution: agent steps`,
+          ),
         );
       } else if (step['structured_output'] !== 'strict') {
         errors.push(
-          `Step '${stepName}': 'structured_output' must be the literal string 'strict' (got ${JSON.stringify(step['structured_output'])})`,
+          withStepLine(
+            stepName,
+            `Step '${stepName}': 'structured_output' must be the literal string 'strict' (got ${JSON.stringify(step['structured_output'])})`,
+          ),
         );
       } else {
         const verdict = assessStructuredOutputEligibility({
@@ -949,8 +1096,11 @@ function parseWorkflowString(
         });
         if (verdict.verdict === 'ineligible') {
           errors.push(
-            `Step '${stepName}': 'structured_output: strict' is not eligible for this step's ` +
-              `schema — ${renderIneligibleMessage(verdict.reasons)}`,
+            withStepLine(
+              stepName,
+              `Step '${stepName}': 'structured_output: strict' is not eligible for this step's ` +
+                `schema — ${renderIneligibleMessage(verdict.reasons)}`,
+            ),
           );
         }
       }
@@ -968,13 +1118,18 @@ function parseWorkflowString(
     if (step['validation_exhaustion'] !== undefined) {
       if (step['execution'] !== 'agent') {
         errors.push(
-          `Step '${stepName}': 'validation_exhaustion' is only valid on execution: agent steps`,
+          withStepLine(
+            stepName,
+            `Step '${stepName}': 'validation_exhaustion' is only valid on execution: agent steps`,
+          ),
         );
       } else if (
         typeof step['validation_exhaustion'] !== 'object' ||
         step['validation_exhaustion'] === null
       ) {
-        errors.push(`Step '${stepName}': 'validation_exhaustion' must be an object`);
+        errors.push(
+          withStepLine(stepName, `Step '${stepName}': 'validation_exhaustion' must be an object`),
+        );
       } else {
         const exhaustionBlock = step['validation_exhaustion'] as Record<string, unknown>;
 
@@ -988,6 +1143,7 @@ function parseWorkflowString(
             code: 'UNKNOWN_VALIDATION_EXHAUSTION_KEY',
             step: stepName,
             noun: 'validation_exhaustion',
+            positionOf: (key) => sourceMap.posOf(['steps', stepName, 'validation_exhaustion', key]),
           }),
         );
 
@@ -997,17 +1153,23 @@ function parseWorkflowString(
             (exhaustionBlock['threshold'] as number) < 1)
         ) {
           errors.push(
-            `Step '${stepName}': 'validation_exhaustion.threshold' must be a positive integer ` +
-              `(1 is legal — it disables in-drive schema-repair, since the first rejection ` +
-              `already meets it)`,
+            withStepLine(
+              stepName,
+              `Step '${stepName}': 'validation_exhaustion.threshold' must be a positive integer ` +
+                `(1 is legal — it disables in-drive schema-repair, since the first rejection ` +
+                `already meets it)`,
+            ),
           );
         }
 
         const modeValue = exhaustionBlock['mode'];
         if (modeValue !== undefined && modeValue !== 'fail' && modeValue !== 'default') {
           errors.push(
-            `Step '${stepName}': 'validation_exhaustion.mode' must be 'fail' or 'default' ` +
-              `(got: ${JSON.stringify(modeValue)})`,
+            withStepLine(
+              stepName,
+              `Step '${stepName}': 'validation_exhaustion.mode' must be 'fail' or 'default' ` +
+                `(got: ${JSON.stringify(modeValue)})`,
+            ),
           );
         }
 
@@ -1015,13 +1177,19 @@ function parseWorkflowString(
         if (modeValue === 'default') {
           if (!hasDefaultOutput) {
             errors.push(
-              `Step '${stepName}': 'validation_exhaustion.mode: default' requires ` +
-                `'default_output' (nothing to substitute on exhaustion)`,
+              withStepLine(
+                stepName,
+                `Step '${stepName}': 'validation_exhaustion.mode: default' requires ` +
+                  `'default_output' (nothing to substitute on exhaustion)`,
+              ),
             );
           } else if (step['output_schema'] === undefined) {
             errors.push(
-              `Step '${stepName}': 'validation_exhaustion.default_output' requires the step to ` +
-                `declare 'output_schema' (an undeclared schema makes the default unvalidatable)`,
+              withStepLine(
+                stepName,
+                `Step '${stepName}': 'validation_exhaustion.default_output' requires the step to ` +
+                  `declare 'output_schema' (an undeclared schema makes the default unvalidatable)`,
+              ),
             );
           } else {
             // B10 — load-time AJV proof: REUSE the runtime validator so the load-time verdict can
@@ -1048,8 +1216,11 @@ function parseWorkflowString(
                     ? err.message
                     : String(err);
               errors.push(
-                `Step '${stepName}': 'validation_exhaustion.default_output' does not validate ` +
-                  `against the step's own 'output_schema': ${detail}`,
+                withStepLine(
+                  stepName,
+                  `Step '${stepName}': 'validation_exhaustion.default_output' does not validate ` +
+                    `against the step's own 'output_schema': ${detail}`,
+                ),
               );
             }
           }
@@ -1092,13 +1263,21 @@ function parseWorkflowString(
 
     // trace_schema is only valid on execution: agent steps.
     if (step['trace_schema'] !== undefined && step['execution'] !== 'agent') {
-      errors.push(`Step '${stepName}': 'trace_schema' is only valid on execution: agent steps`);
+      errors.push(
+        withStepLine(
+          stepName,
+          `Step '${stepName}': 'trace_schema' is only valid on execution: agent steps`,
+        ),
+      );
     }
 
     // trace_validation_mode is only valid on execution: agent steps.
     if (step['trace_validation_mode'] !== undefined && step['execution'] !== 'agent') {
       errors.push(
-        `Step '${stepName}': 'trace_validation_mode' is only valid on execution: agent steps`,
+        withStepLine(
+          stepName,
+          `Step '${stepName}': 'trace_validation_mode' is only valid on execution: agent steps`,
+        ),
       );
     }
 
@@ -1109,7 +1288,10 @@ function parseWorkflowString(
       step['trace_validation_mode'] !== 'enforce'
     ) {
       errors.push(
-        `Step '${stepName}': invalid trace_validation_mode '${String(step['trace_validation_mode'])}'; must be 'warn' or 'enforce'`,
+        withStepLine(
+          stepName,
+          `Step '${stepName}': invalid trace_validation_mode '${String(step['trace_validation_mode'])}'; must be 'warn' or 'enforce'`,
+        ),
       );
     }
 
@@ -1121,7 +1303,7 @@ function parseWorkflowString(
     // trust value).
     if (step['gate'] !== undefined) {
       if (typeof step['gate'] !== 'object' || step['gate'] === null) {
-        errors.push(`Step '${stepName}': 'gate' must be an object`);
+        errors.push(withStepLine(stepName, `Step '${stepName}': 'gate' must be an object`));
       } else {
         const gate = step['gate'] as Record<string, unknown>;
 
@@ -1133,6 +1315,7 @@ function parseWorkflowString(
             code: 'UNKNOWN_GATE_KEY',
             step: stepName,
             noun: 'gate',
+            positionOf: (key) => sourceMap.posOf(['steps', stepName, 'gate', key]),
           }),
         );
 
@@ -1142,26 +1325,44 @@ function parseWorkflowString(
           'timeout_seconds' in gate &&
           (!Number.isInteger(gate['timeout_seconds']) || (gate['timeout_seconds'] as number) <= 0)
         ) {
-          errors.push(`Step '${stepName}': 'gate.timeout_seconds' must be a positive integer`);
+          errors.push(
+            withStepLine(
+              stepName,
+              `Step '${stepName}': 'gate.timeout_seconds' must be a positive integer`,
+            ),
+          );
         }
         if (
           'reminder_seconds' in gate &&
           (!Number.isInteger(gate['reminder_seconds']) || (gate['reminder_seconds'] as number) <= 0)
         ) {
-          errors.push(`Step '${stepName}': 'gate.reminder_seconds' must be a positive integer`);
+          errors.push(
+            withStepLine(
+              stepName,
+              `Step '${stepName}': 'gate.reminder_seconds' must be a positive integer`,
+            ),
+          );
         }
         if (
           'reminder_max' in gate &&
           (!Number.isInteger(gate['reminder_max']) || (gate['reminder_max'] as number) <= 0)
         ) {
-          errors.push(`Step '${stepName}': 'gate.reminder_max' must be a positive integer`);
+          errors.push(
+            withStepLine(
+              stepName,
+              `Step '${stepName}': 'gate.reminder_max' must be a positive integer`,
+            ),
+          );
         }
 
         // on_expiry must be 'settle_default' or 'abort' when provided.
         const onExpiry = gate['on_expiry'];
         if (onExpiry !== undefined && onExpiry !== 'settle_default' && onExpiry !== 'abort') {
           errors.push(
-            `Step '${stepName}': 'gate.on_expiry' must be 'settle_default' or 'abort' (got: ${JSON.stringify(onExpiry)})`,
+            withStepLine(
+              stepName,
+              `Step '${stepName}': 'gate.on_expiry' must be 'settle_default' or 'abort' (got: ${JSON.stringify(onExpiry)})`,
+            ),
           );
         }
 
@@ -1175,8 +1376,11 @@ function parseWorkflowString(
         if (onExpiry === 'settle_default') {
           if (!hasDefaultChoice) {
             errors.push(
-              `Step '${stepName}': 'gate.on_expiry: settle_default' requires 'gate.default_choice' ` +
-                `(nothing to resolve the gate with on expiry)`,
+              withStepLine(
+                stepName,
+                `Step '${stepName}': 'gate.on_expiry: settle_default' requires 'gate.default_choice' ` +
+                  `(nothing to resolve the gate with on expiry)`,
+              ),
             );
           } else {
             const choicesRaw =
@@ -1187,8 +1391,11 @@ function parseWorkflowString(
               : ['approve', 'reject'];
             if (!effectiveChoices.includes(gate['default_choice'] as string)) {
               errors.push(
-                `Step '${stepName}': 'gate.default_choice' (${JSON.stringify(gate['default_choice'])}) ` +
-                  `is not one of the step's effective choices: ${effectiveChoices.join(', ')}`,
+                withStepLine(
+                  stepName,
+                  `Step '${stepName}': 'gate.default_choice' (${JSON.stringify(gate['default_choice'])}) ` +
+                    `is not one of the step's effective choices: ${effectiveChoices.join(', ')}`,
+                ),
               );
             }
           }
@@ -1249,7 +1456,10 @@ function parseWorkflowString(
         !(step['uses_service'] in (services as Record<string, unknown>))
       ) {
         errors.push(
-          `Step '${stepName}': uses_service '${step['uses_service']}' is not defined in 'services'`,
+          withStepLine(
+            stepName,
+            `Step '${stepName}': uses_service '${step['uses_service']}' is not defined in 'services'`,
+          ),
         );
       }
     }
@@ -1257,7 +1467,7 @@ function parseWorkflowString(
     // Validate retry: backoff must be a recognised value when present.
     if (step['retry'] !== undefined) {
       if (typeof step['retry'] !== 'object' || step['retry'] === null) {
-        errors.push(`Step '${stepName}': 'retry' must be an object`);
+        errors.push(withStepLine(stepName, `Step '${stepName}': 'retry' must be an object`));
       } else {
         const retry = step['retry'] as Record<string, unknown>;
 
@@ -1270,6 +1480,7 @@ function parseWorkflowString(
             code: 'UNKNOWN_RETRY_KEY',
             step: stepName,
             noun: 'retry',
+            positionOf: (key) => sourceMap.posOf(['steps', stepName, 'retry', key]),
           }),
         );
 
@@ -1280,33 +1491,53 @@ function parseWorkflowString(
           retry['backoff'] !== 'exponential'
         ) {
           errors.push(
-            `Step '${stepName}': 'retry.backoff' must be 'fixed', 'linear', or 'exponential'`,
+            withStepLine(
+              stepName,
+              `Step '${stepName}': 'retry.backoff' must be 'fixed', 'linear', or 'exponential'`,
+            ),
           );
         }
         if (
           'max_attempts' in retry &&
           (!Number.isInteger(retry['max_attempts']) || (retry['max_attempts'] as number) < 1)
         ) {
-          errors.push(`Step '${stepName}': 'retry.max_attempts' must be a positive integer`);
+          errors.push(
+            withStepLine(
+              stepName,
+              `Step '${stepName}': 'retry.max_attempts' must be a positive integer`,
+            ),
+          );
         }
         if (
           'base_delay_ms' in retry &&
           (typeof retry['base_delay_ms'] !== 'number' || (retry['base_delay_ms'] as number) < 0)
         ) {
-          errors.push(`Step '${stepName}': 'retry.base_delay_ms' must be a non-negative number`);
+          errors.push(
+            withStepLine(
+              stepName,
+              `Step '${stepName}': 'retry.base_delay_ms' must be a non-negative number`,
+            ),
+          );
         }
         if (
           'max_delay_ms' in retry &&
           (typeof retry['max_delay_ms'] !== 'number' || (retry['max_delay_ms'] as number) < 0)
         ) {
-          errors.push(`Step '${stepName}': 'retry.max_delay_ms' must be a non-negative number`);
+          errors.push(
+            withStepLine(
+              stepName,
+              `Step '${stepName}': 'retry.max_delay_ms' must be a non-negative number`,
+            ),
+          );
         }
 
         // --- issue #140: on_timeout / total_timeout_seconds --------------------------------
 
         // E3: on_timeout must be a boolean (kills the 'on_timeout: "true"' silent-inert case).
         if ('on_timeout' in retry && typeof retry['on_timeout'] !== 'boolean') {
-          errors.push(`Step '${stepName}': 'retry.on_timeout' must be a boolean`);
+          errors.push(
+            withStepLine(stepName, `Step '${stepName}': 'retry.on_timeout' must be a boolean`),
+          );
         }
 
         // E2: total_timeout_seconds must be a positive integer — same convention as
@@ -1318,7 +1549,10 @@ function parseWorkflowString(
             (retry['total_timeout_seconds'] as number) <= 0)
         ) {
           errors.push(
-            `Step '${stepName}': 'retry.total_timeout_seconds' must be a positive integer`,
+            withStepLine(
+              stepName,
+              `Step '${stepName}': 'retry.total_timeout_seconds' must be a positive integer`,
+            ),
           );
         }
 
@@ -1326,11 +1560,14 @@ function parseWorkflowString(
         // `=== true` on both loci, provably matching the engine's own conjunct.
         if (retry['on_timeout'] === true && step['idempotent'] !== true) {
           errors.push(
-            `Step '${stepName}': 'retry.on_timeout: true' requires 'idempotent: true' declared ` +
-              `on the step — a timeout-retry can run concurrently with the still-in-flight ` +
-              `original attempt, so the step must explicitly attest that any partial prior ` +
-              `application is harmless to re-apply. Declare 'idempotent: true' or remove ` +
-              `'on_timeout'.`,
+            withStepLine(
+              stepName,
+              `Step '${stepName}': 'retry.on_timeout: true' requires 'idempotent: true' declared ` +
+                `on the step — a timeout-retry can run concurrently with the still-in-flight ` +
+                `original attempt, so the step must explicitly attest that any partial prior ` +
+                `application is harmless to re-apply. Declare 'idempotent: true' or remove ` +
+                `'on_timeout'.`,
+            ),
           );
         }
 
@@ -1436,21 +1673,36 @@ function parseWorkflowString(
 
     if ('service_method' in step && !VALID_SERVICE_METHODS.has(step['service_method'] as string)) {
       errors.push(
-        `Step '${stepName}': invalid service_method '${String(step['service_method'])}'; must be 'fetch', 'create', 'update', or 'delete'`,
+        withStepLine(
+          stepName,
+          `Step '${stepName}': invalid service_method '${String(step['service_method'])}'; must be 'fetch', 'create', 'update', or 'delete'`,
+        ),
       );
     }
 
     // Validate input_map: only valid on execution: auto steps (both uses_service and handler).
     if (step['input_map'] !== undefined) {
       if (step['execution'] !== 'auto') {
-        errors.push(`Step '${stepName}': 'input_map' is only valid on execution: auto steps`);
+        errors.push(
+          withStepLine(
+            stepName,
+            `Step '${stepName}': 'input_map' is only valid on execution: auto steps`,
+          ),
+        );
       } else {
+        // issue #392: input_map's errors are minted deep inside a recursive walk that knows only
+        // its path string, not the step's position. Collected here and suffixed on the way out,
+        // so ONE step's error list never mixes positioned and bare messages — a reader seeing
+        // "(line 12)" on three of five errors would reasonably wonder what is different about
+        // the other two, and nothing is.
+        const inputMapErrors: string[] = [];
         validateInputMapNode(
           step['input_map'] as Record<string, unknown>,
           `Step '${stepName}': input_map`,
-          errors,
+          inputMapErrors,
           0,
         );
+        errors.push(...inputMapErrors.map((e) => withStepLine(stepName, e)));
       }
     }
 
@@ -1467,7 +1719,10 @@ function parseWorkflowString(
       const adapter = adapterName !== undefined ? registry?.getAdapter(adapterName) : undefined;
       if (adapter !== undefined && adapter.config_schema === undefined) {
         errors.push(
-          `Step '${stepName}': 'config' declared but adapter '${adapterName}' does not declare 'config_schema'`,
+          withStepLine(
+            stepName,
+            `Step '${stepName}': 'config' declared but adapter '${adapterName}' does not declare 'config_schema'`,
+          ),
         );
       } else if (adapter?.config_schema !== undefined) {
         const ajv = new Ajv();
@@ -1475,7 +1730,10 @@ function parseWorkflowString(
         if (!valid) {
           const errMessages = ajv.errors?.map((e) => e.message ?? '').join('; ') ?? 'unknown error';
           errors.push(
-            `Step '${stepName}': config validation failed against adapter config_schema: ${errMessages}`,
+            withStepLine(
+              stepName,
+              `Step '${stepName}': config validation failed against adapter config_schema: ${errMessages}`,
+            ),
           );
         }
       }
@@ -1489,8 +1747,11 @@ function parseWorkflowString(
         for (const resourceStepId of handler.uses_resources) {
           if (!(resourceStepId in stepsRaw)) {
             errors.push(
-              `Step '${stepName}': handler '${handlerName}' declares uses_resources '${resourceStepId}' ` +
-                `but no step with that ID exists in this workflow`,
+              withStepLine(
+                stepName,
+                `Step '${stepName}': handler '${handlerName}' declares uses_resources '${resourceStepId}' ` +
+                  `but no step with that ID exists in this workflow`,
+              ),
             );
           }
         }
@@ -1501,7 +1762,10 @@ function parseWorkflowString(
     if ('trigger_rule' in step) {
       if (!VALID_TRIGGER_RULES.has(step['trigger_rule'] as TriggerRule)) {
         errors.push(
-          `Step '${stepName}': invalid trigger_rule '${String(step['trigger_rule'])}'; must be one of ${[...VALID_TRIGGER_RULES].join(', ')}`,
+          withStepLine(
+            stepName,
+            `Step '${stepName}': invalid trigger_rule '${String(step['trigger_rule'])}'; must be one of ${[...VALID_TRIGGER_RULES].join(', ')}`,
+          ),
         );
       }
     }
@@ -1509,22 +1773,34 @@ function parseWorkflowString(
     // Validate depends_on: must be an array of existing step names.
     if ('depends_on' in step && step['depends_on'] !== undefined) {
       if (!Array.isArray(step['depends_on'])) {
-        errors.push(`Step '${stepName}': 'depends_on' must be an array`);
+        errors.push(withStepLine(stepName, `Step '${stepName}': 'depends_on' must be an array`));
       } else {
         for (const dep of step['depends_on'] as unknown[]) {
           if (typeof dep !== 'string') {
-            errors.push(`Step '${stepName}': depends_on entries must be strings`);
+            errors.push(
+              withStepLine(stepName, `Step '${stepName}': depends_on entries must be strings`),
+            );
           } else if (dep === stepName) {
-            errors.push(`Step '${stepName}': a step cannot depend on itself`);
+            errors.push(
+              withStepLine(stepName, `Step '${stepName}': a step cannot depend on itself`),
+            );
           } else if (!(dep in stepsRaw)) {
-            errors.push(`Step '${stepName}': depends_on references unknown step '${dep}'`);
+            errors.push(
+              withStepLine(
+                stepName,
+                `Step '${stepName}': depends_on references unknown step '${dep}'`,
+              ),
+            );
           } else if ((stepsRaw[dep] as Record<string, unknown>)['execution'] === 'finalizer') {
             // A domain step depending on a held-out finalizer would deadlock: the finalizer
             // never enters the eligible set, so this step never becomes eligible and the run
             // never seals.
             errors.push(
-              `Step '${stepName}': depends_on references finalizer step '${dep}' — finalizers ` +
-                `run at the terminal transition and are held out of the DAG; a step cannot depend on one.`,
+              withStepLine(
+                stepName,
+                `Step '${stepName}': depends_on references finalizer step '${dep}' — finalizers ` +
+                  `run at the terminal transition and are held out of the DAG; a step cannot depend on one.`,
+              ),
             );
           }
         }
@@ -1536,24 +1812,36 @@ function parseWorkflowString(
       const rawWhen = step['when'];
       if (typeof rawWhen === 'string') {
         if (rawWhen.trim() === '') {
-          errors.push(`Step '${stepName}': 'when' must be a non-empty string`);
+          errors.push(
+            withStepLine(stepName, `Step '${stepName}': 'when' must be a non-empty string`),
+          );
         } else {
-          validateConditionLeaf('when', rawWhen, stepName, dependsOn, errors);
+          validateConditionLeaf('when', rawWhen, stepName, dependsOn, errors, withStepLine);
         }
       } else if (Array.isArray(rawWhen)) {
         if (rawWhen.length === 0) {
-          errors.push(`Step '${stepName}': 'when' array must not be empty`);
+          errors.push(withStepLine(stepName, `Step '${stepName}': 'when' array must not be empty`));
         } else {
           for (const leaf of rawWhen) {
             if (typeof leaf !== 'string' || leaf.trim() === '') {
-              errors.push(`Step '${stepName}': 'when' array entries must be non-empty strings`);
+              errors.push(
+                withStepLine(
+                  stepName,
+                  `Step '${stepName}': 'when' array entries must be non-empty strings`,
+                ),
+              );
             } else {
-              validateConditionLeaf('when', leaf, stepName, dependsOn, errors);
+              validateConditionLeaf('when', leaf, stepName, dependsOn, errors, withStepLine);
             }
           }
         }
       } else {
-        errors.push(`Step '${stepName}': 'when' must be a string or an array of strings`);
+        errors.push(
+          withStepLine(
+            stepName,
+            `Step '${stepName}': 'when' must be a string or an array of strings`,
+          ),
+        );
       }
     }
 
@@ -1564,26 +1852,52 @@ function parseWorkflowString(
       const rawAbort = step['abort_unless'];
       if (typeof rawAbort === 'string') {
         if (rawAbort.trim() === '') {
-          errors.push(`Step '${stepName}': 'abort_unless' must be a non-empty string`);
+          errors.push(
+            withStepLine(stepName, `Step '${stepName}': 'abort_unless' must be a non-empty string`),
+          );
         } else {
-          validateConditionLeaf('abort_unless', rawAbort, stepName, dependsOn, errors);
+          validateConditionLeaf(
+            'abort_unless',
+            rawAbort,
+            stepName,
+            dependsOn,
+            errors,
+            withStepLine,
+          );
         }
       } else if (Array.isArray(rawAbort)) {
         if (rawAbort.length === 0) {
-          errors.push(`Step '${stepName}': 'abort_unless' array must not be empty`);
+          errors.push(
+            withStepLine(stepName, `Step '${stepName}': 'abort_unless' array must not be empty`),
+          );
         } else {
           for (const leaf of rawAbort) {
             if (typeof leaf !== 'string' || leaf.trim() === '') {
               errors.push(
-                `Step '${stepName}': 'abort_unless' array entries must be non-empty strings`,
+                withStepLine(
+                  stepName,
+                  `Step '${stepName}': 'abort_unless' array entries must be non-empty strings`,
+                ),
               );
             } else {
-              validateConditionLeaf('abort_unless', leaf, stepName, dependsOn, errors);
+              validateConditionLeaf(
+                'abort_unless',
+                leaf,
+                stepName,
+                dependsOn,
+                errors,
+                withStepLine,
+              );
             }
           }
         }
       } else {
-        errors.push(`Step '${stepName}': 'abort_unless' must be a string or an array of strings`);
+        errors.push(
+          withStepLine(
+            stepName,
+            `Step '${stepName}': 'abort_unless' must be a string or an array of strings`,
+          ),
+        );
       }
     }
 
@@ -1593,13 +1907,20 @@ function parseWorkflowString(
     if (step['preconditions'] !== undefined) {
       const rawPre = step['preconditions'];
       if (!Array.isArray(rawPre)) {
-        errors.push(`Step '${stepName}': 'preconditions' must be an array of strings`);
+        errors.push(
+          withStepLine(stepName, `Step '${stepName}': 'preconditions' must be an array of strings`),
+        );
       } else {
         for (const leaf of rawPre) {
           if (typeof leaf !== 'string' || leaf.trim() === '') {
-            errors.push(`Step '${stepName}': 'preconditions' entries must be non-empty strings`);
+            errors.push(
+              withStepLine(
+                stepName,
+                `Step '${stepName}': 'preconditions' entries must be non-empty strings`,
+              ),
+            );
           } else {
-            validateConditionLeaf('preconditions', leaf, stepName, dependsOn, errors);
+            validateConditionLeaf('preconditions', leaf, stepName, dependsOn, errors, withStepLine);
           }
         }
       }
@@ -1709,9 +2030,12 @@ function parseWorkflowString(
                 `execution: guard steps, so '${dep}' has always succeeded by the time this is ` +
                 `evaluated (${consequence})`;
             errors.push(
-              `Step '${stepName}': '${surface}' condition "${leaf}" can never be true — ${cause}. ` +
-                `Guards run only when their dependencies succeeded; for work that must happen AFTER a ` +
-                `failure, use an 'execution: finalizer' step (see issue #366 for widening guards).`,
+              withStepLine(
+                stepName,
+                `Step '${stepName}': '${surface}' condition "${leaf}" can never be true — ${cause}. ` +
+                  `Guards run only when their dependencies succeeded; for work that must happen AFTER a ` +
+                  `failure, use an 'execution: finalizer' step (see issue #366 for widening guards).`,
+              ),
             );
           } else {
             const remedies = ['all_done', 'one_failed'];
@@ -1721,10 +2045,13 @@ function parseWorkflowString(
                 ? ` ('all_failed' fires only if EVERY dependency fails; 'one_success' only if at least one other dependency succeeds.)`
                 : '';
             errors.push(
-              `Step '${stepName}': '${surface}' condition "${leaf}" can never be true — under ` +
-                `${ruleText} trigger rule, '${dep}' can never be in failed_steps when this step is ` +
-                `evaluated (${consequence}). To run this step when '${dep}' fails, set trigger_rule to ` +
-                `one of: ${remedies.join(', ')}.${tail}`,
+              withStepLine(
+                stepName,
+                `Step '${stepName}': '${surface}' condition "${leaf}" can never be true — under ` +
+                  `${ruleText} trigger rule, '${dep}' can never be in failed_steps when this step is ` +
+                  `evaluated (${consequence}). To run this step when '${dep}' fails, set trigger_rule to ` +
+                  `one of: ${remedies.join(', ')}.${tail}`,
+              ),
             );
           }
         }
@@ -1737,14 +2064,20 @@ function parseWorkflowString(
       (step['execution'] !== 'agent' || step['handler'] !== undefined)
     ) {
       errors.push(
-        `Step '${stepName}': 'tools' is only valid on execution: agent steps without 'handler' defined`,
+        withStepLine(
+          stepName,
+          `Step '${stepName}': 'tools' is only valid on execution: agent steps without 'handler' defined`,
+        ),
       );
     }
 
     // Validate tools: requires input_schema.
     if (step['tools'] !== undefined && step['input_schema'] === undefined) {
       errors.push(
-        `Step '${stepName}': 'tools' requires 'input_schema' to be defined — the agentic loop needs a schema for final output extraction`,
+        withStepLine(
+          stepName,
+          `Step '${stepName}': 'tools' requires 'input_schema' to be defined — the agentic loop needs a schema for final output extraction`,
+        ),
       );
     }
 
@@ -1753,7 +2086,10 @@ function parseWorkflowString(
       for (const entry of step['tools'] as string[]) {
         if (!/^[^:]+:[^:]+$/.test(entry)) {
           errors.push(
-            `Step '${stepName}': tools entry '${entry}' must be in 'server_id:tool_name' format`,
+            withStepLine(
+              stepName,
+              `Step '${stepName}': tools entry '${entry}' must be in 'server_id:tool_name' format`,
+            ),
           );
         }
       }
@@ -1771,9 +2107,12 @@ function parseWorkflowString(
       !Array.isArray(doc['mcp_servers'])
     ) {
       errors.push(
-        `Step '${stepName}': declares tools but the workflow defines no mcp_servers — no drive ` +
-          `can ever offer these tools, so the declaration can never be satisfied. Define an ` +
-          `mcp_servers block, or remove 'tools'.`,
+        withStepLine(
+          stepName,
+          `Step '${stepName}': declares tools but the workflow defines no mcp_servers — no drive ` +
+            `can ever offer these tools, so the declaration can never be satisfied. Define an ` +
+            `mcp_servers block, or remove 'tools'.`,
+        ),
       );
     }
 
@@ -1788,7 +2127,10 @@ function parseWorkflowString(
         const serverId = entry.split(':')[0] ?? '';
         if (!serverIds.has(serverId)) {
           errors.push(
-            `Step '${stepName}': tools entry '${entry}' references unknown MCP server '${serverId}'`,
+            withStepLine(
+              stepName,
+              `Step '${stepName}': tools entry '${entry}' references unknown MCP server '${serverId}'`,
+            ),
           );
         }
       }
@@ -1799,7 +2141,9 @@ function parseWorkflowString(
       step['max_tool_calls'] !== undefined &&
       (!Number.isInteger(step['max_tool_calls']) || (step['max_tool_calls'] as number) <= 0)
     ) {
-      errors.push(`Step '${stepName}': 'max_tool_calls' must be a positive integer`);
+      errors.push(
+        withStepLine(stepName, `Step '${stepName}': 'max_tool_calls' must be a positive integer`),
+      );
     }
 
     // Validate max_fan_out: must be a positive integer.
@@ -1807,7 +2151,9 @@ function parseWorkflowString(
       step['max_fan_out'] !== undefined &&
       (!Number.isInteger(step['max_fan_out']) || (step['max_fan_out'] as number) <= 0)
     ) {
-      errors.push(`Step '${stepName}': 'max_fan_out' must be a positive integer`);
+      errors.push(
+        withStepLine(stepName, `Step '${stepName}': 'max_fan_out' must be a positive integer`),
+      );
     }
 
     // Validate tool_timeout: must be a positive integer.
@@ -1815,7 +2161,9 @@ function parseWorkflowString(
       step['tool_timeout'] !== undefined &&
       (!Number.isInteger(step['tool_timeout']) || (step['tool_timeout'] as number) <= 0)
     ) {
-      errors.push(`Step '${stepName}': 'tool_timeout' must be a positive integer`);
+      errors.push(
+        withStepLine(stepName, `Step '${stepName}': 'tool_timeout' must be a positive integer`),
+      );
     }
 
     // Validate timeout_seconds: must be a positive integer (issue A3). Skipped on
@@ -1827,7 +2175,9 @@ function parseWorkflowString(
       step['execution'] !== 'guard' &&
       (!Number.isInteger(step['timeout_seconds']) || (step['timeout_seconds'] as number) <= 0)
     ) {
-      errors.push(`Step '${stepName}': 'timeout_seconds' must be a positive integer`);
+      errors.push(
+        withStepLine(stepName, `Step '${stepName}': 'timeout_seconds' must be a positive integer`),
+      );
     }
   }
 

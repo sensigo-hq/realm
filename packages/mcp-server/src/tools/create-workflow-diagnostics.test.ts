@@ -82,6 +82,27 @@ describe('create_workflow — structured diagnostics (issue #169)', () => {
     expect(diag!.did_you_mean).toBeUndefined();
   });
 
+  it('create_workflow diagnostics carry NO source position — there is no source to point into (issue #392)', async () => {
+    // Not an omission and not a gap to fill later: create_workflow builds a definition from
+    // structured arguments. No YAML text exists anywhere in this path, so a line number would
+    // have to be invented, and inventing one is the exact failure the position work is built to
+    // avoid. Absence here is the correct and permanent answer.
+    const args = {
+      steps: [{ id: 'step-a', description: 'Do something', dependson: ['x'] }],
+    } as unknown as CreateWorkflowArgs;
+
+    const result = await handleCreateWorkflow(args, stores);
+
+    const diag = result.diagnostics!.find((d) => d.key === 'dependson');
+    expect(diag).toBeDefined();
+    expect(diag!.line).toBeUndefined();
+    expect(diag!.column).toBeUndefined();
+    expect(diag!.endLine).toBeUndefined();
+    expect(diag!.endColumn).toBeUndefined();
+    // And the prose says nothing about a line either.
+    expect(diag!.message).not.toContain('(line');
+  });
+
   it('UNKNOWN_CREATE_WORKFLOW_KEY still warns (never refuses) even when UNKNOWN_STEP_KEY is flipped to error (issue #170 leniency proof)', async () => {
     const original = DEFAULT_POLICY.UNKNOWN_STEP_KEY;
     DEFAULT_POLICY.UNKNOWN_STEP_KEY = 'error';

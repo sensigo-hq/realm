@@ -246,6 +246,117 @@ ${servers}steps:
   });
 });
 
+describe('J-E — the author is told WHICH LINE (#392)', () => {
+  // The trio refuses three things. This is the loop that closes each one: the message names a
+  // line, that line genuinely holds the offending text, the author edits there, it passes.
+  //
+  // Every cell asserts the fixture's own text at the line the message claims. Without that, a
+  // template literal's leading newline shifts every count by one and the cell would happily
+  // agree with a number that points one line off.
+
+  it('#170 — the unknown-key refusal names the line, and that line holds the key', async () => {
+    const withTypo = `
+id: journey-e1
+name: Journey E1
+version: 1
+steps:
+  step_one:
+    description: First step
+    execution: auto
+  step_two:
+    description: Second step
+    execution: auto
+    dependson: [step_one]
+`;
+    const first = await validate(write(withTypo));
+    expect(first.refused).toBe(true);
+    expect(first.out).toContain("unknown key 'dependson' (line 12)");
+    // The claim is checked against the file, not against my arithmetic.
+    expect(withTypo.split('\n')[12 - 1]).toContain('dependson:');
+
+    const second = await validate(write(withTypo.replace('dependson', 'depends_on')));
+    expect(second.refused).toBe(false);
+    expect(second.out).toContain('Valid: journey-e1 v1 (2 steps)');
+  });
+
+  it('#170 TWIN — a workflow-level key gets a line too', async () => {
+    const withTypo = `
+id: journey-e2
+name: Journey E2
+version: 1
+descriptoin: a top-level typo
+steps:
+  step_one:
+    description: First step
+    execution: auto
+`;
+    const first = await validate(write(withTypo));
+    expect(first.refused).toBe(true);
+    expect(first.out).toContain("unknown key 'descriptoin' (line 5)");
+    expect(withTypo.split('\n')[5 - 1]).toContain('descriptoin:');
+
+    const second = await validate(write(withTypo.replace('descriptoin', 'description')));
+    expect(second.refused).toBe(false);
+  });
+
+  it('#369 — the guard-preconditions refusal names the guard step line', async () => {
+    const bad = `
+id: journey-e3
+name: Journey E3
+version: 1
+steps:
+  work:
+    description: Do the work
+    execution: agent
+    depends_on: []
+  gate:
+    description: Guard step
+    execution: guard
+    depends_on: [work]
+    abort_unless: "work.result.ok == true"
+    preconditions:
+      - "work.result.count > 0"
+`;
+    const first = await validate(write(bad));
+    expect(first.refused).toBe(true);
+    // The step's OWN line — the errors are about the step, so they point at the step.
+    expect(first.out).toContain('(line 10)');
+    expect(bad.split('\n')[10 - 1]).toContain('gate:');
+
+    const fixed = bad.replace('    preconditions:\n      - "work.result.count > 0"\n', '');
+    expect((await validate(write(fixed))).refused).toBe(false);
+  });
+
+  it('#338 — the tools-without-servers refusal names the step line', async () => {
+    const bad = `
+id: journey-e4
+name: Journey E4
+version: 1
+steps:
+  ask:
+    description: Ask something
+    execution: agent
+    depends_on: []
+    input_schema:
+      type: object
+      properties:
+        q:
+          type: string
+      required: [q]
+    tools:
+      - github:get_pull_request
+`;
+    const first = await validate(write(bad));
+    expect(first.refused).toBe(true);
+    expect(first.out).toContain('declares tools but the workflow defines no mcp_servers');
+    expect(first.out).toContain('(line 6)');
+    expect(bad.split('\n')[6 - 1]).toContain('ask:');
+
+    const fixed = bad.replace('    tools:\n      - github:get_pull_request\n', '');
+    expect((await validate(write(fixed))).refused).toBe(false);
+  });
+});
+
 describe('J-D — the grandfathering journey: a deployed workflow keeps running (#170)', () => {
   it('the EXECUTION loader still loads a workflow with an unknown key, and still warns', () => {
     // This is the cell that makes the changelog's asymmetry sentence true. run/agent/listen load
