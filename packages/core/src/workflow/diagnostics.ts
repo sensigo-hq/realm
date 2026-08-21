@@ -11,6 +11,8 @@
  * emit. Deliberately excludes ORPHANED_MANIFEST — that condition already throws a WorkflowError
  * (`Invalid:` + exit 1) at the CLI layer; it is a hard error, never a warning.
  */
+import type { SourcePosition } from './source-positions.js';
+
 export type WarningCode =
   | 'UNKNOWN_WORKFLOW_KEY'
   | 'UNKNOWN_STEP_KEY'
@@ -52,6 +54,22 @@ export interface LoaderWarning {
   step?: string;
   key?: string;
   did_you_mean?: string;
+  /**
+   * Where the offending key sits in the source YAML, 1-based (issue #392). Present only when the
+   * warning came from a parsed file AND the key's position could be resolved exactly.
+   *
+   * ALL FOUR OR NONE — never a partial position. A range with a start and no end is not a range,
+   * and a consumer that has to check four fields separately will eventually forget one.
+   *
+   * ABSENT, never null (the #311 precedent): "this parse could not place the key" and "the key is
+   * at line 0" are different facts and the channel keeps them different. Structurally absent for
+   * anything not parsed from source text — `create_workflow` builds definitions from structured
+   * arguments, so there is no file for a line number to point into.
+   */
+  line?: number;
+  column?: number;
+  endLine?: number;
+  endColumn?: number;
 }
 
 /**
@@ -142,20 +160,34 @@ export function closestKey(key: string, allowList: readonly string[]): string | 
   return best !== undefined && bestDistance <= threshold ? best : undefined;
 }
 
-/** Builds the templated "unknown key" message text (everything after the `⚠ ` prefix). */
+/**
+ * Builds the templated "unknown key" message text (everything after the `⚠ ` prefix).
+ *
+ * The position is spliced in HERE, at the mint, rather than at any render site (issue #392). Two
+ * reasons. `renderLoaderWarning` is the single source of the `⚠ ` line format and stays
+ * byte-untouched, so nothing downstream has to learn about positions. And the CLI's #170
+ * substitution rewrites `— ignored` at print time for a refusing boundary — inserting before that
+ * anchor leaves it intact, whereas inserting after it would leave the two edits fighting over the
+ * same span.
+ *
+ * The prose carries the START line only. A human reading an error wants somewhere to look, not a
+ * range; the range lives on the structured channel where a span-editing agent can use it.
+ */
 function renderUnknownKeyMessage(
   target: string,
   key: string,
   didYouMean: string | undefined,
   noun: string,
+  line: number | undefined,
 ): string {
+  const at = line === undefined ? '' : ` (line ${line})`;
   // Punctuation deliberately differs by form, matching the design's own literal examples exactly:
   // the no-suggestion form ends with a period (byte-identical to the pre-#169 text); the
   // did_you_mean form's trailing '?)' is the sentence's natural end — no additional period.
   if (didYouMean !== undefined) {
-    return `${target}: unknown key '${key}' — ignored (did you mean '${didYouMean}'?)`;
+    return `${target}: unknown key '${key}'${at} — ignored (did you mean '${didYouMean}'?)`;
   }
-  return `${target}: unknown key '${key}' — ignored (not a recognized ${noun} field).`;
+  return `${target}: unknown key '${key}'${at} — ignored (not a recognized ${noun} field).`;
 }
 
 /**
@@ -179,6 +211,16 @@ export function findUnknownKeys(
      * byte-identical to pre-#140 behavior for every other unknown-key code.
      */
     noun?: string;
+    /**
+     * Resolves a key's position in the source YAML (issue #392). The caller supplies it because
+     * only the caller knows the semantic path this object sits at — `findUnknownKeys` sees a bare
+     * record and could not construct `steps.s1` on its own.
+     *
+     * Optional, so every existing caller compiles and behaves byte-identically. Returning
+     * `undefined` for a key is the normal, expected answer (an unparsed definition, a shape the
+     * position map declined to place) and produces exactly the pre-#392 warning.
+     */
+    positionOf?: (key: string) => SourcePosition | undefined;
   },
 ): LoaderWarning[] {
   const warnings: LoaderWarning[] = [];
@@ -188,16 +230,24 @@ export function findUnknownKeys(
   for (const key of Object.keys(obj)) {
     if (allowList.includes(key)) continue;
     const did_you_mean = closestKey(key, allowList);
+    const pos = ctx.positionOf?.(key);
     const warning: LoaderWarning = {
       code: ctx.code,
       severity: resolveSeverity(ctx.code),
-      message: renderUnknownKeyMessage(target, key, did_you_mean, noun),
+      message: renderUnknownKeyMessage(target, key, did_you_mean, noun, pos?.line),
       scope: ctx.scope,
       key,
     };
     if (ctx.id !== undefined) warning.id = ctx.id;
     if (ctx.step !== undefined) warning.step = ctx.step;
     if (did_you_mean !== undefined) warning.did_you_mean = did_you_mean;
+    // All four or none — assigned together so a partial position is not expressible here.
+    if (pos !== undefined) {
+      warning.line = pos.line;
+      warning.column = pos.column;
+      warning.endLine = pos.endLine;
+      warning.endColumn = pos.endColumn;
+    }
     warnings.push(warning);
   }
   return warnings;

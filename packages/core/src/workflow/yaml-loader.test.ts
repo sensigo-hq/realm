@@ -2547,9 +2547,13 @@ steps:
     expect(def.steps['step-one']?.description).toBe('First step');
     expect(def.steps['step-one']?.execution).toBe('auto');
     const out = warn.mock.calls.flat().join('\n');
-    expect(out).toContain(
-      "step 'step-one': unknown key 'not_a_real_key' — ignored (not a recognized step field).",
-    );
+    // SPLIT PINS (issue #392): the message now carries a source position between the key and the
+    // '— ignored' clause, so the two halves are asserted separately. Keeping them as one string
+    // would make this cell red whenever positions change, and it is not a position test.
+    expect(out).toContain("step 'step-one': unknown key 'not_a_real_key'");
+    expect(out).toContain('— ignored (not a recognized step field).');
+    // reds under probe (a) — deliberate: this half IS the position.
+    expect(out).toContain("unknown key 'not_a_real_key' (line 9) — ignored");
     warn.mockRestore();
   });
 
@@ -2567,9 +2571,11 @@ steps:
 `);
     expect(def.id).toBe('unknown-wf-key-wf');
     const out = warn.mock.calls.flat().join('\n');
-    expect(out).toContain(
-      "workflow 'unknown-wf-key-wf': unknown key 'not_a_real_workflow_key' — ignored (not a recognized workflow field).",
-    );
+    // SPLIT PINS (issue #392) — see the cell above.
+    expect(out).toContain("workflow 'unknown-wf-key-wf': unknown key 'not_a_real_workflow_key'");
+    expect(out).toContain('— ignored (not a recognized workflow field).');
+    // reds under probe (a) — deliberate.
+    expect(out).toContain("unknown key 'not_a_real_workflow_key' (line 5) — ignored");
     warn.mockRestore();
   });
 
@@ -2631,9 +2637,11 @@ steps:
 `);
     expect(def.steps['step-two']?.description).toBe('Second step');
     const out = warn.mock.calls.flat().join('\n');
-    expect(out).toContain(
-      "step 'step-two': unknown key 'dependson' — ignored (did you mean 'depends_on'?)",
-    );
+    // SPLIT PINS (issue #392) — see the first cell in this describe.
+    expect(out).toContain("step 'step-two': unknown key 'dependson'");
+    expect(out).toContain("— ignored (did you mean 'depends_on'?)");
+    // reds under probe (a) — deliberate.
+    expect(out).toContain("unknown key 'dependson' (line 12) — ignored");
     warn.mockRestore();
   });
 
@@ -2651,9 +2659,11 @@ steps:
 `);
     expect(def.steps['step-one']?.description).toBe('First step');
     const out = warn.mock.calls.flat().join('\n');
-    expect(out).toContain(
-      "step 'step-one': unknown key 'produces_state' — ignored (not a recognized step field).",
-    );
+    // SPLIT PINS (issue #392) — see the first cell in this describe.
+    expect(out).toContain("step 'step-one': unknown key 'produces_state'");
+    expect(out).toContain('— ignored (not a recognized step field).');
+    // reds under probe (a) — deliberate.
+    expect(out).toContain("unknown key 'produces_state' (line 9) — ignored");
     expect(out).not.toContain('did you mean');
     warn.mockRestore();
   });

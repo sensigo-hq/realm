@@ -101,7 +101,7 @@ it's meant for CI gates that want to catch a typo before it reaches `register`.
 
 ```bash
 $ realm workflow validate ./my-workflow
-⚠ step 'sync_data': unknown key 'dependson' — REFUSED below (did you mean 'depends_on'?)
+⚠ step 'sync_data': unknown key 'dependson' (line 14) — REFUSED below (did you mean 'depends_on'?)
 Invalid: 1 warning(s) present, and at least one is escalated to an error by policy.
 $ echo $?
 1
@@ -115,6 +115,13 @@ advisory, a dead config block, an unrecognized key inside `retry:` or `gate:`. T
 
 `realm run`, `realm agent`, and `realm listen` are unaffected — they load leniently, so a workflow
 already deployed with an unknown key keeps running.
+
+The `(line 14)` is the line the offending key sits on ([issue #392](https://github.com/sensigo-hq/realm/issues/392)).
+Step-scoped errors carry the line of their own step, so a step that trips several checks reports
+one line for all of them rather than a different one per message. Workflow-scoped errors — a
+dependency cycle, a missing required field, a bad `services` entry — do not carry a line yet; some
+of them, like a missing field, have no key in the file to point at. A position is omitted rather
+than approximated whenever it cannot be resolved exactly.
 
 **The `structured_output` adoption nudge (issue #236):** for every `execution: agent` step with an
 effective schema, `validate` also prints, on its own informational line (`ℹ`, never a `⚠`

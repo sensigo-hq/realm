@@ -96,7 +96,11 @@ steps:
     const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(errored).toContain('refusing to register due to --strict');
     const warnedHere = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    expect(warnedHere).toContain("unknown key 'bogus_retry_key' — ignored");
+    // SPLIT PINS (issue #392): a source position now sits between the key and the clause.
+    expect(warnedHere).toContain("unknown key 'bogus_retry_key'");
+    expect(warnedHere).toContain('— ignored');
+    // reds under probe (a) — deliberate: the retry sub-family carries positions too.
+    expect(warnedHere).toContain("unknown key 'bogus_retry_key' (line 13) — ignored");
     expect(warnedHere).not.toContain('REFUSED below');
     expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).not.toContain(
       'Registered:',

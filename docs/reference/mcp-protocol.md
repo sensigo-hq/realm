@@ -338,6 +338,12 @@ and the workflow is still created. It's surfaced both in `warnings` (the rendere
 entry (`code: "UNKNOWN_CREATE_WORKFLOW_KEY"`) in `diagnostics` — an authoring agent can self-correct
 on the next call instead of repeating the same typo.
 
+The sample above carries no `(line N)`, and that is permanent rather than pending
+([issue #392](https://github.com/sensigo-hq/realm/issues/392)): `create_workflow` builds a
+definition from structured arguments, so no source file exists for a line number to point into.
+Diagnostics from a PARSED workflow do carry `line`/`column`/`endLine`/`endColumn`; these
+structurally cannot, and their absence is the honest answer rather than a gap.
+
 ### Metadata fields
 
 | Field              | Required | Description                                                                                                                                                                                                                                                                                                    |
