@@ -65,6 +65,69 @@ function makeStore(): WorkflowRegistrar & { registered: WorkflowDefinition[] } {
 // Tests
 // ---------------------------------------------------------------------------
 
+describe('watchWorkflow — the issue #170 boundary-reject', () => {
+  // watch.ts's rejectOnErrorSeverity branch went live with the #170 flip and had no coverage at
+  // all before this cell (#170 AC-2 names watch explicitly). It refuses DIFFERENTLY from
+  // validate/register: no process.exit — the watcher stays up so the author can fix the key and
+  // get re-registered on the next save.
+  const UNKNOWN_KEY_YAML = `
+id: watch-unknown-key
+name: Watch Unknown Key
+version: 1
+steps:
+  step-one:
+    description: First step
+    execution: agent
+    dependson: [nothing]
+`;
+
+  it('refuses to register a workflow with an unknown step key, and keeps watching', async () => {
+    const filePath = makeTempFile(UNKNOWN_KEY_YAML);
+    const store = makeStore();
+    const controller = new AbortController();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await new Promise((r) => setTimeout(r, 50));
+    controller.abort();
+    await watchPromise;
+
+    // Nothing reached the registrar.
+    expect(store.registered).toHaveLength(0);
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain('escalated to an error by policy — refusing to register');
+    expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).not.toContain(
+      'Registered:',
+    );
+    // The did-you-mean survives, and the false "ignored" claim does not.
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(warned).toContain("did you mean 'depends_on'?");
+    expect(warned).not.toContain('ignored');
+
+    vi.restoreAllMocks();
+  });
+
+  it('CONTROL: the same workflow with the stray key removed registers normally', async () => {
+    // The key is DELETED rather than corrected to `depends_on`, because `[nothing]` names no real
+    // step — correcting the spelling would trade the policy refusal for a structural one and the
+    // control would pass for the wrong reason.
+    const filePath = makeTempFile(UNKNOWN_KEY_YAML.replace('    dependson: [nothing]\n', ''));
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await new Promise((r) => setTimeout(r, 50));
+    controller.abort();
+    await watchPromise;
+
+    expect(store.registered).toHaveLength(1);
+    vi.restoreAllMocks();
+  });
+});
+
 describe('watchWorkflow', () => {
   it('registers the workflow immediately on start', async () => {
     const filePath = makeTempFile(VALID_YAML);

@@ -4,6 +4,51 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+**BREAKING — three classes of silently-accepted, meaningless input are now load errors.** Each one
+was accepted by the loader and then meant nothing at runtime, which is the worst of both: the
+workflow looked like it said something and behaved as if it had not.
+
+- **An unrecognized workflow-level or step-level key is refused** by `realm workflow validate`,
+  `register`, and `watch` (issue #170 — the hard-reject its own docs promised for the next major).
+  The message names the key and suggests the intended one when it is a near match, so the fix is
+  one edit. `--strict` is no longer needed for this class. **Remediation:** correct the key, or
+  delete it.
+- **`preconditions` on an `execution: guard` step is refused** (issue #369). A guard's execution
+  evaluates only `abort_unless`, so a precondition declared on one was never evaluated — the run
+  looked guarded while the declared check never ran. **Remediation:** move the condition into
+  `abort_unless`. Whether guards gain a live condition surface of their own is an open design
+  question (issue #366); admitting it later would not affect workflows written today.
+- **A step that declares `tools` when the workflow defines no `mcp_servers` block is refused**
+  (issue #338). No drive can offer tools with no server to offer them from, so the declaration
+  could never be satisfied — and every disclosure the loader had for tools lived inside the
+  server-block check that this shape never reached. **Remediation:** define an `mcp_servers`
+  block, or remove the `tools` declaration. An empty `tools: []` declares nothing and is
+  unaffected.
+
+**The three do not refuse in the same places, and the difference matters when you upgrade.** The
+unknown-key refusal is BOUNDARY-GATED: `realm run`, `realm agent`, and `realm listen` still load
+leniently, so a workflow already deployed with an unknown key keeps running and keeps printing its
+warning. The guard-precondition and tools-without-servers refusals are loader-level errors — they
+refuse at **every YAML load path**, execution included. Definitions that never re-parse YAML
+(anything already in the workflow registry, or built inline in code) are not re-validated and are
+untouched by all three.
+
+**Before upgrading**, run `realm workflow validate --strict` against your workflows on your current
+version to find offenders while they are still warnings. After upgrading, plain `validate` refuses
+them.
+
+Neither of the two loader-level classes has any occurrence in this repository — not in the
+examples, the fixtures, or the scaffold. The guard declaration is never evaluated, and the
+tools-without-servers declaration is unsatisfiable by construction. But a deployed workflow FILE in
+that second shape runs today, with its tools silently never offered, and after this change it will
+refuse to load.
+
+---
+
 ## [0.39.0] — 2026-08-21
 
 ### Added

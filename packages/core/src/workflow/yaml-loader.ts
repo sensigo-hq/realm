@@ -847,6 +847,24 @@ function parseWorkflowString(
       if (step['abort_unless'] === undefined) {
         errors.push(`Step '${stepName}': execution: guard requires 'abort_unless'`);
       }
+      // issue #369: `preconditions` gets its OWN error rather than joining `prohibited` above,
+      // because the generic message ("'x' is not valid on execution: guard steps") would not say
+      // the thing that matters — this field was ACCEPTED and INERT before this check existed, so
+      // an author who wrote one has a workflow that looks guarded and never was. The generic
+      // list's own message style is issue #366's territory; the other twelve are left alone.
+      //
+      // The claim "never evaluates it there" rests on `checkPreconditions` having exactly one
+      // engine call site (execution-loop.ts:1380, inside `executeStep`), which `executeGuardStep`
+      // never reaches. A test pins that count so a second call site reds this message.
+      if (step['preconditions'] !== undefined) {
+        errors.push(
+          `Step '${stepName}': 'preconditions' is not valid on execution: guard steps — the ` +
+            `engine never evaluates it there (a guard's execution evaluates only 'abort_unless'), ` +
+            `so the run would LOOK guarded while the declared check never ran. Move the condition ` +
+            `into 'abort_unless'. Whether guards gain a live condition surface is an open design ` +
+            `question (issue #366) — if admitted later, existing workflows are unaffected.`,
+        );
+      }
     }
 
     // abort_unless and abort_message are only valid on execution: guard steps.
@@ -1625,11 +1643,19 @@ function parseWorkflowString(
           leaves: step['execution'] === 'guard' ? asLeaves(step['abort_unless']) : [],
         },
         // `preconditions` is collected for EVERY step kind, but it is INERT on a guard: the sole
-        // `checkPreconditions` call site is `executeStep` (execution-loop.ts:1371), and a guard
+        // `checkPreconditions` call site is `executeStep` (execution-loop.ts:1380), and a guard
         // goes through `executeGuardStep`, which evaluates only `abort_unless`. That is why the
         // guard arm's consequence below is forked — collapsing it back into one shared string
-        // would make the error claim a wedge that cannot happen. (The inertness itself is a real
-        // adjacent gap, tracked as issue #369; this check only refuses to lie about it.)
+        // would make the error claim a wedge that cannot happen.
+        //
+        // Post-#369 a guard declaring `preconditions` is REFUSED outright by the guard block
+        // above, so this arm now only ever fires ALONGSIDE that refusal: errors accumulate rather
+        // than short-circuit, and the guard block runs first, so both messages reach the author
+        // with the prohibition printed above this one. The arm is kept, not deleted — it is what
+        // stops the dead-condition message from claiming a wedge that a guard cannot have, and a
+        // definition reaching this code by any path other than a fresh YAML load (a
+        // store-registered definition, an inline object) is never re-parsed and never sees the
+        // prohibition at all.
         { surface: 'preconditions', leaves: asLeaves(step['preconditions']) },
       ];
 
@@ -1731,6 +1757,24 @@ function parseWorkflowString(
           );
         }
       }
+    }
+
+    // issue #338: the check below only runs when an `mcp_servers` block EXISTS, so the absent-block
+    // variant loaded clean — and every disclosure this loader has for tools lives inside that same
+    // fork, so the corner produced no error, no warning, and a run where the declared tools were
+    // simply never offered. ONE error per step, not one per entry: the entries are not individually
+    // wrong, the workflow is.
+    if (
+      step['tools'] !== undefined &&
+      Array.isArray(step['tools']) &&
+      step['tools'].length > 0 &&
+      !Array.isArray(doc['mcp_servers'])
+    ) {
+      errors.push(
+        `Step '${stepName}': declares tools but the workflow defines no mcp_servers — no drive ` +
+          `can ever offer these tools, so the declaration can never be satisfied. Define an ` +
+          `mcp_servers block, or remove 'tools'.`,
+      );
     }
 
     // Validate tools: server_id must reference a defined mcp_server.

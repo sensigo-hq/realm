@@ -100,14 +100,21 @@ that isn't already checked without the flag — `--strict` only changes what cou
 it's meant for CI gates that want to catch a typo before it reaches `register`.
 
 ```bash
-$ realm workflow validate ./my-workflow --strict
-⚠ step 'sync_data': unknown key 'dependson' — ignored (did you mean 'depends_on'?)
-Valid: my-workflow v1 (3 steps) — 1 warning(s); failing due to --strict
+$ realm workflow validate ./my-workflow
+⚠ step 'sync_data': unknown key 'dependson' — REFUSED below (did you mean 'depends_on'?)
+Invalid: 1 warning(s) present, and at least one is escalated to an error by policy.
 $ echo $?
 1
 ```
 
-Without `--strict`, the same workflow prints the identical warning but exits `0`.
+An unrecognized key is refused with or without `--strict` ([issue #170](https://github.com/sensigo-hq/realm/issues/170)),
+and the policy check runs first — so this class never reaches the `failing due to --strict` line
+any more. `--strict` still does its job for everything that is genuinely a warning: a retry
+advisory, a dead config block, an unrecognized key inside `retry:` or `gate:`. Those keep printing
+`— ignored`, because on those the key really is ignored.
+
+`realm run`, `realm agent`, and `realm listen` are unaffected — they load leniently, so a workflow
+already deployed with an unknown key keeps running.
 
 **The `structured_output` adoption nudge (issue #236):** for every `execution: agent` step with an
 effective schema, `validate` also prints, on its own informational line (`ℹ`, never a `⚠`

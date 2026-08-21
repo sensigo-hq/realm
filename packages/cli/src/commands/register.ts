@@ -83,7 +83,9 @@ export const registerCommand = new Command('register')
     try {
       const { definition, warnings } = await loadWorkflowForRegistration(filePath);
 
-      // Dormant issue #170 boundary-reject: inert today (DEFAULT_POLICY has no 'error' entries).
+      // The issue #170 boundary-reject, LIVE since the flip — checked before --strict, so an
+      // unknown key is refused with or without the flag. Store-registered definitions already in
+      // the registry are never re-parsed and are unaffected.
       if (rejectOnErrorSeverity(warnings)) {
         printLoaderWarnings(warnings);
         console.error(

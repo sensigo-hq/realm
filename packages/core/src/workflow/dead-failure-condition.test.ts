@@ -271,7 +271,7 @@ describe('dead failure condition — loader rejection (issue #362)', () => {
 //
 // Rev 1 emitted, for a guard carrying a dead `preconditions` leaf, "the step never settles — the
 // run WEDGES in a blocked envelope". That is FALSE: `checkPreconditions` has exactly one call site
-// (execution-loop.ts:1371, inside `executeStep`), and a guard goes through `executeGuardStep`,
+// (execution-loop.ts:1380, inside `executeStep`), and a guard goes through `executeGuardStep`,
 // which evaluates only `abort_unless`. Nothing wedges, because nothing is evaluated.
 //
 // The defect class is the same one this whole PR exists to prevent — a confident sentence about a
@@ -287,23 +287,43 @@ const GUARD_PRECONDITION_INERT =
   'the run behaves identically whether this condition is present or absent';
 
 describe('dead failure condition — the message tells the truth about guards (issue #362)', () => {
-  it('a guard `preconditions` leaf gets the INERT consequence, never the wedge', () => {
-    // Asserted on the WHOLE emitted string: a clause silently rewritten to something false would
-    // slip past any substring check, and a false clause is precisely the defect being corrected.
-    expect(
-      loadError(
-        guardWf(
-          "    abort_unless: ['$settlement.extract.settled_by_default == false']\n" +
-            "    preconditions: ['$settlement.extract.failed == true']",
-        ),
+  it('a guard `preconditions` leaf gets the INERT consequence, never the wedge — CO-FIRING with the #369 prohibition', () => {
+    // Was a whole-string `toBe`. Post-#369 a guard declaring `preconditions` is ALSO refused
+    // outright, and loader errors accumulate rather than short-circuit, so this fixture now emits
+    // two messages joined into one. Two containment pins rather than one equality pin, each
+    // keyed on a DISTINCTIVE substring of its own error: a whole-string pin here would have to
+    // re-encode both messages and would red on any wording change to either.
+    //
+    // The clause this test exists for is still asserted exactly — GUARD_PRECONDITION_INERT below
+    // — and its siblings' not-toContain sweep is what stops a false clause slipping in.
+    const message = loadError(
+      guardWf(
+        "    abort_unless: ['$settlement.extract.settled_by_default == false']\n" +
+          "    preconditions: ['$settlement.extract.failed == true']",
       ),
-    ).toBe(
-      'Invalid workflow: ' +
-        `Step 'check': 'preconditions' condition "$settlement.extract.failed == true" can never be ` +
-        `true — and on an execution: guard step it is never evaluated at all: a guard evaluates ` +
-        `only 'abort_unless', so this condition is inert (${GUARD_PRECONDITION_INERT}). Guards run ` +
-        `only when their dependencies succeeded; for work that must happen AFTER a failure, use an ` +
-        `'execution: finalizer' step (see issue #366 for widening guards).`,
+    );
+
+    // Half 1 — the #369 prohibition, which the guard block emits FIRST (it runs at :827-850,
+    // before the dead-condition scan at :1602), so it is prepended in the join.
+    // ONE distinctive substring per error, deliberately: the #369 message's own clauses are
+    // pinned in yaml-loader.test.ts, and re-asserting them here would make this cell red whenever
+    // that message is reworded — costing the message-content cell its discriminating power for no
+    // added coverage. This cell's job is that BOTH errors are present, and in which order.
+    expect(message).toContain(
+      `Step 'check': 'preconditions' is not valid on execution: guard steps`,
+    );
+
+    // Half 2 — the #362 dead-condition message, with the INERT consequence and never the wedge.
+    expect(message).toContain(
+      `Step 'check': 'preconditions' condition "$settlement.extract.failed == true" can never be true`,
+    );
+    expect(message).toContain(GUARD_PRECONDITION_INERT);
+    expect(message).not.toContain(PRECONDITION_WEDGES);
+
+    // Ordering, since the join is what makes both readable: the prohibition reaches the author
+    // above the dead-condition explanation.
+    expect(message.indexOf(`'preconditions' is not valid`)).toBeLessThan(
+      message.indexOf('can never be true'),
     );
   });
 

@@ -2,13 +2,18 @@
 
 Complete reference for `workflow.yaml` fields. Every field documented here is validated at `realm workflow register` time — errors include the field name and expected type.
 
-An unrecognized top-level or step key (a typo, or a field from a removed feature) is never a hard
-error — it's dropped and a warning is printed, e.g. `⚠ step 'sync_data': unknown key 'dependson' —
-ignored (did you mean 'depends_on'?)`, with the **did-you-mean** suggestion appearing only when
-the key is a close match of a real one. `realm workflow validate --strict` (or `register --strict`)
-turns these warnings into a failure, for CI. A future major version will hard-reject unrecognized
-keys outright (tracked in [issue #170](https://github.com/sensigo-hq/realm/issues/170)) — until
-then, leaving one in place while you fix it is safe.
+An unrecognized top-level or step key (a typo, or a field from a removed feature) is **refused** by
+`realm workflow validate`, `register`, and `watch` ([issue #170](https://github.com/sensigo-hq/realm/issues/170)).
+The message names the key and, when it is a close match of a real one, suggests the right one:
+`⚠ step 'sync_data': unknown key 'dependson' — REFUSED below (did you mean 'depends_on'?)`.
+`--strict` is no longer needed for this class — it now only tightens the warnings that remain
+warnings.
+
+**Already-deployed workflows keep running.** `realm run`, `realm agent`, and `realm listen` load
+leniently: an unknown key there is still dropped with a warning (`— ignored`, which on that path is
+the truth), so upgrading does not strand a workflow in production. The refusal stops new offenders
+entering, it does not evict existing ones. To find them before you upgrade, run
+`realm workflow validate --strict` on your current version.
 
 ---
 
@@ -50,7 +55,7 @@ then, leaving one in place while you fix it is safe.
 | `input_schema`      | object                                      | No       | JSON Schema validated against the agent's submitted `params` before execution. Also drives the `call_with.params` skeleton returned to the agent in `next_actions`.                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `output_schema`     | object                                      | No       | JSON Schema validated against the agent's submitted `params` before the engine claims the step. Only valid on `execution: agent` steps — declaring it on `execution: auto` steps is a loader error. Failed validation returns `agent_action: provide_input` and leaves the step unclaimed — immediately re-submittable without side effects.                                                                                                                                                                                                                                 |
 | `structured_output` | `'strict'`                                  | No       | Opts this step into Anthropic grammar-constrained ("strict") decoding for its submit tool. Only valid on `execution: agent` steps. Rejected at load time if the step's effective schema (`output_schema ?? input_schema`) is ineligible. On a step that declares `tools`, strict instead targets the tool-call arguments, per tool, assessed at runtime (issue #311). See [`structured_output`](#structured_output-anthropic-strict-decoding).                                                                                                                               |
-| `preconditions`     | string[]                                    | No       | Boolean expressions evaluated before the step runs. See [Preconditions](#preconditions).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `preconditions`     | string[]                                    | No       | Boolean expressions evaluated before the step runs. **Not valid on `execution: guard` steps** — a guard evaluates only `abort_unless`, so a precondition there is a loader error ([issue #369](https://github.com/sensigo-hq/realm/issues/369)). See [Preconditions](#preconditions).                                                                                                                                                                                                                                                                                        |
 | `trust`             | string                                      | No       | Human oversight level. See [Trust levels](#trust-levels).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `timeout_seconds`   | integer                                     | No       | Step execution timeout in seconds. On expiry the run fails with `STEP_TIMEOUT`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `retry`             | object                                      | No       | Retry configuration. See [Retry](#retry).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -194,6 +199,15 @@ The engine evaluates one or more boolean expressions declared in `abort_unless` 
 All conditions are always evaluated regardless of intermediate outcomes — the evidence record is complete whether the guard passes or aborts.
 
 Guard steps are incompatible with: `uses_service`, `handler`, `input_schema`, `output_schema`, `trust`, `agent_profile`, `trigger_rule`, `timeout_seconds`, `service_method`, `operation`, `input_map`, `tools`.
+
+`preconditions` is prohibited too, and for a sharper reason than the rest
+([issue #369](https://github.com/sensigo-hq/realm/issues/369)): a guard's execution evaluates only
+`abort_unless`, so a precondition declared on one is never evaluated at all. Before this was a
+loader error, such a workflow loaded happily and ran with the declared check silently absent — it
+looked guarded and was not. Put the condition in `abort_unless`, where a guard actually reads it.
+Whether guards should gain a live condition surface of their own is an open design question
+([issue #366](https://github.com/sensigo-hq/realm/issues/366)); if it is ever admitted, workflows
+written today are unaffected.
 
 ```yaml
 steps:
@@ -432,6 +446,12 @@ Start a shadow run with `params: { mode: "shadow" }`. Steps annotated with `when
 ## Preconditions
 
 Boolean expressions evaluated against prior step evidence before the step runs. If any precondition is false, the engine returns `status: blocked` with `agent_action: resolve_precondition`.
+
+**Not valid on `execution: guard` steps.** A guard's execution evaluates only `abort_unless`, so a
+precondition declared there would never run — the workflow would look guarded while the declared
+check never happened. Declaring one is a loader error; put the condition in `abort_unless` instead.
+Whether guards should gain a live condition surface is an open design question
+([issue #366](https://github.com/sensigo-hq/realm/issues/366)).
 
 ```yaml
 write_to_target:
@@ -1848,6 +1868,12 @@ For handler authoring details, interface signatures, primitives, and registratio
 
 Defines external MCP servers that steps may call tools on. Each server has a unique `id`.
 Step tool declarations reference server entries via `server_id:tool_name` in the `tools` field.
+
+**A step that declares `tools` requires an `mcp_servers` block.** Without one there is no server to
+offer the tools from, so the declaration can never be satisfied — the workflow is refused at load
+([issue #338](https://github.com/sensigo-hq/realm/issues/338)). Previously it loaded and ran with
+the tools simply never offered, and nothing said so. Either define the block or remove the `tools`
+declaration; an empty `tools: []` declares nothing and is unaffected.
 
 ```yaml
 mcp_servers:

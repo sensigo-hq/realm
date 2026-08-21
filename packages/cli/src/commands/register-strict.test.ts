@@ -60,7 +60,14 @@ steps:
     rmSync(wfDir, { recursive: true, force: true });
   });
 
-  it('refuses to register and exits 1 when --strict is set and a warning is present', async () => {
+  it('--strict still tightens a code #170 did NOT flip (UNKNOWN_RETRY_KEY)', async () => {
+    // Re-fixtured onto a non-flipped code deliberately. On an unknown STEP key the boundary-reject
+    // now fires first, so a --strict assertion there would pass with the flag doing nothing — the
+    // flag's own machinery would go silently unpinned. UNKNOWN_RETRY_KEY is still 'warn', so only
+    // --strict can refuse it, which is what this cell claims to test.
+    //
+    // It earns a second job for free: it is an unknown-KEY code, so it still renders "— ignored".
+    // That pins the #170 render substitution as CODE-SCOPED rather than a blanket text replace.
     const wfDir = mkdtempSync(join(tmpdir(), 'realm-register-strict-wf-'));
     writeFileSync(
       join(wfDir, 'workflow.yaml'),
@@ -71,7 +78,12 @@ steps:
   step-one:
     description: a step
     execution: auto
-    dependson: [nothing]
+    timeout_seconds: 5
+    retry:
+      max_attempts: 3
+      backoff: fixed
+      base_delay_ms: 10
+      bogus_retry_key: 1
 `,
       'utf8',
     );
@@ -83,13 +95,16 @@ steps:
     expect(exitSpy).toHaveBeenCalledWith(1);
     const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(errored).toContain('refusing to register due to --strict');
+    const warnedHere = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(warnedHere).toContain("unknown key 'bogus_retry_key' — ignored");
+    expect(warnedHere).not.toContain('REFUSED below');
     expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).not.toContain(
       'Registered:',
     );
     rmSync(wfDir, { recursive: true, force: true });
   });
 
-  it('without --strict, the same warning-bearing workflow registers and still prints the warning', async () => {
+  it('without --strict, an unknown key is now refused by the default policy alone', async () => {
     const wfDir = mkdtempSync(join(tmpdir(), 'realm-register-strict-wf-'));
     writeFileSync(
       join(wfDir, 'workflow.yaml'),
@@ -105,11 +120,15 @@ steps:
       'utf8',
     );
 
-    await registerCommand.parseAsync([wfDir], { from: 'user' });
+    await expect(registerCommand.parseAsync([wfDir], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
 
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
     const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    expect(printed).toContain('Registered: typo-reg-lenient v1 (1 steps)');
+    expect(printed).not.toContain('Registered: typo-reg-lenient');
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain('escalated to an error by policy — refusing to register');
     const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(warned).toContain("unknown key 'dependson'");
     rmSync(wfDir, { recursive: true, force: true });

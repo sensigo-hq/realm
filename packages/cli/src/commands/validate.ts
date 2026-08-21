@@ -181,8 +181,10 @@ function printStructuredOutputNudge(definition: WorkflowDefinition): void {
 }
 
 /**
- * The dormant issue #170 boundary-reject: inert today (DEFAULT_POLICY has no 'error' entries),
- * but once #170 flips UNKNOWN_WORKFLOW_KEY/UNKNOWN_STEP_KEY, this refuses those workflows here.
+ * The issue #170 boundary-reject, LIVE since the flip: a workflow carrying an unrecognised
+ * workflow-level or step-level key is refused here, before `--strict` is even consulted (which is
+ * why `--strict` and the default now agree on this class). run/agent/listen are unaffected — they
+ * load leniently, so a deployed workflow with an unknown key keeps running.
  */
 function rejectIfPolicyEscalates(warnings: LoaderWarning[]): boolean {
   if (!rejectOnErrorSeverity(warnings)) return false;

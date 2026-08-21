@@ -1,10 +1,20 @@
 // validate --strict + accumulator tests (issue #169). In-process via commander's parseAsync (same
 // pattern as validate-retry-timeout-advisory.test.ts) — no subprocess/dist rebuild needed.
+//
+// RETIRED ALONGSIDE THIS FILE (issue #170): `dormant-reject.test.ts`. It proved the boundary-reject
+// mechanism was real by MUTATING the exported DEFAULT_POLICY in place — flipping the two codes to
+// 'error', then restoring them — which was the sanctioned simulation while the flip was dormant.
+// The flip has now happened, so that file's "unflipped default only warns" control asserted the
+// opposite of reality, and its two flip-simulation cells asserted the default. Both are covered
+// here and in register-strict.test.ts by cells that need no shared-module mutation at all, so the
+// file went rather than being re-anchored — and the mutation of shared module state went with it.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateCommand } from './validate.js';
+import { printLoaderWarnings } from '../lib/loader-warnings.js';
+import type { LoaderWarning } from '@sensigo/realm';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 
 describe('validate --strict (issue #169)', () => {
@@ -12,11 +22,13 @@ describe('validate --strict (issue #169)', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'realm-validate-strict-'));
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
       throw new Error('process.exit');
     }) as never);
@@ -50,7 +62,7 @@ steps:
     expect(printed).not.toContain('warning(s)');
   });
 
-  it('exits 1 with a summary line naming the count when --strict is set and warnings are present', async () => {
+  it('--strict and the DEFAULT policy now agree on an unknown key: the boundary refuses first', async () => {
     const wfPath = join(dir, 'workflow.yaml');
     writeFileSync(
       wfPath,
@@ -71,15 +83,88 @@ steps:
     ).rejects.toThrow('process.exit');
 
     expect(exitSpy).toHaveBeenCalledWith(1);
+    // ORDERING, and it is the point of this cell post-#170: the policy escalation is checked
+    // BEFORE --strict, so an unknown key never reaches the "failing due to --strict" summary any
+    // more. The flag is not what refuses this workflow — the default policy is.
     const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    expect(printed).toContain(
-      'Valid: typo-wf v1 (1 steps) — 1 warning(s); failing due to --strict',
-    );
+    expect(printed).not.toContain('failing due to --strict');
+    const errored = errorSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain('escalated to an error by policy');
     const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(warned).toContain("unknown key 'dependson'");
   });
 
-  it('without --strict, the same warning-bearing workflow exits 0 and still prints the warning', async () => {
+  it('the refusing boundary does NOT say the key was "ignored" — it was not', async () => {
+    // The warning is minted with "— ignored", which is true of the lenient loader and false here.
+    // Printed directly above "escalated to an error", it told the author the opposite of what was
+    // happening. The did-you-mean fragment — the half that lets them fix it in one edit — stays.
+    const wfPath = join(dir, 'workflow.yaml');
+    writeFileSync(
+      wfPath,
+      `id: ignored-claim-wf
+name: Ignored Claim WF
+version: 1
+steps:
+  step-one:
+    description: a step
+    execution: auto
+    dependson: [nothing]
+`,
+      'utf8',
+    );
+
+    await expect(validateCommand.parseAsync([wfPath], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(warned).toContain("unknown key 'dependson'");
+    expect(warned).not.toContain('ignored');
+    expect(warned).toContain('REFUSED below');
+    expect(warned).toContain("did you mean 'depends_on'?");
+  });
+
+  it('the render substitution covers BOTH flipped codes, not just the step-level one', () => {
+    // Unit-level, driving printLoaderWarnings directly, because the two flipped codes travel
+    // different paths to get here and the cell above only exercises one of them. Narrowing the
+    // substitution to exclude UNKNOWN_WORKFLOW_KEY left the entire cli suite green before this
+    // existed — a conjunct pinned for one member of a set and no other.
+    const both: LoaderWarning[] = [
+      {
+        code: 'UNKNOWN_WORKFLOW_KEY',
+        severity: 'error',
+        message: "workflow 'w': unknown key 'descriptoin' — ignored (did you mean 'description'?)",
+        scope: 'workflow',
+        id: 'w',
+        key: 'descriptoin',
+        did_you_mean: 'description',
+      },
+      {
+        code: 'UNKNOWN_STEP_KEY',
+        severity: 'error',
+        message: "step 's': unknown key 'dependson' — ignored (did you mean 'depends_on'?)",
+        scope: 'step',
+        step: 's',
+        key: 'dependson',
+        did_you_mean: 'depends_on',
+      },
+    ];
+
+    printLoaderWarnings(both);
+
+    const lines = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(lines).toHaveLength(2);
+    for (const line of lines) {
+      expect(line).toContain('REFUSED below');
+      expect(line).not.toContain('— ignored');
+      // The suggestion survives the substitution — it is the useful half of the line.
+      expect(line).toContain('did you mean');
+    }
+    // And the workflow-scoped one is genuinely present, so this cannot pass on two step lines.
+    expect(lines.join('\n')).toContain("workflow 'w'");
+  });
+
+  it('without --strict, an unknown key is now REFUSED by the default policy alone', async () => {
     const wfPath = join(dir, 'workflow.yaml');
     writeFileSync(
       wfPath,
@@ -95,12 +180,16 @@ steps:
       'utf8',
     );
 
-    await validateCommand.parseAsync([wfPath], { from: 'user' });
+    // The #170 flip's headline: no flag, no opt-in, the workflow simply does not validate.
+    await expect(validateCommand.parseAsync([wfPath], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
 
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
     const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    expect(printed).toContain('Valid: typo-wf-lenient v1 (1 steps)');
-    expect(printed).not.toContain('warning(s)');
+    expect(printed).not.toContain('Valid: typo-wf-lenient');
+    const errored = errorSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain('escalated to an error by policy');
     const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(warned).toContain("unknown key 'dependson'");
   });
@@ -111,6 +200,7 @@ describe('validate — double-count guard on the two-pass (extensions) branch (i
   let workflowDir: string;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     clearProjectExtensionsCache();
@@ -122,6 +212,7 @@ describe('validate — double-count guard on the two-pass (extensions) branch (i
     writeFileSync(join(proj, 'dist', 'registry.js'), 'export default {};', 'utf8');
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -147,15 +238,23 @@ steps:
     );
 
     await validateCommand.parseAsync([wfPath, '--strict'], { from: 'user' }).catch(() => {
-      // --strict exits 1 for this fixture; we only care about the count below.
+      // This fixture exits 1 either way; we only care about the count below.
     });
 
+    // The cell's purpose is unchanged by #170 — two loader passes must not double-print the same
+    // warning. What changed is which line reports the count: the policy escalation refuses before
+    // --strict is consulted, so the count is read off the escalation message now.
     const warned: string[] = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]));
     const unknownKeyWarnings = warned.filter((line) => line.includes("unknown key 'dependson'"));
     expect(unknownKeyWarnings).toHaveLength(1);
 
-    const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    expect(printed).toContain('1 warning(s); failing due to --strict');
+    const errored = errorSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain('Invalid: 1 warning(s) present');
+    expect(errored).toContain('escalated to an error by policy');
+    // And the refusal is a refusal: no success line is printed alongside it.
+    expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).not.toContain(
+      'Valid: two-pass-wf',
+    );
   });
 });
 
@@ -164,11 +263,13 @@ describe('validate — accumulator honesty: retry advisory + sentinel + unknown 
   let logSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'realm-validate-accumulator-'));
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
       throw new Error('process.exit');
     }) as never);
@@ -204,10 +305,19 @@ steps:
     ).rejects.toThrow('process.exit');
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-    const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    expect(printed).toContain('2 warning(s); failing due to --strict');
+    // Accumulator honesty is the purpose and it survives: BOTH warnings are counted and both are
+    // printed. Post-#170 the count is reported by the escalation message rather than the --strict
+    // summary, because the unknown key alone is already an error under the default policy.
+    const errored = errorSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain('Invalid: 2 warning(s) present');
+    expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).not.toContain(
+      'Valid: accumulator-wf',
+    );
     const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(warned).toContain("unknown key 'dependson'");
     expect(warned).toContain("declares 'retry' but no 'timeout_seconds'");
+    // The retry advisory is NOT a flipped code, so its line keeps the lenient wording; only the
+    // refused code's "— ignored" is substituted. One render, two different truths.
+    expect(warned).toContain('REFUSED below');
   });
 });

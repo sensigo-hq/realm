@@ -16,8 +16,10 @@ import { printLoaderWarnings, rejectOnErrorSeverity } from '../lib/loader-warnin
  * imported content of each module path (ESM cache) — restart watch to pick up module changes.
  *
  * Prints every accumulated loader warning via printLoaderWarnings (issue #169) and applies the
- * dormant issue #170 boundary-reject (inert today) — but never `--strict` (watch is a dev loop;
- * `--strict` is deliberately validate/register-only).
+ * issue #170 boundary-reject, LIVE since the flip — but never `--strict` (watch is a dev loop;
+ * `--strict` is deliberately validate/register-only). Unlike validate/register this refuses
+ * WITHOUT exiting: the watcher keeps running so the author can fix the key and be re-registered on
+ * the next save, which is the whole point of a dev loop.
  * @param filePath Path to the workflow YAML file.
  * @param store    The registrar to register into.
  */
