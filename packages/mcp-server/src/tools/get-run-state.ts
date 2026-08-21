@@ -96,6 +96,37 @@ export interface RunStateSummary {
    * Prefer this over parsing `terminal_reason`: the prose is for people.
    */
   sealed_by_arm?: string;
+  /**
+   * Issue #367: an operator's RULING on this run's arm, verbatim — who ruled, when, which arm it
+   * replaced (`null` when the ruling was a first stamp of a record that had none), and their
+   * stated reason. Never summarised and never truncated: a ruling is provenance, and half a
+   * provenance record is worse than none.
+   *
+   * `by` is a recorded CLAIM of identity, not a verified one — there is no auth model behind it.
+   * Absent when the run carries no ruling.
+   */
+  sealed_by_adjudicated?: {
+    by: string;
+    at: string;
+    previous_arm: string | null;
+    reason?: string;
+  };
+  /**
+   * Issue #367: present iff this arm was RECOVERED by the classifier (the migration vehicle)
+   * rather than asserted by the writer that sealed the run. Absent otherwise — never `false`.
+   */
+  sealed_by_classified?: true;
+  /**
+   * Issue #367: the step whose settlement sealed the run — emitted ONLY for arms where that step
+   * is the seal's deterministic identity (`guard_*`, `gate_*`, `handler_abort`), mirroring the
+   * same fork `realm run inspect` applies.
+   *
+   * For `complete` and `step_failure` the recorded step is whichever one happened to settle LAST,
+   * a scheduling artifact — and this surface's consumers are agents, the readers most likely to
+   * take a named step as THE culprit. That is precisely the misreading issue #373 exists to
+   * prevent, so the key is absent there. The record still carries it; `export` still ships it.
+   */
+  sealed_by_step?: string;
   completed_steps: string[];
   in_progress_steps: string[];
   failed_steps: string[];
@@ -344,6 +375,20 @@ export async function handleGetRunState(
           sealed_by_arm: (SEAL_ARMS as readonly string[]).includes(run.sealed_by.arm)
             ? run.sealed_by.arm
             : `unrecognized arm '${run.sealed_by.arm}'`,
+          // issue #367 (part 5): the ruling, the classifier marker, and the step — each key ABSENT
+          // when its field is absent, never null (walk-never-ran is not the same as no value).
+          ...(run.sealed_by.adjudicated !== undefined
+            ? { sealed_by_adjudicated: run.sealed_by.adjudicated }
+            : {}),
+          ...(run.sealed_by.classified === true ? { sealed_by_classified: true as const } : {}),
+          // The deterministic-arm fork, identical to inspect's — see the field's own doc for why
+          // a settle-order step must not reach an agent as if it were the culprit.
+          ...(run.sealed_by.step !== undefined &&
+          (run.sealed_by.arm.startsWith('guard_') ||
+            run.sealed_by.arm.startsWith('gate_') ||
+            run.sealed_by.arm === 'handler_abort')
+            ? { sealed_by_step: run.sealed_by.step }
+            : {}),
         }
       : {}),
     ...(run.aborted_at !== undefined ? { abort_context: run.aborted_at } : {}),

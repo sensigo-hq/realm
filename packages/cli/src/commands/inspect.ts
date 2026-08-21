@@ -282,7 +282,27 @@ export async function inspectRun(
       run.sealed_by.arm === 'handler_abort';
     const stepSuffix =
       stepIsDeterministic && run.sealed_by.step !== undefined ? ` (${run.sealed_by.step})` : '';
-    lines.push(`Sealed by: ${arm}${stepSuffix}`);
+    // issue #367 (part 5): classifier provenance is provenance too — a reader deserves to know the
+    // arm was RECOVERED from a legacy record rather than asserted by the writer that sealed it.
+    const classifiedSuffix = run.sealed_by.classified === true ? ' (recovered by classifier)' : '';
+    lines.push(`Sealed by: ${arm}${stepSuffix}${classifiedSuffix}`);
+    // issue #367 (part 5): an operator's ruling on this run, on the surface operators actually
+    // use. Shipping a ruling channel whose rulings were invisible here was the defect this closes.
+    const ruling = run.sealed_by.adjudicated;
+    if (ruling !== undefined) {
+      // `null` means no arm existed before the ruling — the operator's FIRST stamp of a record
+      // that had none. Deliberately not called "unclassifiable": the boundary admits a null
+      // first-stamp on ANY already-terminal unstamped record, so saying so would claim more than
+      // the condition guarding this line.
+      const was =
+        ruling.previous_arm === null
+          ? 'first stamp — no prior arm existed'
+          : `was ${ruling.previous_arm}`;
+      // The reason is the operator's own words, rendered verbatim — never truncated, never
+      // summarised.
+      const because = ruling.reason !== undefined ? ` — ${ruling.reason}` : '';
+      lines.push(`Ruled: ${ruling.by} at ${ruling.at} (${was})${because}`);
+    }
   }
   // The one-line cause has never been rendered here — four rounds of #367/#373 review kept
   // finding that the operator's primary surface shows the failed SET but not why the run ended.

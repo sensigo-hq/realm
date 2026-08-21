@@ -694,6 +694,88 @@ describe('#367 part 4 — the audit honors an operator ruling', () => {
   });
 });
 
+describe("#367 part 5 — the operator's loop, end to end", () => {
+  // The PR-4 cells above pin the short-circuit in isolation. These two walk the whole journey the
+  // short-circuit exists for: sweep parks a record, operator rules on it, next sweep leaves it
+  // alone and says so. A loop that closes on paper and not in the tool is not closed.
+
+  it('J3 — an UNCLASSIFIABLE record: parked, first-stamped with null provenance, then it stands', async () => {
+    // Leg 1: nothing in the record's prose matches a known seal shape, so the sweep refuses to
+    // guess and parks it.
+    await seed('halted-in-migration', {
+      terminal_reason: 'Halted by an operator during the 0.9 migration',
+      run_phase: 'failed',
+    });
+    const before = await migrateStampSeals(store, { force: true });
+    expect(before.unclassifiable.map((e) => e.id)).toEqual(['halted-in-migration']);
+    expect(before.stamped).toEqual([]);
+
+    // Leg 2: the operator reads it and rules. There was no arm to correct, so the only truthful
+    // provenance is `previous_arm: null` — the first-stamp form.
+    const parked = await onDisk('halted-in-migration');
+    const result = await store.stampSeal(
+      'halted-in-migration',
+      {
+        arm: 'abandon_requested',
+        adjudicated: {
+          by: 'mihai',
+          at: '2026-08-21T00:00:00.000Z',
+          previous_arm: null,
+          reason: 'halted deliberately during the migration; no step failed',
+        },
+      },
+      parked.version,
+    );
+    expect(result.stamped).toBe(true);
+
+    // Leg 3: the next sweep honours it — out of `unclassifiable` for good, and the report says
+    // whose call it was rather than re-raising the question.
+    const after = await migrateStampSeals(store, { force: true });
+    expect(after.unclassifiable).toEqual([]);
+    expect(after.already_stamped).toEqual([
+      { id: 'halted-in-migration', verified: true, ruled: true },
+    ]);
+    expect(renderMigrateReport(after, { force: true }).join('\n')).toContain(
+      'ruled by an operator — the ruling stands',
+    );
+  });
+
+  it('J4 — an INCOHERENT abandon record: parked, acknowledged as it stands, then it stands', async () => {
+    // The harder half. Here the operator does NOT correct the arm — they acknowledge it. The loop
+    // has to close on "I know, leave it" too, or the tool keeps arguing with a decision already
+    // made.
+    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const stale: RunRecord = {
+      ...run,
+      terminal_state: true,
+      terminal_reason: 'Abandoned by the operator',
+      abandoned_at: AT,
+      sealed_by: { arm: 'complete' },
+    };
+    const written = await store.update(stale); // the boundary's comparator abstains on abandon markers
+    const before = await migrateStampSeals(store, { force: true });
+    expect(before.incoherent.map((e) => e.id)).toEqual([run.id]);
+
+    // The ack: same arm, and a previous_arm that says truthfully what was there.
+    await store.update({
+      ...written,
+      sealed_by: {
+        arm: 'complete',
+        adjudicated: {
+          by: 'mihai',
+          at: '2026-08-21T00:00:00.000Z',
+          previous_arm: 'complete',
+          reason: 'the work finished; the abandon marker is scar tissue from a later cleanup',
+        },
+      },
+    });
+
+    const after = await migrateStampSeals(store, { force: true });
+    expect(after.incoherent).toEqual([]);
+    expect(after.already_stamped).toEqual([{ id: run.id, verified: true, ruled: true }]);
+  });
+});
+
 describe('#367 part 3 — the exit taxonomy, per bucket combination and per mode', () => {
   const E = (): Parameters<typeof migrateExitCode>[0] => ({
     stamped: [],
