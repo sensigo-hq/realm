@@ -23,7 +23,10 @@
 // is balanced — which is what makes the stack below correct.
 import type { State } from 'js-yaml';
 
-/** Where a key sits in the source. 1-based, both ends, inclusive-exclusive on the column. */
+/**
+ * Where a key sits in the source. 1-based. `endColumn` is exclusive — one past the last character
+ * (the editor convention); all other bounds inclusive.
+ */
 export interface SourcePosition {
   line: number;
   column: number;
@@ -31,9 +34,21 @@ export interface SourcePosition {
   endColumn: number;
 }
 
-/** Resolves a semantic path to its position in the source, or `undefined` if it cannot. */
+/**
+ * Resolves a semantic path to its position in the source, or `undefined` if it cannot.
+ *
+ * The path is a SEQUENCE OF SEGMENTS — `['steps', 'my_step', 'execution']` — never a joined
+ * string, and that is a correctness requirement rather than a style preference. A dotted path
+ * aliases: a step literally named `a.b` and a field `b` on a step named `a` both flatten to
+ * `steps.a.b`, and last-write-wins hands one of them the OTHER's line. That is lawful YAML
+ * producing a confidently wrong position — the one outcome this module exists to make impossible.
+ *
+ * No separator fixes it. NUL does not: js-yaml parses `"a\0b"` into a key that CONTAINS a literal
+ * NUL, so a NUL-join aliases exactly as the dot did. There is no character a YAML key cannot hold,
+ * so only structure can carry the distinction.
+ */
 export interface SourcePositionMap {
-  posOf(path: string): SourcePosition | undefined;
+  posOf(segments: readonly string[]): SourcePosition | undefined;
 }
 
 /** A node reconstructed from one open/close pair. */
@@ -55,6 +70,16 @@ interface Frame {
 }
 
 const EMPTY_MAP: SourcePositionMap = { posOf: () => undefined };
+
+/**
+ * The map's internal key. `JSON.stringify` of a string array is injective — the escaping is
+ * deterministic and the array brackets/commas are part of the encoding — so two different segment
+ * sequences can never produce the same key. `['a.b']` encodes as `["a.b"]` and `['a','b']` as
+ * `["a","b"]`; there is no input that collapses them.
+ */
+function keyOf(segments: readonly string[]): string {
+  return JSON.stringify(segments);
+}
 
 /** A map that resolves nothing — for callers with no source text to map against. */
 export function emptySourcePositionMap(): SourcePositionMap {
@@ -105,9 +130,9 @@ export function createSourcePositionCollector(): {
       const positions = new Map<string, SourcePosition>();
       // The document node is the last thing to close at the top level.
       const root = stack[0]?.children[stack[0].children.length - 1];
-      if (root !== undefined) collect(root, '', positions);
+      if (root !== undefined) collect(root, [], positions);
       return {
-        posOf: (path) => positions.get(path),
+        posOf: (segments) => positions.get(keyOf(segments)),
       };
     },
   };
@@ -128,7 +153,7 @@ export function createSourcePositionCollector(): {
  * blunt: the cost is a missing line number on an exotic shape, and the alternative is a confident
  * wrong one on the same shape.
  */
-function collect(node: Node, path: string, into: Map<string, SourcePosition>): void {
+function collect(node: Node, path: readonly string[], into: Map<string, SourcePosition>): void {
   // Only structural nodes are walked. Anchor replays surface as events nested inside scalars,
   // which have no keys to map and are never descended into.
   if (node.kind !== 'mapping') return;
@@ -143,10 +168,10 @@ function collect(node: Node, path: string, into: Map<string, SourcePosition>): v
   for (let i = 0; i < keys.length; i++) {
     const keyNode = node.children[2 * i] as Node;
     const valueNode = node.children[2 * i + 1] as Node;
-    const childPath = path === '' ? (keys[i] as string) : `${path}.${keys[i]}`;
+    const childPath = [...path, keys[i] as string];
     // +1 on every coordinate: this is the ONE place 0-based parser state becomes 1-based
     // human/agent coordinates.
-    into.set(childPath, {
+    into.set(keyOf(childPath), {
       line: keyNode.startLine + 1,
       column: keyNode.startColumn + 1,
       endLine: keyNode.endLine + 1,

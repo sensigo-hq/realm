@@ -58,6 +58,9 @@ export interface LoaderWarning {
    * Where the offending key sits in the source YAML, 1-based (issue #392). Present only when the
    * warning came from a parsed file AND the key's position could be resolved exactly.
    *
+   * `endColumn` is EXCLUSIVE — one past the last character, the convention every editor uses; all
+   * other bounds are inclusive. Read as inclusive it produces span edits one character short.
+   *
    * ALL FOUR OR NONE — never a partial position. A range with a start and no end is not a range,
    * and a consumer that has to check four fields separately will eventually forget one.
    *

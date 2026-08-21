@@ -687,7 +687,7 @@ function parseWorkflowString(
    * string the step each came from is no longer recoverable.
    */
   const withStepLine = (stepName: string, message: string): string => {
-    const line = sourceMap.posOf(`steps.${stepName}`)?.line;
+    const line = sourceMap.posOf(['steps', stepName])?.line;
     return line === undefined ? message : `${message} (line ${line})`;
   };
 
@@ -717,7 +717,7 @@ function parseWorkflowString(
         scope: 'workflow',
         code: 'UNKNOWN_WORKFLOW_KEY',
         id: workflowId,
-        positionOf: (key) => sourceMap.posOf(key),
+        positionOf: (key) => sourceMap.posOf([key]),
       }),
     );
   }
@@ -811,7 +811,7 @@ function parseWorkflowString(
         scope: 'step',
         code: 'UNKNOWN_STEP_KEY',
         step: stepName,
-        positionOf: (key) => sourceMap.posOf(`steps.${stepName}.${key}`),
+        positionOf: (key) => sourceMap.posOf(['steps', stepName, key]),
       }),
     );
 
@@ -1143,7 +1143,7 @@ function parseWorkflowString(
             code: 'UNKNOWN_VALIDATION_EXHAUSTION_KEY',
             step: stepName,
             noun: 'validation_exhaustion',
-            positionOf: (key) => sourceMap.posOf(`steps.${stepName}.validation_exhaustion.${key}`),
+            positionOf: (key) => sourceMap.posOf(['steps', stepName, 'validation_exhaustion', key]),
           }),
         );
 
@@ -1315,7 +1315,7 @@ function parseWorkflowString(
             code: 'UNKNOWN_GATE_KEY',
             step: stepName,
             noun: 'gate',
-            positionOf: (key) => sourceMap.posOf(`steps.${stepName}.gate.${key}`),
+            positionOf: (key) => sourceMap.posOf(['steps', stepName, 'gate', key]),
           }),
         );
 
@@ -1480,7 +1480,7 @@ function parseWorkflowString(
             code: 'UNKNOWN_RETRY_KEY',
             step: stepName,
             noun: 'retry',
-            positionOf: (key) => sourceMap.posOf(`steps.${stepName}.retry.${key}`),
+            positionOf: (key) => sourceMap.posOf(['steps', stepName, 'retry', key]),
           }),
         );
 
