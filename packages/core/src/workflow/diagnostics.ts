@@ -55,15 +55,21 @@ export interface LoaderWarning {
 }
 
 /**
- * The single datum issue #170 (hard-reject at the next major version) changes: flip
- * UNKNOWN_WORKFLOW_KEY / UNKNOWN_STEP_KEY to 'error' here and the dormant boundary-reject at
- * validate/register/watch (see yaml-loader.ts consumers) starts refusing those workflows.
+ * Issue #170, FLIPPED: `UNKNOWN_WORKFLOW_KEY` / `UNKNOWN_STEP_KEY` are `'error'`, which makes the
+ * dormant boundary-reject at validate/register/watch (see yaml-loader.ts consumers) live — those
+ * three commands now REFUSE a workflow carrying an unrecognised key.
+ *
+ * The refusal is BOUNDARY-GATED, not global: run/agent/listen load through the lenient
+ * `loadWorkflowFromFile`, so an already-deployed workflow carrying an unknown key keeps executing
+ * and keeps printing its warning. That asymmetry is the #169 design, deliberately preserved — the
+ * flip stops new offenders entering, it does not strand running ones.
+ *
  * UNKNOWN_CREATE_WORKFLOW_KEY is deliberately never flipped — create_workflow stays lenient for
  * agents forever (a distinct, permanent design decision, not an oversight).
  */
 export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
-  UNKNOWN_WORKFLOW_KEY: 'warn',
-  UNKNOWN_STEP_KEY: 'warn',
+  UNKNOWN_WORKFLOW_KEY: 'error',
+  UNKNOWN_STEP_KEY: 'error',
   UNKNOWN_CREATE_WORKFLOW_KEY: 'warn',
   IDEMPOTENT_INERT_IN_FINALIZER: 'warn',
   DUAL_SCHEMA_DECLARED: 'warn',

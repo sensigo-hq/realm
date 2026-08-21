@@ -497,12 +497,20 @@ describe('runAgent — strict tool-call arguments (issue #311)', () => {
   });
 
   // -------------------------------------------------------------------------------------------
-  // Pin 16 — the #338 corner, pinned AS BUILT (adjudication belongs to #338, not here)
+  // Pin 16 — the #338 corner, POST-FIX: this pins the loader-BYPASS path, and stays valid forever
   // -------------------------------------------------------------------------------------------
-  it('pin 16 (#338 as-built): a strict step that declares tools but has NO mcp_servers never reaches the tools path — no tool_args, and the OUTPUT gate assesses the step schema instead', async () => {
-    // No `mcp_servers` ⇒ no mcpClient ⇒ run-agent takes the SUBMIT path, where the step's own
-    // schema is gated normally and tools are silently never offered. This is the #338 corner: it
-    // is pinned here so the contract is visible, NOT endorsed — see issue #338.
+  it('pin 16 (#338 post-fix): a strict step that declares tools but has NO mcp_servers never reaches the tools path — no tool_args, and the OUTPUT gate assesses the step schema instead', async () => {
+    // #338 shipped: a YAML file in this shape is now REFUSED AT LOAD. This pin did not flip with
+    // it, and that is deliberate — the definition below is hand-built and handed straight to
+    // run-agent, so it never passes through the YAML loader at all. The behaviour it pins stays
+    // REACHABLE: store-registered definitions are read back with a raw parse and never
+    // re-validated, and an inline definition (this one) is never parsed to begin with.
+    //
+    // So the runtime contract still needs to be honest about what happens when such a definition
+    // reaches the drive: no mcpClient, the SUBMIT path, the step's own schema gated normally, and
+    // tools silently never offered. The loader now stops new YAML from getting here; this pin
+    // describes what the engine does for everything that arrives by another road.
+    // (Note style follows dead-failure-condition.test.ts:349-353.)
     const def: WorkflowDefinition = {
       id: 'no-servers-wf',
       name: 'No Servers',

@@ -7,7 +7,8 @@ import {
 import { WorkflowError } from '../types/workflow-error.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { ServiceAdapter } from '../extensions/service-adapter.js';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -885,6 +886,49 @@ steps:
     }
   });
 
+  it('issue #338: tools declared with NO mcp_servers block at all is refused at load', () => {
+    // The corner the server-reference check below could never see: it runs only when an
+    // `mcp_servers` block EXISTS, so a workflow declaring tools without one loaded clean and ran
+    // with its tools silently never offered.
+    const content = MCP_BASE_YAML.replace(
+      `mcp_servers:
+  - id: github
+    command: npx
+    args: [-y, '@modelcontextprotocol/server-github']
+`,
+      '',
+    );
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      const message = (err as WorkflowError).message;
+      expect(message).toContain(
+        "Step 'step-two': declares tools but the workflow defines no mcp_servers",
+      );
+      expect(message).toContain('can never be satisfied');
+      expect(message).toContain("Define an mcp_servers block, or remove 'tools'");
+      // ONE error for the step, not one per entry — the entries are not individually wrong.
+      expect(message.match(/declares tools but the workflow defines no mcp_servers/g)).toHaveLength(
+        1,
+      );
+    }
+  });
+
+  it('issue #338 CONTROL: an EMPTY tools array with no mcp_servers block still loads', () => {
+    // The refusal is keyed on a non-empty declaration. An empty array declares nothing, so there
+    // is nothing that can never be satisfied.
+    const content = MCP_BASE_YAML.replace(
+      `mcp_servers:
+  - id: github
+    command: npx
+    args: [-y, '@modelcontextprotocol/server-github']
+`,
+      '',
+    ).replace('    tools:\n      - github:get_pull_request', '    tools: []');
+    expect(() => loadWorkflowFromString(content)).not.toThrow();
+  });
+
   it('tools entry referencing unknown mcp_servers id throws WorkflowError', () => {
     const content = MCP_BASE_YAML.replace(
       '- github:get_pull_request',
@@ -1307,6 +1351,131 @@ describe('loadWorkflowFromString — retry validation', () => {
       'depends_on: []\n    retry:\n      max_attempts: 2',
     );
     expect(() => loadWorkflowFromString(content)).not.toThrow();
+  });
+});
+
+describe('issue #369 — `preconditions` is prohibited on a guard, with a message that earns it', () => {
+  // Before this check, a guard could declare `preconditions` and the loader accepted it. The engine
+  // then never evaluated it — `checkPreconditions` is reached only from `executeStep`, and a guard
+  // goes through `executeGuardStep` — so the author shipped a workflow that LOOKED guarded and was
+  // not. Accepted-and-meaningless is the class this whole PR refuses.
+  const GUARD_WITH_PRECONDITIONS = `
+id: guard-precond
+name: Guard Precond
+version: 1
+steps:
+  step_a:
+    description: First step
+    execution: agent
+    depends_on: []
+  guard_b:
+    description: Guard step
+    execution: guard
+    depends_on: [step_a]
+    abort_unless: "step_a.status == 'open'"
+    preconditions:
+      - "step_a.result.count > 0"
+`;
+
+  /** The joined loader message for a definition, or '' if it loaded. */
+  function loadError(yaml: string): string {
+    try {
+      loadWorkflowFromString(yaml);
+      return '';
+    } catch (err) {
+      return (err as WorkflowError).message;
+    }
+  }
+
+  it('refuses the guard, naming the step', () => {
+    expect(() => loadWorkflowFromString(GUARD_WITH_PRECONDITIONS)).toThrow(WorkflowError);
+    expect(loadError(GUARD_WITH_PRECONDITIONS)).toContain(
+      "Step 'guard_b': 'preconditions' is not valid on execution: guard steps",
+    );
+  });
+
+  it('the message carries all four things it promises: cause, consequence, remedy, and the open question', () => {
+    // Each clause is a separate claim the message makes, and each is pinned on its own — a message
+    // that keeps the prohibition and quietly loses the remedy is still a worse message.
+    const message = loadError(GUARD_WITH_PRECONDITIONS);
+    // CAUSE — why it is prohibited, scoped exactly ("there", not "anywhere").
+    expect(message).toContain('the engine never evaluates it there');
+    expect(message).toContain("a guard's execution evaluates only 'abort_unless'");
+    // CONSEQUENCE — the hazard, which no surveyed system prints.
+    expect(message).toContain('so the run would LOOK guarded while the declared check never ran');
+    // REMEDY — what to do instead.
+    expect(message).toContain("Move the condition into 'abort_unless'");
+    // THE OPEN QUESTION — worded as open, never as a decision. It must NOT say what preconditions
+    // WOULD mean on a guard; that would pre-decide #366.
+    expect(message).toContain('open design question (issue #366)');
+    expect(message).toContain('if admitted later, existing workflows are unaffected');
+  });
+
+  it("the CAUSE clause's claim is only true while `checkPreconditions` has ONE engine call site", () => {
+    // The message asserts the engine never evaluates preconditions on a guard. That rests entirely
+    // on there being a single call site, inside `executeStep`. A second one added anywhere in the
+    // engine would make this message a confident lie, and nothing else in the suite would notice.
+    //
+    // SCOPE, deliberately: `packages/core/src`, excluding tests, the definition in
+    // precondition.ts, and the index re-export. The CLI's replay re-evaluator
+    // (replay.ts:116-117) calls it twice and is NOT counted — replay reproduces `executeStep`
+    // semantics for a completed run, it is not a guard surface, and it cannot make this message
+    // false.
+    const root = fileURLToPath(new URL('..', import.meta.url));
+    const callSites: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (
+          entry.name.endsWith('.ts') &&
+          !entry.name.endsWith('.test.ts') &&
+          entry.name !== 'precondition.ts' &&
+          entry.name !== 'index.ts'
+        ) {
+          for (const line of readFileSync(full, 'utf8').split('\n')) {
+            if (line.includes('checkPreconditions('))
+              callSites.push(`${entry.name}: ${line.trim()}`);
+          }
+        }
+      }
+    };
+    walk(root);
+    expect(callSites).toHaveLength(1);
+    expect(callSites[0]).toContain('execution-loop.ts');
+  });
+
+  it('CONTROL: the same guard without `preconditions` loads', () => {
+    expect(() =>
+      loadWorkflowFromString(
+        GUARD_WITH_PRECONDITIONS.replace(
+          '    preconditions:\n      - "step_a.result.count > 0"\n',
+          '',
+        ),
+      ),
+    ).not.toThrow();
+  });
+
+  it('CONTROL: `preconditions` on a NON-guard step is untouched', () => {
+    // The prohibition is guard-scoped. Every other step kind evaluates preconditions for real.
+    const nonGuard = `
+id: precond-ok
+name: Precond OK
+version: 1
+steps:
+  step_a:
+    description: First step
+    execution: agent
+    depends_on: []
+  step_b:
+    description: Second step
+    execution: agent
+    depends_on: [step_a]
+    preconditions:
+      - "step_a.result.count > 0"
+`;
+    expect(() => loadWorkflowFromString(nonGuard)).not.toThrow();
   });
 });
 

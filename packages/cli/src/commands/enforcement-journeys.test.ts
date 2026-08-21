@@ -1,0 +1,282 @@
+// enforcement-journeys.test.ts — the loader-enforcement trio (#170 + #369 + #338) walked the way
+// an author meets it: broken workflow in, refusal out, fix applied, workflow passes.
+//
+// Each refusal in this PR is only as good as the sentence it prints, because the author's next
+// move is decided entirely by that sentence. A cell that asserts "it threw" would pass for a
+// message that says nothing useful. So each journey below asserts the REMEDY the message gives,
+// then applies exactly that remedy and shows the workflow now loads.
+//
+// J-D is the odd one out and the most important: it proves the asymmetry the changelog claims.
+// #170 refuses at validate/register/watch and NOT on the execution path, so a workflow already
+// deployed with an unknown key keeps running. If that ever stops being true, this PR's release
+// notes become false.
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { loadWorkflowFromFile, loadWorkflowFromString, WorkflowError } from '@sensigo/realm';
+import { validateCommand } from './validate.js';
+
+let dir: string;
+let logSpy: ReturnType<typeof vi.spyOn>;
+let warnSpy: ReturnType<typeof vi.spyOn>;
+let errorSpy: ReturnType<typeof vi.spyOn>;
+let exitSpy: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), 'realm-journey-'));
+  logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
+    throw new Error('process.exit');
+  }) as never);
+});
+
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+  vi.restoreAllMocks();
+});
+
+/** Writes `content` to the scratch workflow file and returns its path. */
+function write(content: string): string {
+  const p = join(dir, 'workflow.yaml');
+  writeFileSync(p, content, 'utf8');
+  return p;
+}
+
+/** Runs `realm workflow validate` and reports whether it refused, plus what it said. */
+async function validate(path: string): Promise<{ refused: boolean; out: string }> {
+  logSpy.mockClear();
+  warnSpy.mockClear();
+  errorSpy.mockClear();
+  exitSpy.mockClear();
+  let refused = false;
+  try {
+    await validateCommand.parseAsync([path], { from: 'user' });
+  } catch {
+    refused = true;
+  }
+  const all = [logSpy, warnSpy, errorSpy]
+    .flatMap((spy) => spy.mock.calls.map((c: unknown[]) => String(c[0])))
+    .join('\n');
+  return { refused: refused || exitSpy.mock.calls.length > 0, out: all };
+}
+
+describe('J-A — an author mistypes a step key (#170)', () => {
+  const withTypo = `
+id: journey-a
+name: Journey A
+version: 1
+steps:
+  step_one:
+    description: First step
+    execution: auto
+  step_two:
+    description: Second step
+    execution: auto
+    dependson: [step_one]
+`;
+
+  it('validate refuses, names the key, and suggests the right one — then the fix passes', async () => {
+    const first = await validate(write(withTypo));
+    expect(first.refused).toBe(true);
+    expect(first.out).toContain("unknown key 'dependson'");
+    // The suggestion is the whole reason this is a one-edit fix rather than a doc hunt.
+    expect(first.out).toContain("did you mean 'depends_on'?");
+    // And it must not tell the author the key was ignored, one line above refusing over it.
+    expect(first.out).not.toContain('ignored');
+
+    // Apply exactly what the message suggested.
+    const second = await validate(write(withTypo.replace('dependson', 'depends_on')));
+    expect(second.refused).toBe(false);
+    expect(second.out).toContain('Valid: journey-a v1 (2 steps)');
+  });
+});
+
+describe('J-B — an author puts `preconditions` on a guard (#369)', () => {
+  const guardWith = (extra: string): string => `
+id: journey-b
+name: Journey B
+version: 1
+steps:
+  work:
+    description: Do the work
+    execution: agent
+    depends_on: []
+  gate:
+    description: Guard step
+    execution: guard
+    depends_on: [work]
+${extra}
+`;
+
+  it('the refusal names abort_unless, and the moved condition then loads AND evaluates', async () => {
+    const bad = guardWith(
+      `    abort_unless: "work.result.ok == true"\n    preconditions:\n      - "work.result.count > 0"`,
+    );
+    const first = await validate(write(bad));
+    expect(first.refused).toBe(true);
+    // The CAUSE clause is what this journey anchors — the author has to understand WHY before the
+    // remedy means anything. (The remedy clause has its own pin in yaml-loader.test.ts.)
+    expect(first.out).toContain("'preconditions' is not valid on execution: guard steps");
+    expect(first.out).toContain("a guard's execution evaluates only 'abort_unless'");
+
+    // Move the condition where the message says to put it — as a second abort_unless leaf.
+    const fixed = guardWith(
+      `    abort_unless:\n      - "work.result.ok == true"\n      - "work.result.count > 0"`,
+    );
+    const second = await validate(write(fixed));
+    expect(second.refused).toBe(false);
+    expect(second.out).toContain('Valid: journey-b v1 (2 steps)');
+
+    // And the moved form is not merely accepted — it is a real guard condition the engine reads.
+    const def = loadWorkflowFromFile(write(fixed));
+    expect(def.steps['gate']?.abort_unless).toEqual([
+      'work.result.ok == true',
+      'work.result.count > 0',
+    ]);
+  });
+
+  it('VARIANT: a FAILURE-shaped precondition moved to abort_unless is refused AGAIN, by #362', async () => {
+    // The two-hop case. #369 says "move it to abort_unless" without inspecting the condition, so
+    // an author whose condition tests for FAILURE follows that advice into #362's dead-condition
+    // check — which refuses it too, and points at finalizers. Pinning the convergence here rather
+    // than growing the #369 message: the second message is already correct and already specific,
+    // and #369's job is not to pre-empt every condition an author might be moving.
+    const hop1 = guardWith(
+      `    abort_unless: "work.settled_by_default == false"\n    preconditions:\n      - "$settlement.work.failed == true"`,
+    );
+    const first = await validate(write(hop1));
+    expect(first.refused).toBe(true);
+    expect(first.out).toContain("'preconditions' is not valid on execution: guard steps");
+
+    const hop2 = guardWith(
+      `    abort_unless:\n      - "work.settled_by_default == false"\n      - "$settlement.work.failed == true"`,
+    );
+    const second = await validate(write(hop2));
+    expect(second.refused).toBe(true);
+    expect(second.out).toContain('can never be true');
+    // The second message hands the author the actually-correct destination.
+    expect(second.out).toContain("'execution: finalizer' step");
+  });
+});
+
+describe('J-C — an author declares tools with no mcp_servers (#338)', () => {
+  const base = (servers: string): string => `
+id: journey-c
+name: Journey C
+version: 1
+${servers}steps:
+  ask:
+    description: Ask something
+    execution: agent
+    depends_on: []
+    input_schema:
+      type: object
+      properties:
+        q:
+          type: string
+      required: [q]
+    tools:
+      - github:get_pull_request
+`;
+
+  it('the refusal says what to add — and adding it, or removing the tools, both work', async () => {
+    const first = await validate(write(base('')));
+    expect(first.refused).toBe(true);
+    expect(first.out).toContain('declares tools but the workflow defines no mcp_servers');
+    expect(first.out).toContain("Define an mcp_servers block, or remove 'tools'");
+
+    // Remedy 1, as printed: define the block.
+    const withServers = await validate(
+      write(
+        base(`mcp_servers:
+  - id: github
+    command: npx
+    args: [-y, '@modelcontextprotocol/server-github']
+`),
+      ),
+    );
+    expect(withServers.refused).toBe(false);
+    expect(withServers.out).toContain('Valid: journey-c v1 (1 steps)');
+
+    // Remedy 2, also as printed: drop the declaration.
+    const withoutTools = await validate(
+      write(base('').replace('    tools:\n      - github:get_pull_request\n', '')),
+    );
+    expect(withoutTools.refused).toBe(false);
+  });
+});
+
+describe('J-D — the grandfathering journey: a deployed workflow keeps running (#170)', () => {
+  it('the EXECUTION loader still loads a workflow with an unknown key, and still warns', () => {
+    // This is the cell that makes the changelog's asymmetry sentence true. run/agent/listen load
+    // through `loadWorkflowFromFile`, which never consults the policy — so an unknown key that
+    // now blocks validate does NOT strand a workflow already in production.
+    const deployed = `
+id: journey-d
+name: Journey D
+version: 1
+steps:
+  step_one:
+    description: First step
+    execution: auto
+    dependson: [nothing]
+`;
+    const path = write(deployed);
+    const def = loadWorkflowFromFile(path);
+    expect(def.id).toBe('journey-d');
+
+    // And it still SAYS so — grandfathering is not silence.
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(warned).toContain("unknown key 'dependson'");
+    // On this path "— ignored" is TRUE and is deliberately kept: the key really is ignored here.
+    expect(warned).toContain('— ignored');
+    expect(warned).not.toContain('REFUSED below');
+  });
+
+  it('CONTRAST: the #369 and #338 refusals are NOT boundary-gated — they refuse on this path too', () => {
+    // The other half of the asymmetry, and the reason the changelog must not say "boundary-gated"
+    // about all three. These are loader-level errors: every YAML load path refuses them, execution
+    // included. Only definitions that never re-parse YAML (store-registered, inline) are exempt.
+    const guardPrecond = `
+id: journey-d2
+name: Journey D2
+version: 1
+steps:
+  work:
+    description: Work
+    execution: agent
+    depends_on: []
+  gate:
+    description: Guard
+    execution: guard
+    depends_on: [work]
+    abort_unless: "work.result.ok == true"
+    preconditions:
+      - "work.result.count > 0"
+`;
+    expect(() => loadWorkflowFromString(guardPrecond)).toThrow(WorkflowError);
+
+    const toolsNoServers = `
+id: journey-d3
+name: Journey D3
+version: 1
+steps:
+  ask:
+    description: Ask
+    execution: agent
+    depends_on: []
+    input_schema:
+      type: object
+      properties:
+        q:
+          type: string
+      required: [q]
+    tools:
+      - github:get_pull_request
+`;
+    expect(() => loadWorkflowFromString(toolsNoServers)).toThrow(WorkflowError);
+  });
+});

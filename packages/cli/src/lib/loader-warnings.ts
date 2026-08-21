@@ -10,10 +10,38 @@ import {
   type WarningCode,
 } from '@sensigo/realm';
 
-/** Prints every warning via the single renderLoaderWarning format source. */
+/**
+ * The unknown-key warning is minted with "— ignored", which is true of the LENIENT loader
+ * (run/agent/listen really do ignore the key and carry on) and false here: the only callers of
+ * this function are validate/register/watch, and post-#170 those three REFUSE a workflow whose
+ * warning resolves to 'error'. Printing "— ignored" one line above "escalated to an error" tells
+ * the author the opposite of what is about to happen to them.
+ *
+ * Substituted at the RENDER, not the mint, precisely because the mint is shared with the lenient
+ * path — where the original wording is true and worth keeping. The did-you-mean fragment is
+ * untouched: it is the most useful half of the line and the reason the author can fix this in one
+ * edit.
+ */
+const IGNORED_CLAUSE = '— ignored';
+const REFUSED_CLAUSE = '— REFUSED below';
+
+/**
+ * Prints every warning via the single renderLoaderWarning format source, correcting the
+ * "— ignored" claim for any warning this boundary will actually refuse.
+ *
+ * Resolved against DEFAULT_POLICY, which is the policy the boundary-reject itself uses. A warning
+ * that only fails under `--strict` still renders "— ignored" — see the report's design note; the
+ * `--strict` path prints its own "failing due to --strict" line, so the author is not left
+ * without an explanation.
+ */
 export function printLoaderWarnings(warnings: LoaderWarning[]): void {
   for (const w of warnings) {
-    console.warn(renderLoaderWarning(w));
+    const line = renderLoaderWarning(w);
+    console.warn(
+      resolveSeverity(w.code, DEFAULT_POLICY) === 'error'
+        ? line.replace(IGNORED_CLAUSE, REFUSED_CLAUSE)
+        : line,
+    );
   }
 }
 

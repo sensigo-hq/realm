@@ -12,23 +12,34 @@ import {
 } from './diagnostics.js';
 
 describe('DEFAULT_POLICY / resolveSeverity', () => {
-  it('every DEFAULT_POLICY entry is "warn" today (no code is pre-flipped)', () => {
-    for (const severity of Object.values(DEFAULT_POLICY)) {
-      expect(severity).toBe('warn');
-    }
+  it('exactly two codes are "error" — the issue #170 flip, and nothing rode along with it', () => {
+    // Written as a whole-table assertion rather than two spot checks: the risk this guards is a
+    // THIRD code quietly acquiring 'error' severity, which no per-code test would ever see.
+    const errored = Object.entries(DEFAULT_POLICY)
+      .filter(([, severity]) => severity === 'error')
+      .map(([code]) => code)
+      .sort();
+    expect(errored).toEqual(['UNKNOWN_STEP_KEY', 'UNKNOWN_WORKFLOW_KEY']);
   });
 
   it('resolveSeverity looks up the default policy when none is given', () => {
-    expect(resolveSeverity('UNKNOWN_WORKFLOW_KEY')).toBe('warn');
-    expect(resolveSeverity('UNKNOWN_STEP_KEY')).toBe('warn');
+    expect(resolveSeverity('UNKNOWN_WORKFLOW_KEY')).toBe('error');
+    expect(resolveSeverity('UNKNOWN_STEP_KEY')).toBe('error');
+    // create_workflow stays lenient for agents FOREVER — a permanent design decision, not a code
+    // the next flip is expected to reach. This is the negative half of #170.
     expect(resolveSeverity('UNKNOWN_CREATE_WORKFLOW_KEY')).toBe('warn');
   });
 
   it('resolveSeverity honors an explicit policy override', () => {
-    const policy = { ...DEFAULT_POLICY, UNKNOWN_STEP_KEY: 'error' as const };
-    expect(resolveSeverity('UNKNOWN_STEP_KEY', policy)).toBe('error');
-    // Unaffected codes in the same override stay at their DEFAULT_POLICY value.
-    expect(resolveSeverity('UNKNOWN_WORKFLOW_KEY', policy)).toBe('warn');
+    // Driven on a code #170 did NOT flip, so the override is what makes it 'error' — on a
+    // flipped code the assertion would pass without the override doing anything.
+    const policy = { ...DEFAULT_POLICY, DUAL_SCHEMA_DECLARED: 'error' as const };
+    expect(resolveSeverity('DUAL_SCHEMA_DECLARED', policy)).toBe('error');
+    expect(resolveSeverity('DUAL_SCHEMA_DECLARED')).toBe('warn');
+    // Unaffected codes in the same override keep their DEFAULT_POLICY value, which the spread
+    // now carries as 'error' for the two flipped ones.
+    expect(resolveSeverity('UNKNOWN_WORKFLOW_KEY', policy)).toBe('error');
+    expect(resolveSeverity('RETRY_NO_TIMEOUT', policy)).toBe('warn');
   });
 });
 
@@ -45,7 +56,9 @@ describe('findUnknownKeys', () => {
     expect(warnings.map((w) => w.key).sort()).toEqual(['another_rogue', 'rogue_key']);
     for (const w of warnings) {
       expect(w.code).toBe('UNKNOWN_STEP_KEY');
-      expect(w.severity).toBe('warn');
+      // Resolved at construction against DEFAULT_POLICY, so the #170 flip reaches the structured
+      // warning itself, not only the boundary that reads it.
+      expect(w.severity).toBe('error');
       expect(w.scope).toBe('step');
       expect(w.step).toBe('my-step');
     }
