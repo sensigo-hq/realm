@@ -88,6 +88,64 @@ export function serializeToolResult(result: unknown): string {
   return sanitizeError(raw);
 }
 
+/** The `error` text for a Class-B result whose content carries no readable text at all. */
+export const CLASS_B_NO_TEXT_MARKER = 'tool returned isError with no text content';
+
+/**
+ * Extracts the failure text from a POLITELY FAILED tool call — issue #345.
+ *
+ * MCP defines two ways a tool call fails. The transport can reject (Class A: an exception, which
+ * the providers' catch branch already records honestly), or the call can RETURN normally with
+ * `isError: true` inside the result (Class B: the polite failure the spec defines for a tool
+ * reporting its own error to the model). Class B used to be minted as a success — no `error`
+ * field, the failure text buried inside `result` — which made the record type's own doc contract
+ * false and made every tool-reliability count read failures as successes.
+ *
+ * Returns the sanitized failure text for a Class-B result, or `undefined` for anything else — so
+ * a caller writes `const err = classBError(raw)` and branches on presence.
+ *
+ * WHY `=== true` AND NOT TRUTHINESS. The SDK zod-validates every `callTool` response against
+ * `CallToolResultSchema`, where `isError` is `z.boolean().optional()`. A non-boolean `isError`
+ * fails that parse, the promise REJECTS, and the call lands in the catch branch as Class A —
+ * recorded WITH an `error` either way. So the spec-illegal world cannot reach this mint through
+ * the real transport, and a strict check cannot silently swallow a failure. (The fixture in the
+ * strict-boolean cell models a wire state that cannot occur; it exists to pin the choice, not a
+ * reachable case.) This premise breaks only if realm switches to
+ * `CompatibilityCallToolResultSchema` or talks to a raw transport that skips validation — if that
+ * ever happens, revisit this line first.
+ */
+export function classBError(rawResult: unknown): string | undefined {
+  if (typeof rawResult !== 'object' || rawResult === null) return undefined;
+  const result = rawResult as { isError?: unknown; content?: unknown };
+  if (result.isError !== true) return undefined;
+
+  const blocks = Array.isArray(result.content) ? result.content : [];
+  const text = blocks
+    .filter(
+      (b): b is { type: 'text'; text: string } =>
+        typeof b === 'object' &&
+        b !== null &&
+        (b as { type?: unknown }).type === 'text' &&
+        typeof (b as { text?: unknown }).text === 'string',
+    )
+    .map((b) => b.text)
+    // '\n' is specified rather than incidental: two providers mint this and a different join
+    // would make the same failure read differently depending on which one ran.
+    .join('\n');
+
+  // Empty JOINED text, not merely absent blocks — `text: ''` is transport-legal, and an empty
+  // `error` would be invisible to inspect's truthiness check, so a politely-failed call would
+  // render as unfailed. The marker is what stops that.
+  //
+  // Tested on the TRIMMED text, and that is not fussiness: TWO empty blocks join to `'\n'`, which
+  // is length 1 and would have sailed past a `length === 0` check — producing an `error` that is
+  // technically truthy and visually nothing, which is the same invisible failure wearing a
+  // different hat. (Found by the all-empty cell below, which is why it exists.) The returned text
+  // is never trimmed — only the emptiness question is.
+  if (text.trim().length === 0) return CLASS_B_NO_TEXT_MARKER;
+  return sanitizeError(text);
+}
+
 /** Splits "server_id:tool_name" into its components. Throws if the format is invalid. */
 export function parseNamespacedId(id: string): { serverId: string; toolName: string } {
   const colonIdx = id.indexOf(':');
