@@ -75,7 +75,11 @@
 //      `terminal_state`/marker fields/DERIVED phase, never on a persisted label. Finalizer
 //      self-failures (F4: a finalizer's OWN failure grows `failed_steps` after the mint) are
 //      included by name, undiscriminated from a domain-step failure — this is honest raw data, not
-//      a judgment about WHICH failure kind produced the completed-with-failures seal.
+//      a judgment about WHICH failure kind produced the completed-with-failures seal. That
+//      inclusion is what separates this finding from the MINT-time
+//      `completed_with_failed_steps` finalizer trigger (settlement.ts `deriveEffectiveTriggers`),
+//      which tests the same shape but tests it before any finalizer has run: a post-mint
+//      finalizer self-failure is visible HERE and was never visible THERE. Tracked at #374 (P5).
 //
 // Honest-admission rule (Celery-corrected, record §1): `never_claimed_idle`'s reason text NEVER
 // claims rejection — "parked with no claimed step, idle", never "rejected" or "stuck". Rescoped

@@ -198,16 +198,29 @@ export function selectFinalizers(
 /**
  * Derives the full set of finalizer triggers a terminal `outcome` satisfies for `record` (issue
  * #302, design record §Mechanics-1): `{outcome}` — always — plus `'completed_with_failed_steps'`
- * when `outcome === 'complete' ∧ record.failed_steps.length > 0` (a "mixed complete" seal — the
- * SAME class #304's `completed_with_failed_steps` run-health finding already surfaces at read
- * time; this is the mint-time trigger, sharing that one predicate).
+ * when `outcome === 'complete' ∧ record.failed_steps.length > 0` (a "mixed complete" seal).
+ *
+ * TWO SURFACES, ONE SHAPE, TWO MOMENTS. #304's `completed_with_failed_steps` run-health finding
+ * tests the same SHAPE (completed ∧ non-empty `failed_steps`), but it tests it at READ time on
+ * the final record, whereas this function is evaluated at MINT time, inside
+ * `applyTerminalPostconditions`, before any finalizer has run. There is no shared function and no
+ * shared evaluation point — only a shared shape.
+ *
+ * The moment is what separates them, on a real population: a finalizer's OWN failure joins
+ * `failed_steps` after the seal minted (see the failed arm below, where `delta.finalizer` is
+ * appended), so a run that completes CLEAN and whose finalizer then fails is seen by the
+ * read-time finding and was never seen by this trigger — the record it read had an empty
+ * `failed_steps`. The divergence runs one way only: `failed_steps` only grows, so everything this
+ * trigger fires on the finding also reports, and the finding additionally reports post-mint
+ * finalizer self-failures. Tracked at #374 (P5); this comment describes what the code does today
+ * and does not prejudge what that issue decides.
  *
  * Uniform across epochs (design record M1, deliberate): a second-epoch complete seal whose ONLY
  * `failed_steps` scar is a PRIOR epoch's finalizer self-failure (unresumable, so it never leaves
  * `failed_steps`) still fires this trigger — no exclusion of finalizer-declared step names. The
  * alternative (excluding finalizer names from the predicate) buys mint-time purity at the cost of
- * diverging from the read-time #304 finding's own uniform predicate; this design keeps ONE
- * predicate for both surfaces, deliberately.
+ * making the two surfaces disagree about a shape they can both see, which is a second divergence
+ * on top of the one above.
  *
  * Pure; this ONE function is the seam a future authorable tolerance threshold (SFN-style: fire
  * only when `failed_steps.length` exceeds some declared N) would extend — banked, not built

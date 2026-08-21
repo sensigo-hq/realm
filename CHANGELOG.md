@@ -119,6 +119,14 @@ inspect` renders a `Ruled: <who> at <when> (was <arm>)` line, with the ruling's 
 
 ### Fixed
 
+- The docs and code comments describing the `completed_with_failed_steps` finalizer trigger
+  claimed it shared "ONE predicate" with the run-health finding of the same name. It does not: the
+  two test the same predicate SHAPE at different moments — the trigger at seal time, the finding at
+  read time on the final record — and they diverge on a real population, because a finalizer's own
+  failure joins `failed_steps` after the seal has already minted. A run that completes clean and
+  whose finalizer then fails is reported by the finding and was never seen by the trigger. The
+  affected passages now describe the as-built two-moment evaluation and name the divergence; the
+  divergence itself is tracked at #374. No behaviour changed.
 - **`realm run cleanup` could kill a run somebody was answering** (issue #367). Its
   skip-what's-waiting check read the run's PERSISTED phase label, so a record whose label had gone
   stale while a human was genuinely mid-gate got swept — sealed abandoned with the open gate still
