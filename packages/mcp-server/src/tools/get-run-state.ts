@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  type DriveFailuresField,
   SEAL_ARMS,
   JsonFileStore,
   JsonWorkflowStore,
@@ -95,6 +96,11 @@ export interface RunStateSummary {
    *
    * Prefer this over parsing `terminal_reason`: the prose is for people.
    */
+  /**
+   * Failed drive attempts for this run (issue #401), carried verbatim. Absent — never null — when
+   * the run has had none.
+   */
+  drive_failures?: DriveFailuresField;
   sealed_by_arm?: string;
   /**
    * Issue #367: an operator's RULING on this run's arm, verbatim — who ruled, when, which arm it
@@ -391,6 +397,9 @@ export async function handleGetRunState(
             : {}),
         }
       : {}),
+    // issue #401: failed drive attempts, verbatim and additively — absent, never null, so an
+    // agent can tell "no failures" from "this surface does not report them".
+    ...(run.drive_failures !== undefined ? { drive_failures: run.drive_failures } : {}),
     ...(run.aborted_at !== undefined ? { abort_context: run.aborted_at } : {}),
     next_actions: nextActions,
     next_actions_status: nextActionsStatus,

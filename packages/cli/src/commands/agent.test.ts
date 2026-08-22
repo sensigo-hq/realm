@@ -1,6 +1,9 @@
 // Tests for runAgent(), resolveProvider(), and the agentCommand CLI guards.
 // Uses InMemoryStore and MockLlmProvider to run the agent loop without real I/O.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
@@ -153,24 +156,52 @@ describe('runAgent', () => {
     expect(result).toBe('completed');
   });
 
-  it('retries the LLM call once then returns failed when both attempts throw', async () => {
-    const provider = new MockLlmProvider([new Error('bad JSON'), new Error('bad JSON again')]);
+  // issue #401: the two cells that used to live here pinned the outer `attempt < 2` retry loop —
+  // "retries once then fails" and "succeeds on the second attempt". That loop is RETIRED, and its
+  // retirement is the point of the change: a silent second attempt is precisely what made a
+  // failing drive invisible. The first failure was swallowed, the second exited, and the run
+  // record said nothing either way.
+  it('RETIREMENT — one failure means ONE provider call, an immediate failure, and a recorded entry', async () => {
+    const provider = new MockLlmProvider([new Error('transient error')]);
     const deps = makeDeps({ provider });
+    const errors: string[] = [];
+    const errSpy = vi.spyOn(console, 'error').mockImplementation((m: unknown) => {
+      errors.push(String(m));
+    });
 
-    const result = await runAgent(deps, makeOptions({ definition: agentOnlyWorkflow }));
+    try {
+      const result = await runAgent(deps, makeOptions({ definition: agentOnlyWorkflow }));
 
-    expect(result).toBe('failed');
-    expect(provider.callCount.value).toBe(2);
+      expect(result).toBe('failed');
+      // Exactly ONE — the retry that used to rescue this is gone. Re-attaching is the retry now.
+      expect(provider.callCount.value).toBe(1);
+
+      // The failure is RECORDED, which is the whole reason the retry could be retired.
+      const runs = await deps.store.list();
+      const run = await deps.store.get(runs[0]!.id);
+      expect(run.drive_failures?.entries).toHaveLength(1);
+      expect(run.drive_failures?.total).toBe(1);
+      expect(run.drive_failures?.entries[0]?.message).toContain('transient error');
+
+      // The printed line now carries the step AND the provider's message — the retired line said
+      // only "failed after 2 attempts", which told an operator neither.
+      const printed = errors.join('\n');
+      expect(printed).toContain('LLM call failed');
+      expect(printed).toContain('transient error');
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 
-  it('succeeds when the LLM call fails on the first attempt but succeeds on the second', async () => {
-    const provider = new MockLlmProvider([new Error('transient error'), { summary: 'recovered' }]);
-    const deps = makeDeps({ provider });
-
-    const result = await runAgent(deps, makeOptions({ definition: agentOnlyWorkflow }));
-
-    expect(result).toBe('completed');
-    expect(provider.callCount.value).toBe(2);
+  it('RETIREMENT — the retired loop leaves no trace in the source', async () => {
+    // Source assertion (the census idiom): the old line is unreachable AND unwritten. A comment
+    // describing the retirement is fine; the emitted string is not.
+    const src = await readFile(
+      join(fileURLToPath(new URL('.', import.meta.url)), '..', 'agent', 'run-agent.ts'),
+      'utf8',
+    );
+    expect(src).not.toContain('failed after 2 attempts');
+    expect(src).not.toContain('attempt < 2');
   });
 
   it('pauses at a gate and continues after the gateHandler resolves it', async () => {

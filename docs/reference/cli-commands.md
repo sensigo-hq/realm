@@ -670,6 +670,11 @@ Dry-run by default — even naming a single `<run-id>` only reports what would h
 `cleanup`: `Nd` (days), `Nh` (hours), `Nm` (minutes). `--workflow <id>` restricts a batch to one
 workflow (only valid alongside `--older-than`).
 
+The age a batch measures is **last activity**, not last progress — and recording a drive failure
+counts as activity ([issue #401](https://github.com/sensigo-hq/realm/issues/401)). So a run that
+kept failing ages from its most recent recorded failure rather than from the last step that
+succeeded. That is the intended reading: a run something is still trying to drive is not idle.
+
 **Safety posture:**
 
 - **Terminal-only** — never touches a non-terminal or `gate_waiting` run.

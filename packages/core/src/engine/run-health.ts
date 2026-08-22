@@ -111,6 +111,7 @@ export const DEFAULT_IDLE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
 export interface RunHealthFinding {
   kind:
     | 'never_claimed_idle'
+    | 'drive_failing'
     | 'stale_claim'
     | 'wedged_gate_sibling'
     | 'capability_block'
@@ -274,6 +275,86 @@ function findStructuredOutputDowngrades(run: RunRecord): RunHealthFinding | unde
 }
 
 /**
+ * `drive_failing` (issue #401) — the run's last recorded drive attempt failed, and nothing has
+ * happened since.
+ *
+ * WHY THE LAST-EVENT TEST. A drive failure is only news while it is still the latest thing that
+ * happened to the run. If a sibling step settled afterwards, or a gate opened, the run moved on and
+ * the failure is history — reporting it then would train an operator to ignore the finding, which
+ * is how a watchdog dies. So the entry must be strictly newer than every other timestamped event,
+ * floored at `created_at` so a fresh run with no evidence still fires (max of an empty set is
+ * negative infinity, and without the floor a stale entry predating the run would fire too).
+ *
+ * The settled-step guard is the second half of the same idea: if the step the failure names has
+ * since landed in completed/failed/skipped, the drive that failed was retried and resolved.
+ *
+ * Record-only by construction — no definition, no I/O — so `list --stuck`, which passes neither,
+ * gets this finding for free.
+ */
+function findDriveFailing(run: RunRecord, now: Date): RunHealthFinding | undefined {
+  const field = run.drive_failures;
+  const lastEntry = field?.entries[field.entries.length - 1];
+  if (field === undefined || lastEntry === undefined) return undefined;
+  if (run.terminal_state) return undefined;
+
+  const lastAt = new Date(lastEntry.at).getTime();
+  const floor = new Date(run.created_at).getTime();
+  const gateOpened =
+    run.pending_gate !== undefined ? new Date(run.pending_gate.opened_at).getTime() : -Infinity;
+  const lastEvidence = run.evidence.reduce(
+    (max, snap) => Math.max(max, new Date(snap.completed_at).getTime()),
+    -Infinity,
+  );
+  if (lastAt <= Math.max(gateOpened, lastEvidence, floor)) return undefined;
+
+  const settled = new Set([...run.completed_steps, ...run.failed_steps, ...run.skipped_steps]);
+  if (settled.has(lastEntry.step)) return undefined;
+
+  const ago = formatAgo(now.getTime() - lastAt);
+  // The total suffix appears ONLY when the ring has rolled — otherwise it would repeat a number
+  // the entries themselves already carry.
+  const rolled = field.total > field.entries.length;
+  const suffix = rolled ? `; ${String(field.total)} failures since ${field.first_failed_at}` : '';
+  return {
+    kind: 'drive_failing',
+    step: lastEntry.step,
+    reason: `the last drive attempt failed ${ago} (${lastEntry.error_class}): ${lastEntry.message}${suffix}`,
+    evidence: {
+      step: lastEntry.step,
+      error_class: lastEntry.error_class,
+      at: lastEntry.at,
+      total: field.total,
+      first_failed_at: field.first_failed_at,
+      // The discriminators reach the operator only if they travel — an operator debugging a
+      // 429 storm needs the status and the Retry-After, not just "api_status".
+      ...(lastEntry.last_observed_status !== undefined
+        ? { last_observed_status: lastEntry.last_observed_status }
+        : {}),
+      ...(lastEntry.retry_after_observed_ms !== undefined
+        ? { retry_after_observed_ms: lastEntry.retry_after_observed_ms }
+        : {}),
+      ...(lastEntry.declared_per_attempt_ms !== undefined
+        ? { declared_per_attempt_ms: lastEntry.declared_per_attempt_ms }
+        : {}),
+      ...(lastEntry.derived_ceiling_ms !== undefined
+        ? { derived_ceiling_ms: lastEntry.derived_ceiling_ms }
+        : {}),
+    },
+  };
+}
+
+/** Renders an elapsed span the way an operator reads it: "12s ago", "4m ago", "3h ago". */
+function formatAgo(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${String(s)}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${String(m)}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${String(h)}h ago`;
+  return `${String(Math.floor(h / 24))}d ago`;
+}
+
+/**
  * Classifies a run's health into zero or more typed findings. Pure, read-only, definition-
  * optional, `now`-injectable. See the module doc above for the full branch-conditioning table
  * (design record §1, fold B1) and the honest-admission rule.
@@ -385,6 +466,12 @@ export function classifyRunHealth(
   // seal (which, per the module doc, get_run_state never surfaces run_health for at all).
   const structuredOutputDowngrade = findStructuredOutputDowngrades(run);
   if (structuredOutputDowngrade !== undefined) findings.push(structuredOutputDowngrade);
+
+  // issue #401: drive_failing — the run's last drive attempt failed and nothing has happened
+  // since. Deliberately NOT exclusive with `never_claimed_idle`: from 24h onward a
+  // failed-then-silent run legitimately trips both, and suppressing either would hide a fact.
+  const driveFailing = findDriveFailing(run, now);
+  if (driveFailing !== undefined) findings.push(driveFailing);
 
   // issue #291: gate_expired_awaiting_drive — record-fields-only (never the definition), fires
   // for BOTH an enactable gate AND a finding-only one (expires_at present, on_expiry absent) —

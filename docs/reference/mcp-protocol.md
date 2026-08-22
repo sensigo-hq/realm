@@ -77,6 +77,23 @@ steps) + `failed_steps` + derived `run_phase`
 instead of reading a per-attempt field. See
 [`structured_output`](yaml-schema.md#structured_output-anthropic-strict-decoding).
 
+**`drive_failing` run-health finding + `drive_failures` (issue #401):** a failure while
+`realm agent` drives a step — a connection error, a timeout, an MCP discovery failure, a missing
+SDK, an engine throw, a schema-rejection wedge — is now RECORDED on the run rather than only
+printed to the console. `get_run_state` carries `drive_failures` verbatim
+(`{ first_failed_at, total, entries }`, at most five entries, most-recent-last; `total` and
+`first_failed_at` do not reset when the ring rolls), and `run_health` gains a `drive_failing`
+finding whose reason names when the last attempt failed, its class, and what the provider said.
+
+The finding fires only while the failure is still the LATEST thing that happened to the run: if a
+sibling step settled since, or a gate opened, or the failing step itself has since settled, the run
+moved on and the finding goes quiet. It is deliberately NOT exclusive with `never_claimed_idle` —
+past the idle threshold a failed-then-silent run trips both, and suppressing either would hide a
+fact.
+
+Because recording a failure writes to the run, it also bumps `updated_at`. That is intentional: a
+run whose drive is dying stops looking untouched at the moment it stops being driven.
+
 **`structured_output_downgraded` run-health finding (issue #316):** the remedy for the
 per-step-evidence gap above, for the OTHER downgrade causes (a live API rejection, a gate
 ineligibility, an unsupported provider — anything except the `external_agent` case, which is

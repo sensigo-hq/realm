@@ -111,8 +111,14 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       const moduleId: string = 'openai';
       mod = await import(moduleId);
     } catch {
-      console.error('realm agent requires the openai package. Run: npm install openai');
-      process.exit(1);
+      // issue #401: THROW, never exit. A `process.exit` here killed the process before any
+      // catch could record why the drive failed — the run then read healthy for 24 hours.
+      // The message is preserved exactly; the payload lets the chokepoint classify it as
+      // `sdk_missing` rather than a shapeless `other`.
+      const err = new Error('realm agent requires the openai package. Run: npm install openai');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (err as any).driveCall = { error_class: 'sdk_missing', attempts_sdk: 0, elapsed_ms: 0 };
+      throw err;
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -198,8 +204,14 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       const moduleId: string = 'openai';
       mod = await import(moduleId);
     } catch {
-      console.error('realm agent requires the openai package. Run: npm install openai');
-      process.exit(1);
+      // issue #401: THROW, never exit. A `process.exit` here killed the process before any
+      // catch could record why the drive failed — the run then read healthy for 24 hours.
+      // The message is preserved exactly; the payload lets the chokepoint classify it as
+      // `sdk_missing` rather than a shapeless `other`.
+      const err = new Error('realm agent requires the openai package. Run: npm install openai');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (err as any).driveCall = { error_class: 'sdk_missing', attempts_sdk: 0, elapsed_ms: 0 };
+      throw err;
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -307,8 +319,14 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       const moduleId: string = 'openai';
       mod = await import(moduleId);
     } catch {
-      console.error('realm agent requires the openai package. Run: npm install openai');
-      process.exit(1);
+      // issue #401: THROW, never exit. A `process.exit` here killed the process before any
+      // catch could record why the drive failed — the run then read healthy for 24 hours.
+      // The message is preserved exactly; the payload lets the chokepoint classify it as
+      // `sdk_missing` rather than a shapeless `other`.
+      const err = new Error('realm agent requires the openai package. Run: npm install openai');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (err as any).driveCall = { error_class: 'sdk_missing', attempts_sdk: 0, elapsed_ms: 0 };
+      throw err;
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
