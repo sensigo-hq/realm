@@ -21,6 +21,12 @@
 //     `tools` array. run-agent advertises the bare name; the namespaced `server:tool` id never
 //     reaches the wire, so hardcoding the namespaced form fails for a reason that looks like a
 //     product bug.
+// REDACTION HAZARD, INHERITED BY EVERY CALLER. `sanitizeError` (agent-utils.ts) redacts every
+// `process.env` value longer than four characters as a SUBSTRING, from tool results and from
+// errors alike. A cell that sets an API key for this journey must choose a value colliding with no
+// text it later asserts on — otherwise the assertion reads `[REDACTED]` and the failure looks like
+// a product bug rather than a test's own environment choice. The shipped cell uses
+// `sk-test-composed-journey-0000` for exactly this reason.
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
