@@ -28,8 +28,9 @@
 
     // packages/* all stay on knip's defaults — each is a normal npm-workspace TypeScript package
     // with its own package.json, and knip's plugins (vitest/eslint/prettier/lefthook/
-    // github-actions) already cover the tooling configs those packages reference. The one
-    // exception is cli's `openai` ignore, below — a workspace-scoped entry, not a top-level one.
+    // github-actions) already cover the tooling configs those packages reference. The two
+    // exceptions are cli's `openai` and `@anthropic-ai/sdk` ignores, below — workspace-scoped
+    // entries, not top-level ones.
     "packages/cli": {
       // issue #332 item 5: openai re-homed from root `dependencies` to cli `devDependencies` (the
       // #327 PR body's open relocation question, now resolved) — the ignore entry moves WITH it.
@@ -38,20 +39,28 @@
       // at all) while cli's own copy would newly misreport as unused — the move must be BOTH
       // sides at once.
       //
-      // openai IS used — cli's OpenAI provider loads it via `await import(moduleId)` with a
-      // VARIABLE specifier (openai-provider.ts:59/:133), which is deliberately invisible to
-      // static analysis so openai can stay an optional peer dependency. Do NOT remove or
-      // re-relocate it.
+      // BOTH are used — each is an optional peer SDK that cli's provider loads via
+      // `await import(moduleId)` with a VARIABLE specifier (openai-provider.ts:59/:133,
+      // anthropic-provider.ts:216/:394), deliberately invisible to static analysis so the SDKs
+      // can stay optional peers. knip's import visitors see `import()`/`require()`/`Promise.all`
+      // only — never a variable specifier, and never a `vi.mock` specifier either. Do NOT remove
+      // or re-relocate them.
       //
-      // Constraint: this list may contain EXACTLY this one entry (repo-wide, across every
-      // workspace block — not just this one). Ignoring suppresses BOTH the unused-dependency
-      // finding AND any unlisted-dependency finding for the same name — so a second entry
-      // anywhere would be a silent way to "fix" a real phantom dependency by hiding it instead of
-      // declaring it. Any addition outside of this one documented, dynamic-import-backed
-      // exception is a review red flag. A leftover ROOT-level entry (from before this move) WILL
-      // red the config-hints gate — that redness is the self-cleaning mechanism working, not a
-      // bug; fix by moving, never by loosening.
-      "ignoreDependencies": ["openai"],
+      // `@anthropic-ai/sdk` joined this list when it became a cli devDependency so the composed
+      // journey could drive the REAL SDK over HTTP, closing the seam asymmetry against the
+      // OpenAI journey (which has driven the real SDK since #332 re-homed `openai` the same way).
+      // Same mechanism, same reason, same shape.
+      //
+      // Constraint: this list may contain EXACTLY these two entries (repo-wide, across every
+      // workspace block — not just this one), and both are here for the same documented reason:
+      // an optional peer SDK loaded by a variable-specifier dynamic import. Ignoring suppresses
+      // BOTH the unused-dependency finding AND any unlisted-dependency finding for the same name
+      // — so a third entry anywhere would be a silent way to "fix" a real phantom dependency by
+      // hiding it instead of declaring it. Any addition outside these two documented,
+      // dynamic-import-backed exceptions is a review red flag. A leftover ROOT-level entry (from
+      // before a move) WILL red the config-hints gate — that redness is the self-cleaning
+      // mechanism working, not a bug; fix by moving, never by loosening.
+      "ignoreDependencies": ["openai", "@anthropic-ai/sdk"],
     },
   },
 
