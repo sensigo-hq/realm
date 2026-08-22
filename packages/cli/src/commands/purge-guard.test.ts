@@ -63,7 +63,17 @@ function findDeclarers(): Declarer[] {
       const trimmed = line.trim();
       if (!DECL_LINE.test(trimmed)) return;
       if (trimmed.startsWith('.')) return; // hypothetical continuation-line call site
-      if (!trimmed.endsWith('{')) return; // interface declaration (ends ';') — not a class impl
+      // A class implementation's declaration line ends '{' when the signature fits on one line,
+      // and '(' when the parameter list wraps. Both forms are declarations; an INTERFACE
+      // declaration ends ';' and is excluded either way.
+      //
+      // The '(' form was added for issue #189: widening the return type to
+      // `Promise<ArtifactDeletionReport>` pushed every implementation's signature past the line
+      // limit, so the formatter wrapped them all — and a matcher keyed only on '{' silently found
+      // ZERO declarers. The guard's own non-vacuity cell caught it, which is the one reason this
+      // was not a silent hole: a source-text guard that stops matching does not fail, it stops
+      // guarding.
+      if (!trimmed.endsWith('{') && !trimmed.endsWith('(')) return;
       const className = enclosingClass(lines, i);
       if (className === undefined) return; // not expected for a real class method
       declarers.push({ file, className });

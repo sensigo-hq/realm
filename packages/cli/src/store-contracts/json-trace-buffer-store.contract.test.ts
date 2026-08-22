@@ -23,6 +23,8 @@ const LAWS = [
   'L2_IDEMPOTENT',
   'L3_FAILURE_REJECTS',
   'L4_TYPED_REJECTION',
+  'L5_REPORT_SHAPE',
+  'L6_PREVIEW_EQUALS_RECEIPT',
 ] as const;
 
 /**
@@ -39,12 +41,30 @@ async function makeAdapter(): Promise<{
   const dir = await mkdtemp(join(tmpdir(), 'json-trace-buffer-store-tck-'));
   const store = new JsonTraceBufferStore(dir);
   const runId = randomUUID();
-  await store.append(runId, 'tck-step', [{ event: 'tck-seed' }]);
+  /**
+   * FIXTURE TEETH (issue #189): this store owns TWO artifact classes — live WAL files and SEALED
+   * artifacts — and both deletion paths remove both. A fixture with only a WAL file would let a
+   * stat that counts WAL alone satisfy L6, which is the same under-count the retired filename
+   * scan produced (worse: that scan DID catch sealed files, so a WAL-only stat would be a
+   * regression shipped through the law meant to prevent it).
+   */
+  const seed = async (): Promise<void> => {
+    await store.append(runId, 'tck-sealed-step', [{ event: 'tck-to-be-sealed' }]);
+    const sealed = await store.sealFenced(runId, 'tck-sealed-step', async () => {});
+    if (!sealed.sealed) {
+      throw new Error(
+        `TCK fixture is toothless: sealFenced did not produce a sealed artifact (${JSON.stringify(sealed)}) — L6 needs both artifact classes present (issue #189).`,
+      );
+    }
+    await store.append(runId, 'tck-step', [{ event: 'tck-seed' }]);
+  };
+  await seed();
 
   const adapter: PerRunArtifactStoreContractAdapter = {
     store,
     runIdWithArtifact: runId,
     runIdAbsent: randomUUID(),
+    reseed: seed,
     injectFailure: async (id: string) => {
       const prefix = `trace-buffer-${id}-`;
       const entries = await readdir(dir);

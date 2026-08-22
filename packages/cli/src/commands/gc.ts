@@ -50,7 +50,7 @@
 import { readdir, lstat, unlink, stat } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { Command } from 'commander';
-import { WorkflowError, deleteIfExists } from '@sensigo/realm';
+import { type ArtifactDeletionReport, WorkflowError, deleteIfExists } from '@sensigo/realm';
 import type {
   OrphanSweepableStore,
   OrphanArtifact,
@@ -380,11 +380,15 @@ export async function sweepOrphanArtifacts(
  *  guarantees `listOrphans`; a concrete store (e.g. `JsonTraceBufferStore`) may additionally
  *  implement this. */
 interface DeleteAllForRunFencedCapable {
+  // issue #189: widened for TRUTH — both deletion paths now report their bytes. gc deliberately
+  // IGNORES the result: an orphan reap reports counts of reaped artifacts, not bytes freed, and
+  // inventing a byte line here would be a second, differently-computed figure for an operator to
+  // reconcile against purge's. Behaviour is unchanged; only the type tells the truth.
   deleteAllForRunFenced(
     runId: string,
     guard: () => Promise<void>,
     dirEntries?: readonly string[],
-  ): Promise<void>;
+  ): Promise<ArtifactDeletionReport>;
 }
 
 function hasDeleteAllForRunFenced(

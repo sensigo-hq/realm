@@ -19,6 +19,8 @@ const LAWS = [
   'L2_IDEMPOTENT',
   'L3_FAILURE_REJECTS',
   'L4_TYPED_REJECTION',
+  'L5_REPORT_SHAPE',
+  'L6_PREVIEW_EQUALS_RECEIPT',
 ] as const;
 
 /** Fresh adapter per law — see json-file-store.contract.test.ts for why. injectFailure replaces
@@ -30,12 +32,18 @@ async function makeAdapter(): Promise<{
   const dir = await mkdtemp(join(tmpdir(), 'failed-attempt-store-tck-'));
   const store = new FailedAttemptStore(dir);
   const runId = randomUUID();
-  await store.append(runId, JSON.stringify({ ts: Date.now(), seed: 'tck' }));
+  // This store owns exactly ONE artifact class (the sidecar), so a single seeded line is a
+  // representative fixture here — unlike the two-artifact stores, whose adapters need more.
+  const seed = async (): Promise<void> => {
+    await store.append(runId, JSON.stringify({ ts: 0, seed: 'tck' }));
+  };
+  await seed();
 
   const adapter: PerRunArtifactStoreContractAdapter = {
     store,
     runIdWithArtifact: runId,
     runIdAbsent: randomUUID(),
+    reseed: seed,
     injectFailure: async (id: string) => {
       const path = join(dir, `${id}.attempts.jsonl`);
       await rm(path, { recursive: true, force: true });

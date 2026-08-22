@@ -4,13 +4,15 @@
 // directly against real stores over a real tmp directory — no console/exit-code assertions (that
 // thin formatting layer isn't unit-tested here either, consistent with cleanup.ts/reclaim.ts).
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, readdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, writeFile, readFile, stat, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { v4 as uuidv4 } from 'uuid';
-import { isPurgeEligible, purgeRuns } from './purge.js';
+import { isPurgeEligible, purgeRuns, printPurgeReport } from './purge.js';
+import type { PurgeRunsResult } from './purge.js';
 import {
   JsonFileStore,
   FailedAttemptStore,
@@ -564,6 +566,10 @@ describe('purgeRuns — batch mode (--older-than)', () => {
         },
         deleteAllForRun: (id: string, dirEntries?: readonly string[]) =>
           runStore.deleteAllForRun(id, dirEntries),
+        // issue #189: delegates like the delete does, so the double reports the REAL store's
+        // bytes rather than a number this test invented.
+        statAllForRun: (id: string, dirEntries?: readonly string[]) =>
+          runStore.statAllForRun(id, dirEntries),
       };
 
       // A genuinely broken artifact store for 'broken' — a non-ENOENT failure must land in
@@ -575,7 +581,9 @@ describe('purgeRuns — batch mode (--older-than)', () => {
       const poisoned: PerRunArtifactStore = {
         deleteAllForRun: async (id: string) => {
           if (id === 'broken') throw new Error('simulated disk failure');
+          return { bytes_deleted: 0 };
         },
+        statAllForRun: async () => ({ bytes: 0 }),
       };
 
       const result = await purgeRuns({ olderThan: '1d', dryRun: false }, wrappedRunStore, [
@@ -691,6 +699,8 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
         runsDirPath: runStore.runsDirPath,
         get: (id: string) => runStore.get(id),
         list: (wf?: string) => runStore.list(wf),
+        statAllForRun: (id: string, dirEntries?: readonly string[]) =>
+          runStore.statAllForRun(id, dirEntries),
         deleteAllForRun: async (id: string, dirEntries?: readonly string[]) => {
           if (id === 'resumed-under-lock') {
             throw new WorkflowError(`Run '${id}' is no longer terminal`, {
@@ -733,6 +743,8 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
         runsDirPath: runStore.runsDirPath,
         get: (id: string) => runStore.get(id),
         list: (wf?: string) => runStore.list(wf),
+        statAllForRun: (id: string, dirEntries?: readonly string[]) =>
+          runStore.statAllForRun(id, dirEntries),
         deleteAllForRun: async (id: string, dirEntries?: readonly string[]) => {
           if (id === 'held-by-writer') {
             throw new WorkflowError(`Run '${id}' is locked by another writer`, {
@@ -777,11 +789,14 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
           anchorCalls++;
           return runStore.deleteAllForRun(id, dirEntries);
         },
+        statAllForRun: (id: string, dirEntries?: readonly string[]) =>
+          runStore.statAllForRun(id, dirEntries),
       };
       const throwingArtifactStore: PerRunArtifactStore = {
         deleteAllForRun: async () => {
           throw new Error('trace-buffer store exploded');
         },
+        statAllForRun: async () => ({ bytes: 0 }),
       };
 
       const result = await purgeRuns(
@@ -896,6 +911,8 @@ describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
           return { ...fresh, run_phase: 'running' as const, terminal_state: false };
         },
         list: (wf?: string) => runStore.list(wf),
+        statAllForRun: (id: string, dirEntries?: readonly string[]) =>
+          runStore.statAllForRun(id, dirEntries),
         deleteAllForRun: async (id: string, dirEntries?: readonly string[]) => {
           anchorDeleteCalls++;
           return runStore.deleteAllForRun(id, dirEntries);
@@ -967,5 +984,218 @@ describe('purgeRuns — sealed artifacts (issue #197 PR-2, deliverable 3b: VERIF
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// =================================================================================================
+// issue #189 — every byte figure purge prints is a number a STORE reported about its OWN artifacts
+//
+// What this replaces: purge used to preview bytes by scanning `runsDir` for filenames CONTAINING
+// the runId. That is a caller reading another store's filename layout, and it structurally could
+// not see the content-addressed idempotency pointer — its own docstring conceded the under-count.
+// Worse, the preview and the receipt were then two different kinds of claim: a guess before, and
+// nothing at all after (the "freed" line just re-used the guess).
+// =================================================================================================
+describe('purge byte figures are store-reported (issue #189)', () => {
+  /** Seeds a run that spans EVERY artifact class the wired stores own, and returns the runId. */
+  async function seedMultiStoreRun(s: Stores, runId: string): Promise<void> {
+    await injectRun(
+      s.dir,
+      makeRun({
+        id: runId,
+        idempotency_key: 'k-189',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+      }),
+    );
+    // The pointer — the artifact the retired filename scan could never find.
+    await mkdir(join(s.dir, 'keys'), { recursive: true });
+    await writeFile(
+      keyPointerPath(s.dir, 'wf-1', 'k-189'),
+      JSON.stringify({ run_id: runId, workflow_id: 'wf-1' }),
+      'utf8',
+    );
+    await appendSidecarLine(s.failedAttemptStore, runId);
+    await s.traceBufferStore.append(runId, 'step-a', [{ event: 'live' }]);
+    // A SEALED artifact too: the fenced path retires WAL into sealed files, and a stat that
+    // counted only live WAL would under-report every run that ever sealed — a regression, since
+    // the dying substring scan did catch sealed files.
+    await s.traceBufferStore.append(runId, 'step-sealed', [{ event: 'to-be-sealed' }]);
+    const sealed = await s.traceBufferStore.sealFenced(runId, 'step-sealed', async () => {});
+    expect(sealed.sealed, 'fixture must produce a sealed artifact').toBe(true);
+  }
+
+  /** Independent oracle: sums the real on-disk sizes of every file this run owns. */
+  async function oracleBytes(s: Stores, runId: string): Promise<number> {
+    const entries = await readdir(s.dir);
+    let total = 0;
+    for (const f of entries) {
+      if (f === 'keys') continue;
+      if (f.includes(runId)) total += (await stat(join(s.dir, f))).size;
+    }
+    total += (await stat(keyPointerPath(s.dir, 'wf-1', 'k-189'))).size;
+    return total;
+  }
+
+  it('the DRY-RUN projection sums every artifact class, pointer and sealed artifact included', async () => {
+    const s = await makeStores();
+    try {
+      await seedMultiStoreRun(s, 'r-189-dry');
+      const expected = await oracleBytes(s, 'r-189-dry');
+
+      const result = await purgeRuns(
+        { runId: 'r-189-dry', dryRun: true },
+        s.runStore,
+        s.artifactStores,
+      );
+
+      expect(result.selected).toHaveLength(1);
+      // EXACT, not "greater than zero": a `> 0` pin would survive a stat that saw only the run
+      // file, which is the exact defect this issue retires.
+      expect(result.selected[0]!.bytes).toBe(expected);
+      // And the fixture genuinely spans more than one file, so the equality has teeth.
+      expect(expected).toBeGreaterThan((await stat(join(s.dir, 'r-189-dry.json'))).size);
+    } finally {
+      await rm(s.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('the FORCE receipt is the sum of what the stores reported deleting, and says so', async () => {
+    const s = await makeStores();
+    try {
+      await seedMultiStoreRun(s, 'r-189-force');
+      const expected = await oracleBytes(s, 'r-189-force');
+
+      const result = await purgeRuns(
+        { runId: 'r-189-force', dryRun: false },
+        s.runStore,
+        s.artifactStores,
+      );
+
+      expect(result.purged).toEqual(['r-189-force']);
+      expect(result.freed_bytes['r-189-force']).toBe(expected);
+
+      // The receipt is EXACT, not "greater than zero": a `> 0` pin would survive a store whose
+      // report was hardcoded to a wrong figure, which probe (b) mutates for precisely that reason.
+      expect(result.freed_bytes['r-189-force']).toBe(expected);
+      // And it equals what the dry run would have projected on the same unchanged run — the L6
+      // identity, observed end-to-end through purge rather than only inside one store's TCK.
+      expect(result.selected[0]!.bytes).toBe(expected);
+    } finally {
+      await rm(s.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('RETIREMENT — purge.ts no longer scans another store’s filename layout', async () => {
+    // Source-text pin (the #163 precedent). `f.includes(runId)` and `statMatchedBytes` were the
+    // whole mechanism; if either comes back, the invariant is gone regardless of what the byte
+    // figures happen to say on the day.
+    const src = await readFile(
+      join(fileURLToPath(new URL('.', import.meta.url)), 'purge.ts'),
+      'utf8',
+    );
+    expect(src).not.toContain('statMatchedBytes');
+    expect(src).not.toContain('includes(runId)');
+  });
+});
+
+describe('purge report wording and partial-free disclosure (issue #189)', () => {
+  /** Renders a result and returns everything printed to stdout and stderr. */
+  function render(result: PurgeRunsResult, dryRun: boolean): { out: string; err: string } {
+    const out: string[] = [];
+    const err: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((m: unknown) => {
+      out.push(String(m));
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation((m: unknown) => {
+      err.push(String(m));
+    });
+    try {
+      printPurgeReport(result, dryRun);
+    } finally {
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+    return { out: out.join('\n'), err: err.join('\n') };
+  }
+
+  function emptyResult(): PurgeRunsResult {
+    return {
+      selected: [],
+      skipped: [],
+      purged: [],
+      already_purged: [],
+      blocked: [],
+      failed: [],
+      freed_bytes: {},
+      partial_frees: {},
+    };
+  }
+
+  it('the FORCE line claims provenance; the DRY-RUN projection wording is untouched', async () => {
+    const s = await makeStores();
+    try {
+      const run = makeRun({ id: 'r-word', terminal_state: true, sealed_by: { arm: 'complete' } });
+      const forced = {
+        ...emptyResult(),
+        selected: [{ run, bytes: 4096, resumable: false }],
+        purged: ['r-word'],
+        freed_bytes: { 'r-word': 4096 },
+      };
+      // reds under probe (b) — the receipt's provenance is the whole point of the change.
+      expect(render(forced, false).out).toContain('store-reported');
+
+      // The dry-run projection says what it always said: it is a projection, and calling it
+      // "store-reported" there would blur the two claims this issue exists to separate.
+      const previewed = { ...emptyResult(), selected: [{ run, bytes: 4096, resumable: false }] };
+      expect(render(previewed, true).out).not.toContain('store-reported');
+    } finally {
+      await rm(s.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a refusal that already freed bytes SAYS SO on its own line', async () => {
+    // The honesty case. Earlier stores can delete real bytes before the anchor refuses (ELOCKED,
+    // no_longer_terminal, drain_pending, a mid-sweep fenced-guard refusal). Without this line the
+    // run reads as untouched, and an operator re-running the purge expects the same figure back.
+    const run = makeRun({ id: 'r-partial', terminal_state: true, sealed_by: { arm: 'complete' } });
+    const result = {
+      ...emptyResult(),
+      selected: [{ run, bytes: 2048, resumable: false }],
+      blocked: [{ runId: 'r-partial', reason: 'locked' }],
+      partial_frees: { 'r-partial': { bytes: 2048, stores: 2 } },
+    };
+    const { err } = render(result, false);
+    expect(err).toContain('r-partial: locked');
+    expect(err).toContain('already freed before the refusal');
+    expect(err).toContain('2 of its artifact stores');
+
+    // The headline stays a FLOOR: partial frees are disclosed per-run, never folded in.
+    expect(render(result, false).out).toContain('(0 B freed, store-reported)');
+  });
+
+  it('CONTROL — a refusal that freed NOTHING renders byte-identically to before', async () => {
+    const run = makeRun({ id: 'r-clean', terminal_state: true, sealed_by: { arm: 'complete' } });
+    const result = {
+      ...emptyResult(),
+      selected: [{ run, bytes: 0, resumable: false }],
+      blocked: [{ runId: 'r-clean', reason: 'drain_pending' }],
+    };
+    const { err } = render(result, false);
+    expect(err).toContain('⚠ r-clean: drain_pending');
+    expect(err).not.toContain('already freed');
+  });
+
+  it('a FAILED run with a partial free is disclosed too, not only a blocked one', async () => {
+    const run = makeRun({ id: 'r-boom', terminal_state: true, sealed_by: { arm: 'complete' } });
+    const result = {
+      ...emptyResult(),
+      selected: [{ run, bytes: 512, resumable: false }],
+      failed: [{ runId: 'r-boom', error: 'simulated disk failure' }],
+      partial_frees: { 'r-boom': { bytes: 512, stores: 1 } },
+    };
+    const { err } = render(result, false);
+    expect(err).toContain('✗ r-boom: simulated disk failure');
+    expect(err).toContain('already freed before the refusal');
   });
 });

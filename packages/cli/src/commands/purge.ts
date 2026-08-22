@@ -18,11 +18,11 @@
 // `realm run purge <id> --force` — the operator named this exact run, a deliberate judgment call
 // `reclaim`'s own batch mode also refuses to make automatically. A `claim_stale` (past-deadline)
 // claim, or no in-progress claim at all, is purgeable in both modes.
-import { readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readdir } from 'node:fs/promises';
 import { Command } from 'commander';
 import type { RunRecord, RunStore, PerRunArtifactStore } from '@sensigo/realm';
 import {
+  type ArtifactDeletionReport,
   WorkflowError,
   TERMINAL_PHASES,
   RESUMABLE_PHASES,
@@ -95,35 +95,6 @@ export function isPurgeEligible(
   return { eligible: true };
 }
 
-/**
- * Best-effort on-disk bytes for `runId`: stat every `runsDir` entry whose name CONTAINS the runId
- * (the run file `<id>.json`, `trace-buffer-<id>-*.jsonl`, `<id>.attempts.jsonl`). Reporting-only —
- * this never gates or drives deletion (that stays exclusively behind each store's own
- * `deleteAllForRun`) — and may under-count by the idempotency-key pointer's few dozen bytes: that
- * file is content-addressed by `sha256(workflow_id\0key)`, not the runId, so a runId-substring scan
- * structurally cannot find it (by design — that hash is JsonFileStore-private, and this function
- * must not replicate another store's filename layout to go looking for it).
- */
-async function statMatchedBytes(
-  runsDir: string,
-  runId: string,
-  dirEntries: readonly string[],
-): Promise<number> {
-  const matched = dirEntries.filter((f) => f.includes(runId));
-  let total = 0;
-  await Promise.all(
-    matched.map(async (f) => {
-      try {
-        const info = await stat(join(runsDir, f));
-        total += info.size;
-      } catch {
-        // vanished between the scan and this stat — best-effort, ignore.
-      }
-    }),
-  );
-  return total;
-}
-
 export interface PurgeCandidate {
   run: RunRecord;
   bytes: number;
@@ -143,6 +114,17 @@ export interface PurgeRunsResult {
   skipped: Array<{ runId: string; reason: string }>;
   /** Populated only when `dryRun` is false: runs actually deleted. */
   purged: string[];
+  /**
+   * Issue #189 — per purged run, the bytes its stores actually reported freeing. The receipt,
+   * as distinct from the projection in `selected[].bytes`.
+   */
+  freed_bytes: Record<string, number>;
+  /**
+   * Issue #189 — runs that were REFUSED after earlier stores had already deleted real bytes.
+   * Keyed by runId; `stores` counts how many of this run's artifact stores reported a nonzero
+   * free before the refusal. Empty for a refusal that freed nothing.
+   */
+  partial_frees: Record<string, { bytes: number; stores: number }>;
   /** Populated only when `dryRun` is false: a concurrent/prior purge had already removed it — never a failure. */
   already_purged: string[];
   /**
@@ -238,7 +220,19 @@ export async function purgeRuns(
 
   const selected: PurgeCandidate[] = [];
   for (const { run, overriddenClaimStep } of candidates) {
-    const bytes = await statMatchedBytes(runsDir, run.id, dirEntries);
+    // issue #189: every byte figure is now a number a STORE reported about its OWN artifacts.
+    // This used to substring-scan `runsDir` for filenames containing the runId — a caller reading
+    // another store's filename layout, which structurally could not see the content-addressed
+    // idempotency pointer and had no way to know what else it was missing.
+    //
+    // A stat that THROWS aborts the whole command before anything is deleted (the gc listOrphans
+    // posture): fabricating a 0 for an artifact we cannot read is exactly the lie this change
+    // exists to end, and it would be worse here than in a preview — under --force the operator
+    // would be shown an under-count and then delete against it.
+    let bytes = 0;
+    for (const store of artifactStores)
+      bytes += (await store.statAllForRun(run.id, dirEntries)).bytes;
+    bytes += (await anchorStore.statAllForRun(run.id, dirEntries)).bytes;
     selected.push({
       run,
       bytes,
@@ -252,6 +246,8 @@ export async function purgeRuns(
     selected,
     skipped,
     purged: [],
+    freed_bytes: {},
+    partial_frees: {},
     already_purged: [],
     blocked: [],
     failed: [],
@@ -259,6 +255,11 @@ export async function purgeRuns(
   if (dryRun) return result;
 
   for (const { run } of selected) {
+    // Accumulated as each store reports, so a run that is refused PART-WAY still knows what was
+    // already freed before the refusal. Reported on that run's own line rather than folded into
+    // the headline — see the disclosure below.
+    let freedThisRun = 0;
+    let storesFreed = 0;
     try {
       // Re-check the run still exists immediately before deleting — closes the window against a
       // concurrent purge that already removed it between selection and here. A STATE_RUN_NOT_FOUND
@@ -268,26 +269,45 @@ export async function purgeRuns(
         if (hasDeleteAllForRunFenced(store)) {
           // issue #207 PR-2 (D3 §5): fenced — re-verifies at destruction time, inside the
           // store's own critical section, that the run is still gone/terminal.
-          await store.deleteAllForRunFenced(
+          const report = await store.deleteAllForRunFenced(
             run.id,
             buildPurgeWalGuard(anchorStore, run.id),
             dirEntries,
           );
+          if (report.bytes_deleted > 0) {
+            freedThisRun += report.bytes_deleted;
+            storesFreed++;
+          }
         } else {
           // Non-declaring artifact store (e.g. FailedAttemptStore — issue #207 PR-2, D3 §5
           // residual 4): the sidecar delete remains UNFENCED, a named residual (telemetry-grade,
           // best-effort by that store's own contract — not run-record evidence, not
           // acknowledged-durable data; the anchor stays #184-protected regardless).
-          await store.deleteAllForRun(run.id, dirEntries);
+          const report = await store.deleteAllForRun(run.id, dirEntries);
+          if (report.bytes_deleted > 0) {
+            freedThisRun += report.bytes_deleted;
+            storesFreed++;
+          }
         }
       }
       // The anchor LAST, and only on total success (issue #184) — structural crash-anchor: any
       // throw above (from a non-anchor artifact store) never reaches this line, so the run file
       // is guaranteed intact for re-enumeration on the next pass.
-      await anchorStore.deleteAllForRun(run.id, dirEntries);
+      const anchorReport = await anchorStore.deleteAllForRun(run.id, dirEntries);
+      freedThisRun += anchorReport.bytes_deleted;
       result.purged.push(run.id);
+      result.freed_bytes[run.id] = freedThisRun;
     } catch (err) {
+      // A run refused here may still have had real bytes freed by the stores that ran BEFORE the
+      // refusal (an anchor ELOCKED, a no_longer_terminal re-check, a mid-sweep fenced-guard
+      // refusal). Recorded so the run's own line can say so — silently dropping it would tell an
+      // operator nothing was freed when something was.
+      if (freedThisRun > 0) {
+        result.partial_frees[run.id] = { bytes: freedThisRun, stores: storesFreed };
+      }
       if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
+        // already_purged contributes nothing: the pre-delete re-check above throws before any
+        // store runs, so no report is ever collected on this path.
         result.already_purged.push(run.id);
       } else if (err instanceof WorkflowError && err.code === 'STATE_RUN_BUSY') {
         const reason = err.details['reason'];
@@ -316,7 +336,7 @@ interface DeleteAllForRunFencedCapable {
     runId: string,
     guard: () => Promise<void>,
     dirEntries?: readonly string[],
-  ): Promise<void>;
+  ): Promise<ArtifactDeletionReport>;
 }
 
 function hasDeleteAllForRunFenced(
@@ -397,7 +417,12 @@ function overriddenClaimPhrase(step: string, dryRun: boolean): string {
 }
 
 /** Prints the dry-run / force report shared by both single-run and batch mode. */
-function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void {
+/**
+ * Exported for tests (issue #189): the force line's wording carries the provenance claim
+ * ("store-reported"), and the partial-free disclosure only exists in rendered output — neither is
+ * observable from `purgeRuns`'s return value alone.
+ */
+export function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void {
   for (const s of result.skipped) {
     console.warn(`⚠ skipping ${s.runId}: ${s.reason}`);
   }
@@ -431,16 +456,17 @@ function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void {
     return;
   }
 
-  // issue #184: sum bytes over ACTUALLY-PURGED runs only — `selected` also includes candidates
-  // that ended up already_purged/blocked/failed, whose bytes were never actually freed. Summing
-  // over `selected` here would over-report "freed" bytes for anything but a 100%-successful batch.
-  const purgedIds = new Set(result.purged);
-  const freedBytes = result.selected
-    .filter((c) => purgedIds.has(c.run.id))
-    .reduce((sum, c) => sum + c.bytes, 0);
+  // issue #184: sum over ACTUALLY-PURGED runs only — `selected` also includes candidates that
+  // ended up already_purged/blocked/failed. issue #189: the figure is now what the STORES
+  // reported deleting, not a projection made before the fact.
+  //
+  // It is a FLOOR under partial failure, deliberately: bytes freed before a refusal are disclosed
+  // on that run's own line below rather than folded in here, so "freed" keeps meaning "freed from
+  // runs that were fully purged".
+  const freedBytes = result.purged.reduce((sum, id) => sum + (result.freed_bytes[id] ?? 0), 0);
 
   console.log(
-    `Purged ${result.purged.length}/${result.selected.length} run(s) (${formatBytes(freedBytes)} freed). ` +
+    `Purged ${result.purged.length}/${result.selected.length} run(s) (${formatBytes(freedBytes)} freed, store-reported). ` +
       `${result.already_purged.length} already gone, ${result.blocked.length} blocked, ${result.failed.length} failed.`,
   );
   for (const c of result.selected) {
@@ -448,11 +474,19 @@ function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void {
       console.log(`  ⚠ ${c.run.id}: ${overriddenClaimPhrase(c.overriddenClaimStep, false)}`);
     }
   }
+  // issue #189: a refusal that already freed real bytes says so. Without this the run reads as
+  // untouched, and an operator re-running the purge would expect the same figure back.
+  const partialSuffix = (runId: string): string => {
+    const partial = result.partial_frees[runId];
+    return partial === undefined
+      ? ''
+      : ` (${formatBytes(partial.bytes)} across ${String(partial.stores)} of its artifact stores were already freed before the refusal)`;
+  };
   for (const b of result.blocked) {
-    console.error(`  ⚠ ${b.runId}: ${b.reason}`);
+    console.error(`  ⚠ ${b.runId}: ${b.reason}${partialSuffix(b.runId)}`);
   }
   for (const f of result.failed) {
-    console.error(`  ✗ ${f.runId}: ${f.error}`);
+    console.error(`  ✗ ${f.runId}: ${f.error}${partialSuffix(f.runId)}`);
   }
   console.log(resumableLine);
 }

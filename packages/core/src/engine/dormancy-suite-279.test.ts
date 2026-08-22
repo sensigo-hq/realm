@@ -22,6 +22,7 @@ import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { TraceBufferStore, BufferedEntry, AppendResult } from '../store/trace-buffer-store.js';
 import type { StepHandler } from '../extensions/step-handler.js';
+import type { ArtifactDeletionReport } from '../store/per-run-artifact-store.js';
 
 /**
  * Delegates every RunStore method to a real, functional JsonFileStore — EXCEPT `settleStep`,
@@ -347,7 +348,12 @@ describe('dormancy suite — the legacy path is byte-identical-shaped + the ONE 
       return [];
     }
     async delete(): Promise<void> {}
-    async deleteAllForRun(): Promise<void> {}
+    async deleteAllForRun(): Promise<ArtifactDeletionReport> {
+      return { bytes_deleted: 0 };
+    }
+    async statAllForRun(): Promise<{ bytes: number }> {
+      return { bytes: 0 };
+    }
     async readAllForRun(): Promise<Record<string, unknown[]>> {
       return {};
     }

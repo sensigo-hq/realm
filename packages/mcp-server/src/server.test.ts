@@ -151,7 +151,9 @@ function makeFailedAttemptStoreDouble(): FailedAttemptStoreLike & {
     async read() {
       return { records: [], capped: false };
     },
-    async deleteAllForRun(): Promise<void> {},
+    async deleteAllForRun() {
+      return { bytes_deleted: 0 };
+    },
     async listOrphans() {
       return [];
     },

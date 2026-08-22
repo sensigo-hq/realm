@@ -22,6 +22,7 @@ import {
   statIfExists,
   toArtifactDeleteFailedError,
 } from './fs-io.js';
+import type { ArtifactDeletionReport } from './per-run-artifact-store.js';
 
 /** The sidecar filename suffix — everything before it (the runId) is derived ONLY from the
  *  server-generated UUIDv4 runId, so stripping it back off is unambiguous (no delimiter
@@ -123,13 +124,28 @@ export class FailedAttemptStore implements PerRunArtifactStore, OrphanSweepableS
    * Idempotent: a missing sidecar (no failed attempts were ever recorded, or a concurrent purge /
    * double-invocation already removed it) is a no-op, never an error.
    */
-  async deleteAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<void> {
+  async deleteAllForRun(
+    runId: string,
+    _dirEntries?: readonly string[],
+  ): Promise<ArtifactDeletionReport> {
     const path = this.sidecarPath(runId);
+    // Stat-then-delete (issue #189's accounting rule): a sidecar that vanishes between the two
+    // still counts as deleted, so the figure is a floor rather than a fiction.
+    const bytes = (await statIfExists(path))?.size ?? 0;
     try {
-      await deleteIfExists(path);
+      const didDelete = await deleteIfExists(path);
+      return { bytes_deleted: didDelete ? bytes : 0 };
     } catch (err) {
       throw toArtifactDeleteFailedError(runId, 'FailedAttemptStore', [], path, err);
     }
+  }
+
+  /**
+   * Issue #189 — the bytes of this run's one sidecar, without deleting it. Absent ⇒ 0;
+   * unreachable THROWS (via `statIfExists`), symmetrically with the delete above.
+   */
+  async statAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<{ bytes: number }> {
+    return { bytes: (await statIfExists(this.sidecarPath(runId)))?.size ?? 0 };
   }
 
   /**

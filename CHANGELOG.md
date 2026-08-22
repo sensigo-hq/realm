@@ -46,6 +46,28 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- **BREAKING — stores report their own bytes, and purge prints what they report** (issue #189).
+  `PerRunArtifactStore.deleteAllForRun`, `TraceBufferStore.deleteAllForRun` and
+  `TraceBufferStore.deleteAllForRunFenced` now resolve to an `ArtifactDeletionReport`
+  (`{ bytes_deleted }`) instead of `void`, and every `PerRunArtifactStore` must implement a new
+  required `statAllForRun(runId, dirEntries?) → { bytes }`. `FailedAttemptStoreLike` rides the
+  widening automatically, being a `Pick` of the class. An external store must update; the
+  conformance TCK enforces the report shape, so a store that returns nothing fails its laws rather
+  than silently reporting zeroes.
+  **What this fixes for operators.** `realm run purge` used to estimate bytes by scanning the runs
+  directory for filenames containing the run id — one component reading another's private file
+  layout. It could not see the content-addressed idempotency pointer at all (its own docstring
+  conceded the under-count), and the "freed" line after a purge simply re-printed that estimate, so
+  the preview and the receipt were the same guess made twice. Both figures now come from the stores
+  themselves, and a new conformance law binds them: **on an unchanged run, the preview equals the
+  receipt.**
+  A stat that cannot read an artifact now aborts the command before anything is deleted, rather than
+  quietly counting it as zero — the posture `realm run gc` already takes.
+  **Partial frees are disclosed.** When a run is refused after earlier stores already deleted real
+  bytes, that run's own line says how much was freed before the refusal. The headline "freed" figure
+  stays purged-runs-only, so it is a floor under partial failure rather than a number that drifts
+  with them.
+
 **BREAKING — three classes of silently-accepted, meaningless input are now load errors.** Each one
 was accepted by the loader and then meant nothing at runtime, which is the worst of both: the
 workflow looked like it said something and behaved as if it had not.

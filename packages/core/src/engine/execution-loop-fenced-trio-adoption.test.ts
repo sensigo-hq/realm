@@ -45,7 +45,8 @@ function stubTraceBufferStore(overrides: Partial<TraceBufferStore>): TraceBuffer
     },
     read: async () => [],
     delete: async () => {},
-    deleteAllForRun: async () => {},
+    deleteAllForRun: async () => ({ bytes_deleted: 0 }),
+    statAllForRun: async () => ({ bytes: 0 }),
     readAllForRun: async () => ({}),
     ...overrides,
   };

@@ -62,6 +62,7 @@ function trioOnlyStore(): { store: TraceBufferStore; inner: InMemoryTraceBufferS
     read: (runId, stepId) => inner.read(runId, stepId),
     delete: (runId, stepId) => inner.delete(runId, stepId),
     deleteAllForRun: (runId, dirEntries) => inner.deleteAllForRun(runId, dirEntries),
+    statAllForRun: (runId, dirEntries) => inner.statAllForRun(runId, dirEntries),
     readAllForRun: (runId) => inner.readAllForRun(runId),
     appendFenced: (runId, stepId, entries, guard, options) =>
       inner.appendFenced(runId, stepId, entries, guard, options),

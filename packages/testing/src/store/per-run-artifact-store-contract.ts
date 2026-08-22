@@ -31,9 +31,14 @@
 //   }
 import { WorkflowError, type PerRunArtifactStore } from '@sensigo/realm';
 
-/** One of the four laws every `PerRunArtifactStore` implementation must satisfy (issue #183). */
+/** One of the laws every `PerRunArtifactStore` implementation must satisfy (issues #183, #189). */
 export type ArtifactStoreLaw =
-  'L1_ABSENCE_RESOLVES' | 'L2_IDEMPOTENT' | 'L3_FAILURE_REJECTS' | 'L4_TYPED_REJECTION';
+  | 'L1_ABSENCE_RESOLVES'
+  | 'L2_IDEMPOTENT'
+  | 'L3_FAILURE_REJECTS'
+  | 'L4_TYPED_REJECTION'
+  | 'L5_REPORT_SHAPE'
+  | 'L6_PREVIEW_EQUALS_RECEIPT';
 
 /**
  * A single, framework-agnostic contract case. `run()` throws (rejects) on failure — any test
@@ -65,6 +70,17 @@ export interface PerRunArtifactStoreContractAdapter {
    * why `chmod 0o500` is disqualified.
    */
   injectFailure: (runId: string) => void | Promise<void>;
+  /**
+   * Re-seeds `runIdWithArtifact` from scratch (issue #189). L5 and L6 both consume artifacts by
+   * deleting them, and L6 needs a run that is UNCHANGED between its stat and its delete, so each
+   * needs its own freshly-seeded state rather than whatever a previous law left behind.
+   *
+   * The seeded state must be REPRESENTATIVE of everything this store owns for a run — a store
+   * that owns two artifact classes and seeds one would let a stat that counts only the first
+   * satisfy L6 while under-reporting every real run. That under-count is precisely the defect
+   * #189 retires, so a thin fixture here would let it back in through the law meant to catch it.
+   */
+  reseed: () => void | Promise<void>;
 }
 
 export function perRunArtifactStoreContract(
@@ -101,6 +117,62 @@ export function perRunArtifactStoreContract(
           throw new Error(
             'deleteAllForRun resolved despite an injected non-ENOENT failure — the store ' +
               'reported success for an artifact it could not actually delete (issue #183).',
+          );
+        }
+      },
+    },
+    {
+      law: 'L5_REPORT_SHAPE',
+      name: 'both methods report zero for an absent run, and a positive figure for a seeded one',
+      run: async () => {
+        const absentDelete = await adapter.store.deleteAllForRun(adapter.runIdAbsent);
+        if (absentDelete.bytes_deleted !== 0) {
+          throw new Error(
+            `deleteAllForRun reported ${String(absentDelete.bytes_deleted)} bytes for a run that ` +
+              'owns no artifact — absence must report zero, not an estimate.',
+          );
+        }
+        const absentStat = await adapter.store.statAllForRun(adapter.runIdAbsent);
+        if (absentStat.bytes !== 0) {
+          throw new Error(
+            `statAllForRun reported ${String(absentStat.bytes)} bytes for an absent run.`,
+          );
+        }
+
+        await adapter.reseed();
+        const seededStat = await adapter.store.statAllForRun(adapter.runIdWithArtifact);
+        if (!(seededStat.bytes > 0)) {
+          throw new Error(
+            'statAllForRun reported 0 bytes for a run with a real, present artifact — a store ' +
+              'that cannot see its own artifacts cannot report on them honestly (issue #189).',
+          );
+        }
+        const seededDelete = await adapter.store.deleteAllForRun(adapter.runIdWithArtifact);
+        if (!(seededDelete.bytes_deleted > 0)) {
+          throw new Error(
+            'deleteAllForRun reported 0 bytes after deleting a real, present artifact.',
+          );
+        }
+      },
+    },
+    {
+      law: 'L6_PREVIEW_EQUALS_RECEIPT',
+      name: 'on an unchanged run, statAllForRun equals the bytes a subsequent delete reports',
+      run: async () => {
+        // THE law this issue exists for. An operator is shown a projection before deleting and a
+        // receipt after; if the two are computed differently, one of them is a guess. Binds a
+        // QUIESCENT store only — across separate invocations a stale projection may legitimately
+        // differ, and the receipt is independently true either way.
+        await adapter.reseed();
+        const preview = await adapter.store.statAllForRun(adapter.runIdWithArtifact);
+        const receipt = await adapter.store.deleteAllForRun(adapter.runIdWithArtifact);
+        if (preview.bytes !== receipt.bytes_deleted) {
+          throw new Error(
+            `preview (${String(preview.bytes)}) != receipt (${String(receipt.bytes_deleted)}) on ` +
+              'an unchanged run. The two figures must come from the same store-owned accounting ' +
+              '— a difference means one of them is measuring something the other is not ' +
+              '(issue #189: the classic shape is a stat that misses an artifact class the delete ' +
+              'removes).',
           );
         }
       },
