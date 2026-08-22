@@ -140,11 +140,15 @@ describe('FailedAttemptStore', () => {
     });
 
     it('is idempotent: a run with no sidecar (never failed, or already deleted) is a no-op', async () => {
-      await expect(store.deleteAllForRun('never-recorded-any-attempts')).resolves.toBeUndefined();
+      // issue #189: a store that owns nothing for this run reports zero — not undefined, and not a guess.
+      await expect(store.deleteAllForRun('never-recorded-any-attempts')).resolves.toEqual({
+        bytes_deleted: 0,
+      });
       // and a second call after an actual deletion:
       await store.append(RUN_ID, line());
       await store.deleteAllForRun(RUN_ID);
-      await expect(store.deleteAllForRun(RUN_ID)).resolves.toBeUndefined();
+      // Second call: the sidecar is already gone, so nothing is freed and the report says so.
+      await expect(store.deleteAllForRun(RUN_ID)).resolves.toEqual({ bytes_deleted: 0 });
     });
 
     it('ignores dirEntries (exact-path store — the batch hint is for glob-based stores only)', async () => {

@@ -1,6 +1,7 @@
 // trace-buffer-store.ts — Buffer store interface for incremental trace ingestion (B-lite).
 import type { AgentTraceEntry } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import type { ArtifactDeletionReport } from './per-run-artifact-store.js';
 
 /**
  * The store-layer capability ladder (issue #197 PR-1, design record `plans/issue-197-design.md`
@@ -172,7 +173,14 @@ export interface TraceBufferStore {
    *   this in-memory implementation; a filesystem-backed implementation may use it to avoid a
    *   per-run `readdir`.
    */
-  deleteAllForRun(runId: string, dirEntries?: readonly string[]): Promise<void>;
+  deleteAllForRun(runId: string, dirEntries?: readonly string[]): Promise<ArtifactDeletionReport>;
+
+  /**
+   * Reports the bytes this store holds for `runId` without deleting them (issue #189) — see
+   * `PerRunArtifactStore.statAllForRun` for the full contract, including the L6 preview-equals-
+   * receipt identity and the store-defined bytes measure.
+   */
+  statAllForRun(runId: string, dirEntries?: readonly string[]): Promise<{ bytes: number }>;
 
   /**
    * Reads every buffered/WAL entry for a run, across ALL steps, keyed by stepId — the read-only
@@ -220,8 +228,10 @@ export interface TraceBufferStore {
    * suite is what must verify race closure (the same posture `RunStore.claimStep`'s cross-host
    * obligation already states for `CLAIM_SINGLE_OWNER`, issue #188).
    *
-   * Legacy `append`/`delete`/`deleteAllForRun` remain on the interface, byte-frozen, for any store
-   * that does not declare the fenced trio.
+   * Legacy `append`/`delete`/`deleteAllForRun` remain on the interface for any store that does not
+   * declare the fenced trio. They are frozen in SHAPE except for the issue #189 widening, which
+   * made both deletion paths — fenced and unfenced — return an `ArtifactDeletionReport` so purge
+   * can print a store-reported figure instead of scanning filenames.
    */
   appendFenced?(
     runId: string,
@@ -268,7 +278,7 @@ export interface TraceBufferStore {
     runId: string,
     guard: () => Promise<void>,
     dirEntries?: readonly string[],
-  ): Promise<void>;
+  ): Promise<ArtifactDeletionReport>;
 
   /**
    * **`sealFenced` (issue #197 PR-1, the `seal` rung — design §4).** Atomically retires the
@@ -806,17 +816,57 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
     });
   }
 
-  async deleteAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<void> {
+  /**
+   * The bytes this store attributes to one key — live buffer plus every sealed artifact under it.
+   *
+   * Uses the store's OWN existing budget formula (`Buffer.byteLength(JSON.stringify(...))`), which
+   * is what this implementation already measures capacity with. That makes the measure
+   * internally consistent, which is the contract: bytes are store-defined, and the only guarantee
+   * across stat and delete is that they agree (issue #189, L6).
+   */
+  private bytesForKey(k: string): number {
+    const live = this.buffers.get(k);
+    const sealed = this.sealed.get(k) ?? [];
+    const liveBytes =
+      live === undefined ? 0 : Buffer.byteLength(JSON.stringify(flattenWalBatches(live)));
+    const sealedBytes = sealed.reduce(
+      (sum, artifact) => sum + Buffer.byteLength(JSON.stringify(artifact.lines)),
+      0,
+    );
+    return liveBytes + sealedBytes;
+  }
+
+  /** Every key this store holds for `runId` — live and sealed alike. */
+  private keysForRun(runId: string): Set<string> {
     const prefix = `${runId}:`;
-    const keys = new Set(
+    return new Set(
       [...this.buffers.keys(), ...this.sealed.keys()].filter((k) => k.startsWith(prefix)),
     );
-    for (const k of keys) {
+  }
+
+  /** Issue #189 — see the interface doc. Lock-free by contract; nothing here can be unreachable. */
+  async statAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<{ bytes: number }> {
+    let bytes = 0;
+    for (const k of this.keysForRun(runId)) bytes += this.bytesForKey(k);
+    return Promise.resolve({ bytes });
+  }
+
+  async deleteAllForRun(
+    runId: string,
+    _dirEntries?: readonly string[],
+  ): Promise<ArtifactDeletionReport> {
+    let bytes_deleted = 0;
+    for (const k of this.keysForRun(runId)) {
       await this.withKeyLock(k, async () => {
+        // Measured INSIDE the critical section, immediately before the delete — the accounting
+        // rule is stat-then-delete, and measuring outside would let a concurrent append inflate
+        // the figure for bytes this call never removed.
+        bytes_deleted += this.bytesForKey(k);
         this.buffers.delete(k);
         this.sealed.delete(k);
       });
     }
+    return { bytes_deleted };
   }
 
   /** guard is RE-INVOKED inside EACH per-(runId, stepId) critical section, immediately before
@@ -828,22 +878,22 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
     runId: string,
     guard: () => Promise<void>,
     _dirEntries?: readonly string[],
-  ): Promise<void> {
-    const prefix = `${runId}:`;
-    const keys = new Set(
-      [...this.buffers.keys(), ...this.sealed.keys()].filter((k) => k.startsWith(prefix)),
-    );
+  ): Promise<ArtifactDeletionReport> {
+    const keys = this.keysForRun(runId);
     if (keys.size === 0) {
       await guard();
-      return;
+      return { bytes_deleted: 0 };
     }
+    let bytes_deleted = 0;
     for (const k of keys) {
       await this.withKeyLock(k, async () => {
         await guard();
+        bytes_deleted += this.bytesForKey(k);
         this.buffers.delete(k);
         this.sealed.delete(k);
       });
     }
+    return { bytes_deleted };
   }
 
   /** guard runs INSIDE the per-key critical section, immediately before the seal-move — see the

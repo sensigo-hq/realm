@@ -30,7 +30,13 @@ import { hashParams } from './params-hash.js';
 import { assertSealIntegrity } from './seal-integrity.js';
 import { decideIdempotencyPolicy } from './idempotency-policy.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { readIfExists, deleteIfExists, toArtifactDeleteFailedError } from './fs-io.js';
+import {
+  statIfExists,
+  readIfExists,
+  deleteIfExists,
+  toArtifactDeleteFailedError,
+} from './fs-io.js';
+import type { ArtifactDeletionReport } from './per-run-artifact-store.js';
 
 /**
  * Shared `proper-lockfile` retry policy for EVERY lock this store takes — the 4 run-file
@@ -974,7 +980,50 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
    * purge still reported `purged`. Re-checking terminal state under the SAME lock `update()`
    * uses closes that window: `deleteAllForRun` now unconditionally refuses a non-terminal run.
    */
-  async deleteAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<void> {
+  /**
+   * Issue #189 — reports the bytes this store holds for `runId` without touching anything.
+   *
+   * Deliberately LOCK-FREE and deliberately WITHOUT this class's terminal/drain refusals: it
+   * answers a DRY RUN, which must never fail with `RUN_BUSY` where the retired filename scan
+   * would happily have printed a number. L6 binds unchanged runs only, so the raciness is inside
+   * the contract rather than a hole in it.
+   *
+   * Counts the run file, plus the idempotency pointer ONLY when the pointer still points back at
+   * this run — the same ownership conditional the delete applies. A key repointed to a successor
+   * belongs to that successor; counting it here would inflate the preview and red L6 for a reason
+   * that has nothing to do with this run.
+   */
+  async statAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<{ bytes: number }> {
+    const path = this.filePath(runId);
+    let record: RunRecord;
+    try {
+      record = await this.get(runId);
+    } catch (err) {
+      if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') return { bytes: 0 };
+      throw err;
+    }
+
+    let bytes = (await statIfExists(path))?.size ?? 0;
+    if (record.idempotency_key !== undefined) {
+      const keyPath = this.keyPath(record.workflow_id, record.idempotency_key);
+      let pointer: KeyPointer | undefined;
+      try {
+        pointer = await this.readPointer(keyPath);
+      } catch {
+        // A pointer we cannot read is not a pointer we can attribute — the run file's own bytes
+        // are still true, and the delete path applies the same ownership test before removing it.
+        pointer = undefined;
+      }
+      if (pointer !== undefined && pointer.run_id === runId)
+        bytes += (await statIfExists(keyPath))?.size ?? 0;
+    }
+    return { bytes };
+  }
+
+  async deleteAllForRun(
+    runId: string,
+    _dirEntries?: readonly string[],
+  ): Promise<ArtifactDeletionReport> {
     const path = this.filePath(runId);
     let release: () => Promise<void>;
     try {
@@ -994,7 +1043,8 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       try {
         record = await this.get(runId);
       } catch (err) {
-        if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') return; // already gone
+        if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND')
+          return { bytes_deleted: 0 }; // already gone
         // issue #183: any OTHER failure here means deleteAllForRun cannot even determine what to
         // delete (or confirm the run file itself is reachable) — wrap it into the SAME aggregate
         // shape the unlink failures below use, so a caller (e.g. purge) always observes ONE
@@ -1027,6 +1077,10 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       }
 
       const deleted: string[] = [];
+      // Stat-then-delete, per the contract's accounting rule: an artifact that vanishes between
+      // the two still counts as deleted. The figure is a floor, and a floor is more honest than
+      // reporting nothing and letting an operator read a concurrent purge as "nothing was there".
+      let bytes_deleted = 0;
 
       // Conditional pointer delete: only when this run actually owns an idempotency key. A
       // `rerun`/supersede may have repointed the key to a NEWER run since this run was minted —
@@ -1058,9 +1112,13 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
             throw toArtifactDeleteFailedError(runId, 'JsonFileStore', deleted, keyPath, err);
           }
           if (pointer !== undefined && pointer.run_id === runId) {
+            const keyBytes = (await statIfExists(keyPath))?.size ?? 0;
             try {
               const didDelete = await deleteIfExists(keyPath);
-              if (didDelete) deleted.push(keyPath);
+              if (didDelete) {
+                deleted.push(keyPath);
+                bytes_deleted += keyBytes;
+              }
             } catch (err) {
               // Sequential stop-on-first-hard-error: a pointer we cannot delete means we STOP
               // here — do NOT proceed to the run-file delete below. Leaving the run file in place
@@ -1077,12 +1135,17 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       // The run file LAST — it is the crash re-enumeration anchor: a crash mid-purge leaves this
       // file in place, so the run is found again on the next purge/list pass and retried
       // idempotently (the pointer, if any, is already gone by then).
+      const runFileBytes = (await statIfExists(path))?.size ?? 0;
       try {
         const didDelete = await deleteIfExists(path);
-        if (didDelete) deleted.push(path);
+        if (didDelete) {
+          deleted.push(path);
+          bytes_deleted += runFileBytes;
+        }
       } catch (err) {
         throw toArtifactDeleteFailedError(runId, 'JsonFileStore', deleted, path, err);
       }
+      return { bytes_deleted };
     } finally {
       await release();
     }

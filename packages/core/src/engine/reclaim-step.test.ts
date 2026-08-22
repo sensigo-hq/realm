@@ -563,7 +563,8 @@ describe('reclaimStep — clearing the stale trace buffer (issue #198)', () => {
       delete: async () => {
         throw new Error('simulated disk failure');
       },
-      deleteAllForRun: async () => {},
+      deleteAllForRun: async () => ({ bytes_deleted: 0 }),
+      statAllForRun: async () => ({ bytes: 0 }),
       readAllForRun: async () => ({}),
     };
 
@@ -704,7 +705,8 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
       delete: async () => {
         throw new Error('not used — this store declares the trio');
       },
-      deleteAllForRun: async () => {},
+      deleteAllForRun: async () => ({ bytes_deleted: 0 }),
+      statAllForRun: async () => ({ bytes: 0 }),
       readAllForRun: async () => ({}),
       deleteFenced: async (_runId, _stepId, guard) => {
         await guard();
@@ -780,7 +782,8 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
       delete: async () => {
         throw new Error('not used');
       },
-      deleteAllForRun: async () => {},
+      deleteAllForRun: async () => ({ bytes_deleted: 0 }),
+      statAllForRun: async () => ({ bytes: 0 }),
       readAllForRun: async () => ({}),
       deleteFenced: async (_runId, _stepId, guard) => {
         await guard(); // throws (refuses) at both checkpoints in this test — never reached below

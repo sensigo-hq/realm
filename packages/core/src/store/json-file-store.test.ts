@@ -1236,8 +1236,11 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
 
       await store.deleteAllForRun(run.id);
 
-      await expect(store.deleteAllForRun(run.id)).resolves.toBeUndefined();
-      await expect(store.deleteAllForRun('never-existed-at-all')).resolves.toBeUndefined();
+      // issue #189: idempotent AND honest — a second delete frees nothing and reports zero.
+      await expect(store.deleteAllForRun(run.id)).resolves.toEqual({ bytes_deleted: 0 });
+      await expect(store.deleteAllForRun('never-existed-at-all')).resolves.toEqual({
+        bytes_deleted: 0,
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -1351,7 +1354,9 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
         },
       });
 
-      await expect(store.deleteAllForRun(run.id)).resolves.toBeUndefined();
+      // issue #189: a real delete frees real bytes — the receipt is positive, not merely defined.
+      const report = await store.deleteAllForRun(run.id);
+      expect(report.bytes_deleted).toBeGreaterThan(0);
       expect(existsSync(join(dir, `${run.id}.json`))).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });

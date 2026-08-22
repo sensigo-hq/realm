@@ -4,6 +4,7 @@ import { appendFile, readdir } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import lockfile from 'proper-lockfile';
 import {
+  type ArtifactDeletionReport,
   type TraceBufferStore,
   type BufferedEntry,
   type AppendResult,
@@ -684,13 +685,41 @@ export class JsonTraceBufferStore
    *   (O(N runs × readdir) → O(readdir) for a batch of N). Falls back to its own `readdir` when
    *   omitted, exactly as before.
    */
-  async deleteAllForRun(runId: string, dirEntries?: readonly string[]): Promise<void> {
+  /**
+   * Issue #189 — the bytes this store holds for `runId`, without deleting anything.
+   *
+   * Counts BOTH artifact classes, exactly as both delete paths do: live WAL files AND sealed
+   * artifacts. A WAL-only stat would re-ship the very under-count this issue retires — the dying
+   * filename scan, for all its faults, did catch sealed files, so missing them here would be a
+   * REGRESSION dressed as a fix.
+   *
+   * Lock-free by contract (this answers a dry run). Unreachability throws via `statIfExists`.
+   */
+  async statAllForRun(runId: string, dirEntries?: readonly string[]): Promise<{ bytes: number }> {
+    const matching = [
+      ...(await this.matchingWalFiles(runId, dirEntries)),
+      ...(await this.matchingSealedFiles(runId, dirEntries)),
+    ];
+    let bytes = 0;
+    for (const file of matching) {
+      bytes += (await statIfExists(join(this.runsDir, file)))?.size ?? 0;
+    }
+    return { bytes };
+  }
+
+  async deleteAllForRun(
+    runId: string,
+    dirEntries?: readonly string[],
+  ): Promise<ArtifactDeletionReport> {
     const matching = [
       ...(await this.matchingWalFiles(runId, dirEntries)),
       ...(await this.matchingSealedFiles(runId, dirEntries)),
     ];
 
     const deleted: string[] = [];
+    // Stat-then-delete (issue #189's accounting rule): a file that vanishes between the two still
+    // counts as deleted, making the figure a floor rather than a fiction.
+    let bytes_deleted = 0;
     for (const file of matching) {
       const path = join(this.runsDir, file);
       let release: (() => Promise<void>) | undefined;
@@ -701,8 +730,12 @@ export class JsonTraceBufferStore
         throw err;
       }
       try {
+        const bytes = (await statIfExists(path))?.size ?? 0;
         const didDelete = await deleteIfExists(path);
-        if (didDelete) deleted.push(file);
+        if (didDelete) {
+          deleted.push(file);
+          bytes_deleted += bytes;
+        }
       } catch (err) {
         // Sequential stop-on-first-hard-error: don't attempt the remaining candidates once one
         // has genuinely failed — report exactly what succeeded before the failure.
@@ -711,6 +744,7 @@ export class JsonTraceBufferStore
         await release();
       }
     }
+    return { bytes_deleted };
   }
 
   /**
@@ -738,7 +772,7 @@ export class JsonTraceBufferStore
     runId: string,
     guard: () => Promise<void>,
     dirEntries?: readonly string[],
-  ): Promise<void> {
+  ): Promise<ArtifactDeletionReport> {
     const matching = [
       ...(await this.matchingWalFiles(runId, dirEntries)),
       ...(await this.matchingSealedFiles(runId, dirEntries)),
@@ -746,10 +780,11 @@ export class JsonTraceBufferStore
 
     if (matching.length === 0) {
       await guard();
-      return;
+      return { bytes_deleted: 0 };
     }
 
     const deleted: string[] = [];
+    let bytes_deleted = 0;
     for (const file of matching) {
       const path = join(this.runsDir, file);
       let release: (() => Promise<void>) | undefined;
@@ -768,8 +803,12 @@ export class JsonTraceBufferStore
         // guard-thrown FsIoError for deleteIfExists's own failure and wrapped it too.
         await guard();
         try {
+          const bytes = (await statIfExists(path))?.size ?? 0;
           const didDelete = await deleteIfExists(path);
-          if (didDelete) deleted.push(file);
+          if (didDelete) {
+            deleted.push(file);
+            bytes_deleted += bytes;
+          }
         } catch (err) {
           // Only deleteIfExists's own failure mode (FsIoError) gets wrapped here.
           if (err instanceof FsIoError) {
@@ -781,6 +820,7 @@ export class JsonTraceBufferStore
         await release();
       }
     }
+    return { bytes_deleted };
   }
 
   /**

@@ -81,15 +81,17 @@ describe('JsonTraceBufferStore', () => {
     });
 
     it('is idempotent: no WAL files for the run (or an already-deleted run) is a no-op', async () => {
-      await expect(store.deleteAllForRun('never-had-any-wal')).resolves.toBeUndefined();
+      await expect(store.deleteAllForRun('never-had-any-wal')).resolves.toEqual({
+        bytes_deleted: 0,
+      });
       await store.append('run-1', 'step-a', [{ event: 'a' }]);
       await store.deleteAllForRun('run-1');
-      await expect(store.deleteAllForRun('run-1')).resolves.toBeUndefined();
+      await expect(store.deleteAllForRun('run-1')).resolves.toEqual({ bytes_deleted: 0 });
     });
 
     it('a missing runsDir is a no-op (own readdir fallback path), not a throw', async () => {
       const missingDirStore = new JsonTraceBufferStore(join(dir, 'does', 'not', 'exist'));
-      await expect(missingDirStore.deleteAllForRun('run-1')).resolves.toBeUndefined();
+      await expect(missingDirStore.deleteAllForRun('run-1')).resolves.toEqual({ bytes_deleted: 0 });
     });
 
     it('uses the dirEntries hint when supplied, instead of re-scanning the directory', async () => {
