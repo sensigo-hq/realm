@@ -341,13 +341,13 @@ Use `create_workflow` when no registered workflow matches the task. It registers
 
 ### Step fields
 
-| Field             | Required | Description                                                                                                |
-| ----------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `id`              | Yes      | Unique step identifier. Snake_case verb-noun (e.g. `research_problem`). No spaces.                         |
-| `description`     | Yes      | Acceptance criterion for the step — what correct output looks like, not how to produce it.                 |
-| `depends_on`      | No       | Array with at most one step ID this step depends on. Controls execution order. Omit for the first step.    |
-| `input_schema`    | No       | JSON Schema for the fields this step's `params` must include. Used to validate `execute_step` submissions. |
-| `timeout_seconds` | No       | Positive integer. If the step is not completed within this time, the run enters an error state.            |
+| Field             | Required | Description                                                                                                                                         |
+| ----------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`              | Yes      | Unique step identifier. Snake_case verb-noun (e.g. `research_problem`). No spaces.                                                                  |
+| `description`     | Yes      | Acceptance criterion for the step — what correct output looks like, not how to produce it.                                                          |
+| `depends_on`      | No       | Array with at most one step ID this step depends on. Controls execution order. Omit for the first step.                                             |
+| `input_schema`    | No       | JSON Schema for the fields this step's `params` must include. Used to validate `execute_step` submissions.                                          |
+| `timeout_seconds` | No       | Positive integer. If the step is not completed within this time, the run enters an error state (not currently enforced for agent steps — see #412). |
 
 An unrecognized step key (e.g. a typo like `dependson`) is never rejected — the field is dropped
 and the workflow is still created. It's surfaced both in `warnings` (the rendered text, e.g.

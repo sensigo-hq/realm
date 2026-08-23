@@ -1120,6 +1120,10 @@ describe('loadWorkflowFromString — timeout_seconds validation', () => {
     }
   });
 
+  // The AUTO control for the issue-#402 prohibition below, and deliberately not duplicated
+  // there: auto is where the key is actually enforced (`shouldEnforceTimeout` is
+  // `execution === 'auto'`, claim-liveness.ts), so a check written as `!== 'agent'`-style
+  // over-reach would red exactly here. One cell, one job.
   it('timeout_seconds: 60 (positive integer) on an auto step loads without error', () => {
     const content = VALID_YAML.replace(
       'execution: auto',
@@ -1129,6 +1133,11 @@ describe('loadWorkflowFromString — timeout_seconds validation', () => {
     expect(def.steps['step-one']?.timeout_seconds).toBe(60);
   });
 
+  // The FINALIZER control, and the reason issue #402's check reads `=== 'agent'` rather than
+  // `!== 'auto'`: a finalizer consumes this key TWICE — the drain lease
+  // (execution-loop.ts:5226) and the handler's own dispatch bound (:5030) — so a `!== 'auto'`
+  // prohibition would break a working feature. That mutant reds exactly this cell, which is only
+  // true because it is not duplicated anywhere else.
   it('timeout_seconds: 60 on a finalizer step loads without error (finalizers use their own drain-ceiling default)', () => {
     const content = `
 id: finalizer-timeout-test
@@ -1150,13 +1159,86 @@ steps:
     expect(def.steps['cleanup']?.timeout_seconds).toBe(60);
   });
 
-  it('timeout_seconds: 60 on an agent step loads without error (advisory only — agent dispatch is never wrapped)', () => {
+  // REPLACES the cell that pinned the pre-#402 acceptance ("loads without error (advisory
+  // only…)"). That acceptance was the defect: nothing enforces the key on an agent step, and the
+  // engine's NextAction hands the driving agent an `expected_timeout` display built from it
+  // (execution-loop.ts:671), so the step looked time-bounded to the one reader who would act on
+  // it while nothing bounded anything.
+  it('timeout_seconds on an agent step is a load error naming the bounds that DO exist', () => {
     const content = VALID_YAML.replace(
       'execution: agent',
       'execution: agent\n    timeout_seconds: 60',
     );
-    const def = loadWorkflowFromString(content);
-    expect(def.steps['step-two']?.timeout_seconds).toBe(60);
+    expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+    try {
+      loadWorkflowFromString(content);
+    } catch (err) {
+      const message = (err as WorkflowError).message;
+      expect(message).toContain("'timeout_seconds' is not valid on execution: agent steps");
+      // The consequence, in the author's terms — not just "invalid".
+      expect(message).toContain('LOOK');
+      expect(message).toContain('never enforces it');
+      // Both real bounds named, so the author is not left to hunt for the replacement. Scoped to
+      // realm's own drive, because an external agent gets neither.
+      expect(message).toContain('llm_timeout_seconds');
+      expect(message).toContain('--llm-timeout');
+      expect(message).toContain('tool_timeout');
+      expect(message).toContain("realm's own drive");
+      // And it points at the offending step's own line.
+      expect(message).toMatch(/\(line \d+\)/);
+    }
+  });
+
+  it('agent + timeout_seconds: -1 reports the prohibition ONLY, not also a shape error', () => {
+    // The agent twin of the guard cell below: two messages for one root cause is how an author
+    // ends up fixing the wrong thing first. Same suppression, same reason.
+    const content = VALID_YAML.replace(
+      'execution: agent',
+      'execution: agent\n    timeout_seconds: -1',
+    );
+    try {
+      loadWorkflowFromString(content);
+      throw new Error('expected a load error');
+    } catch (err) {
+      const message = (err as WorkflowError).message;
+      expect(message).toContain("'timeout_seconds' is not valid on execution: agent steps");
+      expect(message).not.toContain("'timeout_seconds' must be a positive integer");
+    }
+  });
+
+  it('agent + BOTH timeout keys: the prohibition fires, llm_timeout_seconds stays legal', () => {
+    // The two checks must not reject each other's key. `llm_timeout_seconds` is the RIGHT key on
+    // an agent step — an error telling the author it is "only valid on agent steps", on an agent
+    // step, would be worse than useless.
+    const content = VALID_YAML.replace(
+      'execution: agent',
+      'execution: agent\n    llm_timeout_seconds: 30\n    timeout_seconds: 60',
+    );
+    try {
+      loadWorkflowFromString(content);
+      throw new Error('expected a load error');
+    } catch (err) {
+      const message = (err as WorkflowError).message;
+      expect(message).toContain("'timeout_seconds' is not valid on execution: agent steps");
+      expect(message).not.toContain("'llm_timeout_seconds' is only valid");
+    }
+  });
+
+  it('ACCUMULATION — a second unrelated error on the same step is still reported', () => {
+    // The loader accumulates rather than stopping at the first problem, and the new check must
+    // not become a short-circuit: an author fixing two things wants to see two things.
+    const content = VALID_YAML.replace(
+      'execution: agent',
+      'execution: agent\n    timeout_seconds: 60\n    idempotent: true',
+    );
+    try {
+      loadWorkflowFromString(content);
+      throw new Error('expected a load error');
+    } catch (err) {
+      const message = (err as WorkflowError).message;
+      expect(message).toContain("'timeout_seconds' is not valid on execution: agent steps");
+      expect(message).toContain("'idempotent' is only valid on execution: auto steps");
+    }
   });
 
   it('guard-prohibition is unchanged: timeout_seconds on a guard step reports exactly the prohibited-field error, not also a positive-integer error', () => {
