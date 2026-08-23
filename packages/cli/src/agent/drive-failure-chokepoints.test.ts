@@ -111,7 +111,7 @@ describe('#401 chokepoint (3) — the last-resort catch', () => {
         ({
           connect: async () => {},
           disconnect: async () => {},
-          listTools: async () => [],
+          getTools: async () => [],
         }) as never,
     });
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -415,6 +415,9 @@ describe('#401 chokepoint (4) — codes that mint NOTHING', () => {
   });
 });
 
+/** ~540 characters — long enough to push the fixed-template error message past the cap. */
+const LONG_STEP = 'overflow_'.repeat(60);
+
 describe('#401 chokepoint (4) — validation rejections DO mint', () => {
   it('a tools-path OUTPUT_SCHEMA rejection with recorded tool calls mints validation_rejected', async () => {
     // The step omits `input_schema` deliberately: Step 2b validates INPUT before Step 2c validates
@@ -443,7 +446,7 @@ describe('#401 chokepoint (4) — validation rejections DO mint', () => {
     vi.restoreAllMocks();
   });
 
-  it('an INPUT_SCHEMA rejection mints too — reached with schemaRetries: 0', async () => {
+  it('an INPUT_SCHEMA rejection mints too — and a huge step name is CAPPED at 500', async () => {
     const store = new InMemoryStore();
     const wf = {
       id: 'input-validation-wf',
@@ -451,7 +454,10 @@ describe('#401 chokepoint (4) — validation rejections DO mint', () => {
       version: 1,
       schema_version: 1,
       steps: {
-        ask: {
+        // The ONLY lever on message length here: `result.errors` is one fixed-template string that
+        // embeds the step id and nothing else (the Ajv rows travel in error_details, never in
+        // errors), so a long step NAME is what pushes the message past the cap.
+        [LONG_STEP]: {
           description: 'Ask',
           execution: 'agent',
           depends_on: [],
@@ -475,7 +481,12 @@ describe('#401 chokepoint (4) — validation rejections DO mint', () => {
 
     const run = await onlyRun(store);
     expect(run.drive_failures?.entries).toHaveLength(1);
-    expect(run.drive_failures!.entries[0]!.error_class).toBe('validation_rejected');
+    const entry = run.drive_failures!.entries[0]!;
+    expect(entry.error_class).toBe('validation_rejected');
+    // Capped through the SHARED constant, not a second literal that could drift from it.
+    expect(entry.message.length).toBe(500);
+    // The step field carries the long name untruncated — the cap is on the message alone.
+    expect(entry.step).toBe(LONG_STEP);
     vi.restoreAllMocks();
   });
 
@@ -546,6 +557,104 @@ describe('#401 chokepoint (4) — validation rejections DO mint', () => {
     const run = await onlyRun(store);
     expect(run.drive_failures?.entries).toHaveLength(1);
     expect(run.drive_failures!.entries[0]!.error_class).toBe('validation_rejected');
+    vi.restoreAllMocks();
+  });
+});
+
+// =================================================================================================
+// issue #401 — a HOSTILE thrown value must not let the mint out-throw the failure it records
+// =================================================================================================
+
+/**
+ * Throws a value whose `name` getter explodes but whose `toString` is safe.
+ *
+ * The safe `toString` is deliberate: both pre-mint console lines interpolate `String(err)`
+ * (run-agent.ts), so a poisoned `toString` would out-throw at the PRINT, before the mint ever
+ * runs. That residual is named on the design record and is NOT fixed here — this cell covers the
+ * mint, which is what §2 hardened.
+ *
+ * A dedicated double rather than TestProvider: TestProvider's `behaviour instanceof Error` gate
+ * RETURNS a non-Error value instead of throwing it, so it cannot produce this case at all.
+ */
+class HostileProvider extends LlmProvider {
+  static readonly hostile: unknown = {
+    get name(): string {
+      throw new Error('hostile getter');
+    },
+    toString(): string {
+      return 'hostile thrown value';
+    },
+  };
+  async callStep(): Promise<Record<string, unknown>> {
+    throw HostileProvider.hostile;
+  }
+}
+
+const HOSTILE_WF = {
+  id: 'hostile-wf',
+  name: 'Hostile',
+  version: 1,
+  schema_version: 1,
+  steps: {
+    classify: {
+      description: 'Classify',
+      execution: 'agent',
+      depends_on: [],
+      input_schema: { type: 'object', properties: { summary: { type: 'string' } } },
+    },
+  },
+} as unknown as WorkflowDefinition;
+
+describe('#401 — the mint survives a hostile thrown value', () => {
+  it('chokepoint (2): returns failed with ONE degraded entry, rather than escalating', async () => {
+    const store = new InMemoryStore();
+    const deps = makeDeps({ store, provider: new HostileProvider() });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await runAgent(deps, { definition: HOSTILE_WF, params: {} });
+    expect(result).toBe('failed');
+
+    const run = await onlyRun(store);
+    expect(run.drive_failures?.entries).toHaveLength(1);
+    const entry = run.drive_failures!.entries[0]!;
+    expect(entry.message).toBe('unrenderable thrown value');
+    expect(entry.error_class).toBe('other');
+    expect(entry.step).toBe('classify');
+    vi.restoreAllMocks();
+  });
+
+  it('chokepoint (3): the ORIGINAL hostile value propagates, unreplaced', async () => {
+    // The point of hardening the mint: whatever reaches the caller must be the operator's actual
+    // failure, not a secondary error the recording machinery generated on top of it.
+    const store = new InMemoryStore();
+    const hostile = HostileProvider.hostile;
+    const deps = makeDeps({
+      store,
+      mcpClientFactory: () => {
+        throw hostile;
+      },
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const toolsWf = {
+      ...HOSTILE_WF,
+      id: 'hostile-tools-wf',
+      mcp_servers: [{ id: 'srv', transport: 'stdio', command: 'node', args: [] }],
+      steps: {
+        classify: {
+          ...(HOSTILE_WF.steps['classify'] as unknown as Record<string, unknown>),
+          tools: ['srv:op'],
+        },
+      },
+    } as unknown as WorkflowDefinition;
+
+    await expect(runAgent(deps, { definition: toolsWf, params: {} })).rejects.toBe(hostile);
+
+    const run = await onlyRun(store);
+    expect(run.drive_failures?.entries).toHaveLength(1);
+    expect(run.drive_failures!.entries[0]!.message).toBe('unrenderable thrown value');
     vi.restoreAllMocks();
   });
 });

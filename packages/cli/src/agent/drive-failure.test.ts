@@ -278,6 +278,29 @@ describe('classifyDriveError — precedence (issue #401)', () => {
     }
   });
 
+  it('a HOSTILE thrown value degrades instead of throwing — the mint never out-throws the failure', () => {
+    // buildEntry runs OUTSIDE the fence's try at every chokepoint, and every step of it touches
+    // the thrown value. A throwing `name` getter would make the MINT throw from inside a catch,
+    // replacing the operator's actual error with a secondary one.
+    const hostile = {
+      get name(): string {
+        throw new Error('hostile getter');
+      },
+      toString(): string {
+        return 'hostile value';
+      },
+    };
+
+    const built = buildEntry(hostile, 'classify', 'anthropic', Date.now() - 10);
+    expect(built.error_class).toBe('other');
+    expect(built.message).toBe('unrenderable thrown value');
+    // All six required fields present — a degraded entry is still a complete entry.
+    expect(built.step).toBe('classify');
+    expect(built.provider).toBe('anthropic');
+    expect(built.at).toEqual(expect.any(String));
+    expect(built.elapsed_ms).toBeGreaterThanOrEqual(0);
+  });
+
   it('lostLine names the run, the class, the time, the step and the message', () => {
     const line = lostLine(
       'run-9',

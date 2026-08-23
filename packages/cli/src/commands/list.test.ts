@@ -315,6 +315,66 @@ describe('listRuns', () => {
   });
 
   // #134 fan-out fix — a capability-blocked step behind a HEALTHY in-progress sibling.
+  /** Recent enough to be the newest event on the fixture run — the finding's last-event conjunct. */
+  const DRIVE_FAILED_AT = new Date(Date.now() - 120_000).toISOString();
+
+  // issue #401: the drive_failing label. --stuck lists one line per run, so the step and the class
+  // ARE the disclosure an operator triages from.
+  it('--stuck labels a drive_failing run as <step>=drive_failing(<class>)', async () => {
+    const failing = makeRun({
+      id: 'run-drive-fail',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      drive_failures: {
+        first_failed_at: DRIVE_FAILED_AT,
+        total: 1,
+        entries: [
+          {
+            at: DRIVE_FAILED_AT,
+            step: 'classify',
+            provider: 'anthropic',
+            error_class: 'api_status',
+            message: 'rate limited',
+            elapsed_ms: 12,
+          },
+        ],
+      },
+    });
+    const result = await listRuns(undefined, makeStore([failing]), undefined, true);
+    expect(result).toContain('run-drive-fail');
+    expect(result).toContain('classify=drive_failing(api_status)');
+  });
+
+  it("--stuck renders a step:'' drive failure with NO leading '=' ", async () => {
+    // `step: ''` is EXPECTED for a failure before any step was selected (an MCP-init throw). A
+    // naive render produces `=drive_failing(other)`, which reads as a missing value rather than as
+    // "this happened before a step existed" — a rendering bug, not a convention.
+    const failing = makeRun({
+      id: 'run-drive-fail-nostep',
+      run_phase: 'running',
+      terminal_state: false,
+      in_progress_steps: [],
+      drive_failures: {
+        first_failed_at: DRIVE_FAILED_AT,
+        total: 1,
+        entries: [
+          {
+            at: DRIVE_FAILED_AT,
+            step: '',
+            provider: 'anthropic',
+            error_class: 'other',
+            message: 'boom',
+            elapsed_ms: 3,
+          },
+        ],
+      },
+    });
+    const result = await listRuns(undefined, makeStore([failing]), undefined, true);
+    expect(result).toContain('drive_failing(other)');
+    expect(result).not.toContain('=drive_failing');
+  });
+
   it('--stuck flags a capability-blocked step even behind a healthy in-progress sibling (fan-out fix)', async () => {
     const blocked = makeRun({
       id: 'run-capblock',

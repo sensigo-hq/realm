@@ -36,6 +36,9 @@ const WF = {
 describe('#401 — a missing SDK is recorded rather than fatal', () => {
   it('records sdk_missing WITH the step name, and preserves the message the exit path printed', async () => {
     const store = new InMemoryStore();
+    // Deterministic across launch contexts: makes the sanitizer's npm-metadata exclusion the
+    // thing under test, rather than whether npm happened to export the variable.
+    vi.stubEnv('npm_package_name', 'realm');
     process.env['OPENAI_API_KEY'] = 'sk-test-sdk-missing-0000';
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -70,19 +73,17 @@ describe('#401 — a missing SDK is recorded rather than fatal', () => {
       expect(entry.step).toBe('classify');
       // The payload's genuine 0 survives — nothing substitutes a measured elapsed for it.
       expect(entry.elapsed_ms).toBe(0);
-      // The SAME message the removed `process.exit` path used to print — asserted on the part
-      // `sanitizeError` leaves alone.
+      // The message the removed `process.exit` path used to print, asserted WHOLE.
       //
-      // NOT asserting the leading word, and the reason is a real finding rather than a test
-      // quirk: `sanitizeError` redacts every `process.env` value longer than four characters as a
-      // substring, and under npm `npm_package_name` is literally `"realm"`. So a message that
-      // begins "realm agent requires…" is recorded as "[REDACTED] agent requires…" whenever the
-      // drive runs under an npm script. Pre-existing behaviour, but #401 makes it DURABLE: the
-      // over-redaction now lands in the run record, not just in console output.
-      expect(entry.message).toContain('agent requires the openai package');
-      expect(entry.message).toContain('npm install openai');
+      // `npm_package_name` is stubbed above rather than relied upon: under a bare `npx vitest`
+      // no npm_* variable exists at all, and this assertion would then pass against the UNFIXED
+      // sanitizer — green for a reason that has nothing to do with the fix.
+      expect(entry.message).toBe(
+        'realm agent requires the openai package. Run: npm install openai',
+      );
     } finally {
       delete process.env['OPENAI_API_KEY'];
+      vi.unstubAllEnvs();
       vi.restoreAllMocks();
     }
   });

@@ -37,7 +37,7 @@ import { isToolCapable } from './providers/llm-provider.js';
 import type { McpClient, ToolDefinition, ToolExecutor } from './mcp/mcp-extensions.js';
 import { McpClient as McpClientImpl } from './mcp/mcp-client.js';
 import { scheduleGateExpiryTimer } from './gate/gate-expiry-timer.js';
-import { recordDriveFailure, buildEntry } from './drive-failure.js';
+import { recordDriveFailure, buildEntry, MESSAGE_CAP } from './drive-failure.js';
 
 export type AgentRunResult = 'completed' | 'failed';
 
@@ -1237,10 +1237,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 step: stepName,
                 provider: providerForEvidence ?? 'unknown',
                 error_class: 'validation_rejected',
-                // The literal mirrors drive-failure.ts's MESSAGE_CAP; exporting the constant is
-                // deferred, so the two are kept in step by this cross-reference rather than by
-                // the type system.
-                message: sanitizeError(result.errors.join(', ')).slice(0, 500),
+                message: sanitizeError(result.errors.join(', ')).slice(0, MESSAGE_CAP),
                 elapsed_ms: Date.now() - attemptStartedAt,
               });
             }

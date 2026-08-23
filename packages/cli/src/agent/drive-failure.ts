@@ -21,8 +21,11 @@ import { sanitizeError, extractHttpStatus } from './providers/agent-utils.js';
 
 /** At most this many entries are retained, most-recent-last. */
 const RING_CAP = 5;
-/** Messages are capped so one enormous provider error cannot dominate a run record. */
-const MESSAGE_CAP = 500;
+/**
+ * Messages are capped so one enormous provider error cannot dominate a run record. Exported so
+ * run-agent's own validation mint uses THIS number rather than a second literal that could drift.
+ */
+export const MESSAGE_CAP = 500;
 /** How deep the cause chain is walked looking for a payload. */
 const CAUSE_DEPTH = 8;
 /** How many times the fence re-reads and re-applies before giving up loudly. */
@@ -85,8 +88,41 @@ export function classifyDriveError(err: unknown): DriveCallPayload & {
   return { error_class: 'other' };
 }
 
-/** Builds the record for one failed attempt. */
+/**
+ * Builds the record for one failed attempt.
+ *
+ * TOTAL BY CONSTRUCTION, and this is not defensive habit — it closes a real hole. `buildEntry`
+ * runs OUTSIDE the fence's try at every chokepoint, and every step of it touches the thrown value:
+ * `classifyDriveError` reads `err.name` (a throwing getter throws here), `findDriveCall` does
+ * `'driveCall' in e` (a proxy with a `has` trap throws), and `sanitizeError` calls `String(err)`
+ * (a poisoned `toString` throws). A hostile thrown object would therefore make the MINT throw
+ * from inside a catch — replacing the operator's actual error with a secondary one, and at
+ * chokepoints (1)/(2) escalating it to (3), which would then re-mint against the WRONG error.
+ *
+ * So: the mint must never out-throw the failure it records. When the value cannot be rendered,
+ * the degraded entry below carries all six required fields and says plainly that it could not.
+ */
 export function buildEntry(
+  err: unknown,
+  step: string,
+  provider: string,
+  attemptStartedAt: number,
+): DriveFailureRecord {
+  try {
+    return buildEntryUnsafe(err, step, provider, attemptStartedAt);
+  } catch {
+    return {
+      at: new Date().toISOString(),
+      step,
+      provider,
+      error_class: 'other',
+      message: 'unrenderable thrown value',
+      elapsed_ms: Date.now() - attemptStartedAt,
+    };
+  }
+}
+
+function buildEntryUnsafe(
   err: unknown,
   step: string,
   provider: string,

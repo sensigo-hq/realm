@@ -50,11 +50,31 @@ export function setAdditionalRedactionValues(values: readonly string[]): void {
 }
 
 /**
+ * npm's manifest metadata — public values copied out of package.json, not secrets. The negative
+ * lookahead keeps `npm_package_config_*` OUT of this exclusion (see sanitizeError's doc).
+ */
+const NPM_MANIFEST_METADATA = /^npm_(package_(?!config_)|lifecycle_)/;
+
+/**
  * Converts an error value to a string and strips sensitive patterns: Bearer tokens,
  * query-string tokens, process.env values longer than 4 characters, and the additional
  * (manifest-secret) values. All literal values are redacted in ONE combined pass,
  * deduped and applied LONGEST-FIRST — a short value contained in a longer one can no
  * longer leave fragments of the longer value behind.
+ *
+ * EXCLUDED from the env sweep (issue #407): npm's own manifest metadata —
+ * `npm_package_*` (except `npm_package_config_*`) and `npm_lifecycle_*`. These are values npm
+ * copies OUT OF package.json, so treating them as secrets meant realm redacted its own name and
+ * version from its own error messages: under npm, `npm_package_name` is `"realm"`, and a message
+ * reading "realm agent requires…" shipped as "[REDACTED] agent requires…". Harmless while it was
+ * console-only; issue #401 persists these messages in the run record, which made the mangling
+ * durable evidence.
+ *
+ * `npm_package_config_*` deliberately STAYS redacted, and the lookahead that keeps it in is
+ * load-bearing: a package.json `config` block holds values the AUTHOR wrote, and npm exports them
+ * verbatim — a probe on this repo produced `npm_package_config_apitoken=SUPERSECRETVALUE123`.
+ * `npm_config_*` stays for the same reason. Widening this exclusion to all `npm_*` would leak
+ * exactly the values most likely to be secrets.
  */
 export function sanitizeError(err: unknown): string {
   let text: string;
@@ -67,9 +87,10 @@ export function sanitizeError(err: unknown): string {
   }
   text = text.replace(/Bearer [A-Za-z0-9._-]+/g, 'Bearer [REDACTED]');
   text = text.replace(/token=[A-Za-z0-9._-]+/g, 'token=[REDACTED]');
-  const envValues = Object.values(process.env).filter(
-    (val): val is string => val !== undefined && val.length > 4,
-  );
+  const envValues = Object.entries(process.env)
+    .filter(([key]) => !NPM_MANIFEST_METADATA.test(key))
+    .map(([, val]) => val)
+    .filter((val): val is string => val !== undefined && val.length > 4);
   const combined = [...new Set([...envValues, ...additionalRedactionValues])].sort(
     (a, b) => b.length - a.length,
   );
