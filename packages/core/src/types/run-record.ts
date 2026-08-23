@@ -693,6 +693,71 @@ export interface SealedBy {
   };
 }
 
+/**
+ * ONE failed drive attempt (issue #401). A "drive attempt" is realm trying to advance a step —
+ * not only a provider call: an auto step whose validation rejects the submission wedges the run
+ * identically and is recorded here too.
+ *
+ * Before this record existed, every one of these failures wrote NOTHING to the store. The console
+ * said what happened, the process exited, and the run read healthy on every operator surface until
+ * `never_claimed_idle` noticed it 24 hours later.
+ */
+export interface DriveFailureRecord {
+  /** ISO-8601 timestamp of the failure. */
+  at: string;
+  /**
+   * The step being driven. `''` is EXPECTED for a throw that happens before a step is selected
+   * (an MCP-init failure, for instance) — surfaces must render that case without a stray
+   * separator rather than treating it as a missing value.
+   */
+  step: string;
+  /**
+   * THE PROVIDER DRIVING THE RUN — context, not cause. On an auto-step entry it names the drive's
+   * provider, which had nothing to do with the failure; it is here so an operator reading several
+   * entries knows what was driving, not to attribute blame.
+   */
+  provider: string;
+  error_class:
+    | 'connection_timeout'
+    | 'connection_error'
+    | 'api_status'
+    | 'sdk_missing'
+    | 'validation_rejected'
+    | 'other';
+  /** Sanitized (secrets redacted) and capped at 500 characters. */
+  message: string;
+  /** Populated when the throwing error carries a driveCall payload. */
+  attempts_sdk?: number;
+  /** Wall time for this attempt: the payload's span when one is present, else time since the attempt began. */
+  elapsed_ms: number;
+  /** Populated when the throwing error carries a driveCall payload. */
+  declared_per_attempt_ms?: number;
+  /** Populated when the throwing error carries a driveCall payload. */
+  derived_ceiling_ms?: number;
+  /** The HTTP status last seen for this attempt, when the error carried one. */
+  last_observed_status?: number;
+  /**
+   * A `Retry-After` value OBSERVED on the wire — never honored. Recording what the service asked
+   * for is a diagnostic; acting on it would be a scheduling decision this layer does not make.
+   * Populated when the throwing error carries a driveCall payload.
+   */
+  retry_after_observed_ms?: number;
+}
+
+/**
+ * The drive-failure field on a run (issue #401): a small ring of the most recent failures, plus
+ * two counters that do NOT reset when the ring rolls.
+ *
+ * `entries` holds at most 5, MOST-RECENT-LAST. `total` and `first_failed_at` live OUTSIDE the ring
+ * deliberately — a run that failed forty times must not read as though it failed five, and the
+ * moment trouble started is the one fact a ring cannot preserve.
+ */
+export interface DriveFailuresField {
+  first_failed_at: string;
+  total: number;
+  entries: DriveFailureRecord[];
+}
+
 export interface RunRecord {
   id: string;
   workflow_id: string;
@@ -780,6 +845,12 @@ export interface RunRecord {
    * Set by 'realm listen' after a successful spawn.
    */
   agent_started_at?: string;
+  /**
+   * Failed drive attempts for this run (issue #401). Additive-optional and never stripped —
+   * `applyResume` preserves it through its `...rest` spread, which is a CHOSEN behaviour: the
+   * history of what went wrong survives a resume.
+   */
+  drive_failures?: DriveFailuresField;
   created_at: string;
   updated_at: string;
   terminal_state: boolean;

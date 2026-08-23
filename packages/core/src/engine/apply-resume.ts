@@ -116,6 +116,9 @@ export function applyResume(
     abandoned_at: _aa,
     sealed_by: _sb,
     pending_gate: strippedGate,
+    // issue #401: `drive_failures` rides `...rest` and is deliberately PRESERVED — the history of
+    // what went wrong survives a resume, so an operator who resumes a wedged run can still see why
+    // it wedged. (Chosen, not incidental: R-12.)
     ...rest
   } = snapshot;
   if (strippedGate !== undefined) {

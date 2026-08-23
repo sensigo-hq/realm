@@ -8,6 +8,23 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **Every failed drive attempt is now recorded on the run** (issue #401). A failure while
+  `realm agent` drives a step — a connection error, a timeout, an MCP discovery failure, a missing
+  SDK, an engine throw mid-loop, a schema rejection that wedges the step — used to write NOTHING
+  to the store. The console said what happened, the process exited, and the run read healthy on
+  every operator surface until the 24-hour idle watchdog noticed.
+  Runs now carry `drive_failures`: the five most recent failures plus a total and a
+  first-failed-at that do NOT reset when the ring rolls. A new `drive_failing` run-health finding
+  reports the latest one. `realm run inspect` shows the class, message, elapsed and HTTP status
+  where there was one; `realm run list --stuck` flags the step and class; `get_run_state` carries
+  the entries verbatim.
+  The finding stays quiet once the run moves on: if a sibling step settled since, or a gate
+  opened, or the failing step itself has since settled, the failure is history rather than news.
+  It is deliberately not exclusive with `never_claimed_idle` — past the threshold a
+  failed-then-silent run trips both, because both are true.
+  Recording a failure also bumps `updated_at`, so a run whose drive is dying stops looking
+  untouched at the moment it stops being driven.
+
 - **Loader diagnostics now tell you which line** (issue #392). An unknown-key warning names the
   line the key sits on — `unknown key 'dependson' (line 14) — ignored (did you mean 'depends_on'?)`
   — and every step-scoped loader error ends with the line of its own step. For agents the
@@ -45,6 +62,13 @@ All notable changes to this project are documented here.
   version-keyed disclosure, so any measurement spanning this release has to segment on it.
 
 ### Changed
+
+- **A transient LLM failure that used to be rescued by a silent second attempt now surfaces as a
+  recorded drive failure** (issue #401). The retry that swallowed the first error is retired — it
+  is precisely what made a failing drive invisible, and it rescued far less than it hid.
+  Re-attaching with `realm agent --run-id <id>` is the retry, and now the record says why it was
+  needed. Providers that used to call `process.exit` on a missing SDK now throw instead, so that
+  failure is recorded too rather than killing the process before anything could write it down.
 
 - **BREAKING — stores report their own bytes, and purge prints what they report** (issue #189).
   `PerRunArtifactStore.deleteAllForRun`, `TraceBufferStore.deleteAllForRun` and

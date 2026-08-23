@@ -309,6 +309,55 @@ export async function inspectRun(
   if (run.terminal_reason !== undefined) {
     lines.push(`Cause: ${run.terminal_reason}`);
   }
+  // issue #401: failed drive attempts. Before this, a run whose drive kept dying showed nothing
+  // here at all — the console said so once, at the time, to whoever happened to be watching.
+  const driveFailures = run.drive_failures;
+  const lastFailure = driveFailures?.entries[driveFailures.entries.length - 1];
+  if (driveFailures !== undefined && lastFailure !== undefined) {
+    lines.push('');
+    lines.push('Drive failures:');
+    // Each discriminator renders only when present: an operator debugging a 429 storm needs the
+    // status and the Retry-After; padding every line with absent fields buries the ones that matter.
+    const status =
+      lastFailure.last_observed_status !== undefined
+        ? ` (status ${String(lastFailure.last_observed_status)})`
+        : '';
+    const retryAfter =
+      lastFailure.retry_after_observed_ms !== undefined
+        ? ` (Retry-After ${String(lastFailure.retry_after_observed_ms)}ms observed)`
+        : '';
+    // Each clock renders INDEPENDENTLY. Pairing them behind one guard meant a ceiling-only entry
+    // printed `declared 0ms` — a fabricated number an operator would read as "the timeout was set
+    // to zero", which is a different bug report than the one they actually have.
+    const declared =
+      lastFailure.declared_per_attempt_ms !== undefined
+        ? ` (declared ${String(lastFailure.declared_per_attempt_ms)}ms)`
+        : '';
+    const ceiling =
+      lastFailure.derived_ceiling_ms !== undefined
+        ? ` (ceiling ${String(lastFailure.derived_ceiling_ms)}ms)`
+        : '';
+    const attempts =
+      lastFailure.attempts_sdk !== undefined
+        ? ` (attempt ${String(lastFailure.attempts_sdk)})`
+        : '';
+    lines.push(
+      `  ${lastFailure.at}  ${lastFailure.step}  ${lastFailure.provider}  ` +
+        `${lastFailure.error_class} after ${String(lastFailure.elapsed_ms)}ms: ` +
+        // Collapsed at RENDER only. `sanitizeError` preserves newlines and provider errors carry
+        // them routinely; rendered raw, one entry sprawls over four lines and the block stops
+        // being scannable. The RECORD keeps the raw sanitized message — it is evidence, and it
+        // must not go lossy because one surface wants a single line.
+        `${lastFailure.message.replace(/\s+/g, ' ')}` +
+        `${status}${retryAfter}${declared}${ceiling}${attempts}`,
+    );
+    // Only when the ring has ROLLED — otherwise this line would restate a count the entries
+    // themselves already show.
+    if (driveFailures.total > driveFailures.entries.length) {
+      lines.push(`  ${String(driveFailures.total)} total since ${driveFailures.first_failed_at}`);
+    }
+    lines.push('');
+  }
   lines.push(`Completed: ${run.completed_steps.join(', ') || '(none)'}`);
   lines.push(`In Progress: ${run.in_progress_steps.join(', ') || '(none)'}`);
   lines.push(`Failed: ${run.failed_steps.join(', ') || '(none)'}`);

@@ -95,6 +95,56 @@ describe('manifest-secret redaction (setAdditionalRedactionValues)', () => {
   });
 });
 
+describe('sanitizeError — npm manifest metadata is not a secret (issue #407)', () => {
+  afterEach(() => {
+    setAdditionalRedactionValues([]);
+    vi.unstubAllEnvs();
+  });
+
+  // The redaction set is built from EVERY `process.env` value over four characters, regardless of
+  // key. Under npm, `npm_package_name` is the product's own name — so realm redacted the word
+  // "realm" out of its own error messages. Harmless-looking until issue #401 started PERSISTING
+  // those messages in the run record, at which point the mangling became durable evidence.
+
+  it('the product name survives — npm_package_name is public manifest metadata', () => {
+    vi.stubEnv('npm_package_name', 'realm');
+    expect(sanitizeError(new Error('realm agent requires the openai package'))).toBe(
+      'realm agent requires the openai package',
+    );
+  });
+
+  it('a version string survives too', () => {
+    vi.stubEnv('npm_package_version', '0.39.0');
+    expect(sanitizeError(new Error('upgrade to 0.39.0 first'))).toContain('0.39.0');
+  });
+
+  it('CONTROL — an ordinary env value over four characters still redacts', () => {
+    vi.stubEnv('AGENT_UTILS_TEST_SECRET', 'env-secret-value-987');
+    const out = sanitizeError(new Error('leaked env-secret-value-987 here'));
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('env-secret-value-987');
+  });
+
+  it('CONTROL — a manifest secret still redacts', () => {
+    setAdditionalRedactionValues(Object.freeze(['manifest-secret-value-123']));
+    const out = sanitizeError(new Error('token is manifest-secret-value-123'));
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('manifest-secret-value-123');
+  });
+
+  it('CONTROL — npm_package_config_* STAYS redacted: it is user-authored, not metadata', () => {
+    // The boundary the exclusion must not cross. A package.json `config` block holds values the
+    // author put there, and npm exports them verbatim into the environment — a probe on this
+    // repo's own npm produced `npm_package_config_apitoken=SUPERSECRETVALUE123`. The lookahead
+    // that keeps `config_` inside the redaction set is load-bearing; widening the exclusion to
+    // all `npm_package_*` would leak exactly the values most likely to be secrets.
+    vi.stubEnv('npm_package_config_apitoken', 'cfg-secret-value-1');
+    const out = sanitizeError(new Error('sent cfg-secret-value-1 upstream'));
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('cfg-secret-value-1');
+  });
+});
+
 describe('extractJsonObject (mandate test 3 — the P1 robust extractor)', () => {
   it('plain JSON object (no fences/preamble) — same as the naive-parse fast path', () => {
     expect(extractJsonObject('{"result":"ok"}')).toEqual({ result: 'ok' });

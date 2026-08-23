@@ -670,6 +670,12 @@ Dry-run by default — even naming a single `<run-id>` only reports what would h
 `cleanup`: `Nd` (days), `Nh` (hours), `Nm` (minutes). `--workflow <id>` restricts a batch to one
 workflow (only valid alongside `--older-than`).
 
+The age a batch measures is **last activity**, not last progress — and recording a drive failure
+counts as activity ([issue #401](https://github.com/sensigo-hq/realm/issues/401)). A run failing
+continuously therefore never ages into a batch sweep — and, being non-terminal, it is not
+purge-eligible at all. Stop the flapper, make the run terminal (abandon it, or `realm run
+cleanup`), then purge.
+
 **Safety posture:**
 
 - **Terminal-only** — never touches a non-terminal or `gate_waiting` run.

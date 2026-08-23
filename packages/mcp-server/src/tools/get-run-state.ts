@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  type DriveFailuresField,
   SEAL_ARMS,
   JsonFileStore,
   JsonWorkflowStore,
@@ -127,6 +128,12 @@ export interface RunStateSummary {
    * prevent, so the key is absent there. The record still carries it; `export` still ships it.
    */
   sealed_by_step?: string;
+
+  /**
+   * Failed drive attempts for this run (issue #401), carried verbatim. Absent — never null — when
+   * the run has had none.
+   */
+  drive_failures?: DriveFailuresField;
   completed_steps: string[];
   in_progress_steps: string[];
   failed_steps: string[];
@@ -391,6 +398,9 @@ export async function handleGetRunState(
             : {}),
         }
       : {}),
+    // issue #401: failed drive attempts, verbatim and additively — absent, never null, so an
+    // agent can tell "no failures" from "this surface does not report them".
+    ...(run.drive_failures !== undefined ? { drive_failures: run.drive_failures } : {}),
     ...(run.aborted_at !== undefined ? { abort_context: run.aborted_at } : {}),
     next_actions: nextActions,
     next_actions_status: nextActionsStatus,

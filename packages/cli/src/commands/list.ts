@@ -80,13 +80,39 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
       const req = f.evidence?.['requirement'] as { kind: string; name: string } | undefined;
       return req !== undefined ? `${f.step}: needs ${req.kind} '${req.name}'` : undefined;
     }
+    // These kinds carry NO --stuck label TODAY. Enumerated rather than left to fall through, so
+    // the exhaustiveness guard below can tell "listed here on purpose" from "forgotten" — but the
+    // enumeration records the status quo, not a settled per-kind rationale. Whether any of them
+    // should gain a label is open (issue #406); listing one here is not an argument that it was
+    // considered and rejected.
     case 'never_claimed_idle':
+    case 'terminal_with_stale_gate':
+    case 'gate_corruption':
+    case 'resolved_gate_with_eligible_guard':
+    case 'completed_with_failed_steps':
+    case 'gate_expired_awaiting_drive':
+    case 'structured_output_downgraded':
       return undefined;
     // issue #279 (increment 1, PR-B): a terminal run with an undrained finalizer — points at the
     // recovery verb directly in the label (appended-segment style; see the dedicated kind-filter
     // group below for the group header this label's segment rides in).
     case 'terminal_pending_finalizer':
       return `${f.step}=${f.reason} (realm run drain)`;
+    // issue #401: the drive died and nothing has happened since. The step prefix appears only
+    // when there IS a step — a pre-step-selection failure rendering as a bare leading `=` is a
+    // rendering bug, not a convention.
+    case 'drive_failing': {
+      const errorClass = f.evidence?.['error_class'];
+      const label = `drive_failing(${typeof errorClass === 'string' ? errorClass : 'unknown'})`;
+      return f.step !== undefined && f.step !== '' ? `${f.step}=${label}` : label;
+    }
+    default: {
+      // Ride-along (boy-scout, not the reported problem): an exhaustiveness guard. A future
+      // finding kind now fails to COMPILE here instead of silently rendering nothing — which is
+      // how a finding reaches an operator's screen as absence rather than as news.
+      const _exhaustive: never = f.kind;
+      return _exhaustive;
+    }
   }
 }
 
@@ -245,6 +271,15 @@ export async function listRuns(
       // pattern as claimLabels/capabilityLabels above, NOT routed through #219's
       // renderCauseSegment (that one is FailedAttemptStore-sourced — a different mechanism; this
       // is classifyRunHealth-sourced, like the two groups above it).
+      // issue #401: a FOURTH kind-filter group, same appended-segment pattern — classifyRunHealth-
+      // sourced like the three above it, deliberately NOT #219's renderCauseSegment channel.
+      const driveFailingLabels = findings
+        .filter((f) => f.kind === 'drive_failing')
+        .map(renderFindingLabel)
+        .filter((l): l is string => l !== undefined);
+      if (driveFailingLabels.length > 0) {
+        line += `  ${driveFailingLabels.join(', ')}`;
+      }
       const pendingFinalizerLabels = findings
         .filter((f) => f.kind === 'terminal_pending_finalizer')
         .map(renderFindingLabel)

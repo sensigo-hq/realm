@@ -215,10 +215,16 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const moduleId: string = '@anthropic-ai/sdk';
       mod = await import(moduleId);
     } catch {
-      console.error(
+      // issue #401: THROW, never exit. A `process.exit` here killed the process before any
+      // catch could record why the drive failed — the run then read healthy for 24 hours.
+      // The message is preserved exactly; the payload lets the chokepoint classify it as
+      // `sdk_missing` rather than a shapeless `other`.
+      const err = new Error(
         'realm agent requires the @anthropic-ai/sdk package. Run: npm install @anthropic-ai/sdk',
       );
-      process.exit(1);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (err as any).driveCall = { error_class: 'sdk_missing', attempts_sdk: 0, elapsed_ms: 0 };
+      throw err;
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return new (mod.default as new (opts: Record<string, unknown>) => any)({
@@ -393,10 +399,16 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const moduleId: string = '@anthropic-ai/sdk';
       mod = await import(moduleId);
     } catch {
-      console.error(
+      // issue #401: THROW, never exit. A `process.exit` here killed the process before any
+      // catch could record why the drive failed — the run then read healthy for 24 hours.
+      // The message is preserved exactly; the payload lets the chokepoint classify it as
+      // `sdk_missing` rather than a shapeless `other`.
+      const err = new Error(
         'realm agent requires the @anthropic-ai/sdk package. Run: npm install @anthropic-ai/sdk',
       );
-      process.exit(1);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (err as any).driveCall = { error_class: 'sdk_missing', attempts_sdk: 0, elapsed_ms: 0 };
+      throw err;
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
