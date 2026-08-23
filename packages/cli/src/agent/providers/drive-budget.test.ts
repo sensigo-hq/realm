@@ -290,11 +290,18 @@ describe('the ceiling outranks a server-directed sleep (issue #401 leg B)', () =
     // testing my own understanding of the SDK rather than the SDK — and the honoring agent is the
     // SDK's retry ladder, not the fetch layer, which is precisely the thing worth pinning.
     //
-    // 429 + `retry-after-ms: 250` and one retry allowed: the SDK sleeps, so nothing is on the
-    // wire when the 100ms ceiling fires. This is the class the bound exists for — waiting is not
-    // progress.
+    // 429 + a four-second `retry-after-ms` and one retry allowed: the SDK sleeps, so nothing is
+    // on the wire when the 700ms ceiling fires. This is the class the bound exists for — waiting
+    // is not progress.
+    //
+    // THE MARGINS ARE DELIBERATE. The cell has one race in it — the 429 has to be OBSERVED before
+    // the ceiling fires, or there is no status to assert. At 100ms against a 250ms sleep it went
+    // green in isolation and red under a full parallel suite (`expected undefined to be 429`),
+    // which is the cell's own timing budget being too tight, not the product. 700ms is far more
+    // than a loopback round trip needs even under load, and it is still nowhere near the four
+    // seconds the server asked for — so what the cell proves is unchanged.
     server = createServer((_req, res) => {
-      res.writeHead(429, { 'retry-after-ms': '250', 'content-type': 'application/json' });
+      res.writeHead(429, { 'retry-after-ms': '4000', 'content-type': 'application/json' });
       res.end('{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}');
     });
     await new Promise<void>((r) => server!.listen(0, '127.0.0.1', r));
@@ -328,16 +335,16 @@ describe('the ceiling outranks a server-directed sleep (issue #401 leg B)', () =
     const err = await driveCreate(
       rawCreate,
       { model: 'claude-x', max_tokens: 16, messages: [{ role: 'user', content: 'hi' }] },
-      { ceilingMs: 100, declaredPerAttemptMs: 40 },
+      { ceilingMs: 700, declaredPerAttemptMs: 40 },
       counters,
     ).catch((e: unknown) => e);
     const elapsed = Date.now() - started;
 
     expect(payloadOf(err)?.error_class).toBe('aborted_by_budget');
     expect(payloadOf(err)?.last_observed_status).toBe(429);
-    expect(payloadOf(err)?.retry_after_observed_ms).toBe(250);
-    // Raced, not awaited: the whole thing returns near the ceiling, not after the 250ms sleep.
-    expect(elapsed).toBeLessThan(220);
+    expect(payloadOf(err)?.retry_after_observed_ms).toBe(4000);
+    // Raced, not awaited: it returns near the ceiling, nowhere near the four-second sleep.
+    expect(elapsed).toBeLessThan(2000);
 
     await new Promise((r) => setTimeout(r, 400)); // let the loser settle, in-cell
     process.off('unhandledRejection', trap);

@@ -140,7 +140,11 @@ export const agentCommand = new Command('agent')
       "its own `llm_timeout_seconds` WINS; this fills in for every step that doesn't. Default " +
       '600. When the ceiling fires the drive stops and records why, naming this lever.',
     parseLlmTimeout,
-    600,
+    // NO default argument, deliberately (issue #401 DQ5). The help text above stays true —
+    // run-agent's own `?? 600` supplies the fallback — but a Commander default would hand the
+    // drive 600 whether or not an operator typed it, and the drive would then record
+    // `declared_per_attempt_ms: 600000` for a value nobody chose. Unset means unset, which is
+    // what lets the recorded provenance tell a declaration from a fallback.
   )
   .action(
     async (opts: {

@@ -10,6 +10,7 @@ import { ExtensionRegistry, classifyRunHealth } from '@sensigo/realm';
 import type { WorkflowDefinition, RunRecord } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
 import { inspectRun } from '../commands/inspect.js';
+import { agentCommand } from '../commands/agent.js';
 import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { AgentDeps } from './run-agent.js';
 import { driveCreate, type LlmClock, type WireCounters } from './providers/agent-utils.js';
@@ -701,6 +702,31 @@ class ThrowingProvider extends LlmProvider {
   }
 }
 
+/**
+ * Records the clock, then fails THROUGH driveCreate, so what lands in the record is a real budget
+ * payload. The ceiling is shrunk here (and only the ceiling) so the cell finishes in
+ * milliseconds — the smallest ceiling any authored value can derive is 64.5 seconds, dominated by
+ * the download allowance. The declared value, which is what these cells assert, is untouched.
+ */
+class BudgetingClockSpy extends LlmProvider {
+  readonly clocks: Array<LlmClock | undefined> = [];
+  async callStep(
+    _p: string,
+    _s?: Record<string, unknown>,
+    _a?: string,
+    opts?: { llmClock?: LlmClock },
+  ): Promise<Record<string, unknown>> {
+    this.clocks.push(opts?.llmClock);
+    if (opts?.llmClock === undefined) throw new Error('clock did not arrive at callStep');
+    return driveCreate(
+      () => new Promise(() => undefined),
+      {},
+      { ...opts.llmClock, ceilingMs: 30 },
+      { attempts: 0 },
+    );
+  }
+}
+
 /** Records the clock it was handed, then fails, so precedence is observable from the outside. */
 class ClockSpyProvider extends LlmProvider {
   readonly clocks: Array<LlmClock | undefined> = [];
@@ -1043,5 +1069,87 @@ describe('#401 — the clock reaches all three of run-agents call sites', () => 
     expect(entry.error_class).toBe('aborted_by_budget');
     expect(entry.declared_per_attempt_ms).toBe(7_000);
     vi.restoreAllMocks();
+  });
+});
+
+// =================================================================================================
+// issue #401 DQ5 — the CLI's own default must not fabricate a declaration
+//
+// `declared_per_attempt_ms` means "somebody chose this". A Commander default on the flag makes
+// that unknowable: the drive receives 600 whether an operator typed it or not, so every CLI run
+// records a declaration nobody made. The fix is the absence of a default argument, and the fallback
+// that keeps 600 working lives in run-agent — which is why the precedence cells above are
+// untouched by it.
+// =================================================================================================
+describe('#401 DQ5 — a flag nobody passed is not a declaration', () => {
+  /** Exactly what Commander hands the action for `--llm-timeout` when the flag is absent. */
+  const unflaggedValue = (): number | undefined => {
+    // The Option's own static defaultValue, not `agentCommand.opts()`: the command is a shared
+    // singleton whose last-parsed state other cells in this suite have already mutated (the
+    // --schema-retries cell records the same hazard).
+    const opt = agentCommand.options.find((o) => o.long === '--llm-timeout');
+    expect(opt).toBeDefined();
+    return opt?.defaultValue as number | undefined;
+  };
+
+  const drive = async (
+    llmTimeoutSeconds: number | undefined,
+  ): Promise<{ clock: LlmClock | undefined; entry: Record<string, unknown> }> => {
+    const store = new InMemoryStore();
+    // Fails through the REAL driveCreate, not a bare throw: the declared value reaches the RECORD
+    // only inside a payload driveCreate builds, so a provider that just throws would make the
+    // entry assertions below true for a reason that has nothing to do with provenance.
+    const provider = new BudgetingClockSpy();
+    const deps = makeDeps({
+      store,
+      provider,
+      ...(llmTimeoutSeconds !== undefined ? { llmTimeoutSeconds } : {}),
+    } as Partial<AgentDeps>);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runAgent(deps, { definition: budgetWf(), params: {} });
+    vi.restoreAllMocks();
+    return {
+      clock: provider.clocks[0],
+      entry: (await onlyRun(store)).drive_failures!.entries[0]! as unknown as Record<
+        string,
+        unknown
+      >,
+    };
+  };
+
+  it('NO FLAG — the source is `default` and no declaration is recorded', async () => {
+    // The DQ5 construction, executed: the value Commander gives the action when the operator
+    // typed nothing is threaded through exactly as `realm agent` threads it. With a default
+    // argument on the option this arrives as 600, the source reads 'flag', and the run claims a
+    // per-attempt value its operator never chose.
+    const { clock, entry } = await drive(unflaggedValue());
+    expect(clock?.perAttemptSource).toBe('default');
+    expect(clock?.declaredPerAttemptMs).toBeUndefined();
+    // A REAL budget payload reached the record — so the absence below is the provenance rule
+    // working, not the absence of a payload.
+    expect(entry['error_class']).toBe('aborted_by_budget');
+    expect(entry['derived_ceiling_ms']).toBe(30);
+    expect(entry['declared_per_attempt_ms']).toBeUndefined();
+    // The BOUND is unaffected — 600 seconds per attempt, exactly as documented.
+    expect(clock?.ceilingMs).toBe(1_861_500);
+  });
+
+  it('FLAG PASSED — the source is `flag` and the declaration IS recorded', async () => {
+    const { clock, entry } = await drive(45);
+    expect(clock?.perAttemptSource).toBe('flag');
+    expect(clock?.declaredPerAttemptMs).toBe(45_000);
+    expect(entry['error_class']).toBe('aborted_by_budget');
+    expect(entry['declared_per_attempt_ms']).toBe(45_000);
+  });
+
+  it('the option carries its parser but NO default argument', () => {
+    // The one production line this leg changes. Its help text still says "Default 600." and that
+    // stays true: run-agent's own fallback supplies it, which is what keeps the precedence cell
+    // above ("neither authored nor flagged ⇒ ten minutes per attempt") green.
+    const opt = agentCommand.options.find((o) => o.long === '--llm-timeout')!;
+    expect(opt.defaultValue).toBeUndefined();
+    expect(opt.parseArg).toBeDefined();
+    expect(opt.description).toContain('Default 600.');
   });
 });
