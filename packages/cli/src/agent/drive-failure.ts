@@ -98,8 +98,10 @@ export function buildEntry(
     step,
     provider,
     message: sanitizeError(err).slice(0, MESSAGE_CAP),
-    // `??` not `||`: a payload reporting a genuine 0ms span must not fall through to the
-    // catch-side elapsed, which would silently replace a real measurement with a different one.
+    // What actually protects a payload's genuine 0ms span is the `...classified` SPREAD BELOW,
+    // which overwrites this field. For a payload-bearing error this line is dead — so an `||`
+    // here would be an EQUIVALENT mutant, not a caught one. The `??` still matters for the
+    // no-payload case, and the SPREAD ORDER is what a test can pin.
     elapsed_ms: classified.elapsed_ms ?? Date.now() - attemptStartedAt,
     ...classified,
   };
@@ -118,11 +120,14 @@ function workflowErrorCode(err: unknown): string | undefined {
  * THE FENCE. Appends one entry to the run's drive-failure ring, and never lets its own failure
  * become the operator's problem.
  *
- * Everything here is subordinate to one rule: the original error line has already been printed,
- * and this must not replace it, hide it, or crash on top of it. So a terminal run is a silent
- * skip (the seal is already the visibility), a vanished run is a silent skip (disposal is the
- * visibility), contention is retried, and anything else prints ONE line naming exactly what was
- * lost — after the original, never instead of it.
+ * Everything here is subordinate to one rule: this must never replace, hide, or crash on top of
+ * the operator's actual error. So a terminal run is a silent skip (the seal is already the
+ * visibility), a vanished run is a silent skip (disposal is the visibility), contention is
+ * retried, and anything else prints ONE line naming exactly what was lost.
+ *
+ * That line lands BESIDE the original, not always after it: chokepoints (1), (2) and (4) print
+ * their error first, so the lost line follows — but chokepoint (3) mints BEFORE its re-throw
+ * reaches the CLI's printer, so there the lost line comes first. Either way the operator has both.
  */
 export async function recordDriveFailure(
   store: Pick<RunStore, 'get' | 'update'>,

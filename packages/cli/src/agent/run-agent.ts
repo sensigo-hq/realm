@@ -1216,9 +1216,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // ═══ issue #401, CHOKEPOINT (4) — the disposition table, KEYED ON ERROR CODE ═══
             //
             // A validation rejection that reaches here has WEDGED the run: it settles nothing, so
-            // there is no seal to carry the news and no evidence to read. Every other error code
-            // either seals (and the seal IS the visibility) or is capability-owned by the block
-            // above, so recording those would duplicate a fact the run already tells.
+            // there is no seal to carry the news and no evidence to read. Every OTHER
+            // non-capability code SETTLES THE STEP — `failed_steps` plus the step's evidence are
+            // the visibility, so recording those would duplicate a fact the run already tells.
+            // (Not "either seals or is capability-owned": non-sealing envelopes exist, and a
+            // settled step on a still-live run is the common case.)
             //
             // Deliberately NOT keyed on `repairsUsed`: every bypass of the repair gate — a
             // tools-path rejection, a concurrent writer's version bump, `schemaRetries: 0`, an
@@ -1235,6 +1237,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 step: stepName,
                 provider: providerForEvidence ?? 'unknown',
                 error_class: 'validation_rejected',
+                // The literal mirrors drive-failure.ts's MESSAGE_CAP; exporting the constant is
+                // deferred, so the two are kept in step by this cross-reference rather than by
+                // the type system.
                 message: sanitizeError(result.errors.join(', ')).slice(0, 500),
                 elapsed_ms: Date.now() - attemptStartedAt,
               });

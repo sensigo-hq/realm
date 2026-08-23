@@ -15,8 +15,9 @@ All notable changes to this project are documented here.
   every operator surface until the 24-hour idle watchdog noticed.
   Runs now carry `drive_failures`: the five most recent failures plus a total and a
   first-failed-at that do NOT reset when the ring rolls. A new `drive_failing` run-health finding
-  reports the latest one on `realm run inspect`, `realm run list --stuck`, and `get_run_state` —
-  with the class, the message, the elapsed time, and the HTTP status where there was one.
+  reports the latest one. `realm run inspect` shows the class, message, elapsed and HTTP status
+  where there was one; `realm run list --stuck` flags the step and class; `get_run_state` carries
+  the entries verbatim.
   The finding stays quiet once the run moves on: if a sibling step settled since, or a gate
   opened, or the failing step itself has since settled, the failure is history rather than news.
   It is deliberately not exclusive with `never_claimed_idle` — past the threshold a

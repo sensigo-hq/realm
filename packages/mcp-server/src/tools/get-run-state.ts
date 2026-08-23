@@ -96,11 +96,6 @@ export interface RunStateSummary {
    *
    * Prefer this over parsing `terminal_reason`: the prose is for people.
    */
-  /**
-   * Failed drive attempts for this run (issue #401), carried verbatim. Absent — never null — when
-   * the run has had none.
-   */
-  drive_failures?: DriveFailuresField;
   sealed_by_arm?: string;
   /**
    * Issue #367: an operator's RULING on this run's arm, verbatim — who ruled, when, which arm it
@@ -133,6 +128,12 @@ export interface RunStateSummary {
    * prevent, so the key is absent there. The record still carries it; `export` still ships it.
    */
   sealed_by_step?: string;
+
+  /**
+   * Failed drive attempts for this run (issue #401), carried verbatim. Absent — never null — when
+   * the run has had none.
+   */
+  drive_failures?: DriveFailuresField;
   completed_steps: string[];
   in_progress_steps: string[];
   failed_steps: string[];

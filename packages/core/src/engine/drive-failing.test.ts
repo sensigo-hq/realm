@@ -207,6 +207,9 @@ describe('drive_failing — the discriminators reach the operator', () => {
     );
     expect(finding?.evidence).not.toHaveProperty('last_observed_status');
     expect(finding?.evidence).not.toHaveProperty('retry_after_observed_ms');
+    // All FOUR, not two: an always-emit-null mutant on the other pair survived the shipped cell.
+    expect(finding?.evidence).not.toHaveProperty('declared_per_attempt_ms');
+    expect(finding?.evidence).not.toHaveProperty('derived_ceiling_ms');
   });
 });
 
@@ -214,24 +217,112 @@ describe('drive_failing — complementarity with never_claimed_idle', () => {
   it('AT LEAST ONE fires at every point, and BOTH fire once the run is also idle', () => {
     // The two findings are not exclusive and must not be made so. Before 24h only drive_failing
     // can speak; after it, silence is ALSO a fact, and suppressing either would hide one.
-    const run = makeRun({ run_phase: 'running', in_progress_steps: [] });
+    // `updated_at` is the last entry's timestamp because that is the only record the fence can
+    // actually produce — writing the failure bumps updated_at at write time. A fixture whose
+    // updated_at is OLDER than its newest entry is unrealizable, and anchoring the idle timepoints
+    // to the entry is the same statement from the other side.
     const failedAt = new Date(failure().at).getTime();
+    const run = makeRun({
+      run_phase: 'running',
+      in_progress_steps: [],
+      updated_at: failure().at,
+    });
 
-    const atOneMinute = kinds(run, new Date(failedAt + 60_000));
-    expect(atOneMinute).toContain('drive_failing');
+    expect(kinds(run, new Date(failedAt + 60_000))).toContain('drive_failing');
 
-    const justUnderIdle = kinds(
-      run,
-      new Date(new Date(T0).getTime() + DEFAULT_IDLE_THRESHOLD_MS - 1000),
-    );
+    const justUnderIdle = kinds(run, new Date(failedAt + DEFAULT_IDLE_THRESHOLD_MS - 1000));
     expect(justUnderIdle.length).toBeGreaterThan(0);
     expect(justUnderIdle).toContain('drive_failing');
 
-    const pastIdle = kinds(
-      run,
-      new Date(new Date(T0).getTime() + DEFAULT_IDLE_THRESHOLD_MS + 1000),
-    );
+    const pastIdle = kinds(run, new Date(failedAt + DEFAULT_IDLE_THRESHOLD_MS + 1000));
     expect(pastIdle).toContain('drive_failing');
     expect(pastIdle).toContain('never_claimed_idle');
+  });
+});
+
+describe('drive_failing — the gate exemption and the tie boundary', () => {
+  it('THE GATE EXEMPTION — a gate_waiting run fires NEITHER, and that is the law working', () => {
+    // The complementarity law's flagged exemption, pinned as a fact rather than left implied: a
+    // run parked on a human gate is not a run whose drive is failing, and the gate_waiting phase
+    // is itself the visibility. The age gate is deliberately SATISFIED so `run_phase` is the ONLY
+    // thing suppressing the idle finding — otherwise this passes on age alone and proves nothing.
+    // The mutant class is a conditioned un-exemption on either side.
+    const failedAt = new Date(failure().at).getTime();
+    const run = makeRun({
+      run_phase: 'gate_waiting',
+      in_progress_steps: [],
+      updated_at: failure().at,
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 'approve',
+        opened_at: new Date(failedAt + 30_000).toISOString(),
+        choices: ['yes'],
+        preview: {},
+      } as NonNullable<RunRecord['pending_gate']>,
+    });
+
+    const at24hPlus = kinds(run, new Date(failedAt + DEFAULT_IDLE_THRESHOLD_MS + 1000));
+    expect(at24hPlus).not.toContain('drive_failing');
+    expect(at24hPlus).not.toContain('never_claimed_idle');
+  });
+
+  it('THE TIE — an entry exactly as old as the newest event is SUPPRESSED', () => {
+    // The comparison is `<=`, and that is load-bearing: a `<` mutant survives every other cell
+    // here. A failure simultaneous with a settle is not the LAST thing that happened.
+    const run = makeRun({ evidence: [snapshot('other', failure().at)] });
+    expect(kinds(run)).not.toContain('drive_failing');
+  });
+});
+
+describe('drive_failing — the "ago" phrasing, per branch', () => {
+  // Only the minutes branch was pinned; the other three could each drift silently.
+  const at = (offsetMs: number): Date => new Date(new Date(failure().at).getTime() + offsetMs);
+  const reasonAt = (now: Date): string | undefined =>
+    classifyRunHealth(makeRun(), { now }).find((f) => f.kind === 'drive_failing')?.reason;
+
+  it('seconds', () => {
+    expect(reasonAt(at(45_000))).toContain('failed 45s ago');
+  });
+
+  it('hours', () => {
+    expect(reasonAt(at(3 * 60 * 60 * 1000))).toContain('failed 3h ago');
+  });
+
+  it('days', () => {
+    expect(reasonAt(at(2 * 24 * 60 * 60 * 1000))).toContain('failed 2d ago');
+  });
+});
+
+describe('drive_failing — across a resume (issue #401, R-12)', () => {
+  it('applyResume PRESERVES drive_failures, and the finding fires until first progress', async () => {
+    // CHOSEN, not incidental: the history of what went wrong survives a resume, so an operator who
+    // resumes a wedged run can still see why it wedged. The consequence is stated rather than
+    // hidden — immediately after a resume the finding still fires, and goes quiet at the first
+    // step that settles.
+    const { applyResume } = await import('./apply-resume.js');
+    const definition = {
+      id: 'wf',
+      name: 'WF',
+      version: 1,
+      schema_version: 1,
+      steps: { classify: { description: 'Classify', execution: 'agent', depends_on: [] } },
+    } as unknown as Parameters<typeof applyResume>[2];
+    const failed = makeRun({
+      run_phase: 'failed',
+      terminal_state: true,
+      terminal_reason: "Step 'classify' failed: boom",
+      failed_steps: ['classify'],
+    });
+
+    const { run: resumed } = applyResume(failed, 'classify', definition);
+
+    expect(resumed.drive_failures).toEqual(failed.drive_failures);
+    expect(resumed.terminal_state).toBe(false);
+    // Fires until first progress.
+    expect(kinds(resumed)).toContain('drive_failing');
+
+    // First progress kills it — the run moved on.
+    const progressed = { ...resumed, completed_steps: ['classify'] };
+    expect(kinds(progressed)).not.toContain('drive_failing');
   });
 });

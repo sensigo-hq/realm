@@ -80,10 +80,11 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
       const req = f.evidence?.['requirement'] as { kind: string; name: string } | undefined;
       return req !== undefined ? `${f.step}: needs ${req.kind} '${req.name}'` : undefined;
     }
-    // These kinds deliberately carry NO --stuck label: either the line already says it (the idle
-    // case IS the reason the run is listed), or the finding is terminal-only and this surface
-    // lists live runs. Enumerated rather than left to fall through, so the exhaustiveness guard
-    // below can tell "decided against" from "forgotten".
+    // These kinds carry NO --stuck label TODAY. Enumerated rather than left to fall through, so
+    // the exhaustiveness guard below can tell "listed here on purpose" from "forgotten" — but the
+    // enumeration records the status quo, not a settled per-kind rationale. Whether any of them
+    // should gain a label is open (issue #406); listing one here is not an argument that it was
+    // considered and rejected.
     case 'never_claimed_idle':
     case 'terminal_with_stale_gate':
     case 'gate_corruption':

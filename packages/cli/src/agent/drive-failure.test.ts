@@ -104,12 +104,17 @@ describe('recordDriveFailure — the fence (issue #401)', () => {
     expect(errors).toEqual([]);
   });
 
-  it('exhausting the retries prints ONE loud line naming what was lost, and does not throw', async () => {
+  it('exhausting the retries prints ONE loud line, AFTER the original error, and does not throw', async () => {
     const h = makeStore(makeRun(), [
       'STATE_SNAPSHOT_MISMATCH',
       'STATE_SNAPSHOT_MISMATCH',
       'STATE_SNAPSHOT_MISMATCH',
     ]);
+    // The chokepoints print the operator's actual error BEFORE calling the fence. Simulated here
+    // so the ordering is asserted rather than assumed: the fence must land beside that line, never
+    // in place of it.
+    console.error("\u2717 Step 'classify' LLM call failed: rate limit");
+
     await expect(
       recordDriveFailure(
         h.store,
@@ -117,11 +122,14 @@ describe('recordDriveFailure — the fence (issue #401)', () => {
         entry({ error_class: 'api_status', message: 'rate limit' }),
       ),
     ).resolves.toBeUndefined();
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toContain('drive-failure record LOST for run r1');
-    expect(errors[0]).toContain('api_status');
-    expect(errors[0]).toContain("step 'classify'");
-    expect(errors[0]).toContain('rate limit');
+
+    expect(errors).toHaveLength(2);
+    expect(errors[0]).toContain("Step 'classify' LLM call failed");
+    const lost = errors[1]!;
+    expect(lost).toContain('drive-failure record LOST for run r1');
+    expect(lost).toContain('api_status');
+    expect(lost).toContain("step 'classify'");
+    expect(lost).toContain('rate limit');
   });
 
   it('a NON-retryable throw also degrades to the loud line — distinct from exhaustion', async () => {
@@ -226,9 +234,22 @@ describe('classifyDriveError — precedence (issue #401)', () => {
     expect(findDriveCall(outer)).toBeDefined();
     const built = buildEntry(outer, 's', 'openai', Date.now() - 5000);
     expect(built.error_class).toBe('sdk_missing');
-    // `??` not `||`: a genuine 0ms span must survive. An `||` regression falls through to the
-    // catch-side elapsed and reports ~5000 here.
+    // What protects a payload's genuine 0ms span is the `...classified` SPREAD placed AFTER
+    // `elapsed_ms:` — the spread overwrites it. The `??` on that line is dead for payload-bearing
+    // entries, so an `||` mutant there is EQUIVALENT and this cell would not catch it. What this
+    // pins is the spread ORDER: move the spread above `elapsed_ms:` and the 0 is lost.
     expect(built.elapsed_ms).toBe(0);
+  });
+
+  it('PRECEDENCE — a PAYLOAD beats a recognized name', () => {
+    // The shipped precedence cells cover name-vs-status only, so demoting the payload below the
+    // name survived the whole suite — and that is exactly the mutant that would gut PR-2's
+    // attribution, where the payload is the only thing that knows what really happened.
+    const err = Object.assign(new Error('x'), {
+      name: 'APIConnectionError',
+      driveCall: { error_class: 'sdk_missing' as const, attempts_sdk: 0, elapsed_ms: 0 },
+    });
+    expect(classifyDriveError(err).error_class).toBe('sdk_missing');
   });
 
   it('a bare Error classifies as other', () => {

@@ -326,10 +326,16 @@ export async function inspectRun(
       lastFailure.retry_after_observed_ms !== undefined
         ? ` (Retry-After ${String(lastFailure.retry_after_observed_ms)}ms observed)`
         : '';
-    const clocks =
-      lastFailure.declared_per_attempt_ms !== undefined ||
+    // Each clock renders INDEPENDENTLY. Pairing them behind one guard meant a ceiling-only entry
+    // printed `declared 0ms` — a fabricated number an operator would read as "the timeout was set
+    // to zero", which is a different bug report than the one they actually have.
+    const declared =
+      lastFailure.declared_per_attempt_ms !== undefined
+        ? ` (declared ${String(lastFailure.declared_per_attempt_ms)}ms)`
+        : '';
+    const ceiling =
       lastFailure.derived_ceiling_ms !== undefined
-        ? ` (declared ${String(lastFailure.declared_per_attempt_ms ?? 0)}ms / ceiling ${String(lastFailure.derived_ceiling_ms ?? 0)}ms)`
+        ? ` (ceiling ${String(lastFailure.derived_ceiling_ms)}ms)`
         : '';
     const attempts =
       lastFailure.attempts_sdk !== undefined
@@ -337,8 +343,13 @@ export async function inspectRun(
         : '';
     lines.push(
       `  ${lastFailure.at}  ${lastFailure.step}  ${lastFailure.provider}  ` +
-        `${lastFailure.error_class} after ${String(lastFailure.elapsed_ms)}ms: ${lastFailure.message}` +
-        `${status}${retryAfter}${clocks}${attempts}`,
+        `${lastFailure.error_class} after ${String(lastFailure.elapsed_ms)}ms: ` +
+        // Collapsed at RENDER only. `sanitizeError` preserves newlines and provider errors carry
+        // them routinely; rendered raw, one entry sprawls over four lines and the block stops
+        // being scannable. The RECORD keeps the raw sanitized message — it is evidence, and it
+        // must not go lossy because one surface wants a single line.
+        `${lastFailure.message.replace(/\s+/g, ' ')}` +
+        `${status}${retryAfter}${declared}${ceiling}${attempts}`,
     );
     // Only when the ring has ROLLED — otherwise this line would restate a count the entries
     // themselves already show.
