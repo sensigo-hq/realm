@@ -1,6 +1,7 @@
 // llm-provider.ts — LLM provider interface and factory function for realm agent.
 import type { StructuredOutputMeta } from '@sensigo/realm';
 import type { ToolDefinition, ToolExecutor, StepWithToolsResult } from '../mcp/mcp-extensions.js';
+import type { LlmClock } from './agent-utils.js';
 
 /**
  * Describes the optional feature set that an LLM provider supports.
@@ -62,6 +63,12 @@ export abstract class LlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
+    /**
+     * Issue #401 — the per-create clock for this step. Optional, and an implementation with
+     * fewer parameters stays assignable, so a `--provider-module` provider that ignores it keeps
+     * working: it gets the drive-failure RECORD without getting the bound.
+     */
+    opts?: { llmClock?: LlmClock },
   ): Promise<Record<string, unknown>>;
 
   /**
@@ -84,10 +91,15 @@ export abstract class LlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    opts?: { structuredOutputStrict?: boolean },
+    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
   ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
-    const output = await this.callStep(prompt, inputSchema, agentProfileInstructions);
+    // issue #401: the clock is PASSED THROUGH here. This base delegation is the route every
+    // provider that does NOT override this method takes for a step declaring `structured_output:
+    // strict` — both in-repo providers override it, so in practice this serves third-party ones.
+    // Dropping the clock here would leave that whole class of drives unbounded, silently.
+    const output = await this.callStep(prompt, inputSchema, agentProfileInstructions, {
+      ...(opts?.llmClock !== undefined ? { llmClock: opts.llmClock } : {}),
+    });
     return { output };
   }
 
@@ -142,6 +154,8 @@ export abstract class ToolCapableLlmProvider extends LlmProvider {
       maxFanOut?: number;
       toolTimeoutMs?: number;
       agentProfileInstructions?: string;
+      /** Issue #401 — the per-create clock for this step's model requests. */
+      llmClock?: LlmClock;
     },
   ): Promise<StepWithToolsResult>;
 }

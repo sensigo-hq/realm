@@ -1011,6 +1011,32 @@ function parseWorkflowString(
       );
     }
 
+    // llm_timeout_seconds (issue #401) is only valid on agent steps — no other execution kind
+    // makes a model request, so the key would be silently inert anywhere else. One `!== 'agent'`
+    // check covers auto/guard/finalizer.
+    if (step['llm_timeout_seconds'] !== undefined && step['execution'] !== 'agent') {
+      errors.push(
+        withStepLine(
+          stepName,
+          `Step '${stepName}': 'llm_timeout_seconds' is only valid on execution: agent steps`,
+        ),
+      );
+    }
+    // ...and when present it must be a positive integer (the same convention as
+    // retry.total_timeout_seconds and gate.timeout_seconds).
+    if (
+      step['llm_timeout_seconds'] !== undefined &&
+      (!Number.isInteger(step['llm_timeout_seconds']) ||
+        (step['llm_timeout_seconds'] as number) <= 0)
+    ) {
+      errors.push(
+        withStepLine(
+          stepName,
+          `Step '${stepName}': 'llm_timeout_seconds' must be a positive integer`,
+        ),
+      );
+    }
+
     // idempotent (issue #101 Phase 2) is only valid on execution: auto steps — the reliably
     // time-boundable, deadline-carrying class. It is inert (no concrete deadline is ever written)
     // on agent/guard/finalizer, so it is rejected there rather than silently ignored.

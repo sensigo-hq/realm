@@ -24,6 +24,11 @@ import {
   summarizeAgentValidationErrors,
   renderValidationSummaryEntry,
   extractHttpStatus,
+  driveCreate,
+  makeCountingFetch,
+  MAX_RETRIES,
+  type LlmClock,
+  type WireCounters,
 } from './agent-utils.js';
 
 /** The tool offered at `tool_choice:'auto'` so the model can return structured output directly —
@@ -76,10 +81,45 @@ function buildSubmitTool(
  *      non-streaming-safe and current models think by default, so 4096 would starve
  *      thinking+output on anything not explicitly bucketed above).
  */
-function resolveMaxTokens(model: string): number {
+export function resolveMaxTokens(model: string): number {
   if (/claude-3[-.]5/i.test(model)) return 8192;
   if (/claude-3-(opus|sonnet|haiku)(-|$)/i.test(model)) return 4096;
   return 16384;
+}
+
+/**
+ * The Anthropic SDK's own non-streaming coherence threshold. A single non-streaming request asking
+ * for more output tokens than this can legitimately outrun a ten-minute budget, and the SDK would
+ * rather you stream than have the request die on a timeout it cannot distinguish from a hang.
+ */
+export const MAX_NONSTREAMING_TOKENS = 21_333;
+
+/**
+ * issue #401 — realm re-imposes the SDK's rule, because realm's own `timeout` DISABLES it.
+ * The SDK runs that check only when `!stream && timeout == null` (messages.js:29-33): the moment
+ * realm passes an explicit per-attempt timeout, the guard silently stops running. Re-imposing it
+ * here keeps behaviour identical to the pre-#401 client instead of trading a loud refusal for a
+ * confusing abort — so it fires ONLY when a clock was threaded (no clock ⇒ no realm timeout ⇒ the
+ * SDK's own guard is still live and will raise this itself).
+ *
+ * STREAMING FORK: realm's Anthropic path never sets `stream: true` on any request, so in practice
+ * this is unconditional. If a streaming path is ever added it must NOT call this — the rule is
+ * about non-streaming requests only, and inheriting it would refuse a request that is perfectly
+ * legal when streamed.
+ *
+ * Realm re-imposes the RATIO rule ONLY. The SDK additionally carries per-model
+ * MODEL_NONSTREAMING_TOKENS caps; those are deliberately not duplicated — a per-model table
+ * copied into a client goes stale on the next model release and starts refusing requests the
+ * server would have served.
+ */
+export function assertMaxTokensCoherent(maxTokens: number, clock: LlmClock | undefined): void {
+  if (clock === undefined) return;
+  if (maxTokens > MAX_NONSTREAMING_TOKENS) {
+    throw new Error(
+      `max_tokens ${maxTokens} exceeds the non-streaming limit of ${MAX_NONSTREAMING_TOKENS} — ` +
+        'a request this large must be streamed. Lower max_tokens for this model.',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -136,22 +176,37 @@ interface LadderState {
  * never requested for this invocation) pass straight through with no ladder engagement at all —
  * byte-identical to pre-#236 behavior.
  */
+/**
+ * Short alias so every `rawCreate` below fits on ONE line. The source rail for issue #401 greps
+ * providers for `.create(` and requires `rawCreate =` on the SAME line; a call that prettier
+ * wraps would make the rail stop matching — and a source-text guard that stops matching does not
+ * fail, it stops guarding (the #189 purge-guard lesson).
+ */
+type Rec = Record<string, unknown>;
+
 async function createMessageWithLadder(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any,
   buildOpts: (strict: boolean) => Record<string, unknown>,
   state: LadderState,
+  // issue #401: the per-create ceiling and the wire counters. Absent for a caller that has no
+  // clock (a bare unit test) — driveCreate is then bypassed and behaviour is as before.
+  clock?: LlmClock,
+  counters?: WireCounters,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
+  // ONE signature fits every create site: the body, plus the per-create options driveCreate adds.
+  const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.messages.create(b, o);
+  const bounded = (body: Rec): Promise<unknown> =>
+    clock !== undefined && counters !== undefined
+      ? driveCreate(rawCreate, body, clock, counters)
+      : rawCreate(body, {});
+
   if (!state.strict) {
-    return (client.messages.create as (opts: Record<string, unknown>) => Promise<unknown>)(
-      buildOpts(false),
-    );
+    return bounded(buildOpts(false));
   }
   try {
-    const response = await (
-      client.messages.create as (opts: Record<string, unknown>) => Promise<unknown>
-    )(buildOpts(true));
+    const response = await bounded(buildOpts(true));
     state.meta = { requested: true, sent: true };
     return response;
   } catch (err) {
@@ -166,9 +221,7 @@ async function createMessageWithLadder(
           : 'service_unavailable';
     state.strict = false; // sticky for the rest of THIS invocation
     try {
-      const response = await (
-        client.messages.create as (opts: Record<string, unknown>) => Promise<unknown>
-      )(buildOpts(false));
+      const response = await bounded(buildOpts(false));
       state.meta = { requested: true, sent: false, downgrade_reason, api_message };
       return response;
     } catch (retryErr) {
@@ -206,7 +259,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private async getClient(): Promise<any> {
+  private async getClient(clock: LlmClock | undefined, counters: WireCounters): Promise<any> {
     // Dynamically import @anthropic-ai/sdk to keep it an optional peer dependency.
     // See openai-provider.ts for an explanation of the 'string' cast technique.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -229,6 +282,14 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return new (mod.default as new (opts: Record<string, unknown>) => any)({
       apiKey: process.env['ANTHROPIC_API_KEY'],
+      // issue #401: realm's own bound on every model request. `timeout` is the PER-ATTEMPT
+      // ceiling the SDK enforces; `maxRetries` is stated explicitly because the ceiling formula
+      // in deriveLlmClock multiplies by it (A4-5) — realm's arithmetic must not be hostage to an
+      // SDK default that could change. `fetch` counts the wire attempts and observes the
+      // rate-limit headers so a fired bound can say WHY (never honored — R-4).
+      ...(clock?.declaredPerAttemptMs !== undefined ? { timeout: clock.declaredPerAttemptMs } : {}),
+      maxRetries: MAX_RETRIES,
+      fetch: makeCountingFetch(counters),
     });
   }
 
@@ -243,8 +304,13 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     inputSchema: Record<string, unknown> | undefined,
     agentProfileInstructions: string | undefined,
     strictRequested: boolean | undefined,
+    clock?: LlmClock,
   ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
-    const client = await this.getClient();
+    // issue #401: counters are PER-INVOCATION, minted beside the client they count for. A
+    // module-global would attribute one step's wire attempts to another's failure.
+    const counters: WireCounters = { attempts: 0 };
+    const client = await this.getClient(clock, counters);
+    assertMaxTokensCoherent(resolveMaxTokens(this.model), clock);
     const state: LadderState = { strict: strictRequested === true, meta: undefined };
 
     // P0: offer a schema-typed __realm_submit__ tool at tool_choice:'auto' (never forced — see the
@@ -284,7 +350,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         }
         return opts;
       };
-      const response = await createMessageWithLadder(client, buildOpts, state);
+      const response = await createMessageWithLadder(client, buildOpts, state, clock, counters);
       const blocks = response.content as Array<{
         type: string;
         text?: string;
@@ -348,12 +414,14 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
+    opts?: { llmClock?: LlmClock },
   ): Promise<Record<string, unknown>> {
     const { output } = await this.callStepInternal(
       prompt,
       inputSchema,
       agentProfileInstructions,
       undefined,
+      opts?.llmClock,
     );
     return output;
   }
@@ -364,13 +432,14 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    opts?: { structuredOutputStrict?: boolean },
+    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
   ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
     return this.callStepInternal(
       prompt,
       inputSchema,
       agentProfileInstructions,
       opts?.structuredOutputStrict === true,
+      opts?.llmClock,
     );
   }
 
@@ -391,8 +460,12 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       maxFanOut?: number;
       toolTimeoutMs?: number;
       agentProfileInstructions?: string;
+      llmClock?: LlmClock;
     },
   ): Promise<StepWithToolsResult> {
+    const clock = options.llmClock;
+    // issue #401: per-invocation, minted beside the client below (never a module global).
+    const counters: WireCounters = { attempts: 0 };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let mod: any;
     try {
@@ -414,7 +487,24 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client = new (mod.default as new (opts: Record<string, unknown>) => any)({
       apiKey: process.env['ANTHROPIC_API_KEY'],
+      // issue #401: realm's own bound on every model request. `timeout` is the PER-ATTEMPT
+      // ceiling the SDK enforces; `maxRetries` is stated explicitly because the ceiling formula
+      // in deriveLlmClock multiplies by it (A4-5) — realm's arithmetic must not be hostage to an
+      // SDK default that could change. `fetch` counts the wire attempts and observes the
+      // rate-limit headers so a fired bound can say WHY (never honored — R-4).
+      ...(clock?.declaredPerAttemptMs !== undefined ? { timeout: clock.declaredPerAttemptMs } : {}),
+      maxRetries: MAX_RETRIES,
+      fetch: makeCountingFetch(counters),
     });
+    assertMaxTokensCoherent(resolveMaxTokens(this.model), clock);
+
+    // ONE signature fits every create site on this path (issue #401): body + the per-create
+    // options driveCreate adds (the abort signal). Bypassed when no clock was threaded — a
+    // direct caller of this provider gets the record, never the bound (record R-14).
+    const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.messages.create(b, o);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bounded = (body: Rec): Promise<any> =>
+      clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
 
     // toolIdMap: bareName → namespaced id, used to recover routing key from LLM responses.
     // Collision guard: two MCP servers may not expose the same bare tool name in the same step.
@@ -515,10 +605,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     const createMainTurn = async (): Promise<any> => {
       const carriedStrict = toolArgsStrictActive;
       try {
-        const response = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (client.messages.create as (opts: Record<string, unknown>) => Promise<any>)(
-          buildMainCallOpts(),
-        );
+        const response = await bounded(buildMainCallOpts());
         // Only a strict-DECORATED request that came back 200 counts toward the disclosed
         // "turns before drop" — that is exactly what the number claims.
         if (carriedStrict) strictTurnsBeforeDrop += 1;
@@ -547,10 +634,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         dropToolArgsStrict();
         // Retry the SAME turn once, unconstrained. A failure here is a genuine call failure and
         // propagates — realm does not swallow it behind the ladder.
-        return await // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (client.messages.create as (opts: Record<string, unknown>) => Promise<any>)(
-          buildMainCallOpts(),
-        );
+        return await bounded(buildMainCallOpts());
       }
     };
 
@@ -594,8 +678,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         // option above), not an `output_config.format` request parameter — deliberately not
         // used here (banked, design record R-P).
       }
-      const final = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (client.messages.create as (opts: Record<string, unknown>) => Promise<any>)(finalOpts);
+      const final = await bounded(finalOpts);
       const blocks = final.content as Array<{
         type: string;
         text?: string;

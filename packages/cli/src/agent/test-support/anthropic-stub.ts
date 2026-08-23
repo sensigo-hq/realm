@@ -53,6 +53,16 @@ export interface StubToolCall {
 export interface AnthropicStubOptions {
   firstToolCall: StubToolCall;
   /**
+   * When set, EVERY request answers with this status and these headers instead of a scripted
+   * turn — the stub becomes a rate limiter rather than a model.
+   *
+   * It exists for one journey: proving that a server-directed `Retry-After` is OBSERVED and never
+   * honored. Pair it with `x-should-retry: false` to keep the cell fast — the real SDK obeys that
+   * directive before it sleeps, so the failure comes back immediately with the long Retry-After
+   * intact in the record.
+   */
+  failure?: { status: number; headers: Record<string, string> };
+  /**
    * The assistant's final answer, returned once the tool has replied. MUST validate against the
    * driven step's `input_schema` — a mismatch engages the #217 repair loop and the journey's own
    * assertions then fail for a reason unrelated to the chain under test.
@@ -104,6 +114,15 @@ export async function startAnthropicStub(options: AnthropicStubOptions): Promise
       // mutation of its history array cannot reach back into what was already serialized.
       requests.push(body);
       headers.push(req.headers);
+
+      if (options.failure !== undefined) {
+        res.writeHead(options.failure.status, {
+          'content-type': 'application/json',
+          ...options.failure.headers,
+        });
+        res.end(JSON.stringify({ type: 'error', error: { type: 'rate_limit_error' } }));
+        return;
+      }
 
       // CONTENT-KEYED turn detection, and string-tolerant: the history mixes string-content
       // messages (the initial prompt, and the #224 correction turn) with array-content ones, so

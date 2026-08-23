@@ -305,6 +305,11 @@ function findDriveFailing(run: RunRecord, now: Date): RunHealthFinding | undefin
     (max, snap) => Math.max(max, new Date(snap.completed_at).getTime()),
     -Infinity,
   );
+  // NOTE the `<=`, and what it costs: a run created and failed inside the SAME MILLISECOND is
+  // not reported, because its failure does not sort after its own creation instant. Real drives
+  // spend far longer than a millisecond reaching a provider, so this is invisible in practice —
+  // but an in-memory test that creates and fails in one tick will see no finding and should
+  // separate the two rather than conclude the predicate is broken.
   if (lastAt <= Math.max(gateOpened, lastEvidence, floor)) return undefined;
 
   const settled = new Set([...run.completed_steps, ...run.failed_steps, ...run.skipped_steps]);

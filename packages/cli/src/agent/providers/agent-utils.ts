@@ -419,3 +419,300 @@ export function extractApiErrorFields(err: unknown): {
   if ('code' in e) out.api_code = typeof e.code === 'string' ? e.code : null;
   return out;
 }
+
+// =================================================================================================
+// issue #401 — the per-create budget: the counting fetch, the ceiling, and the attribution
+//
+// THE INVARIANT: no single model request can hold a drive hostage. The SDK's own `timeout` bounds
+// one ATTEMPT; nothing bounded the whole create, so a server directing a two-hour Retry-After, or
+// a connection that hung after headers, could park a drive indefinitely with nothing recorded.
+//
+// Scope, stated because the claim must not overreach: this bounds realm's IN-REPO providers, which
+// consume the clock. A `--provider-module` provider still gets the RECORD when it fails — it just
+// does not get the bound.
+// =================================================================================================
+
+/** Realm's own retry count, passed EXPLICITLY to every SDK client. */
+export const MAX_RETRIES = 2;
+
+/** The download allowance the derived ceiling adds on top of the retry budget. */
+const DOWNLOAD_ALLOWANCE_MS = 60_000;
+
+/** What a provider attaches to an error it throws, so a chokepoint can classify it precisely. */
+export interface DriveCallPayload {
+  error_class?: string;
+  /**
+   * Attempts the wrapper SAW COMPLETE. An attempt still in flight when the ceiling fired is not
+   * counted — so a pre-header hang records 0, truthfully: nothing came back.
+   */
+  attempts_sdk?: number;
+  elapsed_ms?: number;
+  last_observed_status?: number;
+  retry_after_observed_ms?: number;
+  declared_per_attempt_ms?: number;
+  derived_ceiling_ms?: number;
+}
+
+/** What one client's fetch wrapper has seen. Per-invocation, minted beside the client. */
+export interface WireCounters {
+  attempts: number;
+  lastStatus?: number;
+  lastRetryAfterMs?: number;
+}
+
+/** The clock one step drives under. */
+export interface LlmClock {
+  ceilingMs: number;
+  declaredPerAttemptMs?: number;
+  /**
+   * WHERE the per-attempt value came from. Set once, at run-agent's clock construction, and read
+   * only by the disclosure: it decides whether `declared_per_attempt_ms` is recorded at all (a
+   * default nobody chose is not a declaration) and which lever the abort message names.
+   *
+   * Absent on a hand-built clock — a unit cell, a caller that constructed one directly — and the
+   * message then names BOTH levers, because with no provenance either could be the live one.
+   */
+  perAttemptSource?: 'step' | 'flag' | 'default';
+}
+
+/**
+ * The largest delay a timer can hold. Past it `setTimeout` overflows and fires ~immediately,
+ * which would inVERT a huge budget into an instant abort (gate-expiry-timer.ts:24 clamps for the
+ * same reason). Both timers matter here: realm's own ceiling, and the `timeout` realm hands the
+ * SDK — an unclamped per-attempt value overflows one layer down and returns as a
+ * `connection_timeout` that has nothing to do with the connection.
+ */
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
+/**
+ * Derives the whole-create ceiling from a per-attempt value.
+ *
+ * `perAttempt × (MAX_RETRIES + 1)` covers every attempt the SDK will make, plus the backoff it
+ * sleeps between them, plus a download allowance so a large-but-progressing response is never
+ * killed for being large. The backoff term is the SDK's OWN schedule summed as an UPPER bound —
+ * its jitter only ever reduces the wait, so budgeting the un-jittered sum cannot cut short a
+ * retry the SDK scheduled for itself.
+ *
+ * A SERVER-DIRECTED wait is a different thing and is deliberately NOT budgeted. A `Retry-After`
+ * can ask for hours; the ceiling outranks it on purpose, which is the point of the bound rather
+ * than a gap in it.
+ */
+export function deriveLlmClock(perAttemptMs: number): LlmClock {
+  let backoffMarginMs = 0;
+  for (let n = 0; n < MAX_RETRIES; n++) backoffMarginMs += Math.min(0.5 * 2 ** n, 8) * 1000;
+  // Clamped BEFORE the arithmetic and again after it, because both numbers arm a real timer. The
+  // clamped per-attempt value is what gets recorded too — the record states what actually bounds
+  // the attempt, not what someone asked for. There is deliberately no validator upper bound: a
+  // huge value is not an authoring error, it is a request for "effectively no limit", and that is
+  // what it gets.
+  const perAttempt = Math.min(perAttemptMs, MAX_TIMEOUT_MS);
+  return {
+    ceilingMs: Math.min(
+      perAttempt * (MAX_RETRIES + 1) + backoffMarginMs + DOWNLOAD_ALLOWANCE_MS,
+      MAX_TIMEOUT_MS,
+    ),
+    declaredPerAttemptMs: perAttempt,
+  };
+}
+
+/**
+ * Parses all three Retry-After forms into milliseconds: `retry-after-ms`, a numeric
+ * `Retry-After` in seconds, and an HTTP-date `Retry-After`. OBSERVED, never honored by realm.
+ *
+ * The date form is legal, the SDKs honor it, and a parser that only understood numbers dropped a
+ * whole header form on the floor — recording nothing for a rate limit that was clearly signalled.
+ * A date already in the past observes as 0 (the wait is over; a negative number would be a
+ * nonsense measurement), while a header nobody can parse observes as nothing at all — realm has
+ * no idea what was asked for and says so by omission rather than by inventing a zero.
+ */
+function parseRetryAfterMs(headers: Headers): number | undefined {
+  const ms = headers.get('retry-after-ms');
+  if (ms !== null && ms.trim() !== '' && Number.isFinite(Number(ms))) return Number(ms);
+  const after = headers.get('retry-after');
+  if (after === null || after.trim() === '') return undefined;
+  if (Number.isFinite(Number(after))) return Number(after) * 1000;
+  // `Number`, deliberately, not `parseFloat`. RFC 9110 says a Retry-After is EITHER digits-only
+  // seconds or an HTTP-date; `parseFloat('7200abc')` would happily read 7200 out of a header that
+  // is neither, and record a measurement the server never sent. The strict parse falls through to
+  // the date arm and then to nothing, which is the truthful answer for a malformed header.
+  const at = Date.parse(after);
+  if (!Number.isFinite(at)) return undefined;
+  return Math.max(0, at - Date.now());
+}
+
+/**
+ * Wraps `fetch` so realm can SEE what the SDK's retry ladder did — how many attempts it made, the
+ * last status, and any Retry-After the server asked for, in all three of its legal forms
+ * (`retry-after-ms`, a numeric `Retry-After`, an HTTP-date `Retry-After`).
+ *
+ * Observation only. Realm never honors a Retry-After: acting on it would be a scheduling decision
+ * this layer does not make, and recording it is what lets an operator tell a rate limit apart from
+ * a hang. The inner fetch is injectable so the wrapper is unit-testable without a socket.
+ */
+export function makeCountingFetch(
+  counters: WireCounters,
+  innerFetch: typeof fetch = globalThis.fetch,
+): typeof fetch {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    try {
+      const res = await innerFetch(input, init);
+      counters.attempts++;
+      counters.lastStatus = res.status;
+      const retryAfter = parseRetryAfterMs(res.headers);
+      if (retryAfter !== undefined) counters.lastRetryAfterMs = retryAfter;
+      return res;
+    } catch (err) {
+      // A rejection is still an attempt — it just carries no status to observe.
+      counters.attempts++;
+      throw err;
+    }
+  };
+}
+
+/**
+ * Attaches a payload to an error, WITHOUT overwriting one that is already there.
+ *
+ * TOTAL. Both the probe and the assignment can throw on a value realm did not create — `in` runs
+ * a proxy's `has` trap, and assigning to a frozen object throws in strict mode. Either one would
+ * hand the caller the attacher's own TypeError in place of the failure it was trying to describe,
+ * which is the whole attribution chain defeated by the last link in it. An error that cannot be
+ * enriched still propagates, intact and unenriched; shape classification never needed the payload.
+ */
+export function attachDriveCall(err: unknown, payload: DriveCallPayload): void {
+  if (typeof err !== 'object' || err === null) return;
+  try {
+    if ('driveCall' in err) return; // e.g. getClient's sdk_missing attach — never re-attributed
+    (err as { driveCall: DriveCallPayload }).driveCall = payload;
+  } catch {
+    /* enrichment never out-throws the error being attributed */
+  }
+}
+
+/**
+ * Converts any thrown value to display text, TOTALLY.
+ *
+ * The chokepoints interpolate the thrown value into their console line BEFORE recording it, so a
+ * poisoned `toString` used to out-throw at the print — replacing the operator's error with a
+ * secondary one before the (already hardened) mint could run.
+ */
+export function safeErrorText(err: unknown): string {
+  try {
+    return err instanceof Error ? err.message : String(err);
+  } catch {
+    return 'unrenderable thrown value';
+  }
+}
+
+/** Classifies an SDK-raised error by shape, for the payload's `error_class`. */
+function shapeClass(err: unknown): string {
+  const name = (err as { name?: unknown } | null)?.name;
+  if (name === 'APIConnectionTimeoutError') return 'connection_timeout';
+  if (name === 'APIConnectionError') return 'connection_error';
+  if (extractHttpStatus(err) !== undefined) return 'api_status';
+  return 'other';
+}
+
+/**
+ * Runs ONE model create under realm's ceiling.
+ *
+ * Two mechanisms, because one is not enough. The timer is what bounds the wall clock; the abort is
+ * what actually stops work — but only as far as the SDK will let it. The SDK's sleep primitive is
+ * signal-aware, yet its retry site passes no signal, so a raced-out backoff sleep runs to
+ * completion in the worker. That is the ceiling's known reach, not a bug in it: an SDK bump that
+ * threads the signal there would make the race leg partially redundant, and it would still be
+ * earning its keep on the post-header body hang.
+ *
+ * Wraps the CREATE only. Client construction stays outside — that is where a missing SDK attaches
+ * its own payload, and this must never re-attribute it.
+ */
+export async function driveCreate<T>(
+  rawCreate: (body: Record<string, unknown>, opts: Record<string, unknown>) => Promise<T>,
+  body: Record<string, unknown>,
+  clock: LlmClock,
+  counters: WireCounters,
+): Promise<T> {
+  const before: WireCounters = { ...counters };
+  // The observations are cleared, the attempt total is not. `attempts` is a running count, so a
+  // delta is the right question for it; a status is an OBSERVATION, and asking "did it change?"
+  // means a second identical 429 reads as nothing observed at all — the discriminator vanishing
+  // exactly during the rate-limit storm it exists to describe. Cleared here, they are present in
+  // the payload if and only if THIS create saw them.
+  delete counters.lastStatus;
+  delete counters.lastRetryAfterMs;
+  const started = Date.now();
+  const controller = new AbortController();
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let fired = false;
+  const ceiling = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      fired = true;
+      reject(new Error('__realm_ceiling__'));
+    }, clock.ceilingMs);
+  });
+  // A race has a LOSER, and an unobserved rejected promise takes the process down on Node >= 15.
+  // DEFENSE IN DEPTH, stated precisely: `Promise.race` subscribes to every promise it is given,
+  // and that subscription counts as handling — so as long as the race below actually runs, neither
+  // loser can go unhandled, and probing this line away does NOT trip an unhandledRejection trap.
+  // What made the class real was the path where the race NEVER RAN: a create that threw
+  // synchronously escaped before `Promise.race`, leaving this timer to fire into nothing and kill
+  // the process. That path is closed structurally below; this line is the belt for a future
+  // refactor that stops racing, which is why it survives a probe showing it does nothing today.
+  void ceiling.catch(() => undefined);
+
+  // Declared out here so the fired path can observe the loser; ASSIGNED inside the try, because a
+  // provider whose create throws SYNCHRONOUSLY (a bad argument, a mocked double) would otherwise
+  // escape past both the classification and the `finally` — leaving the error unattributed and
+  // the timer running to fire into nothing.
+  let sdkCall: Promise<T> | undefined;
+
+  try {
+    sdkCall = (async () => rawCreate(body, { signal: controller.signal }))();
+    return await Promise.race([sdkCall, ceiling]);
+  } catch (err) {
+    // Present iff THIS create observed them — the fields were cleared at the top, so a stale
+    // status from a previous create cannot attach to this failure and tell a confident lie about
+    // what just happened.
+    const sawStatus = counters.lastStatus !== undefined;
+    const sawRetryAfter = counters.lastRetryAfterMs !== undefined;
+    const delta: DriveCallPayload = {
+      attempts_sdk: counters.attempts - before.attempts,
+      elapsed_ms: Date.now() - started,
+      ...(sawStatus ? { last_observed_status: counters.lastStatus } : {}),
+      ...(sawRetryAfter ? { retry_after_observed_ms: counters.lastRetryAfterMs } : {}),
+      ...(clock.declaredPerAttemptMs !== undefined
+        ? { declared_per_attempt_ms: clock.declaredPerAttemptMs }
+        : {}),
+      derived_ceiling_ms: clock.ceilingMs,
+    };
+
+    if (fired) {
+      controller.abort();
+      // The loser's rejection still arrives — an APIUserAbortError, moments later. Same defense
+      // in depth as the timer's catch above, and the same honest caveat: the race is already
+      // subscribed, so this is insurance rather than the thing currently preventing a crash.
+      void sdkCall?.catch(() => undefined);
+      // The lever named is the one that is actually LIVE. Telling an operator to raise a flag
+      // that a step key is already overriding sends them to change something with no effect —
+      // so provenance decides which arm renders. With no provenance at all (a hand-built clock)
+      // both arms render, because either could be the live one.
+      const source = clock.perAttemptSource;
+      const stepArm = source === undefined || source === 'step';
+      const flagArm = source === undefined || source === 'flag' || source === 'default';
+      const levers = [
+        ...(stepArm ? ['raise llm_timeout_seconds on the step'] : []),
+        ...(flagArm ? ['pass a larger --llm-timeout'] : []),
+      ].join(' or ');
+      const aborted = new Error(
+        `LLM create exceeded the per-create ceiling (${String(clock.ceilingMs)}ms) — ${levers}`,
+      );
+      attachDriveCall(aborted, { error_class: 'aborted_by_budget', ...delta });
+      throw aborted;
+    }
+
+    attachDriveCall(err, { error_class: shapeClass(err), ...delta });
+    throw err;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
