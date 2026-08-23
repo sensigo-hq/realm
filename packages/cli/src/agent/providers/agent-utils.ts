@@ -603,13 +603,36 @@ export function safeErrorText(err: unknown): string {
   }
 }
 
-/** Classifies an SDK-raised error by shape, for the payload's `error_class`. */
+/**
+ * Classifies an SDK-raised error by shape, for the payload's `error_class`.
+ *
+ * BOTH `name` and `constructor.name` are checked, and the second is the one that works. Neither
+ * installed SDK sets `.name` on its error classes — a real `APIConnectionError` from either one
+ * reports `name === 'Error'` and carries its identity on the constructor — so a check on `.name`
+ * alone recorded every genuine connection failure and every genuine request timeout as `other`.
+ * `.name` is kept because a wrapper that re-throws with a copied name is a real shape too.
+ *
+ * The timeout arm sits first as a belt: under exact string equality a real timeout cannot match
+ * the connection arm anyway (its constructor name is the leaf), but a wrapper copying a parent
+ * `.name` onto a timeout instance could.
+ *
+ * TOTAL. This runs inside driveCreate's catch, where a throw would replace the operator's failure
+ * with realm's own — and reading `constructor` and `name` off a value realm did not create can
+ * throw. (That hole predates the constructor check: a poisoned `.name` getter out-threw here.)
+ */
 function shapeClass(err: unknown): string {
-  const name = (err as { name?: unknown } | null)?.name;
-  if (name === 'APIConnectionTimeoutError') return 'connection_timeout';
-  if (name === 'APIConnectionError') return 'connection_error';
-  if (extractHttpStatus(err) !== undefined) return 'api_status';
-  return 'other';
+  try {
+    const name = (err as { name?: unknown } | null)?.name;
+    const ctor = (err as { constructor?: { name?: unknown } } | null)?.constructor?.name;
+    if (name === 'APIConnectionTimeoutError' || ctor === 'APIConnectionTimeoutError') {
+      return 'connection_timeout';
+    }
+    if (name === 'APIConnectionError' || ctor === 'APIConnectionError') return 'connection_error';
+    if (extractHttpStatus(err) !== undefined) return 'api_status';
+    return 'other';
+  } catch {
+    return 'other';
+  }
 }
 
 /**

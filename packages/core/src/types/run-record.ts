@@ -734,7 +734,16 @@ export interface DriveFailureRecord {
   message: string;
   /** Populated when the throwing error carries a driveCall payload. */
   attempts_sdk?: number;
-  /** Wall time for this attempt: the payload's span when one is present, else time since the attempt began. */
+  /**
+   * Wall time for this attempt: the payload's span when one is present, else time since the
+   * attempt began.
+   *
+   * WALL TIME, which is why it can EXCEED the ceiling beside it. A timer fires when the event
+   * loop gets to it, so under load it fires late — and the payload reports what actually
+   * elapsed while `derived_ceiling_ms` reports what was configured. An `aborted_by_budget` entry
+   * reading `after 67785ms` against `ceiling 64500ms` is both numbers telling the truth about
+   * different things, not a broken bound.
+   */
   elapsed_ms: number;
   /** Populated when the throwing error carries a driveCall payload. */
   declared_per_attempt_ms?: number;

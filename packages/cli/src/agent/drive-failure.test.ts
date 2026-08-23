@@ -357,3 +357,55 @@ describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
     expect(built.elapsed_ms).toBe(151_502);
   });
 });
+
+// =================================================================================================
+// W1 — the connection classes, against the REAL SDK objects
+//
+// Every cell that pinned these classes before built its fixture by SETTING `.name`. That is a
+// faithful test of an assumption nobody had checked: both installed SDKs leave `.name` as
+// `"Error"` and carry the class on `constructor.name`. So on the real wire a connection failure
+// and a request timeout both recorded `other` — the two classes an operator most needs told apart
+// from a hang, silently collapsed into the catch-all, with a green suite over the top.
+// =================================================================================================
+describe('W1 — real SDK error objects classify by their CONSTRUCTOR', () => {
+  /** Constructs the genuine article, dynamically — both SDKs are cli devDependencies. */
+  const realError = async (
+    pkg: 'openai' | '@anthropic-ai/sdk',
+    cls: 'APIConnectionError' | 'APIConnectionTimeoutError',
+  ): Promise<Error> => {
+    const mod = (await import(pkg)) as unknown as Record<string, unknown>;
+    const root = (mod['default'] ?? mod) as Record<string, unknown>;
+    const Ctor = (root[cls] ?? mod[cls]) as new (opts: { message: string }) => Error;
+    const instance = new Ctor({ message: 'the real thing' });
+    // The premise, asserted rather than assumed — if a future SDK starts setting `.name`, this
+    // says so instead of leaving the cell to pass for the old reason.
+    expect(instance.name).toBe('Error');
+    expect(instance.constructor.name).toBe(cls);
+    return instance;
+  };
+
+  for (const pkg of ['openai', '@anthropic-ai/sdk'] as const) {
+    it(`${pkg}: a real APIConnectionError classifies connection_error`, async () => {
+      const err = await realError(pkg, 'APIConnectionError');
+      expect(classifyDriveError(err).error_class).toBe('connection_error');
+      expect(buildEntry(err, 's', 'p', Date.now()).error_class).toBe('connection_error');
+    });
+
+    it(`${pkg}: a real APIConnectionTimeoutError classifies connection_timeout`, async () => {
+      const err = await realError(pkg, 'APIConnectionTimeoutError');
+      expect(classifyDriveError(err).error_class).toBe('connection_timeout');
+      expect(buildEntry(err, 's', 'p', Date.now()).error_class).toBe('connection_timeout');
+    });
+  }
+
+  it('the SHAPE fallback sees it too — a payload whose class did not survive the pick', async () => {
+    // The third arm site, and the easiest to miss: a payload carrying measurements but no usable
+    // class falls through to shape classification, which was checking `.name` like the others.
+    const err = Object.assign(await realError('openai', 'APIConnectionTimeoutError'), {
+      driveCall: { attempts_sdk: 2, elapsed_ms: 900 },
+    });
+    const built = buildEntry(err, 's', 'openai', Date.now());
+    expect(built.error_class).toBe('connection_timeout');
+    expect(built.attempts_sdk).toBe(2); // the measurements it did carry are still kept
+  });
+});

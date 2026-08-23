@@ -3,7 +3,11 @@
 // every other terminal reason keeps today's refusal.
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
-import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
+import {
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+  createDefaultRegistry,
+  WorkflowError,
+} from '@sensigo/realm';
 import type { WorkflowDefinition, EvidenceSnapshot, ExtensionIdentityEntry } from '@sensigo/realm';
 import { resolveRunAttach, EXTENSIONS_LOAD_FAILED } from './run-attach.js';
 import type { loadProjectExtensions } from '../extensions/load-project-extensions.js';
@@ -331,5 +335,98 @@ describe('resolveRunAttach — drift evidence (issue #119)', () => {
     const after = await store.get(runId);
     expect(after.terminal_state).toBe(false);
     expect(after.extension_identity).toBeUndefined();
+  });
+});
+
+// =================================================================================================
+// W2 — the re-attach dead end
+//
+// #401's remediation for a failed drive is "re-attach with --run-id". For a run created from a
+// FILE without --register, that is a dead end: the workflow was never persisted, so the attach
+// fails with a bare "Workflow not found", and `--run-id --workflow` is mutually exclusive. The
+// operator is told to do the one thing that cannot work, and the message does not say why.
+// =================================================================================================
+describe('resolveRunAttach — a not-found workflow says what to do about it', () => {
+  const notFoundStore = (): { get: (id: string) => Promise<WorkflowDefinition> } => ({
+    get: async (id: string) => {
+      throw new WorkflowError(`Workflow not found: ${id}`, {
+        code: 'STATE_WORKFLOW_NOT_FOUND',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+      });
+    },
+  });
+
+  it('carries the remediation, HEDGED — this site cannot know the cause', async () => {
+    // "most often", not "because": a wiped store, a different $HOME and an unregistered file all
+    // produce this same code from the registrar. Claiming one cause unconditionally is the exact
+    // class of overreach this fix is repairing.
+    const store = new InMemoryStore();
+    const runId = await createRun(store);
+    const err = await resolveRunAttach(runId, {
+      store,
+      workflowStore: notFoundStore(),
+      loadExtensions: okLoader(),
+    }).catch((e: unknown) => e);
+
+    const message = (err as Error).message;
+    expect(message).toContain('Workflow not found: attach-wf');
+    expect(message).toContain('most often');
+    expect(message).toContain('--register');
+    expect(message).toContain('realm workflow register');
+  });
+
+  it('the SAME MESSAGE with a different code passes through — the key is the CODE', async () => {
+    // The keying rule, pinned. Probing the implementation over to
+    // `err.message.includes('Workflow')` left the legacy-format control green (its own message
+    // never contains the word in that casing), so that cell alone does not discriminate. This one
+    // does: a message-matching implementation appends remediation here and reds.
+    const store = new InMemoryStore();
+    const runId = await createRun(store);
+    const impostor = new WorkflowError('Workflow not found: attach-wf', {
+      code: 'STATE_LEGACY_FORMAT',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+    });
+    const err = await resolveRunAttach(runId, {
+      store,
+      workflowStore: {
+        get: async () => {
+          throw impostor;
+        },
+      },
+      loadExtensions: okLoader(),
+    }).catch((e: unknown) => e);
+
+    expect(err).toBe(impostor);
+    expect((err as Error).message).not.toContain('most often');
+  });
+
+  it('a DIFFERENT WorkflowError passes through untouched', async () => {
+    // Keyed on the stable code, never on the message text. The legacy-format error is the
+    // registrar's own adjacent throw and carries its own remediation already — appending
+    // registration advice to it would be wrong twice over.
+    const store = new InMemoryStore();
+    const runId = await createRun(store);
+    const legacy = new WorkflowError('This workflow was registered with an older version', {
+      code: 'STATE_LEGACY_FORMAT',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+    });
+    const err = await resolveRunAttach(runId, {
+      store,
+      workflowStore: {
+        get: async () => {
+          throw legacy;
+        },
+      },
+      loadExtensions: okLoader(),
+    }).catch((e: unknown) => e);
+
+    expect(err).toBe(legacy);
+    expect((err as Error).message).not.toContain('most often');
   });
 });

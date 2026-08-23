@@ -124,9 +124,20 @@ export function classifyDriveError(err: unknown): DriveCallPayload & {
     return { error_class: picked.error_class ?? shapeClassify(err), ...picked };
   }
 
+  // `constructor.name`, not just `.name`: neither installed SDK sets `.name` on its error
+  // classes, so a real connection failure or request timeout reports `name === 'Error'` and was
+  // recorded as `other` — the two classes an operator most needs told apart from a hang, silently
+  // collapsed. `.name` is kept for wrappers that re-throw with a copied name. Deliberately NOT
+  // wrapped in try/catch: `buildEntry`'s own catch is this path's totality, and a hostile value
+  // that throws here is meant to reach it.
   const name = (err as { name?: unknown } | null)?.name;
-  if (name === 'APIConnectionTimeoutError') return { error_class: 'connection_timeout' };
-  if (name === 'APIConnectionError') return { error_class: 'connection_error' };
+  const ctor = (err as { constructor?: { name?: unknown } } | null)?.constructor?.name;
+  if (name === 'APIConnectionTimeoutError' || ctor === 'APIConnectionTimeoutError') {
+    return { error_class: 'connection_timeout' };
+  }
+  if (name === 'APIConnectionError' || ctor === 'APIConnectionError') {
+    return { error_class: 'connection_error' };
+  }
 
   const status = extractHttpStatus(err);
   if (status !== undefined) return { error_class: 'api_status', last_observed_status: status };
@@ -134,11 +145,21 @@ export function classifyDriveError(err: unknown): DriveCallPayload & {
   return { error_class: 'other' };
 }
 
-/** The class an error's SHAPE implies, for a payload whose own claim did not survive the pick. */
+/**
+ * The class an error's SHAPE implies, for a payload whose own claim did not survive the pick.
+ *
+ * The same constructor check as the arm above, and the easiest of the three to overlook: a
+ * payload carrying measurements but no usable class lands here, so leaving it on `.name` would
+ * have kept the whole defect alive on that one path. Same totality boundary — `buildEntry`'s
+ * catch, not a guard here.
+ */
 function shapeClassify(err: unknown): DriveFailureRecord['error_class'] {
   const name = (err as { name?: unknown } | null)?.name;
-  if (name === 'APIConnectionTimeoutError') return 'connection_timeout';
-  if (name === 'APIConnectionError') return 'connection_error';
+  const ctor = (err as { constructor?: { name?: unknown } } | null)?.constructor?.name;
+  if (name === 'APIConnectionTimeoutError' || ctor === 'APIConnectionTimeoutError') {
+    return 'connection_timeout';
+  }
+  if (name === 'APIConnectionError' || ctor === 'APIConnectionError') return 'connection_error';
   if (extractHttpStatus(err) !== undefined) return 'api_status';
   return 'other';
 }
