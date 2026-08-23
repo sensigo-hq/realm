@@ -90,6 +90,24 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- **BREAKING — `timeout_seconds` on an `execution: agent` step is now a load error** (issue #402).
+  Nothing ever enforced it there: the engine only wraps `execution: auto` dispatch in a timeout,
+  and agent dispatch is never wrapped at all. Worse than inert, it was actively misleading — the
+  engine minted an `expected_timeout` display from the value into the NextAction the driving agent
+  reads, so the one reader who would act on the bound was told a bound existed while nothing
+  enforced it. The error names the two bounds that DO exist: in realm's own drive the model
+  request is bounded by `llm_timeout_seconds` (or `--llm-timeout`) and tool calls by
+  `tool_timeout`; a step driven by an external agent gets neither.
+  `execution: auto` (enforced) and `execution: finalizer` (drain lease + handler bound) are
+  unaffected; `execution: guard` already rejected the key.
+  **Scope: the YAML loader** — every path that loads a workflow file, including `realm run`,
+  `realm agent` and `realm listen`. A definition already in the registry, or one passed inline, is
+  not re-validated, so an offending workflow surfaces at its next load rather than on upgrade.
+  **There is no pre-upgrade detection.** `validate --strict` on the current version emits nothing
+  for this shape — that silence is the bug this closes — so an author cannot check ahead of time;
+  offenders appear at first load after upgrading. No workflow in this repository carries the key
+  on an agent step. The `create_workflow` MCP tool bypasses the loader and still accepts it (#412).
+
 - **A transient LLM failure that used to be rescued by a silent second attempt now surfaces as a
   recorded drive failure** (issue #401). The retry that swallowed the first error is retired — it
   is precisely what made a failing drive invisible, and it rescued far less than it hid.

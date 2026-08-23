@@ -1037,6 +1037,31 @@ function parseWorkflowString(
       );
     }
 
+    // timeout_seconds is NOT valid on an agent step (issue #402). Nothing enforces it there:
+    // `shouldEnforceTimeout` is `execution === 'auto'`, and agent dispatch is never wrapped in
+    // `withTimeout` at all. It is not merely inert either — the engine mints an
+    // `expected_timeout` display from it into the NextAction the driving agent reads
+    // (execution-loop.ts:671), so the one reader who would act on the bound is told a bound
+    // exists while nothing enforces it. The message names both bounds that DO exist, scoped to
+    // realm's own drive (an externally driven step gets neither), on the RETRY_INERT_NON_AUTO
+    // precedent below.
+    //
+    // `=== 'agent'` EXACTLY, never `!== 'auto'`: finalizers consume this key twice — the drain
+    // lease (execution-loop.ts:5226) and the handler's own bound (:5030) — and guards already
+    // reject it in the prohibited-fields list above.
+    if (step['timeout_seconds'] !== undefined && step['execution'] === 'agent') {
+      errors.push(
+        withStepLine(
+          stepName,
+          `Step '${stepName}': 'timeout_seconds' is not valid on execution: agent steps — ` +
+            'the engine never enforces it there (agent dispatch is never wrapped in a timeout), ' +
+            'so the step would LOOK time-bounded while nothing enforced the bound. ' +
+            "In realm's own drive the model request is bounded by 'llm_timeout_seconds' " +
+            "(or --llm-timeout) and tool calls by 'tool_timeout'.",
+        ),
+      );
+    }
+
     // idempotent (issue #101 Phase 2) is only valid on execution: auto steps — the reliably
     // time-boundable, deadline-carrying class. It is inert (no concrete deadline is ever written)
     // on agent/guard/finalizer, so it is rejected there rather than silently ignored.
@@ -2196,9 +2221,13 @@ function parseWorkflowString(
     // execution: guard — the guard-prohibited-fields check above already flatly rejects
     // 'timeout_seconds' there ('is not valid on execution: guard steps'); re-checking its
     // shape here would double-report the same root cause under a second, confusing message.
+    // Same suppression for the agent prohibition (issue #402), for the same reason: an author
+    // told BOTH that the key is invalid here and that its value has the wrong shape is being
+    // pointed at the shape, which is not the problem.
     if (
       step['timeout_seconds'] !== undefined &&
       step['execution'] !== 'guard' &&
+      step['execution'] !== 'agent' &&
       (!Number.isInteger(step['timeout_seconds']) || (step['timeout_seconds'] as number) <= 0)
     ) {
       errors.push(
