@@ -9,6 +9,7 @@ import {
   MAX_NONSTREAMING_TOKENS,
 } from './anthropic-provider.js';
 import type { ToolDefinition } from '../mcp/mcp-extensions.js';
+import { buildEntry } from '../drive-failure.js';
 
 const mockCreate = vi.fn();
 vi.mock('@anthropic-ai/sdk', () => ({
@@ -93,6 +94,13 @@ describe('AnthropicProvider under a clock — the ceiling is PER CREATE', () => 
     // shape drive-failure's payload-first walk was built for.
     const cause = (err as { cause?: unknown }).cause;
     expect(payloadOf(cause)?.['error_class']).toBe('aborted_by_budget');
+
+    // ...and the CHOKEPOINT agrees. The payload being on the cause chain is only half the claim;
+    // what matters is that the classifier walks to it, so the wrapped abort is recorded as a
+    // budget abort rather than as a shapeless 'other'.
+    expect(buildEntry(err, 'classify', 'anthropic', Date.now()).error_class).toBe(
+      'aborted_by_budget',
+    );
   });
 
   it('the TOOLS path is bounded too — every turn of the agentic loop', async () => {
@@ -136,9 +144,11 @@ describe('the non-streaming max_tokens rule realm re-imposes (issue #401)', () =
   });
 
   it('CANARY — every model realm resolves today asks for FEWER tokens than the limit', () => {
-    // This is what makes the rule latent rather than live. If someone raises the token table past
-    // the threshold, this cell fails first and says what the choice actually is: stream, or ask
-    // for less. Without it the guard would start refusing real steps with nothing pointing here.
+    // This is what makes the rule latent rather than live. If someone raises one of the buckets
+    // BELOW past the threshold, this cell fails and says what the choice actually is: stream, or
+    // ask for less. It covers the buckets named here, not every model id that could ever resolve
+    // — a new bucket added without a line here is a new blind spot, which is the one thing this
+    // cell cannot tell you about itself.
     for (const model of ['claude-3-5-sonnet', 'claude-3-opus', 'claude-sonnet-4-5', 'unknown-x']) {
       expect(resolveMaxTokens(model)).toBeLessThanOrEqual(MAX_NONSTREAMING_TOKENS);
     }

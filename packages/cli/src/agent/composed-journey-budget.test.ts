@@ -112,6 +112,16 @@ describe('composed journey (budget) — a server-directed Retry-After is observe
       const findings = classifyRunHealth(run);
       const driveFinding = findings.find((f) => f.kind === 'drive_failing');
       expect(driveFinding?.reason).toContain('api_status');
+      // The finding's EVIDENCE carries the discriminators too, not just its prose. An agent
+      // reading run health consumes this object; a status that only exists inside a sentence is
+      // not available to it.
+      expect(driveFinding?.evidence).toMatchObject({
+        error_class: 'api_status',
+        last_observed_status: 429,
+        retry_after_observed_ms: 7_200_000,
+        declared_per_attempt_ms: 30_000,
+        derived_ceiling_ms: 151_500,
+      });
 
       const rendered = await inspectRun(runId, store, workflowStore);
       expect(rendered).toContain('Drive failures:');
@@ -119,6 +129,9 @@ describe('composed journey (budget) — a server-directed Retry-After is observe
       expect(rendered).toContain('(Retry-After 7200000ms observed)');
       expect(rendered).toContain('(declared 30000ms)');
       expect(rendered).toContain('(ceiling 151500ms)');
+      // The attempt suffix, pinned so its wording stays put: `attempts_sdk` counts attempts the
+      // wrapper SAW COMPLETE, so "attempt 1" is the honest reading of one finished attempt.
+      expect(rendered).toContain('(attempt 1)');
     } finally {
       await stub.close();
       if (originalKey === undefined) delete process.env['ANTHROPIC_API_KEY'];

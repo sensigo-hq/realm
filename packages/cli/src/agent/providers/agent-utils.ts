@@ -441,6 +441,10 @@ const DOWNLOAD_ALLOWANCE_MS = 60_000;
 /** What a provider attaches to an error it throws, so a chokepoint can classify it precisely. */
 export interface DriveCallPayload {
   error_class?: string;
+  /**
+   * Attempts the wrapper SAW COMPLETE. An attempt still in flight when the ceiling fired is not
+   * counted — so a pre-header hang records 0, truthfully: nothing came back.
+   */
   attempts_sdk?: number;
   elapsed_ms?: number;
   last_observed_status?: number;
@@ -460,39 +464,86 @@ export interface WireCounters {
 export interface LlmClock {
   ceilingMs: number;
   declaredPerAttemptMs?: number;
+  /**
+   * WHERE the per-attempt value came from. Set once, at run-agent's clock construction, and read
+   * only by the disclosure: it decides whether `declared_per_attempt_ms` is recorded at all (a
+   * default nobody chose is not a declaration) and which lever the abort message names.
+   *
+   * Absent on a hand-built clock — a unit cell, a caller that constructed one directly — and the
+   * message then names BOTH levers, because with no provenance either could be the live one.
+   */
+  perAttemptSource?: 'step' | 'flag' | 'default';
 }
+
+/**
+ * The largest delay a timer can hold. Past it `setTimeout` overflows and fires ~immediately,
+ * which would inVERT a huge budget into an instant abort (gate-expiry-timer.ts:24 clamps for the
+ * same reason). Both timers matter here: realm's own ceiling, and the `timeout` realm hands the
+ * SDK — an unclamped per-attempt value overflows one layer down and returns as a
+ * `connection_timeout` that has nothing to do with the connection.
+ */
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 /**
  * Derives the whole-create ceiling from a per-attempt value.
  *
  * `perAttempt × (MAX_RETRIES + 1)` covers every attempt the SDK will make, plus the backoff it
  * sleeps between them, plus a download allowance so a large-but-progressing response is never
- * killed for being large. The backoff term is the SDK's own schedule summed as an UPPER bound —
- * its jitter only ever reduces the wait, so budgeting the un-jittered sum cannot cut a retry short.
+ * killed for being large. The backoff term is the SDK's OWN schedule summed as an UPPER bound —
+ * its jitter only ever reduces the wait, so budgeting the un-jittered sum cannot cut short a
+ * retry the SDK scheduled for itself.
+ *
+ * A SERVER-DIRECTED wait is a different thing and is deliberately NOT budgeted. A `Retry-After`
+ * can ask for hours; the ceiling outranks it on purpose, which is the point of the bound rather
+ * than a gap in it.
  */
 export function deriveLlmClock(perAttemptMs: number): LlmClock {
   let backoffMarginMs = 0;
   for (let n = 0; n < MAX_RETRIES; n++) backoffMarginMs += Math.min(0.5 * 2 ** n, 8) * 1000;
+  // Clamped BEFORE the arithmetic and again after it, because both numbers arm a real timer. The
+  // clamped per-attempt value is what gets recorded too — the record states what actually bounds
+  // the attempt, not what someone asked for. There is deliberately no validator upper bound: a
+  // huge value is not an authoring error, it is a request for "effectively no limit", and that is
+  // what it gets.
+  const perAttempt = Math.min(perAttemptMs, MAX_TIMEOUT_MS);
   return {
-    ceilingMs: perAttemptMs * (MAX_RETRIES + 1) + backoffMarginMs + DOWNLOAD_ALLOWANCE_MS,
-    declaredPerAttemptMs: perAttemptMs,
+    ceilingMs: Math.min(
+      perAttempt * (MAX_RETRIES + 1) + backoffMarginMs + DOWNLOAD_ALLOWANCE_MS,
+      MAX_TIMEOUT_MS,
+    ),
+    declaredPerAttemptMs: perAttempt,
   };
 }
 
-/** Parses either Retry-After form into milliseconds. OBSERVED, never honored by realm. */
+/**
+ * Parses all three Retry-After forms into milliseconds: `retry-after-ms`, a numeric
+ * `Retry-After` in seconds, and an HTTP-date `Retry-After`. OBSERVED, never honored by realm.
+ *
+ * The date form is legal, the SDKs honor it, and a parser that only understood numbers dropped a
+ * whole header form on the floor — recording nothing for a rate limit that was clearly signalled.
+ * A date already in the past observes as 0 (the wait is over; a negative number would be a
+ * nonsense measurement), while a header nobody can parse observes as nothing at all — realm has
+ * no idea what was asked for and says so by omission rather than by inventing a zero.
+ */
 function parseRetryAfterMs(headers: Headers): number | undefined {
   const ms = headers.get('retry-after-ms');
   if (ms !== null && ms.trim() !== '' && Number.isFinite(Number(ms))) return Number(ms);
-  const secs = headers.get('retry-after');
-  if (secs !== null && secs.trim() !== '' && Number.isFinite(Number(secs))) {
-    return Number(secs) * 1000;
-  }
-  return undefined;
+  const after = headers.get('retry-after');
+  if (after === null || after.trim() === '') return undefined;
+  if (Number.isFinite(Number(after))) return Number(after) * 1000;
+  // `Number`, deliberately, not `parseFloat`. RFC 9110 says a Retry-After is EITHER digits-only
+  // seconds or an HTTP-date; `parseFloat('7200abc')` would happily read 7200 out of a header that
+  // is neither, and record a measurement the server never sent. The strict parse falls through to
+  // the date arm and then to nothing, which is the truthful answer for a malformed header.
+  const at = Date.parse(after);
+  if (!Number.isFinite(at)) return undefined;
+  return Math.max(0, at - Date.now());
 }
 
 /**
  * Wraps `fetch` so realm can SEE what the SDK's retry ladder did — how many attempts it made, the
- * last status, and any Retry-After the server asked for.
+ * last status, and any Retry-After the server asked for, in all three of its legal forms
+ * (`retry-after-ms`, a numeric `Retry-After`, an HTTP-date `Retry-After`).
  *
  * Observation only. Realm never honors a Retry-After: acting on it would be a scheduling decision
  * this layer does not make, and recording it is what lets an operator tell a rate limit apart from
@@ -518,11 +569,23 @@ export function makeCountingFetch(
   };
 }
 
-/** Attaches a payload to an error, WITHOUT overwriting one that is already there. */
+/**
+ * Attaches a payload to an error, WITHOUT overwriting one that is already there.
+ *
+ * TOTAL. Both the probe and the assignment can throw on a value realm did not create — `in` runs
+ * a proxy's `has` trap, and assigning to a frozen object throws in strict mode. Either one would
+ * hand the caller the attacher's own TypeError in place of the failure it was trying to describe,
+ * which is the whole attribution chain defeated by the last link in it. An error that cannot be
+ * enriched still propagates, intact and unenriched; shape classification never needed the payload.
+ */
 export function attachDriveCall(err: unknown, payload: DriveCallPayload): void {
   if (typeof err !== 'object' || err === null) return;
-  if ('driveCall' in err) return; // e.g. an sdk_missing attach from getClient — never re-attributed
-  (err as { driveCall: DriveCallPayload }).driveCall = payload;
+  try {
+    if ('driveCall' in err) return; // e.g. getClient's sdk_missing attach — never re-attributed
+    (err as { driveCall: DriveCallPayload }).driveCall = payload;
+  } catch {
+    /* enrichment never out-throws the error being attributed */
+  }
 }
 
 /**
@@ -569,6 +632,13 @@ export async function driveCreate<T>(
   counters: WireCounters,
 ): Promise<T> {
   const before: WireCounters = { ...counters };
+  // The observations are cleared, the attempt total is not. `attempts` is a running count, so a
+  // delta is the right question for it; a status is an OBSERVATION, and asking "did it change?"
+  // means a second identical 429 reads as nothing observed at all — the discriminator vanishing
+  // exactly during the rate-limit storm it exists to describe. Cleared here, they are present in
+  // the payload if and only if THIS create saw them.
+  delete counters.lastStatus;
+  delete counters.lastRetryAfterMs;
   const started = Date.now();
   const controller = new AbortController();
 
@@ -581,9 +651,13 @@ export async function driveCreate<T>(
     }, clock.ceilingMs);
   });
   // A race has a LOSER, and an unobserved rejected promise takes the process down on Node >= 15.
-  // The timer can lose two ways — the create settles first, or both settle in the same tick and
-  // the race picks the create — so its rejection is observed here unconditionally. The create's
-  // own losing rejection is observed on the fired path below.
+  // DEFENSE IN DEPTH, stated precisely: `Promise.race` subscribes to every promise it is given,
+  // and that subscription counts as handling — so as long as the race below actually runs, neither
+  // loser can go unhandled, and probing this line away does NOT trip an unhandledRejection trap.
+  // What made the class real was the path where the race NEVER RAN: a create that threw
+  // synchronously escaped before `Promise.race`, leaving this timer to fire into nothing and kill
+  // the process. That path is closed structurally below; this line is the belt for a future
+  // refactor that stops racing, which is why it survives a probe showing it does nothing today.
   void ceiling.catch(() => undefined);
 
   // Declared out here so the fired path can observe the loser; ASSIGNED inside the try, because a
@@ -596,13 +670,11 @@ export async function driveCreate<T>(
     sdkCall = (async () => rawCreate(body, { signal: controller.signal }))();
     return await Promise.race([sdkCall, ceiling]);
   } catch (err) {
-    // Observed THIS create, not carried over from the last one: a stale status from a previous
-    // create attaching to this failure would be a confident lie about what just happened.
-    const sawStatus =
-      counters.lastStatus !== undefined && counters.lastStatus !== before.lastStatus;
-    const sawRetryAfter =
-      counters.lastRetryAfterMs !== undefined &&
-      counters.lastRetryAfterMs !== before.lastRetryAfterMs;
+    // Present iff THIS create observed them — the fields were cleared at the top, so a stale
+    // status from a previous create cannot attach to this failure and tell a confident lie about
+    // what just happened.
+    const sawStatus = counters.lastStatus !== undefined;
+    const sawRetryAfter = counters.lastRetryAfterMs !== undefined;
     const delta: DriveCallPayload = {
       attempts_sdk: counters.attempts - before.attempts,
       elapsed_ms: Date.now() - started,
@@ -616,12 +688,23 @@ export async function driveCreate<T>(
 
     if (fired) {
       controller.abort();
-      // The loser's rejection still arrives. Unobserved, an APIUserAbortError takes the process
-      // down on Node ≥15 — so it is observed here and dropped.
+      // The loser's rejection still arrives — an APIUserAbortError, moments later. Same defense
+      // in depth as the timer's catch above, and the same honest caveat: the race is already
+      // subscribed, so this is insurance rather than the thing currently preventing a crash.
       void sdkCall?.catch(() => undefined);
+      // The lever named is the one that is actually LIVE. Telling an operator to raise a flag
+      // that a step key is already overriding sends them to change something with no effect —
+      // so provenance decides which arm renders. With no provenance at all (a hand-built clock)
+      // both arms render, because either could be the live one.
+      const source = clock.perAttemptSource;
+      const stepArm = source === undefined || source === 'step';
+      const flagArm = source === undefined || source === 'flag' || source === 'default';
+      const levers = [
+        ...(stepArm ? ['raise llm_timeout_seconds on the step'] : []),
+        ...(flagArm ? ['pass a larger --llm-timeout'] : []),
+      ].join(' or ');
       const aborted = new Error(
-        `LLM create exceeded the per-create ceiling (${String(clock.ceilingMs)}ms) — ` +
-          `raise llm_timeout_seconds on the step or pass --llm-timeout`,
+        `LLM create exceeded the per-create ceiling (${String(clock.ceilingMs)}ms) — ${levers}`,
       );
       attachDriveCall(aborted, { error_class: 'aborted_by_budget', ...delta });
       throw aborted;

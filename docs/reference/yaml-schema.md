@@ -895,8 +895,10 @@ backoffMargin = Σ n=0..(maxRetries−1) min(0.5 × 2ⁿ, 8) seconds   = 1.5s at
 ```
 
 The `+ 60_000` is a download allowance, so a large-but-progressing response is never killed for
-being large. The backoff term is the SDK's own retry schedule summed as an UPPER bound — its
-jitter only ever shortens a wait, so budgeting the un-jittered sum can never cut a retry short.
+being large. The backoff term is the SDK's OWN retry schedule summed as an UPPER bound — its
+jitter only ever shortens a wait, so budgeting the un-jittered sum can never cut short a retry the
+SDK scheduled for itself. A SERVER-DIRECTED wait is a different thing and is deliberately not
+budgeted: a `Retry-After` can ask for hours, and the ceiling outranks it on purpose.
 With the default 600s per attempt the derived ceiling is 1,861,500ms; with `llm_timeout_seconds:
 30` it is 151,500ms.
 
@@ -924,9 +926,16 @@ The ceiling forbids exactly two things the SDKs otherwise permit:
    as long as the server asks.
 
 **`Retry-After` is OBSERVED, never honored** (record R-4: visibility over obedience). Realm reads
-both header forms, records the value on the failure as `retry_after_observed_ms` alongside
-`last_observed_status`, and does not wait for it. Those two fields are what let an operator tell a
-rate limit apart from a hang without reading a single log line.
+all three forms — `retry-after-ms`, a numeric `Retry-After` in seconds, and an HTTP-date
+`Retry-After` — and records the value on the failure as `retry_after_observed_ms` alongside
+`last_observed_status`. Those two fields are what let an operator tell a rate limit apart from a
+hang without reading a single log line. Realm's own scheduling never waits on it; the SDK beneath
+may, and that wait is bounded by the ceiling.
+
+A past date observes as `0` (the wait is already over), and a header nobody can parse observes as
+nothing at all rather than as a fabricated zero. `attempts_sdk` counts the attempts the wrapper saw
+COMPLETE — an attempt still in flight when the ceiling fired is not counted, so a request that hung
+before its headers arrived records `0`.
 
 > **Header note:** realm now passes an explicit request timeout to both SDKs, so outgoing requests
 > carry an `X-Stainless-Timeout` header they did not carry before. Servers ignore it; proxies that

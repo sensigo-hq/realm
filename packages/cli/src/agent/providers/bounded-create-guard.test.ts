@@ -57,6 +57,25 @@ describe('#401 — no provider calls an SDK create outside the ceiling', () => {
     expect(wrappers.filter((w) => w.startsWith('openai-reasoning-provider'))).toHaveLength(1);
   });
 
+  it('ROUTED, not merely WRAPPED — each wrapper is actually handed to driveCreate', () => {
+    // A wrapper proves the call has the right SHAPE; it does not prove anything bounds it. A
+    // provider could define `rawCreate` and then call it directly, satisfying the rail above
+    // while the request runs with no ceiling at all — so the routing is counted too. Six
+    // wrappers, six hand-offs: anthropic (ladder, tools loop), openai (callStep, strict ladder,
+    // tools loop), reasoning (callStep). Bypassing any one of them drops this count to five.
+    const routed = providerSources().flatMap(({ name, src }) =>
+      src
+        .split('\n')
+        .map((line, i) => ({ name, i, line }))
+        .filter(({ line }) => !isComment(line) && line.includes('driveCreate(rawCreate'))
+        .map(({ name, i }) => `${name}:${String(i + 1)}`),
+    );
+    expect(routed).toHaveLength(6);
+    expect(routed.filter((r) => r.startsWith('anthropic-provider'))).toHaveLength(2);
+    expect(routed.filter((r) => r.startsWith('openai-provider'))).toHaveLength(3);
+    expect(routed.filter((r) => r.startsWith('openai-reasoning-provider'))).toHaveLength(1);
+  });
+
   it('never the `.create({` shape — the capability-warn census scans for exactly that', () => {
     // The census that counts capability-declaring sites keys on `.create({`. Writing a create in
     // that shape here would silently enter a population this code is not part of.

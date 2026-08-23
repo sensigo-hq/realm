@@ -34,13 +34,16 @@ All notable changes to this project are documented here.
   backoff, plus a 60-second download allowance — so a legitimately slow response is never killed
   for being large.
   When the ceiling fires the drive stops and says why, in the terms of the lever you would change:
-  the recorded failure is `aborted_by_budget`, carrying the declared per-attempt value, the derived
-  ceiling, the elapsed time, and how many wire attempts the SDK actually made. Two behaviours the
+  the recorded failure is `aborted_by_budget`, carrying the derived ceiling, the elapsed time, how
+  many wire attempts completed, plus the declared per-attempt value when a step or the flag set one
+  — a fallback nobody chose is not reported as a declaration. Two behaviours the
   SDKs otherwise permit are now forbidden: a response whose headers arrived but whose body never
   finishes, and unbounded sleeping on a server-directed `Retry-After`.
-  **`Retry-After` is observed, never honored.** Realm reads both header forms and records the value
-  beside the HTTP status on the failure, so a rate limit is distinguishable from a hang at a glance
-  — but it does not wait for it. Scheduling is not this layer's decision; disclosure is.
+  **`Retry-After` is observed, never honored.** Realm reads all three forms — `retry-after-ms`, a
+  numeric `Retry-After`, and an HTTP-date `Retry-After` — and records the value beside the HTTP
+  status on the failure, so a rate limit is distinguishable from a hang at a glance. Realm's own
+  scheduling never waits on it; the SDK beneath may, and that wait is bounded by the ceiling.
+  Scheduling is not this layer's decision; disclosure is.
   **Scope, stated honestly.** The BOUND applies to realm's own providers (Anthropic, OpenAI,
   OpenAI-reasoning) driven by `realm agent`. A provider supplied through `--provider-module` gets
   the failure record like any other but not the ceiling — realm does not construct its client. The

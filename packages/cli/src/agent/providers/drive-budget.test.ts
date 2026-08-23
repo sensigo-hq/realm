@@ -4,7 +4,8 @@
 import { readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { describe, it, expect, afterEach } from 'vitest';
+import Anthropic from '@anthropic-ai/sdk';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   deriveLlmClock,
   makeCountingFetch,
@@ -14,6 +15,7 @@ import {
   MAX_RETRIES,
   type WireCounters,
 } from './agent-utils.js';
+import { buildEntry } from '../drive-failure.js';
 
 // -------------------------------------------------------------------------------------------
 // The ceiling arithmetic
@@ -49,7 +51,10 @@ describe('deriveLlmClock — the per-attempt value becomes a whole-create ceilin
       'src/agent/providers/openai-provider.ts',
       'src/agent/providers/openai-reasoning-provider.ts',
     ].map((f) => readFileSync(f, 'utf8'));
-    const declared = sources.join('\n').match(/maxRetries: MAX_RETRIES/g) ?? [];
+    // Anchored on the trailing comma: without it the matcher also accepts a site written
+    // `maxRetries: MAX_RETRIES + 1`, which is a DIFFERENT number of attempts than the formula
+    // budgets for and would pass a census that was supposed to catch exactly that.
+    const declared = sources.join('\n').match(/maxRetries: MAX_RETRIES,/g) ?? [];
     expect(declared).toHaveLength(6);
     // Non-vacuity: the matcher finds nothing if someone inlines a literal instead.
     expect(sources.join('\n')).not.toMatch(/maxRetries:\s*\d/);
@@ -280,23 +285,39 @@ describe('the ceiling outranks a server-directed sleep (issue #401 leg B)', () =
     server = undefined;
   });
 
-  it('fires DURING an honored Retry-After sleep and says so', async () => {
-    // A 429 with `retry-after-ms: 250` and one retry allowed: the fetch layer honors the sleep,
-    // so nothing is on the wire when the 100ms ceiling fires. This is the class the bound exists
-    // for — waiting is not the same as progress.
+  it('fires DURING an honored Retry-After sleep, and stops the retry that was coming', async () => {
+    // The REAL Anthropic client, against a real 429. Hand-rolling the sleep here would have been
+    // testing my own understanding of the SDK rather than the SDK — and the honoring agent is the
+    // SDK's retry ladder, not the fetch layer, which is precisely the thing worth pinning.
+    //
+    // 429 + `retry-after-ms: 250` and one retry allowed: the SDK sleeps, so nothing is on the
+    // wire when the 100ms ceiling fires. This is the class the bound exists for — waiting is not
+    // progress.
     server = createServer((_req, res) => {
       res.writeHead(429, { 'retry-after-ms': '250', 'content-type': 'application/json' });
-      res.end('{"error":{"message":"slow down"}}');
+      res.end('{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}');
     });
     await new Promise<void>((r) => server!.listen(0, '127.0.0.1', r));
     const port = (server.address() as AddressInfo).port;
 
     const counters: WireCounters = { attempts: 0 };
-    const countingFetch = makeCountingFetch(counters);
+    const client = new Anthropic({
+      apiKey: 'sk-ant-test-drive-budget-0000',
+      baseURL: `http://127.0.0.1:${String(port)}`,
+      maxRetries: 1,
+      fetch: makeCountingFetch(counters),
+    });
+    // Casts because driveCreate is Record-typed at its boundary — it bounds ANY create, and does
+    // not know one SDK's request type from another's.
+    const rawCreate = (b: Record<string, unknown>, o: Record<string, unknown>): Promise<unknown> =>
+      client.messages.create(b as never, o as never);
 
-    // The loser's rejection lands after the race is decided. Unobserved it would take the process
-    // down — the trap proves the no-op `.catch` in driveCreate is doing its job, and it lives in
-    // this cell because this is the only place the loser is guaranteed to reject late.
+    // The loser's rejection lands after the race is decided, and this is the only place it is
+    // guaranteed to reject LATE — so the trap is the regression sentinel for the whole class.
+    // What it does NOT prove is that driveCreate's no-op `.catch` lines are load-bearing:
+    // `Promise.race` is already subscribed to both promises, and probing those lines away leaves
+    // this cell green. Verified, and said plainly, because a trap that silently proves nothing is
+    // worse than no trap.
     const unhandled: unknown[] = [];
     const trap = (e: unknown): void => {
       unhandled.push(e);
@@ -305,20 +326,8 @@ describe('the ceiling outranks a server-directed sleep (issue #401 leg B)', () =
 
     const started = Date.now();
     const err = await driveCreate(
-      async (_b, o) => {
-        const res = await countingFetch(`http://127.0.0.1:${String(port)}/v1/messages`, {
-          method: 'POST',
-          body: JSON.stringify(_b),
-          signal: o['signal'] as AbortSignal,
-        });
-        if (!res.ok) {
-          const wait = Number(res.headers.get('retry-after-ms') ?? 0);
-          await new Promise((r) => setTimeout(r, wait)); // the honored sleep
-          throw Object.assign(new Error('rate limited'), { status: res.status });
-        }
-        return {};
-      },
-      { model: 'm' },
+      rawCreate,
+      { model: 'claude-x', max_tokens: 16, messages: [{ role: 'user', content: 'hi' }] },
       { ceilingMs: 100, declaredPerAttemptMs: 40 },
       counters,
     ).catch((e: unknown) => e);
@@ -327,12 +336,16 @@ describe('the ceiling outranks a server-directed sleep (issue #401 leg B)', () =
     expect(payloadOf(err)?.error_class).toBe('aborted_by_budget');
     expect(payloadOf(err)?.last_observed_status).toBe(429);
     expect(payloadOf(err)?.retry_after_observed_ms).toBe(250);
-    // Raced, not awaited: the whole cell returns near the ceiling, not after the 250ms sleep.
+    // Raced, not awaited: the whole thing returns near the ceiling, not after the 250ms sleep.
     expect(elapsed).toBeLessThan(220);
 
-    await new Promise((r) => setTimeout(r, 300)); // let the loser reject, in-cell
+    await new Promise((r) => setTimeout(r, 400)); // let the loser settle, in-cell
     process.off('unhandledRejection', trap);
     expect(unhandled).toEqual([]);
+    // A4-2, executed: the SDK's backoff sleep is not itself interruptible, but the abort stops
+    // the retry at the next check — so the second attempt never reaches the wire. One attempt,
+    // counted, long after the sleep would have ended.
+    expect(counters.attempts).toBe(1);
   });
 
   it('a hanging response is aborted by the signal, and the attempt is still counted', async () => {
@@ -361,5 +374,233 @@ describe('the ceiling outranks a server-directed sleep (issue #401 leg B)', () =
     expect(payloadOf(err)?.error_class).toBe('aborted_by_budget');
     expect(counters.attempts).toBe(1);
     expect(counters.lastStatus).toBe(200); // headers arrived; the body never did
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// K1 — an observation belongs to the create that made it, INCLUDING when it repeats
+// -------------------------------------------------------------------------------------------
+describe('driveCreate — a repeated status is still THIS creates status', () => {
+  it('two consecutive 429s both carry the status AND the Retry-After', async () => {
+    // The delta snapshot answers "did this create observe something?" by comparing against the
+    // previous create's value — which silently means a SECOND identical 429 looks like nothing
+    // was observed at all. A rate-limit storm is exactly a run of identical statuses, so the
+    // discriminator disappears at the moment it matters most. Both fields are checked here
+    // because a half-fix that resets only the status reds this cell on the Retry-After.
+    const counters: WireCounters = { attempts: 0 };
+    const clock = { ceilingMs: 5_000, declaredPerAttemptMs: 1_000 };
+    const rateLimited = async (): Promise<never> => {
+      counters.attempts += 1;
+      counters.lastStatus = 429;
+      counters.lastRetryAfterMs = 250;
+      throw Object.assign(new Error('rate limited'), { status: 429 });
+    };
+
+    const first = await driveCreate(rateLimited, {}, clock, counters).catch((e: unknown) => e);
+    const second = await driveCreate(rateLimited, {}, clock, counters).catch((e: unknown) => e);
+
+    expect(payloadOf(first)?.last_observed_status).toBe(429);
+    expect(payloadOf(first)?.retry_after_observed_ms).toBe(250);
+    expect(payloadOf(second)?.last_observed_status).toBe(429);
+    expect(payloadOf(second)?.retry_after_observed_ms).toBe(250);
+    // The attempt count is still a DELTA — it is a running total, not an observation.
+    expect(payloadOf(second)?.attempts_sdk).toBe(1);
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// attachDriveCall is TOTAL — enrichment never replaces the error being attributed
+// -------------------------------------------------------------------------------------------
+describe('attachDriveCall — the last untotal link in the attribution chain', () => {
+  it('a FROZEN error survives: the original propagates, unattributed but intact', async () => {
+    // Assigning to a frozen object throws in strict mode. Before this was total, a frozen thrown
+    // value came back to the caller as the attacher's own TypeError — the operator's failure
+    // replaced by the recording machinery's.
+    const counters: WireCounters = { attempts: 0 };
+    const frozen = Object.freeze(Object.assign(new Error('frozen failure'), { status: 503 }));
+    const thrown = await driveCreate(
+      async () => {
+        throw frozen;
+      },
+      {},
+      { ceilingMs: 5_000 },
+      counters,
+    ).catch((e: unknown) => e);
+
+    expect(thrown).toBe(frozen);
+    expect(payloadOf(thrown)).toBeUndefined();
+    // And it still classifies, because shape classification never needed the payload.
+    expect(buildEntry(thrown, 's', 'anthropic', Date.now()).error_class).toBe('api_status');
+  });
+
+  it('a proxy whose `has` trap throws survives the same way', () => {
+    const hostile = new Proxy(new Error('trapped'), {
+      has(): boolean {
+        throw new Error('has trap');
+      },
+    });
+    expect(() => {
+      attachDriveCall(hostile, { error_class: 'other' });
+    }).not.toThrow();
+  });
+
+  it('CONTROL — a getter-only driveCall is left alone, not overwritten', () => {
+    const err = Object.defineProperty(new Error('x'), 'driveCall', {
+      get: () => ({ error_class: 'sdk_missing' }),
+      configurable: true,
+    });
+    attachDriveCall(err, { error_class: 'other' });
+    expect((err as unknown as { driveCall: { error_class: string } }).driveCall.error_class).toBe(
+      'sdk_missing',
+    );
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// The lever a fired ceiling names is the one that is LIVE
+// -------------------------------------------------------------------------------------------
+describe('driveCreate — the abort names the live lever, not every lever', () => {
+  const fire = async (source?: 'step' | 'flag' | 'default'): Promise<string> => {
+    const err = await driveCreate(
+      () => new Promise(() => undefined),
+      {},
+      {
+        ceilingMs: 20,
+        declaredPerAttemptMs: 10,
+        ...(source !== undefined ? { perAttemptSource: source } : {}),
+      },
+      { attempts: 0 },
+    ).catch((e: unknown) => e);
+    return (err as Error).message;
+  };
+
+  it('a step-authored clock names the STEP key only', async () => {
+    // Telling someone to raise a flag their own step key overrides sends them to change
+    // something that cannot have any effect.
+    const message = await fire('step');
+    expect(message).toContain('raise llm_timeout_seconds on the step');
+    expect(message).not.toContain('--llm-timeout');
+  });
+
+  it('a flag-sourced clock names the FLAG only', async () => {
+    const message = await fire('flag');
+    expect(message).toContain('--llm-timeout');
+    expect(message).not.toContain('llm_timeout_seconds on the step');
+  });
+
+  it('a default-sourced clock names the FLAG — it is the live lever when nothing was authored', async () => {
+    const message = await fire('default');
+    expect(message).toContain('--llm-timeout');
+    expect(message).not.toContain('llm_timeout_seconds on the step');
+  });
+
+  it('a clock with NO provenance names BOTH — either could be live', async () => {
+    // This is also why the lever cells elsewhere in the suite stayed green when the fork landed:
+    // green-as-is was probed pre-fork, and under the fork these cells stay green because a
+    // source-less clock renders both arms.
+    const message = await fire();
+    expect(message).toContain('raise llm_timeout_seconds on the step');
+    expect(message).toContain('--llm-timeout');
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// The clamp — a huge budget must not invert into an instant abort
+// -------------------------------------------------------------------------------------------
+describe('deriveLlmClock — both timers are clamped to what a timer can hold', () => {
+  const MAX = 2 ** 31 - 1;
+
+  it('a huge per-attempt value, and Infinity, both land exactly on the limit', () => {
+    // Past 2^31-1 a setTimeout overflows and fires almost immediately, so an unclamped huge
+    // budget becomes the opposite of what was asked for. Infinity is reachable from real input:
+    // `Number.isInteger(1e305)` is true, so the loader accepts it and x1000 overflows to
+    // Infinity. Math.min absorbs both cases.
+    expect(deriveLlmClock(9_999_999_999_999).ceilingMs).toBe(MAX);
+    expect(deriveLlmClock(Number.POSITIVE_INFINITY).ceilingMs).toBe(MAX);
+  });
+
+  it('the DECLARED value is the clamped one — the record says what actually bounds the attempt', () => {
+    // Recording the raw request would have the record claim a bound that no timer can hold, and
+    // the SDK's own `timeout` gets this same clamped number, so the two agree.
+    expect(deriveLlmClock(9_999_999_999_999).declaredPerAttemptMs).toBe(MAX);
+  });
+
+  it('INVERSION PIN — a create under a huge clock RESOLVES rather than aborting instantly', async () => {
+    // The discriminating cell, and the 20ms is load-bearing. Node clamps an over-range setTimeout
+    // delay to ONE MILLISECOND, so unclamped this "effectively forever" budget fires the ceiling
+    // almost at once and turns into a budget of nothing. A create that resolves in the same
+    // microtask would beat even that timer and prove nothing — probed, and it did exactly that.
+    const out = await driveCreate(
+      async () => {
+        await new Promise((r) => setTimeout(r, 20));
+        return { ok: true };
+      },
+      {},
+      deriveLlmClock(9_999_999_999_999),
+      { attempts: 0 },
+    );
+    expect(out).toEqual({ ok: true });
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// Retry-After — all three legal forms
+// -------------------------------------------------------------------------------------------
+describe('makeCountingFetch — the HTTP-date Retry-After form', () => {
+  const req = new Request('https://example.invalid/v1/messages');
+  const observe = async (value: string): Promise<number | undefined> => {
+    const counters: WireCounters = { attempts: 0 };
+    await makeCountingFetch(
+      counters,
+      async () => new Response('', { status: 429, headers: { 'Retry-After': value } }),
+    )(req);
+    return counters.lastRetryAfterMs;
+  };
+
+  it('a FUTURE date is observed as the delta from now', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-23T12:00:00Z'));
+    try {
+      // Two minutes out. The SDKs honour this form, so a parser that only read numbers dropped a
+      // whole legal header on the floor and recorded nothing for an obvious rate limit.
+      const observed = await observe('Sun, 23 Aug 2026 12:02:00 GMT');
+      expect(observed).toBe(120_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a PAST date is observed as 0 — the wait is over, not negative', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-23T12:00:00Z'));
+    try {
+      expect(await observe('Sun, 23 Aug 2026 11:58:00 GMT')).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('an UNPARSEABLE header is observed as nothing at all — never a fabricated zero', async () => {
+    // Zero would claim the server asked for no wait. Absence says the truth: realm has no idea
+    // what was asked for.
+    expect(await observe('whenever you feel like it')).toBeUndefined();
+  });
+});
+
+describe('attempts_sdk counts what the wrapper SAW COMPLETE', () => {
+  it('a pre-header hang records 0 attempts, truthfully', async () => {
+    // An attempt still in flight when the ceiling fired is not a completed attempt, and the
+    // wrapper does not count it. Zero is the honest number: nothing came back. The render says
+    // "attempt 0", which reads oddly for exactly one second and then reads correctly — an
+    // operator seeing it knows nothing ever completed, which is the whole diagnosis.
+    const counters: WireCounters = { attempts: 0 };
+    const err = await driveCreate(
+      () => new Promise(() => undefined),
+      {},
+      { ceilingMs: 25, declaredPerAttemptMs: 10 },
+      counters,
+    ).catch((e: unknown) => e);
+    expect(payloadOf(err)?.attempts_sdk).toBe(0);
+    expect(payloadOf(err)?.last_observed_status).toBeUndefined();
   });
 });

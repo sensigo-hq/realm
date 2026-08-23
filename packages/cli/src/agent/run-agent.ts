@@ -34,6 +34,7 @@ import {
   renderValidationSummaryEntry,
   deriveLlmClock,
   safeErrorText,
+  type LlmClock,
 } from './providers/agent-utils.js';
 import { isToolCapable } from './providers/llm-provider.js';
 import type { McpClient, ToolDefinition, ToolExecutor } from './mcp/mcp-extensions.js';
@@ -490,9 +491,28 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // (the --schema-retries precedent, exactly). `deriveLlmClock` turns the per-ATTEMPT
         // seconds into the whole-create ceiling — per-attempt × (retries + 1), plus the SDK's
         // own worst-case backoff sleeping, plus a download allowance for a slow response body.
-        const llmClock = deriveLlmClock(
+        //
+        // The SOURCE is computed here, once, and travels with the clock. Two disclosures depend
+        // on it and nothing else does: whether the recorded `declared_per_attempt_ms` exists at
+        // all — a fallback nobody chose is not a declaration, so it is omitted rather than
+        // reported as one — and which lever a fired ceiling names, since telling someone to raise
+        // a flag their own step key overrides sends them to change something inert.
+        const perAttemptSource: NonNullable<LlmClock['perAttemptSource']> =
+          stepDef.llm_timeout_seconds !== undefined
+            ? 'step'
+            : deps.llmTimeoutSeconds !== undefined
+              ? 'flag'
+              : 'default';
+        const derivedClock = deriveLlmClock(
           (stepDef.llm_timeout_seconds ?? fallbackLlmTimeoutSeconds) * 1000,
         );
+        const llmClock: LlmClock = {
+          ceilingMs: derivedClock.ceilingMs,
+          perAttemptSource,
+          ...(perAttemptSource !== 'default' && derivedClock.declaredPerAttemptMs !== undefined
+            ? { declaredPerAttemptMs: derivedClock.declaredPerAttemptMs }
+            : {}),
+        };
 
         // issue #217: the in-drive schema-feedback repair loop. `stepInput`/`toolCallsForMeta`/
         // `result` are re-assigned on every attempt inside the `for` loop below; `repairsUsed`/

@@ -93,8 +93,10 @@ export abstract class LlmProvider {
     agentProfileInstructions?: string,
     opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
   ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
-    // issue #401: the clock is PASSED THROUGH here. This base delegation is the commonest path to
-    // `callStep`, and dropping the clock at it would silently unbound the majority of drives.
+    // issue #401: the clock is PASSED THROUGH here. This base delegation is the route every
+    // provider that does NOT override this method takes for a step declaring `structured_output:
+    // strict` — both in-repo providers override it, so in practice this serves third-party ones.
+    // Dropping the clock here would leave that whole class of drives unbounded, silently.
     const output = await this.callStep(prompt, inputSchema, agentProfileInstructions, {
       ...(opts?.llmClock !== undefined ? { llmClock: opts.llmClock } : {}),
     });

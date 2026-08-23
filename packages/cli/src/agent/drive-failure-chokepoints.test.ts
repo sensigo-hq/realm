@@ -6,12 +6,13 @@
 // which `runAgent`'s callers depend on.
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
-import { ExtensionRegistry } from '@sensigo/realm';
+import { ExtensionRegistry, classifyRunHealth } from '@sensigo/realm';
 import type { WorkflowDefinition, RunRecord } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
+import { inspectRun } from '../commands/inspect.js';
 import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { AgentDeps } from './run-agent.js';
-import { driveCreate, type WireCounters } from './providers/agent-utils.js';
+import { driveCreate, type LlmClock, type WireCounters } from './providers/agent-utils.js';
 
 /**
  * Extends the real base class rather than shaping an object literal: the base supplies
@@ -680,6 +681,16 @@ class FullyHostileProvider extends LlmProvider {
   }
 }
 
+/** The same hostile value, thrown on the TOOLS route — the other print site. */
+class HostileToolsProvider extends ToolCapableLlmProvider {
+  async callStep(): Promise<Record<string, unknown>> {
+    throw FULLY_HOSTILE;
+  }
+  async callStepWithTools(): Promise<never> {
+    throw FULLY_HOSTILE;
+  }
+}
+
 /** Throws whatever it is given, unchanged — the transport for a real driveCreate product. */
 class ThrowingProvider extends LlmProvider {
   constructor(private readonly toThrow: unknown) {
@@ -692,14 +703,18 @@ class ThrowingProvider extends LlmProvider {
 
 /** Records the clock it was handed, then fails, so precedence is observable from the outside. */
 class ClockSpyProvider extends LlmProvider {
-  readonly seen: Array<number | undefined> = [];
+  readonly clocks: Array<LlmClock | undefined> = [];
+  /** The declared per-attempt value of each clock seen — absent where nothing was declared. */
+  get seen(): Array<number | undefined> {
+    return this.clocks.map((c) => c?.declaredPerAttemptMs);
+  }
   async callStep(
     _p: string,
     _s?: Record<string, unknown>,
     _a?: string,
-    opts?: { llmClock?: { declaredPerAttemptMs?: number } },
+    opts?: { llmClock?: LlmClock },
   ): Promise<Record<string, unknown>> {
-    this.seen.push(opts?.llmClock?.declaredPerAttemptMs);
+    this.clocks.push(opts?.llmClock);
     throw new Error('stop here');
   }
 }
@@ -728,7 +743,8 @@ describe('#401 PR-2 — which clock the step drives under', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await runAgent(deps, { definition: budgetWf(12), params: {} });
-    expect(provider.seen).toEqual([12_000]);
+    expect(provider.seen).toEqual([12_000]); // authored ⇒ DECLARED, and recorded as such
+    expect(provider.clocks[0]?.perAttemptSource).toBe('step');
     vi.restoreAllMocks();
   });
 
@@ -738,17 +754,24 @@ describe('#401 PR-2 — which clock the step drives under', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await runAgent(deps, { definition: budgetWf(), params: {} });
+    // A flag IS a declaration — somebody typed it. Present, like the step key.
     expect(provider.seen).toEqual([45_000]);
+    expect(provider.clocks[0]?.perAttemptSource).toBe('flag');
     vi.restoreAllMocks();
   });
 
-  it('neither authored nor flagged ⇒ ten minutes per attempt', async () => {
+  it('neither authored nor flagged ⇒ ten minutes per attempt, DECLARED BY NOBODY', async () => {
+    // The ceiling is real and derived from 600s; the DECLARATION is absent, because nobody made
+    // one. Recording 600000 here would have the run claim a per-attempt value its author never
+    // chose — a fallback is what happens when there is no declaration, not a quiet one.
     const provider = new ClockSpyProvider();
     const deps = makeDeps({ provider });
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await runAgent(deps, { definition: budgetWf(), params: {} });
-    expect(provider.seen).toEqual([600_000]);
+    expect(provider.seen).toEqual([undefined]);
+    expect(provider.clocks[0]?.perAttemptSource).toBe('default');
+    expect(provider.clocks[0]?.ceilingMs).toBe(1_861_500); // 600s x 3 + 1.5s + 60s
     vi.restoreAllMocks();
   });
 
@@ -798,11 +821,57 @@ describe('#401 PR-2 — a fired ceiling as the operator meets it', () => {
     expect(entry.declared_per_attempt_ms).toBe(10);
     expect(entry.derived_ceiling_ms).toBe(25);
     expect(typeof entry.elapsed_ms).toBe('number');
+
+    // ...and it reaches the two places an operator actually looks. A record nobody can read is
+    // not a record, and the lever text has to survive BOTH renders, not just the store.
+    const run = await onlyRun(store);
+    // Creation is backdated by a second, and ONLY creation: an in-memory run is created and fails
+    // inside the same millisecond, and the finding's floor is the creation instant, so the real
+    // failure does not sort after it (see the note at run-health.ts's floor comparison). The
+    // entry under test is untouched.
+    const finding = classifyRunHealth({
+      ...run,
+      created_at: new Date(Date.parse(run.created_at) - 1000).toISOString(),
+    }).find((f) => f.kind === 'drive_failing');
+    expect(finding?.reason).toContain('aborted_by_budget');
+    expect(finding?.reason).toContain('llm_timeout_seconds');
+
+    const rendered = await inspectRun(run.id, store, deps.workflowStore);
+    expect(rendered).toContain('llm_timeout_seconds');
+    expect(rendered).toContain('--llm-timeout');
+    expect(rendered).toContain('(declared 10ms)');
+    expect(rendered).toContain('(ceiling 25ms)');
     vi.restoreAllMocks();
   });
 });
 
 describe('#401 PR-2 — the print no longer out-throws the failure', () => {
+  it('the TOOLS print is hardened too — the other half of the same fix', async () => {
+    // Two prints, two chokepoints. Pinning only the non-tools one leaves a reversion at the tools
+    // line entirely free, and that line is the one a tools-bearing step goes through.
+    const store = new InMemoryStore();
+    const deps = makeDeps({
+      store,
+      provider: new HostileToolsProvider(),
+      mcpClientFactory: () => ({
+        connect: async () => {},
+        getTools: async () => [{ name: 'op', description: 'd', inputSchema: { type: 'object' } }],
+        callTool: async () => ({ content: [] }),
+        disconnect: async () => {},
+      }),
+    } as unknown as Partial<AgentDeps>);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await runAgent(deps, { definition: toolsWf(), params: {} });
+    expect(result).toBe('failed');
+    expect(errSpy.mock.calls.flat().join(' ')).toContain('unrenderable thrown value');
+    expect((await onlyRun(store)).drive_failures!.entries[0]!.message).toBe(
+      'unrenderable thrown value',
+    );
+    vi.restoreAllMocks();
+  });
+
   it('a value hostile at BOTH the print and the mint still returns failed, recorded', async () => {
     // Before the prints were made total, this value took the process out at the console line —
     // ahead of the (already hardened) mint. Now both are total, so the failure is recorded and
@@ -818,6 +887,161 @@ describe('#401 PR-2 — the print no longer out-throws the failure', () => {
     const entry = (await onlyRun(store)).drive_failures!.entries[0]!;
     expect(entry.message).toBe('unrenderable thrown value');
     expect(errSpy.mock.calls.flat().join(' ')).toContain('unrenderable thrown value');
+    vi.restoreAllMocks();
+  });
+});
+
+// =================================================================================================
+// issue #401 — the clock's OTHER two thread sites, and the base delegation
+//
+// run-agent hands the clock to three different call sites depending on the step. Only one of them
+// was pinned; a clock dropped at either of the others would leave a whole route unbounded with
+// nothing to show for it. Each cell below reds under its OWN site's drop-mutant.
+// =================================================================================================
+
+/** A tool-capable double that records the clock it was handed on the tools route. */
+class ToolsClockSpy extends ToolCapableLlmProvider {
+  clock: LlmClock | undefined;
+  async callStep(): Promise<Record<string, unknown>> {
+    throw new Error('not the tools route');
+  }
+  async callStepWithTools(
+    _p: string,
+    _t: unknown,
+    _e: unknown,
+    options: { llmClock?: LlmClock },
+  ): Promise<never> {
+    this.clock = options.llmClock;
+    throw new Error('stop here');
+  }
+}
+
+/** Overrides callStepWithMeta, like both real providers do — the DECLARED-step route. */
+class MetaClockSpy extends LlmProvider {
+  clock: LlmClock | undefined;
+  async callStep(): Promise<Record<string, unknown>> {
+    throw new Error('not the declared route');
+  }
+  override async callStepWithMeta(
+    _p: string,
+    _s?: Record<string, unknown>,
+    _a?: string,
+    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
+  ): Promise<never> {
+    this.clock = opts?.llmClock;
+    throw new Error('stop here');
+  }
+}
+
+/**
+ * Does NOT override callStepWithMeta, so run-agent's declared-step route reaches it through the
+ * BASE class delegation — the hop that serves every third-party provider.
+ */
+class BaseDelegationProvider extends LlmProvider {
+  async callStep(
+    _p: string,
+    _s?: Record<string, unknown>,
+    _a?: string,
+    opts?: { llmClock?: LlmClock },
+  ): Promise<Record<string, unknown>> {
+    if (opts?.llmClock === undefined) throw new Error('clock did not arrive at callStep');
+    // The CEILING is shrunk here, in the double, so the cell finishes in milliseconds: the real
+    // one derived from a 7-second key is 82.5s, dominated by the download allowance, and no
+    // authored value can produce a sub-second ceiling. What is asserted downstream is the
+    // DECLARED value, which is untouched and is what proves the clock travelled.
+    return driveCreate(
+      () => new Promise(() => undefined),
+      {},
+      { ...opts.llmClock, ceilingMs: 30 },
+      { attempts: 0 },
+    );
+  }
+}
+
+const declaredWf = (): WorkflowDefinition =>
+  ({
+    ...budgetWf(7),
+    id: 'declared-budget-wf',
+    steps: {
+      classify: {
+        description: 'Classify',
+        execution: 'agent',
+        depends_on: [],
+        llm_timeout_seconds: 7,
+        structured_output: 'strict',
+        input_schema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['summary'],
+          properties: { summary: { type: 'string' } },
+        },
+      },
+    },
+  }) as unknown as WorkflowDefinition;
+
+const toolsWf = (): WorkflowDefinition =>
+  ({
+    id: 'tools-budget-wf',
+    name: 'Tools Budget',
+    version: 1,
+    schema_version: 1,
+    mcp_servers: [{ id: 'srv', transport: 'stdio', command: 'node', args: [] }],
+    steps: {
+      classify: {
+        description: 'Classify',
+        execution: 'agent',
+        depends_on: [],
+        llm_timeout_seconds: 9,
+        tools: ['srv:op'],
+        input_schema: { type: 'object', properties: { summary: { type: 'string' } } },
+      },
+    },
+  }) as unknown as WorkflowDefinition;
+
+describe('#401 — the clock reaches all three of run-agents call sites', () => {
+  it('(i) the TOOLS route', async () => {
+    const provider = new ToolsClockSpy();
+    const deps = makeDeps({
+      provider,
+      mcpClientFactory: () => ({
+        connect: async () => {},
+        getTools: async () => [{ name: 'op', description: 'd', inputSchema: { type: 'object' } }],
+        callTool: async () => ({ content: [] }),
+        disconnect: async () => {},
+      }),
+    } as unknown as Partial<AgentDeps>);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runAgent(deps, { definition: toolsWf(), params: {} });
+    expect(provider.clock?.declaredPerAttemptMs).toBe(9_000);
+    vi.restoreAllMocks();
+  });
+
+  it('(ii) the DECLARED strict route, on a provider that overrides callStepWithMeta', async () => {
+    const provider = new MetaClockSpy();
+    const deps = makeDeps({ provider });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runAgent(deps, { definition: declaredWf(), params: {} });
+    expect(provider.clock?.declaredPerAttemptMs).toBe(7_000);
+    vi.restoreAllMocks();
+  });
+
+  it('(iii) the BASE delegation carries it through to callStep', async () => {
+    // The hop every third-party provider inherits: run-agent calls callStepWithMeta, the base
+    // class forwards to callStep. The double throws a NAMED error if the clock did not arrive,
+    // so the drop-mutant reds fast and says exactly what went missing instead of hanging.
+    const store = new InMemoryStore();
+    const deps = makeDeps({ store, provider: new BaseDelegationProvider() });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await runAgent(deps, { definition: declaredWf(), params: {} });
+    expect(result).toBe('failed');
+
+    const entry = (await onlyRun(store)).drive_failures!.entries[0]!;
+    expect(entry.error_class).toBe('aborted_by_budget');
+    expect(entry.declared_per_attempt_ms).toBe(7_000);
     vi.restoreAllMocks();
   });
 });

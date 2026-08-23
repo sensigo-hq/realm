@@ -218,9 +218,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
   ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
     const clock = opts?.llmClock;
-    // issue #401: the clock MUST travel across this delegation — it is the commonest path
-    // (every step that never opted into strict structured output lands here), and a clock
-    // dropped here would leave the majority of real drives unbounded.
+    // issue #401: the clock MUST travel across this delegation. Every step that DECLARED strict
+    // but resolved to not sending it lands here — and a step that never declared anything at all
+    // does not reach this method, it goes straight to `callStep`. A clock dropped here unbounds
+    // that first class entirely.
     if (opts?.structuredOutputStrict !== true || inputSchema === undefined) {
       return {
         output: await this.callStep(prompt, inputSchema, agentProfileInstructions, {
