@@ -2668,3 +2668,57 @@ steps:
     warn.mockRestore();
   });
 });
+
+describe('loadWorkflowFromString — llm_timeout_seconds validation (issue #401)', () => {
+  const wf = (execution: string, extra = 'llm_timeout_seconds: 30'): string => `
+id: test-wf
+name: Test
+version: 1
+steps:
+  the-step:
+    description: A step
+    execution: ${execution}
+    ${execution === 'auto' ? 'service: svc\n    operation: op' : ''}
+    ${extra}
+`;
+
+  // Per member, not "everything except agent": each kind is its own load error because each one
+  // would have accepted a key that can never do anything there.
+  for (const kind of ['auto', 'guard', 'finalizer']) {
+    it(`llm_timeout_seconds on a ${kind} step is a load error`, () => {
+      expect(() => loadWorkflowFromString(wf(kind))).toThrow(WorkflowError);
+      try {
+        loadWorkflowFromString(wf(kind));
+      } catch (err) {
+        expect((err as WorkflowError).message).toContain(
+          "llm_timeout_seconds' is only valid on execution: agent steps",
+        );
+      }
+    });
+  }
+
+  it('llm_timeout_seconds on an agent step LOADS, and the value survives', () => {
+    const def = loadWorkflowFromString(wf('agent'));
+    expect(def.steps['the-step']?.llm_timeout_seconds).toBe(30);
+  });
+
+  it('an agent step without the key loads with the key absent — never a fabricated default', () => {
+    // The default lives in the drive (and in the CLI flag), not in the definition. A loader that
+    // stamped 600 here would make every workflow file claim a timeout its author never wrote.
+    const def = loadWorkflowFromString(wf('agent', 'agent_profile: p'));
+    expect(def.steps['the-step']?.llm_timeout_seconds).toBeUndefined();
+  });
+
+  for (const [label, value] of [
+    ['zero', '0'],
+    ['negative', '-5'],
+    ['fractional', '1.5'],
+    ['a string', "'30'"],
+  ] as const) {
+    it(`llm_timeout_seconds of ${label} is refused`, () => {
+      expect(() => loadWorkflowFromString(wf('agent', `llm_timeout_seconds: ${value}`))).toThrow(
+        /must be a positive integer/,
+      );
+    });
+  }
+});

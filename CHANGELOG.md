@@ -25,6 +25,30 @@ All notable changes to this project are documented here.
   Recording a failure also bumps `updated_at`, so a run whose drive is dying stops looking
   untouched at the moment it stops being driven.
 
+- **A model request can no longer hold a drive forever** (issue #401). Every request `realm agent`
+  makes now runs under a ceiling. Agent steps take a new `llm_timeout_seconds:` key (per ATTEMPT,
+  positive integer, a load error on any other execution kind), and `realm agent` takes a matching
+  `--llm-timeout <seconds>` that fills in for steps that authored nothing; the step's own key
+  wins, and 600 seconds per attempt is the default. From the per-attempt value realm derives the
+  bound it enforces on one create — attempts × the per-attempt value, plus the SDK's own worst-case
+  backoff, plus a 60-second download allowance — so a legitimately slow response is never killed
+  for being large.
+  When the ceiling fires the drive stops and says why, in the terms of the lever you would change:
+  the recorded failure is `aborted_by_budget`, carrying the declared per-attempt value, the derived
+  ceiling, the elapsed time, and how many wire attempts the SDK actually made. Two behaviours the
+  SDKs otherwise permit are now forbidden: a response whose headers arrived but whose body never
+  finishes, and unbounded sleeping on a server-directed `Retry-After`.
+  **`Retry-After` is observed, never honored.** Realm reads both header forms and records the value
+  beside the HTTP status on the failure, so a rate limit is distinguishable from a hang at a glance
+  — but it does not wait for it. Scheduling is not this layer's decision; disclosure is.
+  **Scope, stated honestly.** The BOUND applies to realm's own providers (Anthropic, OpenAI,
+  OpenAI-reasoning) driven by `realm agent`. A provider supplied through `--provider-module` gets
+  the failure record like any other but not the ceiling — realm does not construct its client. The
+  MCP `execute_step` path never goes through the drive and is unaffected. Streaming requests are
+  not covered: realm does not stream today.
+  Outgoing requests now carry an `X-Stainless-Timeout` header they did not carry before, because
+  realm passes an explicit timeout to both SDKs.
+
 - **Loader diagnostics now tell you which line** (issue #392). An unknown-key warning names the
   line the key sits on — `unknown key 'dependson' (line 14) — ignored (did you mean 'depends_on'?)`
   — and every step-scoped loader error ends with the line of its own step. For agents the

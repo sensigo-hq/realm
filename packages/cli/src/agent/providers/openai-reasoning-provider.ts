@@ -1,7 +1,24 @@
 // openai-reasoning-provider.ts — OpenAI reasoning model provider (o1-series) for realm agent.
 // Extends LlmProvider (not ToolCapableLlmProvider) — o1-series models do not support the tools parameter.
 import { LlmProvider, type ProviderCapabilities } from './llm-provider.js';
-import { buildSystemPrompt, extractJsonObject, sanitizeError } from './agent-utils.js';
+import {
+  buildSystemPrompt,
+  extractJsonObject,
+  sanitizeError,
+  driveCreate,
+  makeCountingFetch,
+  MAX_RETRIES,
+  type LlmClock,
+  type WireCounters,
+} from './agent-utils.js';
+
+/**
+ * Short alias so `rawCreate` fits on ONE line — the issue-#401 source rail greps providers for
+ * `.create(` and requires `rawCreate =` on the SAME line; a wrapped call would make the rail stop
+ * matching, and a source-text guard that stops matching does not fail, it stops guarding (the
+ * #189 purge-guard lesson).
+ */
+type Rec = Record<string, unknown>;
 
 /**
  * Returns the max_completion_tokens for the given OpenAI reasoning model.
@@ -48,7 +65,11 @@ export class OpenAIReasoningProvider extends LlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
+    callOpts?: { llmClock?: LlmClock },
   ): Promise<Record<string, unknown>> {
+    const clock = callOpts?.llmClock;
+    // issue #401: per-invocation counters, minted beside the client they count for.
+    const counters: WireCounters = { attempts: 0 };
     // Dynamically import openai to keep it an optional peer dependency.
     // Assigning the module specifier to a typed variable via 'string' makes TS
     // treat it as Promise<any>, bypassing static module resolution at build time.
@@ -71,7 +92,16 @@ export class OpenAIReasoningProvider extends LlmProvider {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client = new (mod.default as new (opts: Record<string, unknown>) => any)({
       apiKey: process.env['OPENAI_API_KEY'],
+      // issue #401: realm's own bound (see the twin comment in anthropic-provider.ts).
+      ...(clock?.declaredPerAttemptMs !== undefined ? { timeout: clock.declaredPerAttemptMs } : {}),
+      maxRetries: MAX_RETRIES,
+      fetch: makeCountingFetch(counters),
     });
+
+    const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.chat.completions.create(b, o);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bounded = (body: Rec): Promise<any> =>
+      clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
 
     // Fold system prompt into the user message — safe for all o1-series API revisions.
     const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
@@ -81,8 +111,7 @@ export class OpenAIReasoningProvider extends LlmProvider {
     const messages: Message[] = [{ role: 'user', content: userContent }];
 
     const makeRequest = async (msgs: Message[]): Promise<string> => {
-      const response = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (client.chat.completions.create as (opts: Record<string, unknown>) => Promise<any>)({
+      const response = await bounded({
         model: this.model,
         max_completion_tokens: resolveMaxCompletionTokens(this.model),
         messages: msgs,

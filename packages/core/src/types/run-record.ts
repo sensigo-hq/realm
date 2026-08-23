@@ -723,6 +723,12 @@ export interface DriveFailureRecord {
     | 'api_status'
     | 'sdk_missing'
     | 'validation_rejected'
+    /**
+     * The per-create ceiling fired: realm stopped waiting on a model request that was still
+     * outstanding (issue #401). Distinct from `connection_timeout`, which is the SDK's own
+     * per-attempt timeout — this one is realm's bound on the whole create, retries included.
+     */
+    | 'aborted_by_budget'
     | 'other';
   /** Sanitized (secrets redacted) and capped at 500 characters. */
   message: string;

@@ -74,6 +74,19 @@ function parseSchemaRetries(value: string): number {
   return n;
 }
 
+/**
+ * Commander argParser for `--llm-timeout` (issue #401). Same idiom and the same reasons as
+ * `parseSchemaRetries` above; the value is a PER-ATTEMPT ceiling in seconds, so zero is rejected
+ * along with the negatives — a zero-second budget would abort every request before it started.
+ */
+function parseLlmTimeout(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new InvalidArgumentError('--llm-timeout must be a positive integer number of seconds.');
+  }
+  return n;
+}
+
 export const agentCommand = new Command('agent')
   .description('Run a workflow autonomously using an LLM provider')
   .option('--workflow <path>', 'Path to workflow directory or workflow.yaml file')
@@ -121,6 +134,14 @@ export const agentCommand = new Command('agent')
     parseSchemaRetries,
     2,
   )
+  .option(
+    '--llm-timeout <seconds>',
+    'Per-attempt ceiling for each model request, in seconds (issue #401). A step that authors ' +
+      "its own `llm_timeout_seconds` WINS; this fills in for every step that doesn't. Default " +
+      '600. When the ceiling fires the drive stops and records why, naming this lever.',
+    parseLlmTimeout,
+    600,
+  )
   .action(
     async (opts: {
       workflow?: string;
@@ -136,6 +157,7 @@ export const agentCommand = new Command('agent')
       project?: string;
       mintWriterNonce?: boolean;
       schemaRetries: number;
+      llmTimeout: number;
     }) => {
       if (!opts.workflow && !opts.runId) {
         console.error('Error: one of --workflow or --run-id is required');
@@ -253,6 +275,7 @@ export const agentCommand = new Command('agent')
               // issue #217: default 2, threaded exactly like mintWriterNonce above. Commander
               // always supplies a value (the option's own default), so this is never undefined.
               schemaRetries: opts.schemaRetries,
+              llmTimeoutSeconds: opts.llmTimeout,
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }
@@ -300,6 +323,7 @@ export const agentCommand = new Command('agent')
               // issue #217: default 2, threaded exactly like mintWriterNonce above. Commander
               // always supplies a value (the option's own default), so this is never undefined.
               schemaRetries: opts.schemaRetries,
+              llmTimeoutSeconds: opts.llmTimeout,
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }

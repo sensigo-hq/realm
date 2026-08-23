@@ -400,6 +400,16 @@ export interface StepDefinition {
   trace_validation_mode?: 'warn' | 'enforce';
   preconditions?: string[];
   trust?: TrustLevel;
+  /**
+   * Per-ATTEMPT ceiling for this step's model requests, in seconds (issue #401). Only valid on
+   * `execution: agent` steps — every other kind is a load error, because no other kind makes a
+   * model request.
+   *
+   * Distinct from {@link StepDefinition.timeout_seconds}, which bounds the whole step: this one
+   * bounds ONE request to the model, and realm derives a whole-create ceiling from it that also
+   * covers the SDK's retries and their backoff.
+   */
+  llm_timeout_seconds?: number;
   timeout_seconds?: number;
   retry?: RetryConfig;
   /**
@@ -542,6 +552,7 @@ export const KNOWN_STEP_KEYS = [
   'max_fan_out',
   'tool_timeout',
   'structured_output',
+  'llm_timeout_seconds',
 ] as const;
 
 // Compile-time drift guard: KNOWN_STEP_KEYS must be an exact partition of StepDefinition's keys.

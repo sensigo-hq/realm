@@ -204,7 +204,7 @@ describe('classifyDriveError — precedence (issue #401)', () => {
   });
 
   it('a status-carrying error classifies api_status AND carries the status VALUE forward', () => {
-    // The status is this class's only discriminator, and its only producer in PR-1. Dropping it
+    // The status is this class's only discriminator. Dropping it
     // from this arm leaves an operator with "api_status" and no idea whether it was a 429 or a 500.
     const built = buildEntry(
       Object.assign(new Error('rate limited'), { status: 429 }),
@@ -234,16 +234,16 @@ describe('classifyDriveError — precedence (issue #401)', () => {
     expect(findDriveCall(outer)).toBeDefined();
     const built = buildEntry(outer, 's', 'openai', Date.now() - 5000);
     expect(built.error_class).toBe('sdk_missing');
-    // What protects a payload's genuine 0ms span is the `...classified` SPREAD placed AFTER
-    // `elapsed_ms:` — the spread overwrites it. The `??` on that line is dead for payload-bearing
-    // entries, so an `||` mutant there is EQUIVALENT and this cell would not catch it. What this
-    // pins is the spread ORDER: move the spread above `elapsed_ms:` and the 0 is lost.
+    // INVERTED by issue #401's reorder. The spread now sits ABOVE `elapsed_ms:`, so what
+    // protects a payload's genuine 0ms span is the `??` on that line — and it is live, not dead:
+    // change it to `||` and this cell reds, because `0 || <span>` yields the wall-clock span the
+    // payload explicitly said was zero. The order that made an `||` equivalent is gone.
     expect(built.elapsed_ms).toBe(0);
   });
 
   it('PRECEDENCE — a PAYLOAD beats a recognized name', () => {
     // The shipped precedence cells cover name-vs-status only, so demoting the payload below the
-    // name survived the whole suite — and that is exactly the mutant that would gut PR-2's
+    // name survived the whole suite — and that is exactly the mutant that guts the budget's
     // attribution, where the payload is the only thing that knows what really happened.
     const err = Object.assign(new Error('x'), {
       name: 'APIConnectionError',
@@ -310,5 +310,50 @@ describe('classifyDriveError — precedence (issue #401)', () => {
     expect(line).toContain('connection_error');
     expect(line).toContain("step 'classify'");
     expect(line).toContain('socket hang up');
+  });
+});
+
+describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
+  it('keeps valid measurements, drops an out-of-union class, and never persists junk keys', () => {
+    // A provider payload is untyped input to a record realm keeps forever. The filter is per
+    // FIELD on purpose: the numbers are measurements and survive on their own merits, while the
+    // class is a claim — one realm does not recognise is replaced by what the error's shape says,
+    // not carried through because it arrived in the same object.
+    const err = Object.assign(new Error('rate limited'), {
+      status: 429,
+      driveCall: {
+        error_class: 'made_up_class',
+        attempts_sdk: 3,
+        elapsed_ms: '900',
+        derived_ceiling_ms: 151_500,
+        retry_after_observed_ms: Number.NaN,
+        wire_secret: 'sk-should-never-be-stored',
+      },
+    });
+    const built = buildEntry(err, 's', 'anthropic', Date.now() - 1234);
+
+    expect(built.error_class).toBe('api_status'); // shape decided, the claim did not
+    expect(built.attempts_sdk).toBe(3); // a real number is kept
+    expect(built.derived_ceiling_ms).toBe(151_500);
+    expect(built.retry_after_observed_ms).toBeUndefined(); // NaN is not a measurement
+    expect(Object.keys(built)).not.toContain('wire_secret');
+    // The string elapsed_ms did not survive, so the computed span is what is recorded.
+    expect(built.elapsed_ms).toBeGreaterThanOrEqual(1234);
+  });
+
+  it('aborted_by_budget IS a recognized class and survives the pick', () => {
+    const err = Object.assign(new Error('ceiling'), {
+      driveCall: {
+        error_class: 'aborted_by_budget',
+        declared_per_attempt_ms: 30_000,
+        derived_ceiling_ms: 151_500,
+        attempts_sdk: 1,
+        elapsed_ms: 151_502,
+      },
+    });
+    const built = buildEntry(err, 's', 'anthropic', Date.now());
+    expect(built.error_class).toBe('aborted_by_budget');
+    expect(built.declared_per_attempt_ms).toBe(30_000);
+    expect(built.elapsed_ms).toBe(151_502);
   });
 });

@@ -11,6 +11,7 @@ import type { WorkflowDefinition, RunRecord } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
 import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { AgentDeps } from './run-agent.js';
+import { driveCreate, type WireCounters } from './providers/agent-utils.js';
 
 /**
  * Extends the real base class rather than shaping an object literal: the base supplies
@@ -568,10 +569,10 @@ describe('#401 chokepoint (4) — validation rejections DO mint', () => {
 /**
  * Throws a value whose `name` getter explodes but whose `toString` is safe.
  *
- * The safe `toString` is deliberate: both pre-mint console lines interpolate `String(err)`
- * (run-agent.ts), so a poisoned `toString` would out-throw at the PRINT, before the mint ever
- * runs. That residual is named on the design record and is NOT fixed here — this cell covers the
- * mint, which is what §2 hardened.
+ * The safe `toString` used to be load-bearing: both pre-mint console lines interpolated
+ * `String(err)` directly, so a poisoned `toString` out-threw at the PRINT, before the mint ever
+ * ran. Issue #401 closed that too — those lines now route through `safeErrorText`, and the
+ * companion cell below drives a value that is hostile at BOTH points.
  *
  * A dedicated double rather than TestProvider: TestProvider's `behaviour instanceof Error` gate
  * RETURNS a non-Error value instead of throwing it, so it cannot produce this case at all.
@@ -655,6 +656,168 @@ describe('#401 — the mint survives a hostile thrown value', () => {
     const run = await onlyRun(store);
     expect(run.drive_failures?.entries).toHaveLength(1);
     expect(run.drive_failures!.entries[0]!.message).toBe('unrenderable thrown value');
+    vi.restoreAllMocks();
+  });
+});
+
+// =================================================================================================
+// issue #401 PR-2 — the budget, end to end through the drive
+// =================================================================================================
+
+/** Fully hostile: the `name` getter AND `toString` both explode. */
+const FULLY_HOSTILE: unknown = {
+  get name(): string {
+    throw new Error('hostile getter');
+  },
+  toString(): string {
+    throw new Error('poisoned toString');
+  },
+};
+
+class FullyHostileProvider extends LlmProvider {
+  async callStep(): Promise<Record<string, unknown>> {
+    throw FULLY_HOSTILE;
+  }
+}
+
+/** Throws whatever it is given, unchanged — the transport for a real driveCreate product. */
+class ThrowingProvider extends LlmProvider {
+  constructor(private readonly toThrow: unknown) {
+    super();
+  }
+  async callStep(): Promise<Record<string, unknown>> {
+    throw this.toThrow;
+  }
+}
+
+/** Records the clock it was handed, then fails, so precedence is observable from the outside. */
+class ClockSpyProvider extends LlmProvider {
+  readonly seen: Array<number | undefined> = [];
+  async callStep(
+    _p: string,
+    _s?: Record<string, unknown>,
+    _a?: string,
+    opts?: { llmClock?: { declaredPerAttemptMs?: number } },
+  ): Promise<Record<string, unknown>> {
+    this.seen.push(opts?.llmClock?.declaredPerAttemptMs);
+    throw new Error('stop here');
+  }
+}
+
+const budgetWf = (llmTimeoutSeconds?: number): WorkflowDefinition =>
+  ({
+    id: 'budget-wf',
+    name: 'Budget',
+    version: 1,
+    schema_version: 1,
+    steps: {
+      classify: {
+        description: 'Classify',
+        execution: 'agent',
+        depends_on: [],
+        ...(llmTimeoutSeconds !== undefined ? { llm_timeout_seconds: llmTimeoutSeconds } : {}),
+        input_schema: { type: 'object', properties: { summary: { type: 'string' } } },
+      },
+    },
+  }) as unknown as WorkflowDefinition;
+
+describe('#401 PR-2 — which clock the step drives under', () => {
+  it("the step's OWN key wins over the CLI flag", async () => {
+    const provider = new ClockSpyProvider();
+    const deps = makeDeps({ provider, llmTimeoutSeconds: 45 } as Partial<AgentDeps>);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runAgent(deps, { definition: budgetWf(12), params: {} });
+    expect(provider.seen).toEqual([12_000]);
+    vi.restoreAllMocks();
+  });
+
+  it('the flag fills in for a step that authored nothing', async () => {
+    const provider = new ClockSpyProvider();
+    const deps = makeDeps({ provider, llmTimeoutSeconds: 45 } as Partial<AgentDeps>);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runAgent(deps, { definition: budgetWf(), params: {} });
+    expect(provider.seen).toEqual([45_000]);
+    vi.restoreAllMocks();
+  });
+
+  it('neither authored nor flagged ⇒ ten minutes per attempt', async () => {
+    const provider = new ClockSpyProvider();
+    const deps = makeDeps({ provider });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runAgent(deps, { definition: budgetWf(), params: {} });
+    expect(provider.seen).toEqual([600_000]);
+    vi.restoreAllMocks();
+  });
+
+  it('the ATTACH leg carries the clock too, not just the create leg', async () => {
+    // Both `realm agent` invocation legs thread the flag; a clock wired on only one of them would
+    // leave every re-attached run unbounded, which is the longer-lived half of the population.
+    const store = new InMemoryStore();
+    const provider = new ClockSpyProvider();
+    const deps = makeDeps({ store, provider, llmTimeoutSeconds: 45 } as Partial<AgentDeps>);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const created = await store.create({
+      workflow_id: 'budget-wf',
+      workflow_version: 1,
+      params: {},
+    } as never);
+    await runAgent(deps, { existingRunId: created.run.id, definition: budgetWf(), params: {} });
+    expect(provider.seen).toEqual([45_000]);
+    vi.restoreAllMocks();
+  });
+});
+
+describe('#401 PR-2 — a fired ceiling as the operator meets it', () => {
+  it('the recorded entry carries the lever, the class, and every discriminator', async () => {
+    // The abort object is built by the REAL driveCreate against a create that never settles; only
+    // the transport is doubled, because what is under test is what the drive DOES with it.
+    const counters: WireCounters = { attempts: 1, lastStatus: 429, lastRetryAfterMs: 7_200_000 };
+    const aborted = await driveCreate(
+      () => new Promise(() => undefined),
+      {},
+      { ceilingMs: 25, declaredPerAttemptMs: 10 },
+      counters,
+    ).catch((e: unknown) => e);
+
+    const store = new InMemoryStore();
+    const deps = makeDeps({ store, provider: new ThrowingProvider(aborted) });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await runAgent(deps, { definition: budgetWf(30), params: {} });
+    expect(result).toBe('failed');
+
+    const entry = (await onlyRun(store)).drive_failures!.entries[0]!;
+    expect(entry.error_class).toBe('aborted_by_budget');
+    expect(entry.message).toContain('llm_timeout_seconds');
+    expect(entry.message).toContain('--llm-timeout');
+    expect(entry.declared_per_attempt_ms).toBe(10);
+    expect(entry.derived_ceiling_ms).toBe(25);
+    expect(typeof entry.elapsed_ms).toBe('number');
+    vi.restoreAllMocks();
+  });
+});
+
+describe('#401 PR-2 — the print no longer out-throws the failure', () => {
+  it('a value hostile at BOTH the print and the mint still returns failed, recorded', async () => {
+    // Before the prints were made total, this value took the process out at the console line —
+    // ahead of the (already hardened) mint. Now both are total, so the failure is recorded and
+    // the drive ends the way every other failed drive ends.
+    const store = new InMemoryStore();
+    const deps = makeDeps({ store, provider: new FullyHostileProvider() });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await runAgent(deps, { definition: budgetWf(), params: {} });
+    expect(result).toBe('failed');
+
+    const entry = (await onlyRun(store)).drive_failures!.entries[0]!;
+    expect(entry.message).toBe('unrenderable thrown value');
+    expect(errSpy.mock.calls.flat().join(' ')).toContain('unrenderable thrown value');
     vi.restoreAllMocks();
   });
 });

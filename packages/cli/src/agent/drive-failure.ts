@@ -72,11 +72,57 @@ export function findDriveCall(err: unknown): DriveCallPayload | undefined {
  * 3. an HTTP status, which also carries the status VALUE forward as a discriminator;
  * 4. `other`.
  */
+const ERROR_CLASSES: ReadonlySet<string> = new Set([
+  'connection_timeout',
+  'connection_error',
+  'api_status',
+  'sdk_missing',
+  'validation_rejected',
+  'aborted_by_budget',
+  'other',
+]);
+
+const NUMERIC_PAYLOAD_FIELDS = [
+  'attempts_sdk',
+  'elapsed_ms',
+  'last_observed_status',
+  'retry_after_observed_ms',
+  'declared_per_attempt_ms',
+  'derived_ceiling_ms',
+] as const;
+
+/**
+ * Picks the known fields out of an attached payload, key-filtered and typeof-checked.
+ *
+ * The payload is an UNTYPED boundary into a record realm persists, so a raw spread would let any
+ * key a provider happened to attach land in the store forever. Filtering is per FIELD, not
+ * whole-payload: the numbers are measurements and are kept when they are numbers, while the class
+ * is a CLAIM — an out-of-union value is dropped and shape classification decides instead.
+ */
+function pickPayload(payload: DriveCallPayload): {
+  error_class?: DriveFailureRecord['error_class'];
+  [k: string]: unknown;
+} {
+  const out: Record<string, unknown> = {};
+  for (const field of NUMERIC_PAYLOAD_FIELDS) {
+    const value = (payload as Record<string, unknown>)[field];
+    if (typeof value === 'number' && Number.isFinite(value)) out[field] = value;
+  }
+  const cls = (payload as Record<string, unknown>)['error_class'];
+  if (typeof cls === 'string' && ERROR_CLASSES.has(cls)) out['error_class'] = cls;
+  return out as { error_class?: DriveFailureRecord['error_class'] };
+}
+
 export function classifyDriveError(err: unknown): DriveCallPayload & {
   error_class: DriveFailureRecord['error_class'];
 } {
   const payload = findDriveCall(err);
-  if (payload !== undefined) return { error_class: 'other', ...payload };
+  if (payload !== undefined) {
+    const picked = pickPayload(payload);
+    // A payload whose class did not survive the pick falls through to shape classification —
+    // the measurements it carried are still kept.
+    return { error_class: picked.error_class ?? shapeClassify(err), ...picked };
+  }
 
   const name = (err as { name?: unknown } | null)?.name;
   if (name === 'APIConnectionTimeoutError') return { error_class: 'connection_timeout' };
@@ -86,6 +132,15 @@ export function classifyDriveError(err: unknown): DriveCallPayload & {
   if (status !== undefined) return { error_class: 'api_status', last_observed_status: status };
 
   return { error_class: 'other' };
+}
+
+/** The class an error's SHAPE implies, for a payload whose own claim did not survive the pick. */
+function shapeClassify(err: unknown): DriveFailureRecord['error_class'] {
+  const name = (err as { name?: unknown } | null)?.name;
+  if (name === 'APIConnectionTimeoutError') return 'connection_timeout';
+  if (name === 'APIConnectionError') return 'connection_error';
+  if (extractHttpStatus(err) !== undefined) return 'api_status';
+  return 'other';
 }
 
 /**
@@ -134,12 +189,12 @@ function buildEntryUnsafe(
     step,
     provider,
     message: sanitizeError(err).slice(0, MESSAGE_CAP),
-    // What actually protects a payload's genuine 0ms span is the `...classified` SPREAD BELOW,
-    // which overwrites this field. For a payload-bearing error this line is dead — so an `||`
-    // here would be an EQUIVALENT mutant, not a caught one. The `??` still matters for the
-    // no-payload case, and the SPREAD ORDER is what a test can pin.
-    elapsed_ms: classified.elapsed_ms ?? Date.now() - attemptStartedAt,
+    // The spread goes ABOVE the computed span deliberately (issue #401): a payload key that is
+    // PRESENT but undefined-valued would otherwise clobber a real measurement with nothing. With
+    // this order the `??` below is the live protector of a payload's genuine 0ms span, which also
+    // makes an `||` there a caught mutant rather than an equivalent one.
     ...classified,
+    elapsed_ms: classified.elapsed_ms ?? Date.now() - attemptStartedAt,
   };
 }
 

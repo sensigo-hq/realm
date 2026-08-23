@@ -25,7 +25,20 @@ import {
   renderValidationSummaryEntry,
   extractHttpStatus,
   extractApiErrorFields,
+  driveCreate,
+  makeCountingFetch,
+  MAX_RETRIES,
+  type LlmClock,
+  type WireCounters,
 } from './agent-utils.js';
+
+/**
+ * Short alias so every `rawCreate` fits on ONE line — the issue-#401 source rail greps providers
+ * for `.create(` and requires `rawCreate =` on the SAME line; a wrapped call would make the rail
+ * stop matching, and a source-text guard that stops matching does not fail, it stops guarding
+ * (the #189 purge-guard lesson).
+ */
+type Rec = Record<string, unknown>;
 
 /**
  * Issue #313: the schema name OpenAI requires on `response_format.json_schema`. Must match
@@ -101,7 +114,11 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
+    callOpts?: { llmClock?: LlmClock },
   ): Promise<Record<string, unknown>> {
+    const clock = callOpts?.llmClock;
+    // issue #401: per-invocation counters, minted beside the client they count for.
+    const counters: WireCounters = { attempts: 0 };
     // Dynamically import openai to keep it an optional peer dependency.
     // Assigning the module specifier to a typed variable via 'string' makes TS
     // treat it as Promise<any>, bypassing static module resolution at build time.
@@ -125,7 +142,16 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     const client = new (mod.default as new (opts: Record<string, unknown>) => any)({
       apiKey: process.env['OPENAI_API_KEY'],
       ...(this.baseUrl !== undefined ? { baseURL: this.baseUrl } : {}),
+      // issue #401: realm's own bound (see the twin comment in anthropic-provider.ts).
+      ...(clock?.declaredPerAttemptMs !== undefined ? { timeout: clock.declaredPerAttemptMs } : {}),
+      maxRetries: MAX_RETRIES,
+      fetch: makeCountingFetch(counters),
     });
+
+    const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.chat.completions.create(b, o);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bounded = (body: Rec): Promise<any> =>
+      clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
 
     const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
     type Message = { role: 'system' | 'user' | 'assistant'; content: string };
@@ -142,8 +168,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       if (this.capabilities().jsonMode) {
         opts['response_format'] = { type: 'json_object' };
       }
-      const response = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (client.chat.completions.create as (opts: Record<string, unknown>) => Promise<any>)(opts);
+      const response = await bounded(opts);
       return (response.choices[0]?.message?.content as string | undefined) ?? '';
     };
 
@@ -190,11 +215,21 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    opts?: { structuredOutputStrict?: boolean },
+    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
   ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
+    const clock = opts?.llmClock;
+    // issue #401: the clock MUST travel across this delegation — it is the commonest path
+    // (every step that never opted into strict structured output lands here), and a clock
+    // dropped here would leave the majority of real drives unbounded.
     if (opts?.structuredOutputStrict !== true || inputSchema === undefined) {
-      return { output: await this.callStep(prompt, inputSchema, agentProfileInstructions) };
+      return {
+        output: await this.callStep(prompt, inputSchema, agentProfileInstructions, {
+          ...(clock !== undefined ? { llmClock: clock } : {}),
+        }),
+      };
     }
+    // Per-invocation counters, minted beside the client below.
+    const counters: WireCounters = { attempts: 0 };
 
     // Dynamically import openai to keep it an optional peer dependency (same `moduleId` idiom as
     // callStep — the indirection is what keeps the import out of static resolution).
@@ -218,6 +253,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     const client = new (mod.default as new (opts: Record<string, unknown>) => any)({
       apiKey: process.env['OPENAI_API_KEY'],
       ...(this.baseUrl !== undefined ? { baseURL: this.baseUrl } : {}),
+      // issue #401: realm's own bound (see the twin comment in anthropic-provider.ts).
+      ...(clock?.declaredPerAttemptMs !== undefined ? { timeout: clock.declaredPerAttemptMs } : {}),
+      maxRetries: MAX_RETRIES,
+      fetch: makeCountingFetch(counters),
     });
 
     const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
@@ -241,10 +280,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
           : {}),
     });
 
+    const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.chat.completions.create(b, o);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const create = (o: Record<string, unknown>): Promise<any> =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (client.chat.completions.create as (x: Record<string, unknown>) => Promise<any>)(o);
+    const create = (o: Rec): Promise<any> =>
+      clock !== undefined ? driveCreate(rawCreate, o, clock, counters) : rawCreate(o, {});
 
     /** Reads the answer, honouring the refusal field as an L1-class escape. */
     const readContent = (response: {
@@ -311,8 +350,12 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       maxFanOut?: number;
       toolTimeoutMs?: number;
       agentProfileInstructions?: string;
+      llmClock?: LlmClock;
     },
   ): Promise<StepWithToolsResult> {
+    const clock = options.llmClock;
+    // issue #401: per-invocation counters, minted beside the client below.
+    const counters: WireCounters = { attempts: 0 };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let mod: any;
     try {
@@ -333,7 +376,16 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     const client = new (mod.default as new (opts: Record<string, unknown>) => any)({
       apiKey: process.env['OPENAI_API_KEY'],
       ...(this.baseUrl !== undefined ? { baseURL: this.baseUrl } : {}),
+      // issue #401: realm's own bound (see the twin comment in anthropic-provider.ts).
+      ...(clock?.declaredPerAttemptMs !== undefined ? { timeout: clock.declaredPerAttemptMs } : {}),
+      maxRetries: MAX_RETRIES,
+      fetch: makeCountingFetch(counters),
     });
+
+    const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.chat.completions.create(b, o);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bounded = (body: Rec): Promise<any> =>
+      clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
 
     const responseFormat = this.capabilities().jsonMode
       ? ({ type: 'json_object' } as const)
@@ -442,10 +494,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     const createMainTurn = async (): Promise<any> => {
       const carriedStrict = toolArgsStrictActive;
       try {
-        const response = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (client.chat.completions.create as (opts: Record<string, unknown>) => Promise<any>)(
-          buildMainCallOpts(),
-        );
+        const response = await bounded(buildMainCallOpts());
         if (carriedStrict) strictTurnsBeforeDrop += 1;
         return response;
       } catch (err) {
@@ -460,10 +509,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         };
         toolArgsStrictActive = false;
         toolArgsStrictStripped = true;
-        return await // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (client.chat.completions.create as (opts: Record<string, unknown>) => Promise<any>)(
-          buildMainCallOpts(),
-        );
+        return await bounded(buildMainCallOpts());
       }
     };
 
@@ -480,10 +526,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         content:
           'You have reached the maximum number of tool calls. Produce your final JSON answer now using only what you have already gathered. No further tool calls will be executed.',
       });
-      const final = await // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (client.chat.completions.create as (opts: Record<string, unknown>) => Promise<any>)(
-        buildFinalCallOpts(),
-      );
+      const final = await bounded(buildFinalCallOpts());
       const text: string = (final.choices[0].message.content as string | null) ?? '';
       const parsed = extractJsonObject(text);
       // issue #224 (D4, §4 budget-exhaustion terminal): RETURN the best-effort output

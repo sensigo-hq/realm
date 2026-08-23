@@ -873,6 +873,67 @@ fetch_document:
 
 ---
 
+## `llm_timeout_seconds` (the per-attempt model-request ceiling)
+
+```yaml
+classify:
+  execution: agent
+  llm_timeout_seconds: 30
+```
+
+| Field                 | Type    | Meaning                                                                                                                                                                                               |
+| --------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `llm_timeout_seconds` | integer | **(issue #401)** How long ONE model request may take, in seconds. Positive integer. Valid ONLY on `execution: agent` steps — a load error anywhere else, because no other kind makes a model request. |
+
+**Per ATTEMPT, not per step.** A step that needs several turns is not killed for the sum of them;
+each request gets the same ceiling. From it realm derives the bound it actually enforces on one
+create:
+
+```
+ceilingMs = perAttemptMs × (maxRetries + 1) + backoffMargin + 60_000
+backoffMargin = Σ n=0..(maxRetries−1) min(0.5 × 2ⁿ, 8) seconds   = 1.5s at maxRetries 2
+```
+
+The `+ 60_000` is a download allowance, so a large-but-progressing response is never killed for
+being large. The backoff term is the SDK's own retry schedule summed as an UPPER bound — its
+jitter only ever shortens a wait, so budgeting the un-jittered sum can never cut a retry short.
+With the default 600s per attempt the derived ceiling is 1,861,500ms; with `llm_timeout_seconds:
+30` it is 151,500ms.
+
+**Precedence.** The step's own key wins. `realm agent --llm-timeout <seconds>` fills in for every
+step that authored nothing. Neither ⇒ 600 seconds per attempt.
+
+**Where it applies.** Realm's own agent drive only — `realm agent`. The MCP `execute_step` path
+never runs through the drive, so a step driven by an external agent is unaffected. A provider
+supplied via `--provider-module` gets the drive-failure RECORD like any other, but not the bound:
+realm cannot impose a ceiling inside code it does not construct the client for (record R-14). The
+VISIBILITY guarantee is universal; the BOUND is realm's own providers.
+
+### Why the total drive is bounded (issue #401)
+
+Each ladder leg is gated on an HTTP status — 400/503 for the structured-output ladder, 400 for the
+tool-args ladder. A ceiling abort carries no status, so it can never engage a ladder leg and the
+legs cannot compound: the whole drive is bounded by (the existing, already-bounded turn and repair
+counters) × the per-create ceiling.
+
+The ceiling forbids exactly two things the SDKs otherwise permit:
+
+1. **The unbounded post-header hang** — headers arrive, the body never finishes, and a
+   request-level timeout that has already been satisfied never fires again.
+2. **Unbounded server-directed sleeping** — a `Retry-After` the SDK honours can hold a worker for
+   as long as the server asks.
+
+**`Retry-After` is OBSERVED, never honored** (record R-4: visibility over obedience). Realm reads
+both header forms, records the value on the failure as `retry_after_observed_ms` alongside
+`last_observed_status`, and does not wait for it. Those two fields are what let an operator tell a
+rate limit apart from a hang without reading a single log line.
+
+> **Header note:** realm now passes an explicit request timeout to both SDKs, so outgoing requests
+> carry an `X-Stainless-Timeout` header they did not carry before. Servers ignore it; proxies that
+> log headers will show it.
+
+---
+
 ## `validation_exhaustion` (bounded schema-rejection exhaustion)
 
 ```yaml

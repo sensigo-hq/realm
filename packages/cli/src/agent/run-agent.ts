@@ -32,6 +32,8 @@ import {
   sanitizeError,
   setAdditionalRedactionValues,
   renderValidationSummaryEntry,
+  deriveLlmClock,
+  safeErrorText,
 } from './providers/agent-utils.js';
 import { isToolCapable } from './providers/llm-provider.js';
 import type { McpClient, ToolDefinition, ToolExecutor } from './mcp/mcp-extensions.js';
@@ -97,6 +99,15 @@ export interface AgentDeps {
    * byte-for-byte.
    */
   schemaRetries?: number;
+  /**
+   * issue #401 — the fallback per-ATTEMPT ceiling for model requests, in seconds. Threaded from
+   * `realm agent --llm-timeout` through both runAgent call sites. A step's own
+   * `llm_timeout_seconds` WINS; this fills in for every step that did not author one (the
+   * `--schema-retries` precedent). Absent ⇒ 600 (ten minutes), which is what the SDKs already
+   * used as their own default request timeout — so the default drive behaves as it did, except
+   * that the bound is now realm's, is attributed when it fires, and covers retries too.
+   */
+  llmTimeoutSeconds?: number;
 }
 
 /**
@@ -223,6 +234,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // issue #217: resolved once per run (not per call, unlike shouldMintWriterNonce — there is no
   // env-var strict-flip counterpart here). `0` disables the repair loop entirely.
   const schemaRetries = deps.schemaRetries ?? 2;
+
+  // issue #401 — the per-ATTEMPT ceiling in seconds, before the per-step key overrides it.
+  // 600s is the SDKs' own default request timeout, so an unconfigured drive keeps today's
+  // per-attempt patience; what changes is that the bound is realm's, it also covers the SDK's
+  // internal retries, and a fired bound says which lever to raise.
+  const fallbackLlmTimeoutSeconds = deps.llmTimeoutSeconds ?? 600;
 
   // issue #236 — sticky downgrade (design §4 [Rv8]): per step, homed HERE (run-agent scope,
   // beside the verdict) — survives BOTH remaining loops (the provider ladder ⊂ the #217 repair
@@ -467,6 +484,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // progress DID happen. Chosen, not incidental.
         currentStepName = stepName;
         const stepDef: StepDefinition = definition.steps[stepName]!;
+
+        // issue #401 — the clock for THIS step's model requests. The step's own authored key
+        // WINS; the CLI flag fills in for a step that never authored one; 600s if neither
+        // (the --schema-retries precedent, exactly). `deriveLlmClock` turns the per-ATTEMPT
+        // seconds into the whole-create ceiling — per-attempt × (retries + 1), plus the SDK's
+        // own worst-case backoff sleeping, plus a download allowance for a slow response body.
+        const llmClock = deriveLlmClock(
+          (stepDef.llm_timeout_seconds ?? fallbackLlmTimeoutSeconds) * 1000,
+        );
 
         // issue #217: the in-drive schema-feedback repair loop. `stepInput`/`toolCallsForMeta`/
         // `result` are re-assigned on every attempt inside the `for` loop below; `repairsUsed`/
@@ -885,6 +911,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   toolDefs,
                   executor,
                   {
+                    llmClock,
                     ...(toolsEffectiveOutputSchema !== undefined
                       ? { inputSchema: toolsEffectiveOutputSchema }
                       : {}),
@@ -910,9 +937,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   },
                 );
               } catch (err) {
-                console.error(
-                  `\n✗ Step '${stepName}' (tools) failed: ${err instanceof Error ? err.message : String(err)}`,
-                );
+                console.error(`\n✗ Step '${stepName}' (tools) failed: ${safeErrorText(err)}`);
                 // issue #401, CHOKEPOINT (1): recorded AFTER the original line, never instead of
                 // it. Returns rather than throws, which is what makes double-minting structurally
                 // impossible — the last-resort catch below never sees this path.
@@ -1006,7 +1031,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     promptForAttempt,
                     inputSchema,
                     agentProfileInstructions,
-                    { structuredOutputStrict: structuredOutputPlan.send },
+                    { structuredOutputStrict: structuredOutputPlan.send, llmClock },
                   );
                   stepInput = output;
                   if (structuredOutputPlan.ineligibleMeta !== undefined) {
@@ -1048,6 +1073,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     promptForAttempt,
                     inputSchema,
                     agentProfileInstructions,
+                    { llmClock },
                   );
                 }
               } catch (err) {
@@ -1055,9 +1081,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 // code: this catch returns 'failed' immediately, the sticky map is
                 // per-invocation, and nothing later reads it. The SUCCESS-path arming site
                 // above is the one that serves the #217 repair loop, and it is untouched.
-                console.error(
-                  `\n✗ Step '${stepName}' LLM call failed: ${err instanceof Error ? err.message : String(err)}`,
-                );
+                console.error(`\n✗ Step '${stepName}' LLM call failed: ${safeErrorText(err)}`);
                 await recordDriveFailure(
                   deps.store,
                   runId,
