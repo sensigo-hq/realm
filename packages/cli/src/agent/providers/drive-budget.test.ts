@@ -184,6 +184,9 @@ describe('driveCreate — no single model request holds the drive hostage', () =
   });
 
   it('an SDK-raised error keeps its identity and gains the shape-classified payload', async () => {
+    // A name-SETTING double: not what either SDK produces (see the real-object cells below), but
+    // exactly what a wrapper that copies `.name` onto its own error looks like — so this stays as
+    // coverage of that shape, alongside the real one.
     const counters: WireCounters = { attempts: 0 };
     const original = Object.assign(new Error('socket died'), { name: 'APIConnectionError' });
     const thrown = await driveCreate(
@@ -609,5 +612,69 @@ describe('attempts_sdk counts what the wrapper SAW COMPLETE', () => {
     ).catch((e: unknown) => e);
     expect(payloadOf(err)?.attempts_sdk).toBe(0);
     expect(payloadOf(err)?.last_observed_status).toBeUndefined();
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// W1 — what driveCreate attaches when the SDK raises its OWN error object
+// -------------------------------------------------------------------------------------------
+describe('driveCreate — the real SDK classes, attached at the wrapper', () => {
+  const realError = async (
+    pkg: 'openai' | '@anthropic-ai/sdk',
+    cls: 'APIConnectionError' | 'APIConnectionTimeoutError',
+  ): Promise<Error> => {
+    const mod = (await import(pkg)) as unknown as Record<string, unknown>;
+    const root = (mod['default'] ?? mod) as Record<string, unknown>;
+    const Ctor = (root[cls] ?? mod[cls]) as new (opts: { message: string }) => Error;
+    return new Ctor({ message: 'the real thing' });
+  };
+
+  for (const [pkg, cls, expected] of [
+    ['openai', 'APIConnectionError', 'connection_error'],
+    ['openai', 'APIConnectionTimeoutError', 'connection_timeout'],
+    ['@anthropic-ai/sdk', 'APIConnectionError', 'connection_error'],
+    ['@anthropic-ai/sdk', 'APIConnectionTimeoutError', 'connection_timeout'],
+  ] as const) {
+    it(`${pkg} ${cls} ⇒ ${expected}`, async () => {
+      const counters: WireCounters = { attempts: 0 };
+      const original = await realError(pkg, cls);
+      const thrown = await driveCreate(
+        async () => {
+          counters.attempts = 1;
+          throw original;
+        },
+        {},
+        { ceilingMs: 5_000, declaredPerAttemptMs: 1_000 },
+        counters,
+      ).catch((e: unknown) => e);
+
+      expect(thrown).toBe(original);
+      expect(payloadOf(thrown)?.error_class).toBe(expected);
+    });
+  }
+
+  it('a value hostile at CONSTRUCTOR and NAME does not out-throw the wrapper', () => {
+    // Classification now reads `constructor`, which is one more property a hostile thrown value
+    // can poison — and this runs inside driveCreate's catch, where a throw would replace the
+    // operator's failure with realm's own. (It also closes the same hole for `.name`, which was
+    // reachable here before this change.)
+    const hostile = new Proxy(new Error('trapped'), {
+      get(target, prop, receiver): unknown {
+        if (prop === 'constructor' || prop === 'name') throw new Error('poisoned property');
+        return Reflect.get(target, prop, receiver) as unknown;
+      },
+    });
+    const counters: WireCounters = { attempts: 0 };
+    return driveCreate(
+      async () => {
+        throw hostile;
+      },
+      {},
+      { ceilingMs: 5_000 },
+      counters,
+    ).catch((e: unknown) => {
+      expect(e).toBe(hostile);
+      expect(payloadOf(e)?.error_class).toBe('other');
+    });
   });
 });

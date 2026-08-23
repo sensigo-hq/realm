@@ -94,7 +94,10 @@ All notable changes to this project are documented here.
   recorded drive failure** (issue #401). The retry that swallowed the first error is retired — it
   is precisely what made a failing drive invisible, and it rescued far less than it hid.
   Re-attaching with `realm agent --run-id <id>` is the retry, and now the record says why it was
-  needed. Providers that used to call `process.exit` on a missing SDK now throw instead, so that
+  needed — for a run whose workflow is REGISTERED. A run created from a file without `--register`
+  cannot be re-attached at all (the definition was never persisted, and `--run-id` is mutually
+  exclusive with `--workflow`); the attach now says so and names the fix instead of failing with a
+  bare "Workflow not found". Closing that gap properly is #410. Providers that used to call `process.exit` on a missing SDK now throw instead, so that
   failure is recorded too rather than killing the process before anything could write it down.
 
 - **BREAKING — stores report their own bytes, and purge prints what they report** (issue #189).
