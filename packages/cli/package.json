@@ -43,8 +43,8 @@
     "lint": "eslint src"
   },
   "peerDependencies": {
-    "openai": ">=4.0.0",
-    "@anthropic-ai/sdk": ">=0.20.0"
+    "@anthropic-ai/sdk": ">=0.20.0",
+    "openai": ">=4.0.0"
   },
   "peerDependenciesMeta": {
     "openai": {
@@ -57,17 +57,17 @@
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.120.0",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^26.1.1",
-    "openai": "^6.34.0",
+    "@types/node": "^26.2.0",
+    "openai": "^6.49.0",
     "typescript": "*",
     "uuid": "^14.0.1",
     "vitest": "^4.1.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@sensigo/realm": "*",
     "@sensigo/realm-mcp": "*",
     "@sensigo/realm-testing": "*",
-    "@modelcontextprotocol/sdk": "1.30.0",
     "chalk": "^5.0.0",
     "commander": "^15.0.0",
     "dotenv": "^17.4.0",
