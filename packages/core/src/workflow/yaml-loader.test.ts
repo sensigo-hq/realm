@@ -1160,10 +1160,11 @@ steps:
   });
 
   // REPLACES the cell that pinned the pre-#402 acceptance ("loads without error (advisory
-  // only…)"). That acceptance was the defect: nothing enforces the key on an agent step, and the
-  // engine's NextAction hands the driving agent an `expected_timeout` display built from it
-  // (execution-loop.ts:671), so the step looked time-bounded to the one reader who would act on
-  // it while nothing bounded anything.
+  // only…)"). That acceptance was the defect: nothing enforces the key on an agent step, and at
+  // the time the engine also handed the driving agent an `expected_timeout` display built from
+  // it, so the step looked time-bounded while nothing bounded anything. Issue #412 deleted that
+  // display; the load error stays, because an author writing a bound that does nothing should be
+  // told so rather than discover it.
   it('timeout_seconds on an agent step is a load error naming the bounds that DO exist', () => {
     const content = VALID_YAML.replace(
       'execution: agent',

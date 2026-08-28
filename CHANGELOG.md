@@ -8,6 +8,11 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **`create_workflow` accepts `llm_timeout_seconds`** (issue #412). Every step the MCP authoring
+  tool creates is `execution: agent`, so this is the key that actually bounds them: a per-attempt
+  ceiling on the step's model request, applied by realm's own drive. The MCP surface and the YAML
+  surface now agree on which bound an agent step can declare.
+
 - **Every failed drive attempt is now recorded on the run** (issue #401). A failure while
   `realm agent` drives a step — a connection error, a timeout, an MCP discovery failure, a missing
   SDK, an engine throw mid-loop, a schema rejection that wedges the step — used to write NOTHING
@@ -89,6 +94,19 @@ All notable changes to this project are documented here.
   version-keyed disclosure, so any measurement spanning this release has to segment on it.
 
 ### Changed
+
+- **BREAKING — `create_workflow` no longer accepts `timeout_seconds`, and `expected_timeout` is
+  gone from the next-action envelope** (issue #412). Two halves of one falsity.
+  The authoring half: `create_workflow` mints every step as `execution: agent`, where nothing has
+  ever enforced `timeout_seconds` — the same shape the loader now refuses (#402). An agent that
+  still sends it gets the workflow it asked for, the field dropped, and a targeted warning naming
+  the replacement; it is never an error, because this tool stays lenient for agents by design.
+  The envelope half: the `expected_timeout` display claimed a time bound on next-actions whose
+  instructed action was never bounded by it — on an agent step nothing enforces the key, and on a
+  handler step the NextAction tells the reader to call the handler themselves, outside anything
+  the engine wraps. Deleted rather than scoped: there is no surface it reaches where it was true.
+  MCP consumers reading `expected_timeout` will no longer find it. Nothing else in the envelope
+  changes.
 
 - **BREAKING — `timeout_seconds` on an `execution: agent` step is now a load error** (issue #402).
   Nothing ever enforced it there: the engine only wraps `execution: auto` dispatch in a timeout,

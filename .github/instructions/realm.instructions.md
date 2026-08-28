@@ -94,20 +94,16 @@ The `call_with` object is pre-populated with placeholders:
 `orientation` describes the current state and what step comes next (distinct from `context_hint`,
 which describes what just happened).
 
-If `expected_timeout` is set, the step has a declared timeout — complete within the indicated
-time (e.g. `"30s"`).
-
 ### 4a. Parallel execution strategy
 
 When `next_actions` contains multiple items, choose a strategy based on step complexity:
 
 - **Inline sequential:** execute all eligible steps yourself, one after another in this session.
-  Use for lightweight steps — no `agent_profile`, no `prompt`, short expected output, no declared
-  `expected_timeout`. Fast and avoids subagent overhead.
+  Use for lightweight steps — no `agent_profile`, no `prompt`, short expected output. Fast and
+  avoids subagent overhead.
 
-- **Subagent fan-out:** spawn one subagent per eligible step for steps that have an `agent_profile`,
-  a substantial `prompt`, or a declared `expected_timeout`. True parallelism. Collect all subagent
-  results before proceeding.
+- **Subagent fan-out:** spawn one subagent per eligible step for steps that have an `agent_profile`
+  or a substantial `prompt`. True parallelism. Collect all subagent results before proceeding.
 
 - **Mixed:** execute lightweight steps inline, spawn subagents for heavyweight steps. Valid within
   the same batch.

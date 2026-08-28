@@ -17,7 +17,6 @@ export interface NextAction {
   human_readable: string;
   /** Current state orientation — describes what state the run is in and what just happened. */
   orientation: string;
-  expected_timeout?: string;
   /** The step's declared input schema — use this to structure the params argument of your execute_step call. */
   input_schema?: Record<string, unknown>;
   /** Template-resolved step prompt, delivered to the agent at step entry. */

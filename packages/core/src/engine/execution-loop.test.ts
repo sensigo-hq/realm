@@ -1504,6 +1504,66 @@ describe('executeStep', () => {
   // ---------------------------------------------------------------------------
 
   describe('buildNextActions instruction population', () => {
+    // issue #412: the `expected_timeout` display is gone. It rendered on every NextAction built
+    // from a step carrying `timeout_seconds` — agent steps, and handler-bearing steps of any
+    // kind — and on both the INSTRUCTED action is outside anything that enforced the number.
+    // The definitions here are built programmatically because the loader now refuses this shape
+    // on an agent step (#402); a definition from the registry or an older store can still carry
+    // it, which is exactly the population that must not be shown a bound nobody applies.
+    it('an agent step carrying timeout_seconds gets NO timeout display', async () => {
+      const def: WorkflowDefinition = {
+        id: 'no-expected-timeout-agent-wf',
+        name: 'No Expected Timeout (agent)',
+        version: 1,
+        steps: {
+          'review-code': {
+            description: 'Review the code',
+            execution: 'agent',
+            depends_on: [],
+            timeout_seconds: 60,
+          },
+        },
+      };
+      const { run } = await store.create({
+        workflowId: 'no-expected-timeout-agent-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const action = buildNextActions(def, run)[0]!;
+      expect(action.instruction!.tool).toBe('execute_step');
+      expect(Object.keys(action)).not.toContain('expected_timeout');
+      expect(JSON.stringify(action)).not.toContain('60s');
+    });
+
+    it('a HANDLER-bearing step carrying timeout_seconds gets none either', async () => {
+      // The other half of the reach, and the one the audit corrected: the NextActions filter is
+      // agent-OR-handler, so an auto step with a handler is shown this too — and its instruction
+      // tells the reader to call the handler themselves, which no withTimeout wraps.
+      const def: WorkflowDefinition = {
+        id: 'no-expected-timeout-handler-wf',
+        name: 'No Expected Timeout (handler)',
+        version: 1,
+        steps: {
+          enrich: {
+            description: 'Enrich the record',
+            execution: 'auto',
+            depends_on: [],
+            handler: 'do_enrich',
+            timeout_seconds: 60,
+          },
+        },
+      };
+      const { run } = await store.create({
+        workflowId: 'no-expected-timeout-handler-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const action = buildNextActions(def, run)[0]!;
+      expect(action.instruction!.tool).toBe('do_enrich');
+      expect(Object.keys(action)).not.toContain('expected_timeout');
+      expect(JSON.stringify(action)).not.toContain('60s');
+    });
+
     it('populates instruction with execute_step for an agent step', async () => {
       const agentStepDef: WorkflowDefinition = {
         id: 'agent-instr-wf',

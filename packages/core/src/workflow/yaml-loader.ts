@@ -1039,12 +1039,12 @@ function parseWorkflowString(
 
     // timeout_seconds is NOT valid on an agent step (issue #402). Nothing enforces it there:
     // `shouldEnforceTimeout` is `execution === 'auto'`, and agent dispatch is never wrapped in
-    // `withTimeout` at all. It is not merely inert either — the engine mints an
-    // `expected_timeout` display from it into the NextAction the driving agent reads
-    // (execution-loop.ts:671), so the one reader who would act on the bound is told a bound
-    // exists while nothing enforces it. The message names both bounds that DO exist, scoped to
-    // realm's own drive (an externally driven step gets neither), on the RETRY_INERT_NON_AUTO
-    // precedent below.
+    // `withTimeout` at all. The key is now inert as well as unenforced — issue #412 deleted the
+    // `expected_timeout` display that used to render it into the NextAction, which is what made
+    // it actively misleading rather than merely useless. The error stays: an author who writes a
+    // bound should be told it does nothing, not left to find out. The message names both bounds
+    // that DO exist, scoped to realm's own drive (an externally driven step gets neither), on
+    // the RETRY_INERT_NON_AUTO precedent below.
     //
     // `=== 'agent'` EXACTLY, never `!== 'auto'`: finalizers consume this key twice — the drain
     // lease (execution-loop.ts:5226) and the handler's own bound (:5030) — and guards already

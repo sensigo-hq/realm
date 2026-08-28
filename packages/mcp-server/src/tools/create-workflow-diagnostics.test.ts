@@ -8,7 +8,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore, JsonWorkflowStore, DEFAULT_POLICY } from '@sensigo/realm';
-import { handleCreateWorkflow, type CreateWorkflowArgs } from './create-workflow.js';
+import { handleCreateWorkflow, stepSchema, type CreateWorkflowArgs } from './create-workflow.js';
 
 describe('create_workflow — structured diagnostics (issue #169)', () => {
   let runDir: string;
@@ -120,6 +120,138 @@ describe('create_workflow — structured diagnostics (issue #169)', () => {
       expect(result.diagnostics!.some((d) => d.code === 'UNKNOWN_CREATE_WORKFLOW_KEY')).toBe(true);
     } finally {
       DEFAULT_POLICY.UNKNOWN_STEP_KEY = original;
+    }
+  });
+});
+
+// =================================================================================================
+// issue #412 — the dead key goes, the live one arrives
+//
+// Every step this tool mints is `execution: 'agent'`, and nothing enforces `timeout_seconds`
+// there. Worse than inert: the engine used to render an `expected_timeout` display from it into
+// the NextAction the agent reads, so the authoring surface accepted a bound, the run surface
+// advertised it, and no layer applied it. `llm_timeout_seconds` is the key that actually governs
+// an agent step's model request (#401), so it takes its place.
+// =================================================================================================
+describe('create_workflow — timeout keys (issue #412)', () => {
+  let runDir: string;
+  let workflowDir: string;
+  let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
+
+  beforeEach(async () => {
+    runDir = await mkdtemp(join(tmpdir(), 'realm-cw-412-run-'));
+    workflowDir = await mkdtemp(join(tmpdir(), 'realm-cw-412-wf-'));
+    stores = {
+      runStore: new JsonFileStore(runDir),
+      workflowStore: new JsonWorkflowStore(workflowDir),
+    };
+  });
+
+  it('timeout_seconds is dropped with a TARGETED warning — never an error', async () => {
+    // Lenient forever, by design (#169/#176): an agent that still sends the old key gets the
+    // workflow it asked for, minus the field, plus an explanation. The message is targeted
+    // because did-you-mean cannot bridge the distance to `llm_timeout_seconds` — an agent told
+    // only "not a recognized field" would have no way to find the replacement.
+    const args = {
+      steps: [{ id: 'step-a', description: 'Do something', timeout_seconds: 60 }],
+    } as unknown as CreateWorkflowArgs;
+
+    const result = await handleCreateWorkflow(args, stores);
+
+    expect(result.status).toBe('ok');
+    const def = await stores.workflowStore.get(result.data['workflow_id'] as string);
+    expect(def.steps['step-a']?.timeout_seconds).toBeUndefined();
+
+    const diag = result.diagnostics?.find((d) => d.key === 'timeout_seconds');
+    expect(diag).toBeDefined();
+    expect(diag!.code).toBe('UNKNOWN_CREATE_WORKFLOW_KEY');
+    expect(diag!.step).toBe('step-a');
+    expect(diag!.message).toContain("'timeout_seconds' was removed (#412)");
+    expect(diag!.message).toContain('nothing enforces it on agent steps');
+    expect(diag!.message).toContain('llm_timeout_seconds');
+    expect(result.warnings.some((w) => w.includes("'timeout_seconds' was removed"))).toBe(true);
+  });
+
+  it('llm_timeout_seconds is accepted and REACHES the registered definition', async () => {
+    // The copy is the whole point: an advertised field that never lands in the definition is a
+    // silently-inert authored bound — the same falsity this PR is removing, resurrected.
+    const args = {
+      steps: [{ id: 'step-a', description: 'Do something', llm_timeout_seconds: 30 }],
+    } as unknown as CreateWorkflowArgs;
+
+    const result = await handleCreateWorkflow(args, stores);
+
+    expect(result.status).toBe('ok');
+    const def = await stores.workflowStore.get(result.data['workflow_id'] as string);
+    expect(def.steps['step-a']?.llm_timeout_seconds).toBe(30);
+    // And it is NOT reported as unknown — it is a declared field now.
+    expect(result.diagnostics?.some((d) => d.key === 'llm_timeout_seconds')).toBeFalsy();
+  });
+
+  for (const bad of [0, -1, 1.5]) {
+    it(`llm_timeout_seconds: ${String(bad)} is rejected`, async () => {
+      const args = {
+        steps: [{ id: 'step-a', description: 'Do something', llm_timeout_seconds: bad }],
+      } as unknown as CreateWorkflowArgs;
+      const result = await handleCreateWorkflow(args, stores);
+      expect(result.status).toBe('error');
+      expect(JSON.stringify(result)).toContain('llm_timeout_seconds must be a positive integer');
+    });
+  }
+
+  it("llm_timeout_seconds: '30' (a string) is rejected", async () => {
+    // Direct-call hits the Rule-5 mirror; over the wire zod's number rejects it before validateArgs
+    // ever runs. Two error shapes, both correct — this asserts the direct-call one only.
+    const args = {
+      steps: [{ id: 'step-a', description: 'Do something', llm_timeout_seconds: '30' }],
+    } as unknown as CreateWorkflowArgs;
+    const result = await handleCreateWorkflow(args, stores);
+    expect(result.status).toBe('error');
+  });
+
+  it('GUARDRAIL 7 — every field the description advertises actually survives a create', async () => {
+    // The description is a claim made to an agent, which reads it instead of the source. Rather
+    // than string-matching the sentence, this drives it: each field the text names is sent, and
+    // none of them may come back as "unknown". A description that advertises a dropped field is
+    // the same defect class as an authored bound nothing enforces.
+    const advertised = (stepSchema.description ?? '')
+      .replace(/^.*Valid fields:\s*/s, '')
+      .replace(/\..*$/s, '')
+      .split(/,\s*/)
+      .map((f) => f.trim().split(/\s/)[0]!)
+      .filter((f) => /^[a-z_]+$/.test(f));
+
+    // Non-vacuity: the parse found a real list, not an empty one.
+    expect(advertised).toContain('id');
+    expect(advertised).toContain('llm_timeout_seconds');
+    expect(advertised).not.toContain('timeout_seconds');
+
+    const sample: Record<string, unknown> = {
+      id: 'step-a',
+      description: 'Do something',
+      depends_on: [],
+      // ELIGIBLE by #236's pre-register gate, because `structured_output: 'strict'` below is
+      // checked against it — a bare `{type:'object'}` is refused, and the refusal would look
+      // like this sweep failing rather than like the sample being wrong.
+      input_schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['answer'],
+        properties: { answer: { type: 'string' } },
+      },
+      llm_timeout_seconds: 30,
+      structured_output: 'strict',
+    };
+    // Every advertised field must have a value here — otherwise the sweep silently skips it.
+    for (const field of advertised) expect(Object.keys(sample)).toContain(field);
+
+    const result = await handleCreateWorkflow(
+      { steps: [sample] } as unknown as CreateWorkflowArgs,
+      stores,
+    );
+    expect(result.status).toBe('ok');
+    for (const field of advertised) {
+      expect(result.diagnostics?.some((d) => d.key === field)).toBeFalsy();
     }
   });
 });

@@ -29,13 +29,17 @@ import { sseJsonStringify } from '../sse-json.js';
  * enumerates the valid field set directly in the tool's parameter schema, so an agent learns the
  * shape upfront instead of only discovering a typo after submitting it.
  */
-const stepSchema = z
+export const stepSchema = z
   .object({
     id: z.string(),
     description: z.string(),
     depends_on: z.array(z.string()).optional(),
     input_schema: z.record(z.unknown()).optional(),
-    timeout_seconds: z.number().optional(),
+    // issue #412: `timeout_seconds` was REMOVED here, not renamed. Every step this tool mints is
+    // `execution: 'agent'`, where nothing enforces it — the loader now rejects the same shape
+    // (#402). `llm_timeout_seconds` is the key that actually bounds an agent step's model
+    // request (#401), per ATTEMPT.
+    llm_timeout_seconds: z.number().optional(),
     // issue #236 (L0 prevention layer): opt in to Anthropic strict/grammar-constrained decoding
     // for this step's submit tool. Gated at PRE-register time by assessStructuredOutputEligibility
     // — see validateArgs below.
@@ -44,7 +48,8 @@ const stepSchema = z
   .passthrough()
   .describe(
     'A single workflow step. Valid fields: id, description, depends_on, input_schema, ' +
-      'timeout_seconds, structured_output (the literal "strict" — opts into constrained ' +
+      "llm_timeout_seconds (positive integer seconds; the PER-ATTEMPT ceiling on this step's " +
+      'model request), structured_output (the literal "strict" — opts into constrained ' +
       'decoding; rejected pre-register if the input_schema is ineligible). Any other field is ' +
       'dropped and returned as a warning — do not invent step fields.',
   );
@@ -54,7 +59,7 @@ export interface CreateWorkflowStep {
   description: string;
   depends_on?: string[];
   input_schema?: Record<string, unknown>;
-  timeout_seconds?: number;
+  llm_timeout_seconds?: number;
   structured_output?: 'strict';
 }
 
@@ -182,11 +187,12 @@ function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: st
     }
   }
 
-  // Rule 5: timeout_seconds must be a positive integer if present.
+  // Rule 5: llm_timeout_seconds must be a positive integer if present (issue #412 — the same
+  // convention the loader applies to the key on a file-authored agent step).
   for (const step of args.steps) {
-    if (step.timeout_seconds !== undefined) {
-      if (!Number.isInteger(step.timeout_seconds) || step.timeout_seconds <= 0) {
-        errors.push(`Step '${step.id}': timeout_seconds must be a positive integer`);
+    if (step.llm_timeout_seconds !== undefined) {
+      if (!Number.isInteger(step.llm_timeout_seconds) || step.llm_timeout_seconds <= 0) {
+        errors.push(`Step '${step.id}': llm_timeout_seconds must be a positive integer`);
       }
     }
   }
@@ -262,8 +268,12 @@ function buildWorkflowDefinition(workflowId: string, args: CreateWorkflowArgs): 
     if (step.input_schema !== undefined) {
       stepDef.input_schema = step.input_schema as JsonSchema;
     }
-    if (step.timeout_seconds !== undefined) {
-      stepDef.timeout_seconds = step.timeout_seconds;
+    // issue #412: MUST copy — buildWorkflowDefinition copies an explicit field list (never a
+    // spread), so omitting this line would advertise a bound in the tool description, accept it,
+    // and register a step that carries none: exactly the silently-inert authored bound this PR
+    // exists to remove, resurrected on the new key.
+    if (step.llm_timeout_seconds !== undefined) {
+      stepDef.llm_timeout_seconds = step.llm_timeout_seconds;
     }
     // issue #236: MUST copy — buildWorkflowDefinition copies an explicit field list (never a
     // spread), so an omitted field here would make the registered run silently carry no
@@ -346,14 +356,24 @@ export async function handleCreateWorkflow(
     // "not a recognized field" text doesn't teach the actual disposition (register-time-only; a
     // dynamic workflow is auto-enrolled at the default fail-at-6 posture with no reachable
     // override). Every other unknown key keeps the generic message unchanged.
-    .map((w) =>
-      w.key === 'validation_exhaustion'
-        ? {
-            ...w,
-            message: `Step '${w.step}': 'validation_exhaustion' is register-time only — dynamic workflows use the default exhaustion posture.`,
-          }
-        : w,
-    );
+    .map((w) => {
+      // issue #220 §3b [P-S6] and issue #412 both need a TARGETED message: the generic "not a
+      // recognized field" text teaches nothing, and did-you-mean cannot bridge the distance from
+      // `timeout_seconds` to `llm_timeout_seconds`. Every other unknown key keeps the generic form.
+      if (w.key === 'validation_exhaustion') {
+        return {
+          ...w,
+          message: `Step '${w.step}': 'validation_exhaustion' is register-time only — dynamic workflows use the default exhaustion posture.`,
+        };
+      }
+      if (w.key === 'timeout_seconds') {
+        return {
+          ...w,
+          message: `Step '${w.step}': 'timeout_seconds' was removed (#412) — nothing enforces it on agent steps; the model-request bound is 'llm_timeout_seconds'.`,
+        };
+      }
+      return w;
+    });
 
   const result = await handleStartRun(
     { workflow_id: workflowId, params: {} },
