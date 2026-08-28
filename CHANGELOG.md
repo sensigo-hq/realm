@@ -59,7 +59,9 @@ All notable changes to this project are documented here.
 
 - **Loader diagnostics now tell you which line** (issue #392). An unknown-key warning names the
   line the key sits on — `unknown key 'dependson' (line 14) — ignored (did you mean 'depends_on'?)`
-  — and every step-scoped loader error ends with the line of its own step. For agents the
+  — and every step-scoped loader error ends with the line of its own step (with one refinement in
+  this same release: prohibition-family errors now name the offending KEY's line where it
+  resolves, falling back to the step's). For agents the
   structured warnings channel carries the full range as data: `line`, `column`, `endLine`,
   `endColumn`, all 1-based, so an edit can be applied without parsing it back out of the prose.
   All four are present together or absent together, never partially.
@@ -94,6 +96,23 @@ All notable changes to this project are documented here.
   version-keyed disclosure, so any measurement spanning this release has to segment on it.
 
 ### Changed
+
+- **Loader refusals explain themselves, and point at the key rather than the step** (issue #417).
+  Six prohibition messages — `on_outcome`, `abort_unless`, `abort_message`, `agent_profile`,
+  `llm_timeout_seconds`, `idempotent` — said only that a key was not valid on that kind of step.
+  They now also say what the key would have DONE, traced to its actual consumer, and where it
+  works instead: an author who writes `llm_timeout_seconds` on an auto step is told that its
+  dispatch is bounded by `timeout_seconds`, rather than being left to search.
+  **Positions moved from the step to the key.** These errors, and the three that already carried
+  four clauses, now name the offending key's own line. On a long step that is the difference
+  between being sent to the field and being sent to the declaration twenty lines above it. Where
+  the position cannot be resolved the message falls back to the step's line, and then to no
+  position at all — a wrong line number sends an author confidently to the wrong place.
+  **`realm workflow validate` and `realm workflow watch` no longer print "Invalid" twice.** The
+  loader's message already begins `Invalid workflow:`; the added prefix is now suppressed where it
+  would repeat.
+  Behaviour is unchanged: the same shapes are refused, in the same order, and the count of errors
+  a file produces is identical. Anything parsing exact message strings will see different text.
 
 - **BREAKING — `tool_timeout` on a step with no `tools` is now a load error** (issue #413).
   The key bounds one tool call inside the agentic loop, and a step with no tools never enters that
@@ -138,7 +157,7 @@ All notable changes to this project are documented here.
   **Scope: the YAML loader** — every path that loads a workflow file, including `realm run`,
   `realm agent` and `realm listen`. A definition already in the registry, or one passed inline, is
   not re-validated, so an offending workflow surfaces at its next load rather than on upgrade.
-  **There is no pre-upgrade detection.** `validate --strict` on the current version emits nothing
+  **There is no pre-upgrade detection.** `validate --strict` on the PRE-UPGRADE version emits nothing
   for this shape — that silence is the bug this closes — so an author cannot check ahead of time;
   offenders appear at first load after upgrading. No workflow in this repository carries the key
   on an agent step. The `create_workflow` MCP tool bypasses the loader and still accepts it (#412).

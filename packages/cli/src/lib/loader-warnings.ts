@@ -73,3 +73,19 @@ const ALL_ERROR_POLICY: Record<WarningCode, 'warn' | 'error'> = Object.fromEntri
 export function failsStrict(warnings: LoaderWarning[]): boolean {
   return rejectOnErrorSeverity(warnings, ALL_ERROR_POLICY);
 }
+
+/**
+ * Renders a load failure without saying "invalid" twice (issue #417).
+ *
+ * The loader's own message already begins `Invalid workflow: …`, so wrapping it in `Invalid: `
+ * produced `Invalid: Invalid workflow: Step 'x': …` — an author's first three words are the same
+ * word twice, before anything they can act on. Where the message announces itself, it is printed
+ * verbatim; where it does not (a non-loader error surfacing on the same path), the prefix still
+ * earns its place.
+ *
+ * Applies only to the message-echoing renders. The standalone strict-escalation lines have their
+ * own text and are untouched.
+ */
+export function renderLoadFailure(message: string): string {
+  return message.startsWith('Invalid workflow:') ? message : `Invalid: ${message}`;
+}

@@ -13,7 +13,9 @@ warnings.
 **Source positions** ([issue #392](https://github.com/sensigo-hq/realm/issues/392)) appear on
 loader diagnostics wherever the key can be placed exactly: the prose carries the start line, and
 the structured warnings channel carries the full range (`line`, `column`, `endLine`, `endColumn`,
-1-based). Step-scoped errors name the line of their step. All four range fields are present
+1-based). Key-scoped errors — the prohibition family — name the KEY's own line where the source
+position resolves, falling back to the step's line and then to no position at all; every other
+step-scoped error names the line of its step. All four range fields are present
 together or absent together, never partially — and they are **absent rather than approximate** when
 a position cannot be resolved exactly, because a wrong line number is worse than none. Two shapes
 resolve to absent by design: a mapping the parser cannot pair key-for-key (a merge key, for
@@ -872,6 +874,36 @@ fetch_document:
 > and so never consumes the block.
 
 ---
+
+## How the loader decides what to refuse
+
+Two different mistakes get two different treatments, and the asymmetry is deliberate.
+
+**An unknown key is a mistake about the FILE.** You meant `depends_on` and typed `dependson`. The
+loader refuses it at the authoring boundary (`validate`, `register`, `watch`) and warns rather than
+refuses at execution, so a deployed workflow keeps running while its author fixes the typo
+(issues #169/#170). `create_workflow` stays lenient permanently — an agent that invents a field
+should be told, not blocked.
+
+**A KNOWN key in a place that ignores it is a false statement about the RUN**, and that is refused
+everywhere. `timeout_seconds` on an agent step is not a typo; it is a bound the author believes
+exists. Nothing enforces it, so the step looks time-bounded and is not — and unlike a typo, the
+file gives no hint that anything is wrong. That is why these are errors rather than warnings even
+though the key is spelled correctly and the workflow would otherwise run.
+
+Each such refusal says four things: what is not valid, what the key would have DONE (traced to its
+actual consumer), where it does work instead, and — where the question is genuinely open — under
+what condition it might be admitted later. A refusal that only says "invalid" leaves the author to
+guess which of those four they needed.
+
+**When the affected population is not zero.** Where a shape is already in use, a straight break is
+the wrong tool. The ladder is: refuse, but ship a version-pinned escape hatch that silences the
+error for a named release and expires by itself; remove the escape at the next major. A silencer
+that does not expire becomes permanent, and the population never moves.
+
+**Extension namespace.** There is deliberately none — no `x-` prefix, no reserved vendor block.
+Every key is realm's, and an unrecognised one is a mistake rather than somebody else's field. The
+revisit trigger is concrete: third-party tooling that needs to annotate workflow YAML.
 
 ## `llm_timeout_seconds` (the per-attempt model-request ceiling)
 

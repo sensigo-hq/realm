@@ -691,6 +691,26 @@ function parseWorkflowString(
     return line === undefined ? message : `${message} (line ${line})`;
   };
 
+  /**
+   * Like `withStepLine`, but names the OFFENDING KEY's own line (issue #417).
+   *
+   * For a key-scoped refusal the step's line is the wrong place to send someone: a long step has
+   * the key twenty lines below its own name, and the author reading `(line 40)` looks at the
+   * declaration rather than at the field being refused. The position map records every pairable
+   * mapping key, so the key's own line is available wherever the step's is.
+   *
+   * Falls back to the step's line, and then to no position at all. Two shapes reach that
+   * fallback and both are real: a step body assembled through a merge key (`<<: *anchor`), which
+   * the map refuses as unpairable, and `use_template` steps, whose keys are synthesized and
+   * exist at no line in the file. Neither guesses — a wrong line number sends an author
+   * confidently to the wrong place, which is worse than sending them nowhere.
+   */
+  const withKeyLine = (stepName: string, key: string, message: string): string => {
+    const line =
+      sourceMap.posOf(['steps', stepName, key])?.line ?? sourceMap.posOf(['steps', stepName])?.line;
+    return line === undefined ? message : `${message} (line ${line})`;
+  };
+
   // Step 2: Top-level validation
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new WorkflowError('Invalid workflow: Workflow must be a non-null object', {
@@ -922,9 +942,15 @@ function parseWorkflowString(
     // on_outcome is only valid on execution: finalizer steps.
     if (step['on_outcome'] !== undefined && step['execution'] !== 'finalizer') {
       errors.push(
-        withStepLine(
+        // Consumer: settlement.ts:145 (`finalizerTriggers`) — it is read only when selecting
+        // which finalizers a run's outcome should fire.
+        withKeyLine(
           stepName,
-          `Step '${stepName}': 'on_outcome' is only valid on execution: finalizer steps`,
+          'on_outcome',
+          `Step '${stepName}': 'on_outcome' is only valid on execution: finalizer steps — it ` +
+            'selects which finalizers run for a given outcome, and only finalizers are selected ' +
+            'that way, so here it would decide nothing. Move it to the finalizer that should ' +
+            'react to the outcome, or remove it.',
         ),
       );
     }
@@ -971,8 +997,9 @@ function parseWorkflowString(
       // never reaches. A test pins that count so a second call site reds this message.
       if (step['preconditions'] !== undefined) {
         errors.push(
-          withStepLine(
+          withKeyLine(
             stepName,
+            'preconditions',
             `Step '${stepName}': 'preconditions' is not valid on execution: guard steps — the ` +
               `engine never evaluates it there (a guard's execution evaluates only 'abort_unless'), ` +
               `so the run would LOOK guarded while the declared check never ran. Move the condition ` +
@@ -986,17 +1013,27 @@ function parseWorkflowString(
     // abort_unless and abort_message are only valid on execution: guard steps.
     if (step['abort_unless'] !== undefined && step['execution'] !== 'guard') {
       errors.push(
-        withStepLine(
+        // Consumer: execution-loop.ts:4828 — the condition list a guard evaluates before the
+        // run is allowed to continue.
+        withKeyLine(
           stepName,
-          `Step '${stepName}': 'abort_unless' is only valid on execution: guard steps`,
+          'abort_unless',
+          `Step '${stepName}': 'abort_unless' is only valid on execution: guard steps — it is ` +
+            'the condition list a guard evaluates before letting the run continue, and only ' +
+            'guard steps are evaluated, so here it would gate nothing. Put the check on a guard ' +
+            'step, or remove it.',
         ),
       );
     }
     if (step['abort_message'] !== undefined && step['execution'] !== 'guard') {
       errors.push(
-        withStepLine(
+        // Consumer: execution-loop.ts:4943 — the text reported when a guard aborts the run.
+        withKeyLine(
           stepName,
-          `Step '${stepName}': 'abort_message' is only valid on execution: guard steps`,
+          'abort_message',
+          `Step '${stepName}': 'abort_message' is only valid on execution: guard steps — it is ` +
+            'the text reported when a guard aborts the run, and only a guard aborts, so here it ' +
+            'would never be read. Move it to the guard that performs the abort, or remove it.',
         ),
       );
     }
@@ -1004,9 +1041,14 @@ function parseWorkflowString(
     // agent_profile is only valid on agent steps.
     if ('agent_profile' in step && step['execution'] !== 'agent') {
       errors.push(
-        withStepLine(
+        // Consumer: run-agent.ts:584 — resolved into the model prompt for the step.
+        withKeyLine(
           stepName,
-          `Step '${stepName}': 'agent_profile' is only valid on execution: agent steps`,
+          'agent_profile',
+          `Step '${stepName}': 'agent_profile' is only valid on execution: agent steps — its ` +
+            'content is resolved into the model prompt, and only an agent step makes a model ' +
+            'request, so here it would reach no model. Move it to the agent step whose prompt ' +
+            'it should shape, or remove it.',
         ),
       );
     }
@@ -1016,9 +1058,15 @@ function parseWorkflowString(
     // check covers auto/guard/finalizer.
     if (step['llm_timeout_seconds'] !== undefined && step['execution'] !== 'agent') {
       errors.push(
-        withStepLine(
+        // Consumer: run-agent.ts's per-step clock resolution — the per-attempt bound on the
+        // step's model request.
+        withKeyLine(
           stepName,
-          `Step '${stepName}': 'llm_timeout_seconds' is only valid on execution: agent steps`,
+          'llm_timeout_seconds',
+          `Step '${stepName}': 'llm_timeout_seconds' is only valid on execution: agent steps — ` +
+            'it bounds one model request, and no other kind makes one, so here it would bound ' +
+            "nothing. An auto step's dispatch is bounded by 'timeout_seconds', and a " +
+            "finalizer's handler by its own 'timeout_seconds'.",
         ),
       );
     }
@@ -1051,8 +1099,9 @@ function parseWorkflowString(
     // reject it in the prohibited-fields list above.
     if (step['timeout_seconds'] !== undefined && step['execution'] === 'agent') {
       errors.push(
-        withStepLine(
+        withKeyLine(
           stepName,
+          'timeout_seconds',
           `Step '${stepName}': 'timeout_seconds' is not valid on execution: agent steps — ` +
             'the engine never enforces it there (agent dispatch is never wrapped in a timeout), ' +
             'so the step would LOOK time-bounded while nothing enforced the bound. ' +
@@ -1067,9 +1116,15 @@ function parseWorkflowString(
     // on agent/guard/finalizer, so it is rejected there rather than silently ignored.
     if (step['idempotent'] !== undefined && step['execution'] !== 'auto') {
       errors.push(
-        withStepLine(
+        // Consumers: execution-loop.ts:2115 (gates `retry.on_timeout`) and reclaim.ts:73
+        // (reclaim eligibility) — both act on auto dispatch.
+        withKeyLine(
           stepName,
-          `Step '${stepName}': 'idempotent' is only valid on execution: auto steps`,
+          'idempotent',
+          `Step '${stepName}': 'idempotent' is only valid on execution: auto steps — it gates ` +
+            "'retry.on_timeout' and reclaim eligibility, and both act on auto dispatch, so here " +
+            'it would gate nothing. Remove it, or move the work to an auto step if you need ' +
+            'either.',
         ),
       );
     }
@@ -2139,8 +2194,9 @@ function parseWorkflowString(
       (Array.isArray(step['tools']) && (step['tools'] as unknown[]).length === 0);
     if (step['tool_timeout'] !== undefined && toolsMissing) {
       errors.push(
-        withStepLine(
+        withKeyLine(
           stepName,
+          'tool_timeout',
           `Step '${stepName}': 'tool_timeout' requires 'tools' (a declared, non-empty list) — ` +
             'without tool calls there is ' +
             'nothing for it to bound, so the step would carry a bound with nothing to bind. ' +

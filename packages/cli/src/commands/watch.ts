@@ -5,7 +5,11 @@ import { Command } from 'commander';
 import { loadWorkflowFromFileWithDiagnostics, WorkflowError } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
 import { loadWorkflowForRegistration } from './register.js';
-import { printLoaderWarnings, rejectOnErrorSeverity } from '../lib/loader-warnings.js';
+import {
+  renderLoadFailure,
+  printLoaderWarnings,
+  rejectOnErrorSeverity,
+} from '../lib/loader-warnings.js';
 
 /**
  * Attempts to load and register a workflow YAML file.
@@ -41,7 +45,7 @@ async function registerFile(filePath: string, store: WorkflowRegistrar): Promise
     );
   } catch (err) {
     if (err instanceof WorkflowError) {
-      console.error(`[${timestamp}] Invalid: ${err.message}`);
+      console.error(`[${timestamp}] ${renderLoadFailure(err.message)}`);
     } else {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[${timestamp}] Error: ${message}`);

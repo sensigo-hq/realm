@@ -26,7 +26,12 @@ import {
   loadProjectExtensions,
   checkForOrphanedManifests,
 } from '../extensions/load-project-extensions.js';
-import { printLoaderWarnings, rejectOnErrorSeverity, failsStrict } from '../lib/loader-warnings.js';
+import {
+  renderLoadFailure,
+  printLoaderWarnings,
+  rejectOnErrorSeverity,
+  failsStrict,
+} from '../lib/loader-warnings.js';
 
 /**
  * Advisory (issue A3, never rejects): an auto step declaring `retry:` but no `timeout_seconds`
@@ -265,7 +270,7 @@ export const validateCommand = new Command('validate')
         }
       } catch (err) {
         if (err instanceof WorkflowError) {
-          console.error(`Invalid: ${err.message}`);
+          console.error(renderLoadFailure(err.message));
           process.exit(1);
         }
         throw err;
@@ -310,7 +315,7 @@ export const validateCommand = new Command('validate')
         process.exit(1);
       }
     } catch (err) {
-      console.error(`Invalid: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(renderLoadFailure(err instanceof Error ? err.message : String(err)));
       process.exit(1);
     }
   });
