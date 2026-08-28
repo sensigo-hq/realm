@@ -699,11 +699,12 @@ function parseWorkflowString(
    * declaration rather than at the field being refused. The position map records every pairable
    * mapping key, so the key's own line is available wherever the step's is.
    *
-   * Falls back to the step's line, and then to no position at all. Two shapes reach that
-   * fallback and both are real: a step body assembled through a merge key (`<<: *anchor`), which
-   * the map refuses as unpairable, and `use_template` steps, whose keys are synthesized and
-   * exist at no line in the file. Neither guesses — a wrong line number sends an author
-   * confidently to the wrong place, which is worse than sending them nowhere.
+   * Falls back to the step's line, and then to no position at all — and the two real shapes land
+   * on DIFFERENT rungs, which is why both are pinned. A step body assembled through a merge key
+   * (`<<: *anchor`) leaves the KEY unpairable while the step's own name is still placeable, so it
+   * falls back to the step's line. A `use_template` step, whose keys are synthesized, exists at no
+   * line in the file at all and carries no position. Neither guesses — a wrong line number sends
+   * an author confidently to the wrong place, which is worse than sending them nowhere.
    */
   const withKeyLine = (stepName: string, key: string, message: string): string => {
     const line =
@@ -1020,20 +1021,24 @@ function parseWorkflowString(
           'abort_unless',
           `Step '${stepName}': 'abort_unless' is only valid on execution: guard steps — it is ` +
             'the condition list a guard evaluates before letting the run continue, and only ' +
-            'guard steps are evaluated, so here it would gate nothing. Put the check on a guard ' +
-            'step, or remove it.',
+            'guard steps are evaluated that way, so here it would gate nothing. Put the check ' +
+            'on a guard step, or remove it.',
         ),
       );
     }
     if (step['abort_message'] !== undefined && step['execution'] !== 'guard') {
       errors.push(
         // Consumer: execution-loop.ts:4943 — the text reported when a guard aborts the run.
+        // The clause is about READERSHIP, not about who aborts: `handler_abort` and
+        // `gate_expiry_abort` are seal arms too (types/run-record.ts:603-617), so "only a guard
+        // aborts" would be false. What is true is that every reader of this key is a guard path.
         withKeyLine(
           stepName,
           'abort_message',
           `Step '${stepName}': 'abort_message' is only valid on execution: guard steps — it is ` +
-            'the text reported when a guard aborts the run, and only a guard aborts, so here it ' +
-            'would never be read. Move it to the guard that performs the abort, or remove it.',
+            'the text reported when a guard aborts the run, and nothing but a guard reads it, ' +
+            'so here it would never be read. Move it to the guard that performs the abort, or ' +
+            'remove it.',
         ),
       );
     }
@@ -1058,14 +1063,16 @@ function parseWorkflowString(
     // check covers auto/guard/finalizer.
     if (step['llm_timeout_seconds'] !== undefined && step['execution'] !== 'agent') {
       errors.push(
-        // Consumer: run-agent.ts's per-step clock resolution — the per-attempt bound on the
-        // step's model request.
+        // Consumer: run-agent.ts:501-507 — the per-step clock resolution, which is the
+        // per-attempt bound on the step's model request. The range names the resolution rather
+        // than each read: :501 and :507 read the KEY, :503 reads the CLI flag it overrides.
         withKeyLine(
           stepName,
           'llm_timeout_seconds',
           `Step '${stepName}': 'llm_timeout_seconds' is only valid on execution: agent steps — ` +
             'it bounds one model request, and no other kind makes one, so here it would bound ' +
-            "nothing. An auto step's dispatch is bounded by 'timeout_seconds', and a " +
+            'nothing. Move it to the agent step whose request it should bound, or remove it. ' +
+            "An auto step's dispatch is bounded by 'timeout_seconds', and a " +
             "finalizer's handler by its own 'timeout_seconds'.",
         ),
       );
@@ -1116,8 +1123,10 @@ function parseWorkflowString(
     // on agent/guard/finalizer, so it is rejected there rather than silently ignored.
     if (step['idempotent'] !== undefined && step['execution'] !== 'auto') {
       errors.push(
-        // Consumers: execution-loop.ts:2115 (gates `retry.on_timeout`) and reclaim.ts:73
-        // (reclaim eligibility) — both act on auto dispatch.
+        // Consumers: execution-loop.ts:2526 (the `willRetry` conjunct gating `retry.on_timeout`;
+        // the :2115 advisory mirrors the rule for loader-bypassing definitions and, by its own
+        // header, never gates) and reclaim.ts:73 (reclaim eligibility) — both act on auto
+        // dispatch.
         withKeyLine(
           stepName,
           'idempotent',

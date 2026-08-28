@@ -60,8 +60,8 @@ All notable changes to this project are documented here.
 - **Loader diagnostics now tell you which line** (issue #392). An unknown-key warning names the
   line the key sits on — `unknown key 'dependson' (line 14) — ignored (did you mean 'depends_on'?)`
   — and every step-scoped loader error ends with the line of its own step (with one refinement in
-  this same release: prohibition-family errors now name the offending KEY's line where it
-  resolves, falling back to the step's). For agents the
+  this same release: the nine retrofitted prohibition messages now name the offending KEY's line
+  where it resolves, falling back to the step's). For agents the
   structured warnings channel carries the full range as data: `line`, `column`, `endLine`,
   `endColumn`, all 1-based, so an edit can be applied without parsing it back out of the prose.
   All four are present together or absent together, never partially.
@@ -223,9 +223,10 @@ refuse at **every YAML load path**, execution included. Definitions that never r
 (anything already in the workflow registry, or built inline in code) are not re-validated and are
 untouched by all three.
 
-**Before upgrading**, run `realm workflow validate --strict` against your workflows on your current
-version to find offenders while they are still warnings. After upgrading, plain `validate` refuses
-them.
+**Before upgrading**, run `realm workflow validate --strict` against your workflows on the
+PRE-UPGRADE version to find unknown-key offenders while they are still warnings. The
+guard-precondition and tools-without-servers shapes emit nothing on the pre-upgrade version and
+surface at first load after upgrading. After upgrading, plain `validate` refuses all three.
 
 Neither of the two loader-level classes has any occurrence in this repository — not in the
 examples, the fixtures, or the scaffold. The guard declaration is never evaluated, and the

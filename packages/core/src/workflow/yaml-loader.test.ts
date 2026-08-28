@@ -3091,6 +3091,9 @@ ${body}
     const m = load('auto', "    abort_unless: ['first.x']");
     expect(m).toContain("'abort_unless' is only valid on execution: guard steps");
     expect(m).toContain('condition list a guard evaluates');
+    // "that way" carries the claim: every step is evaluated in SOME sense, so the elliptical
+    // form is false read literally. The on_outcome sibling already qualifies it this way.
+    expect(m).toContain('only guard steps are evaluated that way');
     expect(m).toContain('would gate nothing');
     expect(m).toContain('Put the check on a guard step');
   });
@@ -3099,6 +3102,9 @@ ${body}
     const m = load('auto', '    abort_message: nope');
     expect(m).toContain("'abort_message' is only valid on execution: guard steps");
     expect(m).toContain('text reported when a guard aborts');
+    // NOT "only a guard aborts" — handler_abort and gate_expiry_abort are seal arms too. The
+    // true basis is readership: every reader of this key is a guard path.
+    expect(m).toContain('nothing but a guard reads it');
     expect(m).toContain('would never be read');
     expect(m).toContain('Move it to the guard');
   });
@@ -3117,6 +3123,9 @@ ${body}
     expect(m).toContain("'llm_timeout_seconds' is only valid on execution: agent steps");
     expect(m).toContain('bounds one model request');
     expect(m).toContain('would bound nothing');
+    // The remedial verb its five siblings all carry — "here is where it goes", not only "here
+    // is where it works". Added ahead of the redirect, which stays byte-identical.
+    expect(m).toContain('Move it to the agent step whose request it should bound, or remove it.');
     expect(m).toContain("An auto step's dispatch is bounded by 'timeout_seconds'");
     expect(m).toContain("finalizer's handler");
   });

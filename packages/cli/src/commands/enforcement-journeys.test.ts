@@ -461,4 +461,34 @@ steps:
     expect(result.out).toContain('Invalid workflow:');
     expect(result.out).not.toContain('Invalid: Invalid workflow:');
   });
+
+  it('the EXTENSIONS path renders it the same way — the third site, separately wired', async () => {
+    // validate forks on whether the file declares `extensions:` (validate.ts:247), and the two
+    // arms print through different lines. Reverting the extensions-path one alone left the whole
+    // cli suite green — proven by probe — so the fork needs a cell of its own.
+    //
+    // No real extensions module is needed: a family prohibition throws in pass 1, before
+    // extension resolution runs, so the `extensions:` block only has to exist to choose the arm.
+    const withExtensions = `
+id: prefix-demo-ext
+name: Prefix Demo Ext
+version: 1
+extensions:
+  modules: []
+steps:
+  first:
+    description: First step
+    execution: auto
+    depends_on: []
+  subject:
+    description: A step with a key that does nothing here
+    execution: auto
+    depends_on: [first]
+    agent_profile: reviewer
+`;
+    const result = await validate(write(withExtensions));
+    expect(result.refused).toBe(true);
+    expect(result.out).toContain('Invalid workflow:');
+    expect(result.out).not.toContain('Invalid: Invalid workflow:');
+  });
 });
