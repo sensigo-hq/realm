@@ -166,7 +166,11 @@ describe('create_workflow — timeout keys (issue #412)', () => {
     expect(diag).toBeDefined();
     expect(diag!.code).toBe('UNKNOWN_CREATE_WORKFLOW_KEY');
     expect(diag!.step).toBe('step-a');
-    expect(diag!.message).toContain("'timeout_seconds' was removed (#412)");
+    expect(diag!.message).toContain("step 'step-a': 'timeout_seconds' was removed (#412)");
+    // Lower-case `step`, matching the generic unknown-key path — one channel, one voice.
+    expect(diag!.message).not.toContain("Step '");
+    // No structured did_you_mean: the substitution would change semantics, so a human decides.
+    expect(diag!.did_you_mean).toBeUndefined();
     expect(diag!.message).toContain('nothing enforces it on agent steps');
     expect(diag!.message).toContain('llm_timeout_seconds');
     expect(result.warnings.some((w) => w.includes("'timeout_seconds' was removed"))).toBe(true);

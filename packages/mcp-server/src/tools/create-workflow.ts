@@ -367,9 +367,14 @@ export async function handleCreateWorkflow(
         };
       }
       if (w.key === 'timeout_seconds') {
+        // Deliberately NO structured `did_you_mean`: a blind `timeout_seconds` →
+        // `llm_timeout_seconds` substitution would CHANGE semantics (a whole-step wish becomes a
+        // per-attempt model-request bound), and an agent applying a suggestion mechanically would
+        // author a different intent than the one it had. The replacement is named in prose so a
+        // human decides.
         return {
           ...w,
-          message: `Step '${w.step}': 'timeout_seconds' was removed (#412) — nothing enforces it on agent steps; the model-request bound is 'llm_timeout_seconds'.`,
+          message: `step '${w.step}': 'timeout_seconds' was removed (#412) — nothing enforces it on agent steps; the model-request bound is 'llm_timeout_seconds'.`,
         };
       }
       return w;

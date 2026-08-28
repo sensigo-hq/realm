@@ -172,8 +172,8 @@ recovery path was taken, and `context_hint` will describe what happened.
 ## Checking Run State
 
 If you lose track of a run's current state (e.g. after an error or session gap), call
-`get_run_state` with the `run_id`. It returns the current state name, whether the run is
-terminal, the pending gate if any, and how many evidence entries exist. Use it to orient
+`get_run_state` with the `run_id`. It returns `run_phase` and `terminal_state` (a boolean), the
+pending gate if any, and how many evidence entries exist. Use it to orient
 yourself before deciding the next tool call — do not guess the state.
 
 When `run_phase` is `aborted`, the response also includes `abort_context`: the guard step ID,
