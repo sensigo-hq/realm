@@ -1051,7 +1051,11 @@ steps:
     } catch (err) {
       const message = (err as WorkflowError).message;
       expect(message).toContain("'max_tool_calls' must be a positive integer");
-      expect(message).toContain("'tool_timeout' must be a positive integer");
+      // REPOINTED by issue #413: this step is TOOLLESS, so `tool_timeout` no longer reaches the
+      // shape check at all — it is refused outright. The cell's purpose is multi-error
+      // COLLECTION, which two distinct errors exercise just as well; the shape pin itself lives
+      // on a tools-bearing fixture above and stays green.
+      expect(message).toContain("'tool_timeout' requires 'tools'");
     }
   });
 });
@@ -2804,4 +2808,176 @@ steps:
       );
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Tests: tool_timeout requires tools (issue #413)
+//
+// `tool_timeout` bounds ONE tool call inside the agentic loop (run-agent.ts). A step with no
+// tools never enters that loop, so the key sits there bounding nothing — an author who wrote it
+// believes tool calls are capped on a step that makes none. The predicate keys on TOOLS, never on
+// execution kind: the day `tools` becomes legal somewhere new, this follows it automatically.
+// ---------------------------------------------------------------------------
+
+describe('loadWorkflowFromString — tool_timeout requires tools (issue #413)', () => {
+  /**
+   * Counts the errors in a thrown loader message.
+   *
+   * By the per-error `Step '<name>':` prefix, NOT by splitting on the '; ' the loader joins with:
+   * this issue's own message contains a semicolon, so a naive split reported 3 errors where there
+   * were 2 — the instrument, not the behaviour. Verified against a real two-error message.
+   */
+  const errorCount = (message: string): number => (message.match(/Step '/g) ?? []).length;
+
+  /**
+   * A two-step workflow whose second step is the subject. `depends_on` is omitted for finalizers
+   * because they prohibit it — a fixture that sets it mints a SECOND error and the "exactly one"
+   * assertions below would then be measuring the fixture rather than the rule.
+   */
+  const step = (execution: string, body: string): string => `
+id: tt-test
+name: Tool Timeout Test
+version: 1
+steps:
+  first:
+    description: First step
+    execution: auto
+    depends_on: []
+  subject:
+    description: The step under test
+    execution: ${execution}
+${execution === 'finalizer' ? '' : '    depends_on: [first]\n'}${body}
+`;
+
+  /**
+   * A tools-BEARING agent step, self-contained: the `mcp_servers` block and `input_schema` are
+   * both present because the other `tools` rules would otherwise speak over the one under test.
+   */
+  const TOOLS_YAML = `
+id: tt-tools-test
+name: Tool Timeout Tools Test
+version: 1
+mcp_servers:
+  - id: github
+    command: npx
+    args: [-y, '@modelcontextprotocol/server-github']
+steps:
+  first:
+    description: First step
+    execution: auto
+    depends_on: []
+  subject:
+    description: Agent step with tools
+    execution: agent
+    depends_on: [first]
+    input_schema:
+      type: object
+      properties:
+        result:
+          type: string
+      required: [result]
+    tools:
+      - github:get_pull_request
+`;
+
+  const loadError = (content: string): string => {
+    try {
+      loadWorkflowFromString(content);
+      throw new Error('expected a load error');
+    } catch (err) {
+      return (err as WorkflowError).message;
+    }
+  };
+
+  it('a TOOLLESS agent step with tool_timeout is a load error that says what it needs', () => {
+    const message = loadError(step('agent', '    tool_timeout: 30'));
+    expect(message).toContain("'tool_timeout' requires 'tools'");
+    // The consequence, in the author's terms.
+    expect(message).toContain('nothing for it to bound');
+    expect(message).toContain('a bound with nothing to bind');
+    // The runtime facts the message asserts — both of them.
+    expect(message).toContain("realm's own drive");
+    expect(message).toContain('default 30');
+    // The remedy, phrased so an author who wrote `tools: []` is not told to add a key they have.
+    expect(message).toContain('declare at least one tool or remove the key');
+    // And the offending step's own line.
+    expect(message).toMatch(/\(line \d+\)/);
+  });
+
+  // Per member, because the predicate is kind-agnostic and each kind reaches it differently:
+  // guard and finalizer ban `tools` outright, auto restricts it, and none of that is what makes
+  // this fire — the ABSENCE of tools is.
+  for (const kind of ['auto', 'guard', 'finalizer']) {
+    it(`a ${kind} step with tool_timeout reports exactly ONE error — the prohibition`, () => {
+      // Each kind's own required shape, satisfied — an empty `abort_unless` and a finalizer
+      // with `depends_on` are both refused in their own right, and either would make the
+      // one-error assertion below pass or fail for reasons unrelated to tool_timeout.
+      const body =
+        kind === 'finalizer'
+          ? '    on_outcome: always\n    handler: do_cleanup\n    tool_timeout: 30'
+          : kind === 'guard'
+            ? "    abort_unless: ['first.result']\n    tool_timeout: 30"
+            : '    tool_timeout: 30';
+      const message = loadError(step(kind, body));
+      expect(message).toContain("'tool_timeout' requires 'tools'");
+      expect(errorCount(message)).toBe(1);
+    });
+  }
+
+  it('CONTROL — a tools-bearing agent step with tool_timeout is legal', () => {
+    const def = loadWorkflowFromString(
+      TOOLS_YAML.replace('    tools:', '    tool_timeout: 45\n    tools:'),
+    );
+    expect(def.steps['subject']?.tool_timeout).toBe(45);
+  });
+
+  it('tool_timeout: -5 WITHOUT tools reports the prohibition ONLY, not also a shape error', () => {
+    // Same suppression convention as #402's: two messages for one root cause points the author at
+    // the shape, which is not the problem.
+    const message = loadError(step('agent', '    tool_timeout: -5'));
+    expect(message).toContain("'tool_timeout' requires 'tools'");
+    expect(message).not.toContain("'tool_timeout' must be a positive integer");
+  });
+
+  it('tool_timeout: -5 WITH tools still reports the shape error', () => {
+    // The suppression's other polarity: where the key is legal, its value is still checked.
+    const message = loadError(TOOLS_YAML.replace('    tools:', '    tool_timeout: -5\n    tools:'));
+    expect(message).toContain("'tool_timeout' must be a positive integer");
+    expect(message).not.toContain("'tool_timeout' requires 'tools'");
+  });
+
+  it('COMPOSITION — tools on an AUTO step reports the tools error, and NOT also this one', () => {
+    // The step HAS tools, so the requires-predicate must stay silent and let the tools-placement
+    // error speak alone. input_schema and a matching mcp_servers block are present so the other
+    // tools rules stay quiet too — the single error is the placement one.
+    const message = loadError(
+      TOOLS_YAML.replace(
+        'execution: agent\n    depends_on: [first]',
+        'execution: auto\n    depends_on: [first]\n    tool_timeout: 30',
+      ),
+    );
+    expect(message).toContain("'tools' is only valid on execution: agent steps");
+    expect(message).not.toContain("'tool_timeout' requires 'tools'");
+    expect(errorCount(message)).toBe(1);
+  });
+
+  // An EMPTY tools list declares no tool calls: run-agent's tools path is gated on
+  // `tools.length > 0`, so `tool_timeout` is exactly as inert there as with no key at all. These
+  // two are why the predicate and the shape-check suppression share one helper — under a plain
+  // `tools !== undefined` conjunct the second cell would mint TWO errors.
+  it('tools: [] + tool_timeout reports the prohibition, exactly ONE error', () => {
+    const message = loadError(
+      step('agent', '    input_schema:\n      type: object\n    tools: []\n    tool_timeout: 30'),
+    );
+    expect(message).toContain("'tool_timeout' requires 'tools'");
+    expect(errorCount(message)).toBe(1);
+  });
+
+  it('tools: [] + tool_timeout: -5 reports the prohibition ONLY', () => {
+    const message = loadError(
+      step('agent', '    input_schema:\n      type: object\n    tools: []\n    tool_timeout: -5'),
+    );
+    expect(message).toContain("'tool_timeout' requires 'tools'");
+    expect(message).not.toContain("'tool_timeout' must be a positive integer");
+  });
 });
