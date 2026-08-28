@@ -668,7 +668,12 @@ function stepToNextAction(
       : {}),
     human_readable: `Execute step '${stepName}': ${step.description}`,
     orientation: `Run is active. Next step ready: '${stepName}'.`,
-    ...(step.timeout_seconds !== undefined ? { expected_timeout: `${step.timeout_seconds}s` } : {}),
+    // issue #412: the `expected_timeout` display is GONE, not scoped. It rendered wherever a
+    // NextAction was built — agent steps, and handler-bearing steps of any kind — and on both
+    // the instructed action is outside anything that enforced the number: an agent step's
+    // dispatch is never wrapped in a timeout, and a handler NextAction tells the reader to call
+    // the handler themselves, which no withTimeout covers. A displayed bound that never governs
+    // the action it is displayed beside is worse than no display.
     ...(resolvedPrompt !== undefined ? { prompt: resolvedPrompt } : {}),
   };
 }
