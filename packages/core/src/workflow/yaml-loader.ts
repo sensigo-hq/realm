@@ -2141,7 +2141,8 @@ function parseWorkflowString(
       errors.push(
         withStepLine(
           stepName,
-          `Step '${stepName}': 'tool_timeout' requires 'tools' — without tool calls there is ` +
+          `Step '${stepName}': 'tool_timeout' requires 'tools' (a declared, non-empty list) — ` +
+            'without tool calls there is ' +
             'nothing for it to bound, so the step would carry a bound with nothing to bind. ' +
             "In realm's own drive each tool call is capped at tool_timeout seconds (default " +
             '30); declare at least one tool or remove the key.',

@@ -2891,7 +2891,9 @@ steps:
 
   it('a TOOLLESS agent step with tool_timeout is a load error that says what it needs', () => {
     const message = loadError(step('agent', '    tool_timeout: 30'));
-    expect(message).toContain("'tool_timeout' requires 'tools'");
+    // The parenthetical is load-bearing for the `tools: []` author, who can SEE the key and would
+    // otherwise read "requires 'tools'" as a claim about something already on the page.
+    expect(message).toContain("'tool_timeout' requires 'tools' (a declared, non-empty list)");
     // The consequence, in the author's terms.
     expect(message).toContain('nothing for it to bound');
     expect(message).toContain('a bound with nothing to bind');
@@ -2969,7 +2971,7 @@ steps:
     const message = loadError(
       step('agent', '    input_schema:\n      type: object\n    tools: []\n    tool_timeout: 30'),
     );
-    expect(message).toContain("'tool_timeout' requires 'tools'");
+    expect(message).toContain("'tool_timeout' requires 'tools' (a declared, non-empty list)");
     expect(errorCount(message)).toBe(1);
   });
 
@@ -2977,7 +2979,7 @@ steps:
     const message = loadError(
       step('agent', '    input_schema:\n      type: object\n    tools: []\n    tool_timeout: -5'),
     );
-    expect(message).toContain("'tool_timeout' requires 'tools'");
+    expect(message).toContain("'tool_timeout' requires 'tools' (a declared, non-empty list)");
     expect(message).not.toContain("'tool_timeout' must be a positive integer");
   });
 });

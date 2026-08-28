@@ -108,7 +108,7 @@ All notable changes to this project are documented here.
   somewhere new this follows it without another change.
   **Scope: the YAML loader** — every path that loads a workflow file. A definition already in the
   registry, or passed inline, is not re-validated, so an offender surfaces at its next load rather
-  than on upgrade. **There is no pre-upgrade detection**: today's `validate` accepts the shape,
+  than on upgrade. **There is no pre-upgrade detection**: `validate` on the PRE-UPGRADE version accepts the shape,
   which is the silence this closes. The one workflow in this repository using the key declares
   tools alongside both uses and is unaffected.
 
