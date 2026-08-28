@@ -241,3 +241,43 @@ describe('watchWorkflow', () => {
     expect(store.registered).toHaveLength(1);
   });
 });
+
+// issue #417 — watch keeps its timestamp and drops the doubled word. The prefix is checked, not
+// just the absence, so the fix cannot be read as having removed it wholesale.
+describe('watch — a load failure says "invalid" once (issue #417)', () => {
+  const PROHIBITED_KEY_YAML = `
+id: prefix-demo
+name: Prefix Demo
+version: 1
+steps:
+  first:
+    description: First step
+    execution: auto
+    depends_on: []
+  subject:
+    description: A step with a key that does nothing here
+    execution: auto
+    depends_on: [first]
+    agent_profile: reviewer
+`;
+
+  it('prints "[timestamp] Invalid workflow: …", never "Invalid: Invalid workflow:"', async () => {
+    const filePath = makeTempFile(PROHIBITED_KEY_YAML);
+    const store = makeStore();
+    const controller = new AbortController();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await new Promise((r) => setTimeout(r, 50));
+    controller.abort();
+    await watchPromise;
+
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toMatch(/^\[[^\]]+\] Invalid workflow:/m);
+    expect(errored).not.toContain('Invalid: Invalid workflow:');
+    expect(store.registered).toHaveLength(0);
+    vi.restoreAllMocks();
+  });
+});

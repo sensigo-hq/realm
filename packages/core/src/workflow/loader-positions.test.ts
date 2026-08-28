@@ -166,8 +166,10 @@ steps:
     } catch (err) {
       message = (err as Error).message;
     }
-    // The suffix names where the STEP is, not where the offending field is: a step's errors are
-    // about the step, and one line per step keeps a long error list readable.
+    // The suffix names where the STEP is — true of THIS message, and no longer true as a general
+    // statement (issue #417): the prohibition family now names the offending KEY's own line, so
+    // an author reading a long step is sent to the field rather than to its declaration. Errors
+    // outside that family, like this one, still name the step.
     expect(message).toContain(
       "Step 'step_two': 'timeout_seconds' is not valid on execution: guard steps (line 8)",
     );

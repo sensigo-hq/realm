@@ -319,9 +319,11 @@ steps:
 `;
     const first = await validate(write(bad));
     expect(first.refused).toBe(true);
-    // The step's OWN line — the errors are about the step, so they point at the step.
-    expect(first.out).toContain('(line 10)');
-    expect(bad.split('\n')[10 - 1]).toContain('gate:');
+    // The offending KEY's own line (issue #417), not the step's. `gate:` is on line 10 and
+    // `preconditions:` is five lines below it — on a long step that is the difference between
+    // being sent to the field and being sent to the declaration above it.
+    expect(first.out).toContain('(line 15)');
+    expect(bad.split('\n')[15 - 1]).toContain('preconditions:');
 
     const fixed = bad.replace('    preconditions:\n      - "work.result.count > 0"\n', '');
     expect((await validate(write(fixed))).refused).toBe(false);
@@ -426,5 +428,67 @@ steps:
       - github:get_pull_request
 `;
     expect(() => loadWorkflowFromString(toolsNoServers)).toThrow(WorkflowError);
+  });
+});
+
+// =================================================================================================
+// issue #417 — the double prefix, per COMMAND
+//
+// The predicate is unit-pinned beside its definition; these prove each command actually WIRES it.
+// A shared helper nothing calls is the same defect as no helper — and both renders reach an author
+// on the path they use, not through the function.
+// =================================================================================================
+describe('#417 — a load failure says "invalid" once, per command', () => {
+  const BAD = `
+id: prefix-demo
+name: Prefix Demo
+version: 1
+steps:
+  first:
+    description: First step
+    execution: auto
+    depends_on: []
+  subject:
+    description: A step with a key that does nothing here
+    execution: auto
+    depends_on: [first]
+    agent_profile: reviewer
+`;
+
+  it('validate prints the loader message verbatim, with no added prefix', async () => {
+    const result = await validate(write(BAD));
+    expect(result.refused).toBe(true);
+    expect(result.out).toContain('Invalid workflow:');
+    expect(result.out).not.toContain('Invalid: Invalid workflow:');
+  });
+
+  it('the EXTENSIONS path renders it the same way — the third site, separately wired', async () => {
+    // validate forks on whether the file declares `extensions:` (validate.ts:247), and the two
+    // arms print through different lines. Reverting the extensions-path one alone left the whole
+    // cli suite green — proven by probe — so the fork needs a cell of its own.
+    //
+    // No real extensions module is needed: a family prohibition throws in pass 1, before
+    // extension resolution runs, so the `extensions:` block only has to exist to choose the arm.
+    const withExtensions = `
+id: prefix-demo-ext
+name: Prefix Demo Ext
+version: 1
+extensions:
+  modules: []
+steps:
+  first:
+    description: First step
+    execution: auto
+    depends_on: []
+  subject:
+    description: A step with a key that does nothing here
+    execution: auto
+    depends_on: [first]
+    agent_profile: reviewer
+`;
+    const result = await validate(write(withExtensions));
+    expect(result.refused).toBe(true);
+    expect(result.out).toContain('Invalid workflow:');
+    expect(result.out).not.toContain('Invalid: Invalid workflow:');
   });
 });

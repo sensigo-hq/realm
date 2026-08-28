@@ -1189,8 +1189,10 @@ steps:
       expect(message).toContain('--llm-timeout');
       expect(message).toContain('tool_timeout');
       expect(message).toContain("realm's own drive");
-      // And it points at the offending step's own line.
-      expect(message).toMatch(/\(line \d+\)/);
+      // And it points at the KEY's own line (issue #417), not the step's. The fixture puts
+      // `timeout_seconds` on line 13 while `step-two:` is on line 10 — a number-agnostic regex
+      // passes either way and would prove nothing about the move.
+      expect(message).toContain('(line 13)');
     }
   });
 
@@ -2902,8 +2904,10 @@ steps:
     expect(message).toContain('default 30');
     // The remedy, phrased so an author who wrote `tools: []` is not told to add a key they have.
     expect(message).toContain('declare at least one tool or remove the key');
-    // And the offending step's own line.
-    expect(message).toMatch(/\(line \d+\)/);
+    // The KEY's own line (issue #417), not the step's — see the twin note on the #402 cell.
+    // 14 is `tool_timeout`; `subject:` is on line 10. Taken from the loader, not counted by eye:
+    // a hand-counted line number is the #392 hazard in the test rather than in the product.
+    expect(message).toContain('(line 14)');
   });
 
   // Per member, because the predicate is kind-agnostic and each kind reaches it differently:
@@ -2981,5 +2985,227 @@ steps:
     );
     expect(message).toContain("'tool_timeout' requires 'tools' (a declared, non-empty list)");
     expect(message).not.toContain("'tool_timeout' must be a positive integer");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The family's COUNT and ORDER (issue #417 PR-1)
+//
+// This cell was written against main BEFORE the retrofit and must stay green through it. The
+// retrofit rewrites message TEXT and moves where errors point; it may not change which checks
+// fire or the order they fire in. A red here at any point during that work means a message edit
+// reached the predicates, which nothing in that PR is allowed to do.
+//
+// Counted by the per-error `Step '<name>':` prefix — never by splitting on the '; ' the loader
+// joins with, because family messages contain semicolons of their own (the #413 lesson).
+// ---------------------------------------------------------------------------
+describe('the prohibition family — count and order are fixed (issue #417)', () => {
+  it('one auto step trips five family checks, in declaration order', () => {
+    const content = `
+id: order-probe
+name: Order Probe
+version: 1
+steps:
+  first:
+    description: First step
+    execution: auto
+    depends_on: []
+  subject:
+    description: The step under test
+    execution: auto
+    depends_on: [first]
+    on_outcome: always
+    abort_unless: ['first.x']
+    abort_message: nope
+    agent_profile: p
+    llm_timeout_seconds: 30
+`;
+    let message: string;
+    try {
+      loadWorkflowFromString(content);
+      throw new Error('expected a load error');
+    } catch (err) {
+      message = (err as WorkflowError).message;
+    }
+
+    expect((message.match(/Step '/g) ?? []).length).toBe(5);
+    // ORDER, by first-occurrence index — the checks run in source order and must keep doing so.
+    const order = [
+      'on_outcome',
+      'abort_unless',
+      'abort_message',
+      'agent_profile',
+      'llm_timeout_seconds',
+    ];
+    const positions = order.map((key) => message.indexOf(`'${key}'`));
+    expect(positions.every((p) => p >= 0)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The four-clause retrofit (issue #417 PR-1)
+//
+// Each of these messages already said WHAT was wrong. What they did not say is what the key
+// would have DONE and where it does work — so an author read "only valid on X steps", moved on,
+// and learned nothing about why. Each clause below is derived from the key's actual consumer,
+// cited beside the message in the loader.
+//
+// The existing `toContain` pins for these messages stay green by construction: the retrofit
+// appends after the original text rather than rewriting it.
+// ---------------------------------------------------------------------------
+describe('the prohibition family speaks in four clauses (issue #417)', () => {
+  const load = (execution: string, body: string): string => {
+    const content = `
+id: retrofit-test
+name: Retrofit Test
+version: 1
+steps:
+  first:
+    description: First step
+    execution: auto
+    depends_on: []
+  subject:
+    description: The step under test
+    execution: ${execution}
+    depends_on: [first]
+${body}
+`;
+    try {
+      loadWorkflowFromString(content);
+      throw new Error('expected a load error');
+    } catch (err) {
+      return (err as WorkflowError).message;
+    }
+  };
+
+  it('on_outcome names what it selects and where to put it', () => {
+    const m = load('auto', '    on_outcome: always');
+    expect(m).toContain("'on_outcome' is only valid on execution: finalizer steps");
+    expect(m).toContain('selects which finalizers run');
+    expect(m).toContain('would decide nothing');
+    expect(m).toContain('Move it to the finalizer');
+  });
+
+  it('abort_unless names what it gates and where to put it', () => {
+    const m = load('auto', "    abort_unless: ['first.x']");
+    expect(m).toContain("'abort_unless' is only valid on execution: guard steps");
+    expect(m).toContain('condition list a guard evaluates');
+    // "that way" carries the claim: every step is evaluated in SOME sense, so the elliptical
+    // form is false read literally. The on_outcome sibling already qualifies it this way.
+    expect(m).toContain('only guard steps are evaluated that way');
+    expect(m).toContain('would gate nothing');
+    expect(m).toContain('Put the check on a guard step');
+  });
+
+  it('abort_message names who reads it and where to put it', () => {
+    const m = load('auto', '    abort_message: nope');
+    expect(m).toContain("'abort_message' is only valid on execution: guard steps");
+    expect(m).toContain('text reported when a guard aborts');
+    // NOT "only a guard aborts" — handler_abort and gate_expiry_abort are seal arms too. The
+    // true basis is readership: every reader of this key is a guard path.
+    expect(m).toContain('nothing but a guard reads it');
+    expect(m).toContain('would never be read');
+    expect(m).toContain('Move it to the guard');
+  });
+
+  it('agent_profile names what consumes it and where to put it', () => {
+    const m = load('auto', '    agent_profile: reviewer');
+    expect(m).toContain("'agent_profile' is only valid on execution: agent steps");
+    expect(m).toContain('resolved into the model prompt');
+    expect(m).toContain('would reach no model');
+    expect(m).toContain('Move it to the agent step');
+  });
+
+  it('llm_timeout_seconds names the per-kind equivalent, not just the refusal', () => {
+    // The remedy is the useful half: an auto step DOES have a bound, and it has a different name.
+    const m = load('auto', '    llm_timeout_seconds: 30');
+    expect(m).toContain("'llm_timeout_seconds' is only valid on execution: agent steps");
+    expect(m).toContain('bounds one model request');
+    expect(m).toContain('would bound nothing');
+    // The remedial verb its five siblings all carry — "here is where it goes", not only "here
+    // is where it works". Added ahead of the redirect, which stays byte-identical.
+    expect(m).toContain('Move it to the agent step whose request it should bound, or remove it.');
+    expect(m).toContain("An auto step's dispatch is bounded by 'timeout_seconds'");
+    expect(m).toContain("finalizer's handler");
+  });
+
+  it('idempotent names BOTH things it gates', () => {
+    // Two consumers, and a message naming only one would be half a truth — the loader's own
+    // comment records that this key acquired its second function in issue #140.
+    const m = load('agent', '    idempotent: true');
+    expect(m).toContain("'idempotent' is only valid on execution: auto steps");
+    expect(m).toContain("'retry.on_timeout'");
+    expect(m).toContain('reclaim eligibility');
+    expect(m).toContain('would gate nothing');
+  });
+
+  it("the message names the KEY's line, not the step's", () => {
+    // The move that makes a long step usable: `subject:` is on line 10 and the offending key is
+    // five lines further down. Read from the loader rather than counted by eye.
+    const m = load('auto', '    max_tool_calls: 5\n    agent_profile: reviewer');
+    expect(m).toContain('(line 15)');
+    expect(m).not.toContain('(line 10)');
+  });
+
+  it('FALLBACK 1 — a merge-key body falls back to the STEP line, never a guess', () => {
+    // The position map refuses a mapping it cannot pair key-for-key, so the KEY has no line. The
+    // step's own name is still placeable, so that is what the message names — one rung down the
+    // chain, not a guess and not nothing.
+    const content = `id: merge-key-wf
+name: Merge Key
+version: 1
+defaults: &d
+  execution: auto
+steps:
+  subject:
+    <<: *d
+    description: A step assembled through a merge key
+    agent_profile: reviewer
+`;
+    let message: string;
+    try {
+      loadWorkflowFromString(content);
+      throw new Error('expected a load error');
+    } catch (err) {
+      message = (err as WorkflowError).message;
+    }
+    expect(message).toContain("'agent_profile' is only valid on execution: agent steps");
+    expect(message).toContain('(line 7)'); // `subject:` — the step, since the key is unplaceable
+  });
+
+  it('FALLBACK 2 — a TEMPLATED step carries no position at all', () => {
+    // The bottom of the chain. A step expanded from a template exists at no line in the file —
+    // its name was synthesized — so there is nothing truthful to point at, and the message says
+    // nothing rather than pointing at the call site the author did not write the key in.
+    const content = `
+id: tpl-wf
+name: Template Workflow
+version: 1
+templates:
+  pair:
+    steps:
+      review:
+        description: Review the result
+        execution: auto
+        agent_profile: reviewer
+steps:
+  init:
+    description: Initialise
+    execution: auto
+  setup:
+    use_template: pair
+    prefix: doc
+`;
+    let message: string;
+    try {
+      loadWorkflowFromString(content);
+      throw new Error('expected a load error');
+    } catch (err) {
+      message = (err as WorkflowError).message;
+    }
+    expect(message).toContain("Step 'doc_review'");
+    expect(message).toContain("'agent_profile' is only valid on execution: agent steps");
+    expect(message).not.toMatch(/\(line \d+\)/);
   });
 });

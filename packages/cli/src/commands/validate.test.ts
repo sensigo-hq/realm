@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { renderLoadFailure } from '../lib/loader-warnings.js';
 import { loadWorkflowFromString, WorkflowError } from '@sensigo/realm';
 
 const VALID_WORKFLOW = `
@@ -36,5 +37,33 @@ describe('validate command (via loadWorkflowFromString)', () => {
   it('step with invalid execution value throws WorkflowError', () => {
     const content = VALID_WORKFLOW.replace('execution: auto', 'execution: invalid_mode');
     expect(() => loadWorkflowFromString(content)).toThrow(WorkflowError);
+  });
+});
+
+// =================================================================================================
+// issue #417 — the double prefix
+//
+// The loader's message already begins "Invalid workflow: …". Wrapping it produced
+// "Invalid: Invalid workflow: …" — the same word twice before anything actionable. Nothing pinned
+// the doubled form, so these cells are the new contract rather than an edit to an old one.
+// =================================================================================================
+describe('validate — a load failure says "invalid" once (issue #417)', () => {
+  it('a loader refusal prints the message verbatim, with no added prefix', () => {
+    expect(renderLoadFailure("Invalid workflow: Step 'x': 'agent_profile' is only valid…")).toBe(
+      "Invalid workflow: Step 'x': 'agent_profile' is only valid…",
+    );
+  });
+
+  it('a NON-loader error keeps the prefix — it announces nothing on its own', () => {
+    expect(renderLoadFailure('ENOENT: no such file or directory')).toBe(
+      'Invalid: ENOENT: no such file or directory',
+    );
+  });
+
+  it('the predicate is anchored at the START, not a substring match', () => {
+    // A message that merely mentions the phrase is not one that announces itself with it.
+    expect(renderLoadFailure('Wrapper says: Invalid workflow: something')).toBe(
+      'Invalid: Wrapper says: Invalid workflow: something',
+    );
   });
 });

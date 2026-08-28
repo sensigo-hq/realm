@@ -13,7 +13,10 @@ warnings.
 **Source positions** ([issue #392](https://github.com/sensigo-hq/realm/issues/392)) appear on
 loader diagnostics wherever the key can be placed exactly: the prose carries the start line, and
 the structured warnings channel carries the full range (`line`, `column`, `endLine`, `endColumn`,
-1-based). Step-scoped errors name the line of their step. All four range fields are present
+1-based). The rewritten prohibition messages (nine today; the rest of the family follows) name the
+KEY's own line where the source position resolves, falling back to the step's line and then to no
+position at all; every other step-scoped error, including the not-yet-rewritten refusals, names the
+line of its step. All four range fields are present
 together or absent together, never partially — and they are **absent rather than approximate** when
 a position cannot be resolved exactly, because a wrong line number is worse than none. Two shapes
 resolve to absent by design: a mapping the parser cannot pair key-for-key (a merge key, for
@@ -69,6 +72,7 @@ entering, it does not evict existing ones. To find them before you upgrade, run
 | `preconditions`     | string[]                                    | No       | Boolean expressions evaluated before the step runs. **Not valid on `execution: guard` steps** — a guard evaluates only `abort_unless`, so a precondition there is a loader error ([issue #369](https://github.com/sensigo-hq/realm/issues/369)). See [Preconditions](#preconditions).                                                                                                                                                                                                                                                                                                |
 | `trust`             | string                                      | No       | Human oversight level. See [Trust levels](#trust-levels).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `timeout_seconds`   | integer                                     | No       | Step execution timeout in seconds. On expiry the run fails with `STEP_TIMEOUT`. Enforced on `execution: auto`; consumed by `execution: finalizer` (drain lease + handler bound). **A load error on `execution: agent`** — nothing enforces it there, so the step would look time-bounded while nothing bounded it. In realm's own drive, an agent step's model request is bounded by [`llm_timeout_seconds`](#llm_timeout_seconds-the-per-attempt-model-request-ceiling) (or `--llm-timeout`) and its tool calls by `tool_timeout`; a step driven by an external agent gets neither. |
+| `idempotent`        | boolean                                     | No       | Attests the step's work is safe to re-apply. Only valid on `execution: auto` steps — a load error anywhere else. Gates `retry.on_timeout` and reclaim eligibility.                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `retry`             | object                                      | No       | Retry configuration. See [Retry](#retry).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `instructions`      | string                                      | No       | Agent-facing instructions. Delivered as `gate.agent_hint` when a gate is open.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `prompt`            | string                                      | No       | Template-resolved task prompt delivered via `next_actions[].prompt`. On human gate steps, delivered as `gate.display`. Supports `{{ context.resources.STEP.FIELD }}` and `{{ run.params.FIELD }}`.                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -872,6 +876,48 @@ fetch_document:
 > and so never consumes the block.
 
 ---
+
+## How the loader decides what to refuse
+
+Two different mistakes get two different treatments, and the asymmetry is deliberate.
+
+**An unknown key is a mistake about the FILE.** You meant `depends_on` and typed `dependson`. The
+loader refuses it at the authoring boundary (`validate`, `register`, `watch`) and warns rather than
+refuses at execution, so a deployed workflow keeps running while its author fixes the typo
+(issues #169/#170). `create_workflow` stays lenient permanently — an agent that invents a field
+should be told, not blocked.
+
+**A KNOWN key in a place that ignores it is a false statement about the RUN**, and that is refused
+everywhere. `timeout_seconds` on an agent step is not a typo; it is a bound the author believes
+exists. Nothing enforces it, so the step looks time-bounded and is not — and unlike a typo, the
+file gives no hint that anything is wrong. That is why these are errors rather than warnings even
+though the key is spelled correctly and the workflow would otherwise run.
+
+Nine of these refusals — the rest of the family follows in an upcoming release — say four things
+today: what is not valid, what the key would have DONE (traced to its actual consumer), where it
+does work instead, and — where the question is genuinely open — under what condition it might be
+admitted later. A refusal that only says "invalid" leaves the author to guess which of those four
+they needed. Among the rewritten messages, one that carries no re-admission condition means nothing
+is currently open for that key — the fourth clause appears only where a genuine widening is on the
+board, never as boilerplate.
+
+**When a release removes a key you use**, the key becomes unknown and the unknown-key rules above
+take over: `validate`, `register`, and `watch` refuse it at the boundary, while already-deployed
+workflows keep executing with an `— ignored` warning. Check your workflows against the new
+version's `realm workflow validate` before pointing execution at it (the refusal contract at the
+top of this document).
+
+**When the affected population is not zero.** Where a shape is already in use, a straight break is
+the wrong tool. The ladder is: refuse, but ship a version-pinned escape hatch that silences the
+error for a named release and expires by itself; remove the escape at the next major. A silencer
+that does not expire becomes permanent, and the population never moves. No such escape hatch exists
+in realm today — none has yet been needed. This paragraph is the committed policy for the first
+refusal — a new prohibition or a removed key — whose population trace finds a deployed population;
+that change ships the mechanism.
+
+**Extension namespace.** There is deliberately none — no `x-` prefix, no reserved vendor block.
+Every key is realm's, and an unrecognised one is a mistake rather than somebody else's field. The
+revisit trigger is concrete: third-party tooling that needs to annotate workflow YAML.
 
 ## `llm_timeout_seconds` (the per-attempt model-request ceiling)
 
