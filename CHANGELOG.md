@@ -95,6 +95,23 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- **BREAKING — `tool_timeout` on a step with no `tools` is now a load error** (issue #413).
+  The key bounds one tool call inside the agentic loop, and a step with no tools never enters that
+  loop — so it sat there bounding nothing while its author believed tool calls were capped. An
+  empty list counts as no tools, because that is exactly what it is at runtime: realm's drive gates
+  the tools path on a non-empty list.
+  The error names the remedy in the author's own terms — declare a tool, or drop the key — and
+  states the runtime fact it rests on: in realm's own drive each tool call is capped at
+  `tool_timeout` seconds, defaulting to 30. A step driven by an external agent makes its own tool
+  calls and was never covered either way.
+  The predicate keys on `tools`, never on execution kind, so the day `tools` becomes legal
+  somewhere new this follows it without another change.
+  **Scope: the YAML loader** — every path that loads a workflow file. A definition already in the
+  registry, or passed inline, is not re-validated, so an offender surfaces at its next load rather
+  than on upgrade. **There is no pre-upgrade detection**: `validate` on the PRE-UPGRADE version accepts the shape,
+  which is the silence this closes. The one workflow in this repository using the key declares
+  tools alongside both uses and is unaffected.
+
 - **BREAKING — `create_workflow` no longer accepts `timeout_seconds`, and `expected_timeout` is
   gone from the next-action envelope** (issue #412). Two halves of one falsity.
   The authoring half: `create_workflow` mints every step as `execution: agent`, where nothing has

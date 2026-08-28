@@ -2122,6 +2122,34 @@ function parseWorkflowString(
       );
     }
 
+    // issue #413: `tool_timeout` requires `tools`. It bounds ONE tool call inside the agentic
+    // loop (run-agent.ts), and a step with no tools never enters that loop — so the key sits
+    // there bounding nothing while its author believes tool calls are capped.
+    //
+    // An EMPTY list counts as missing, and that is not pedantry: run-agent gates the tools path
+    // on `tools.length > 0`, so `tools: []` is exactly as toolless at runtime as no key at all.
+    // This one helper is also the shape check's complement further down, which is what makes
+    // "exactly one error" true by construction rather than by coincidence.
+    //
+    // NOT extended to non-array `tools` spellings — that is #391, still open. Under the
+    // `!toolsMissing` complement below, a non-array `tools` still lets the shape check fire, so
+    // nothing is silently exempted here.
+    const toolsMissing =
+      step['tools'] === undefined ||
+      (Array.isArray(step['tools']) && (step['tools'] as unknown[]).length === 0);
+    if (step['tool_timeout'] !== undefined && toolsMissing) {
+      errors.push(
+        withStepLine(
+          stepName,
+          `Step '${stepName}': 'tool_timeout' requires 'tools' (a declared, non-empty list) — ` +
+            'without tool calls there is ' +
+            'nothing for it to bound, so the step would carry a bound with nothing to bind. ' +
+            "In realm's own drive each tool call is capped at tool_timeout seconds (default " +
+            '30); declare at least one tool or remove the key.',
+        ),
+      );
+    }
+
     // Validate tools: requires input_schema.
     if (step['tools'] !== undefined && step['input_schema'] === undefined) {
       errors.push(
@@ -2207,9 +2235,15 @@ function parseWorkflowString(
       );
     }
 
-    // Validate tool_timeout: must be a positive integer.
+    // Validate tool_timeout: must be a positive integer. Skipped where the key is not valid at
+    // all (issue #413's requires-tools check above already reported that) — the same convention
+    // as `timeout_seconds` below: an author told BOTH that the key does not belong here and that
+    // its value has the wrong shape is being pointed at the shape, which is not the problem.
+    // The `!toolsMissing` complement is the SAME helper the prohibition keys on, so the two are
+    // exhaustive and disjoint by construction: `tools: []` with a negative value reports once.
     if (
       step['tool_timeout'] !== undefined &&
+      !toolsMissing &&
       (!Number.isInteger(step['tool_timeout']) || (step['tool_timeout'] as number) <= 0)
     ) {
       errors.push(

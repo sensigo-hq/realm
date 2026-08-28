@@ -94,6 +94,41 @@ function makeWorkflowStore(def?: WorkflowDefinition) {
 }
 
 describe('runAgent — MCP tools integration', () => {
+  // issue #413: the loader's new error tells authors "each tool call is capped at tool_timeout
+  // seconds (default 30)". The per-CALL cap is already pinned by execution in the provider suites
+  // (openai-provider.test.ts's tool-timeout cell and its anthropic twin); what nothing pinned is
+  // the DEFAULT travelling from an absent key to the provider. A message that states a number is
+  // a claim, and this is the only cell that would notice it drifting.
+  it('an absent tool_timeout reaches the provider as the documented 30-second default', async () => {
+    const mockClient = makeMockMcpClient();
+    const provider = new (class extends ToolCapableLlmProvider {
+      callStep = vi.fn();
+      callStepWithTools = vi.fn().mockResolvedValue({ output: { summary: 'done' }, toolCalls: [] });
+    })();
+    // The shared fixture declares `tool_timeout: 10`, which would have pinned the FIXTURE rather
+    // than the default — caught by asserting 30000 and seeing 10000. This copy drops the key.
+    const research = { ...mcpWorkflow.steps['research']! };
+    delete research.tool_timeout;
+    const noTimeoutWorkflow: WorkflowDefinition = {
+      ...mcpWorkflow,
+      steps: { research },
+    };
+    const deps: AgentDeps = {
+      store: new InMemoryStore(),
+      workflowStore: makeWorkflowStore(noTimeoutWorkflow),
+      provider,
+      registry: createDefaultRegistry(),
+      mcpClientFactory: () => mockClient,
+    };
+
+    await runAgent(deps, { definition: noTimeoutWorkflow, params: {} });
+
+    const options = (provider.callStepWithTools as ReturnType<typeof vi.fn>).mock.calls[0]![3] as {
+      toolTimeoutMs: number;
+    };
+    expect(options.toolTimeoutMs).toBe(30_000);
+  });
+
   it('tool calls dispatched to the correct server and tool name', async () => {
     const mockClient = makeMockMcpClient();
     const toolCalls: ToolCallRecord[] = [
