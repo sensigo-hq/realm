@@ -105,6 +105,14 @@ describe('composed journey (budget) — a server-directed Retry-After is observe
       expect(entry.last_observed_status).toBe(429);
       expect(entry.retry_after_observed_ms).toBe(7_200_000);
       expect(entry.attempts_sdk).toBe(1); // the SDK obeyed x-should-retry and did not retry
+
+      // The declared value reaches the WIRE, not just the record. A presence assertion would
+      // prove nothing here — the Anthropic SDK emits this header on every request and would say
+      // `600` (its own default) with realm's threading reverted entirely. `30` is the value only
+      // the step's declared `llm_timeout_seconds` above can produce. Single-request journey, so
+      // turn 1 is the only turn. (No OpenAI twin exists: that SDK emits this header only for a
+      // per-REQUEST timeout, and realm passes its timeout at construction — probed on both SDKs.)
+      expect(stub.headers[0]?.['x-stainless-timeout']).toBe('30');
       expect(entry.declared_per_attempt_ms).toBe(30_000); // the step's own authored key
       expect(entry.derived_ceiling_ms).toBe(151_500); // 30s x 3 + 1.5s backoff + 60s download
 

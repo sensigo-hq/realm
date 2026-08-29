@@ -21,6 +21,15 @@ Follow this checklist in order before merging any branch into `main`.
 - Run linter; zero errors and zero warnings
 - Run type-checker (if applicable); clean output
 - Run dependency vulnerability audit (`npm audit --audit-level=high` or equivalent) — scope to production dependencies; no high or critical findings
+- `npm run deps:audit` — knip's dead/phantom dependency gate. Exit 0 with zero findings AND zero configuration hints. This runs on the weekly scheduled audit, NOT on PR CI, so nothing else catches it: issue #415 sat red for five days, invisible to every PR check.
+- `node scripts/check-action-pins.mjs` — every GitHub Action pinned to a SHA whose comment matches it
+- `npm run typecheck:tests` — post-build, because it type-checks against `dist`
+- Release-diff hygiene sweep for stray debug output:
+  ```bash
+  git diff <prev-tag>..main -- ':(glob)packages/*/src/**' | grep -cE '^\+.*console\.'
+  git diff <prev-tag>..main -- ':(glob)packages/*/src/**' | grep -cE '^\+'
+  ```
+  **A review gate, never a zero-hits gate.** Print the hit count BESIDE the total added lines — a zero-hit sweep over a zero-line diff is self-refuting, and reporting only the numerator hides that. Realm's own render code legitimately writes to the console, so hits are expected (29 on this release). ENUMERATE them and adjudicate each as intentional production output; an unadjudicated hit blocks the merge.
 - All CI pipeline checks are green on the PR before merging
 
 ### 3. Comments and Documentation
@@ -38,6 +47,7 @@ Follow this checklist in order before merging any branch into `main`.
 - All documented configuration options are implemented and functional
 - Default values are sensible and documented
 - **If any exported symbol's signature or behaviour changes in a non-backwards-compatible way:** this is a breaking change — flag it explicitly. Do not merge without a CHANGELOG entry planned, a major version bump in the version plan, and a migration guide committed or linked.
+- **Pre-1.0 (0.x), breaking changes MAY ship in a minor** when flagged **BREAKING** in the changelog with upgrade guidance; 1.0.0 is reserved. (House precedent: v0.14.0, the #390 trio adjudication.)
 
 ### 5. Test Coverage
 
@@ -54,7 +64,7 @@ Follow this checklist in order before merging any branch into `main`.
 ### 7. Repository Hygiene _(hard gate — no secrets)_
 
 - `.gitignore` covers all build artifacts, dependency directories, IDE files, OS files, local config, and secrets
-- `package.json` / project manifest has accurate name, version, description, and entry points. Version follows Semantic Versioning: patch for bug fixes, minor for new backwards-compatible features, major for breaking changes.
+- `package.json` / project manifest has accurate name, version, description, and entry points. Version follows Semantic Versioning: patch for bug fixes, minor for new backwards-compatible features, major for breaking changes — **except pre-1.0 (0.x), where a breaking change MAY ship in a minor if flagged BREAKING in the changelog with upgrade guidance (see §4)**.
 - No files that shouldn't be public: credentials, local config, database files, logs, build output
 - **No hardcoded secrets, API keys, tokens, or environment-specific paths in source code**
 - License file is present if this is an open-source release
@@ -63,6 +73,7 @@ Follow this checklist in order before merging any branch into `main`.
 
 1. Re-read every file modified in this session. Verify each is coherent, complete, and consistent with adjacent code.
 2. Confirm nothing private, internal, or unfinished is exposed in the public surface.
+3. Operator-facing changes: the customer-journey walk (guardrail 8 — fresh-eyes lane + crown, findings dispositioned) must have run at PR review.
 
 ---
 
@@ -142,7 +153,23 @@ npm install @sensigo/realm@<version>
 node --input-type=module -e "import { VERSION } from '@sensigo/realm'; console.log(VERSION);"
 ```
 
-**8. Rollback note**
+**8. Verify the consumer** _(user-side, Mac-executed)_
+
+Not runnable from WSL — realm-workspace and its deploy live on the Mac. Every other step in Part B
+is a hard gate; this one is a hard gate **on the Mac**, so a Part B run elsewhere records it as
+pending rather than wedging on it.
+
+On the Mac, before the deploy — realm-workspace against the published release:
+
+```bash
+npm install @sensigo/realm@<version> @sensigo/realm-cli@<version> @sensigo/realm-mcp@<version> --save-exact
+npm test
+npx realm workflow validate workflows/<each>/workflow.yaml
+```
+
+then `npm run deploy`.
+
+**9. Rollback note**
 
 If the publish workflow fails after some packages are published but before all four complete: re-push the tag (delete and re-push, or re-trigger the workflow manually). `npm publish` will skip packages already at the target version with a `EPUBLISHCONFLICT` error. Confirm all four packages appear on the registry before proceeding.
 

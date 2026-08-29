@@ -1132,6 +1132,31 @@ describe('purge report wording and partial-free disclosure (issue #189)', () => 
     };
   }
 
+  it('the resumable disclosure names a command that EXISTS (issue #417 release prep)', async () => {
+    // The line told an operator to run `realm resume`, which is not a command — the top-level
+    // help prints instead of anything happening. The only spelling that exists is
+    // `realm run resume`, verified by executing both against the built CLI. A remedy naming a
+    // command that does not exist is worse than no remedy: it costs the reader a round trip
+    // before they learn the advice was wrong.
+    const s = await makeStores();
+    try {
+      const run = makeRun({
+        id: 'r-resumable',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+      });
+      const withResumable = {
+        ...emptyResult(),
+        selected: [{ run, bytes: 1024, resumable: true }],
+      };
+      const rendered = render(withResumable, true).out;
+      expect(rendered).toContain('resumable via');
+      expect(rendered).toContain("'realm run resume'");
+    } finally {
+      await rm(s.dir, { recursive: true, force: true });
+    }
+  });
+
   it('the FORCE line claims provenance; the DRY-RUN projection wording is untouched', async () => {
     const s = await makeStores();
     try {
