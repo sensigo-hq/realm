@@ -6,6 +6,50 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+Two arcs. A failing drive used to be invisible — the run read healthy while nothing was happening
+— and it is now recorded, bounded, and attributed: every failure lands on the run, and no single
+model request can hold a drive open indefinitely. And the loader stopped accepting input that
+means nothing: five classes of key that were parsed, stored, and then ignored at runtime are now
+refused with an explanation of what they would have done and where they work instead.
+
+**Five BREAKING changes**, which a 0.x minor is allowed to carry: pre-1.0, breaking changes ship
+in a minor when they are flagged here with upgrade guidance. Four of the five refuse or remove
+things that never worked — the loader trio (one change carrying three refusal classes),
+`timeout_seconds` on agent steps, `tool_timeout` without tools, and the dead MCP field, a removal
+— five refusal classes among them, which is what the Upgrading list below counts. The fifth
+(#189) is different in kind: a store-contract widening that asks STORE IMPLEMENTERS for real
+work; workflow authors are untouched by it.
+
+Read **Upgrading** below before you upgrade — four of the five refusal classes can surface only
+after you have.
+
+#### Upgrading
+
+**Five new refusal classes, in two groups.**
+
+DETECTABLE BEFORE YOU UPGRADE — run `realm workflow validate --strict` on the PRE-UPGRADE version:
+
+- Unknown workflow-level or step-level keys (issue #170). They are warnings today, so `--strict`
+  is what turns them into a non-zero exit you can act on.
+
+SURFACES AT FIRST LOAD AFTER UPGRADING — the pre-upgrade `validate` says nothing about these, which
+is precisely the silence each one closes:
+
+- `preconditions` on an `execution: guard` step (issue #369)
+- `tools` on a step whose workflow defines no `mcp_servers` block (issue #338)
+- `timeout_seconds` on an `execution: agent` step (issue #402)
+- `tool_timeout` on a step that declares no tools (issue #413)
+
+**What is NOT re-validated, for all five:** a definition already in the workflow registry, or built
+inline in code, never re-parses YAML and is untouched. An offending FILE surfaces at its next load.
+
+**One thing to check that is not a refusal.** If any step's single model call legitimately exceeds
+10 minutes, declare `llm_timeout_seconds` (or pass `--llm-timeout`) before upgrading — the new
+default ceiling will otherwise abort it.
+
+**Store implementers:** #189 widens the store contract (its entry below has the shapes); workflow
+authors and YAML files are untouched by it.
+
 ### Added
 
 - **`create_workflow` accepts `llm_timeout_seconds`** (issue #412). Every step the MCP authoring
@@ -18,8 +62,8 @@ All notable changes to this project are documented here.
   SDK, an engine throw mid-loop, a schema rejection that wedges the step — used to write NOTHING
   to the store. The console said what happened, the process exited, and the run read healthy on
   every operator surface until the 24-hour idle watchdog noticed.
-  Runs now carry `drive_failures`: the five most recent failures plus a total and a
-  first-failed-at that do NOT reset when the ring rolls. A new `drive_failing` run-health finding
+  Runs now carry `drive_failures`: a ring of the five most recent failures — oldest dropped as new
+  ones arrive — plus a total and a first-failed-at that do NOT reset when the ring rolls. A new `drive_failing` run-health finding
   reports the latest one. `realm run inspect` shows the class, message, elapsed and HTTP status
   where there was one; `realm run list --stuck` flags the step and class; `get_run_state` carries
   the entries verbatim.
@@ -37,30 +81,35 @@ All notable changes to this project are documented here.
   wins, and 600 seconds per attempt is the default. From the per-attempt value realm derives the
   bound it enforces on one create — attempts × the per-attempt value, plus the SDK's own worst-case
   backoff, plus a 60-second download allowance — so a legitimately slow response is never killed
-  for being large.
+  for being large. With the defaults (600 s per attempt, three wire attempts) the ceiling is
+  1,861,500 ms ≈ 1,861 s (~31 min).
   When the ceiling fires the drive stops and says why, in the terms of the lever you would change:
   the recorded failure is `aborted_by_budget`, carrying the derived ceiling, the elapsed time, how
   many wire attempts completed, plus the declared per-attempt value when a step or the flag set one
-  — a fallback nobody chose is not reported as a declaration. Two behaviours the
+  — a fallback nobody chose is not reported as a declaration: when the 600 s default applied, the
+  record simply carries no declared value at all. Two behaviours the
   SDKs otherwise permit are now forbidden: a response whose headers arrived but whose body never
   finishes, and unbounded sleeping on a server-directed `Retry-After`.
   **`Retry-After` is observed, never honored.** Realm reads all three forms — `retry-after-ms`, a
   numeric `Retry-After`, and an HTTP-date `Retry-After` — and records the value beside the HTTP
   status on the failure, so a rate limit is distinguishable from a hang at a glance. Realm's own
   scheduling never waits on it; the SDK beneath may, and that wait is bounded by the ceiling.
-  Scheduling is not this layer's decision; disclosure is.
+  Scheduling is not realm's drive-layer decision; disclosure is.
   **Scope, stated honestly.** The BOUND applies to realm's own providers (Anthropic, OpenAI,
   OpenAI-reasoning) driven by `realm agent`. A provider supplied through `--provider-module` gets
   the failure record like any other but not the ceiling — realm does not construct its client. The
   MCP `execute_step` path never goes through the drive and is unaffected. Streaming requests are
   not covered: realm does not stream today.
-  Outgoing requests now carry an `X-Stainless-Timeout` header they did not carry before, because
-  realm passes an explicit timeout to both SDKs.
+  On Anthropic requests, the SDK's `X-Stainless-Timeout` header reflects the declared per-attempt
+  value in seconds (`30` for a declared 30 s; the SDK's own `600` when nothing is declared — as it
+  already did). The OpenAI SDK does not emit this header for realm's client-level timeout; the
+  bound is enforced identically there, just not wire-visible.
 
 - **Loader diagnostics now tell you which line** (issue #392). An unknown-key warning names the
   line the key sits on — `unknown key 'dependson' (line 14) — ignored (did you mean 'depends_on'?)`
   — and every step-scoped loader error ends with the line of its own step (with one refinement in
-  this same release: the nine retrofitted prohibition messages now name the offending KEY's line
+  this same release: the nine key-prohibition errors — the six upgraded in this release plus the
+  three that already carried the form, see the #417 entry below — now name the offending KEY's line
   where it resolves, falling back to the step's). For agents the
   structured warnings channel carries the full range as data: `line`, `column`, `endLine`,
   `endColumn`, all 1-based, so an edit can be applied without parsing it back out of the prose.
@@ -77,23 +126,6 @@ All notable changes to this project are documented here.
   That is a deliberate cut, not an oversight.
   No new dependency: the map is built by the parser already in use, during the parse the loader
   already performs.
-
-### Fixed
-
-- **A tool call that fails politely is now recorded as a failure** (issue #345). MCP lets a tool
-  report its own error by RETURNING a result with `isError: true` rather than by throwing. realm
-  recorded those as successes: the `ToolCallRecord` carried no `error` field and the failure text
-  sat inside `result`, where nothing looked for it. The record type's own documentation said the
-  opposite, `realm run inspect` showed the call as unremarkable, and anything counting tool
-  reliability read the failure as a success.
-  The record now carries `error` for both failure classes — a thrown error and a returned
-  `isError` — with `result` still holding the full serialized payload, because evidence is never
-  discarded to tidy a record. **What the model sees is unchanged**: how a failing tool is reported
-  back into the conversation is a separate decision this fix does not touch.
-  **Consequence worth knowing before you compare numbers:** tool-reliability measurements
-  (issues #344 and #347) now read this class honestly, and records written by earlier versions
-  under-report failures. Records are append-only and are not migrated — this entry is the
-  version-keyed disclosure, so any measurement spanning this release has to segment on it.
 
 ### Changed
 
@@ -128,8 +160,8 @@ All notable changes to this project are documented here.
   **Scope: the YAML loader** — every path that loads a workflow file. A definition already in the
   registry, or passed inline, is not re-validated, so an offender surfaces at its next load rather
   than on upgrade. **There is no pre-upgrade detection**: `validate` on the PRE-UPGRADE version accepts the shape,
-  which is the silence this closes. The one workflow in this repository using the key declares
-  tools alongside both uses and is unaffected.
+  which is the silence this closes. The one workflow in realm's own examples, fixtures and scaffold
+  that uses the key declares tools alongside both steps that use it, and is unaffected.
 
 - **BREAKING — `create_workflow` no longer accepts `timeout_seconds`, and `expected_timeout` is
   gone from the next-action envelope** (issue #412). Two halves of one falsity.
@@ -159,18 +191,27 @@ All notable changes to this project are documented here.
   not re-validated, so an offending workflow surfaces at its next load rather than on upgrade.
   **There is no pre-upgrade detection.** `validate --strict` on the PRE-UPGRADE version emits nothing
   for this shape — that silence is the bug this closes — so an author cannot check ahead of time;
-  offenders appear at first load after upgrading. No workflow in this repository carries the key
-  on an agent step. The `create_workflow` MCP tool bypasses the loader and still accepts it (#412).
+  offenders appear at first load after upgrading. No workflow in realm's own examples, fixtures and
+  scaffold carries the key on an agent step. The `create_workflow` MCP tool bypasses the loader; as
+  of this release it drops the key with a warning naming the replacement instead of accepting it
+  silently (#412, above).
 
 - **A transient LLM failure that used to be rescued by a silent second attempt now surfaces as a
   recorded drive failure** (issue #401). The retry that swallowed the first error is retired — it
-  is precisely what made a failing drive invisible, and it rescued far less than it hid.
-  Re-attaching with `realm agent --run-id <id>` is the retry, and now the record says why it was
-  needed — for a run whose workflow is REGISTERED. A run created from a file without `--register`
+  is precisely what made a failing drive invisible: it hid failures from the record, and whether it
+  ever rescued a run was not measurable.
+  **A drive now STOPS on its first recorded failure** — the silent second attempt is gone.
+  For a run whose workflow is REGISTERED, re-attaching with `realm agent --run-id <id>` is the
+  retry, and now the record says why it was needed. A run created from a file without `--register`
   cannot be re-attached at all (the definition was never persisted, and `--run-id` is mutually
   exclusive with `--workflow`); the attach now says so and names the fix instead of failing with a
-  bare "Workflow not found". Closing that gap properly is #410. Providers that used to call `process.exit` on a missing SDK now throw instead, so that
-  failure is recorded too rather than killing the process before anything could write it down.
+  bare "Workflow not found". Closing that gap properly is #410.
+  Under `realm listen`, a failed drive is NOT retried by the listener; the run surfaces as
+  `drive_failing` (`list --stuck`, run-health) until an operator or supervisor re-attaches.
+
+- **Providers throw instead of calling `process.exit`** (issue #401). A missing optional SDK used
+  to end the process before any catch could record why the drive failed. It now throws, so the
+  failure reaches a chokepoint and is written down.
 
 - **BREAKING — stores report their own bytes, and purge prints what they report** (issue #189).
   `PerRunArtifactStore.deleteAllForRun`, `TraceBufferStore.deleteAllForRun` and
@@ -187,52 +228,80 @@ All notable changes to this project are documented here.
   the preview and the receipt were the same guess made twice. Both figures now come from the stores
   themselves, and a new conformance law binds them: **on an unchanged run, the preview equals the
   receipt.**
-  A stat that cannot read an artifact now aborts the command before anything is deleted, rather than
-  quietly counting it as zero — the posture `realm run gc` already takes.
+  A stat that cannot read an artifact now makes `realm run purge` abort, deleting nothing, rather
+  than quietly counting it as zero — the posture `realm run gc` already takes.
   **Partial frees are disclosed.** When a run is refused after earlier stores already deleted real
   bytes, that run's own line says how much was freed before the refusal. The headline "freed" figure
   stays purged-runs-only, so it is a floor under partial failure rather than a number that drifts
   with them.
 
-**BREAKING — three classes of silently-accepted, meaningless input are now load errors.** Each one
-was accepted by the loader and then meant nothing at runtime, which is the worst of both: the
-workflow looked like it said something and behaved as if it had not.
+- **BREAKING — three classes of silently-accepted, meaningless input are now load errors.** Each one
+  was accepted by the loader and then meant nothing at runtime, which is the worst of both: the
+  workflow looked like it said something and behaved as if it had not.
 
-- **An unrecognized workflow-level or step-level key is refused** by `realm workflow validate`,
-  `register`, and `watch` (issue #170 — the hard-reject its own docs promised for the next major).
-  The message names the key and suggests the intended one when it is a near match, so the fix is
-  one edit. `--strict` is no longer needed for this class. **Remediation:** correct the key, or
-  delete it.
-- **`preconditions` on an `execution: guard` step is refused** (issue #369). A guard's execution
-  evaluates only `abort_unless`, so a precondition declared on one was never evaluated — the run
-  looked guarded while the declared check never ran. **Remediation:** move the condition into
-  `abort_unless`. Whether guards gain a live condition surface of their own is an open design
-  question (issue #366); admitting it later would not affect workflows written today.
-- **A step that declares `tools` when the workflow defines no `mcp_servers` block is refused**
-  (issue #338). No drive can offer tools with no server to offer them from, so the declaration
-  could never be satisfied — and every disclosure the loader had for tools lived inside the
-  server-block check that this shape never reached. **Remediation:** define an `mcp_servers`
-  block, or remove the `tools` declaration. An empty `tools: []` declares nothing and is
-  unaffected.
+  - **An unrecognized workflow-level or step-level key is refused** by `realm workflow validate`,
+    `register`, and `watch` (issue #170 — the hard-reject its own docs promised for the next major).
+    The message names the key and suggests the intended one when it is a near match, so the fix is
+    one edit. `--strict` is no longer needed for this class. **Remediation:** correct the key, or
+    delete it.
+  - **`preconditions` on an `execution: guard` step is refused** (issue #369). A guard's execution
+    evaluates only `abort_unless`, so a precondition declared on one was never evaluated — the run
+    looked guarded while the declared check never ran. **Remediation:** move the condition into
+    `abort_unless`. Whether guards gain a live condition surface of their own is an open design
+    question (issue #366); admitting it later would not affect workflows written today.
+  - **A step that declares `tools` when the workflow defines no `mcp_servers` block is refused**
+    (issue #338). No drive can offer tools with no server to offer them from, so the declaration
+    could never be satisfied — and every disclosure the loader had for tools lived inside the
+    server-block check that this shape never reached. **Remediation:** define an `mcp_servers`
+    block, or remove the `tools` declaration. An empty `tools: []` declares nothing and is
+    unaffected.
 
-**The three do not refuse in the same places, and the difference matters when you upgrade.** The
-unknown-key refusal is BOUNDARY-GATED: `realm run`, `realm agent`, and `realm listen` still load
-leniently, so a workflow already deployed with an unknown key keeps running and keeps printing its
-warning. The guard-precondition and tools-without-servers refusals are loader-level errors — they
-refuse at **every YAML load path**, execution included. Definitions that never re-parse YAML
-(anything already in the workflow registry, or built inline in code) are not re-validated and are
-untouched by all three.
+  **The three do not refuse in the same places, and the difference matters when you upgrade.** The
+  unknown-key refusal is BOUNDARY-GATED: `realm run`, `realm agent`, and `realm listen` still load
+  leniently, so a workflow already deployed with an unknown key keeps running and keeps printing its
+  warning. The guard-precondition and tools-without-servers refusals are loader-level errors — they
+  refuse at **every YAML load path**, execution included. Definitions that never re-parse YAML
+  (anything already in the workflow registry, or built inline in code) are not re-validated and are
+  untouched by all three.
 
-**Before upgrading**, run `realm workflow validate --strict` against your workflows on the
-PRE-UPGRADE version to find unknown-key offenders while they are still warnings. The
-guard-precondition and tools-without-servers shapes emit nothing on the pre-upgrade version and
-surface at first load after upgrading. After upgrading, plain `validate` refuses all three.
+  **Before upgrading**, run `realm workflow validate --strict` against your workflows on the
+  PRE-UPGRADE version to find unknown-key offenders while they are still warnings. The
+  guard-precondition and tools-without-servers shapes emit nothing on the pre-upgrade version and
+  surface at first load after upgrading. After upgrading, plain `validate` refuses all three.
 
-Neither of the two loader-level classes has any occurrence in this repository — not in the
-examples, the fixtures, or the scaffold. The guard declaration is never evaluated, and the
-tools-without-servers declaration is unsatisfiable by construction. But a deployed workflow FILE in
-that second shape runs today, with its tools silently never offered, and after this change it will
-refuse to load.
+  Neither of the two loader-level classes has any occurrence — not in the
+  examples, the fixtures, or the scaffold. The guard declaration is never evaluated, and the
+  tools-without-servers declaration is unsatisfiable by construction. But a deployed workflow FILE in
+  that second shape runs today, with its tools silently never offered, and after this change it will
+  refuse to load.
+
+### Fixed
+
+- **A tool call that fails politely is now recorded as a failure** (issue #345). MCP lets a tool
+  report its own error by RETURNING a result with `isError: true` rather than by throwing. realm
+  recorded those as successes: the `ToolCallRecord` carried no `error` field and the failure text
+  sat inside `result`, where nothing looked for it. The record type's own documentation said the
+  opposite, `realm run inspect` showed the call as unremarkable, and anything counting tool
+  reliability read the failure as a success.
+  The record now carries `error` for both failure classes — a thrown error and a returned
+  `isError` — with `result` still holding the full serialized payload, because evidence is never
+  discarded to tidy a record. **What the model sees is unchanged**: how a failing tool is reported
+  back into the conversation is a separate decision this fix does not touch.
+  **Consequence worth knowing before you compare numbers:** tool-reliability measurements
+  (issues #344 and #347) now read this class honestly, and records written by earlier versions
+  under-report failures. Records are append-only and are not migrated — this entry is the
+  version-keyed disclosure, so any measurement spanning this release has to segment on it.
+
+- **Error messages no longer redact npm's own manifest metadata** (issue #407). `sanitizeError`
+  builds its redaction set from every environment value longer than four characters, which under
+  an npm launch includes `npm_package_name` — so a message containing the product's own name
+  shipped as `[REDACTED] …`. Provider errors and sanitized tool results in persisted evidence
+  both carried the mangled form.
+  `npm_package_*` (except `npm_package_config_*`) and `npm_lifecycle_*` are now excluded, because
+  they are public manifest metadata. `npm_package_config_*` and `npm_config_*` deliberately stay
+  redacted — a `config` block is author-written and can carry a secret.
+  Records written by earlier versions may carry the mangled form; they are not migrated. The
+  remainder of the launcher-metadata audit stays open on #407.
 
 ---
 

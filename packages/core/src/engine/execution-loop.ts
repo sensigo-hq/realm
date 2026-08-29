@@ -4136,7 +4136,7 @@ async function composeExpiredGateEnvelope(
   // to), and never claim "expired" at all, since nothing here witnessed this gate expiring.
   const err = new WorkflowError(
     `Gate '${originalGateId}': the run reached a terminal outcome concurrently — your choice ` +
-      `was NOT recorded. 'realm resume' clears a stale pending gate on a resumable run, or ` +
+      `was NOT recorded. 'realm run resume' clears a stale pending gate on a resumable run, or ` +
       `'realm run purge' removes the record entirely.`,
     {
       code: 'STATE_RUN_TERMINAL',
@@ -4444,7 +4444,7 @@ export async function submitHumanResponse(
           // stale pending_gate (never cleared), which is the best-effort step label here.
           const zombieStep = result.run.pending_gate?.step_name ?? 'submit_gate';
           const err = new WorkflowError(
-            `Run '${options.runId}' is terminal; cannot submit a gate response — 'realm resume' ` +
+            `Run '${options.runId}' is terminal; cannot submit a gate response — 'realm run resume' ` +
               `clears a stale pending gate on a resumable run, or 'realm run purge' removes the ` +
               `record entirely.`,
             {

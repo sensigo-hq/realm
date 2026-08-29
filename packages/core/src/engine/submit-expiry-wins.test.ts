@@ -376,7 +376,7 @@ describe('submitHumanResponse — composeExpiredGateEnvelope gate_id discriminat
       // guidance an operator gets on the OTHER terminal-submit refusal path, so the honest answer
       // here isn't a dead end.
       expect(envelope.errors.join(' ')).toContain(
-        "'realm resume' clears a stale pending gate on a resumable run",
+        "'realm run resume' clears a stale pending gate on a resumable run",
       );
       expect(envelope.errors.join(' ')).toContain("'realm run purge' removes the record entirely");
       // The false attribution the mutant produces instead: reports THIS gate as the one that

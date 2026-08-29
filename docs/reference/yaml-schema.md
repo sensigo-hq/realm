@@ -1646,9 +1646,7 @@ services:
 > **Current limitation — content injection:** The adapter response is injected in full into
 > `context.resources.<step_name>` and flows into every subsequent agent step's prompt context.
 > For large files (logs, lengthy documents, large JSON) this consumes significant context budget.
-> A `content_strategy: reference` option is planned for Release 2: in reference mode the engine
-> injects only metadata and exposes a `read_resource` MCP tool the agent calls on demand.
-> For Release 1, keep service-read files small (under ~10KB).
+> Keep service-read files small — under roughly 10 KB.
 
 ### Service trust levels
 

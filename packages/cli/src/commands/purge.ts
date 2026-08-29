@@ -130,7 +130,7 @@ export interface PurgeRunsResult {
   /**
    * Populated only when `dryRun` is false (issue #184): the run could not be deleted right now
    * because another writer holds its lock (`ELOCKED`), or because it is no longer terminal (a
-   * concurrent `realm resume` raced the purge) — `STATE_RUN_BUSY` from the anchor store. NEVER a
+   * concurrent `realm run resume` raced the purge) — `STATE_RUN_BUSY` from the anchor store. NEVER a
    * failure: a live writer self-heals, and a stale lock is eventually stolen.
    */
   blocked: Array<{ runId: string; reason: string }>;
@@ -353,7 +353,7 @@ function hasDeleteAllForRunFenced(
  * immediately before its WAL delete. The real routing (issue #207 correction — this doc
  * previously overclaimed that any read failure lands `blocked`, which is not what the code does):
  * run genuinely gone (`STATE_RUN_NOT_FOUND`) → proceeds (resolves) — safe to purge its WAL; run
- * still present but no longer terminal (a concurrent `realm resume` raced the purge) → throws the
+ * still present but no longer terminal (a concurrent `realm run resume` raced the purge) → throws the
  * typed `STATE_RUN_BUSY` shape purge's own bucket mapping already routes to `blocked` (verified by
  * the extended purge-guard test, not rebuilt here); ANY OTHER read failure (a genuine I/O error,
  * not an absence or a resume race) → re-thrown UNWRAPPED, exactly as the guard contract requires —
@@ -435,7 +435,7 @@ export function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void
   const resumableCount = result.selected.filter((c) => c.resumable).length;
   const resumableLine =
     `${resumableCount} of ${result.selected.length} selected run(s) ` +
-    `${dryRun ? 'are' : 'were'} resumable via 'realm resume' — ` +
+    `${dryRun ? 'are' : 'were'} resumable via 'realm run resume' — ` +
     `purging ${dryRun ? 'would destroy' : 'has destroyed'} that path ${dryRun ? 'permanently' : 'for them'}.`;
 
   if (dryRun) {

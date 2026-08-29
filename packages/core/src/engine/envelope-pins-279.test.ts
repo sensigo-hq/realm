@@ -146,7 +146,7 @@ describe('run_terminal envelope — the composed cancelled-predicate (issue #279
       // variant above for the same addition and its rationale).
       expect(result.agent_action).toBe('report_to_user');
       expect(result.errors[0]).not.toContain('NOT recorded'); // never the cancelled text
-      expect(result.errors[0]).toContain('realm resume');
+      expect(result.errors[0]).toContain('realm run resume');
       expect(result.errors[0]).toContain('realm run purge');
     } finally {
       await rm(dir, { recursive: true, force: true });

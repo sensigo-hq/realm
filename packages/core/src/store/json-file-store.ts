@@ -975,7 +975,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
    * `update()`/`claimStep()`), and the run's terminal state is RE-VERIFIED under that lock, not
    * just at selection time. `RESUMABLE_PHASES ⊂ TERMINAL_PHASES` and `resume.ts` sets
    * `terminal_state: false`, and `atomicWriteFile` (a temp write + `rename`) recreates a
-   * deleted target on `rename` — so, unlocked, a concurrent `realm resume` racing a batch purge
+   * deleted target on `rename` — so, unlocked, a concurrent `realm run resume` racing a batch purge
    * could resurrect the run file as a LIVE run with its WAL/sidecar/pointer already gone, while
    * purge still reported `purged`. Re-checking terminal state under the SAME lock `update()`
    * uses closes that window: `deleteAllForRun` now unconditionally refuses a non-terminal run.

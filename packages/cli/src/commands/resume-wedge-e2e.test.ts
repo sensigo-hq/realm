@@ -79,7 +79,7 @@ describe('resume wedge e2e (issue #279, increment 1, PR-B, verification item 4)'
     expect(afterFail.run_phase).toBe('failed');
 
     // 2. Resume through the REAL CLI command (not a hand-called function — the literal Command
-    // object `realm resume` wires).
+    // object that `realm run resume` wires; the subcommand's own object is named `resume`).
     await resumeCommand.parseAsync([run.id, '--from', 'work'], { from: 'user' });
     expect(exitSpy).not.toHaveBeenCalled();
     const afterResume = await runStore.get(run.id);

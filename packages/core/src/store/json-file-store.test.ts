@@ -1273,7 +1273,7 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
   it('resurrect-race fix: refuses (STATE_RUN_BUSY, reason no_longer_terminal) when the on-disk record is no longer terminal at delete time, and the run file survives intact', async () => {
     // Deterministic proof of the actual bug: a run selected as terminal can be "resumed" (flipped
     // back to a live state) BEFORE deleteAllForRun's lock is acquired — simulating exactly what a
-    // concurrent `realm resume` racing a batch purge does (resume.ts sets terminal_state: false;
+    // concurrent `realm run resume` racing a batch purge does (resume.ts sets terminal_state: false;
     // RESUMABLE_PHASES ⊂ TERMINAL_PHASES). deleteAllForRun must re-verify UNDER ITS OWN LOCK, not
     // trust a caller's earlier selection-time snapshot.
     const { store, dir } = await makeTmpStore();
