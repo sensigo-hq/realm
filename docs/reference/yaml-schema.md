@@ -948,8 +948,9 @@ budgeted: a `Retry-After` can ask for hours, and the ceiling outranks it on purp
 With the default 600s per attempt the derived ceiling is 1,861,500ms; with `llm_timeout_seconds:
 30` it is 151,500ms.
 
-**Precedence.** The step's own key wins. `realm agent --llm-timeout <seconds>` fills in for every
-step that authored nothing. Neither ⇒ 600 seconds per attempt.
+**Precedence.** The step's own key wins. `realm agent --llm-timeout <seconds>` (or
+`realm listen --llm-timeout`, which passes it to every drive it spawns) fills in for every step
+that authored nothing. Neither ⇒ 600 seconds per attempt.
 
 **Where it applies.** Realm's own agent drive only — `realm agent`. The MCP `execute_step` path
 never runs through the drive, so a step driven by an external agent is unaffected. A provider

@@ -1015,6 +1015,7 @@ creates a run, and spawns `realm agent --run-id` (detached) for it.
 realm listen [workflows...] [--port <n>] [--host <addr>] [--body-timeout-ms <n>]
              [--max-body-bytes <n>] [--max-concurrent <n>] [--dedup-store file|memory]
              [--log-level debug|info|warn|error] [--sweep-expired-gates <seconds>]
+             [--llm-timeout <seconds>]
 ```
 
 **Arguments:**
@@ -1031,6 +1032,11 @@ realm listen [workflows...] [--port <n>] [--host <addr>] [--body-timeout-ms <n>]
 - `--max-concurrent <n>` — in-flight request ceiling before `503` (default `20`)
 - `--dedup-store file|memory` — durable file dedup (default) or in-memory best-effort
 - `--log-level <level>` — `debug` | `info` | `warn` | `error` (default `info`)
+- `--llm-timeout <seconds>` — per-attempt fallback ceiling for model requests on the drives this
+  process spawns (issue #409). A step's own `llm_timeout_seconds` WINS; this fills in for steps
+  that author none. **No default here**, deliberately: absent means each spawned drive uses its
+  own 600-second fallback, and its run record then carries no `declared_per_attempt_ms` at all —
+  a fallback nobody chose is never recorded as a declaration.
 - `--sweep-expired-gates <seconds>` — **opt-in** (issue #291), default OFF: runs a coarse,
   store-wide sweep every `<seconds>` that enacts every expired, enactable gate this store holds —
   not just gates on workflows this `listen` process has mounted. The **user-chosen always-on

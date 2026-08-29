@@ -15,6 +15,9 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { Command } from 'commander';
+// issue #409: the SAME parser `realm agent --llm-timeout` uses — never a second copy, so the two
+// flags cannot drift on what they accept. The listen→agent edge is one-way and cycle-free.
+import { parseLlmTimeout } from './agent.js';
 import {
   loadWorkflowFromFile,
   JsonFileStore,
@@ -740,14 +743,39 @@ export function startListen(
   });
 }
 
-function defaultSpawnAgent(runId: string, cwd: string): SpawnResult {
+/**
+ * The argv a spawned drive is launched with, minus the interpreter and the realm binary.
+ *
+ * Pure and exported so the passthrough is pinnable without spawning anything: the deps seam that
+ * listen's own tests double sits ABOVE this, so nothing else would notice the flag going missing.
+ *
+ * PROVENANCE: a listen-passed value makes the child derive `perAttemptSource: 'flag'` for its
+ * in-memory clock, which is true — the operator did set it. That label is never persisted; what
+ * the run record carries is the CONSEQUENCE: `declared_per_attempt_ms` present, and a fired
+ * ceiling naming `--llm-timeout` as the lever.
+ */
+export function buildAgentArgv(runId: string, llmTimeoutSeconds?: number): string[] {
+  const argv = ['agent', '--run-id', runId];
+  if (llmTimeoutSeconds !== undefined) argv.push('--llm-timeout', String(llmTimeoutSeconds));
+  return argv;
+}
+
+export function defaultSpawnAgent(
+  runId: string,
+  cwd: string,
+  llmTimeoutSeconds?: number,
+): SpawnResult {
   try {
     const realmBin = process.argv[1] ?? '';
-    const child = nodeSpawn(process.execPath, [realmBin, 'agent', '--run-id', runId], {
-      detached: true,
-      stdio: 'inherit',
-      cwd,
-    });
+    const child = nodeSpawn(
+      process.execPath,
+      [realmBin, ...buildAgentArgv(runId, llmTimeoutSeconds)],
+      {
+        detached: true,
+        stdio: 'inherit',
+        cwd,
+      },
+    );
     child.unref();
     return { pid: child.pid ?? -1 };
   } catch (err) {
@@ -779,120 +807,152 @@ export const listenCommand = new Command('listen')
   .option('--max-concurrent <n>', 'Max in-flight requests before 503', '20')
   .option('--dedup-store <kind>', 'Dedup store: file | memory', 'file')
   .option('--log-level <level>', 'Log level: debug | info | warn | error', 'info')
+  // issue #409. NO Commander default, and here that is not style. A defaulted flag would make
+  // listen pass `--llm-timeout 600` to every child, and every spawned drive would then persist
+  // `declared_per_attempt_ms: 600000` — a declaration nobody made. Absent flag ⇒ no argv
+  // passthrough ⇒ the child derives its own default and the record carries no declared value at
+  // all, which is the truth.
+  .option(
+    '--llm-timeout <seconds>',
+    'Per-attempt fallback ceiling for model requests on spawned drives (issue #409). A step ' +
+      "that authors its own `llm_timeout_seconds` WINS; this fills in for those that don't. " +
+      'No default: absent means each drive uses its own 600s fallback.',
+    parseLlmTimeout,
+  )
   .option(
     '--sweep-expired-gates <seconds>',
     'OPT-IN (issue #291): store-wide sweep interval (seconds) that enacts expired, enactable ' +
       'gates across every run this store holds. Default OFF — listen never touches gates ' +
       'unless this is set. Never drains finalizers itself — see: realm run drain --expired.',
   )
-  .action(async (workflows: string[], opts: Record<string, string>) => {
-    const levels = ['debug', 'info', 'warn', 'error'];
-    const threshold = levels.indexOf(opts['logLevel'] ?? 'info');
-    const log =
-      (level: string) =>
-      (msg: string, data?: unknown): void => {
-        if (levels.indexOf(level) < threshold) return;
-        const line = data !== undefined ? `${msg} ${JSON.stringify(data)}` : msg;
-        if (level === 'error') console.error(line);
-        else if (level === 'warn') console.warn(line);
-        else console.log(line);
+  .action(
+    async (
+      workflows: string[],
+      opts: {
+        port?: string;
+        host?: string;
+        bodyTimeoutMs?: string;
+        maxBodyBytes?: string;
+        maxConcurrent?: string;
+        dedupStore?: string;
+        logLevel?: string;
+        sweepExpiredGates?: string;
+        llmTimeout?: number;
+      },
+    ) => {
+      const levels = ['debug', 'info', 'warn', 'error'];
+      const threshold = levels.indexOf(opts['logLevel'] ?? 'info');
+      const log =
+        (level: string) =>
+        (msg: string, data?: unknown): void => {
+          if (levels.indexOf(level) < threshold) return;
+          const line = data !== undefined ? `${msg} ${JSON.stringify(data)}` : msg;
+          if (level === 'error') console.error(line);
+          else if (level === 'warn') console.warn(line);
+          else console.log(line);
+        };
+      const logger: Logger = {
+        debug: log('debug'),
+        info: log('info'),
+        warn: log('warn'),
+        error: log('error'),
       };
-    const logger: Logger = {
-      debug: log('debug'),
-      info: log('info'),
-      warn: log('warn'),
-      error: log('error'),
-    };
 
-    const inputs: Array<{ definition: WorkflowDefinition; workflowDir: string }> = [];
-    const args = workflows.length > 0 ? workflows : ['.'];
-    for (const input of args) {
-      const filePath = resolveWorkflowFile(input);
+      const inputs: Array<{ definition: WorkflowDefinition; workflowDir: string }> = [];
+      const args = workflows.length > 0 ? workflows : ['.'];
+      for (const input of args) {
+        const filePath = resolveWorkflowFile(input);
+        try {
+          const definition = loadWorkflowFromFile(filePath);
+          inputs.push({ definition, workflowDir: join(filePath, '..') });
+        } catch (err) {
+          console.error(
+            `Error: failed to load workflow '${filePath}': ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(1);
+          return;
+        }
+      }
+
+      let routes: Map<string, WorkflowEntry>;
       try {
-        const definition = loadWorkflowFromFile(filePath);
-        inputs.push({ definition, workflowDir: join(filePath, '..') });
+        routes = buildRouteTable(inputs, { env: process.env, logger });
+      } catch (err) {
+        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+        return;
+      }
+      if (routes.size === 0) {
+        console.error('Error: no workflows with a trigger: block to mount.');
+        process.exit(1);
+        return;
+      }
+
+      const host = opts['host'] ?? '127.0.0.1';
+      if (!isLoopbackHost(host)) {
+        logger.warn(
+          `listen: binding to non-loopback host '${host}' — this server serves plaintext HTTP. Terminate TLS at a reverse proxy before exposing it.`,
+        );
+      }
+
+      const dedupKind = opts['dedupStore'] === 'memory' ? 'memory' : 'file';
+      const dedupBase = defaultDedupBase();
+      const memoryStores = new Map<string, DedupStore>();
+      const deps: ListenDeps = {
+        workflowStore: new JsonWorkflowStore(),
+        runStore: new JsonFileStore(),
+        dedupStoreFor: (workflowId: string): DedupStore => {
+          if (dedupKind === 'memory') {
+            let s = memoryStores.get(workflowId);
+            if (s === undefined) {
+              s = new InMemoryDedupStore();
+              memoryStores.set(workflowId, s);
+            }
+            return s;
+          }
+          return new FileDedupStore(dedupBase, workflowId);
+        },
+        // issue #409: the operator's fallback clock reaches every drive listen spawns. The deps
+        // SIGNATURE is unchanged — the value is closed over here rather than threaded through it.
+        spawnAgent: (runId: string, cwd: string): SpawnResult =>
+          defaultSpawnAgent(runId, cwd, opts.llmTimeout),
+        clock: () => Date.now(),
+        logger,
+      };
+
+      // Register routed workflows once + load their extension modules — fail-fast on any error.
+      try {
+        await prepareListenWorkflows(routes, deps);
       } catch (err) {
         console.error(
-          `Error: failed to load workflow '${filePath}': ${err instanceof Error ? err.message : String(err)}`,
+          `Error: listen startup failed: ${err instanceof Error ? err.message : String(err)}`,
         );
         process.exit(1);
         return;
       }
-    }
 
-    let routes: Map<string, WorkflowEntry>;
-    try {
-      routes = buildRouteTable(inputs, { env: process.env, logger });
-    } catch (err) {
-      console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
-      process.exit(1);
-      return;
-    }
-    if (routes.size === 0) {
-      console.error('Error: no workflows with a trigger: block to mount.');
-      process.exit(1);
-      return;
-    }
-
-    const host = opts['host'] ?? '127.0.0.1';
-    if (!isLoopbackHost(host)) {
-      logger.warn(
-        `listen: binding to non-loopback host '${host}' — this server serves plaintext HTTP. Terminate TLS at a reverse proxy before exposing it.`,
+      const sweepExpiredGatesSeconds =
+        opts['sweepExpiredGates'] !== undefined
+          ? parseInt(opts['sweepExpiredGates'], 10)
+          : undefined;
+      const handle = await startListen(
+        routes,
+        {
+          port: parseInt(opts['port'] ?? '3000', 10),
+          host,
+          bodyTimeoutMs: parseInt(opts['bodyTimeoutMs'] ?? '5000', 10),
+          maxBodyBytes: parseInt(opts['maxBodyBytes'] ?? '1048576', 10),
+          maxConcurrent: parseInt(opts['maxConcurrent'] ?? '20', 10),
+          ...(sweepExpiredGatesSeconds !== undefined
+            ? { sweepExpiredGatesIntervalMs: sweepExpiredGatesSeconds * 1000 }
+            : {}),
+        },
+        deps,
       );
-    }
 
-    const dedupKind = opts['dedupStore'] === 'memory' ? 'memory' : 'file';
-    const dedupBase = defaultDedupBase();
-    const memoryStores = new Map<string, DedupStore>();
-    const deps: ListenDeps = {
-      workflowStore: new JsonWorkflowStore(),
-      runStore: new JsonFileStore(),
-      dedupStoreFor: (workflowId: string): DedupStore => {
-        if (dedupKind === 'memory') {
-          let s = memoryStores.get(workflowId);
-          if (s === undefined) {
-            s = new InMemoryDedupStore();
-            memoryStores.set(workflowId, s);
-          }
-          return s;
-        }
-        return new FileDedupStore(dedupBase, workflowId);
-      },
-      spawnAgent: defaultSpawnAgent,
-      clock: () => Date.now(),
-      logger,
-    };
-
-    // Register routed workflows once + load their extension modules — fail-fast on any error.
-    try {
-      await prepareListenWorkflows(routes, deps);
-    } catch (err) {
-      console.error(
-        `Error: listen startup failed: ${err instanceof Error ? err.message : String(err)}`,
+      const addr = handle.server.address() as { port: number } | null;
+      logger.info(
+        `realm listen on ${host}:${addr?.port ?? opts['port']} — ${routes.size} workflow(s) mounted`,
       );
-      process.exit(1);
-      return;
-    }
-
-    const sweepExpiredGatesSeconds =
-      opts['sweepExpiredGates'] !== undefined ? parseInt(opts['sweepExpiredGates'], 10) : undefined;
-    const handle = await startListen(
-      routes,
-      {
-        port: parseInt(opts['port'] ?? '3000', 10),
-        host,
-        bodyTimeoutMs: parseInt(opts['bodyTimeoutMs'] ?? '5000', 10),
-        maxBodyBytes: parseInt(opts['maxBodyBytes'] ?? '1048576', 10),
-        maxConcurrent: parseInt(opts['maxConcurrent'] ?? '20', 10),
-        ...(sweepExpiredGatesSeconds !== undefined
-          ? { sweepExpiredGatesIntervalMs: sweepExpiredGatesSeconds * 1000 }
-          : {}),
-      },
-      deps,
-    );
-
-    const addr = handle.server.address() as { port: number } | null;
-    logger.info(
-      `realm listen on ${host}:${addr?.port ?? opts['port']} — ${routes.size} workflow(s) mounted`,
-    );
-  });
+    },
+  );

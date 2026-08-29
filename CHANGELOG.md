@@ -6,6 +6,16 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **`realm listen --llm-timeout <seconds>`** (issue #409). The operator's fallback per-attempt
+  ceiling for the drives a listen process spawns. A step's own `llm_timeout_seconds` still wins;
+  this fills in for steps that author none, which previously had no route to anything but the
+  600-second default.
+  There is deliberately no default on the flag: absent means no passthrough, so each spawned drive
+  derives its own fallback and its run record carries no declared per-attempt value — a fallback
+  nobody chose is not recorded as a declaration. Behaviour without the flag is unchanged.
+
 ### Fixed
 
 - **Every run that `realm run list --stuck` shows now says why it is there** (issue #406). Three
