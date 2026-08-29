@@ -79,7 +79,7 @@ function parseSchemaRetries(value: string): number {
  * `parseSchemaRetries` above; the value is a PER-ATTEMPT ceiling in seconds, so zero is rejected
  * along with the negatives — a zero-second budget would abort every request before it started.
  */
-function parseLlmTimeout(value: string): number {
+export function parseLlmTimeout(value: string): number {
   const n = Number(value);
   if (!Number.isInteger(n) || n <= 0) {
     throw new InvalidArgumentError('--llm-timeout must be a positive integer number of seconds.');

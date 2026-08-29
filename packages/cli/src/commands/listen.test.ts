@@ -1,5 +1,15 @@
 // Tests for `realm listen` — the full request pipeline (mock req/res, injected deps) + startup.
+//
+// issue #409: `node:child_process` is mocked FILE-WIDE, deliberately and safely. Vitest hoists
+// every `vi.mock` to the top of the file whatever AST depth it is written at, so a
+// describe-scoped one would silently be file-wide anyway — better to say so than to look scoped.
+// Safe here because no other cell in this file reaches child_process: they all double the
+// `spawnAgent` deps seam, which sits ABOVE the spawn.
 import { describe, it, expect, vi } from 'vitest';
+import { InvalidArgumentError } from 'commander';
+
+const spawnMock = vi.hoisted(() => vi.fn(() => ({ pid: 4242, unref: vi.fn() })));
+vi.mock('node:child_process', () => ({ spawn: spawnMock }));
 import { EventEmitter } from 'node:events';
 import { createHmac } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -14,6 +24,9 @@ import {
   normalizeHeaders,
   prepareListenWorkflows,
   defaultDedupBase,
+  buildAgentArgv,
+  defaultSpawnAgent,
+  listenCommand,
   type ListenDeps,
   type Logger,
   type WorkflowEntry,
@@ -552,5 +565,91 @@ describe('defaultDedupBase (issue #332 item 3 — call-time, never module-scope,
     } finally {
       if (savedHome !== undefined) process.env['HOME'] = savedHome;
     }
+  });
+});
+
+// =================================================================================================
+// issue #409 — the operator's fallback clock reaches spawned drives
+//
+// A step's own `llm_timeout_seconds` already wins, read inside the drive. What the listen operator
+// had no way to set was the fallback for steps that author none: every spawned drive got the 600s
+// default and nothing could change it.
+// =================================================================================================
+describe('--llm-timeout on listen (issue #409)', () => {
+  it('buildAgentArgv without the flag is byte-identical to what listen spawned before', () => {
+    expect(buildAgentArgv('run-1')).toEqual(['agent', '--run-id', 'run-1']);
+  });
+
+  it('buildAgentArgv with the flag appends it as a string pair', () => {
+    expect(buildAgentArgv('run-1', 45)).toEqual([
+      'agent',
+      '--run-id',
+      'run-1',
+      '--llm-timeout',
+      '45',
+    ]);
+  });
+
+  // The WIRED pair. `buildAgentArgv` being right proves nothing about the spawn using it — that
+  // is the #353 flag-drop class, where every cell stayed green while the closure was never wired.
+  // Each cell also asserts the RETURN: an auto-mock returning undefined would throw inside
+  // defaultSpawnAgent, be CAUGHT, and return `{error}` with the args already captured — so an
+  // args-only assertion would pass against a broken mock.
+  it('WIRED — the spawn carries the flag when the operator set one', () => {
+    spawnMock.mockClear();
+    const result = defaultSpawnAgent('run-42', '/tmp/cwd', 45);
+    expect(result).toEqual({ pid: 4242 });
+
+    const [cmd, argv] = spawnMock.mock.calls[0]! as unknown as [string, string[]];
+    expect(cmd).toBe(process.execPath);
+    // Never pin this literal — under vitest it is the worker entry, not the realm binary.
+    expect(argv[0]).toBe(process.argv[1] ?? '');
+    expect(argv.slice(1)).toEqual(['agent', '--run-id', 'run-42', '--llm-timeout', '45']);
+  });
+
+  it('WIRED — the spawn is unchanged when the operator set none', () => {
+    spawnMock.mockClear();
+    const result = defaultSpawnAgent('run-43', '/tmp/cwd');
+    expect(result).toEqual({ pid: 4242 });
+
+    const [, argv] = spawnMock.mock.calls[0]! as unknown as [string, string[]];
+    expect(argv.slice(1)).toEqual(['agent', '--run-id', 'run-43']);
+    expect(argv).not.toContain('--llm-timeout');
+  });
+
+  // The parser's FIRST refusal cells anywhere — mirroring the --schema-retries trio. Driven by
+  // Option introspection rather than parseAsync: a flagless parseAsync on this shared singleton
+  // RUNS the action, which loads a workflow.yaml from the cwd and can start a real server.
+  //
+  // Commander 15 consumes a required option-argument unconditionally, so `--llm-timeout -5` on a
+  // real argv genuinely delivers '-5' here — these represent reachable input, not a synthetic one.
+  describe('the flag refuses what it should', () => {
+    const opt = (): NonNullable<ReturnType<typeof findOpt>> => {
+      const found = findOpt();
+      expect(found).toBeDefined();
+      return found!;
+    };
+    const findOpt = (): (typeof listenCommand.options)[number] | undefined =>
+      listenCommand.options.find((o) => o.long === '--llm-timeout');
+
+    for (const bad of ['0', '-5', 'abc']) {
+      it(`rejects '${bad}'`, () => {
+        expect(() => opt().parseArg!(bad, undefined)).toThrow(InvalidArgumentError);
+        expect(() => opt().parseArg!(bad, undefined)).toThrow(
+          '--llm-timeout must be a positive integer number of seconds.',
+        );
+      });
+    }
+
+    it('accepts a positive integer', () => {
+      expect(opt().parseArg!('45', undefined)).toBe(45);
+    });
+
+    it('carries NO default — a defaulted flag would record a declaration nobody made', () => {
+      // With a default, listen would pass `--llm-timeout 600` to every child and every spawned
+      // drive would persist `declared_per_attempt_ms: 600000`. Absent means absent.
+      expect(opt().defaultValue).toBeUndefined();
+      expect(opt().parseArg).toBeDefined();
+    });
   });
 });
