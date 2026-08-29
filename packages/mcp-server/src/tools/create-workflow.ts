@@ -54,6 +54,46 @@ export const stepSchema = z
       'dropped and returned as a warning — do not invent step fields.',
   );
 
+/**
+ * The metadata allow-list (issue #419), same pattern as `stepSchema` above: `Object.keys(shape)`
+ * is the single source of truth for detecting unknown metadata keys, so the accepted fields and
+ * the sweep can never drift apart.
+ *
+ * `.passthrough()` is load-bearing, not decoration. A nested plain `z.object` strips
+ * independently of its parent: even under a passthrough top level, `metadata: { name, author }`
+ * arrived at the handler as `{ name }` with `author` gone and nothing said. Metadata was a
+ * SECOND silent surface; passthrough is what lets the sweep below ever see the key.
+ */
+export const metadataSchema = z
+  .object({
+    name: z.string().optional(),
+    description: z.string().optional(),
+    task_description: z.string().optional(),
+    model: z.string().optional(),
+    agent: z.string().optional(),
+  })
+  .passthrough();
+
+/**
+ * The top-level argument allow-list (issue #419). Before this schema existed the tool passed a
+ * raw zod SHAPE to `server.tool()`, which the SDK wraps in a default-mode `z.object` — STRIP —
+ * so an unknown top-level key (`workflow_id`, the one an agent most plausibly invents) died
+ * inside the SDK before the handler ran: `warnings: []`, a workflow registered under a minted id
+ * the caller never saw, and a follow-up `start_run` with the self-chosen id failing
+ * `STATE_WORKFLOW_NOT_FOUND` with no hint anywhere. The per-step sweep (#169) only ever worked
+ * because `stepSchema` is `.passthrough()`; this is the same fix one level up.
+ */
+export const createWorkflowArgsSchema = z
+  .object({
+    steps: z.array(stepSchema).min(1),
+    metadata: metadataSchema.optional(),
+    // Declared so a submitted value is NOT silently stripped by the schema — validateArgs
+    // rejects it with an actionable "register-time, operator-only" error (mirrors the
+    // per-step agent_profile rejection).
+    extensions: z.unknown().optional(),
+  })
+  .passthrough();
+
 export interface CreateWorkflowStep {
   id: string;
   description: string;
@@ -339,6 +379,67 @@ export async function handleCreateWorkflow(
 
   await workflowStore.register(definition);
 
+  // Issue #419 — the TOP-LEVEL sweep. Unknown keys survive to here now that
+  // `createWorkflowArgsSchema` is `.passthrough()`; before, the SDK stripped them before this
+  // function ran and there was nothing to find. Same code as the step sweep
+  // (UNKNOWN_CREATE_WORKFLOW_KEY), so #170 never flips it and create_workflow stays lenient for
+  // agents forever — this only ever warns, never rejects.
+  //
+  // INVARIANT: an unknown key can never leak into the registered definition.
+  // `buildWorkflowDefinition` copies an explicit field list and never spreads, so a key the sweep
+  // reports is a key that was dropped — the warning and the drop cannot come apart.
+  //
+  // The one unknown key that can never be warned about is `__proto__`: zod drops it before the
+  // handler runs. The prototype is untouched (no pollution) and the silence is structural, not a
+  // gap this sweep could close.
+  const topLevelDiagnostics: LoaderWarning[] = findUnknownKeys(
+    args as unknown as Record<string, unknown>,
+    Object.keys(createWorkflowArgsSchema.shape),
+    {
+      scope: 'workflow',
+      id: workflowId,
+      code: 'UNKNOWN_CREATE_WORKFLOW_KEY',
+      // The `noun` override (the UNKNOWN_RETRY_KEY precedent) — "not a recognized create_workflow
+      // field", never "workflow field": the latter is the loader's definition-key vocabulary and
+      // would send an agent looking at YAML fields that have nothing to do with this tool.
+      noun: 'create_workflow',
+    },
+  ).map((w) => {
+    // TARGETED messages, the same `.map()` shape the step sweep below uses for its two cases.
+    if (w.key === 'workflow_id') {
+      return {
+        ...w,
+        message: `workflow '${workflowId}': 'workflow_id' is ignored — create_workflow mints its own workflow id and returns it as data.workflow_id; a start_run with a self-chosen id fails STATE_WORKFLOW_NOT_FOUND. To influence the id's slug, set metadata.name.`,
+      };
+    }
+    // Derived membership, no hand list: these are the tool's OWN accepted fields, submitted one
+    // level too high. "Not a recognized field" would be true and useless — the field IS
+    // recognized, just not there.
+    if (Object.keys(metadataSchema.shape).includes(w.key ?? '')) {
+      return {
+        ...w,
+        message: `workflow '${workflowId}': '${w.key}' belongs under metadata — submitted at the top level it is ignored; use metadata.${w.key}.`,
+      };
+    }
+    return w;
+  });
+
+  // Issue #419 — the METADATA sweep (the second silent surface: a nested plain object strips
+  // independently of its passthrough parent, so `metadata.author` used to vanish without a word).
+  const metadataDiagnostics: LoaderWarning[] =
+    args.metadata === undefined
+      ? []
+      : findUnknownKeys(
+          args.metadata as unknown as Record<string, unknown>,
+          Object.keys(metadataSchema.shape),
+          {
+            scope: 'workflow',
+            id: workflowId,
+            code: 'UNKNOWN_CREATE_WORKFLOW_KEY',
+            noun: 'metadata',
+          },
+        );
+
   // Issue #169: each raw submitted step's extra keys survive stepSchema's .passthrough() — find
   // them against the SAME allow-list the schema itself declares (Object.keys(stepSchema.shape),
   // the single source of truth, no hand-maintained list). Distinct code (UNKNOWN_CREATE_WORKFLOW_KEY)
@@ -394,35 +495,43 @@ export async function handleCreateWorkflow(
     data: { workflow_id: workflowId },
     // issue #236 [R2-4]: structured_output caveats render into the existing warnings: string[]
     // (render-only — no WarningCode minted; ALL_ERROR_POLICY never sees them).
+    // Order is outermost-first (top-level, then metadata, then step) because that reads the way
+    // the payload nests. It is presentation only — nothing keys on the order across groups.
     warnings: [
       ...result.warnings,
+      ...topLevelDiagnostics.map(renderLoaderWarning),
+      ...metadataDiagnostics.map(renderLoaderWarning),
       ...stepDiagnostics.map(renderLoaderWarning),
       ...structuredOutputCaveats,
     ],
-    diagnostics: [...(result.diagnostics ?? []), ...stepDiagnostics],
+    diagnostics: [
+      ...(result.diagnostics ?? []),
+      ...topLevelDiagnostics,
+      ...metadataDiagnostics,
+      ...stepDiagnostics,
+    ],
   };
 }
 
 /** Registers the create_workflow MCP tool on the server. */
 export function registerCreateWorkflow(server: McpServer, opts?: HandleRunStores): void {
-  server.tool(
+  // issue #419 — this is the repo's FIRST `registerTool` user; the other nine tools still call
+  // `server.tool()`, and the deviation is forced rather than stylistic. `server.tool()` accepts a
+  // raw shape only: handed a full `z.object` it throws ("expected a Zod schema or
+  // ToolAnnotations, but received an unrecognized object"), and a raw shape is exactly what the
+  // SDK wraps in a stripping `z.object`. Carrying `.passthrough()` to the handler therefore
+  // requires `registerTool`, which takes the schema as given.
+  //
+  // Second consequence, also intended: `tools/list` now advertises `additionalProperties: true`
+  // at the top level and under `metadata`. It read `false` before while the server accepted the
+  // key and dropped it — an advertised falsehood. The server was always lenient (#169); the
+  // advertisement now says so.
+  server.registerTool(
     'create_workflow',
-    'Create a dynamic Realm workflow at runtime and immediately start a run. Use this when you have a multi-step task and want to track your own execution plan. Returns next_action pointing at your first step — proceed with execute_step as normal.',
     {
-      steps: z.array(stepSchema).min(1),
-      metadata: z
-        .object({
-          name: z.string().optional(),
-          description: z.string().optional(),
-          task_description: z.string().optional(),
-          model: z.string().optional(),
-          agent: z.string().optional(),
-        })
-        .optional(),
-      // Declared so a submitted value is NOT silently stripped by the schema — validateArgs
-      // rejects it with an actionable "register-time, operator-only" error (mirrors the
-      // per-step agent_profile rejection).
-      extensions: z.unknown().optional(),
+      description:
+        'Create a dynamic Realm workflow at runtime and immediately start a run. Use this when you have a multi-step task and want to track your own execution plan. Returns next_action pointing at your first step — proceed with execute_step as normal. Top-level fields: steps, metadata, and extensions (extensions is register-time, operator-only, and rejected here); any other field is dropped and returned as a warning.',
+      inputSchema: createWorkflowArgsSchema,
     },
     async (args) => {
       try {
