@@ -18,6 +18,18 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **`create_workflow` no longer swallows unknown top-level and `metadata` keys** (issue #419). The
+  per-step sweep has warned about invented step fields since #169, but nothing above a step did:
+  an unknown top-level argument and an unknown field inside `metadata` were both dropped inside
+  the MCP layer before the tool's own code ran, so the response came back `ok` with no warning at
+  all. The trap this most often set is `workflow_id` — the tool mints its own id, so an agent that
+  chose one got a workflow registered under a different id and a `start_run` that failed
+  `STATE_WORKFLOW_NOT_FOUND` with nothing anywhere to explain why. All three surfaces now warn and
+  drop, `workflow_id` and misplaced metadata fields get a message that names the fix, and
+  `tools/list` advertises `additionalProperties: true` where it previously claimed `false` while
+  the server accepted the key and threw it away. Still never a rejection: an agent that invents a
+  field is told, not blocked.
+
 - **Every run that `realm run list --stuck` shows now says why it is there** (issue #406). Three
   finding kinds selected a run onto the list and then contributed nothing to its line: an expired
   gate, a corrupted gate record, and a grandfathered terminal record still carrying a pending
