@@ -88,8 +88,15 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
     // The step is interpolated unguarded because `pending_gate.step_name` is a REQUIRED string
     // (run-record.ts) — unlike drive_failing, which can fire before any step is selected.
     case 'gate_expired_awaiting_drive': {
-      const disposition = f.evidence?.['disposition'];
-      return `${f.step}=gate_expired(${typeof disposition === 'string' ? disposition : 'unknown'})`;
+      const raw = f.evidence?.['disposition'];
+      const disposition = typeof raw === 'string' ? raw : 'unknown';
+      // The pointer is keyed on the LITERAL `finding_only`, never on "not abort/settle_default".
+      // The other two dispositions enact themselves at the next enactment point (and `realm run
+      // drain --expired` can force them), so a verb there would send an operator to do work the
+      // engine is already going to do. `unknown` is the armor branch above — an out-of-contract
+      // record — and prescribing `respond` against one is a claim the engine cannot back.
+      const pointer = disposition === 'finding_only' ? ' (realm run respond)' : '';
+      return `${f.step}=gate_expired(${disposition})${pointer}`;
     }
     // issue #406: a settled gate entry coexisting with a live pending_gate of the same id. This
     // kind IS the out-of-contract-store detection surface, so the step guard is load-bearing

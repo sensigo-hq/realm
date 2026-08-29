@@ -360,10 +360,9 @@ Valid `--status` values: `running`, `gate_waiting`, `completed`, `failed`, `aban
 
 When filtering by `gate_waiting`, each line also shows the gate step name and gate age (time since the gate opened).
 
-`--stuck` (mutually exclusive with `--status`) shows only runs `classifyRunHealth` (issue #221)
-flags — the SAME shared predicate `get_run_state`/`inspect` (the other two READ surfaces) derive
-from (`reclaim` reads the same underlying record facts via its own independent discriminator; it
-does not call this function). **Nine finding kinds select a run onto this list:** a stale or
+`--stuck` (mutually exclusive with `--status`) shows only runs flagged by the same health
+classification `get_run_state` and `inspect` use. **Nine finding kinds select a run onto this
+list:** a stale or
 unknown-age claim, a wedged non-gated sibling on a `gate_waiting` run, a capability block, a
 `running` run with no claimed step idle for at least the active threshold (default 24h — printed
 in the header as `(threshold 24h)`), a terminal run with an undrained finalizer, a failing drive,
@@ -378,23 +377,29 @@ run simply between agent drives is no longer flagged the instant its last claim 
 disclosed behavior change from the prior unconditional check — see the CHANGELOG). Each flagged
 line appends its idle age plus finding labels.
 
-**The labels**, one per finding kind that carries one:
+**The labels** — one row per label form; the claim row serves two kinds:
 
-| label                                             | means                                                                                                                                 |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `<step>=claim_stale` / `<step>=claim_unknown_age` | the step's claim is past its deadline, or carries no deadline to judge by                                                             |
-| `<step>=wedged_gate_sibling`                      | a non-gated sibling step is wedged behind an open gate                                                                                |
-| `<step>: needs <kind> '<name>'`                   | the step is blocked on a capability the registry does not have                                                                        |
-| `<step>=<reason> (realm run drain)`               | a terminal run with an undrained finalizer — the pointer is the fix                                                                   |
-| `<step>=drive_failing(<class>)`                   | the drive died on this step; `<class>` is the failure class (fuller vocabulary in [mcp-protocol.md](mcp-protocol.md))                 |
-| `<step>=gate_expired(<disposition>)`              | the gate is past `expires_at`; the disposition is `abort`, `settle_default`, or `finding_only` — what, if anything, will enact itself |
-| `<step>=gate_corruption`                          | a settled gate entry coexists with a live pending gate of the same id — a store that diverged, not an engine path                     |
-| `<step>=stale_gate (realm run purge)`             | a terminal run still carrying a pending gate (a grandfathered record); the pointer is the fix                                         |
+| label                                                                                             | means                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<step>=claim_stale` / `<step>=claim_unknown_age`                                                 | the step's claim is past its deadline, or carries none to judge by. On a `running` run the kind behind it is `stale_claim`; behind an open gate it is `wedged_gate_sibling` — the distinction lives in the run's shape and in `inspect`'s finding text, never in the label                                                                                                                                                                                          |
+| `<step>: needs <kind> '<name>'`                                                                   | the step is blocked on a capability the registry does not have                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `<step>=<reason> (realm run drain)`                                                               | a terminal run with an undrained finalizer — the pointer is the fix. `<reason>` is `never_leased`, `lease_expired`, or `lease_held`                                                                                                                                                                                                                                                                                                                                 |
+| `<step>=drive_failing(<class>)`                                                                   | the drive died on this step; `<class>` is the failure class (fuller vocabulary in [mcp-protocol.md](mcp-protocol.md))                                                                                                                                                                                                                                                                                                                                               |
+| `<step>=gate_expired(<disposition>)`, and `<step>=gate_expired(finding_only) (realm run respond)` | the gate is past `expires_at`. `abort` and `settle_default` enact themselves at the next enactment point (`realm run drain --expired` can force them). `finding_only` means nothing will enact itself — a human response ends it: `realm run respond <run-id> --gate <gate-id> --choice <choice>`, with the gate id shown by `realm run inspect`. A wrong choice is safe: the run refuses with `Choice '<x>' is not valid. Expected one of: …` and no state changes |
+| `<step>=gate_corruption`                                                                          | a settled gate entry coexists with a live pending gate of the same id — a store that diverged, not an engine path                                                                                                                                                                                                                                                                                                                                                   |
+| `<step>=stale_gate (realm run purge)`                                                             | a terminal run still carrying a pending gate — one written by an older realm, before terminal seals stripped their gates. Purge DISPOSES of the record; a `failed` or `abandoned` run can instead continue via `realm run resume` (only those two phases are resumable — purge's own dry-run counts how many selected runs qualify). For a grandfathered record disposal is the usual intent, which is why the label points at purge                                |
 
 `never_claimed_idle` carries no label of its own: it IS the reason the run is listed, and the
 header's threshold already says so. `--older-than <duration>` overrides the idle-age
 threshold (e.g. `30m`, `6h`, `7d`; requires `--stuck`); `--older-than 0m` restores the old
-unconditional breadth (bare `0` is rejected — use `0m`). This is a different flag from `realm run
+unconditional breadth (bare `0` is rejected — use `0m`).
+
+On a corrupt record a label may render `(unknown)` in place of its enum value — that is the armor,
+not a vocabulary member. Labels of the SAME cause family join comma-separated with the step
+repeated per label (`x=stale_gate (realm run purge), x=gate_corruption`); different families
+render as separate two-space-separated segments. The timestamp column is `updated_at`.
+
+This is a different flag from `realm run
 reclaim --older-than`, which is a deadline-margin add-on for `--all` auto-reclaim selection, not
 an idle-age threshold. See [Operating & recovering runs](operating-runs.md).
 
@@ -526,7 +531,8 @@ For agent steps, the output may be missing required fields — compare its shape
 **Run stuck at a gate (`gate_waiting` state):**
 The state line will show `gate_waiting` in yellow. Look at the last entry in the evidence
 chain — it will be the step that produced the gate. Submit the gate response with
-`realm run respond <run-id>`.
+`realm run respond <run-id> --gate <gate-id> --choice <choice>` — the gate id is on
+`realm run inspect`'s `Gate:` line.
 
 **Precondition blocked a step unexpectedly:**
 Find the step that was supposed to run and look at its `precondition_trace`. Each expression
@@ -573,11 +579,14 @@ only when the run cannot be aborted normally. Every successful `abandon` prints 
 
 ### `realm run respond <run-id>`
 
-Submits a human gate response interactively. Prompts for the gate choice.
+Submits a human gate response. Both flags are REQUIRED — nothing is prompted for.
 
 ```bash
-realm run respond abc123
+realm run respond abc123 --gate <gate-id> --choice approve
 ```
+
+The gate id is on `realm run inspect`'s `Gate:` line. A choice the gate does not offer is refused with
+`Choice '<x>' is not valid. Expected one of: …` — nothing is recorded, so a wrong guess is safe.
 
 **Expiry-WINS (issue #291):** if the gate carries an authored `gate.timeout_seconds` and has
 already expired unresolved when this is called, the response is **refused** with an honest

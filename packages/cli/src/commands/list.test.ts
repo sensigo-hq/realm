@@ -1086,14 +1086,35 @@ describe('--stuck labels: the #406 adjudication', () => {
       const result = await listRuns(undefined, makeStore([run]), undefined, true);
       expect(result).toContain('run-gate');
       expect(result).toContain(`approval=gate_expired(${rendered})`);
+      // Per member: the pointer belongs to finding_only ONLY. These two enact themselves at the
+      // next enactment point (and `realm run drain --expired` can force them), so telling an
+      // operator to respond would send them to do work the engine is already going to do.
+      expect(result).not.toContain('realm run respond');
     });
   }
 
   it('an expired gate with NO on_expiry labels gate_expired(finding_only)', async () => {
     // The producer supplies `on_expiry ?? 'finding_only'`, so the label never renders "undefined"
     // — a finding-only gate is still awaiting a human, which is the whole reason it is listed.
+    // ...and it is the one disposition whose only exit is a human, so it carries the verb —
+    // the same "the pointer is the fix" convention the stale_gate and drain labels follow.
     const result = await listRuns(undefined, makeStore([gatedRun()]), undefined, true);
-    expect(result).toContain('approval=gate_expired(finding_only)');
+    expect(result).toContain('approval=gate_expired(finding_only) (realm run respond)');
+  });
+
+  it('ARMOR — a corrupt on_expiry renders (unknown) and carries NO pointer', async () => {
+    // The typeof guard's branch. `unknown` is not a vocabulary member — it means the record is
+    // out of contract — so prescribing `respond` against it would be a claim the engine cannot
+    // back. The pointer is keyed on the literal `finding_only`, never on "not abort/settle".
+    const corrupt = gatedRun(
+      { id: 'run-armor' },
+      {
+        on_expiry: { nonsense: true } as unknown as 'abort',
+      },
+    );
+    const result = await listRuns(undefined, makeStore([corrupt]), undefined, true);
+    expect(result).toContain('approval=gate_expired(unknown)');
+    expect(result).not.toContain('realm run respond');
   });
 
   it('a settled-gate/pending-gate both-match record labels gate_corruption', async () => {
