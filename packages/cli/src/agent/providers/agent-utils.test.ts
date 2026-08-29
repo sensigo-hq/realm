@@ -95,7 +95,7 @@ describe('manifest-secret redaction (setAdditionalRedactionValues)', () => {
   });
 });
 
-describe('sanitizeError — npm manifest metadata is not a secret (issue #407)', () => {
+describe('sanitizeError — the redaction boundary (issue #407)', () => {
   afterEach(() => {
     setAdditionalRedactionValues([]);
     vi.unstubAllEnvs();
@@ -105,6 +105,13 @@ describe('sanitizeError — npm manifest metadata is not a secret (issue #407)',
   // key. Under npm, `npm_package_name` is the product's own name — so realm redacted the word
   // "realm" out of its own error messages. Harmless-looking until issue #401 started PERSISTING
   // those messages in the run record, at which point the mangling became durable evidence.
+  //
+  // The first fix excluded `npm_package_*` (minus `config_`) BY PREFIX, on the premise that
+  // `npm_package_*` is public manifest metadata. That premise is launcher-dependent and FALSE
+  // under yarn classic, which flattens the ENTIRE package.json into that namespace — so an
+  // author's `npm_package_deploy_apiKey` was excluded from redaction. The boundary is now three
+  // bounded rules instead: an exact-key allowlist, a public-value-shape filter, and an
+  // under-HOME value rule.
 
   it('the product name survives — npm_package_name is public manifest metadata', () => {
     vi.stubEnv('npm_package_name', 'realm');
@@ -114,8 +121,15 @@ describe('sanitizeError — npm manifest metadata is not a secret (issue #407)',
   });
 
   it('a version string survives too', () => {
+    // Now true for TWO independent reasons: the exact key is excluded, AND the value matches the
+    // public-value shape. Either alone would carry this cell.
     vi.stubEnv('npm_package_version', '0.39.0');
     expect(sanitizeError(new Error('upgrade to 0.39.0 first'))).toContain('0.39.0');
+  });
+
+  it('the lifecycle EVENT survives — the third exact key', () => {
+    vi.stubEnv('npm_lifecycle_event', 'build');
+    expect(sanitizeError(new Error('the build step failed'))).toContain('the build step failed');
   });
 
   it('CONTROL — an ordinary env value over four characters still redacts', () => {
@@ -135,13 +149,187 @@ describe('sanitizeError — npm manifest metadata is not a secret (issue #407)',
   it('CONTROL — npm_package_config_* STAYS redacted: it is user-authored, not metadata', () => {
     // The boundary the exclusion must not cross. A package.json `config` block holds values the
     // author put there, and npm exports them verbatim into the environment — a probe on this
-    // repo's own npm produced `npm_package_config_apitoken=SUPERSECRETVALUE123`. The lookahead
-    // that keeps `config_` inside the redaction set is load-bearing; widening the exclusion to
-    // all `npm_package_*` would leak exactly the values most likely to be secrets.
+    // repo's own npm produced `npm_package_config_apitoken=SUPERSECRETVALUE123`.
+    // This now holds by ABSENCE from an exact-key set rather than by a lookahead: with three
+    // named keys excluded, everything else — including every `config_` field and every yarn1
+    // flattened field — is swept by default. Fail-closed by construction rather than by a regex
+    // that has to anticipate the shapes.
     vi.stubEnv('npm_package_config_apitoken', 'cfg-secret-value-1');
     const out = sanitizeError(new Error('sent cfg-secret-value-1 upstream'));
     expect(out).toContain('[REDACTED]');
     expect(out).not.toContain('cfg-secret-value-1');
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Rule 1a — the exact-key allowlist, and the channel it closes
+  // ---------------------------------------------------------------------------------------
+
+  it('SECURITY — a yarn1-flattened manifest field is redacted', () => {
+    // Yarn classic flattens the ENTIRE package.json into `npm_package_*`, so a deploy block's
+    // apiKey arrives as `npm_package_deploy_apiKey`. Under the prefix exclusion that key was
+    // EXCLUDED from redaction — a secret channel opened by the very fix that stopped the
+    // mangling. Three exact keys close it: everything else is swept, whatever the launcher
+    // invents.
+    vi.stubEnv('npm_package_deploy_apiKey', 'yarn1-nested-secret-1');
+    const out = sanitizeError(new Error('posted yarn1-nested-secret-1 to the deploy hook'));
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('yarn1-nested-secret-1');
+  });
+
+  it('SECURITY — npm_lifecycle_script returns to the sweep', () => {
+    // Author-written script text, which can carry an inline token — and a spawn failure echoes
+    // the whole line. Excluded by the prefix form; swept again now. A tightening of 0.40.0.
+    vi.stubEnv('npm_lifecycle_script', 'TOKEN=inline-tok-99 node ship.js');
+    const out = sanitizeError(new Error('spawn failed: TOKEN=inline-tok-99 node ship.js'));
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('inline-tok-99');
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Rule 1b — the public-value shape
+  // ---------------------------------------------------------------------------------------
+
+  it('the word "false" survives — launcher booleans mangled every message', () => {
+    // pnpm injects `pnpm_config_verify_deps_before_run=false` and yarn1 `YARN_WRAP_OUTPUT=false`,
+    // so under either launcher the word "false" was redacted out of every message and every
+    // recorded tool result.
+    vi.stubEnv('AGENT_UTILS_TEST_BOOL', 'false');
+    expect(sanitizeError(new Error('the model received "false" for that field'))).toContain(
+      '"false"',
+    );
+  });
+
+  it('a dotted version survives — npm mangled version strings with its own', () => {
+    vi.stubEnv('AGENT_UTILS_TEST_VER', '11.8.0');
+    expect(sanitizeError(new Error('needs 11.8.0 or newer'))).toContain('11.8.0');
+  });
+
+  it('BOUNDARY — a bare integer stays redacted (a PIN is not a version)', () => {
+    // The shape is deliberately narrow: `\d+(\.\d+)*` would have admitted numeric PINs and
+    // account ids, which are exactly the kind of value the sweep exists for.
+    vi.stubEnv('AGENT_UTILS_TEST_PIN', '483921');
+    const out = sanitizeError(new Error('pin 483921 rejected'));
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('483921');
+  });
+
+  it('BOUNDARY — a dotted quad stays redacted (an IPv4 is not a version)', () => {
+    vi.stubEnv('AGENT_UTILS_TEST_IP', '10.20.30.40');
+    const out = sanitizeError(new Error('connect 10.20.30.40 refused'));
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('10.20.30.40');
+  });
+
+  it('BOUNDARY — a value that merely CONTAINS a shaped prefix still redacts', () => {
+    vi.stubEnv('AGENT_UTILS_TEST_MIX', 'false-positive-x');
+    const out = sanitizeError(new Error('saw false-positive-x'));
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('false-positive-x');
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Rule 1c — the under-HOME value rule
+  // ---------------------------------------------------------------------------------------
+
+  it('a path under HOME keeps its tail; the home prefix is stripped', () => {
+    // The informative half of a require stack is the tail. Redacting the whole path told an
+    // operator nothing; stripping only the home prefix keeps the file and loses the username.
+    vi.stubEnv('HOME', '/home/testuser');
+    vi.stubEnv('INIT_CWD', '/home/testuser/proj');
+    const out = sanitizeError(new Error('Require stack: /home/testuser/proj/x.js'));
+    expect(out).toBe('Require stack: [REDACTED]/proj/x.js');
+  });
+
+  it('SHADOW CLOSURE — a second key carrying the SAME value cannot reopen the leak', () => {
+    // The rule is VALUE-level, not key-level. `npm_config_local_prefix` carries the identical
+    // string as `INIT_CWD`; under a key-level exclusion this exact case no-oped, because the
+    // shadow key was still in the sweep and redacted the prefix anyway.
+    vi.stubEnv('HOME', '/home/testuser');
+    vi.stubEnv('INIT_CWD', '/home/testuser/proj');
+    vi.stubEnv('npm_config_local_prefix', '/home/testuser/proj');
+    expect(sanitizeError(new Error('Require stack: /home/testuser/proj/x.js'))).toBe(
+      'Require stack: [REDACTED]/proj/x.js',
+    );
+  });
+
+  it('PRIVACY — a path NOT under HOME is redacted wholesale', () => {
+    // The WSL shape: `/mnt/c/Users/<Name>` carries the username in the tail, so the home-prefix
+    // strip cannot help. Full redaction is the right answer there, and stays.
+    vi.stubEnv('HOME', '/home/testuser');
+    vi.stubEnv('PWD', '/mnt/c/Users/Test User/proj');
+    const out = sanitizeError(new Error('cwd /mnt/c/Users/Test User/proj missing'));
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('Test User');
+  });
+
+  it('BOUNDARY — HOME itself, standalone, stays redacted', () => {
+    vi.stubEnv('HOME', '/home/testuser');
+    const out = sanitizeError(new Error('base is /home/testuser'));
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('testuser');
+  });
+
+  it('SUB-CONJUNCT — a short HOME does not open the rule', () => {
+    // `/srv` is four characters, so it is itself outside the sweep — nothing would redact the
+    // prefix. Dropping the length guard would ship the full path with no redaction at all.
+    vi.stubEnv('HOME', '/srv');
+    vi.stubEnv('AGENT_UTILS_TEST_PATH', '/srv/data/secret-x');
+    const out = sanitizeError(new Error('read /srv/data/secret-x'));
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('/srv/data/secret-x');
+  });
+
+  it('SUB-CONJUNCT — CONTAINING the home prefix is not STARTING with it', () => {
+    // An `includes` mutant is strictly looser, and asserting it EXACTLY is what catches it:
+    // under `startsWith` the whole value is swept and the line reads `read [REDACTED]`, while
+    // under `includes` the value leaves the sweep and only HOME's own redaction lands inside it,
+    // leaving `read /opt[REDACTED]/thing`. A `toContain('[REDACTED]')` pair passes BOTH — the
+    // looser reading still contains the marker and still loses the whole string. Probed: with
+    // the weaker assertions the mutant survived every cell in this file.
+    vi.stubEnv('HOME', '/home/testuser');
+    vi.stubEnv('AGENT_UTILS_TEST_NESTED', '/opt/home/testuser/thing');
+    expect(sanitizeError(new Error('read /opt/home/testuser/thing'))).toBe('read [REDACTED]');
+  });
+
+  it('npm_package_json under HOME keeps its tail', () => {
+    // Path-valued on every launcher that sets it, so it belongs to the value-level rule rather
+    // than the exact-key set — keeping it key-excluded would ship a non-HOME checkout's full
+    // path, which is the very privacy trade rule 1c exists to make.
+    vi.stubEnv('HOME', '/home/testuser');
+    vi.stubEnv('npm_package_json', '/home/testuser/proj/package.json');
+    expect(sanitizeError(new Error('read /home/testuser/proj/package.json'))).toBe(
+      'read [REDACTED]/proj/package.json',
+    );
+  });
+
+  it('npm_package_json NOT under HOME is redacted wholesale', () => {
+    vi.stubEnv('HOME', '/home/testuser');
+    vi.stubEnv('npm_package_json', '/mnt/c/Users/Test User/proj/package.json');
+    const out = sanitizeError(new Error('read /mnt/c/Users/Test User/proj/package.json'));
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('Test User');
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // The exemption — both filters apply to the ENV sweep only
+  // ---------------------------------------------------------------------------------------
+
+  it('EXEMPTION — a declared secret that LOOKS public still redacts', () => {
+    vi.stubEnv('AGENT_UTILS_TEST_SHAPED', '1.2.3');
+    setAdditionalRedactionValues(Object.freeze(['1.2.3']));
+    const out = sanitizeError(new Error('version 1.2.3 leaked'));
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('1.2.3');
+  });
+
+  it('EXEMPTION — a declared secret UNDER HOME redacts whole, no tail', () => {
+    // HOME is stubbed deliberately: without it the fixture path is not under the ambient home,
+    // and the combined-list mutant this cell exists to catch would survive.
+    vi.stubEnv('HOME', '/home/testuser');
+    setAdditionalRedactionValues(Object.freeze(['/home/testuser/declared-secret']));
+    const out = sanitizeError(new Error('key at /home/testuser/declared-secret'));
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('declared-secret');
   });
 });
 

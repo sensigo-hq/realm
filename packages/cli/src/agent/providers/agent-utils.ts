@@ -50,10 +50,42 @@ export function setAdditionalRedactionValues(values: readonly string[]): void {
 }
 
 /**
- * npm's manifest metadata — public values copied out of package.json, not secrets. The negative
- * lookahead keeps `npm_package_config_*` OUT of this exclusion (see sanitizeError's doc).
+ * The THREE launcher keys whose values are public by name, not by prefix (issue #407).
+ *
+ * Exact keys, deliberately — the prefix form they replace was a secret channel. Yarn classic
+ * flattens the ENTIRE package.json into `npm_package_*`, so `npm_package_deploy_apiKey` was
+ * excluded from redaction under that launcher. With a closed set of three, everything a launcher
+ * invents is swept by default: `npm_package_config_*`, `npm_config_*`, every yarn1-flattened
+ * field, and `npm_lifecycle_script` — whose value is author-written script text that can carry an
+ * inline token, and whose whole line is echoed by a spawn failure.
+ *
+ * `npm_package_json` is NOT here: it is path-valued on every launcher that sets it, so it belongs
+ * to the under-HOME value rule below — a checkout under home keeps its tail, one outside home is
+ * redacted whole, which is the same privacy trade every other path value gets.
+ *
+ * Case-sensitive on purpose: a hostile `NPM_PACKAGE_NAME` is not one of these and stays swept.
  */
-const NPM_MANIFEST_METADATA = /^npm_(package_(?!config_)|lifecycle_)/;
+const EXCLUDED_LAUNCHER_METADATA = new Set([
+  'npm_package_name',
+  'npm_package_version',
+  'npm_lifecycle_event',
+]);
+
+/**
+ * Values that are public by SHAPE: booleans, and 2-or-3-segment dotted version numbers.
+ *
+ * Launchers inject these constantly — pnpm's `pnpm_config_verify_deps_before_run=false`, yarn1's
+ * `YARN_WRAP_OUTPUT=false`, npm's `npm_config_npm_version=11.8.0` — so the word "false" and any
+ * matching version string were being cut out of every message and every recorded tool result.
+ *
+ * The bound is narrow on purpose. A looser `\d+(\.\d+)*` would admit bare integers (numeric
+ * PINs, account ids) and IPv4 addresses — values the sweep exists for. Two or three segments,
+ * each dotted, and nothing else: `1.0.0-beta` and four-segment strings stay swept.
+ *
+ * Case-sensitive: `FALSE` stays swept. The `true` alternative is dead today — four characters,
+ * already below the length filter — and is kept as defense should that filter ever change.
+ */
+const PUBLIC_VALUE_SHAPE = /^(true|false|\d+\.\d+(\.\d+)?)$/;
 
 /**
  * Converts an error value to a string and strips sensitive patterns: Bearer tokens,
@@ -62,19 +94,43 @@ const NPM_MANIFEST_METADATA = /^npm_(package_(?!config_)|lifecycle_)/;
  * deduped and applied LONGEST-FIRST — a short value contained in a longer one can no
  * longer leave fragments of the longer value behind.
  *
- * EXCLUDED from the env sweep (issue #407): npm's own manifest metadata —
- * `npm_package_*` (except `npm_package_config_*`) and `npm_lifecycle_*`. These are values npm
- * copies OUT OF package.json, so treating them as secrets meant realm redacted its own name and
- * version from its own error messages: under npm, `npm_package_name` is `"realm"`, and a message
- * reading "realm agent requires…" shipped as "[REDACTED] agent requires…". Harmless while it was
- * console-only; issue #401 persists these messages in the run record, which made the mangling
- * durable evidence.
+ * THE BOUNDARY (issue #407). The default is fail-closed — every env value over four characters
+ * is redacted — with three bounded exceptions, and everything else swept. Where the field bounds
+ * redaction by key semantics or by registered values, realm keeps the closed default and names
+ * its exceptions.
  *
- * `npm_package_config_*` deliberately STAYS redacted, and the lookahead that keeps it in is
- * load-bearing: a package.json `config` block holds values the AUTHOR wrote, and npm exports them
- * verbatim — a probe on this repo produced `npm_package_config_apitoken=SUPERSECRETVALUE123`.
- * `npm_config_*` stays for the same reason. Widening this exclusion to all `npm_*` would leak
- * exactly the values most likely to be secrets.
+ * Why it exists at all: under npm, `npm_package_name` is `"realm"`, so realm redacted its own
+ * name out of its own error messages. Console-only that was cosmetic; issue #401 persists those
+ * messages in the run record, which made the mangling durable evidence.
+ *
+ * The first fix excluded `npm_package_*` BY PREFIX — and that was itself a secret channel. Yarn
+ * classic flattens the whole package.json into that namespace, so `npm_package_deploy_apiKey`
+ * and `npm_package_scripts_ship` (a script line with an inline token) were excluded from
+ * redaction. The premise "npm_package_* is public metadata" is true of npm, pnpm, bun and berry,
+ * and FALSE of yarn 1.x. Exact keys cannot be flattened into.
+ *
+ * The three rules, applied to the ENV SWEEP ONLY:
+ *
+ *  1. EXACT KEYS — {@link EXCLUDED_LAUNCHER_METADATA}, three of them, none path-valued.
+ *  2. PUBLIC SHAPE — {@link PUBLIC_VALUE_SHAPE}: booleans and dotted versions, which launchers
+ *     inject everywhere and which mangled ordinary prose ("received false") and version numbers.
+ *  3. UNDER HOME — a value starting with `HOME + '/'` leaves the sweep, so a require stack
+ *     renders `[REDACTED]/code/realm/…`: the tail is the informative half, the username is not.
+ *     HOME ITSELF stays swept, which is what strips the prefix.
+ *
+ * Rule 3 is CONDITIONAL PRIVACY, and the condition is the point: a path outside home — the WSL
+ * `/mnt/c/Users/<Name>` shape — cannot have its username stripped by a home-prefix rule, so it
+ * stays redacted whole. Accepted bound: a path INTO home (`SECRET_PATH=/home/x/secrets/key.pem`)
+ * reveals its tail. A path to a secret is not the secret — file content never transits env — but
+ * the tail can disclose directory structure. The remedy for a sensitive path is to declare it a
+ * manifest secret: the exemption below redacts declared values even under home.
+ *
+ * THE EXEMPTION, load-bearing: rules 2 and 3 filter the ENV sweep only. `additionalRedactionValues`
+ * — values an author DECLARED secret — are never filtered, however public-shaped they look or
+ * wherever they live.
+ *
+ * BLAST RADIUS: {@link serializeToolResult} runs this same pass, so persisted tool results heal
+ * with it — going forward. Records written by earlier releases keep the mangled form.
  */
 export function sanitizeError(err: unknown): string {
   let text: string;
@@ -87,10 +143,30 @@ export function sanitizeError(err: unknown): string {
   }
   text = text.replace(/Bearer [A-Za-z0-9._-]+/g, 'Bearer [REDACTED]');
   text = text.replace(/token=[A-Za-z0-9._-]+/g, 'token=[REDACTED]');
+  // Read PER CALL, never captured at module scope: a module-scope read is the issue-#285 class
+  // and would make every `vi.stubEnv('HOME', …)` cell test the process's real home instead.
+  //
+  // Keyed on `process.env.HOME`, deliberately NOT `os.homedir()`, and the listen.ts #332
+  // precedent that brands bare HOME reads house-inconsistent does not apply here: the filter key
+  // MUST be the same string the sweep can still redact. With homedir() and HOME unset or
+  // different, under-home values would leave the sweep while nothing redacted their prefix, and
+  // the full path would ship bare. The coupling is the mechanism.
+  //
+  // The length guard is not cosmetic: a HOME of four characters or fewer is itself outside the
+  // sweep, so nothing would redact the prefix it strips. No normalization either — a trailing
+  // slash makes `HOME + '/'` never match, the rule no-ops, and the value stays redacted.
+  //
+  // win32 is a stated non-goal rather than an oversight (realm has live win32 branches
+  // elsewhere): HOME is typically undefined there, so the rule no-ops into today's fail-closed
+  // full redaction, and `USERPROFILE` is deliberately unhandled — its value stays swept.
+  const home = process.env['HOME'];
+  const homePrefix = home !== undefined && home.length > 4 ? `${home}/` : undefined;
   const envValues = Object.entries(process.env)
-    .filter(([key]) => !NPM_MANIFEST_METADATA.test(key))
+    .filter(([key]) => !EXCLUDED_LAUNCHER_METADATA.has(key))
     .map(([, val]) => val)
-    .filter((val): val is string => val !== undefined && val.length > 4);
+    .filter((val): val is string => val !== undefined && val.length > 4)
+    .filter((val) => !PUBLIC_VALUE_SHAPE.test(val))
+    .filter((val) => homePrefix === undefined || !val.startsWith(homePrefix));
   const combined = [...new Set([...envValues, ...additionalRedactionValues])].sort(
     (a, b) => b.length - a.length,
   );
