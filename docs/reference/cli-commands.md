@@ -363,13 +363,36 @@ When filtering by `gate_waiting`, each line also shows the gate step name and ga
 `--stuck` (mutually exclusive with `--status`) shows only runs `classifyRunHealth` (issue #221)
 flags — the SAME shared predicate `get_run_state`/`inspect` (the other two READ surfaces) derive
 from (`reclaim` reads the same underlying record facts via its own independent discriminator; it
-does not call this function): a stale or unknown-age claim, a wedged non-gated sibling on a
-`gate_waiting` run, a capability block, or a
-`running` run with no claimed step that has been idle for at least the active threshold (default
-24h — printed in the header as `(threshold 24h)`). The never-claimed check is **age-gated**: a
+does not call this function). **Nine finding kinds select a run onto this list:** a stale or
+unknown-age claim, a wedged non-gated sibling on a `gate_waiting` run, a capability block, a
+`running` run with no claimed step idle for at least the active threshold (default 24h — printed
+in the header as `(threshold 24h)`), a terminal run with an undrained finalizer, a failing drive,
+an expired gate, a corrupted gate record, and a terminal run still carrying a pending gate.
+
+A tenth kind, `resolved_gate_with_eligible_guard`, is **structurally absent here**: its producer
+requires a workflow definition and `list` classifies definition-free, so it never fires on this
+surface. Two further kinds never select: `completed_with_failed_steps` (issue #302) and
+`structured_output_downgraded` (issue #316) — a completed run and a degraded-assurance disclosure
+are not "stuck" symptoms. Either can still appear on a run selected by one of the nine. The never-claimed check is **age-gated**: a
 run simply between agent drives is no longer flagged the instant its last claim settles (a
 disclosed behavior change from the prior unconditional check — see the CHANGELOG). Each flagged
-line appends its idle age plus finding labels. `--older-than <duration>` overrides the idle-age
+line appends its idle age plus finding labels.
+
+**The labels**, one per finding kind that carries one:
+
+| label                                             | means                                                                                                                                 |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `<step>=claim_stale` / `<step>=claim_unknown_age` | the step's claim is past its deadline, or carries no deadline to judge by                                                             |
+| `<step>=wedged_gate_sibling`                      | a non-gated sibling step is wedged behind an open gate                                                                                |
+| `<step>: needs <kind> '<name>'`                   | the step is blocked on a capability the registry does not have                                                                        |
+| `<step>=<reason> (realm run drain)`               | a terminal run with an undrained finalizer — the pointer is the fix                                                                   |
+| `<step>=drive_failing(<class>)`                   | the drive died on this step; `<class>` is the failure class (fuller vocabulary in [mcp-protocol.md](mcp-protocol.md))                 |
+| `<step>=gate_expired(<disposition>)`              | the gate is past `expires_at`; the disposition is `abort`, `settle_default`, or `finding_only` — what, if anything, will enact itself |
+| `<step>=gate_corruption`                          | a settled gate entry coexists with a live pending gate of the same id — a store that diverged, not an engine path                     |
+| `<step>=stale_gate (realm run purge)`             | a terminal run still carrying a pending gate (a grandfathered record); the pointer is the fix                                         |
+
+`never_claimed_idle` carries no label of its own: it IS the reason the run is listed, and the
+header's threshold already says so. `--older-than <duration>` overrides the idle-age
 threshold (e.g. `30m`, `6h`, `7d`; requires `--stuck`); `--older-than 0m` restores the old
 unconditional breadth (bare `0` is rejected — use `0m`). This is a different flag from `realm run
 reclaim --older-than`, which is a deadline-margin add-on for `--all` auto-reclaim selection, not

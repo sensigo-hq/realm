@@ -80,17 +80,49 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
       const req = f.evidence?.['requirement'] as { kind: string; name: string } | undefined;
       return req !== undefined ? `${f.step}: needs ${req.kind} '${req.name}'` : undefined;
     }
-    // These kinds carry NO --stuck label TODAY. Enumerated rather than left to fall through, so
-    // the exhaustiveness guard below can tell "listed here on purpose" from "forgotten" — but the
-    // enumeration records the status quo, not a settled per-kind rationale. Whether any of them
-    // should gain a label is open (issue #406); listing one here is not an argument that it was
-    // considered and rejected.
-    case 'never_claimed_idle':
-    case 'terminal_with_stale_gate':
+    // issue #406: an expired gate. The disposition is what an operator acts on — whether the
+    // declared enactment is coming, or whether only a human response ends this. The producer
+    // always supplies one (`on_expiry ?? 'finding_only'`), so the typeof guard is armor against a
+    // corrupt record rather than doubt about the contract: a raw interpolation of a non-string
+    // would ship `gate_expired([object Object])` on the very records this surface exists for.
+    // The step is interpolated unguarded because `pending_gate.step_name` is a REQUIRED string
+    // (run-record.ts) — unlike drive_failing, which can fire before any step is selected.
+    case 'gate_expired_awaiting_drive': {
+      const disposition = f.evidence?.['disposition'];
+      return `${f.step}=gate_expired(${typeof disposition === 'string' ? disposition : 'unknown'})`;
+    }
+    // issue #406: a settled gate entry coexisting with a live pending_gate of the same id. This
+    // kind IS the out-of-contract-store detection surface, so the step guard is load-bearing
+    // here in a way it is not for the other two: a corrupt empty settled key must not render a
+    // bare leading `=`. Detail lives in evidence/inspect; the label's job is the cause name.
     case 'gate_corruption':
+      return f.step !== undefined && f.step !== ''
+        ? `${f.step}=gate_corruption`
+        : 'gate_corruption';
+    // issue #406: a terminal record still carrying a pending_gate. Points at the recovery verb
+    // directly, like terminal_pending_finalizer's `(realm run drain)`.
+    //
+    // The pointer is TRUE end-to-end, checked rather than assumed: purge keys on the DERIVED
+    // phase (purge.ts's header invariant), so a grandfathered stale-gate record derives terminal
+    // and is never refused as "still gate_waiting"; the store's only refusals are
+    // no_longer_terminal and drain_pending, neither keyed on pending_gate. One nuance the label
+    // has no room for: if the gate step's claim still lingers in `in_progress_steps` the record
+    // classifies claim_unknown_age, which a BATCH purge skips with a warning — the single-id path
+    // needs `--force` to delete (its dry-run selects and reports either way).
+    case 'terminal_with_stale_gate':
+      return `${f.step}=stale_gate (realm run purge)`;
+    // These kinds carry no --stuck label, and issue #406 settled why for each — this is a
+    // decision, not a status quo. `never_claimed_idle` IS the listing reason itself; the
+    // threshold header already says it, and a per-step label would restate the line.
+    // `resolved_gate_with_eligible_guard` cannot reach this surface at all: its producer requires
+    // a workflow definition and `list` classifies definition-free, so a label would be dead code.
+    // `completed_with_failed_steps` and `structured_output_downgraded` are EXCLUDED from --stuck
+    // selection (issues #302/#316, the filter below) — either can only co-ride a run selected by
+    // some other finding, which renders its own label, so a label here would never be the reason
+    // a reader is looking at the line.
+    case 'never_claimed_idle':
     case 'resolved_gate_with_eligible_guard':
     case 'completed_with_failed_steps':
-    case 'gate_expired_awaiting_drive':
     case 'structured_output_downgraded':
       return undefined;
     // issue #279 (increment 1, PR-B): a terminal run with an undrained finalizer — points at the
@@ -286,6 +318,21 @@ export async function listRuns(
         .filter((l): l is string => l !== undefined);
       if (pendingFinalizerLabels.length > 0) {
         line += `  ${pendingFinalizerLabels.join(', ')}`;
+      }
+      // issue #406: the three gate-shaped causes, in ONE group so their findings-array order
+      // survives to the line. A terminal both-match record fires stale_gate then gate_corruption,
+      // and that order is part of what a reader (or a reaper parsing this line) sees.
+      const gateCauseLabels = findings
+        .filter(
+          (f) =>
+            f.kind === 'gate_expired_awaiting_drive' ||
+            f.kind === 'gate_corruption' ||
+            f.kind === 'terminal_with_stale_gate',
+        )
+        .map(renderFindingLabel)
+        .filter((l): l is string => l !== undefined);
+      if (gateCauseLabels.length > 0) {
+        line += `  ${gateCauseLabels.join(', ')}`;
       }
       // issue #219: cause attribution, appended LAST — best-effort, per-run (one run's sidecar
       // I/O failure never aborts the rest of the list). `records.length === 0` (no throw) means

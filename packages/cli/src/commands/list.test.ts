@@ -1039,3 +1039,118 @@ describe('list.ts source-text negative pin (issue #219): list stays definition-f
     expect(source).not.toContain('loadWorkflow');
   });
 });
+
+// =================================================================================================
+// issue #406 — every run --stuck lists says WHY
+//
+// `--stuck` SELECTS any run whose findings are not all in the two-kind exclusion, so a run picked
+// up by an expired gate, a corrupted gate record, or a grandfathered stale-gate terminal record
+// appeared on the list with nothing on its line saying which. The operator was told a run was
+// stuck and left to go find out why somewhere else.
+//
+// Compact, kind-derived forms — never the `reason`, which for these three kinds is a full
+// sentence. The `${step}=${reason}` convention fits the short-enum reasons of
+// stale_claim/wedged_gate_sibling; these follow drive_failing's compact-form precedent instead.
+// =================================================================================================
+describe('--stuck labels: the #406 adjudication', () => {
+  const EXPIRED = '2024-01-01T00:00:00.000Z'; // long past — the gate is overdue at any `now`
+
+  const gatedRun = (
+    overrides: Partial<RunRecord> = {},
+    gate: Partial<NonNullable<RunRecord['pending_gate']>> = {},
+  ): RunRecord =>
+    makeRun({
+      id: 'run-gate',
+      run_phase: 'gate_waiting',
+      terminal_state: false,
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 'approval',
+        choices: ['approve', 'reject'],
+        opened_at: EXPIRED,
+        preview: {},
+        expires_at: EXPIRED,
+        ...gate,
+      } as NonNullable<RunRecord['pending_gate']>,
+      ...overrides,
+    });
+
+  // Per member: the disposition is a three-value union and the label interpolates it, so each
+  // value gets its own cell rather than one representative.
+  for (const [onExpiry, rendered] of [
+    ['abort', 'abort'],
+    ['settle_default', 'settle_default'],
+  ] as const) {
+    it(`an expired gate with on_expiry: '${onExpiry}' labels gate_expired(${rendered})`, async () => {
+      const run = gatedRun({}, { on_expiry: onExpiry });
+      const result = await listRuns(undefined, makeStore([run]), undefined, true);
+      expect(result).toContain('run-gate');
+      expect(result).toContain(`approval=gate_expired(${rendered})`);
+    });
+  }
+
+  it('an expired gate with NO on_expiry labels gate_expired(finding_only)', async () => {
+    // The producer supplies `on_expiry ?? 'finding_only'`, so the label never renders "undefined"
+    // — a finding-only gate is still awaiting a human, which is the whole reason it is listed.
+    const result = await listRuns(undefined, makeStore([gatedRun()]), undefined, true);
+    expect(result).toContain('approval=gate_expired(finding_only)');
+  });
+
+  it('a settled-gate/pending-gate both-match record labels gate_corruption', async () => {
+    // The out-of-contract-store detection surface: a settled entry carrying the SAME gate_id as a
+    // live pending_gate. No engine path writes this; a store that diverged did.
+    const corrupt = gatedRun({
+      id: 'run-corrupt',
+      settled: { approval: { outcome: 'gate', token: 'g1', at: EXPIRED } },
+    } as Partial<RunRecord>);
+    const result = await listRuns(undefined, makeStore([corrupt]), undefined, true);
+    expect(result).toContain('run-corrupt');
+    expect(result).toContain('approval=gate_corruption');
+  });
+
+  it('a TERMINAL record carrying a pending_gate labels stale_gate with the recovery verb', async () => {
+    // Mirrors terminal_pending_finalizer's `(realm run drain)` pointer. The pointer is true
+    // end-to-end: purge keys on the DERIVED phase, so a grandfathered stale-gate record derives
+    // terminal and is never refused as "still gate_waiting".
+    const stale = makeRun({
+      id: 'run-stale-gate',
+      run_phase: 'completed',
+      terminal_state: true,
+      pending_gate: {
+        gate_id: 'g9',
+        step_name: 'approval',
+        choices: ['approve'],
+        opened_at: EXPIRED,
+        preview: {},
+      } as NonNullable<RunRecord['pending_gate']>,
+    });
+    const result = await listRuns(undefined, makeStore([stale]), undefined, true);
+    expect(result).toContain('run-stale-gate');
+    expect(result).toContain('approval=stale_gate (realm run purge)');
+  });
+
+  it('COMPOSED — a terminal both-match record renders BOTH labels, in producer order', async () => {
+    // The terminal branch pushes stale_gate first, then gate_corruption, and both route through
+    // the one new order-preserving group. Asserted as the joined ordered pair rather than two
+    // independent contains: the #221 [S4] rail treats this line as a parsed wire format, so the
+    // order is part of the contract. The divergence DETAIL lives in inspect/export.
+    //
+    // Fixture note: the settled entry's KEY must equal `pending_gate.step_name` for the labels to
+    // share a step — the corruption predicate itself matches on token === gate_id regardless.
+    const both = makeRun({
+      id: 'run-both',
+      run_phase: 'completed',
+      terminal_state: true,
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 'approval',
+        choices: ['approve'],
+        opened_at: EXPIRED,
+        preview: {},
+      } as NonNullable<RunRecord['pending_gate']>,
+      settled: { approval: { outcome: 'gate', token: 'g1', at: EXPIRED } },
+    } as Partial<RunRecord>);
+    const result = await listRuns(undefined, makeStore([both]), undefined, true);
+    expect(result).toContain('approval=stale_gate (realm run purge), approval=gate_corruption');
+  });
+});

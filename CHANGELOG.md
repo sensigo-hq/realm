@@ -4,6 +4,29 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Every run `realm run list --stuck` shows now says why it is there** (issue #406). Three
+  finding kinds selected a run onto the list and then contributed nothing to its line: an expired
+  gate, a corrupted gate record, and a grandfathered terminal record still carrying a pending
+  gate. The operator was told a run was stuck and left to find the cause somewhere else.
+  Each now labels its own line: `<step>=gate_expired(<disposition>)` — where the disposition is
+  `abort`, `settle_default` or `finding_only`, which is what decides whether anything will enact
+  itself; `<step>=gate_corruption`; and `<step>=stale_gate (realm run purge)`, whose pointer
+  mirrors the undrained-finalizer label's.
+  The adjudication closed the question for the other three kinds rather than leaving it open:
+  `completed_with_failed_steps` and `structured_output_downgraded` are excluded from `--stuck`
+  selection by design (#302/#316), so a label there could never be the reason a reader is looking
+  at the line, and `resolved_gate_with_eligible_guard` cannot reach this surface at all — its
+  producer needs a workflow definition and `list` classifies definition-free. `never_claimed_idle`
+  keeps no label because it IS the listing reason, which the threshold header already states.
+  The `--stuck` documentation gains the label vocabulary it never had, and its selector list —
+  stale by five kinds — is corrected in the same edit.
+
+---
+
 ## [0.40.0] — 2026-08-29
 
 Two arcs. A failing drive used to be invisible — the run read healthy while nothing was happening
