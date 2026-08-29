@@ -904,7 +904,7 @@ describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
           getCalls++;
           // Calls 1-2 are purgeRuns's own selection + pre-delete re-check (both still terminal —
           // unaffected by this test). Call 3+ is the fenced guard's OWN re-check, invoked from
-          // inside deleteAllForRunFenced — simulate a concurrent `realm resume` landing exactly
+          // inside deleteAllForRunFenced — simulate a concurrent `realm run resume` landing exactly
           // there.
           if (getCalls <= 2) return runStore.get(id);
           const fresh = await runStore.get(id);

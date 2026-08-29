@@ -13,10 +13,15 @@ means nothing: five classes of key that were parsed, stored, and then ignored at
 refused with an explanation of what they would have done and where they work instead.
 
 **Five BREAKING changes**, which a 0.x minor is allowed to carry: pre-1.0, breaking changes ship
-in a minor when they are flagged here with upgrade guidance. Every one of them is a refusal of
-something that never worked, not a change to something that did.
+in a minor when they are flagged here with upgrade guidance. Four of the five refuse or remove
+things that never worked — the loader trio (one change carrying three refusal classes),
+`timeout_seconds` on agent steps, `tool_timeout` without tools, and the dead MCP field, a removal
+— five refusal classes among them, which is what the Upgrading list below counts. The fifth
+(#189) is different in kind: a store-contract widening that asks STORE IMPLEMENTERS for real
+work; workflow authors are untouched by it.
 
-Read **Upgrading** below before you upgrade — one of the five can surface only after you have.
+Read **Upgrading** below before you upgrade — four of the five refusal classes can surface only
+after you have.
 
 #### Upgrading
 
@@ -41,6 +46,9 @@ inline in code, never re-parses YAML and is untouched. An offending FILE surface
 **One thing to check that is not a refusal.** If any step's single model call legitimately exceeds
 10 minutes, declare `llm_timeout_seconds` (or pass `--llm-timeout`) before upgrading — the new
 default ceiling will otherwise abort it.
+
+**Store implementers:** #189 widens the store contract (its entry below has the shapes); workflow
+authors and YAML files are untouched by it.
 
 ### Added
 

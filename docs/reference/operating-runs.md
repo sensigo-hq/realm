@@ -10,7 +10,7 @@ is the source of truth. Recovery is therefore about the **record**, not about ki
 
 | Situation               | Symptom                                                                                              | Action                                                                                                                                                                                 |
 | ----------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Stuck but recoverable   | A run is terminal `failed` because one step errored, but the work can be retried                     | `realm resume <run-id> --from <step>` — re-enables the failed step and resets the run to `running`, then drive with `realm agent --run-id <run-id>`.                                   |
+| Stuck but recoverable   | A run is terminal `failed` because one step errored, but the work can be retried                     | `realm run resume <run-id> --from <step>` — re-enables the failed step and resets the run to `running`, then drive with `realm agent --run-id <run-id>`.                               |
 | Stuck and dead          | A run is `running` with no claimed step (`in_progress_steps: []`) and no agent is coming back for it | `realm run abandon <run-id> [--reason …]` (or the `abandon_run` MCP tool), then re-run (see [Recovery loop](#recovery-loop)).                                                          |
 | Bulk idle               | Many old non-terminal runs left parked                                                               | `realm run cleanup --older-than 30d` — abandons idle non-terminal runs (skips `gate_waiting`).                                                                                         |
 | Disk cleanup            | Old terminal runs (and their artifacts) should be permanently removed                                | `realm run purge --older-than 30d [--force]` — see [Purging runs](#purging-runs-permanent-deletion). **Irreversible.**                                                                 |
@@ -112,7 +112,7 @@ you name it directly:
 
 Like `reclaim --all`, purge is **dry-run by default** — even naming a single `<run-id>` only reports
 what would happen until you add `--force`. The report always includes an explicit count of how many
-of the selected runs are **resumable** (phase ∈ `failed`/`abandoned`) via `realm resume` — because
+of the selected runs are **resumable** (phase ∈ `failed`/`abandoned`) via `realm run resume` — because
 purging one destroys that path permanently. Batch mode's continue-on-error report distinguishes a
 run that a concurrent purge already removed (`already_purged` — benign) from a genuine deletion
 failure (`failed`).

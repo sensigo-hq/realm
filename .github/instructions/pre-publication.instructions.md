@@ -24,12 +24,6 @@ Follow this checklist in order before merging any branch into `main`.
 - `npm run deps:audit` — knip's dead/phantom dependency gate. Exit 0 with zero findings AND zero configuration hints. This runs on the weekly scheduled audit, NOT on PR CI, so nothing else catches it: issue #415 sat red for five days, invisible to every PR check.
 - `node scripts/check-action-pins.mjs` — every GitHub Action pinned to a SHA whose comment matches it
 - `npm run typecheck:tests` — post-build, because it type-checks against `dist`
-- Release-diff hygiene sweep for stray debug output:
-  ```bash
-  git diff <prev-tag>..main -- ':(glob)packages/*/src/**' | grep -cE '^\+.*console\.'
-  git diff <prev-tag>..main -- ':(glob)packages/*/src/**' | grep -cE '^\+'
-  ```
-  **A review gate, never a zero-hits gate.** Print the hit count BESIDE the total added lines — a zero-hit sweep over a zero-line diff is self-refuting, and reporting only the numerator hides that. Realm's own render code legitimately writes to the console, so hits are expected (29 on this release). ENUMERATE them and adjudicate each as intentional production output; an unadjudicated hit blocks the merge.
 - All CI pipeline checks are green on the PR before merging
 
 ### 3. Comments and Documentation
@@ -86,6 +80,17 @@ Follow this checklist in order before merging any branch into `main`.
 > A package with `"private": true` in its manifest is not published. Part B does not apply to it.
 
 **When to run Part B:** Cut a release when `[Unreleased]` in `CHANGELOG.md` contains at least one `### Added`, `### Changed`, or `### Security` entry and all open PRs for the milestone are merged. Do not let `[Unreleased]` accumulate across multiple sessions without a release — npm will show the previous version until a tag is pushed.
+
+**0. Pre-flight — release-diff hygiene sweep**
+
+Stray debug output, over the whole release rather than one PR:
+
+```bash
+git diff <prev-tag>..main -- ':(glob)packages/*/src/**' | grep -cE '^\+.*console\.'
+git diff <prev-tag>..main -- ':(glob)packages/*/src/**' | grep -cE '^\+'
+```
+
+**A review gate, never a zero-hits gate.** Print the hit count BESIDE the total added lines — a zero-hit sweep over a zero-line diff is self-refuting, and reporting only the numerator hides that. Realm's own render code legitimately writes to the console, so hits are expected. ENUMERATE them and adjudicate each as intentional production output; an unadjudicated hit blocks the release.
 
 **1. Create a release branch**
 
