@@ -387,7 +387,10 @@ export async function inspectRun(
   if (derivedPhase === 'gate_waiting' && run.pending_gate !== undefined) {
     const gate = run.pending_gate;
     const due = computeGateDueState(gate, new Date());
-    let gateLine = `Gate: ${gate.step_name} (opened ${formatGateAge(gate.opened_at)} ago)`;
+    // issue #406: the gate id is on the line because `realm run respond --gate <gate-id>` needs
+    // it, and the --stuck label now points an operator here to get it. The drive-time surfaces
+    // that already print it are the ones a stuck run no longer has.
+    let gateLine = `Gate: ${gate.step_name} (gate ${gate.gate_id}, opened ${formatGateAge(gate.opened_at)} ago)`;
     if (due.expired) {
       gateLine += ` — EXPIRED ${formatGateAge(gate.expires_at!)} ago`;
     }

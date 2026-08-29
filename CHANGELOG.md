@@ -4,6 +4,35 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Every run that `realm run list --stuck` shows now says why it is there** (issue #406). Three
+  finding kinds selected a run onto the list and then contributed nothing to its line: an expired
+  gate, a corrupted gate record, and a grandfathered terminal record still carrying a pending
+  gate. The operator was told a run was stuck and left to find the cause somewhere else.
+  Each now labels its own line: `<step>=gate_expired(<disposition>)` — where the disposition is
+  `abort`, `settle_default` or `finding_only`, which is what decides whether anything will enact
+  itself — rendering as `<step>=gate_expired(finding_only) (realm run respond)` for the one
+  disposition whose only exit is a human; `<step>=gate_corruption`; and
+  `<step>=stale_gate (realm run purge)`, whose pointer mirrors the undrained-finalizer label's.
+  `realm run inspect`'s `Gate:` line now carries the gate id — the `--gate` argument that
+  pointer's verb needs, which no read surface a stuck operator has was printing.
+  The other three — the kinds that never put a run on this list by themselves:
+  `completed_with_failed_steps` and `structured_output_downgraded` are excluded from `--stuck`
+  selection by design (#302/#316), so a label there could never be the reason a reader is looking
+  at the line, and `resolved_gate_with_eligible_guard` cannot reach this surface at all — its
+  producer needs a workflow definition and `list` classifies definition-free. `never_claimed_idle`
+  keeps no label because it IS the listing reason, which the threshold header already states.
+  One honest limit: a store record whose persisted phase diverges from its derived one can still
+  select without a label, because `never_claimed_idle` reads the persisted phase (issue #432).
+  Engine-written records always explain themselves — with a label, or with the threshold header.
+  The `--stuck` documentation gains the label vocabulary it never had, and its selector list —
+  stale by five kinds — is corrected in the same edit.
+
+---
+
 ## [0.40.0] — 2026-08-29
 
 Two arcs. A failing drive used to be invisible — the run read healthy while nothing was happening

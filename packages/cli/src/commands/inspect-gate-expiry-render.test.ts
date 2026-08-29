@@ -74,9 +74,19 @@ describe('inspectRun — Gate: line (issue #291)', () => {
   it('a plain open gate (no timeout/reminder) renders the base Gate: line, no EXPIRED/reminder text', async () => {
     const run = makeRun({ pending_gate: makeGate() });
     const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore());
-    expect(result).toContain('Gate: approve (opened');
+    expect(result).toContain('Gate: approve (gate gate-1, opened');
     expect(result).not.toContain('EXPIRED');
     expect(result).not.toContain('reminder');
+  });
+
+  it('the Gate line carries the gate id — the argument `realm run respond` requires', async () => {
+    // issue #406: `--stuck` now points a finding_only gate at `realm run respond`, and that verb
+    // takes `--gate <gate-id>`. Neither `list` nor `inspect` printed the id, so the remedy could
+    // not be completed from the surfaces a stuck operator has — the drive-time surfaces that DO
+    // print it are exactly the ones a stuck run no longer has.
+    const run = makeRun({ pending_gate: makeGate() });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore());
+    expect(result).toContain('gate gate-1');
   });
 
   it('an expired gate renders the EXPIRED marker on the Gate: line', async () => {
