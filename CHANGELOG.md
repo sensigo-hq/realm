@@ -17,8 +17,10 @@ All notable changes to this project are documented here.
   itself — rendering as `<step>=gate_expired(finding_only) (realm run respond)` for the one
   disposition whose only exit is a human; `<step>=gate_corruption`; and
   `<step>=stale_gate (realm run purge)`, whose pointer mirrors the undrained-finalizer label's.
-  `realm run inspect`'s `Gate:` line now carries the gate id — the `--gate` argument that
-  pointer's verb needs, which no read surface a stuck operator has was printing.
+  `realm run inspect` now carries both halves — the gate id on its `Gate:` line, and the gate's
+  choices on a `Choices:` line below it — the `--gate` and `--choice` arguments that pointer's
+  verb needs, which no read surface a stuck operator has was printing. One respond attempt, no
+  guess-and-retry.
   The other three — the kinds that never put a run on this list by themselves:
   `completed_with_failed_steps` and `structured_output_downgraded` are excluded from `--stuck`
   selection by design (#302/#316), so a label there could never be the reason a reader is looking

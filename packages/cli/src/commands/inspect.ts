@@ -401,6 +401,20 @@ export async function inspectRun(
         : `, reminder due in ${formatGateAge(new Date().toISOString(), new Date(due.next_reminder_due_at))}`;
     }
     lines.push(gateLine);
+    // issue #406: the OTHER argument `realm run respond` requires. Rendered from
+    // `run.pending_gate.choices`, which is the same source BOTH validation sites read
+    // (execution-loop.ts's CLI path and settlement.ts's store path each do
+    // `pending_gate.choices.includes(...)`) — and the field is frozen at mint, so a definition
+    // edited after this gate opened never applies to it. Printed and accepted cannot drift.
+    //
+    // Empty renders NOTHING rather than an empty menu: an authored `gate.choices: []` reaches a
+    // real record (the loader has no non-empty check), and that such a gate is human-unresolvable
+    // is issue #433's, not this line's. An ABSENT `choices` is out of contract — the field is
+    // required and always minted — and is trusted exactly as the Gate line above trusts
+    // `gate_id` and `step_name`.
+    if (gate.choices.length > 0) {
+      lines.push(`  Choices: ${gate.choices.join(', ')}`);
+    }
   }
 
   // issue #221: typed run-health findings — the SAME shared classifyRunHealth predicate the three

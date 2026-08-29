@@ -89,6 +89,29 @@ describe('inspectRun — Gate: line (issue #291)', () => {
     expect(result).toContain('gate gate-1');
   });
 
+  it("the Choices line carries the gate's choices — the other argument `respond` requires", async () => {
+    // issue #406's remedy loop, second half. `realm run respond` takes --gate AND --choice; the
+    // id arrived with the Gate line, and without this the choice was a documented guess (the
+    // refusal lists the valid ones on a wrong try). Both now come from one read.
+    //
+    // The render reads `run.pending_gate.choices`, which is the SAME source both validation
+    // sites read — so what is printed is what respond will accept, with no drift surface.
+    const run = makeRun({ pending_gate: makeGate({ choices: ['approve', 'reject'] }) });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore());
+    expect(result).toContain('Choices: approve, reject');
+  });
+
+  it('an EMPTY choices array renders no Choices line at all', async () => {
+    // Production-reachable, not fixture armor: the loader has no non-empty check and the mint
+    // forwards `[]` past its default, so an authored `gate.choices: []` reaches a real record.
+    // Printing an empty "Choices:" would advertise a menu with nothing on it. That such a gate is
+    // human-unresolvable at all is a pre-existing loader gap — issue #433, not this render's.
+    const run = makeRun({ pending_gate: makeGate({ choices: [] }) });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore());
+    expect(result).toContain('Gate: approve');
+    expect(result).not.toContain('Choices:');
+  });
+
   it('an expired gate renders the EXPIRED marker on the Gate: line', async () => {
     const run = makeRun({
       pending_gate: makeGate({ expires_at: new Date(Date.now() - 300_000).toISOString() }),
@@ -130,5 +153,7 @@ describe('inspectRun — Gate: line (issue #291)', () => {
     });
     const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore());
     expect(result).not.toContain('Gate:');
+    // The Choices line is as absent as its parent — it lives inside the same gate block.
+    expect(result).not.toContain('Choices:');
   });
 });
