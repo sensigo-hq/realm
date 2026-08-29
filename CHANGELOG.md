@@ -33,6 +33,38 @@ All notable changes to this project are documented here.
   The `--stuck` documentation gains the label vocabulary it never had, and its selector list —
   stale by five kinds — is corrected in the same edit.
 
+- **Launcher metadata stops mangling messages and recorded tool results** (issue #407). realm
+  redacts every environment value over four characters, and package managers inject values that
+  are not secrets at all. Under pnpm and yarn classic the word **"false"** was cut out of every
+  message and every persisted tool result (`pnpm_config_verify_deps_before_run`,
+  `YARN_WRAP_OUTPUT`); under npm, version strings matching npm's own were cut the same way; and
+  path-bearing messages lost their informative half — `Require stack: [REDACTED]` told an
+  operator nothing.
+  Three bounded rules replace the prefix exclusion: three exact launcher keys, a public-value
+  shape (booleans and dotted versions — deliberately not bare integers or IPv4, which are the
+  shapes secrets take), and a value starting with `$HOME/`, which now renders
+  `Require stack: [REDACTED]/packages/…` — the tail survives, the username does not. A path
+  OUTSIDE home stays redacted whole, because there the username is in the tail.
+  Values an author declared secret are never filtered by any of this — they redact whether they
+  look public or live under home.
+  Persisted evidence heals going forward. Records written by earlier releases keep the mangled
+  form: the env sweep dates to v0.14.0, so mangled tool results span v0.14.0 through 0.40.0. (The
+  Security entry below has a different, much narrower window — do not read them together.)
+
+### Security
+
+- **A yarn-classic redaction hole is closed** (issue #407). Yarn 1.x flattens the entire
+  package.json into `npm_package_*` environment variables, and 0.40.0 excluded that whole
+  namespace from realm's redaction sweep by prefix. So under a yarn 1.x launch, an arbitrary
+  manifest field holding a secret — `npm_package_deploy_apiKey` — was **not redacted** from error
+  messages or persisted tool results. The exclusion is now a set of three exact keys, so every
+  flattened field is swept again.
+  `npm_lifecycle_script` also returns to the sweep: its value is author-written script text that
+  can embed an inline token, and a spawn failure echoes the whole line.
+  No CVE; realm-local. **The window is 0.40.0 only** — the prefix exclusion shipped in that
+  release and is removed here. Exposure required a yarn 1.x launch AND a manifest field
+  containing a secret AND a message or tool result echoing that value in full.
+
 ---
 
 ## [0.40.0] — 2026-08-29
