@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
+## [0.40.0] — 2026-08-29
 
 Two arcs. A failing drive used to be invisible — the run read healthy while nothing was happening
 — and it is now recorded, bounded, and attributed: every failure lands on the run, and no single
