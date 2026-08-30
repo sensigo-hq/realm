@@ -87,6 +87,13 @@ realm workflow validate ./my-workflow --strict   # fail (exit 1) if any warning 
 realm workflow validate ./my-workflow --explain  # full per-step structured_output detail
 ```
 
+**One pass reports everything** (issue #424). A workflow can be wrong in more than one way at
+once, and a hard error no longer hides the rest: when validation fails, the loader warnings that
+were live at the moment it failed — a typo and its did-you-mean, a retry advisory — print above
+the error, so a single run gives you the whole defect set. Previously the warnings unwound with
+the failure and only surfaced once the error was fixed, one layer per round trip. The same holds
+for `realm workflow register` and `realm workflow watch`.
+
 Workflows declaring `extensions:` (or validated with `--extensions-module <path>`) are loaded
 file-based, their extension modules are loaded, and step `config` is then validated against each
 resolved adapter's `config_schema` (two-pass). Extension-free workflows keep the historical

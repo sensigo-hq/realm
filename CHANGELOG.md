@@ -44,6 +44,15 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **A hard load error no longer swallows the warnings channel** (issue #424). Errors and warnings
+  travel separately in the loader — errors accumulate and throw once, warnings ride a returned
+  array — so any error threw the warnings away with the stack. A workflow with a prohibited key
+  AND a mistyped one told you about the prohibition, and only about the typo after you had fixed
+  the first and run again: one defect per round trip.
+  `validate`, `register` and `watch` now print the full set in one pass — the warnings, with
+  their did-you-mean hints, above the error that stopped the load. Exit codes are unchanged, and
+  a failure with no warnings looks exactly as it did.
+
 - **The documented MCP tool list named a tool that does not exist, and omitted one that does**
   (issue #420). `list_runs` was documented in the protocol reference and the README and has never
   been registered anywhere — an agent reading either would call a tool that isn't there.

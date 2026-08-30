@@ -45,6 +45,8 @@ async function registerFile(filePath: string, store: WorkflowRegistrar): Promise
     );
   } catch (err) {
     if (err instanceof WorkflowError) {
+      // issue #424 — see the comment at validate.ts's extension-free catch.
+      if (err.warnings !== undefined) printLoaderWarnings(err.warnings);
       console.error(`[${timestamp}] ${renderLoadFailure(err.message)}`);
     } else {
       const message = err instanceof Error ? err.message : String(err);

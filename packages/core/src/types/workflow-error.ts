@@ -1,4 +1,5 @@
 // Structured, categorized error class used throughout the engine.
+import type { LoaderWarning } from '../workflow/diagnostics.js';
 
 export type ErrorCategory = 'NETWORK' | 'SERVICE' | 'STATE' | 'VALIDATION' | 'ENGINE' | 'RESOURCE';
 
@@ -176,6 +177,17 @@ export interface WorkflowErrorOptions {
   stepId?: string;
   attempt?: number;
   retry_after?: number; // seconds; set only for SERVICE_RATE_LIMITED errors
+  /**
+   * issue #424: the loader warnings that were live when this error was thrown. Present only on
+   * loader errors, and only when there were any.
+   *
+   * No current call site populates this — every attachment goes through
+   * `attachLoaderWarnings` after construction, because the throw sites are spread across two
+   * files and the warnings array is not in scope at most of them. The option exists so the
+   * options shape mirrors the fields 1:1 (the `stepId`/`retry_after` convention) and so direct
+   * construction stays possible.
+   */
+  warnings?: readonly LoaderWarning[];
 }
 
 export class WorkflowError extends Error {
@@ -188,6 +200,21 @@ export class WorkflowError extends Error {
   readonly timestamp: string;
   readonly attempt: number;
   readonly retry_after?: number;
+  /**
+   * issue #424: the loader warnings live at the moment this error was thrown — a typo hint, a
+   * retry advisory — so a caller rendering the failure can show the whole defect set at once
+   * instead of revealing the next layer on each fix.
+   *
+   * The SLOT is writable because the loader attaches it after construction (see
+   * `attachLoaderWarnings` in yaml-loader.ts): the throw sites are spread across two files, and
+   * two chokepoints catching-and-attaching cover them all — including every future one — where
+   * per-site construction would not. The VALUE stays readonly, and the helper attaches at most
+   * once, so an inner chokepoint's attachment survives an outer one.
+   *
+   * ABSENT rather than `[]` when there were no warnings: "this error carried none" and "nobody
+   * looked" are different facts and the channel keeps them different.
+   */
+  warnings?: readonly LoaderWarning[];
 
   constructor(message: string, options: WorkflowErrorOptions) {
     super(message);
@@ -201,5 +228,6 @@ export class WorkflowError extends Error {
     this.timestamp = new Date().toISOString();
     this.attempt = options.attempt ?? 1;
     if (options.retry_after !== undefined) this.retry_after = options.retry_after;
+    if (options.warnings !== undefined) this.warnings = options.warnings;
   }
 }

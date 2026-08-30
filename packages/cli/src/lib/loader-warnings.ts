@@ -34,7 +34,7 @@ const REFUSED_CLAUSE = '— REFUSED below';
  * `--strict` path prints its own "failing due to --strict" line, so the author is not left
  * without an explanation.
  */
-export function printLoaderWarnings(warnings: LoaderWarning[]): void {
+export function printLoaderWarnings(warnings: readonly LoaderWarning[]): void {
   for (const w of warnings) {
     const line = renderLoaderWarning(w);
     console.warn(
