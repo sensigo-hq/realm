@@ -123,16 +123,38 @@ function findReasoningLikeTopLevelProperty(schema: unknown): string | undefined 
 }
 
 /**
- * issue #236 (Deliverable 7) — the adoption-without-default-ON nudge. Prints, per
- * `execution: 'agent'` step with an effective schema, the migration DELTA on its OWN INFO
- * channel: structurally NOT a LoaderWarning (plain `console.log`, never routed through
- * `printLoaderWarnings`/the warnings accumulator/`--strict` — that stays a hard zero-diff rail on
- * `loader-warnings.ts`, since ANY new WarningCode there would auto-fail `validate --strict`).
- * Opted-in steps ALSO print here (their own caveats) — the same channel, per design [Rv3]. Never
- * printed for an ineligible-and-opted-in step: the LOADER already rejected that combination at
- * load time, so this function structurally never observes it.
+ * issue #236 (Deliverable 7) — the adoption nudge, on validate's own INFO channel. Structurally
+ * NOT a LoaderWarning (plain `console.log`, never routed through `printLoaderWarnings`/the
+ * warnings accumulator/`--strict` — that stays a hard zero-diff rail on `loader-warnings.ts`,
+ * since ANY new WarningCode there would auto-fail `validate --strict`).
+ *
+ * issue #422 reshaped the FORM, not the purpose. It used to print one line per caveat per step,
+ * which on a green validate of a file that never mentions structured_output meant fourteen lines
+ * (examples/06) or nine (examples/02) of advice nobody asked for. The field's converged answer for
+ * adoption discovery on a clean run is one aggregate line plus a named detail command plus a
+ * durable silencer — npm fund, cargo's future-incompat report, npm audit; no surveyed tool prints
+ * per-item adoption advice on a green run, and npm's RFC 0017 explicitly rejected demoting the
+ * class behind a flag instead. So: a summary by default, the full per-step detail behind
+ * `--explain`, and `REALM_NO_NUDGE=1` to silence.
+ *
+ * THE POLICY THAT DECIDES WHICH STEPS ARE LOUD (rustc's attach-to-the-diagnostic rule, made
+ * written policy here): advice about config the author DECLARED is a diagnostic and always prints;
+ * advice about config they COULD adopt is one line. So an opted-in step's caveats print
+ * unconditionally — `--explain` does not gate them and `REALM_NO_NUDGE` does not silence them —
+ * while a not-opted-in step's detail is exactly what moves behind the flag.
+ *
+ * Never printed for an ineligible-and-opted-in step: the LOADER already rejected that combination
+ * at load time, so this function structurally never observes it.
  */
-function printStructuredOutputNudge(definition: WorkflowDefinition): void {
+function printStructuredOutputNudge(
+  definition: WorkflowDefinition,
+  opts: { explain: boolean },
+): void {
+  // Not-opted-in steps whose detail either renders (--explain) or feeds the summary counts.
+  const ready: string[] = []; // eligible | eligible_with_caveats
+  const withCaveats: string[] = []; // the subset of `ready` carrying >=1 caveat
+  const oneAway: string[] = []; // ineligible
+
   for (const [stepName, step] of Object.entries(definition.steps)) {
     if (step.execution !== 'agent') continue;
     const effectiveSchema = step.output_schema ?? step.input_schema;
@@ -146,43 +168,108 @@ function printStructuredOutputNudge(definition: WorkflowDefinition): void {
     });
     const reasoningProp = findReasoningLikeTopLevelProperty(effectiveSchema);
 
-    if (verdict.verdict === 'ineligible') {
-      // Opted-in + ineligible is unreachable (the loader already rejected it) — this is always
-      // the "here's what you're one step short of" migration nudge for a NOT-opted-in step.
-      console.log(
-        `ℹ Step '${stepName}': structured_output: strict — one line short: ` +
-          `${renderIneligibleMessage(verdict.reasons)}`,
-      );
+    // An opted-in step's advice is about DECLARED config: a diagnostic, printed here and now
+    // whatever the flags say. It is also EXCLUDED from the summary's census entirely — its
+    // surface is this branch, never the aggregate line.
+    if (optedIn) {
+      if (verdict.verdict !== 'eligible_with_caveats') continue;
+      for (const caveat of verdict.caveats) {
+        console.log(`ℹ Step '${stepName}': structured_output caveat — ${caveat.remediation}`);
+      }
+      printReasoningAnnotation(stepName, reasoningProp);
       continue;
     }
 
-    if (verdict.verdict === 'eligible_with_caveats') {
-      const prefix = optedIn
-        ? `ℹ Step '${stepName}': structured_output caveat`
-        : `ℹ Step '${stepName}': eligible for structured_output: strict, with caveat`;
-      for (const caveat of verdict.caveats) {
-        console.log(`${prefix} — ${caveat.remediation}`);
-      }
-      if (reasoningProp !== undefined) {
+    if (verdict.verdict === 'ineligible') {
+      oneAway.push(stepName);
+      if (opts.explain) {
         console.log(
-          `ℹ Step '${stepName}': the optional '${reasoningProp}' property looks like a ` +
-            `reasoning field — see the optional_emission caveat above (position matters: with ` +
-            `default thinking there is no regression; on non-thinking configurations prefer ` +
-            `'required' + first property order — see docs/reference/yaml-schema.md).`,
+          `ℹ Step '${stepName}': structured_output: strict — one line short: ` +
+            `${renderIneligibleMessage(verdict.reasons)}`,
         );
+      }
+      continue;
+    }
+
+    ready.push(stepName);
+    if (verdict.verdict === 'eligible_with_caveats') {
+      // `eligible_with_caveats` with zero caveats is unconstructible — the assessor mints that
+      // verdict only when it has at least one — so the verdict IS the caveated subset.
+      withCaveats.push(stepName);
+      if (opts.explain) {
+        for (const caveat of verdict.caveats) {
+          console.log(
+            `ℹ Step '${stepName}': eligible for structured_output: strict, with caveat — ` +
+              `${caveat.remediation}`,
+          );
+        }
+        printReasoningAnnotation(stepName, reasoningProp);
       }
       continue;
     }
 
     // eligible, zero caveats — NEVER printed bare (census: this is a rare, fully-required
     // schema). Always paired with the concrete next step.
-    if (!optedIn) {
+    if (opts.explain) {
       console.log(
         `ℹ Step '${stepName}': eligible for structured_output: strict — add ` +
           `'structured_output: strict' to opt in.`,
       );
     }
   }
+
+  // `--explain` REPLACES the summary with the detail above — an explicit ask for detail should
+  // not also get the pointer telling you how to ask for it.
+  if (opts.explain) return;
+  // Read at call time, never captured at module scope (the #285 class). An explicit `--explain`
+  // beats a standing preference, which is why this check sits below the return above.
+  if (process.env['REALM_NO_NUDGE'] === '1') return;
+
+  const line = renderNudgeSummary(ready.length, withCaveats.length, oneAway.length);
+  if (line !== undefined) console.log(line);
+}
+
+/** The reasoning-position annotation, printed beside a caveat list wherever one renders. */
+function printReasoningAnnotation(stepName: string, reasoningProp: string | undefined): void {
+  if (reasoningProp === undefined) return;
+  console.log(
+    `ℹ Step '${stepName}': the optional '${reasoningProp}' property looks like a ` +
+      `reasoning field — see the optional_emission caveat above (position matters: with ` +
+      `default thinking there is no regression; on non-thinking configurations prefer ` +
+      `'required' + first property order — see docs/reference/yaml-schema.md).`,
+  );
+}
+
+/**
+ * The one graded summary line (issue #422), or `undefined` when there is nothing to say.
+ *
+ * The tail teaches BOTH escape routes in the one line it gets — the detail command (npm's
+ * "Run `npm fund` for details", cargo's named report command) fused with the silencer (git's
+ * squelch-teaching advice hints). A reader who wants more and a reader who wants less are both
+ * served without a second line.
+ *
+ * Each clause pluralizes on its OWN count, and a zero-valued clause is omitted rather than
+ * rendered as a zero. The caveats parenthetical and the one-change-away clause are independent:
+ * gating the second on the first would silently drop it for a file whose ready steps are all
+ * caveat-free.
+ */
+function renderNudgeSummary(
+  ready: number,
+  withCaveats: number,
+  oneAway: number,
+): string | undefined {
+  if (ready === 0 && oneAway === 0) return undefined;
+  const steps = (n: number): string => (n === 1 ? 'step' : 'steps');
+  const tail = ` — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).`;
+
+  if (ready === 0) {
+    return `ℹ ${oneAway} ${steps(oneAway)} one change away from structured_output: strict${tail}`;
+  }
+
+  let line = `ℹ ${ready} ${steps(ready)} ready for structured_output: strict`;
+  if (withCaveats > 0) line += ` (${withCaveats} with caveats)`;
+  if (oneAway > 0) line += `, ${oneAway} ${steps(oneAway)} one change away`;
+  return line + tail;
 }
 
 /**
@@ -226,96 +313,109 @@ export const validateCommand = new Command('validate')
     '--strict',
     'Exit non-zero if any loader warning is present (unknown keys, retry-without-timeout, sentinel credentials — issue #169)',
   )
+  .option(
+    '--explain',
+    'Print the full per-step structured_output adoption detail instead of the one-line summary the default run prints (issue #422)',
+  )
   .description('Validate a workflow YAML file')
-  .action(async (inputPath: string, opts: { extensionsModule?: string; strict?: boolean }) => {
-    const filePath =
-      inputPath.endsWith('.yaml') || inputPath.endsWith('.yml')
-        ? inputPath
-        : join(inputPath, 'workflow.yaml');
-    const strict = opts.strict === true;
+  .action(
+    async (
+      inputPath: string,
+      opts: { extensionsModule?: string; strict?: boolean; explain?: boolean },
+    ) => {
+      const filePath =
+        inputPath.endsWith('.yaml') || inputPath.endsWith('.yml')
+          ? inputPath
+          : join(inputPath, 'workflow.yaml');
+      const strict = opts.strict === true;
+      const explain = opts.explain === true;
 
-    let content: string;
-    try {
-      content = readFileSync(filePath, 'utf8');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`Error: ${message}`);
-      process.exit(1);
-      return;
-    }
-
-    if (!hasTopLevelExtensions(content) && opts.extensionsModule === undefined) {
-      // Extension-free: the exact current from-string path — byte-identical behavior,
-      // plus the orphaned-manifest guard (#123). The from-string loader stamps no
-      // source_dir/trust_root, so resolve the same trust root the file-based path would
-      // (findTrustRoot walks package.json/.git from the workflow dir) and run the guard
-      // structural-first — after the workflow parses, before the `Valid:` print. It throws
-      // WorkflowError, which the catch below renders as `Invalid:` + exit(1). resolve()
-      // before dirname so a relative `workflow.yaml` doesn't collapse the walk to '.'.
+      let content: string;
       try {
-        const { definition, warnings: loaderWarnings } =
-          loadWorkflowFromStringWithDiagnostics(content);
-        const workflowDir = dirname(resolve(filePath));
-        checkForOrphanedManifests(workflowDir, findTrustRoot(workflowDir));
+        content = readFileSync(filePath, 'utf8');
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+        return;
+      }
 
-        const accumulated = [...loaderWarnings, ...findRetryWithoutExplicitTimeout(definition)];
+      if (!hasTopLevelExtensions(content) && opts.extensionsModule === undefined) {
+        // Extension-free: the exact current from-string path — byte-identical behavior,
+        // plus the orphaned-manifest guard (#123). The from-string loader stamps no
+        // source_dir/trust_root, so resolve the same trust root the file-based path would
+        // (findTrustRoot walks package.json/.git from the workflow dir) and run the guard
+        // structural-first — after the workflow parses, before the `Valid:` print. It throws
+        // WorkflowError, which the catch below renders as `Invalid:` + exit(1). resolve()
+        // before dirname so a relative `workflow.yaml` doesn't collapse the walk to '.'.
+        try {
+          const { definition, warnings: loaderWarnings } =
+            loadWorkflowFromStringWithDiagnostics(content);
+          const workflowDir = dirname(resolve(filePath));
+          checkForOrphanedManifests(workflowDir, findTrustRoot(workflowDir));
+
+          const accumulated = [...loaderWarnings, ...findRetryWithoutExplicitTimeout(definition)];
+          if (rejectIfPolicyEscalates(accumulated)) {
+            process.exit(1);
+          }
+          const strictFailed = printValidationOutcome(definition, accumulated, strict);
+          // issue #236: the nudge's own INFO channel — never affects the exit code below.
+          printStructuredOutputNudge(definition, { explain });
+          if (strictFailed) {
+            process.exit(1);
+          }
+        } catch (err) {
+          if (err instanceof WorkflowError) {
+            console.error(renderLoadFailure(err.message));
+            process.exit(1);
+          }
+          throw err;
+        }
+        return;
+      }
+
+      // Extensions declared (or an override supplied): file-based two-pass validation.
+      try {
+        // Pass 1: structural validation + extension resolution metadata (source_dir/trust_root).
+        // The universal, registry-independent structural load — its warnings are what we count.
+        const { definition, warnings: pass1Warnings } =
+          loadWorkflowFromFileWithDiagnostics(filePath);
+        const { registry, manifest, sentinelWarnings } = await loadProjectExtensions(definition, {
+          ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
+          secretMode: 'sentinel',
+        });
+        // Pass 2: step config validated against each resolved adapter's config_schema. Same
+        // content as pass 1, registry only adds config_schema checks — its warnings are proven
+        // identical to pass 1's, so they are deliberately discarded here (not collected) to avoid
+        // double-counting the same unknown key twice.
+        loadWorkflowFromFileWithDiagnostics(filePath, registry);
+
+        const accumulated = [
+          ...pass1Warnings,
+          ...findRetryWithoutExplicitTimeout(definition),
+          ...wrapSentinelWarnings(sentinelWarnings),
+        ];
         if (rejectIfPolicyEscalates(accumulated)) {
           process.exit(1);
         }
         const strictFailed = printValidationOutcome(definition, accumulated, strict);
+        if (manifest.modules.length > 0) {
+          console.log(
+            `Extensions: ${manifest.modules.map((m) => m.declared).join(', ')} ` +
+              `(adapters: ${manifest.adapters.length}, handlers: ${manifest.handlers.length}, ` +
+              `processors: ${manifest.processors.length})`,
+          );
+        }
         // issue #236: the nudge's own INFO channel — never affects the exit code below.
-        printStructuredOutputNudge(definition);
+        // issue #422: genuinely end-of-report, BELOW the Extensions block — the summary is a
+        // pointer at what you could do next, not part of what was just validated.
+        printStructuredOutputNudge(definition, { explain });
         if (strictFailed) {
           process.exit(1);
         }
       } catch (err) {
-        if (err instanceof WorkflowError) {
-          console.error(renderLoadFailure(err.message));
-          process.exit(1);
-        }
-        throw err;
-      }
-      return;
-    }
-
-    // Extensions declared (or an override supplied): file-based two-pass validation.
-    try {
-      // Pass 1: structural validation + extension resolution metadata (source_dir/trust_root).
-      // The universal, registry-independent structural load — its warnings are what we count.
-      const { definition, warnings: pass1Warnings } = loadWorkflowFromFileWithDiagnostics(filePath);
-      const { registry, manifest, sentinelWarnings } = await loadProjectExtensions(definition, {
-        ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
-        secretMode: 'sentinel',
-      });
-      // Pass 2: step config validated against each resolved adapter's config_schema. Same
-      // content as pass 1, registry only adds config_schema checks — its warnings are proven
-      // identical to pass 1's, so they are deliberately discarded here (not collected) to avoid
-      // double-counting the same unknown key twice.
-      loadWorkflowFromFileWithDiagnostics(filePath, registry);
-
-      const accumulated = [
-        ...pass1Warnings,
-        ...findRetryWithoutExplicitTimeout(definition),
-        ...wrapSentinelWarnings(sentinelWarnings),
-      ];
-      if (rejectIfPolicyEscalates(accumulated)) {
+        console.error(renderLoadFailure(err instanceof Error ? err.message : String(err)));
         process.exit(1);
       }
-      const strictFailed = printValidationOutcome(definition, accumulated, strict);
-      // issue #236: the nudge's own INFO channel — never affects the exit code below.
-      printStructuredOutputNudge(definition);
-      if (manifest.modules.length > 0) {
-        console.log(
-          `Extensions: ${manifest.modules.map((m) => m.declared).join(', ')} ` +
-            `(adapters: ${manifest.adapters.length}, handlers: ${manifest.handlers.length}, ` +
-            `processors: ${manifest.processors.length})`,
-        );
-      }
-      if (strictFailed) {
-        process.exit(1);
-      }
-    } catch (err) {
-      console.error(renderLoadFailure(err instanceof Error ? err.message : String(err)));
-      process.exit(1);
-    }
-  });
+    },
+  );

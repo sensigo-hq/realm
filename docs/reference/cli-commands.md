@@ -84,6 +84,7 @@ and invalid `depends_on` references.
 ```bash
 realm workflow validate ./my-workflow
 realm workflow validate ./my-workflow --strict   # fail (exit 1) if any warning is present
+realm workflow validate ./my-workflow --explain  # full per-step structured_output detail
 ```
 
 Workflows declaring `extensions:` (or validated with `--extensions-module <path>`) are loaded
@@ -98,6 +99,10 @@ exits `0` — the workflow is `Valid:` regardless. `--strict` changes that: if *
 present, the summary line names the count and the command exits `1` instead. Nothing is checked
 that isn't already checked without the flag — `--strict` only changes what counts as success, so
 it's meant for CI gates that want to catch a typo before it reaches `register`.
+
+**`--explain` (issue #422):** prints the full per-step `structured_output` adoption detail
+described below, in place of the one-line summary a default run prints. It changes nothing about
+what is validated and nothing about the exit code.
 
 ```bash
 $ realm workflow validate ./my-workflow
@@ -126,19 +131,30 @@ per message. Workflow-scoped errors — a dependency cycle, a missing required f
 file to point at. A position is omitted rather than approximated whenever it cannot be resolved
 exactly.
 
-**The `structured_output` adoption nudge (issue #236):** for every `execution: agent` step with an
-effective schema, `validate` also prints, on its own informational line (`ℹ`, never a `⚠`
-warning), whether that step is eligible for `structured_output: strict` and what — if
-anything — stands in the way. This is pure information: it never affects `--strict`'s exit code,
-and it prints whether or not the step has actually opted in (an opted-in step's OWN caveats print
-here too). See [`structured_output`](yaml-schema.md#structured_output-anthropic-strict-decoding)
-for the full gate table.
+**The `structured_output` adoption nudge (issues #236, #422):** `validate` looks at every
+`execution: agent` step with an effective schema and works out whether it could adopt
+`structured_output: strict`, and what — if anything — stands in the way. All of it is pure
+information on its own line (`ℹ`, never a `⚠` warning); none of it affects `--strict`'s exit code.
+
+A default run says it in **one line**, graded by how far each step has to go:
 
 ```bash
-$ realm workflow validate ./my-workflow
-Valid: my-workflow v1 (2 steps)
-ℹ Step 'classify': structured_output: strict — one line short: add additionalProperties: false at 'the schema root'
+$ realm workflow validate examples/02-ticket-classifier
+Valid: ticket-classifier v1 (4 steps)
+ℹ 2 steps ready for structured_output: strict (2 with caveats) — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).
 ```
+
+`--explain` swaps that line for the per-step detail — which step, which caveat, which one line it
+is short. `REALM_NO_NUDGE=1` silences the summary for good; an explicit `--explain` still prints,
+because asking for detail beats a standing preference not to be told.
+
+**A step that has already opted in is different, and always loud.** Its caveats print on every
+run — `--explain` does not gate them and `REALM_NO_NUDGE` does not silence them — and it is left
+out of the summary's counts entirely. The rule behind that split: advice about config you
+DECLARED is a diagnostic, and advice about config you COULD adopt is one line you can turn off.
+
+See [`structured_output`](yaml-schema.md#structured_output-anthropic-strict-decoding) for the full
+gate table.
 
 ---
 

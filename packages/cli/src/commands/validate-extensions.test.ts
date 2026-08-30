@@ -2,7 +2,7 @@
 //  - extension-free workflows keep the EXACT current output (golden test on a repo example);
 //  - a declaring workflow gets config_schema two-pass validation against the resolved
 //    registry (a custom adapter config violation is caught at validate time).
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { execFile } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,11 +27,29 @@ function runValidate(args: string[]): Promise<{ code: number; stdout: string; st
   });
 }
 
+// issue #422: the golden and the order cell below both assert a summary line that
+// `REALM_NO_NUDGE=1` suppresses, so an operator with it exported in their shell would red them.
+// `execFile` is given no `env`, so the child inherits the caller's LIVE `process.env` at call
+// time — clearing it here is visible to the spawned CLI, no explicit spawn-env needed. (Verified
+// by defanging this delete under an ambient export: exactly these two cells red.)
+let savedNoNudge: string | undefined;
+beforeEach(() => {
+  savedNoNudge = process.env['REALM_NO_NUDGE'];
+  delete process.env['REALM_NO_NUDGE'];
+});
+afterEach(() => {
+  if (savedNoNudge === undefined) delete process.env['REALM_NO_NUDGE'];
+  else process.env['REALM_NO_NUDGE'] = savedNoNudge;
+});
+
 describe('realm workflow validate — golden (extension-free byte-identical)', () => {
-  // issue #236: the golden output gained the structured_output nudge's own INFO lines — the
-  // sweep added `additionalProperties: false` to this example's step schemas (Deliverable 8),
-  // making both agent steps eligible_with_caveats (pattern/minLength/maxLength are all post-hoc-
-  // only under strict). Updated deliberately, not a silent snapshot bump — see the report.
+  // issue #236 gave this golden the structured_output nudge's own INFO lines — the sweep added
+  // `additionalProperties: false` to this example's step schemas (Deliverable 8), making both
+  // agent steps eligible_with_caveats (pattern/minLength/maxLength are all post-hoc-only under
+  // strict). issue #422 then collapsed those NINE per-caveat lines — seven for `identify_ticket`,
+  // two for `classify_ticket`, neither step opted in — into the ONE aggregate line below. The
+  // detail is not gone; it is behind `validate --explain`. Updated deliberately, not a silent
+  // snapshot bump — see the report.
   it('validates the existing ticket-classifier example with the exact current output', async () => {
     const { code, stdout, stderr } = await runValidate([
       join(REPO_ROOT, 'examples', '02-ticket-classifier', 'workflow.yaml'),
@@ -39,15 +57,7 @@ describe('realm workflow validate — golden (extension-free byte-identical)', (
     expect(stderr).toBe('');
     expect(stdout).toBe(
       'Valid: ticket-classifier v1 (4 steps)\n' +
-        "ℹ Step 'identify_ticket': eligible for structured_output: strict, with caveat — 'pattern' at 'properties.customer_id' is silently ignored or rejected by the API — enforced post-hoc by realm's own validation only\n" +
-        "ℹ Step 'identify_ticket': eligible for structured_output: strict, with caveat — 'minLength' at 'properties.product_area' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n" +
-        "ℹ Step 'identify_ticket': eligible for structured_output: strict, with caveat — 'maxLength' at 'properties.product_area' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n" +
-        "ℹ Step 'identify_ticket': eligible for structured_output: strict, with caveat — 'minLength' at 'properties.product_version' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n" +
-        "ℹ Step 'identify_ticket': eligible for structured_output: strict, with caveat — 'maxLength' at 'properties.product_version' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n" +
-        "ℹ Step 'identify_ticket': eligible for structured_output: strict, with caveat — 'minLength' at 'properties.reported_issue' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n" +
-        "ℹ Step 'identify_ticket': eligible for structured_output: strict, with caveat — 'maxLength' at 'properties.reported_issue' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n" +
-        "ℹ Step 'classify_ticket': eligible for structured_output: strict, with caveat — 'minLength' at 'properties.summary' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n" +
-        "ℹ Step 'classify_ticket': eligible for structured_output: strict, with caveat — 'maxLength' at 'properties.summary' is silently ignored or rejected by the API — either way enforced post-hoc by realm\n",
+        "ℹ 2 steps ready for structured_output: strict (2 with caveats) — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).\n",
     );
     expect(code).toBe(0);
   }, 20_000);
@@ -123,6 +133,113 @@ ${config}
     expect(stdout).toContain('Valid: cfg-wf v1 (1 steps)');
     expect(stdout).toContain('Extensions: ../../dist/registry.js');
     expect(code).toBe(0);
+  }, 20_000);
+
+  it('the summary still prints on this branch when --strict is FAILING the run', async () => {
+    // The extensions-path twin of the extension-free cell in
+    // validate-structured-output-nudge.test.ts. Both call sites reach their exit through
+    // `strictFailed` with the nudge in between, and each needed its own cell: a mutant that
+    // skips the nudge on one branch leaves the other's cell green.
+    //
+    // This file is spawn-based, so the assertion is the CHILD's real exit code from
+    // `runValidate` — an in-process `vi.spyOn(process, 'exit')` here would mock the test
+    // runner's own exit and could never observe the child, which is an assertion that can only
+    // ever pass. `retry:` on the agent step mints RETRY_INERT_NON_AUTO (warn), which fails
+    // --strict without escalating.
+    const file = join(workflowDir, 'workflow.yaml');
+    writeFileSync(
+      file,
+      `
+id: cfg-wf-strict
+name: Config WF Strict
+version: 1
+extensions: ../../dist/registry.js
+services:
+  custom_svc:
+    adapter: custom_adapter
+    trust: engine_managed
+steps:
+  fetch_data:
+    description: fetch
+    execution: auto
+    uses_service: custom_svc
+    config:
+      needed_key: value
+  summarise:
+    description: summarise
+    execution: agent
+    depends_on: [fetch_data]
+    retry:
+      max_attempts: 3
+    output_schema:
+      type: object
+      required: [summary]
+      properties:
+        summary: { type: string }
+`,
+      'utf8',
+    );
+
+    const { code, stdout } = await runValidate([file, '--strict']);
+
+    expect(code).not.toBe(0);
+    expect(stdout).toContain('failing due to --strict');
+    expect(stdout).toContain(
+      "ℹ 1 step one change away from structured_output: strict — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).",
+    );
+  }, 20_000);
+
+  it('(i) the adoption summary is genuinely end-of-report — below the Extensions block', async () => {
+    // issue #422: the summary points at what you could do NEXT, so it belongs after everything
+    // that describes what was just validated. On this path that means below `Extensions:`, which
+    // is where the nudge call moved. The agent step carries no `agent_profile`, so profile
+    // resolution is skipped entirely and no profiles machinery is needed here.
+    const file = join(workflowDir, 'workflow.yaml');
+    writeFileSync(
+      file,
+      `
+id: cfg-wf-order
+name: Config WF Order
+version: 1
+extensions: ../../dist/registry.js
+services:
+  custom_svc:
+    adapter: custom_adapter
+    trust: engine_managed
+steps:
+  fetch_data:
+    description: fetch
+    execution: auto
+    uses_service: custom_svc
+    config:
+      needed_key: value
+  summarise:
+    description: summarise
+    execution: agent
+    depends_on: [fetch_data]
+    output_schema:
+      type: object
+      additionalProperties: false
+      required: [summary]
+      properties:
+        summary: { type: string, pattern: "^[a-z]+$" }
+`,
+      'utf8',
+    );
+    const { code, stdout } = await runValidate([file]);
+    expect(code).toBe(0);
+
+    const lines = stdout.trimEnd().split('\n');
+    const validAt = lines.findIndex((l) => l.startsWith('Valid:'));
+    const extensionsAt = lines.findIndex((l) => l.startsWith('Extensions:'));
+    const summaryAt = lines.findIndex((l) => l.startsWith('ℹ'));
+    // Non-vacuity: all three actually printed, so the ordering below compares real positions.
+    expect(validAt).toBeGreaterThanOrEqual(0);
+    expect(extensionsAt).toBeGreaterThan(validAt);
+    expect(summaryAt).toBeGreaterThan(extensionsAt);
+    expect(lines[summaryAt]).toBe(
+      "ℹ 1 step ready for structured_output: strict (1 with caveats) — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).",
+    );
   }, 20_000);
 });
 
