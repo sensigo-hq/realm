@@ -242,6 +242,44 @@ describe('watchWorkflow', () => {
   });
 });
 
+// issue #424 — watch reports the whole defect set on a failing reload, same as validate and
+// register. Its render is its own site, so it needs its own cell.
+describe('watch — a hard load error carries its warnings (issue #424)', () => {
+  const BOTH_YAML = `
+id: carry-watch
+name: Carry Watch
+version: 1
+steps:
+  classify:
+    description: classify
+    execution: agent
+    dependson: [nowhere]
+    timeout_seconds: 60
+`;
+
+  it('prints the warning AND the timestamped error in one reload', async () => {
+    const filePath = makeTempFile(BOTH_YAML);
+    const store = makeStore();
+    const controller = new AbortController();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await new Promise((r) => setTimeout(r, 50));
+    controller.abort();
+    await watchPromise;
+
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain("'timeout_seconds' is not valid on execution: agent steps");
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(warned).toContain("unknown key 'dependson'");
+    expect(warned).toContain("did you mean 'depends_on'?");
+    expect(store.registered).toHaveLength(0);
+    vi.restoreAllMocks();
+  });
+});
+
 // issue #417 — watch keeps its timestamp and drops the doubled word. The prefix is checked, not
 // just the absence, so the fix cannot be read as having removed it wholesale.
 describe('watch — a load failure says "invalid" once (issue #417)', () => {

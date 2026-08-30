@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   loadWorkflowFromString,
   loadWorkflowFromFile,
+  attachLoaderWarnings,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from './yaml-loader.js';
 import { WorkflowError } from '../types/workflow-error.js';
@@ -3215,5 +3216,157 @@ steps:
     // Widened past `(line N)` (issue #420): the message must carry NO position in either form,
     // and the bare-`(line N)` pattern no longer excludes a `(step at line N)` regression.
     expect(message).not.toMatch(/line \d+/);
+  });
+});
+
+// =================================================================================================
+// issue #424 — a hard load error carries the loader warnings that were live when it was thrown
+//
+// Errors and warnings travel different channels: errors accumulate and throw once, warnings ride a
+// returned array. On a throw the array unwound with the stack, so a workflow wrong in both ways
+// reported only the error — the author fixed it, re-ran, and met the next layer. Two chokepoints
+// attach on the way out, which covers every throw site in this file, the template resolver's four,
+// and any future one.
+// =================================================================================================
+describe('loader errors carry the warnings channel (issue #424)', () => {
+  /** Loads and returns the WorkflowError it threw, failing loudly if it did not throw. */
+  function caughtFrom(fn: () => unknown): WorkflowError {
+    try {
+      fn();
+    } catch (err) {
+      if (err instanceof WorkflowError) return err;
+      throw err;
+    }
+    throw new Error('expected a WorkflowError');
+  }
+
+  it('CHOKEPOINT 1 — a prohibition thrown from the main collector carries a step-key typo', () => {
+    const err = caughtFrom(() =>
+      loadWorkflowFromString(`
+id: carry-1
+name: Carry 1
+version: 1
+steps:
+  classify:
+    description: classify
+    execution: agent
+    dependson: [nowhere]
+    timeout_seconds: 60
+`),
+    );
+
+    expect(err.message).toContain("'timeout_seconds' is not valid on execution: agent steps");
+    expect(err.warnings).toBeDefined();
+    const typo = err.warnings!.find((w) => w.key === 'dependson');
+    expect(typo).toBeDefined();
+    // The whole structured entry rides, not just its text — a consumer can branch on the code
+    // and hand the author the suggestion without parsing prose.
+    expect(typo!.code).toBe('UNKNOWN_STEP_KEY');
+    expect(typo!.did_you_mean).toBe('depends_on');
+    expect(typo!.step).toBe('classify');
+  });
+
+  it('CHOKEPOINT 1 covers the TEMPLATE RESOLVER too — a different file, no sweep could reach it', () => {
+    // resolveTemplates lives in template-resolver.ts and throws four of its own errors. They
+    // cross this frame, so the chokepoint catches them for free; a per-site sweep of yaml-loader
+    // would have missed the family entirely.
+    const err = caughtFrom(() =>
+      loadWorkflowFromString(`
+id: carry-tmpl
+name: Carry Tmpl
+version: 1
+notakey: true
+steps:
+  expanded:
+    use_template: nonexistent
+    prefix: x
+`),
+    );
+
+    expect(err.warnings).toBeDefined();
+    expect(err.warnings!.some((w) => w.key === 'notakey')).toBe(true);
+  });
+
+  it('CHOKEPOINT 2 — a missing agent_profile throws AFTER the parse, and still carries the typo', () => {
+    // The representative case for the second chokepoint: profile resolution happens in
+    // loadWorkflowFromFileCore, after parseWorkflowString already returned its warnings
+    // successfully. Nothing inside the parser could have attached here.
+    const dir = mkdtempSync(join(tmpdir(), 'realm-424-f1-'));
+    try {
+      const file = join(dir, 'workflow.yaml');
+      writeFileSync(
+        file,
+        `id: carry-2
+name: Carry 2
+version: 1
+steps:
+  classify:
+    description: classify
+    execution: agent
+    agent_profile: nonexistent
+    dependson: [nowhere]
+`,
+        'utf8',
+      );
+
+      const err = caughtFrom(() => loadWorkflowFromFile(file));
+      expect(err.message).toContain("agent_profile 'nonexistent' not found");
+      expect(err.warnings).toBeDefined();
+      expect(err.warnings!.some((w) => w.key === 'dependson')).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a throw with no warnings in scope carries the field ABSENT, never an empty array', () => {
+    // The YAML parse throws before the warnings array exists. Undefined and `[]` are different
+    // claims — "there were none" versus "nobody looked" — and the channel keeps them apart, so
+    // every render site guards on `!== undefined` and gets the right answer.
+    //
+    // The class field is declared, so under the repo's ES2022 target it is an own property whose
+    // VALUE is undefined rather than an absent key — identical to `stepId` and `retry_after`,
+    // the two fields this one follows. `'warnings' in err` is therefore true for every
+    // WorkflowError ever constructed; the value is the fact worth pinning, and it is what
+    // survives JSON.stringify (which drops undefined) and what the CLI guards read.
+    const err = caughtFrom(() => loadWorkflowFromString('id: broken\n  bad: [x\n   nope\n'));
+    expect(err.message).toContain('YAML parse error');
+    expect(err.warnings).toBeUndefined();
+    expect(JSON.parse(JSON.stringify({ warnings: err.warnings }))).toEqual({});
+  });
+
+  it('attachLoaderWarnings is attach-once, and a no-op on an empty set', () => {
+    // Attach-once is what makes the two chokepoints safe to nest: the inner one attaches the
+    // richer set, and the outer one re-catching the same error must not overwrite it.
+    const err = new WorkflowError('x', {
+      code: 'VALIDATION_WORKFLOW_SCHEMA',
+      category: 'VALIDATION',
+      agentAction: 'report_to_user',
+      retryable: false,
+    });
+    expect(err.warnings).toBeUndefined();
+
+    attachLoaderWarnings(err, []);
+    expect(err.warnings).toBeUndefined(); // empty is a no-op, so no `[]` is ever minted
+
+    const first = [
+      {
+        code: 'UNKNOWN_STEP_KEY' as const,
+        severity: 'warn' as const,
+        message: 'a',
+        scope: 'step' as const,
+      },
+    ];
+    attachLoaderWarnings(err, first);
+    expect(err.warnings).toBe(first);
+
+    attachLoaderWarnings(err, [
+      {
+        code: 'UNKNOWN_WORKFLOW_KEY' as const,
+        severity: 'warn' as const,
+        message: 'b',
+        scope: 'workflow' as const,
+      },
+    ]);
+    expect(err.warnings).toBe(first); // the second attach did nothing
   });
 });

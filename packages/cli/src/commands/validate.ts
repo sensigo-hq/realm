@@ -366,6 +366,12 @@ export const validateCommand = new Command('validate')
           }
         } catch (err) {
           if (err instanceof WorkflowError) {
+            // issue #424: a hard load error carries the warnings that were live when it was
+            // thrown, so one run reports the whole defect set instead of revealing the next
+            // layer after each fix. Printed BEFORE the error, matching both existing paths
+            // (printValidationOutcome and the policy escalation). These never reach the
+            // --strict accumulator — the run is already failing — so exit codes are unchanged.
+            if (err.warnings !== undefined) printLoaderWarnings(err.warnings);
             console.error(renderLoadFailure(err.message));
             process.exit(1);
           }
@@ -414,6 +420,11 @@ export const validateCommand = new Command('validate')
           process.exit(1);
         }
       } catch (err) {
+        // issue #424, the extensions-path twin of the catch above. The non-WorkflowError arm is
+        // untouched: this branch renders any Error by design, and only the warnings render is new.
+        if (err instanceof WorkflowError && err.warnings !== undefined) {
+          printLoaderWarnings(err.warnings);
+        }
         console.error(renderLoadFailure(err instanceof Error ? err.message : String(err)));
         process.exit(1);
       }

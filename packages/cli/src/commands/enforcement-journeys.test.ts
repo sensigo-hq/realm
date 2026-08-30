@@ -438,6 +438,135 @@ steps:
 // A shared helper nothing calls is the same defect as no helper — and both renders reach an author
 // on the path they use, not through the function.
 // =================================================================================================
+// =================================================================================================
+// issue #424 — a hard load error carries the warnings channel
+//
+// A workflow can be wrong in two ways at once: a key the loader REFUSES and a key it only warns
+// about. The refusal threw, the warnings array unwound with the stack, and the author saw only the
+// error — fixed it, re-ran, and only then met the typo. One defect per round trip.
+// =================================================================================================
+describe('#424 — one run reports the whole defect set', () => {
+  /** A prohibited key (throws) AND a typo (warns) in the same file. */
+  const BOTH = `
+id: carry-424
+name: Carry 424
+version: 1
+steps:
+  classify:
+    description: classify
+    execution: agent
+    dependson: [nowhere]
+    timeout_seconds: 60
+`;
+
+  it('validate renders the warning AND the error in one pass (extension-free)', async () => {
+    const result = await validate(write(BOTH));
+    expect(result.refused).toBe(true);
+    // The error, unchanged.
+    expect(result.out).toContain("'timeout_seconds' is not valid on execution: agent steps");
+    // And the warning that used to unwind with it — in its SUBSTITUTED form, because
+    // printLoaderWarnings rewrites "— ignored" to "— REFUSED below" for a code this boundary
+    // refuses, and that claim is true here: the line below it IS the refusal.
+    expect(result.out).toContain("unknown key 'dependson'");
+    expect(result.out).toContain('— REFUSED below');
+    expect(result.out).toContain("did you mean 'depends_on'?");
+  });
+
+  it('the EXTENSIONS path carries them too — the second render, separately wired', async () => {
+    // Same fork the #417 cell below documents: validate has two independent catches, and the
+    // adjacent comment records that reverting one alone left the whole cli suite green.
+    //
+    // The `extensions:` VALUE has to be well-formed, not merely present. A malformed one throws
+    // its own shape error first and the cell would then pass on the wrong error entirely — the
+    // module never has to resolve, because the prohibition throws in pass 1, before extension
+    // resolution runs.
+    const withExtensions = `
+id: carry-424-ext
+name: Carry 424 Ext
+version: 1
+extensions: ./dist/registry.js
+steps:
+  classify:
+    description: classify
+    execution: agent
+    dependson: [nowhere]
+    timeout_seconds: 60
+`;
+    const result = await validate(write(withExtensions));
+    expect(result.refused).toBe(true);
+    expect(result.out).toContain("'timeout_seconds' is not valid on execution: agent steps");
+    expect(result.out).toContain("unknown key 'dependson'");
+    expect(result.out).toContain("did you mean 'depends_on'?");
+  });
+
+  it('the warning prints BEFORE the error', async () => {
+    // The `validate` helper above concatenates per-spy groups, so its output is order-blind and a
+    // pin over it would be vacuously green. This cell captures into ONE shared sink instead, so
+    // the indices below are real emission order. (Standing instrument caveat — do not "fix" the
+    // helper; this is the pattern for any cross-channel order pin.)
+    const emitted: string[] = [];
+    const sink = (...args: unknown[]): void => void emitted.push(String(args[0]));
+    warnSpy.mockImplementation(sink);
+    errorSpy.mockImplementation(sink);
+    logSpy.mockImplementation(sink);
+
+    try {
+      await validateCommand.parseAsync([write(BOTH)], { from: 'user' });
+    } catch {
+      /* process.exit throws in this harness */
+    }
+
+    const warningAt = emitted.findIndex((l) => l.includes("unknown key 'dependson'"));
+    const errorAt = emitted.findIndex((l) => l.includes('Invalid workflow:'));
+    // Non-vacuity first: an order comparison between two -1s would pass for a run that printed
+    // neither.
+    expect(warningAt).toBeGreaterThanOrEqual(0);
+    expect(errorAt).toBeGreaterThanOrEqual(0);
+    expect(warningAt).toBeLessThan(errorAt);
+  });
+
+  it('--strict changes nothing: same output, same exit', async () => {
+    logSpy.mockClear();
+    warnSpy.mockClear();
+    errorSpy.mockClear();
+    exitSpy.mockClear();
+    await expect(
+      validateCommand.parseAsync([write(BOTH), '--strict'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+
+    const all = [logSpy, warnSpy, errorSpy]
+      .flatMap((spy) => spy.mock.calls.map((c: unknown[]) => String(c[0])))
+      .join('\n');
+    expect(all).toContain("unknown key 'dependson'");
+    expect(all).toContain("'timeout_seconds' is not valid on execution: agent steps");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    // Exactly one render of each — throw-path warnings never reach the --strict accumulator, so
+    // nothing double-prints.
+    const warningLines = all.split('\n').filter((l) => l.includes("unknown key 'dependson'"));
+    expect(warningLines).toHaveLength(1);
+  });
+
+  it('an unparseable file degrades to the error alone — warnings ABSENT, not empty', async () => {
+    // The YAML parse throws before the warnings array exists, so there is nothing to attach and
+    // the field stays absent. "This error carried no warnings" and "nobody looked" are different
+    // facts, and ABSENT is the honest one.
+    const unparseable = 'id: broken\n  bad: [indentation\n   nope\n';
+    const result = await validate(write(unparseable));
+    expect(result.refused).toBe(true);
+    expect(result.out).toContain('YAML parse error');
+    expect(result.out).not.toContain('⚠');
+
+    let caught: unknown;
+    try {
+      loadWorkflowFromString(unparseable);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(WorkflowError);
+    expect((caught as WorkflowError).warnings).toBeUndefined();
+  });
+});
+
 describe('#417 — a load failure says "invalid" once, per command', () => {
   const BAD = `
 id: prefix-demo

@@ -138,3 +138,100 @@ steps:
     rmSync(wfDir, { recursive: true, force: true });
   });
 });
+
+// =================================================================================================
+// issue #424 — register reports the whole defect set in one pass
+//
+// register renders a loader failure at ONE site (the ManifestSecretsError catch above it
+// rethrows into this one), and until now that render dropped the warnings the error was thrown
+// alongside: an author with a prohibited key AND a typo fixed the key, re-ran, and only then met
+// the typo.
+// =================================================================================================
+describe('register — a hard load error carries its warnings (issue #424)', () => {
+  let home: string;
+  let originalHome: string | undefined;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'realm-register-424-'));
+    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
+    originalHome = process.env['HOME'];
+    process.env['HOME'] = home;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
+      throw new Error('process.exit');
+    }) as never);
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = originalHome;
+    vi.restoreAllMocks();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('renders the warning AND the error together', async () => {
+    const wfDir = mkdtempSync(join(tmpdir(), 'realm-register-424-wf-'));
+    writeFileSync(
+      join(wfDir, 'workflow.yaml'),
+      `id: carry-reg
+name: Carry Reg
+version: 1
+steps:
+  classify:
+    description: classify
+    execution: agent
+    dependson: [nowhere]
+    timeout_seconds: 60
+`,
+      'utf8',
+    );
+
+    await expect(registerCommand.parseAsync([wfDir], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain("'timeout_seconds' is not valid on execution: agent steps");
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(warned).toContain("unknown key 'dependson'");
+    expect(warned).toContain("did you mean 'depends_on'?");
+    rmSync(wfDir, { recursive: true, force: true });
+  });
+
+  it('the FILE-path chokepoint carries too: a missing profile still reports the typo', async () => {
+    // This one never reaches the parse collector — `agent_profile` resolution happens in
+    // loadWorkflowFromFileCore, AFTER the parse returned successfully with its warnings. A single
+    // chokepoint inside the parser would leave this case exactly as broken as it was.
+    const wfDir = mkdtempSync(join(tmpdir(), 'realm-register-424-f1-'));
+    writeFileSync(
+      join(wfDir, 'workflow.yaml'),
+      `id: carry-reg-profile
+name: Carry Reg Profile
+version: 1
+steps:
+  classify:
+    description: classify
+    execution: agent
+    agent_profile: nonexistent
+    dependson: [nowhere]
+`,
+      'utf8',
+    );
+
+    await expect(registerCommand.parseAsync([wfDir], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain("agent_profile 'nonexistent' not found");
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(warned).toContain("unknown key 'dependson'");
+    rmSync(wfDir, { recursive: true, force: true });
+  });
+});

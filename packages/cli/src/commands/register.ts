@@ -8,6 +8,7 @@ import {
   loadWorkflowFromFileWithDiagnostics,
   JsonWorkflowStore,
   resolveSeverity,
+  WorkflowError,
 } from '@sensigo/realm';
 import type { WorkflowDefinition, LoaderWarning } from '@sensigo/realm';
 import {
@@ -118,6 +119,12 @@ export const registerCommand = new Command('register')
         console.log(`  ${definition.description}`);
       }
     } catch (err) {
+      // issue #424 — see the comment at validate.ts's extension-free catch. This is the ONLY
+      // render site for a loader failure here: the ManifestSecretsError catch above rethrows
+      // into this one, so rendering there too would double-print.
+      if (err instanceof WorkflowError && err.warnings !== undefined) {
+        printLoaderWarnings(err.warnings);
+      }
       const message = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${message}`);
       process.exit(1);
