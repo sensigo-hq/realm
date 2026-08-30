@@ -583,6 +583,77 @@ steps:
     expect(logged).toContain("the optional 'reasoning' property looks like a reasoning field");
   });
 
+  it('only the exact string "1" silences — REALM_NO_NUDGE=0 still prints', async () => {
+    // The repo's env convention is an exact `=== '1'` match (serve.ts:165), and every other cell
+    // here only ever sets '1' or leaves it unset — so a `!== undefined` check would pass all of
+    // them while silently silencing an operator who wrote `REALM_NO_NUDGE=0` meaning "no, do not
+    // silence". `0`, `false` and empty are all values a person reasonably expects to be OFF.
+    const wfPath = write(`
+id: nudge-env-zero
+name: Nudge Env Zero
+version: 1
+steps:
+  a:
+    description: a
+    execution: agent
+    output_schema:
+      type: object
+      required: [category]
+      properties:
+        category: { type: string }
+`);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    process.env['REALM_NO_NUDGE'] = '0';
+
+    await validateCommand.parseAsync([wfPath], { from: 'user' });
+
+    expect(infoLines(logSpy)).toEqual([
+      'ℹ 1 step one change away from structured_output: strict' + TAIL,
+    ]);
+  });
+
+  it('the summary still prints when --strict is FAILING the run — the INFO channel is independent of the exit code', async () => {
+    // A warn-class warning does not escalate (rejectIfPolicyEscalates is error-only), so
+    // --strict reaches its exit through `strictFailed`, and the nudge sits between the two. No
+    // cell anywhere traversed that path with a nudgeable step, so a change that skipped the
+    // nudge on a failing run would have gone unnoticed — and the whole design of this channel is
+    // that it is independent of whether validation succeeded.
+    //
+    // `retry:` on an agent step mints RETRY_INERT_NON_AUTO, a warn-severity warning — the
+    // cheapest way to make --strict fail without escalating anything.
+    const wfPath = write(`
+id: nudge-strict-failing
+name: Nudge Strict Failing
+version: 1
+steps:
+  classify:
+    description: classify
+    execution: agent
+    retry:
+      max_attempts: 3
+    output_schema:
+      type: object
+      required: [category]
+      properties:
+        category: { type: string }
+`);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
+      throw new Error('process.exit');
+    }) as never);
+
+    await expect(
+      validateCommand.parseAsync([wfPath, '--strict'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    // And the summary printed anyway. `infoLines` filters to `ℹ` only, so the warning and the
+    // `Valid: … failing due to --strict` line cannot stand in for it here.
+    expect(infoLines(logSpy)).toEqual([
+      'ℹ 1 step one change away from structured_output: strict' + TAIL,
+    ]);
+  });
+
   it('(j) --explain on a file with nothing to show prints nothing extra', async () => {
     const wfPath = write(`
 id: nudge-nothing

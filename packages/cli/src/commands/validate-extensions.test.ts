@@ -135,6 +135,60 @@ ${config}
     expect(code).toBe(0);
   }, 20_000);
 
+  it('the summary still prints on this branch when --strict is FAILING the run', async () => {
+    // The extensions-path twin of the extension-free cell in
+    // validate-structured-output-nudge.test.ts. Both call sites reach their exit through
+    // `strictFailed` with the nudge in between, and each needed its own cell: a mutant that
+    // skips the nudge on one branch leaves the other's cell green.
+    //
+    // This file is spawn-based, so the assertion is the CHILD's real exit code from
+    // `runValidate` — an in-process `vi.spyOn(process, 'exit')` here would mock the test
+    // runner's own exit and could never observe the child, which is an assertion that can only
+    // ever pass. `retry:` on the agent step mints RETRY_INERT_NON_AUTO (warn), which fails
+    // --strict without escalating.
+    const file = join(workflowDir, 'workflow.yaml');
+    writeFileSync(
+      file,
+      `
+id: cfg-wf-strict
+name: Config WF Strict
+version: 1
+extensions: ../../dist/registry.js
+services:
+  custom_svc:
+    adapter: custom_adapter
+    trust: engine_managed
+steps:
+  fetch_data:
+    description: fetch
+    execution: auto
+    uses_service: custom_svc
+    config:
+      needed_key: value
+  summarise:
+    description: summarise
+    execution: agent
+    depends_on: [fetch_data]
+    retry:
+      max_attempts: 3
+    output_schema:
+      type: object
+      required: [summary]
+      properties:
+        summary: { type: string }
+`,
+      'utf8',
+    );
+
+    const { code, stdout } = await runValidate([file, '--strict']);
+
+    expect(code).not.toBe(0);
+    expect(stdout).toContain('failing due to --strict');
+    expect(stdout).toContain(
+      "ℹ 1 step one change away from structured_output: strict — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).",
+    );
+  }, 20_000);
+
   it('(i) the adoption summary is genuinely end-of-report — below the Extensions block', async () => {
     // issue #422: the summary points at what you could do NEXT, so it belongs after everything
     // that describes what was just validated. On this path that means below `Extensions:`, which
