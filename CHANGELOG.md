@@ -18,6 +18,20 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- **`realm workflow validate` says the structured_output nudge in one line** (issue #422). It used
+  to print one line per caveat per step — fourteen lines on a green validate of
+  `examples/06-ticket-router`, nine on `examples/02-ticket-classifier`, on files that never
+  mention `structured_output` at all. Now a default run ends with a single graded line: how many
+  steps are ready, how many of those carry caveats, how many are one change away. The full
+  per-step detail is unchanged and moved behind `realm workflow validate --explain`, and
+  `REALM_NO_NUDGE=1` silences the summary for good.
+  A step that has already opted in is unaffected: its caveats print on every run and are never
+  silenced, because advice about config you DECLARED is a diagnostic, while advice about config
+  you COULD adopt is one line you can turn off. Nothing here touches exit codes or `--strict`.
+  The form follows the field: no surveyed tool prints per-item adoption advice on a clean run,
+  and the converged shape everywhere is one aggregate line plus a named detail command plus a
+  durable silencer.
+
 - **Loader line cites now say WHICH line they found** (issue #420). Every positioned loader
   message read `(line N)`, whether the number was the offending key's own line or the step's —
   and the two are often twenty lines apart on a long step. An author sent to the declaration

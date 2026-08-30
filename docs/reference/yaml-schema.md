@@ -1224,10 +1224,13 @@ an MCP consumer combines the run's own `sealed_by_arm` (issue #367 — the recor
 first) + `terminal_reason` (multi-failure runs list all failed
 steps) + `failed_steps` + derived `run_phase`
 instead (the same posture issue #304's `completed_with_failed_steps` finding already established).
-`realm validate` additionally prints a per-step adoption NUDGE on its own informational channel —
-the migration delta for a step that hasn't opted in yet, and the caveat text for one that has —
-never a bare "eligible" (see `realm validate --strict` in [cli-commands.md](cli-commands.md); the
-nudge never affects the exit code).
+`realm validate` additionally prints an adoption NUDGE on its own informational channel. A
+default run says it in one graded line — how many steps are ready, how many carry caveats, how
+many are one change away — and `realm validate --explain` prints the per-step migration delta
+behind it, never a bare "eligible"; `REALM_NO_NUDGE=1` silences the summary. A step that has
+already opted in is the exception: its caveat text prints on every run and is never silenced,
+because advice about DECLARED config is a diagnostic (see
+[cli-commands.md](cli-commands.md); the nudge never affects the exit code).
 
 **Run-health disclosure (issue #316).** A run-health `structured_output_downgraded` finding
 aggregates every step whose disclosed `downgrade_reason` is present — surfacing on live runs via
