@@ -27,11 +27,16 @@ You define workflows in YAML. The engine enforces step order, validates every ag
 npm install -g @sensigo/realm-cli
 ```
 
-**MCP server (global, for AI agent connections)**
+**MCP server (standalone bin)**
 
 ```bash
 npm install -g @sensigo/realm-mcp
 ```
+
+The agent config below uses `realm mcp` from the CLI, which needs no second install. Reach for
+`@sensigo/realm-mcp` when you are embedding the server programmatically, or want the standalone
+`realm-mcp` bin — it runs the same server and the same ten tools, but resolves neither
+workflow-declared project extensions nor the `realm.yaml` deployment manifest.
 
 **Programmatic use**
 
@@ -133,7 +138,7 @@ REALM_SERVE_TOKEN=<secret> realm serve --port 3001
 
 This starts an HTTP MCP server protected by Bearer token authentication. Use `--dev` to skip auth during local development.
 
-Once connected the agent has access to 10 tools: `list_workflows`, `get_workflow_protocol`, `start_run`, `start_run_batch`, `execute_step`, `submit_human_response`, `get_run_state`, `abandon_run`, `create_workflow`, and `list_runs`.
+Once connected the agent has access to 10 tools: `list_workflows`, `get_workflow_protocol`, `start_run`, `start_run_batch`, `execute_step`, `submit_human_response`, `get_run_state`, `abandon_run`, `create_workflow`, and `append_trace`.
 
 The agent calls `list_workflows` to discover registered workflows, then `get_workflow_protocol` for the matched workflow to receive explicit step-by-step instructions. It cannot execute a step out of order or submit output that fails schema validation.
 

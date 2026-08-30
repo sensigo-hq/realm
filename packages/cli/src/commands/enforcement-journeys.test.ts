@@ -351,7 +351,7 @@ steps:
     const first = await validate(write(bad));
     expect(first.refused).toBe(true);
     expect(first.out).toContain('declares tools but the workflow defines no mcp_servers');
-    expect(first.out).toContain('(line 6)');
+    expect(first.out).toContain('(step at line 6)');
     expect(bad.split('\n')[6 - 1]).toContain('ask:');
 
     const fixed = bad.replace('    tools:\n      - github:get_pull_request\n', '');

@@ -171,7 +171,7 @@ steps:
     // an author reading a long step is sent to the field rather than to its declaration. Errors
     // outside that family, like this one, still name the step.
     expect(message).toContain(
-      "Step 'step_two': 'timeout_seconds' is not valid on execution: guard steps (line 8)",
+      "Step 'step_two': 'timeout_seconds' is not valid on execution: guard steps (step at line 8)",
     );
   });
 
@@ -201,7 +201,7 @@ steps:
     const parts = message.replace('Invalid workflow: ', '').split('; ');
     expect(parts.length).toBeGreaterThan(1);
     for (const part of parts) {
-      expect(part, `unpositioned: ${part}`).toContain('(line 5)');
+      expect(part, `unpositioned: ${part}`).toContain('(step at line 5)');
     }
   });
 });

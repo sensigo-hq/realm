@@ -682,13 +682,28 @@ function parseWorkflowString(
   // Finalised after the parse succeeded; resolves a semantic path to its place in the source.
   const sourceMap: SourcePositionMap = positions.finish();
   /**
-   * Appends ` (line N)` when the step's own key can be placed, and nothing when it cannot
+   * Appends ` (step at line N)` when the step's own key can be placed, and nothing when it cannot
    * (issue #392). Used at PUSH time, never at join time — once messages are joined into one
    * string the step each came from is no longer recoverable.
+   *
+   * The suffix names the STEP because that is the only position this helper ever has, and saying
+   * so is the point (issue #420). Across the loader the two forms are univocal:
+   *
+   *   `(line N)`         — the OFFENDING KEY's own line. Minted by `withKeyLine`'s first rung
+   *                        below, and by the unknown-key warnings (`renderUnknownKeyMessage`),
+   *                        which is key-exact-or-absent by construction: every `findUnknownKeys`
+   *                        call site passes a `positionOf` that resolves the offending key's own
+   *                        path, with no step fallback anywhere.
+   *   `(step at line N)` — the STEP's line. This helper, and `withKeyLine`'s fallback rung.
+   *
+   * Before that split both rungs rendered `(line N)`, so an author could not tell a cite that
+   * pointed AT the refused field from one that pointed at the declaration above it. The
+   * structured channel (`line`/`column`/`endLine`/`endColumn`) is unaffected — it always carried
+   * the distinction; only the prose was ambiguous.
    */
   const withStepLine = (stepName: string, message: string): string => {
     const line = sourceMap.posOf(['steps', stepName])?.line;
-    return line === undefined ? message : `${message} (line ${line})`;
+    return line === undefined ? message : `${message} (step at line ${line})`;
   };
 
   /**
@@ -705,11 +720,19 @@ function parseWorkflowString(
    * falls back to the step's line. A `use_template` step, whose keys are synthesized, exists at no
    * line in the file at all and carries no position. Neither guesses — a wrong line number sends
    * an author confidently to the wrong place, which is worse than sending them nowhere.
+   *
+   * The two rungs render DIFFERENTLY (issue #420): rung 1 is ` (line N)`, the key's own line;
+   * rung 2 is ` (step at line N)`, the step's — the same vocabulary `withStepLine` above
+   * documents in full. They were previously indistinguishable, which made the fallback silently
+   * claim to be a key-exact cite. The two lookups are separate rather than one `??` chain for
+   * exactly that reason: a single chain cannot report WHICH rung answered.
    */
   const withKeyLine = (stepName: string, key: string, message: string): string => {
-    const line =
-      sourceMap.posOf(['steps', stepName, key])?.line ?? sourceMap.posOf(['steps', stepName])?.line;
-    return line === undefined ? message : `${message} (line ${line})`;
+    const keyLine = sourceMap.posOf(['steps', stepName, key])?.line;
+    if (keyLine !== undefined) return `${message} (line ${keyLine})`;
+    const stepLine = sourceMap.posOf(['steps', stepName])?.line;
+    if (stepLine !== undefined) return `${message} (step at line ${stepLine})`;
+    return message;
   };
 
   // Step 2: Top-level validation
@@ -1808,7 +1831,7 @@ function parseWorkflowString(
         // issue #392: input_map's errors are minted deep inside a recursive walk that knows only
         // its path string, not the step's position. Collected here and suffixed on the way out,
         // so ONE step's error list never mixes positioned and bare messages — a reader seeing
-        // "(line 12)" on three of five errors would reasonably wonder what is different about
+        // "(step at line 12)" on three of five errors would reasonably wonder what is different about
         // the other two, and nothing is.
         const inputMapErrors: string[] = [];
         validateInputMapNode(

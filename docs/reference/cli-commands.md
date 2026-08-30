@@ -117,11 +117,14 @@ advisory, a dead config block, an unrecognized key inside `retry:` or `gate:`. T
 already deployed with an unknown key keeps running.
 
 The `(line 14)` is the line the offending key sits on ([issue #392](https://github.com/sensigo-hq/realm/issues/392)).
-Step-scoped errors carry the line of their own step, so a step that trips several checks reports
-one line for all of them rather than a different one per message. Workflow-scoped errors — a
-dependency cycle, a missing required field, a bad `services` entry — do not carry a line yet; some
-of them, like a missing field, have no key in the file to point at. A position is omitted rather
-than approximated whenever it cannot be resolved exactly.
+Two forms appear, and they mean different things. `(line N)` always points AT the offending key.
+`(step at line N)` points at the step's own line — used where the message is about the step rather
+than one key, and as the fallback when a key cannot be placed exactly. A step that trips several
+step-scoped checks reports the same `(step at line N)` on all of them rather than a different line
+per message. Workflow-scoped errors — a dependency cycle, a missing required field, a bad
+`services` entry — do not carry a line yet; some of them, like a missing field, have no key in the
+file to point at. A position is omitted rather than approximated whenever it cannot be resolved
+exactly.
 
 **The `structured_output` adoption nudge (issue #236):** for every `execution: agent` step with an
 effective schema, `validate` also prints, on its own informational line (`ℹ`, never a `⚠`
@@ -1037,6 +1040,11 @@ realm listen [workflows...] [--port <n>] [--host <addr>] [--body-timeout-ms <n>]
   that author none. **No default here**, deliberately: absent means each spawned drive uses its
   own 600-second fallback, and its run record then carries no `declared_per_attempt_ms` at all —
   a fallback nobody chose is never recorded as a declaration.
+  The flag governs the drives THIS process spawns, and nothing beyond them: a run later
+  re-attached with `realm agent --run-id` takes that invocation's own `--llm-timeout`, or the
+  default when it carries none — never this one. The clock is per-drive, resolved when the drive
+  starts. Worth knowing because the stuck-run remedy loop sends operators to exactly that
+  re-attach.
 - `--sweep-expired-gates <seconds>` — **opt-in** (issue #291), default OFF: runs a coarse,
   store-wide sweep every `<seconds>` that enacts every expired, enactable gate this store holds —
   not just gates on workflows this `listen` process has mounted. The **user-chosen always-on

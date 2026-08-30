@@ -16,7 +16,27 @@ All notable changes to this project are documented here.
   derives its own fallback and its run record carries no declared per-attempt value — a fallback
   nobody chose is not recorded as a declaration. Behaviour without the flag is unchanged.
 
+### Changed
+
+- **Loader line cites now say WHICH line they found** (issue #420). Every positioned loader
+  message read `(line N)`, whether the number was the offending key's own line or the step's —
+  and the two are often twenty lines apart on a long step. An author sent to the declaration
+  instead of the field had no way to tell which had happened. The prose is now univocal:
+  `(line N)` is always the offending key's own line, and `(step at line N)` is always the step's.
+  Messages that name a key keep the exact text they had; only the ones that were falling back to
+  the step, and the step-scoped messages that never had a key to point at, read differently.
+  The structured channel (`line`, `column`, `endLine`, `endColumn`) is untouched — it always
+  carried the distinction; only the prose was ambiguous.
+
 ### Fixed
+
+- **The documented MCP tool list named a tool that does not exist, and omitted one that does**
+  (issue #420). `list_runs` was documented in the protocol reference and the README and has never
+  been registered anywhere — an agent reading either would call a tool that isn't there.
+  `append_trace`, the real tenth tool, appeared in no document at all. Four separate places each
+  claimed a different number of tools (seven, seven, nine, ten); all four now agree on the ten
+  that are actually registered. The protocol reference also gains a `Connecting` section, which
+  it never had.
 
 - **`create_workflow` no longer swallows unknown top-level and `metadata` keys** (issue #419). The
   per-step sweep has warned about invented step fields since #169, but nothing above a step did:

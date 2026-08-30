@@ -583,17 +583,20 @@ Configure your AI client. **Claude Desktop** (`~/Library/Application Support/Cla
 For hosted platforms that cannot spawn a local subprocess, use `realm serve` instead. See the
 [CLI Reference](reference/cli-commands.md#realm-serve) for details.
 
-The agent has access to 7 MCP tools:
+The agent has access to 10 MCP tools:
 
 | Tool                    | Description                                                        |
 | ----------------------- | ------------------------------------------------------------------ |
 | `list_workflows`        | List all registered workflows                                      |
 | `get_workflow_protocol` | Get step-by-step instructions for a workflow                       |
 | `start_run`             | Start a new run                                                    |
+| `start_run_batch`       | Start many runs of one workflow in a single call                   |
 | `execute_step`          | Submit output for the current agent step                           |
 | `submit_human_response` | Approve or reject a human gate                                     |
 | `get_run_state`         | Inspect the current state of a run                                 |
+| `abandon_run`           | End a non-terminal run without completing it                       |
 | `create_workflow`       | Register a dynamic workflow at runtime and immediately start a run |
+| `append_trace`          | Add trace entries during a step, before submitting it              |
 
 The agent should call `list_workflows` first to discover what is registered, then
 `get_workflow_protocol` for the matched workflow before calling `start_run`. The protocol is

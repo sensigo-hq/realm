@@ -3146,6 +3146,10 @@ ${body}
     const m = load('auto', '    max_tool_calls: 5\n    agent_profile: reviewer');
     expect(m).toContain('(line 15)');
     expect(m).not.toContain('(line 10)');
+    // And it is the KEY-EXACT form, not the fallback (issue #420). Without this the rung-1 and
+    // rung-2 renders would be indistinguishable to the assertion, so a fallback that started
+    // firing here — pointing at the declaration instead of the field — would pass unnoticed.
+    expect(m).not.toContain('step at');
   });
 
   it('FALLBACK 1 — a merge-key body falls back to the STEP line, never a guess', () => {
@@ -3171,7 +3175,9 @@ steps:
       message = (err as WorkflowError).message;
     }
     expect(message).toContain("'agent_profile' is only valid on execution: agent steps");
-    expect(message).toContain('(line 7)'); // `subject:` — the step, since the key is unplaceable
+    // The FALLBACK form, and it says so: `subject:` is the step's line, reached because the key
+    // itself is unplaceable. `(line N)` would have been indistinguishable from a key-exact cite.
+    expect(message).toContain('(step at line 7)');
   });
 
   it('FALLBACK 2 — a TEMPLATED step carries no position at all', () => {
@@ -3206,6 +3212,8 @@ steps:
     }
     expect(message).toContain("Step 'doc_review'");
     expect(message).toContain("'agent_profile' is only valid on execution: agent steps");
-    expect(message).not.toMatch(/\(line \d+\)/);
+    // Widened past `(line N)` (issue #420): the message must carry NO position in either form,
+    // and the bare-`(line N)` pattern no longer excludes a `(step at line N)` regression.
+    expect(message).not.toMatch(/line \d+/);
   });
 });

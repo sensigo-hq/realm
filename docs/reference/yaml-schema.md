@@ -13,10 +13,12 @@ warnings.
 **Source positions** ([issue #392](https://github.com/sensigo-hq/realm/issues/392)) appear on
 loader diagnostics wherever the key can be placed exactly: the prose carries the start line, and
 the structured warnings channel carries the full range (`line`, `column`, `endLine`, `endColumn`,
-1-based). The rewritten prohibition messages (nine today; the rest of the family follows) name the
-KEY's own line where the source position resolves, falling back to the step's line and then to no
-position at all; every other step-scoped error, including the not-yet-rewritten refusals, names the
-line of its step. All four range fields are present
+1-based). The prose form tells you WHICH line it found, so the two are never confused:
+`(line N)` is the offending KEY's own line, and `(step at line N)` is the step's. The rewritten
+prohibition messages (nine today; the rest of the family follows) name the key's own line where the
+source position resolves, falling back to `(step at line N)` and then to no position at all; every
+other step-scoped error, including the not-yet-rewritten refusals, names its step that way too.
+All four range fields are present
 together or absent together, never partially — and they are **absent rather than approximate** when
 a position cannot be resolved exactly, because a wrong line number is worse than none. Two shapes
 resolve to absent by design: a mapping the parser cannot pair key-for-key (a merge key, for
@@ -955,7 +957,7 @@ that authored nothing. Neither ⇒ 600 seconds per attempt.
 **Where it applies.** Realm's own agent drive only — `realm agent`. The MCP `execute_step` path
 never runs through the drive, so a step driven by an external agent is unaffected. A provider
 supplied via `--provider-module` gets the drive-failure RECORD like any other, but not the bound:
-realm cannot impose a ceiling inside code it does not construct the client for (record R-14). The
+realm cannot impose a ceiling inside code it does not construct the client for. The
 VISIBILITY guarantee is universal; the BOUND is realm's own providers.
 
 ### Why the total drive is bounded (issue #401)
@@ -972,7 +974,8 @@ The ceiling forbids exactly two things the SDKs otherwise permit:
 2. **Unbounded server-directed sleeping** — a `Retry-After` the SDK honours can hold a worker for
    as long as the server asks.
 
-**`Retry-After` is OBSERVED, never honored** (record R-4: visibility over obedience). Realm reads
+**`Retry-After` is OBSERVED, never honored** (a recorded design decision: visibility over
+obedience). Realm reads
 all three forms — `retry-after-ms`, a numeric `Retry-After` in seconds, and an HTTP-date
 `Retry-After` — and records the value on the failure as `retry_after_observed_ms` alongside
 `last_observed_status`. Those two fields are what let an operator tell a rate limit apart from a

@@ -4,20 +4,73 @@ Realm exposes 10 MCP tools. This document covers the full protocol: tool call pa
 
 ---
 
+## Connecting
+
+The server ships inside the CLI. Install it, and `realm` is the command an MCP client spawns:
+
+```bash
+npm install -g @sensigo/realm-cli
+```
+
+Workflows come from `realm workflow register` (see [cli-commands](cli-commands.md)), or an agent
+mints one live with `create_workflow`.
+
+The client config is the same everywhere:
+
+```json
+{
+  "mcpServers": {
+    "realm": {
+      "command": "realm",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Where that file lives differs per client — the [README](../../README.md) and
+[getting-started](../getting-started.md) name the paths.
+
+**Project configuration.** A registered workflow that declares `extensions:` or relies on a
+`realm.yaml` deployment manifest resolves both from its own stored trust root. Nothing to
+configure — registration recorded where the workflow came from. Only a definition with _no_
+stored trust root, such as one minted live through `create_workflow`, needs an anchor, and that
+is what `--project <dir>` supplies:
+
+```json
+{ "command": "realm", "args": ["mcp", "--project", "/path/to/deployment"] }
+```
+
+There is deliberately no default. Under stdio the working directory belongs to the client, so a
+default would let any repo a client happens to open resolve its own `realm.yaml` — reading
+secrets and importing code. That is a recorded security decision, not an omission: the manifest
+loads only when an operator types the flag.
+
+**Hosted platforms** that cannot spawn a local subprocess use `realm serve` instead, an HTTP MCP
+server behind a Bearer token — see [cli-commands](cli-commands.md).
+
+**The standalone `realm-mcp` bin** (from `@sensigo/realm-mcp`) runs the same server and exposes
+the same ten tools, but it constructs no registry provider: it resolves neither workflow-declared
+project extensions nor the deployment manifest, so custom adapters, secret bindings, and gate
+notifiers are all absent. It exists for embedding and testing. Interactive operators want
+`realm mcp`.
+
+---
+
 ## Tools
 
-| Tool                    | Description                                                                                                                                                                                                                                                                                                                                                                          |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `list_workflows`        | Returns all registered workflow IDs and names. Call this first to discover what is available.                                                                                                                                                                                                                                                                                        |
-| `get_workflow_protocol` | Returns the full agent briefing for a workflow: step list, input schemas, instructions, rules, and quick_start. Read this before `start_run`.                                                                                                                                                                                                                                        |
-| `start_run`             | Starts a new run for a workflow. Accepts `workflow_id`, optional `params`, optional `idempotency_key` (if supplied and a run with that key already exists for the workflow, the existing run is returned instead of creating a new one), and optional `on_terminal_match` / `on_live_match` policy params — see [Idempotency re-encounter policy](#idempotency-re-encounter-policy). |
-| `start_run_batch`       | Atomically enqueues multiple runs of the same workflow. Accepts a single `workflow_id`, an `items` array (each item has `params` and optional `idempotency_key`), optional `parent_run_id`, and optional `max_items` (default 100). All items are validated before any run is created.                                                                                               |
-| `execute_step`          | Submits agent output for the current step. Accepts `run_id`, `command` (step name), and `params`.                                                                                                                                                                                                                                                                                    |
-| `submit_human_response` | Submits a human gate response. Accepts `run_id`, `gate_id`, and `choice`.                                                                                                                                                                                                                                                                                                            |
-| `get_run_state`         | Returns the current state, evidence chain, and terminal status of a run. When `run_phase` is `aborted`, also returns `abort_context` (guard step ID, evaluated conditions, optional abort message). Also returns `next_actions` + `next_actions_status` (see below).                                                                                                                 |
-| `abandon_run`           | Abandons a non-terminal run — marks it terminal with phase `abandoned`. Accepts `run_id` and optional `reason`. Idempotent; refuses already-terminal runs (`STATE_RUN_TERMINAL`) and `gate_waiting` runs (`STATE_TRANSITION_DENIED` — resolve the gate first). See [Operating & recovering runs](operating-runs.md).                                                                 |
-| `create_workflow`       | Registers a dynamic workflow from a `steps` array and immediately starts a run. No YAML file or `realm register` required.                                                                                                                                                                                                                                                           |
-| `list_runs`             | Lists runs, optionally filtered by `workflow_id` or `status`.                                                                                                                                                                                                                                                                                                                        |
+| Tool                    | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `list_workflows`        | Returns all registered workflow IDs and names. Call this first to discover what is available.                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `get_workflow_protocol` | Returns the full agent briefing for a workflow: step list, input schemas, instructions, rules, and quick_start. Read this before `start_run`.                                                                                                                                                                                                                                                                                                                                                                            |
+| `start_run`             | Starts a new run for a workflow. Accepts `workflow_id`, optional `params`, optional `idempotency_key` (if supplied and a run with that key already exists for the workflow, the existing run is returned instead of creating a new one), and optional `on_terminal_match` / `on_live_match` policy params — see [Idempotency re-encounter policy](#idempotency-re-encounter-policy).                                                                                                                                     |
+| `start_run_batch`       | Atomically enqueues multiple runs of the same workflow. Accepts a single `workflow_id`, an `items` array (each item has `params` and optional `idempotency_key`), optional `parent_run_id`, and optional `max_items` (default 100). All items are validated before any run is created.                                                                                                                                                                                                                                   |
+| `execute_step`          | Submits agent output for the current step. Accepts `run_id`, `command` (step name), and `params`.                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `submit_human_response` | Submits a human gate response. Accepts `run_id`, `gate_id`, and `choice`.                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `get_run_state`         | Returns the current state, evidence chain, and terminal status of a run. When `run_phase` is `aborted`, also returns `abort_context` (guard step ID, evaluated conditions, optional abort message). Also returns `next_actions` + `next_actions_status` (see below).                                                                                                                                                                                                                                                     |
+| `abandon_run`           | Abandons a non-terminal run — marks it terminal with phase `abandoned`. Accepts `run_id` and optional `reason`. Idempotent; refuses already-terminal runs (`STATE_RUN_TERMINAL`) and `gate_waiting` runs (`STATE_TRANSITION_DENIED` — resolve the gate first). See [Operating & recovering runs](operating-runs.md).                                                                                                                                                                                                     |
+| `create_workflow`       | Registers a dynamic workflow from a `steps` array and immediately starts a run. No YAML file or `realm register` required.                                                                                                                                                                                                                                                                                                                                                                                               |
+| `append_trace`          | Submits trace entries incrementally during an agent step, before `execute_step`. Accepts `run_id`, `step_id`, `entries`, and an optional `writer_nonce`. Entries are buffered and merged with any submitted at `execute_step` finalization — durable once this call returns, canonical only once the step completes. Valid only for an agent step that has not yet been claimed; a terminal run is refused (its entries could never be adopted). Advises the caller when the buffer passes 80% of either capacity bound. |
 
 ---
 
