@@ -242,6 +242,65 @@ describe('watchWorkflow', () => {
   });
 });
 
+// issue #425 — watch's own lines carry a timestamp and its warnings block did not, so on a busy
+// session the warnings floated free of the save that produced them. A gated header ties them
+// together; the clean-save control proves the gate.
+describe('watch — the timestamped warnings header (issue #425)', () => {
+  const WARNING_YAML = `
+id: watch-warn
+name: Watch Warn
+version: 1
+steps:
+  step-one:
+    description: First step
+    execution: agent
+    retry:
+      max_attempts: 3
+`;
+
+  it('heads a non-empty warnings block with a timestamp and a count', async () => {
+    const filePath = makeTempFile(WARNING_YAML);
+    const store = makeStore();
+    const controller = new AbortController();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await new Promise((r) => setTimeout(r, 50));
+    controller.abort();
+    await watchPromise;
+
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(warned[0]).toMatch(/^\[[^\]]+\] 1 warning:$/);
+    // Singular, and the registration line below it now agrees with its own count too — watch's
+    // first `(1 step)` pin anywhere.
+    const logged = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(logged).toContain('Registered: watch-warn v1 (1 step)');
+    vi.restoreAllMocks();
+  });
+
+  it('a clean save prints NO header — the gate, not just the format', async () => {
+    // printLoaderWarnings runs on every successful registration, so an ungated header would
+    // print "[iso] 0 warnings:" over nothing each time the file is saved.
+    const filePath = makeTempFile(VALID_YAML);
+    const store = makeStore();
+    const controller = new AbortController();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await new Promise((r) => setTimeout(r, 50));
+    controller.abort();
+    await watchPromise;
+
+    expect(warnSpy.mock.calls).toHaveLength(0);
+    expect(store.registered).toHaveLength(1);
+    vi.restoreAllMocks();
+  });
+});
+
 // issue #424 — watch reports the whole defect set on a failing reload, same as validate and
 // register. Its render is its own site, so it needs its own cell.
 describe('watch — a hard load error carries its warnings (issue #424)', () => {

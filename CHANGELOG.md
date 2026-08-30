@@ -18,6 +18,26 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- **The CLI's refusals and summaries read like sentences** (issue #425). Five things an operator
+  meets constantly, each slightly wrong:
+  A workflow with several problems reported them as one paragraph joined by semicolons — and
+  since a loader message can itself contain a semicolon, there was no reliable way to see where
+  one ended. Each error now gets its own line under a count: `Invalid workflow — 2 errors:`.
+  The escalation line said "at least one is escalated to an error by policy" above a list of
+  warnings, leaving you to work out which. It now names them:
+  `Invalid: 2 warnings, 1 escalated to an error by policy: UNKNOWN_STEP_KEY 'dependson'`.
+  `realm workflow watch` timestamps every line it prints except its warnings, which floated free
+  of the save that produced them; they now sit under a timestamped, counted header.
+  A one-step workflow said `(1 steps)`, and the protocol summary said `1 of 1 steps require agent
+action. 0 are handled automatically` — every count now agrees with its own noun and verb.
+  And a loader refusal reads the same on every command: `register`, `test`, `agent` and `run`
+  printed `Error: Invalid workflow: …`, saying "invalid" twice before anything actionable.
+  Errors that announce nothing on their own keep the prefix — the split is by family, not a
+  blanket drop.
+  One further text change comes with that last item: an unreadable file passed to `realm run`
+  used to print `Error loading workflow: …` and now prints `Invalid: …`, the same prefix every
+  other command already used for the same class.
+
 - **`realm workflow validate` says the structured_output nudge in one line** (issue #422). It used
   to print one line per caveat per step — fourteen lines on a green validate of
   `examples/06-ticket-router`, nine on `examples/02-ticket-classifier`, on files that never

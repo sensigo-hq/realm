@@ -8,7 +8,13 @@
 import { Command, InvalidArgumentError } from 'commander';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { loadWorkflowFromFile, JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
+import {
+  loadWorkflowFromFile,
+  JsonFileStore,
+  JsonWorkflowStore,
+  WorkflowError,
+} from '@sensigo/realm';
+import { renderLoadFailure } from '../lib/loader-warnings.js';
 import type { RunStore, WorkflowDefinition, ExtensionRegistry } from '@sensigo/realm';
 import { LlmProvider, resolveProvider } from '../agent/providers/llm-provider.js';
 import type { ProviderName } from '../agent/providers/llm-provider.js';
@@ -343,7 +349,19 @@ export const agentCommand = new Command('agent')
 
         process.exit(result === 'completed' ? 0 : 1);
       } catch (err) {
-        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        // issue #425 — THE FAMILY SPLIT. An `Invalid workflow:` message announces itself, so it
+        // renders verbatim through the shared helper (which also lists a multi-error throw one per
+        // line). Everything else this catch can see — a store failure, a broken extension module —
+        // announces nothing on its own, so it keeps the prefix that earns its place (#417). The
+        // predicate carries the colon, byte-matching the helper's own check.
+        // This catch wraps the ENTIRE drive, so the else-arm carries provider failures, store
+        // errors and everything else a run can hit — dropping the prefix here wholesale would
+        // strip it from all of them.
+        if (err instanceof WorkflowError && err.message.startsWith('Invalid workflow:')) {
+          console.error(renderLoadFailure(err));
+        } else {
+          console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        }
         process.exit(1);
       }
     },

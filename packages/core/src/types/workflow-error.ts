@@ -188,6 +188,12 @@ export interface WorkflowErrorOptions {
    * construction stays possible.
    */
   warnings?: readonly LoaderWarning[];
+  /**
+   * issue #425: the individual error strings this message was joined from. Unlike `warnings`
+   * above, THIS sibling is populated at construction — the collectors that join them are the
+   * only place the individual strings still exist.
+   */
+  errors?: readonly string[];
 }
 
 export class WorkflowError extends Error {
@@ -215,6 +221,17 @@ export class WorkflowError extends Error {
    * looked" are different facts and the channel keeps them different.
    */
   warnings?: readonly LoaderWarning[];
+  /**
+   * issue #425: the errors this message was joined from, one per element, before `join('; ')`
+   * flattened them. A collector accumulates several problems and throws once, so a reader gets
+   * one paragraph-long line with the boundaries only implied by punctuation — and a message can
+   * itself contain a semicolon (the #413 four-clause text does), so splitting the joined string
+   * back apart is not a recoverable operation. Kept here instead, and the render walks the array.
+   *
+   * ABSENT rather than `[]` on a single-error throw, so a caller can tell "there was one" from
+   * "there was a list" without counting.
+   */
+  errors?: readonly string[];
 
   constructor(message: string, options: WorkflowErrorOptions) {
     super(message);
@@ -229,5 +246,6 @@ export class WorkflowError extends Error {
     this.attempt = options.attempt ?? 1;
     if (options.retry_after !== undefined) this.retry_after = options.retry_after;
     if (options.warnings !== undefined) this.warnings = options.warnings;
+    if (options.errors !== undefined) this.errors = options.errors;
   }
 }

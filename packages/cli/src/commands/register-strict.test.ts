@@ -56,7 +56,7 @@ steps:
 
     expect(exitSpy).not.toHaveBeenCalled();
     const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    expect(printed).toContain('Registered: clean-reg v1 (1 steps)');
+    expect(printed).toContain('Registered: clean-reg v1 (1 step)');
     rmSync(wfDir, { recursive: true, force: true });
   });
 
@@ -233,5 +233,109 @@ steps:
     const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(warned).toContain("unknown key 'dependson'");
     rmSync(wfDir, { recursive: true, force: true });
+  });
+});
+
+// issue #425 — register's refusal joins the shared voice: an `Invalid workflow:` message renders
+// verbatim (no `Error: ` prefix doubling the word "invalid"), and a multi-error throw lists one
+// per line. Everything else this catch sees keeps the prefix, which the control cell pins.
+describe('register — the loader voice and multi-error lines (issue #425)', () => {
+  let home: string;
+  let originalHome: string | undefined;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'realm-register-425-'));
+    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
+    originalHome = process.env['HOME'];
+    process.env['HOME'] = home;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
+      throw new Error('process.exit');
+    }) as never);
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = originalHome;
+    vi.restoreAllMocks();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  function writeWorkflow(body: string): string {
+    const wfDir = mkdtempSync(join(tmpdir(), 'realm-register-425-wf-'));
+    writeFileSync(join(wfDir, 'workflow.yaml'), body, 'utf8');
+    return wfDir;
+  }
+
+  it('a loader refusal prints verbatim and lists each error on its own line', async () => {
+    const wfDir = writeWorkflow(`id: multi-reg
+name: Multi Reg
+version: 1
+steps:
+  a:
+    description: a
+    execution: agent
+    timeout_seconds: 60
+  b:
+    description: b
+    execution: agent
+    tool_timeout: 30
+`);
+
+    await expect(registerCommand.parseAsync([wfDir], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain('Invalid workflow — 2 errors:');
+    // The prefix is gone from THIS family: "Error: Invalid workflow:" said invalid twice.
+    expect(errored).not.toContain('Error: Invalid workflow');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    rmSync(wfDir, { recursive: true, force: true });
+  });
+
+  it('the THIRD collector: two missing profiles are two lines, not one blob', async () => {
+    // profileErrors is its own accumulator inside the file-based load, easy to miss when the
+    // other two are the obvious ones.
+    const wfDir = writeWorkflow(`id: profiles-reg
+name: Profiles Reg
+version: 1
+steps:
+  a:
+    description: a
+    execution: agent
+    agent_profile: missing_one
+  b:
+    description: b
+    execution: agent
+    agent_profile: missing_two
+`);
+
+    await expect(registerCommand.parseAsync([wfDir], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain('Invalid workflow — 2 errors:');
+    expect(errored).toContain("agent_profile 'missing_one' not found");
+    expect(errored).toContain("agent_profile 'missing_two' not found");
+    rmSync(wfDir, { recursive: true, force: true });
+  });
+
+  it('a NON-loader failure keeps its prefix — the split is a split, not a blanket drop', async () => {
+    // An unreadable path is not a loader refusal: it announces nothing on its own, so `Error: `
+    // still earns its place (#417's own doctrine). Dropping the prefix wholesale here would have
+    // stripped it from every store and extension failure this catch also sees.
+    await expect(
+      registerCommand.parseAsync([join(home, 'no-such-dir')], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toMatch(/^Error: /m);
+    expect(errored).not.toContain('Invalid workflow');
   });
 });

@@ -3,7 +3,8 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadWorkflowFromFile } from '@sensigo/realm';
+import { loadWorkflowFromFile, WorkflowError } from '@sensigo/realm';
+import { renderLoadFailure } from '../lib/loader-warnings.js';
 import { runFixtureTests } from '@sensigo/realm-testing';
 import type { TestResult, RunFixtureTestsOptions } from '@sensigo/realm-testing';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
@@ -80,7 +81,16 @@ export const testCommand = new Command('test')
         ...(extensions !== undefined ? { extensions } : {}),
       });
     } catch (err) {
-      console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      // issue #425 — THE FAMILY SPLIT. An `Invalid workflow:` message announces itself, so it
+      // renders verbatim through the shared helper (which also lists a multi-error throw one per
+      // line). Everything else this catch can see — a store failure, a broken extension module —
+      // announces nothing on its own, so it keeps the prefix that earns its place (#417). The
+      // predicate carries the colon, byte-matching the helper's own check.
+      if (err instanceof WorkflowError && err.message.startsWith('Invalid workflow:')) {
+        console.error(renderLoadFailure(err));
+      } else {
+        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      }
       process.exit(1);
       return;
     }

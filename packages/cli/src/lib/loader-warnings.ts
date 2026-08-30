@@ -6,6 +6,7 @@ import {
   renderLoaderWarning,
   resolveSeverity,
   DEFAULT_POLICY,
+  type WorkflowError,
   type LoaderWarning,
   type WarningCode,
 } from '@sensigo/realm';
@@ -86,6 +87,21 @@ export function failsStrict(warnings: LoaderWarning[]): boolean {
  * Applies only to the message-echoing renders. The standalone strict-escalation lines have their
  * own text and are untouched.
  */
-export function renderLoadFailure(message: string): string {
-  return message.startsWith('Invalid workflow:') ? message : `Invalid: ${message}`;
+export function renderLoadFailure(err: WorkflowError | string): string {
+  // The string branch FIRST, and not only for the unit cells that drive it: several call sites
+  // pass `err instanceof Error ? err.message : String(err)`, so a plain string is a real caller
+  // shape, and an object-first implementation would reach for `.errors` on it.
+  if (typeof err === 'string') {
+    return err.startsWith('Invalid workflow:') ? err : `Invalid: ${err}`;
+  }
+
+  // issue #425: several problems collected into one throw get one line each. The array is the
+  // only place the boundaries survive — a loader message can itself contain '; ' (the #413
+  // four-clause text does), so splitting the joined message back apart would cut one message in
+  // half and call the halves two errors.
+  const parts = err.errors;
+  if (parts !== undefined && parts.length > 1) {
+    return [`Invalid workflow — ${parts.length} errors:`, ...parts.map((e) => `  ${e}`)].join('\n');
+  }
+  return renderLoadFailure(err.message);
 }

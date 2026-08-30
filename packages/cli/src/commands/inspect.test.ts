@@ -230,7 +230,7 @@ describe('inspectRun', () => {
     expect(result).toContain('test-workflow');
     expect(result).toContain('completed');
     expect(result).toContain('step_one');
-    expect(result).toContain('Evidence (1 steps)');
+    expect(result).toContain('Evidence (1 step)');
   });
 
   it('shows retry attempts grouped when a step has multiple evidence snapshots with attempt', async () => {
@@ -261,7 +261,7 @@ describe('inspectRun', () => {
     const result = await inspectRun('run_test1', makeRunStore(run), workflowStore);
     expect(result).toContain('workflow definition not found');
     expect(result).toContain('step_one');
-    expect(result).toContain('Evidence (1 steps)');
+    expect(result).toContain('Evidence (1 step)');
   });
 
   it('surfaces gate_message on gate_response evidence entries', async () => {

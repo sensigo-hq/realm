@@ -448,6 +448,9 @@ function loadWorkflowFromFileCore(
 
     if (profileErrors.length > 0) {
       throw new WorkflowError(`Invalid workflow: ${profileErrors.join('; ')}`, {
+        // issue #425: the pre-join strings, so a render can list them one per line. Two missing
+        // profiles are two problems, not one long sentence.
+        errors: [...profileErrors],
         code: 'VALIDATION_WORKFLOW_SCHEMA',
         category: 'VALIDATION',
         agentAction: 'report_to_user',
@@ -841,6 +844,8 @@ function parseWorkflowString(
 
     if (errors.length > 0) {
       throw new WorkflowError(`Invalid workflow: ${errors.join('; ')}`, {
+        // issue #425: the pre-join strings — see the profile collector above.
+        errors: [...errors],
         code: 'VALIDATION_WORKFLOW_SCHEMA',
         category: 'VALIDATION',
         agentAction: 'report_to_user',
@@ -2574,6 +2579,8 @@ function parseWorkflowString(
 
     if (errors.length > 0) {
       throw new WorkflowError(`Invalid workflow: ${errors.join('; ')}`, {
+        // issue #425: the pre-join strings — see the profile collector above.
+        errors: [...errors],
         code: 'VALIDATION_WORKFLOW_SCHEMA',
         category: 'VALIDATION',
         agentAction: 'report_to_user',

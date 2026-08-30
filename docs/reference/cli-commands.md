@@ -114,7 +114,7 @@ what is validated and nothing about the exit code.
 ```bash
 $ realm workflow validate ./my-workflow
 ⚠ step 'sync_data': unknown key 'dependson' (line 14) — REFUSED below (did you mean 'depends_on'?)
-Invalid: 1 warning(s) present, and at least one is escalated to an error by policy.
+Invalid: 1 warning, 1 escalated to an error by policy: UNKNOWN_STEP_KEY 'dependson'
 $ echo $?
 1
 ```
