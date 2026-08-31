@@ -1,11 +1,11 @@
 // Tests for realm workflow watch — watchWorkflow function.
 import { describe, it, expect, vi } from 'vitest';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { WorkflowRegistrar, WorkflowDefinition } from '@sensigo/realm';
-import { watchWorkflow } from './watch.js';
+import { watchWorkflow, makeCoalescedTrigger } from './watch.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -376,5 +376,237 @@ steps:
     expect(errored).not.toContain('Invalid: Invalid workflow:');
     expect(store.registered).toHaveLength(0);
     vi.restoreAllMocks();
+  });
+});
+
+// =================================================================================================
+// issue #449 — the watch keeps watching
+// =================================================================================================
+
+/** Vim-style save: write a temp file, rename it over the target. Renames the watched inode away. */
+function atomicSave(filePath: string, content: string): void {
+  const tmp = `${filePath}.tmp`;
+  writeFileSync(tmp, content, 'utf8');
+  renameSync(tmp, filePath);
+}
+
+/**
+ * Waits until `cond()` holds, polling. Every POSITIVE wait uses this rather than a fixed sleep:
+ * a fixed window that is generous locally is a flake under CI starvation (the #371 class), and
+ * polling is also faster on the happy path. Fixed windows survive below ONLY where the assertion
+ * is NEGATIVE and needs elapsed time to mean anything.
+ */
+async function until(cond: () => boolean, capMs = 5000): Promise<void> {
+  const deadline = Date.now() + capMs;
+  while (!cond() && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+function yamlAt(version: number): string {
+  return `
+id: watch-test
+name: Watch Test
+version: ${version}
+steps:
+  step-one:
+    description: First step
+    execution: agent
+`;
+}
+
+describe('watchWorkflow — atomic saves (issue #449)', () => {
+  it('(b) survives TWO consecutive atomic saves', async () => {
+    // The defect this pins is not "the first atomic save is missed" — it is that the watch DIES
+    // during it. Executed on main: v2 still registered (the renamed-away inode's final `change`
+    // slipped through the old filter), and then nothing ever did again — v3 and a subsequent
+    // in-place write both emitted nothing at all. So one save is not enough to see it; the
+    // second is where a file watch is already dead and a directory watch is not.
+    const filePath = makeTempFile(VALID_YAML);
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await until(() => store.registered.length >= 1);
+
+    atomicSave(filePath, yamlAt(2));
+    await until(() => store.registered.at(-1)?.version === 2);
+
+    atomicSave(filePath, yamlAt(3));
+    await until(() => store.registered.at(-1)?.version === 3);
+
+    // Version first, deliberately: it is the assertion that says WHICH save was missed. A
+    // length check first would red with a count and hide that.
+    expect(store.registered.at(-1)!.version).toBe(3);
+    expect(store.registered.length).toBeGreaterThanOrEqual(3);
+
+    controller.abort();
+    await watchPromise;
+    vi.restoreAllMocks();
+  }, 20_000);
+
+  it('(c) a sibling file in the same directory does NOT re-register', async () => {
+    // The basename filter's pin. The settle gap is load-bearing: without it the coalescer folds
+    // the sibling write into the real save's fire, one registration comes out either way, and
+    // the filter is untested. Executed both ways — without the gap the filter-drop mutant
+    // survives.
+    const filePath = makeTempFile(VALID_YAML);
+    const dir = dirname(filePath);
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await until(() => store.registered.length >= 1);
+    const afterStartup = store.registered.length;
+
+    writeFileSync(join(dir, 'notes.txt'), 'not a workflow', 'utf8');
+    // NEGATIVE assertion — it needs elapsed time to mean anything, so this one is a fixed wait.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(store.registered.length).toBe(afterStartup);
+
+    atomicSave(filePath, yamlAt(2));
+    await until(() => store.registered.length > afterStartup);
+
+    expect(store.registered.length).toBe(afterStartup + 1);
+    expect(store.registered.at(-1)!.version).toBe(2);
+
+    controller.abort();
+    await watchPromise;
+    vi.restoreAllMocks();
+  }, 20_000);
+
+  it('(f) a profiles-file CREATE bursts two events and re-registers exactly once', async () => {
+    // THE WIRING CELL. Bypassing the coalescer at the call site survives every other cell in
+    // this file, because the YAML path yields exactly one passing event per save — there is
+    // nothing to coalesce there. The profiles watcher is the observable burst: creating a file
+    // emits `rename` + `change`, two events, so an unwired call site registers twice.
+    const filePath = makeTempFile(VALID_YAML);
+    const dir = dirname(filePath);
+    const profilesDir = join(dir, 'profiles');
+    mkdirSync(profilesDir, { recursive: true });
+    writeFileSync(join(profilesDir, 'existing.md'), 'seed', 'utf8');
+
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await until(() => store.registered.length >= 1);
+    const afterStartup = store.registered.length;
+
+    writeFileSync(join(profilesDir, 'brand-new.md'), 'a new profile', 'utf8');
+    await until(() => store.registered.length > afterStartup);
+    // Then settle: "exactly one, not two" is a negative claim about the second, so it needs the
+    // window to have passed.
+    await new Promise((r) => setTimeout(r, 300));
+
+    expect(store.registered.length).toBe(afterStartup + 1);
+
+    controller.abort();
+    await watchPromise;
+    vi.restoreAllMocks();
+  }, 20_000);
+
+  it('(g) a missing workflow file is still refused at startup', async () => {
+    // The contract a directory watch would silently lose: `fs.watch` on an absent FILE threw
+    // ENOENT, and the action rendered it and exited 1. A directory watch succeeds and would
+    // watch nothing, forever, saying nothing — so the guard raises the identical error itself.
+    //
+    // Driven through watchWorkflow directly, which is this file's universal idiom: the CLI
+    // action constructs a JsonWorkflowStore, which mkdirSyncs into the REAL $HOME, and this file
+    // has no scratch-HOME harness. The action's catch-render-exit-1 is unchanged pre-existing
+    // boilerplate and is not what this cell is about.
+    const dir = join(tmpdir(), `realm-watch-missing-${randomUUID()}`);
+    mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, 'workflow.yaml');
+    const store = makeStore();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(watchWorkflow(filePath, store)).rejects.toThrow(
+      `ENOENT: no such file or directory, watch '${filePath}'`,
+    );
+
+    vi.restoreAllMocks();
+  }, 10_000);
+
+  it('(h) a refused watch leaves NO watcher behind', async () => {
+    // The guard's POSITION, not its existence — cell (g) passes wherever the throw sits. Thrown
+    // after the watcher was created, the rejection reported a failure while a live persistent
+    // watcher kept running: executed, a workflow.yaml created afterwards was still registered by
+    // the phantom, and a caller that held nothing itself never exited (10s timeout kill) where
+    // the fixed version exits in 2ms.
+    //
+    // The store-empty conjunct is the observable chosen for BOTH symptoms, by entailment: no
+    // registration ⟹ nothing fired ⟹ no live watcher. (A handle census via
+    // process.getActiveResourcesInfo() would observe the loop half directly, but it is
+    // experimental and noisy under a worker pool.)
+    const dir = join(tmpdir(), `realm-watch-phantom-${randomUUID()}`);
+    mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, 'workflow.yaml'); // deliberately never written
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await expect(watchWorkflow(filePath, store, controller.signal)).rejects.toThrow(
+        `ENOENT: no such file or directory, watch '${filePath}'`,
+      );
+
+      // The file appears AFTER the failure was reported. Nothing should be listening.
+      writeFileSync(filePath, VALID_YAML, 'utf8');
+      // NEGATIVE assertion: it needs elapsed time to mean anything. The phantom's latency is the
+      // fs event plus the 100ms coalesce window, well inside this.
+      await new Promise((r) => setTimeout(r, 300));
+
+      expect(store.registered).toEqual([]);
+    } finally {
+      // Inert on the fixed code — the throw precedes any watcher. It matters during a red-first
+      // or mutant run, where it closes the leaked handle so a deliberately-failing cell does not
+      // strand a live watcher in the worker.
+      controller.abort();
+      vi.restoreAllMocks();
+    }
+  }, 10_000);
+});
+
+describe('makeCoalescedTrigger (issue #449)', () => {
+  it('(d) collapses a burst into one trailing fire, and cancel() disarms a pending one', () => {
+    vi.useFakeTimers();
+    let fires = 0;
+    const c = makeCoalescedTrigger(() => {
+      fires += 1;
+    }, 100);
+
+    for (let i = 0; i < 5; i++) c.trigger();
+    vi.advanceTimersByTime(99);
+    expect(fires).toBe(0); // still inside the window — a burst has not resolved yet
+    vi.advanceTimersByTime(1);
+    expect(fires).toBe(1); // exactly one, at the trailing edge
+
+    c.trigger();
+    vi.advanceTimersByTime(100);
+    expect(fires).toBe(2); // a later burst is its own fire, not swallowed
+
+    // The abort case: a pending timer must not survive a cancel, or it fires after the watch
+    // resolved and registers into a store whose owner has moved on.
+    c.trigger();
+    c.cancel();
+    vi.advanceTimersByTime(500);
+    expect(fires).toBe(2);
+    c.cancel(); // idempotent
+
+    vi.useRealTimers();
   });
 });
