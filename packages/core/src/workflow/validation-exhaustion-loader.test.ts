@@ -155,7 +155,7 @@ steps:
       expect(w?.code).toBe('UNKNOWN_VALIDATION_EXHAUSTION_KEY');
       expect(w?.severity).toBe('warn');
       expect(w?.message).toContain('validation_exhaustion');
-      // (y)/(z): joins UNKNOWN_KEY_CODES — always carries the ⚠ prefix.
+      // (y)/(z): rendered like every warning — `⚠ ` + the message (issue #444).
       expect(renderLoaderWarning(w!)).toMatch(/^⚠ /);
     });
 
@@ -331,9 +331,11 @@ steps:
       expect(w.severity).toBe('warn');
       expect(w.message).toContain('default_output');
       expect(w.message).toContain('mode: default');
-      // NOT in UNKNOWN_KEY_CODES — renders its message verbatim, no ⚠ prefix.
-      expect(renderLoaderWarning(w)).toBe(w.message);
-      expect(renderLoaderWarning(w)).not.toMatch(/^⚠ /);
+      // issue #444: every code renders `⚠ ` + its message. The hygiene conjunct is on w.message
+      // — and this is the strongest of the four, because `w` here is a REAL warning the core
+      // loader just minted, not a hand-built fixture. If that mint ever bakes a prefix, this reds.
+      expect(renderLoaderWarning(w)).toBe(`⚠ ${w.message}`);
+      expect(w.message).not.toMatch(/^⚠/);
     });
 
     it('dead-config WARN: default_output present with mode: fail (explicit) is also ignored', () => {

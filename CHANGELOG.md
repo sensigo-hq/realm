@@ -18,6 +18,22 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- **Every warning line carries the same `⚠ ` prefix** (issue #444). One `validate` run could
+  print three grammars at once: unknown-key warnings were prefixed, most advisory warnings
+  rendered bare, and two carried their own two-space `⚠  ` baked into the message. The prefix now
+  belongs to the renderer alone and every code gets it — on validate, register, watch and test,
+  and on the lenient loader's stderr for run, agent and listen. Message text is unchanged; the two
+  formerly-baked messages lose only their duplicate prefix, so those lines change by exactly one
+  space.
+
+- **`realm workflow validate` no longer blames the workflow for an extensions failure**
+  (issue #445). On a workflow that declares `extensions:`, anything that went wrong while loading
+  its modules or its deployment manifest was reported as `Invalid: …` — an unresolvable module
+  path, a malformed `realm.yaml`, or the orphaned-manifest refusal, all phrased as though the
+  workflow itself were wrong, sending the author to the wrong file. Those now read
+  `Error loading extensions: …`, matching what `realm run` has always said about the same
+  failures.
+
 - **The CLI's refusals and summaries read like sentences** (issue #425). Five things an operator
   meets constantly, each slightly wrong:
   A workflow with several problems reported them as one paragraph joined by semicolons — and
@@ -63,6 +79,12 @@ action. 0 are handled automatically` — every count now agrees with its own nou
   carried the distinction; only the prose was ambiguous.
 
 ### Fixed
+
+- **An internal error during `validate`'s extensions pass was swallowed and mislabelled**
+  (issue #445). The extension-free path has always rethrown a non-loader error so a genuine bug
+  surfaces loudly rather than being reported as an invalid workflow. The extensions path did the
+  opposite: it rendered anything at all as `Invalid: …`, so a crash inside realm told the author
+  their file was wrong. Both paths now share one failure render, and both rethrow.
 
 - **`realm workflow run` no longer crashes and leaves a wedged run behind when stdin is not a
   terminal** (issue #426). Dev mode prompts for every step and every gate, so a piped or scripted

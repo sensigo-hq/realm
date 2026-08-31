@@ -222,9 +222,12 @@ export function checkForOrphanedManifests(sourceDir: string, trustRoot: string):
       : `Deployment manifests at ${orphans.map((o) => `'${o}'`).join(', ')}`;
   const nearest = orphans[0]!;
   // Throw WorkflowError (VALIDATION class — the same class the yaml-loader raises for
-  // structural validation failures) so `realm workflow validate`'s existing
-  // `if (err instanceof WorkflowError)` handler renders it as `Invalid:` rather than a stack
-  // trace, and every execution/registration path treats it as a load failure.
+  // structural validation failures) so every command treats it as a load failure rather than a
+  // stack trace. WHICH sentence renders it depends on how the command reached this guard
+  // (issue #445): validate's extension-FREE arm calls checkForOrphanedManifests directly and
+  // renders `Invalid:`; a load that comes THROUGH loadProjectExtensions surfaces via each
+  // command's extension-load catch — `Error loading extensions:` on run and validate, `Error:`
+  // on register.
   throw new WorkflowError(
     `${found} will NOT be loaded — manifests are read only from the deployment root ` +
       `'${join(trustRoot, 'realm.yaml')}'. Move it to '${join(trustRoot, 'realm.yaml')}' ` +

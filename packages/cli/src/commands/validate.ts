@@ -21,7 +21,7 @@ import {
   renderIneligibleMessage,
   type LoaderWarning,
 } from '@sensigo/realm';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import type { WorkflowDefinition, ExtensionRegistry } from '@sensigo/realm';
 import {
   loadProjectExtensions,
   checkForOrphanedManifests,
@@ -31,6 +31,7 @@ import {
   printLoaderWarnings,
   rejectOnErrorSeverity,
   failsStrict,
+  wrapSentinelWarnings,
 } from '../lib/loader-warnings.js';
 
 /**
@@ -48,7 +49,8 @@ import {
  * fires). The message is worded to cover both axes without requiring the reader to already know
  * about the cap.
  */
-function findRetryWithoutExplicitTimeout(definition: WorkflowDefinition): LoaderWarning[] {
+/** @internal Exported for testing only. */
+export function findRetryWithoutExplicitTimeout(definition: WorkflowDefinition): LoaderWarning[] {
   const warnings: LoaderWarning[] = [];
   for (const [stepName, step] of Object.entries(definition.steps)) {
     if (
@@ -62,7 +64,7 @@ function findRetryWithoutExplicitTimeout(definition: WorkflowDefinition): Loader
         scope: 'step',
         step: stepName,
         message:
-          `⚠  Step '${stepName}': declares 'retry' but no 'timeout_seconds' — each attempt is ` +
+          `Step '${stepName}': declares 'retry' but no 'timeout_seconds' — each attempt is ` +
           `bounded by the default execution timeout (${DEFAULT_EXECUTION_TIMEOUT_SECONDS}s), and ` +
           `(absent an explicit 'retry.total_timeout_seconds') the step's overall retry budget ` +
           `defaults to that same per-attempt bound compounded across every attempt plus backoffs. ` +
@@ -72,16 +74,6 @@ function findRetryWithoutExplicitTimeout(definition: WorkflowDefinition): Loader
     }
   }
   return warnings;
-}
-
-/** Wraps loadProjectExtensions' sentinel-credential warnings as LoaderWarning (issue #169). */
-function wrapSentinelWarnings(sentinelWarnings: string[] | undefined): LoaderWarning[] {
-  return (sentinelWarnings ?? []).map((message) => ({
-    code: 'EXTENSION_SENTINEL' as const,
-    severity: resolveSeverity('EXTENSION_SENTINEL'),
-    scope: 'workflow' as const,
-    message: `⚠  ${message}`,
-  }));
 }
 
 /**
@@ -274,6 +266,32 @@ function renderNudgeSummary(
 }
 
 /**
+ * The ONE place a load failure is rendered on this command (issue #445).
+ *
+ * WorkflowError means the workflow is invalid: print the warnings it carried (#424), render the
+ * message, exit 1. Anything else is an internal bug and is RETHROWN — the #123 doctrine, pinned
+ * by validate-internal-error.test.ts's "genuine-bug-still-loud" cell: a real crash must never be
+ * relabelled `Invalid:`, because that tells an author their file is wrong when realm is.
+ *
+ * The extensions arm used to render ANY error as `Invalid:`, so it violated that doctrine in two
+ * directions at once — an internal bug was swallowed, and a user's broken extension module was
+ * blamed on their workflow. Both arms route here now, and extension loading has its own catch
+ * with its own sentence, so the two populations stay separate.
+ *
+ * SCOPE, deliberate: watch/register/test/agent keep their own catches (#425's recorded
+ * exclusion). If a second surface ever adopts this, move it to lib/loader-warnings.ts — one
+ * caller does not earn a shared home.
+ */
+function exitOnLoadFailure(err: unknown): never {
+  if (err instanceof WorkflowError) {
+    if (err.warnings !== undefined) printLoaderWarnings(err.warnings);
+    console.error(renderLoadFailure(err));
+    process.exit(1);
+  }
+  throw err;
+}
+
+/**
  * The issue #170 boundary-reject, LIVE since the flip: a workflow carrying an unrecognised
  * workflow-level or step-level key is refused here, before `--strict` is even consulted (which is
  * why `--strict` and the default now agree on this class). run/agent/listen are unaffected — they
@@ -373,90 +391,106 @@ export const validateCommand = new Command('validate')
         // source_dir/trust_root, so resolve the same trust root the file-based path would
         // (findTrustRoot walks package.json/.git from the workflow dir) and run the guard
         // structural-first — after the workflow parses, before the `Valid:` print. It throws
-        // WorkflowError, which the catch below renders as `Invalid:` + exit(1). resolve()
+        // WorkflowError, which exitOnLoadFailure renders as `Invalid:` + exit(1) — this arm's
+        // guard call is DIRECT, which is why it keeps that sentence while an extensions-declaring
+        // load surfaces the same guard as `Error loading extensions:` (issue #445). resolve()
         // before dirname so a relative `workflow.yaml` doesn't collapse the walk to '.'.
+        let definition: WorkflowDefinition;
+        let loaderWarnings: LoaderWarning[];
         try {
-          const { definition, warnings: loaderWarnings } =
-            loadWorkflowFromStringWithDiagnostics(content);
+          ({ definition, warnings: loaderWarnings } =
+            loadWorkflowFromStringWithDiagnostics(content));
           const workflowDir = dirname(resolve(filePath));
           checkForOrphanedManifests(workflowDir, findTrustRoot(workflowDir));
-
-          const accumulated = [...loaderWarnings, ...findRetryWithoutExplicitTimeout(definition)];
-          if (rejectIfPolicyEscalates(accumulated)) {
-            process.exit(1);
-          }
-          const strictFailed = printValidationOutcome(definition, accumulated, strict);
-          // issue #236: the nudge's own INFO channel — never affects the exit code below.
-          printStructuredOutputNudge(definition, { explain });
-          if (strictFailed) {
-            process.exit(1);
-          }
         } catch (err) {
-          if (err instanceof WorkflowError) {
-            // issue #424: a hard load error carries the warnings that were live when it was
-            // thrown, so one run reports the whole defect set instead of revealing the next
-            // layer after each fix. Printed BEFORE the error, matching both existing paths
-            // (printValidationOutcome and the policy escalation). These never reach the
-            // --strict accumulator — the run is already failing — so exit codes are unchanged.
-            if (err.warnings !== undefined) printLoaderWarnings(err.warnings);
-            console.error(renderLoadFailure(err));
-            process.exit(1);
-          }
-          throw err;
+          exitOnLoadFailure(err);
+        }
+
+        // Reporting, deliberately OUTSIDE the try (issue #445): these lines only run once the
+        // load succeeded, and their own `process.exit` calls have no business passing through a
+        // catch that exists to classify LOAD failures. Production-neutral — the exits still exit.
+        const accumulated = [...loaderWarnings, ...findRetryWithoutExplicitTimeout(definition)];
+        if (rejectIfPolicyEscalates(accumulated)) {
+          process.exit(1);
+        }
+        const strictFailed = printValidationOutcome(definition, accumulated, strict);
+        // issue #236: the nudge's own INFO channel — never affects the exit code below.
+        printStructuredOutputNudge(definition, { explain });
+        if (strictFailed) {
+          process.exit(1);
         }
         return;
       }
 
       // Extensions declared (or an override supplied): file-based two-pass validation.
+      //
+      // THREE tries, not one (issue #445). The old single catch spanned five concerns and
+      // rendered every one of them `Invalid: …` — including a user's unresolvable extension
+      // module, and including internal bugs. Each try now owns one failure population, and the
+      // reporting tail sits outside all of them.
+      let definition: WorkflowDefinition;
+      let pass1Warnings: LoaderWarning[];
       try {
         // Pass 1: structural validation + extension resolution metadata (source_dir/trust_root).
         // The universal, registry-independent structural load — its warnings are what we count.
-        const { definition, warnings: pass1Warnings } =
-          loadWorkflowFromFileWithDiagnostics(filePath);
-        const { registry, manifest, sentinelWarnings } = await loadProjectExtensions(definition, {
+        ({ definition, warnings: pass1Warnings } = loadWorkflowFromFileWithDiagnostics(filePath));
+      } catch (err) {
+        exitOnLoadFailure(err);
+      }
+
+      let registry: ExtensionRegistry;
+      let manifest: Awaited<ReturnType<typeof loadProjectExtensions>>['manifest'];
+      let sentinelWarnings: string[] | undefined;
+      try {
+        ({ registry, manifest, sentinelWarnings } = await loadProjectExtensions(definition, {
           ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
           secretMode: 'sentinel',
-        });
+        }));
+      } catch (err) {
+        // issue #445 — a DIFFERENT population, and it gets its own sentence. Everything
+        // loadProjectExtensions throws is extension or deployment territory: an unresolvable
+        // module path, a failed import, a module whose default export is the wrong shape, a
+        // malformed `realm.yaml`, and the #123 orphaned-manifest refusal. None of those makes
+        // the WORKFLOW invalid, and calling them `Invalid:` sent an author to the wrong file.
+        // The sentence is `realm run`'s, verbatim (run.ts) — the sibling surface renders this
+        // identical failure class exactly so.
+        console.error(
+          `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(1);
+      }
+
+      try {
         // Pass 2: step config validated against each resolved adapter's config_schema. Same
         // content as pass 1, registry only adds config_schema checks — its warnings are proven
         // identical to pass 1's, so they are deliberately discarded here (not collected) to avoid
         // double-counting the same unknown key twice.
         loadWorkflowFromFileWithDiagnostics(filePath, registry);
-
-        const accumulated = [
-          ...pass1Warnings,
-          ...findRetryWithoutExplicitTimeout(definition),
-          ...wrapSentinelWarnings(sentinelWarnings),
-        ];
-        if (rejectIfPolicyEscalates(accumulated)) {
-          process.exit(1);
-        }
-        const strictFailed = printValidationOutcome(definition, accumulated, strict);
-        if (manifest.modules.length > 0) {
-          console.log(
-            `Extensions: ${manifest.modules.map((m) => m.declared).join(', ')} ` +
-              `(adapters: ${manifest.adapters.length}, handlers: ${manifest.handlers.length}, ` +
-              `processors: ${manifest.processors.length})`,
-          );
-        }
-        // issue #236: the nudge's own INFO channel — never affects the exit code below.
-        // issue #422: genuinely end-of-report, BELOW the Extensions block — the summary is a
-        // pointer at what you could do next, not part of what was just validated.
-        printStructuredOutputNudge(definition, { explain });
-        if (strictFailed) {
-          process.exit(1);
-        }
       } catch (err) {
-        // issue #424, the extensions-path twin of the catch above. The non-WorkflowError arm is
-        // untouched: this branch renders any Error by design, and only the warnings render is new.
-        if (err instanceof WorkflowError && err.warnings !== undefined) {
-          printLoaderWarnings(err.warnings);
-        }
-        console.error(
-          renderLoadFailure(
-            err instanceof WorkflowError ? err : err instanceof Error ? err.message : String(err),
-          ),
+        exitOnLoadFailure(err);
+      }
+
+      const accumulated = [
+        ...pass1Warnings,
+        ...findRetryWithoutExplicitTimeout(definition),
+        ...wrapSentinelWarnings(sentinelWarnings),
+      ];
+      if (rejectIfPolicyEscalates(accumulated)) {
+        process.exit(1);
+      }
+      const strictFailed = printValidationOutcome(definition, accumulated, strict);
+      if (manifest.modules.length > 0) {
+        console.log(
+          `Extensions: ${manifest.modules.map((m) => m.declared).join(', ')} ` +
+            `(adapters: ${manifest.adapters.length}, handlers: ${manifest.handlers.length}, ` +
+            `processors: ${manifest.processors.length})`,
         );
+      }
+      // issue #236: the nudge's own INFO channel — never affects the exit code below.
+      // issue #422: genuinely end-of-report, BELOW the Extensions block — the summary is a
+      // pointer at what you could do next, not part of what was just validated.
+      printStructuredOutputNudge(definition, { explain });
+      if (strictFailed) {
         process.exit(1);
       }
     },

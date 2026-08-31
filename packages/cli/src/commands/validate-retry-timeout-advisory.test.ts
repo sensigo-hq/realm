@@ -6,7 +6,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { validateCommand } from './validate.js';
+import { validateCommand, findRetryWithoutExplicitTimeout } from './validate.js';
+import type { WorkflowDefinition } from '@sensigo/realm';
 
 describe('validate — retry-without-timeout_seconds advisory (issue A3)', () => {
   let dir: string;
@@ -128,5 +129,34 @@ steps:
     await validateCommand.parseAsync([wfPath], { from: 'user' });
 
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+// issue #444 — mint hygiene for the OTHER formerly-baked producer. This mint carried a two-space
+// `⚠  ` inside the message; the renderer prefixes unconditionally now, so a re-bake would print
+// `⚠ ⚠  …`. The advisory cells above pin the message's TEXT with prefix-insensitive fragments and
+// would not notice, which is why the prefix needs its own assertion.
+describe('findRetryWithoutExplicitTimeout — mint hygiene (issue #444)', () => {
+  it('mints a message with no ⚠ prefix of its own', () => {
+    const definition = {
+      id: 'hygiene-wf',
+      name: 'Hygiene WF',
+      version: 1,
+      steps: {
+        work: {
+          description: 'work',
+          execution: 'auto' as const,
+          handler: 'h',
+          retry: { max_attempts: 3 },
+        },
+      },
+    } as unknown as WorkflowDefinition;
+
+    const [warning] = findRetryWithoutExplicitTimeout(definition);
+
+    expect(warning).toBeDefined();
+    expect(warning!.code).toBe('RETRY_NO_TIMEOUT');
+    expect(warning!.message).not.toMatch(/^⚠/);
+    expect(warning!.message).toMatch(/^Step 'work': declares 'retry'/);
   });
 });

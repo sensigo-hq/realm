@@ -124,6 +124,10 @@ ${config}
     const { code, stderr } = await runValidate([file]);
     expect(code).toBe(1);
     expect(stderr).toContain('config validation failed against adapter config_schema');
+    // issue #445: this is a WORKFLOW refusal reaching the chokepoint, not an internal bug — so
+    // no stack. The fragment above would match INSIDE a stack trace too, so without this
+    // conjunct a pass-2 crash rendering as a rethrow would still look like a pass.
+    expect(stderr).not.toContain('    at ');
   }, 20_000);
 
   it('passes when the config satisfies the custom adapter config_schema', async () => {
@@ -133,6 +137,73 @@ ${config}
     expect(stdout).toContain('Valid: cfg-wf v1 (1 step)');
     expect(stdout).toContain('Extensions: ../../dist/registry.js');
     expect(code).toBe(0);
+  }, 20_000);
+
+  it('(b) an unresolvable extension module blames the EXTENSIONS, not the workflow', async () => {
+    // issue #445. This used to print `Invalid: Cannot resolve extension module '…' … ENOENT …`
+    // — the workflow called invalid because a module beside it was missing, sending the author
+    // to the wrong file. `realm run` has always rendered this exact failure class as
+    // `Error loading extensions:`; validate says the same thing now.
+    const file = join(workflowDir, 'ext-missing.yaml');
+    writeFileSync(
+      file,
+      `
+id: ext-missing
+name: Ext Missing
+version: 1
+extensions: ../../dist/does-not-exist.js
+steps:
+  fetch_data:
+    description: fetch
+    execution: auto
+    handler: h
+`,
+      'utf8',
+    );
+
+    const { code, stderr } = await runValidate([file]);
+    expect(code).toBe(1);
+    expect(stderr).toContain('Error loading extensions:');
+    expect(stderr).toContain('Cannot resolve extension module');
+    expect(stderr).not.toContain('Invalid:');
+    // Not an internal bug either — the extensions catch renders a sentence, never a stack.
+    expect(stderr).not.toContain('    at ');
+  }, 20_000);
+
+  it('(e) the orphaned-manifest refusal joins the extensions family on this arm', async () => {
+    // issue #445, the disclosed render change: this WorkflowError used to reach the shared
+    // `Invalid:` render. It is a deployment-layout problem, not an invalid workflow, and `run`
+    // already reported it as such — so on the extensions arm it now reads the same way. The
+    // extension-FREE arm still renders it `Invalid:` (its guard call is direct, not through
+    // loadProjectExtensions), which is pinned by validate-orphan-manifest.test.ts.
+    const file = join(workflowDir, 'ext-orphan.yaml');
+    writeFileSync(
+      file,
+      `
+id: ext-orphan
+name: Ext Orphan
+version: 1
+extensions: ../../dist/registry.js
+steps:
+  fetch_data:
+    description: fetch
+    execution: auto
+    handler: h
+`,
+      'utf8',
+    );
+    const orphan = join(workflowDir, 'realm.yaml');
+    writeFileSync(orphan, 'version: 1\n', 'utf8');
+
+    try {
+      const { code, stderr } = await runValidate([file]);
+      expect(code).toBe(1);
+      expect(stderr).toContain('Error loading extensions:');
+      expect(stderr).toContain('will NOT be loaded');
+      expect(stderr).not.toContain('Invalid:');
+    } finally {
+      rmSync(orphan, { force: true });
+    }
   }, 20_000);
 
   it('the summary still prints on this branch when --strict is FAILING the run', async () => {

@@ -167,7 +167,7 @@ describe('renderLoaderWarning — golden format', () => {
     );
   });
 
-  it('IDEMPOTENT_INERT_IN_FINALIZER and DUAL_SCHEMA_DECLARED render message verbatim — no ⚠ prefix added (byte-identical to the pre-#169 text)', () => {
+  it('an advisory code renders ⚠ + its message, same as every other code (issue #444)', () => {
     const idempotentWarning: LoaderWarning = {
       code: 'IDEMPOTENT_INERT_IN_FINALIZER',
       severity: 'warn',
@@ -178,8 +178,9 @@ describe('renderLoaderWarning — golden format', () => {
         "carries no deadline, so 'realm run reclaim --all' can never select it). Recover it with " +
         "'realm run reclaim --step my-step --force'.",
     };
-    expect(renderLoaderWarning(idempotentWarning)).toBe(idempotentWarning.message);
-    expect(renderLoaderWarning(idempotentWarning)).not.toMatch(/^⚠/);
+    expect(renderLoaderWarning(idempotentWarning)).toBe(`⚠ ${idempotentWarning.message}`);
+    // Mint hygiene: the message carries no prefix of its own, so the two cannot compose.
+    expect(idempotentWarning.message).not.toMatch(/^⚠/);
 
     const dualSchemaWarning: LoaderWarning = {
       code: 'DUAL_SCHEMA_DECLARED',
@@ -190,27 +191,34 @@ describe('renderLoaderWarning — golden format', () => {
         "Step 'my-step': declares both input_schema and output_schema; the agent's submitted " +
         'output is validated against both — prefer one to avoid divergence.',
     };
-    expect(renderLoaderWarning(dualSchemaWarning)).toBe(dualSchemaWarning.message);
-    expect(renderLoaderWarning(dualSchemaWarning)).not.toMatch(/^⚠/);
+    expect(renderLoaderWarning(dualSchemaWarning)).toBe(`⚠ ${dualSchemaWarning.message}`);
+    // Mint hygiene: the message carries no prefix of its own, so the two cannot compose.
+    expect(dualSchemaWarning.message).not.toMatch(/^⚠/);
   });
 
-  it('RETRY_NO_TIMEOUT and EXTENSION_SENTINEL render message verbatim — their own ⚠  (two-space) prefix is baked into message, not added here', () => {
+  it('the two formerly-baked codes carry no prefix of their own any more (issue #444)', () => {
+    // These two used to bake a two-space `⚠  ` into the message at the mint, so the renderer had
+    // to leave them alone — which is how one block came to print three different grammars. The
+    // mints are bare now and the renderer prefixes every code alike; the `not.toMatch` conjuncts
+    // are what stop a future mint from re-baking one and producing `⚠ ⚠  …`.
     const retryWarning: LoaderWarning = {
       code: 'RETRY_NO_TIMEOUT',
       severity: 'warn',
       scope: 'step',
       step: 'my-step',
       message:
-        "⚠  Step 'my-step': declares 'retry' but no 'timeout_seconds' — each attempt is bounded.",
+        "Step 'my-step': declares 'retry' but no 'timeout_seconds' — each attempt is bounded.",
     };
-    expect(renderLoaderWarning(retryWarning)).toBe(retryWarning.message);
+    expect(renderLoaderWarning(retryWarning)).toBe(`⚠ ${retryWarning.message}`);
+    expect(retryWarning.message).not.toMatch(/^⚠/);
 
     const sentinelWarning: LoaderWarning = {
       code: 'EXTENSION_SENTINEL',
       severity: 'warn',
       scope: 'workflow',
-      message: '⚠  Using sentinel credentials for adapter X.',
+      message: 'Using sentinel credentials for adapter X.',
     };
-    expect(renderLoaderWarning(sentinelWarning)).toBe(sentinelWarning.message);
+    expect(renderLoaderWarning(sentinelWarning)).toBe(`⚠ ${sentinelWarning.message}`);
+    expect(sentinelWarning.message).not.toMatch(/^⚠/);
   });
 });
