@@ -10,7 +10,9 @@ import {
   submitHumanResponse,
   unmetCapabilities,
   capabilityWarning,
+  WorkflowError,
 } from '@sensigo/realm';
+import { renderLoadFailure } from '../lib/loader-warnings.js';
 import type { WorkflowDefinition, StepDefinition, ExtensionRegistry } from '@sensigo/realm';
 import type { StepDispatcher } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
@@ -66,9 +68,15 @@ export const runCommand = new Command('run')
       try {
         definition = loadWorkflowFromFile(filePath);
       } catch (err) {
-        console.error(
-          `Error loading workflow: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        // issue #425 — this catch wraps loadWorkflowFromFile ALONE, so everything it can see is
+        // a loader failure and the family split needs no else-arm here. A structural refusal
+        // renders verbatim; an unreadable file rides the helper's `Invalid: ` fallback, which
+        // replaces today's `Error loading workflow: ` prefix — a deliberate text change, so that
+        // one voice reaches an author from every command.
+        //
+        // No `err.warnings` render here: surfacing the lenient path's warnings on run/agent/
+        // listen stays out of scope (#424's stated non-goal).
+        console.error(renderLoadFailure(err instanceof WorkflowError ? err : String(err)));
         process.exit(1);
       }
 

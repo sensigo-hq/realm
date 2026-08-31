@@ -97,7 +97,8 @@ function printValidationOutcome(
   strict: boolean,
 ): boolean {
   printLoaderWarnings(warnings);
-  const base = `Valid: ${definition.id} v${definition.version} (${Object.keys(definition.steps).length} steps)`;
+  const stepCount = Object.keys(definition.steps).length;
+  const base = `Valid: ${definition.id} v${definition.version} (${stepCount} ${stepCount === 1 ? 'step' : 'steps'})`;
   if (strict && failsStrict(warnings)) {
     console.log(`${base} — ${warnings.length} warning(s); failing due to --strict`);
     return true;
@@ -281,10 +282,36 @@ function renderNudgeSummary(
 function rejectIfPolicyEscalates(warnings: LoaderWarning[]): boolean {
   if (!rejectOnErrorSeverity(warnings)) return false;
   printLoaderWarnings(warnings);
-  console.error(
-    `Invalid: ${warnings.length} warning(s) present, and at least one is escalated to an error by policy.`,
-  );
+  // issue #425: name WHICH warnings escalated. "at least one is escalated" left an author with
+  // three warnings above and no way to tell which of them was the refusal — the counts are the
+  // aggregate this line adds, so it is the line that has to say.
+  //
+  // register.ts and watch.ts carry sibling escalation lines and are deliberately NOT changed:
+  // neither aggregates counts, and on all three surfaces printLoaderWarnings' `— REFUSED below`
+  // substitution already marks each refused warning one line above.
+  console.error(renderEscalationLine(warnings));
   return true;
+}
+
+/**
+ * The escalation line (issue #425). Extracted so the keyless branch below is reachable from a
+ * test: every WarningCode that escalates under the default policy happens to carry a key today,
+ * so no real fixture can drive it — and a clause nothing can exercise rots into a wrong guess
+ * about what a future keyless code would print.
+ *
+ * @internal Exported for testing only.
+ */
+export function renderEscalationLine(warnings: readonly LoaderWarning[]): string {
+  // Same default policy `rejectOnErrorSeverity` just gated on, so the list can never disagree
+  // with the refusal it explains.
+  const escalated = warnings.filter((w) => resolveSeverity(w.code) === 'error');
+  const list = escalated
+    .map((w) => (w.key === undefined ? w.code : `${w.code} '${w.key}'`))
+    .join(', ');
+  return (
+    `Invalid: ${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}, ` +
+    `${escalated.length} escalated to an error by policy: ${list}`
+  );
 }
 
 /** Pre-scan: does the YAML carry a top-level `extensions` key? (Parse errors → false; the
@@ -372,7 +399,7 @@ export const validateCommand = new Command('validate')
             // (printValidationOutcome and the policy escalation). These never reach the
             // --strict accumulator — the run is already failing — so exit codes are unchanged.
             if (err.warnings !== undefined) printLoaderWarnings(err.warnings);
-            console.error(renderLoadFailure(err.message));
+            console.error(renderLoadFailure(err));
             process.exit(1);
           }
           throw err;
@@ -425,7 +452,11 @@ export const validateCommand = new Command('validate')
         if (err instanceof WorkflowError && err.warnings !== undefined) {
           printLoaderWarnings(err.warnings);
         }
-        console.error(renderLoadFailure(err instanceof Error ? err.message : String(err)));
+        console.error(
+          renderLoadFailure(
+            err instanceof WorkflowError ? err : err instanceof Error ? err.message : String(err),
+          ),
+        );
         process.exit(1);
       }
     },

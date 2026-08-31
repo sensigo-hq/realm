@@ -511,7 +511,7 @@ export async function inspectRun(
   }
 
   lines.push('');
-  lines.push(`Evidence (${stepOrder.length} steps):`);
+  lines.push(`Evidence (${stepOrder.length} ${stepOrder.length === 1 ? 'step' : 'steps'}):`);
 
   stepOrder.forEach((stepId, idx) => {
     const snaps = stepSnapshots.get(stepId)!;

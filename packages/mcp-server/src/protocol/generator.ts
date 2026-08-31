@@ -140,7 +140,13 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
   }
 
   const totalSteps = steps.length;
-  const agent_steps_summary = `${agentStepCount} of ${totalSteps} steps require agent action. ${autoStepCount} are handled automatically.`;
+  // issue #425: each clause agrees with its OWN count — the noun with the total it counts, and
+  // each verb with the subject in front of it. Keying the verb on totalSteps is the plausible
+  // wrong fix and produces "1 of 3 steps require" for three steps of which one is an agent step.
+  const agent_steps_summary =
+    `${agentStepCount} of ${totalSteps} ${totalSteps === 1 ? 'step' : 'steps'} ` +
+    `${agentStepCount === 1 ? 'requires' : 'require'} agent action. ` +
+    `${autoStepCount} ${autoStepCount === 1 ? 'is' : 'are'} handled automatically.`;
 
   const rules = definition.protocol?.rules ?? DEFAULT_RULES;
 

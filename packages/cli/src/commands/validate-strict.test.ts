@@ -58,7 +58,7 @@ steps:
 
     expect(exitSpy).not.toHaveBeenCalled();
     const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    expect(printed).toContain('Valid: clean-wf v1 (1 steps)');
+    expect(printed).toContain('Valid: clean-wf v1 (1 step)');
     expect(printed).not.toContain('warning(s)');
   });
 
@@ -249,8 +249,12 @@ steps:
     expect(unknownKeyWarnings).toHaveLength(1);
 
     const errored = errorSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    expect(errored).toContain('Invalid: 1 warning(s) present');
-    expect(errored).toContain('escalated to an error by policy');
+    // issue #425: whole line. The escalation message is the only one that aggregates counts, so
+    // it is the one that has to say WHICH warning escalated — a substring pin on the counts
+    // would not have noticed the list going missing.
+    expect(errored).toContain(
+      "Invalid: 1 warning, 1 escalated to an error by policy: UNKNOWN_STEP_KEY 'dependson'",
+    );
     // And the refusal is a refusal: no success line is printed alongside it.
     expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).not.toContain(
       'Valid: two-pass-wf',
@@ -309,7 +313,12 @@ steps:
     // printed. Post-#170 the count is reported by the escalation message rather than the --strict
     // summary, because the unknown key alone is already an error under the default policy.
     const errored = errorSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    expect(errored).toContain('Invalid: 2 warning(s) present');
+    // issue #425, and this is the discriminating case: TWO warnings, ONE of them escalated. The
+    // old line said "at least one is escalated" and left the author to work out which of the two
+    // above it was the refusal. Both counts and the named culprit, on one line.
+    expect(errored).toContain(
+      "Invalid: 2 warnings, 1 escalated to an error by policy: UNKNOWN_STEP_KEY 'dependson'",
+    );
     expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).not.toContain(
       'Valid: accumulator-wf',
     );

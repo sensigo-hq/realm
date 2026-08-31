@@ -70,7 +70,7 @@ describe('realm workflow validate — orphaned-manifest guard (extension-free fr
   it('2. byte-identical happy path: no orphan → exactly the Valid line, exit 0', async () => {
     const { code, stdout, stderr } = await runCli(['workflow', 'validate', workflowPath]);
     expect(stderr).toBe('');
-    expect(stdout).toBe('Valid: orphan-wf v1 (1 steps)\n');
+    expect(stdout).toBe('Valid: orphan-wf v1 (1 step)\n');
     expect(code).toBe(0);
   }, 25_000);
 });

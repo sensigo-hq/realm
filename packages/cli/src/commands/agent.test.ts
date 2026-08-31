@@ -3,6 +3,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import {
@@ -415,6 +417,60 @@ describe('agentCommand CLI guards', () => {
       .catch(() => {});
     expect(process.exit).toHaveBeenCalledWith(1);
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining('mutually exclusive'));
+  });
+
+  // issue #425 — the family split at `realm agent`. This catch wraps the ENTIRE drive, so its
+  // else-arm carries provider failures, store errors and everything else a run can hit: the
+  // control cell below is what makes the split a split rather than a blanket prefix drop.
+  it('a loader refusal prints verbatim, with no doubled "invalid"', async () => {
+    // The provider-key guard runs BEFORE the workflow is loaded, so without this the cell never
+    // reaches the catch under test (verified: it exits on "requires an LLM API key" instead).
+    const savedKey = process.env['OPENAI_API_KEY'];
+    process.env['OPENAI_API_KEY'] = 'test-key';
+    const dir = mkdtempSync(join(tmpdir(), 'realm-agent-voice-'));
+    const file = join(dir, 'workflow.yaml');
+    writeFileSync(
+      file,
+      `id: agent-voice
+name: Agent Voice
+version: 1
+steps:
+  a:
+    description: a
+    execution: agent
+    timeout_seconds: 60
+`,
+      'utf8',
+    );
+
+    await agentCommand.parseAsync(['node', 'realm', '--workflow', file]).catch(() => {});
+
+    const errored = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .join('\n');
+    expect(errored).toContain("Invalid workflow: Step 'a': 'timeout_seconds' is not valid");
+    expect(errored).not.toContain('Error: Invalid workflow');
+    rmSync(dir, { recursive: true, force: true });
+    if (savedKey === undefined) delete process.env['OPENAI_API_KEY'];
+    else process.env['OPENAI_API_KEY'] = savedKey;
+  });
+
+  it('a NON-loader failure keeps its prefix — the whole drive rides this arm', async () => {
+    const savedKey = process.env['OPENAI_API_KEY'];
+    process.env['OPENAI_API_KEY'] = 'test-key';
+    const dir = mkdtempSync(join(tmpdir(), 'realm-agent-voice-missing-'));
+    await agentCommand
+      .parseAsync(['node', 'realm', '--workflow', join(dir, 'no-such-file.yaml')])
+      .catch(() => {});
+
+    const errored = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .join('\n');
+    expect(errored).toMatch(/^Error: /m);
+    expect(errored).not.toContain('Invalid workflow');
+    rmSync(dir, { recursive: true, force: true });
+    if (savedKey === undefined) delete process.env['OPENAI_API_KEY'];
+    else process.env['OPENAI_API_KEY'] = savedKey;
   });
 
   // issue #313 — the four dead-config cells. Silently accepting a flag that changes nothing is

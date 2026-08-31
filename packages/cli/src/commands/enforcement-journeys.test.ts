@@ -127,7 +127,7 @@ steps:
 
     const second = await validate(write(withTypo.replace('descriptoin', 'description')));
     expect(second.refused).toBe(false);
-    expect(second.out).toContain('Valid: journey-a2 v1 (1 steps)');
+    expect(second.out).toContain('Valid: journey-a2 v1 (1 step)');
   });
 });
 
@@ -236,7 +236,7 @@ ${servers}steps:
       ),
     );
     expect(withServers.refused).toBe(false);
-    expect(withServers.out).toContain('Valid: journey-c v1 (1 steps)');
+    expect(withServers.out).toContain('Valid: journey-c v1 (1 step)');
 
     // Remedy 2, also as printed: drop the declaration.
     const withoutTools = await validate(
@@ -567,6 +567,96 @@ steps:
   });
 });
 
+// =================================================================================================
+// issue #425 — several problems read as several problems
+//
+// A collector gathers everything wrong with a file and throws once, joined with '; '. Two
+// prohibitions arrived as one paragraph with the boundaries implied by punctuation — and since a
+// loader message can itself contain a semicolon, the reader could not reliably tell where one
+// ended. The array rides the error now and the render walks it.
+// =================================================================================================
+describe('#425 — a multi-error refusal lists one per line', () => {
+  const TWO_PROBLEMS = `
+id: multi-425
+name: Multi 425
+version: 1
+steps:
+  a:
+    description: a
+    execution: agent
+    timeout_seconds: 60
+  b:
+    description: b
+    execution: agent
+    tool_timeout: 30
+`;
+
+  it('validate heads the block with a count and indents each error', async () => {
+    const result = await validate(write(TWO_PROBLEMS));
+    expect(result.refused).toBe(true);
+    expect(result.out).toContain('Invalid workflow — 2 errors:');
+    // Two errors, each on its own line, each keeping its position cite.
+    const lines = result.out.split('\n');
+    const items = lines.filter((l) => l.startsWith("  Step '"));
+    expect(items).toHaveLength(2);
+    expect(items[0]).toContain("Step 'a': 'timeout_seconds' is not valid");
+    expect(items[0]).toContain('(line 9)');
+    // The #413 message contains '; ' inside itself. It stays ONE item — an implementation that
+    // split the joined message on the separator would report three errors here, cutting this
+    // message in half and calling the halves two problems.
+    expect(items[1]).toContain("Step 'b': 'tool_timeout' requires 'tools'");
+    expect(items[1]).toContain('declare at least one tool or remove the key');
+    expect(items[1]).toContain('(line 13)');
+  });
+
+  it('the EXTENSIONS path lists them too — the second render, separately wired', async () => {
+    // Found by mutation: reverting the extensions catch to pass `err.message` instead of the
+    // error left all 1449 cli cells green, so an `extensions:`-bearing workflow would have gone
+    // on printing one paragraph while every other path listed per line. Third time this fork has
+    // needed its own cell (#417's comment, #424's carry, now this) — the two catches never cover
+    // each other. The extensions VALUE must be well-formed or the loader's own shape check
+    // refuses first and the cell proves nothing.
+    const result = await validate(
+      write(`
+id: multi-425-ext
+name: Multi 425 Ext
+version: 1
+extensions: ./dist/registry.js
+steps:
+  a:
+    description: a
+    execution: agent
+    timeout_seconds: 60
+  b:
+    description: b
+    execution: agent
+    tool_timeout: 30
+`),
+    );
+    expect(result.refused).toBe(true);
+    expect(result.out).toContain('Invalid workflow — 2 errors:');
+    expect(result.out.split('\n').filter((l) => l.startsWith("  Step '"))).toHaveLength(2);
+  });
+
+  it('a SINGLE-error refusal is byte-identical to before — no header, no indent', async () => {
+    const result = await validate(
+      write(`
+id: single-425
+name: Single 425
+version: 1
+steps:
+  a:
+    description: a
+    execution: agent
+    timeout_seconds: 60
+`),
+    );
+    expect(result.refused).toBe(true);
+    expect(result.out).not.toContain('errors:');
+    expect(result.out).toContain("Invalid workflow: Step 'a': 'timeout_seconds' is not valid");
+  });
+});
+
 describe('#417 — a load failure says "invalid" once, per command', () => {
   const BAD = `
 id: prefix-demo
@@ -596,8 +686,10 @@ steps:
     // arms print through different lines. Reverting the extensions-path one alone left the whole
     // cli suite green — proven by probe — so the fork needs a cell of its own.
     //
-    // No real extensions module is needed: a family prohibition throws in pass 1, before
-    // extension resolution runs, so the `extensions:` block only has to exist to choose the arm.
+    // No real extensions module is needed — but note WHAT refuses here (corrected in #442):
+    // `{modules: []}` fails the loader's own extensions SHAPE check, not the `agent_profile`
+    // prohibition below it. Either way the extensions arm is the one that renders, which is all
+    // this cell claims; the fixture is left as-is so the assertion keeps meaning what it says.
     const withExtensions = `
 id: prefix-demo-ext
 name: Prefix Demo Ext

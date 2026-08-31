@@ -3,7 +3,7 @@ import { watch, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { Command } from 'commander';
 import { loadWorkflowFromFileWithDiagnostics, WorkflowError } from '@sensigo/realm';
-import type { WorkflowRegistrar } from '@sensigo/realm';
+import type { WorkflowRegistrar, LoaderWarning } from '@sensigo/realm';
 import { loadWorkflowForRegistration } from './register.js';
 import {
   renderLoadFailure,
@@ -27,27 +27,44 @@ import {
  * @param filePath Path to the workflow YAML file.
  * @param store    The registrar to register into.
  */
+/**
+ * issue #425: watch's own lines are timestamped and its warnings block was not, so on a busy
+ * watch session the warnings floated free of the save that produced them. One gated header ties
+ * them together. GATED because the clean-save path below calls printLoaderWarnings
+ * unconditionally: an ungated header would print `[iso] 0 warnings:` over nothing on every
+ * successful save. On console.warn, so it heads the block it belongs to rather than splitting
+ * across channels.
+ */
+function printWarningsBlock(timestamp: string, warnings: LoaderWarning[]): void {
+  if (warnings.length === 0) return;
+  console.warn(
+    `[${timestamp}] ${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}:`,
+  );
+  printLoaderWarnings(warnings);
+}
+
 async function registerFile(filePath: string, store: WorkflowRegistrar): Promise<void> {
   const timestamp = new Date().toISOString();
   try {
     const { definition, warnings } = await loadWorkflowForRegistration(filePath);
     if (rejectOnErrorSeverity(warnings)) {
-      printLoaderWarnings(warnings);
+      printWarningsBlock(timestamp, warnings);
       console.error(
         `[${timestamp}] Invalid: '${definition.id}' has a warning escalated to an error by policy — refusing to register.`,
       );
       return;
     }
     await store.register(definition);
-    printLoaderWarnings(warnings);
+    printWarningsBlock(timestamp, warnings);
+    const stepCount = Object.keys(definition.steps).length;
     console.log(
-      `[${timestamp}] Registered: ${definition.id} v${definition.version} (${Object.keys(definition.steps).length} steps)`,
+      `[${timestamp}] Registered: ${definition.id} v${definition.version} (${stepCount} ${stepCount === 1 ? 'step' : 'steps'})`,
     );
   } catch (err) {
     if (err instanceof WorkflowError) {
       // issue #424 — see the comment at validate.ts's extension-free catch.
-      if (err.warnings !== undefined) printLoaderWarnings(err.warnings);
-      console.error(`[${timestamp}] ${renderLoadFailure(err.message)}`);
+      if (err.warnings !== undefined) printWarningsBlock(timestamp, [...err.warnings]);
+      console.error(`[${timestamp}] ${renderLoadFailure(err)}`);
     } else {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[${timestamp}] Error: ${message}`);

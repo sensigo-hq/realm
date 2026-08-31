@@ -130,7 +130,7 @@ ${config}
     const file = join(workflowDir, 'workflow.yaml');
     writeFileSync(file, workflowYaml('      needed_key: value'), 'utf8');
     const { code, stdout } = await runValidate([file]);
-    expect(stdout).toContain('Valid: cfg-wf v1 (1 steps)');
+    expect(stdout).toContain('Valid: cfg-wf v1 (1 step)');
     expect(stdout).toContain('Extensions: ../../dist/registry.js');
     expect(code).toBe(0);
   }, 20_000);

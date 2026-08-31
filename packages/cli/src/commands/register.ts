@@ -16,7 +16,12 @@ import {
   type LoadedProjectExtensions,
 } from '../extensions/load-project-extensions.js';
 import { ManifestSecretsError } from '../extensions/manifest-secrets.js';
-import { printLoaderWarnings, rejectOnErrorSeverity, failsStrict } from '../lib/loader-warnings.js';
+import {
+  printLoaderWarnings,
+  rejectOnErrorSeverity,
+  failsStrict,
+  renderLoadFailure,
+} from '../lib/loader-warnings.js';
 
 /** Wraps loadProjectExtensions' sentinel-credential warnings as LoaderWarning (issue #169). */
 function wrapSentinelWarnings(sentinelWarnings: string[] | undefined): LoaderWarning[] {
@@ -112,8 +117,9 @@ export const registerCommand = new Command('register')
       for (const warning of contextWarnings) {
         console.warn(`⚠  ${warning}`);
       }
+      const stepCount = Object.keys(definition.steps).length;
       console.log(
-        `Registered: ${definition.id} v${definition.version} (${Object.keys(definition.steps).length} steps)`,
+        `Registered: ${definition.id} v${definition.version} (${stepCount} ${stepCount === 1 ? 'step' : 'steps'})`,
       );
       if (definition.description !== undefined) {
         console.log(`  ${definition.description}`);
@@ -125,8 +131,17 @@ export const registerCommand = new Command('register')
       if (err instanceof WorkflowError && err.warnings !== undefined) {
         printLoaderWarnings(err.warnings);
       }
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`Error: ${message}`);
+      // issue #425 — THE FAMILY SPLIT. An `Invalid workflow:` message announces itself, so it
+      // renders verbatim through the shared helper (which also lists a multi-error throw one per
+      // line). Everything else this catch can see — a store failure, a broken extension module —
+      // announces nothing on its own, so it keeps the prefix that earns its place (#417). The
+      // predicate carries the colon, byte-matching the helper's own check.
+      if (err instanceof WorkflowError && err.message.startsWith('Invalid workflow:')) {
+        console.error(renderLoadFailure(err));
+      } else {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`Error: ${message}`);
+      }
       process.exit(1);
     }
   });
