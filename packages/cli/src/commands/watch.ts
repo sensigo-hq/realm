@@ -1,6 +1,6 @@
 // realm workflow watch <path> — watches a workflow YAML and re-registers on change.
 import { watch, existsSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { join, dirname, resolve, basename } from 'node:path';
 import { Command } from 'commander';
 import { loadWorkflowFromFileWithDiagnostics, WorkflowError } from '@sensigo/realm';
 import type { WorkflowRegistrar, LoaderWarning } from '@sensigo/realm';
@@ -72,12 +72,61 @@ async function registerFile(filePath: string, store: WorkflowRegistrar): Promise
   }
 }
 
+/** The trailing-edge window a save's event burst collapses into (issue #449). */
+const COALESCE_MS = 100;
+
+/**
+ * A trailing-edge coalescer: every `trigger()` (re)arms one timer, so a burst of calls inside the
+ * window produces exactly one `fn()` at the end of it (issue #449).
+ *
+ * WHAT ACTUALLY BURSTS, precisely — the YAML watcher is not the reason. On this platform the
+ * basename filter already reduces an atomic save to ONE passing event. The burst is the
+ * profiles watcher, which has no filter: creating a file there emits `rename` + `change`, two
+ * events, probe-proven. Cross-platform event shapes vary besides, so one instance is shared by
+ * both watchers rather than reasoned about per-watcher.
+ *
+ * `cancel()` exists because an abort must not leave a pending timer: it would fire after the
+ * watch resolved, re-registering into a store whose owner has moved on. Idempotent.
+ *
+ * @internal Exported for testing only.
+ */
+export function makeCoalescedTrigger(
+  fn: () => void,
+  delayMs: number,
+): { trigger(): void; cancel(): void } {
+  let timer: NodeJS.Timeout | undefined;
+  return {
+    trigger(): void {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = undefined;
+        fn();
+      }, delayMs);
+    },
+    cancel(): void {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+    },
+  };
+}
+
 /**
  * Watches a workflow YAML file and re-registers it into the given store on every change.
  * Also watches the profiles directory alongside the YAML — any file change there triggers
  * re-registration. If the profiles directory does not exist, only the YAML is watched.
  * Performs an initial registration before entering the watch loop.
  * Resolves when the watcher is closed (e.g. when the AbortSignal fires).
+ *
+ * Three mechanics worth knowing (issue #449):
+ * - The YAML watch is on the file's DIRECTORY, filtered by basename — a file watch dies with the
+ *   inode an atomic save renames away.
+ * - Both watchers are persistent, so they hold the process open; Ctrl+C is what stops it.
+ * - Each save's event burst is coalesced into one re-registration on a 100ms trailing edge.
+ *
+ * RESTART REQUIRED for three things, all read once at startup and never re-read: the extension
+ * modules (ESM cache, note below), a `profiles/` directory created after the watch began, and a
+ * `profiles_dir:` value edited mid-watch — an edit to that key keeps watching the OLD directory
+ * until you restart. No late-mount machinery; watch-before-create is a separate feature.
  *
  * @param filePath    Path to the workflow YAML file.
  * @param store       The workflow registrar to register into — injected, never instantiated here.
@@ -112,13 +161,41 @@ export async function watchWorkflow(
     }
   }
 
-  const watchYaml = new Promise<void>((resolve, reject) => {
-    const watcher = watch(filePath, { persistent: false, signal });
+  // issue #449 — `fs.watch` on the FILE dies with the inode. A vim-style atomic save writes a
+  // temp file and renames it over the target, so the watched inode is renamed away: the save that
+  // does it can still slip through as the dying inode's final `change` (executed: v2 DOES
+  // register), but the handle is dead from then on — the NEXT atomic save, and an ordinary
+  // in-place write after it, emit nothing at all (executed: count stays 2 through both). One vim
+  // save left watch silently blind to every later edit.
+  //
+  // Watching the DIRECTORY and filtering by basename fixes it structurally: the directory sees
+  // the rename INTO the name, and a directory handle has no inode to die with. No eventType
+  // filter — event shapes vary by platform, and on this one an atomic save's passing event is a
+  // `rename`, not a `change`.
+  //
+  // Computed BEFORE the Promise below: the executor's `resolve` parameter shadows node:path's
+  // `resolve`, so path math inside it is a trap.
+  const watchDir = dirname(resolve(filePath));
+  const watchName = basename(filePath);
 
-    watcher.on('change', (eventType: string) => {
-      if (eventType === 'change') {
-        void registerFile(filePath, store);
-      }
+  // ONE coalescer shared by both watchers, created after the initial registration above so that
+  // first pass stays immediate. See makeCoalescedTrigger for what actually bursts.
+  const coalesced = makeCoalescedTrigger(() => {
+    void registerFile(filePath, store);
+  }, COALESCE_MS);
+
+  const watchYaml = new Promise<void>((resolveWatch, reject) => {
+    // persistent: true (issue #449) — this was the liveness half. Non-persistent watchers do not
+    // hold the event loop, so the real CLI ran its initial registration and exited ~0.6s later
+    // while claiming to watch. No in-process test could ever see it: under vitest the runner's
+    // own loop keeps the process alive, which is exactly what `persistent` decides.
+    const watcher = watch(watchDir, { persistent: true, signal });
+
+    watcher.on('change', (_eventType: string, filename: string | Buffer | null) => {
+      // `null` is in the type and means "the platform could not say which file" — treat it as
+      // possibly-ours rather than dropping a real edit. Buffer only under encoding:'buffer',
+      // which is never set here.
+      if (filename === watchName || filename === null) coalesced.trigger();
     });
 
     watcher.on('error', (err: Error) => {
@@ -126,9 +203,19 @@ export async function watchWorkflow(
     });
 
     watcher.on('close', () => {
-      resolve();
+      // Before resolving, or a pending timer fires after the watch is over — re-registering into
+      // a store whose owner has finished with it.
+      coalesced.cancel();
+      resolveWatch();
     });
   });
+
+  // issue #449 — the missing-file contract, preserved deliberately. `fs.watch` on an absent FILE
+  // threw ENOENT and the action exited 1; a DIRECTORY watch would happily watch nothing forever,
+  // silently. Same error, same exit, raised explicitly now that the watch itself no longer does.
+  if (!existsSync(filePath)) {
+    throw new Error(`ENOENT: no such file or directory, watch '${filePath}'`);
+  }
 
   // Only watch the profiles directory if it exists.
   if (!existsSync(resolvedProfilesDir)) {
@@ -136,11 +223,11 @@ export async function watchWorkflow(
   }
 
   const profilesDirPath = resolvedProfilesDir;
-  const watchProfiles = new Promise<void>((resolve, reject) => {
-    const watcher = watch(profilesDirPath, { persistent: false, signal });
+  const watchProfiles = new Promise<void>((resolveWatch, reject) => {
+    const watcher = watch(profilesDirPath, { persistent: true, signal });
 
     watcher.on('change', () => {
-      void registerFile(filePath, store);
+      coalesced.trigger();
     });
 
     watcher.on('error', (err: Error) => {
@@ -148,7 +235,8 @@ export async function watchWorkflow(
     });
 
     watcher.on('close', () => {
-      resolve();
+      coalesced.cancel();
+      resolveWatch();
     });
   });
 

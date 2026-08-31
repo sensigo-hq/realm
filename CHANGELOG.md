@@ -80,6 +80,21 @@ action. 0 are handled automatically` — every count now agrees with its own nou
 
 ### Fixed
 
+- **`realm workflow watch` now actually watches** (issue #449). Two defects, both of them there
+  since the command shipped.
+  It exited about 0.6 seconds after the initial registration: the watchers were non-persistent,
+  so they held nothing alive and the process simply ran out of work — while the line above still
+  said "press Ctrl+C to stop". No test could see it, because under a test runner something else
+  is already keeping the process alive, which is the only thing that flag decides.
+  And an editor's atomic save — the vim-style write-a-temp-file-and-rename-over-it — killed the
+  watch along with the inode it renamed away. That save itself could still slip through as the
+  dying inode's last event, so the first one usually looked fine; every edit after it was
+  invisible. One vim save left watch silently blind for the rest of the session.
+  The watcher now holds the process open (Ctrl+C stops it, as always promised), watches the
+  workflow file's directory so atomic saves are seen and the watch cannot die with an inode,
+  coalesces each save's burst of filesystem events into one re-registration, and still refuses a
+  missing workflow file at startup exactly as it did before.
+
 - **An internal error during `validate`'s extensions pass was swallowed and mislabelled**
   (issue #445). The extension-free path has always rethrown a non-loader error so a genuine bug
   surfaces loudly rather than being reported as an invalid workflow. The extensions path did the
