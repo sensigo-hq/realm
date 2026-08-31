@@ -19,6 +19,9 @@ import {
   resolveSeverity,
   assessStructuredOutputEligibility,
   renderIneligibleMessage,
+  JsonWorkflowStore,
+  RUNTIME_ONLY_WORKFLOW_KEYS,
+  VERSION,
   type LoaderWarning,
 } from '@sensigo/realm';
 import type { WorkflowDefinition, ExtensionRegistry } from '@sensigo/realm';
@@ -92,7 +95,9 @@ function printValidationOutcome(
   const stepCount = Object.keys(definition.steps).length;
   const base = `Valid: ${definition.id} v${definition.version} (${stepCount} ${stepCount === 1 ? 'step' : 'steps'})`;
   if (strict && failsStrict(warnings)) {
-    console.log(`${base} — ${warnings.length} warning(s); failing due to --strict`);
+    console.log(
+      `${base} — ${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}; failing due to --strict`,
+    );
     return true;
   }
   console.log(base);
@@ -348,8 +353,111 @@ function hasTopLevelExtensions(content: string): boolean {
   }
 }
 
+/**
+ * `validate --registered <id>` — audit the STORED copy of a workflow (issue #427).
+ *
+ * The mechanism is kubectl's server-side dry-run shape: strip the keys the loader stamps, feed
+ * the rest back through the REAL loader, report what it says. Zero rules are duplicated here, so
+ * this surface cannot drift from what `register` would accept tomorrow.
+ *
+ * What it audits is the INSTALLED loader — the same limitation kubectl documents. The
+ * pre-upgrade journey is therefore: upgrade the CLI first, THEN audit. That is safe precisely
+ * because grandfathering holds: a registered copy keeps running under the rules it was
+ * registered with, so upgrading the CLI to look does not change what your runs do.
+ */
+async function validateRegistered(id: string, strict: boolean): Promise<void> {
+  const store = new JsonWorkflowStore();
+
+  let stored: WorkflowDefinition;
+  try {
+    stored = await store.get(id);
+  } catch (err) {
+    if (err instanceof WorkflowError && err.code === 'STATE_WORKFLOW_NOT_FOUND') {
+      console.error(`Error: ${err.message}`);
+      console.error('Registered workflows: realm workflow list');
+      process.exit(1);
+    }
+    if (err instanceof WorkflowError && err.code === 'STATE_LEGACY_FORMAT') {
+      // ONE clause only. There is no schema_version to name — nothing parsed far enough to read
+      // one — and the grandfathering sentence would be FALSE for this cohort: every runtime
+      // consumer resolves through this same get() gate (start_run, execute_step, append_trace,
+      // get_workflow_protocol, submit_human_response, replay), so a legacy entry cannot run at
+      // all. It is not grandfathered; it is unreachable.
+      console.log(`Auditing the registered copy of '${id}' with realm ${VERSION}'s loader.`);
+      // The store's own message carries the remedy; the loader would say `Missing required
+      // field: 'steps'` here, which is true of the shape and useless about the cause.
+      console.error(renderLoadFailure(err));
+      process.exit(1);
+    }
+    if (!(err instanceof WorkflowError)) {
+      // get()'s try wraps ONLY the read — JSON.parse sits outside it, so a corrupt stored file
+      // arrives here as a bare SyntaxError with no code (executed).
+      console.error(
+        `Error: the registered copy of '${id}' is not parseable JSON: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      console.error('Registered workflows: realm workflow list');
+      process.exit(1);
+    }
+    throw err; // #123: an unexpected WorkflowError is a bug, and bugs stay loud.
+  }
+
+  console.log(
+    `Auditing the registered copy of '${id}' (schema_version ${String(stored.schema_version)}) ` +
+      `with realm ${VERSION}'s loader.`,
+  );
+  console.log(
+    'Registered copies stay grandfathered at runtime — this reports what re-registration today would say.',
+  );
+
+  const clone = { ...stored } as Record<string, unknown>;
+  for (const key of RUNTIME_ONLY_WORKFLOW_KEYS) delete clone[key];
+
+  const declaresProfile = Object.values(stored.steps ?? {}).some(
+    (step) => (step as { agent_profile?: unknown }).agent_profile !== undefined,
+  );
+  if (clone['extensions'] !== undefined || declaresProfile) {
+    console.log(
+      'Extensions/profiles declared — module resolution, config_schema checks, and agent-profile ' +
+        'file resolution need the source tree and are not audited here; structural rules only.',
+    );
+  }
+  // MUST delete: the from-string loader hard-throws on an `extensions` key (allowExtensions:
+  // false) with "Register this workflow from its YAML file" — maximally misleading here, where
+  // the workflow IS registered and the operator asked about the stored copy. The honesty line
+  // above is what carries the real limitation.
+  delete clone['extensions'];
+
+  let definition: WorkflowDefinition;
+  let loaderWarnings: LoaderWarning[];
+  try {
+    ({ definition, warnings: loaderWarnings } = loadWorkflowFromStringWithDiagnostics(
+      JSON.stringify(clone),
+    ));
+  } catch (err) {
+    exitOnLoadFailure(err);
+  }
+
+  // The extension-free arm's tail, minus the orphan-manifest check (there is no source tree to
+  // have one) and minus the adoption nudge (a stored copy is not where you edit; `--explain` is
+  // therefore inert in this mode, deliberately — no machinery for it).
+  const accumulated = [...loaderWarnings, ...findRetryWithoutExplicitTimeout(definition)];
+  if (rejectIfPolicyEscalates(accumulated)) {
+    process.exit(1);
+  }
+  const strictFailed = printValidationOutcome(definition, accumulated, strict);
+  if (strictFailed) {
+    process.exit(1);
+  }
+}
+
 export const validateCommand = new Command('validate')
-  .argument('<path>', 'Path to workflow directory or workflow.yaml file')
+  .argument('[path]', 'Path to workflow directory or workflow.yaml file')
+  .option(
+    '--registered <id>',
+    'Audit the STORED copy of a registered workflow instead of a file (issue #427)',
+  )
   .option(
     '--extensions-module <path>',
     "Extensions module that REPLACES the workflow's declared 'extensions' modules (repair/override)",
@@ -365,15 +473,46 @@ export const validateCommand = new Command('validate')
   .description('Validate a workflow YAML file')
   .action(
     async (
-      inputPath: string,
-      opts: { extensionsModule?: string; strict?: boolean; explain?: boolean },
+      inputPath: string | undefined,
+      opts: {
+        extensionsModule?: string;
+        strict?: boolean;
+        explain?: boolean;
+        registered?: string;
+      },
     ) => {
-      const filePath =
-        inputPath.endsWith('.yaml') || inputPath.endsWith('.yml')
-          ? inputPath
-          : join(inputPath, 'workflow.yaml');
       const strict = opts.strict === true;
       const explain = opts.explain === true;
+
+      // Exactly-one, checked FIRST and load-bearing: commander parses a `[path]` positional and
+      // a `--registered <id>` option happily together and enforces nothing between them
+      // (executed — both arrive). The flag is `--registered <id>` rather than an auto-detecting
+      // positional deliberately: nothing can reliably tell an id from a path, and guessing wrong
+      // means auditing something the operator did not name.
+      if (inputPath === undefined && opts.registered === undefined) {
+        console.error(
+          'Error: provide a workflow path, or --registered <id> to audit a stored definition.',
+        );
+        process.exit(1);
+        return;
+      }
+      if (inputPath !== undefined && opts.registered !== undefined) {
+        console.error(
+          'Error: --registered audits the stored copy — it cannot be combined with a path.',
+        );
+        process.exit(1);
+        return;
+      }
+
+      if (opts.registered !== undefined) {
+        await validateRegistered(opts.registered, strict);
+        return;
+      }
+
+      const filePath =
+        inputPath!.endsWith('.yaml') || inputPath!.endsWith('.yml')
+          ? inputPath!
+          : join(inputPath!, 'workflow.yaml');
 
       let content: string;
       try {

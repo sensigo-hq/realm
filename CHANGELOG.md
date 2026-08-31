@@ -8,6 +8,25 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **`realm workflow list` and `realm workflow validate --registered <id>`** (issue #427). The
+  registry was a black box: `register` wrote into it, everything else read from it by id, and
+  nothing showed an operator what was in there — so a definition registered under an older realm
+  sat grandfathered and invisible until something tried to use it.
+  `workflow list` prints what is registered, marking each definition current or legacy.
+  `validate --registered <id>` then audits any one of them: it strips the keys the loader stamps
+  at registration, feeds the rest back through the real loader, and reports what re-registering
+  that definition today would say. No rules are duplicated, so the audit cannot drift from what
+  `register` accepts.
+  It finds real things. On a working machine it flags registered workflows carrying
+  `auth.token_from`, removed in v0.14.0 — they run today, and today's loader refuses them
+  verbatim. It audits the loader you have INSTALLED, so the journey is upgrade the CLI first,
+  then audit; that is safe because grandfathering means looking changes nothing.
+
+- **`realm run ./some/path` now points at the right command.** `realm run` manages run instances;
+  the dev-mode runner is `realm workflow run`. A path-shaped token now gets that pointer instead
+  of a bare unknown-command error. Every other unknown token still falls through to commander,
+  near-miss suggestions included.
+
 - **`realm listen --llm-timeout <seconds>`** (issue #409). The operator's fallback per-attempt
   ceiling for the drives a listen process spawns. A step's own `llm_timeout_seconds` still wins;
   this fills in for steps that author none, which previously had no route to anything but the
@@ -79,6 +98,9 @@ action. 0 are handled automatically` — every count now agrees with its own nou
   carried the distinction; only the prose was ambiguous.
 
 ### Fixed
+
+- **Warning counts read as sentences** (issue #427). `validate --strict` and `register --strict`
+  both summarised with `N warning(s)`; they now say `1 warning` or `2 warnings`.
 
 - **`realm workflow watch` now actually watches** (issue #449). Two defects, both of them there
   since the command shipped.

@@ -94,7 +94,7 @@ export const registerCommand = new Command('register')
       if (opts.strict && failsStrict(warnings)) {
         printLoaderWarnings(warnings);
         console.error(
-          `Error: '${definition.id}' v${definition.version} has ${warnings.length} warning(s); refusing to register due to --strict`,
+          `Error: '${definition.id}' v${definition.version} has ${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}; refusing to register due to --strict`,
         );
         process.exit(1);
         return;

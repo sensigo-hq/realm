@@ -138,6 +138,7 @@ describe('every workflow-loading command rejects an orphaned manifest (behaviora
   //     request drivers). Excluded from the BEHAVIORAL cases, NOT from the guard.
   const GUARD_NOT_APPLICABLE: Record<string, string> = {
     init: 'scaffolds a new workflow; loads no existing definition',
+    list: 'reads the registry store directly, never loads a workflow from a path (issue #427)',
     migrate: 'rewrites a workflow file in place; does not load-to-run',
     webhook: "removed alias (use 'realm listen'); loads no workflow",
   };

@@ -67,16 +67,51 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
   }
 
   async list(): Promise<WorkflowDefinition[]> {
+    // Re-expressed over listWithDiagnostics (issue #427) so there is ONE directory walk and one
+    // parse policy. The interface contract is unchanged — callers that only want the readable
+    // definitions still get exactly those, and the skipped files stay skipped here.
+    const { workflows } = await this.listWithDiagnostics();
+    return workflows;
+  }
+
+  /**
+   * Everything `list()` returns, plus what it silently drops (issue #427).
+   *
+   * `list()` skips a file it cannot parse, which is right for a caller that just wants the
+   * definitions and wrong for an operator asking what is in their registry: realm cannot audit
+   * what it cannot read, and saying nothing about it is how a broken entry stays invisible.
+   *
+   * `mismatched` covers a second invisible case. `<id>.json` is the write convention, but a
+   * hand-edited file can carry an inner id that differs from its basename — and since anything
+   * resolving a workflow by id resolves by FILENAME, such an entry is reachable under a name
+   * this list would not print. Disclosed rather than corrected.
+   *
+   * Additive and CONCRETE: `WorkflowRegistrar` is untouched, so no other implementation has to
+   * grow a method to satisfy a read surface only the CLI uses.
+   */
+  async listWithDiagnostics(): Promise<{
+    workflows: WorkflowDefinition[];
+    unreadable: Array<{ file: string; reason: string }>;
+    mismatched: Array<{ file: string; id: string }>;
+  }> {
     const entries = readdirSync(this.dir).filter((f) => f.endsWith('.json'));
-    const results: WorkflowDefinition[] = [];
+    const workflows: WorkflowDefinition[] = [];
+    const unreadable: Array<{ file: string; reason: string }> = [];
+    const mismatched: Array<{ file: string; id: string }> = [];
     for (const entry of entries) {
+      let parsed: WorkflowDefinition;
       try {
         const raw = readFileSync(join(this.dir, entry), 'utf8');
-        results.push(JSON.parse(raw) as WorkflowDefinition);
-      } catch {
-        // Skip files that fail to parse
+        parsed = JSON.parse(raw) as WorkflowDefinition;
+      } catch (err) {
+        unreadable.push({ file: entry, reason: err instanceof Error ? err.message : String(err) });
+        continue;
+      }
+      workflows.push(parsed);
+      if (entry !== `${String(parsed.id)}.json`) {
+        mismatched.push({ file: entry, id: String(parsed.id) });
       }
     }
-    return results;
+    return { workflows, unreadable, mismatched };
   }
 }

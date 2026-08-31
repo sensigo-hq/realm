@@ -330,3 +330,82 @@ steps:
     expect(warned).toContain('REFUSED below');
   });
 });
+
+// issue #427 — the validate half of the pluralization pair. Both directions minted: every
+// pre-existing pin on this line was a count-agnostic substring, so the ternary would have gone
+// in with nothing reddening either way.
+describe('validate --strict — the summary counts agree with the count (issue #427)', () => {
+  let dir: string;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'realm-validate-plural-'));
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
+      throw new Error('process.exit');
+    }) as never);
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  function write(body: string): string {
+    const p = join(dir, 'workflow.yaml');
+    writeFileSync(p, body, 'utf8');
+    return p;
+  }
+
+  const printed = (): string => logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+
+  it('one warning reads "1 warning"', async () => {
+    // NON-escalating on purpose: an unknown key resolves to error under the live #170 policy and
+    // refuses before this summary line is ever reached.
+    const p = write(`id: plural-one
+name: Plural One
+version: 1
+steps:
+  a:
+    description: a
+    execution: agent
+    retry:
+      max_attempts: 3
+`);
+
+    await expect(validateCommand.parseAsync([p, '--strict'], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+
+    expect(printed()).toContain('1 warning; failing due to --strict');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('two warnings read "2 warnings"', async () => {
+    const p = write(`id: plural-two
+name: Plural Two
+version: 1
+steps:
+  a:
+    description: a
+    execution: agent
+    retry:
+      max_attempts: 3
+  b:
+    description: b
+    execution: agent
+    depends_on: [a]
+    retry:
+      max_attempts: 2
+`);
+
+    await expect(validateCommand.parseAsync([p, '--strict'], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+
+    expect(printed()).toContain('2 warnings; failing due to --strict');
+  });
+});
