@@ -1,7 +1,12 @@
 // loader-warnings.ts — shared CLI surfacing for the structured loader-warning channel (issue
-// #169). Every CLI command that prints loader warnings funnels through printLoaderWarnings (the
-// only caller of renderLoaderWarning — no command hand-rolls a `⚠ ` string), and the dormant
-// #170 boundary-reject is factored into ONE shared helper so validate/register/watch can't drift.
+// #169). Every LoaderWarning a CLI command prints funnels through printLoaderWarnings (the only
+// caller of renderLoaderWarning), and the dormant #170 boundary-reject is factored into ONE
+// shared helper so validate/register/watch can't drift.
+//
+// Precise as of issue #444: no command hand-rolls a ⚠ prefix for a LOADER WARNING. A few
+// adjacent one-off notices — register's sentinel lines, test's sentinel echo — still print their
+// own `⚠ ` directly, because they are plain strings rather than LoaderWarnings; they were
+// normalized to the same single-space grammar so a mixed block cannot recur.
 import {
   renderLoaderWarning,
   resolveSeverity,
@@ -73,6 +78,25 @@ const ALL_ERROR_POLICY: Record<WarningCode, 'warn' | 'error'> = Object.fromEntri
 /** True if `--strict` should fail the command given these accumulated warnings. */
 export function failsStrict(warnings: LoaderWarning[]): boolean {
   return rejectOnErrorSeverity(warnings, ALL_ERROR_POLICY);
+}
+
+/**
+ * Wraps loadProjectExtensions' sentinel-credential warnings as LoaderWarning (issue #169).
+ *
+ * ONE copy (issue #444): validate.ts and register.ts each carried a byte-identical private one,
+ * and both baked a two-space `⚠  ` into the message. The prefix now belongs to
+ * `renderLoaderWarning` alone, so the message here is the input string verbatim.
+ *
+ * register's caller is `loadWorkflowForRegistration`, which `watch` also uses — so the strip
+ * reaches watch too, and there is no third caller.
+ */
+export function wrapSentinelWarnings(sentinelWarnings: string[] | undefined): LoaderWarning[] {
+  return (sentinelWarnings ?? []).map((message) => ({
+    code: 'EXTENSION_SENTINEL' as const,
+    severity: resolveSeverity('EXTENSION_SENTINEL'),
+    scope: 'workflow' as const,
+    message,
+  }));
 }
 
 /**

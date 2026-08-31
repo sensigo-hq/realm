@@ -384,9 +384,13 @@ export function attachLoaderWarnings(err: WorkflowError, warnings: readonly Load
  * Pure core of loadWorkflowFromFile (issue #169): parses + resolves everything a file-based load
  * needs, but never prints and never chooses between the two public presentations — it always
  * returns the definition alongside every collected LoaderWarning. `loadWorkflowFromFile` (prints
- * via renderLoaderWarning, returns just the definition — byte-identical default behavior, the
- * non-breaking invariant) and `loadWorkflowFromFileWithDiagnostics` (prints nothing, returns both)
- * are both thin wrappers over this.
+ * via renderLoaderWarning, returns just the definition) and `loadWorkflowFromFileWithDiagnostics`
+ * (prints nothing, returns both) are both thin wrappers over this.
+ *
+ * The #169-era "byte-identical default behavior" claim was retired in issue #444 (2026-08-31):
+ * renderLoaderWarning now prefixes `⚠ ` for every code, so this printer's advisory lines gained
+ * the prefix they lacked. The SHAPE of the contract is unchanged — one printing wrapper, one
+ * silent one — and the text after the prefix is untouched.
  * @throws WorkflowError on read failure or structural validation errors.
  */
 function loadWorkflowFromFileCore(

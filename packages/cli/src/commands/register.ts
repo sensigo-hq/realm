@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import {
   loadWorkflowFromFileWithDiagnostics,
   JsonWorkflowStore,
-  resolveSeverity,
   WorkflowError,
 } from '@sensigo/realm';
 import type { WorkflowDefinition, LoaderWarning } from '@sensigo/realm';
@@ -21,17 +20,8 @@ import {
   rejectOnErrorSeverity,
   failsStrict,
   renderLoadFailure,
+  wrapSentinelWarnings,
 } from '../lib/loader-warnings.js';
-
-/** Wraps loadProjectExtensions' sentinel-credential warnings as LoaderWarning (issue #169). */
-function wrapSentinelWarnings(sentinelWarnings: string[] | undefined): LoaderWarning[] {
-  return (sentinelWarnings ?? []).map((message) => ({
-    code: 'EXTENSION_SENTINEL' as const,
-    severity: resolveSeverity('EXTENSION_SENTINEL'),
-    scope: 'workflow' as const,
-    message: `⚠  ${message}`,
-  }));
-}
 
 /**
  * Loads and validates a workflow for registration. Extension-declaring workflows get the
@@ -55,9 +45,9 @@ export async function loadWorkflowForRegistration(
     loaded = await loadProjectExtensions(definition);
   } catch (err) {
     if (!(err instanceof ManifestSecretsError)) throw err;
-    console.warn(`⚠  ${err.message}`);
+    console.warn(`⚠ ${err.message}`);
     console.warn(
-      '⚠  Registering with SENTINEL credentials — execution paths still require real secret resolution.',
+      '⚠ Registering with SENTINEL credentials — execution paths still require real secret resolution.',
     );
     loaded = await loadProjectExtensions(definition, { secretMode: 'sentinel' });
   }
@@ -115,7 +105,7 @@ export const registerCommand = new Command('register')
       printLoaderWarnings(warnings);
       const contextWarnings = lintWorkflowContext(definition);
       for (const warning of contextWarnings) {
-        console.warn(`⚠  ${warning}`);
+        console.warn(`⚠ ${warning}`);
       }
       const stepCount = Object.keys(definition.steps).length;
       console.log(

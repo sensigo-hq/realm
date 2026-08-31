@@ -690,7 +690,7 @@ steps:
     // issue's AC3 "create_workflow stays lenient" holds BY CONSTRUCTION. See the report.
   });
 
-  it('7. renderer golden test: RETRY_INERT_NON_AUTO renders message verbatim (the #169 renderLoaderWarning family pattern — no ⚠ prefix added, byte-identical to whatever constructed it)', () => {
+  it('7. renderer golden test: RETRY_INERT_NON_AUTO renders ⚠ + its message, like every other code (issue #444)', () => {
     const warning: LoaderWarning = {
       code: 'RETRY_INERT_NON_AUTO',
       severity: 'warn',
@@ -698,6 +698,7 @@ steps:
       step: 'work',
       message: "Step 'work': 'retry' is inert on execution: 'agent' steps.",
     };
-    expect(renderLoaderWarning(warning)).toBe(warning.message);
+    expect(renderLoaderWarning(warning)).toBe(`⚠ ${warning.message}`);
+    expect(warning.message).not.toMatch(/^⚠/);
   });
 });

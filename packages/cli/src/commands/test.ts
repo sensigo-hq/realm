@@ -66,7 +66,7 @@ export const testCommand = new Command('test')
         ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
         secretMode: 'sentinel',
       });
-      for (const warning of loaded.sentinelWarnings ?? []) console.warn(`⚠  ${warning}`);
+      for (const warning of loaded.sentinelWarnings ?? []) console.warn(`⚠ ${warning}`);
       const hasExtensionContent =
         loaded.manifest.modules.length > 0 ||
         loaded.manifest.adapters.length > 0 ||

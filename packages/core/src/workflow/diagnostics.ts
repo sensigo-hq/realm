@@ -256,34 +256,24 @@ export function findUnknownKeys(
   return warnings;
 }
 
-const UNKNOWN_KEY_CODES = new Set<WarningCode>([
-  'UNKNOWN_WORKFLOW_KEY',
-  'UNKNOWN_STEP_KEY',
-  'UNKNOWN_CREATE_WORKFLOW_KEY',
-  'UNKNOWN_RETRY_KEY',
-  'UNKNOWN_VALIDATION_EXHAUSTION_KEY',
-  'UNKNOWN_GATE_KEY',
-]);
-
 /**
  * The SINGLE source of the `⚠ ` line format — every printer (the core plain wrappers in
  * yaml-loader.ts, and the CLI's `printLoaderWarnings` helper) renders through this, never by
  * hand-rolling a `⚠ ` string itself.
  *
- * Every code in `UNKNOWN_KEY_CODES` is templated fresh from the structured fields (so the
- * `did_you_mean` suggestion is appended only when present) and always carries the `⚠ ` prefix —
- * byte-identical to the pre-#169 console.warn text (UNKNOWN_RETRY_KEY, issue #140, and
- * UNKNOWN_VALIDATION_EXHAUSTION_KEY, issue #220, both follow the same rendering exactly, just with
- * a different noun instead of 'step'/'workflow'). Every other code
- * (IDEMPOTENT_INERT_IN_FINALIZER, DUAL_SCHEMA_DECLARED, RETRY_NO_TIMEOUT, EXTENSION_SENTINEL,
- * ON_TIMEOUT_SINGLE_ATTEMPT, TOTAL_TIMEOUT_BELOW_ATTEMPT, TOTAL_TIMEOUT_NON_AUTO,
- * RETRY_INERT_NON_AUTO, DEAD_VALIDATION_EXHAUSTION_CONFIG) returns `message` verbatim: these are
- * free-text warnings whose exact current prefix (or lack of one) is preserved byte-for-byte by
- * whatever constructed them, not re-derived here.
+ * THE LAW (issue #444): every warning renders as `⚠ ` + its message, verbatim, whatever its
+ * code. One grammar, one owner.
+ *
+ * It used to be three grammars in four homes: the six unknown-key codes were prefixed here, two
+ * CLI mints baked a two-space `⚠  ` into the message itself, and the remaining advisory codes
+ * rendered bare — so one `validate` run could print a prefixed line, an unprefixed line and a
+ * double-spaced line in the same block. The prefix belongs to the renderer because the renderer
+ * is the only place that knows it is rendering; a mint knows only what it is warning about.
+ *
+ * The obligation that comes with owning it: a MINT MUST NOT carry a prefix of its own, or the
+ * two compose into `⚠ ⚠  …` — the #417 double-prefix class. Each producer has a hygiene cell
+ * asserting its message does not start with `⚠`.
  */
 export function renderLoaderWarning(w: LoaderWarning): string {
-  if (UNKNOWN_KEY_CODES.has(w.code)) {
-    return `⚠ ${w.message}`;
-  }
-  return w.message;
+  return `⚠ ${w.message}`;
 }

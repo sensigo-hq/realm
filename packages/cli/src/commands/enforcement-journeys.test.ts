@@ -472,9 +472,10 @@ steps:
     expect(result.out).toContain("did you mean 'depends_on'?");
   });
 
-  it('the EXTENSIONS path carries them too — the second render, separately wired', async () => {
-    // Same fork the #417 cell below documents: validate has two independent catches, and the
-    // adjacent comment records that reverting one alone left the whole cli suite green.
+  it('the EXTENSIONS path carries them too — its own arrival into the shared chokepoint', async () => {
+    // Since #445 the two arms share ONE render (exitOnLoadFailure), so this pair no longer pins
+    // two independent renders — it pins that each arm still ARRIVES there. That is the half a
+    // shared body cannot check for itself: a chokepoint is only as good as its callers.
     //
     // The `extensions:` VALUE has to be well-formed, not merely present. A malformed one throws
     // its own shape error first and the cell would then pass on the wrong error entirely — the
@@ -609,12 +610,10 @@ steps:
     expect(items[1]).toContain('(line 13)');
   });
 
-  it('the EXTENSIONS path lists them too — the second render, separately wired', async () => {
-    // Found by mutation: reverting the extensions catch to pass `err.message` instead of the
-    // error left all 1449 cli cells green, so an `extensions:`-bearing workflow would have gone
-    // on printing one paragraph while every other path listed per line. Third time this fork has
-    // needed its own cell (#417's comment, #424's carry, now this) — the two catches never cover
-    // each other. The extensions VALUE must be well-formed or the loader's own shape check
+  it('the EXTENSIONS path lists them too — its own arrival into the shared chokepoint', async () => {
+    // Found by mutation during #425, when the two arms still had independent renders: reverting
+    // one alone left the whole cli suite green. #445 merged them into one chokepoint, so this
+    // cell's job changed — it now pins that the extensions arm still ARRIVES at the shared body. The extensions VALUE must be well-formed or the loader's own shape check
     // refuses first and the cell proves nothing.
     const result = await validate(
       write(`
@@ -681,10 +680,10 @@ steps:
     expect(result.out).not.toContain('Invalid: Invalid workflow:');
   });
 
-  it('the EXTENSIONS path renders it the same way — the third site, separately wired', async () => {
-    // validate forks on whether the file declares `extensions:` (validate.ts:247), and the two
-    // arms print through different lines. Reverting the extensions-path one alone left the whole
-    // cli suite green — proven by probe — so the fork needs a cell of its own.
+  it('the EXTENSIONS path renders it the same way — its own arrival into the shared chokepoint', async () => {
+    // validate forks on whether the file declares `extensions:`, and the arms used to print
+    // through different lines — reverting one alone left the whole cli suite green. #445 gave
+    // them one shared render; this cell now pins the extensions arm's ARRIVAL at it.
     //
     // No real extensions module is needed — but note WHAT refuses here (corrected in #442):
     // `{modules: []}` fails the loader's own extensions SHAPE check, not the `agent_profile`
