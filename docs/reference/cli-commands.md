@@ -224,6 +224,11 @@ realm workflow run ./my-workflow
 realm workflow run ./my-workflow --params '{"company_name":"Acme"}'
 ```
 
+**It needs a real terminal** (issue #426). Because it prompts for every step and every gate, a
+piped or scripted invocation has nothing to answer with — so one is refused up front, before any
+run record is created. For scripted flows use `realm workflow test` (fixture-driven) or
+`realm listen` / `realm agent` (the production drives).
+
 ---
 
 ### `realm workflow test <path>`
