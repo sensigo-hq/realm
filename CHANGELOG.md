@@ -64,6 +64,16 @@ action. 0 are handled automatically` — every count now agrees with its own nou
 
 ### Fixed
 
+- **`realm workflow run` no longer crashes and leaves a wedged run behind when stdin is not a
+  terminal** (issue #426). Dev mode prompts for every step and every gate, so a piped or scripted
+  invocation had nothing to answer with: stdin hit EOF, readline closed, and the first prompt
+  threw a raw Node stack trace — but only _after_ the run record had been created and its id
+  printed. Every scripted call minted a `running` run nobody was driving.
+  Non-TTY stdin is now refused before any run exists, with a message that names the scripted
+  alternatives (`realm workflow test` for fixtures, `realm listen` / `realm agent` for the
+  drives). Runs already wedged by the old behaviour are unaffected — clear them with
+  `realm run purge` or `realm run abandon`.
+
 - **A hard load error no longer swallows the warnings channel** (issue #424). Errors and warnings
   travel separately in the loader — errors accumulate and throw once, warnings ride a returned
   array — so any error threw the warnings away with the stack. A workflow with a prohibited key

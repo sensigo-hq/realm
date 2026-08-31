@@ -105,6 +105,29 @@ export const runCommand = new Command('run')
         process.exit(1);
       }
 
+      // issue #426 — dev mode is interactive BY DESIGN: every step kind and every gate prompts
+      // on stdin (agent output, auto mock output, gate choices), so a non-TTY stdin can only
+      // ever EOF into ERR_USE_AFTER_CLOSE — and it did so AFTER the run was minted and its id
+      // printed, leaving a wedged `running` record behind on every scripted invocation.
+      //
+      // Refused BEFORE any store work, joining the "1b … BEFORE run creation" doctrine one
+      // member up. The placement is load → extensions → params → HERE, and each boundary is
+      // pinned: earlier than the load and the loader-voice cells lose their messages; earlier
+      // than extensions and the spawned orphan-manifest case loses its refusal; earlier than
+      // params and `--params '{'` reports the wrong problem.
+      //
+      // `!== true` rather than a truthiness test: isTTY is `undefined` on a pipe, never false.
+      if (process.stdin.isTTY !== true) {
+        console.error(
+          'Error: dev-mode run is interactive — it prompts on stdin for every step and gate, ' +
+            'and stdin here is not a terminal. No run was created. ' +
+            "Scripted flows: 'realm workflow test' drives fixtures; " +
+            "'realm listen' / 'realm agent' are the production drives. " +
+            'To run this workflow by hand, use a real terminal.',
+        );
+        process.exit(1);
+      }
+
       // 3. Create store and initial run record
       const store = new JsonFileStore();
       // issue #207 PR-2 (D3 §5, mixed-wiring gap): construct a JsonTraceBufferStore beside the
