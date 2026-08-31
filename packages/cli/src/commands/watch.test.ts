@@ -538,6 +538,47 @@ describe('watchWorkflow — atomic saves (issue #449)', () => {
 
     vi.restoreAllMocks();
   }, 10_000);
+
+  it('(h) a refused watch leaves NO watcher behind', async () => {
+    // The guard's POSITION, not its existence — cell (g) passes wherever the throw sits. Thrown
+    // after the watcher was created, the rejection reported a failure while a live persistent
+    // watcher kept running: executed, a workflow.yaml created afterwards was still registered by
+    // the phantom, and a caller that held nothing itself never exited (10s timeout kill) where
+    // the fixed version exits in 2ms.
+    //
+    // The store-empty conjunct is the observable chosen for BOTH symptoms, by entailment: no
+    // registration ⟹ nothing fired ⟹ no live watcher. (A handle census via
+    // process.getActiveResourcesInfo() would observe the loop half directly, but it is
+    // experimental and noisy under a worker pool.)
+    const dir = join(tmpdir(), `realm-watch-phantom-${randomUUID()}`);
+    mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, 'workflow.yaml'); // deliberately never written
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await expect(watchWorkflow(filePath, store, controller.signal)).rejects.toThrow(
+        `ENOENT: no such file or directory, watch '${filePath}'`,
+      );
+
+      // The file appears AFTER the failure was reported. Nothing should be listening.
+      writeFileSync(filePath, VALID_YAML, 'utf8');
+      // NEGATIVE assertion: it needs elapsed time to mean anything. The phantom's latency is the
+      // fs event plus the 100ms coalesce window, well inside this.
+      await new Promise((r) => setTimeout(r, 300));
+
+      expect(store.registered).toEqual([]);
+    } finally {
+      // Inert on the fixed code — the throw precedes any watcher. It matters during a red-first
+      // or mutant run, where it closes the leaked handle so a deliberately-failing cell does not
+      // strand a live watcher in the worker.
+      controller.abort();
+      vi.restoreAllMocks();
+    }
+  }, 10_000);
 });
 
 describe('makeCoalescedTrigger (issue #449)', () => {

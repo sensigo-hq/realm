@@ -173,6 +173,22 @@ export async function watchWorkflow(
   // filter — event shapes vary by platform, and on this one an atomic save's passing event is a
   // `rename`, not a `change`.
   //
+  // issue #449 — the missing-file contract, preserved deliberately. `fs.watch` on an absent FILE
+  // threw ENOENT and the action exited 1; a DIRECTORY watch would happily watch nothing forever,
+  // silently. Same error, same exit, raised explicitly now that the watch itself no longer does.
+  //
+  // POSITION IS LOAD-BEARING: before any resource exists. Thrown after the watcher was created,
+  // this left a live persistent watcher behind a reported failure — executed: the rejection
+  // arrives, a workflow.yaml created afterwards still gets registered by the phantom, and the
+  // caller's event loop is held open by a watch it was told had failed. It also orphaned the
+  // never-awaited watchYaml promise, so a later 'error' on the leaked handle would have surfaced
+  // as an unhandled rejection. The CLI never saw either — its catch calls process.exit(1) — but
+  // the function's own contract ("resolves when the watcher is closed") cannot be honoured by a
+  // rejection that closes nothing.
+  if (!existsSync(filePath)) {
+    throw new Error(`ENOENT: no such file or directory, watch '${filePath}'`);
+  }
+
   // Computed BEFORE the Promise below: the executor's `resolve` parameter shadows node:path's
   // `resolve`, so path math inside it is a trap.
   const watchDir = dirname(resolve(filePath));
@@ -209,13 +225,6 @@ export async function watchWorkflow(
       resolveWatch();
     });
   });
-
-  // issue #449 — the missing-file contract, preserved deliberately. `fs.watch` on an absent FILE
-  // threw ENOENT and the action exited 1; a DIRECTORY watch would happily watch nothing forever,
-  // silently. Same error, same exit, raised explicitly now that the watch itself no longer does.
-  if (!existsSync(filePath)) {
-    throw new Error(`ENOENT: no such file or directory, watch '${filePath}'`);
-  }
 
   // Only watch the profiles directory if it exists.
   if (!existsSync(resolvedProfilesDir)) {
