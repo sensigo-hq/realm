@@ -11,9 +11,15 @@ import {
   unmetCapabilities,
   capabilityWarning,
   WorkflowError,
+  deriveRunPhase,
 } from '@sensigo/realm';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
-import type { WorkflowDefinition, StepDefinition, ExtensionRegistry } from '@sensigo/realm';
+import type {
+  WorkflowDefinition,
+  StepDefinition,
+  ExtensionRegistry,
+  RunRecord,
+} from '@sensigo/realm';
 import type { StepDispatcher } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { scheduleGateExpiryTimer } from '../agent/gate/gate-expiry-timer.js';
@@ -26,6 +32,66 @@ import { scheduleGateExpiryTimer } from '../agent/gate/gate-expiry-timer.js';
 function isWriterNonceRequired(): boolean {
   const v = process.env['REALM_REQUIRE_WRITER_NONCE'];
   return v !== undefined && v !== '' && v !== '0' && v !== 'false';
+}
+
+/**
+ * The detach map (issue #447): what to do next, for THIS run's state.
+ *
+ * Cancelling a dev-run prompt used to dump a raw Node stack over an unhandled AbortError, which
+ * reads like a crash. The run was always saved — every settled step persists before the next
+ * prompt — so the exit should say so, and then hand over the exact commands that work from here.
+ *
+ * The fork is on the RECORD, not on a guess, because two of the three states REFUSE most of the
+ * remedies and printing a command that will be rejected is worse than printing nothing:
+ *
+ *  - TERMINAL — reachable for real: an external `realm run respond`, or a gate-expiry enactment,
+ *    can terminalize this run while this process sits blocked on the prompt (the #291 race the
+ *    fresh get below exists to catch). Inspect ONLY, because both other remedies refuse a
+ *    terminal run, by two DIFFERENT mechanisms: `realm run abandon` throws STATE_RUN_TERMINAL
+ *    (abandon-run.ts), while `realm agent --run-id` refuses through a separate uncoded check in
+ *    resolveRunAttach (run-attach.ts) — a plain Error, not that code.
+ *  - PENDING GATE — respond and inspect, and deliberately NO Discard line: `realm run abandon`
+ *    REFUSES a run with a pending gate (STATE_TRANSITION_DENIED, abandon-run.ts) and tells you to
+ *    resolve the gate first. The gate_id and choices come from the FROZEN record, the same source
+ *    `respond` validates against, so what is printed is what will be accepted.
+ *  - OTHERWISE — drive, inspect, or discard, all three of which apply.
+ *
+ * The choices are joined with `|` deliberately: this is a usage template showing alternation, not
+ * a list. (inspect renders them `', '` and the prompt `'/'`; three renderings, three purposes.)
+ * An authored-empty `choices: []` renders an empty alternation — that run is already
+ * human-unresolvable, which is issue #433's to make unmintable at the loader; not special-cased
+ * here.
+ *
+ * @internal Exported for testing only.
+ */
+export function renderDetachMap(record: RunRecord, promptStep: string | undefined): string {
+  // DERIVED, never the persisted field: a record can carry a stale `run_phase` that disagrees
+  // with what its own seal says (issue #432's class), and a map that names the wrong phase sends
+  // an operator to the wrong remedy.
+  const phase = deriveRunPhase(record);
+  const step = promptStep ?? record.pending_gate?.step_name ?? '(step unknown)';
+  const lines = [
+    `Prompt cancelled — detached from run '${record.id}' at step '${step}' (phase: ${phase}). The run is saved.`,
+  ];
+
+  if (record.terminal_state) {
+    lines.push(`  Inspect:   realm run inspect ${record.id}`);
+    return lines.join('\n');
+  }
+
+  const gate = record.pending_gate;
+  if (gate !== undefined) {
+    lines.push(
+      `  Respond:   realm run respond ${record.id} --gate ${gate.gate_id} --choice ${gate.choices.join('|')}`,
+    );
+    lines.push(`  Inspect:   realm run inspect ${record.id}`);
+    return lines.join('\n');
+  }
+
+  lines.push(`  Drive it:  realm agent --run-id ${record.id}`);
+  lines.push(`  Inspect:   realm run inspect ${record.id}`);
+  lines.push(`  Discard:   realm run abandon ${record.id}`);
+  return lines.join('\n');
 }
 
 export const runCommand = new Command('run')
@@ -159,6 +225,11 @@ export const runCommand = new Command('run')
       // 5. Execution loop
       let run = await store.get(runId);
 
+      // issue #447: which step the operator was answering for, assigned immediately before each
+      // question. The block-scoped names below are not visible from the catch, and the catch is
+      // where this is needed.
+      let promptStep: string | undefined;
+
       try {
         while (!run.terminal_state) {
           // Handle open gate
@@ -179,6 +250,7 @@ export const runCommand = new Command('run')
               definition,
               registry,
             });
+            promptStep = g.step_name;
             const raw = await rl.question(`  Choice [${g.choices.join('/')}]: `).finally(() => {
               clearExpiryTimer();
             });
@@ -218,6 +290,7 @@ export const runCommand = new Command('run')
           let userOutput: Record<string, unknown>;
 
           if (stepDef.execution === 'agent') {
+            promptStep = stepName;
             const raw = await rl.question('  Agent output JSON (Enter for {}): ');
             userOutput = raw.trim() === '' ? {} : (JSON.parse(raw) as Record<string, unknown>);
           } else {
@@ -228,6 +301,7 @@ export const runCommand = new Command('run')
                 : stepDef.uses_service !== undefined
                   ? `service: ${stepDef.uses_service}`
                   : 'auto';
+            promptStep = stepName;
             const raw = await rl.question(`  Mock output (${hint}) — JSON (Enter for {}): `);
             userOutput = raw.trim() === '' ? {} : (JSON.parse(raw) as Record<string, unknown>);
           }
@@ -265,6 +339,54 @@ export const runCommand = new Command('run')
         if (run.terminal_state) {
           console.log(`Run complete. Phase: ${run.run_phase}`);
         }
+      } catch (err) {
+        // issue #447 — the operator cancelled the prompt. Ctrl-D at a pending `rl.question`
+        // rejects with an AbortError carrying `code: 'ABORT_ERR'`. Nothing awaits
+        // `program.parse()`, so today that surfaces as an unhandled-rejection stack: a saved run
+        // that looks like a crash.
+        //
+        // CTRL-D ONLY, verified in a real pty on Node v24 (three probes, with Ctrl-D as the
+        // working control through the same harness): Ctrl-C is NOT this class here — the
+        // terminal's line discipline raises SIGINT and the process dies at 130 before readline
+        // sees the byte, so no rejection reaches this catch and no message of ours can print.
+        // Nothing in this feature claims otherwise; see the report.
+        //
+        // Keyed on the CODE alone, never the message, which names the trigger and varies.
+        //
+        // The classification is precise TODAY and the precision is not free: a handler that
+        // out-throws is re-coded ENGINE_HANDLER_FAILED (execution-loop.ts), every engine throw
+        // is WorkflowError-coded and none uses ABORT_ERR, and the gate-expiry timer contains
+        // its own errors. So ABORT_ERR reaching here means the prompt, and only the prompt.
+        // ADDING ANY AbortSignal-CONSUMING AWAIT TO THIS LOOP REQUIRES RE-ESTABLISHING THAT.
+        if ((err as { code?: string })?.code === 'ABORT_ERR') {
+          // A FRESH read, not the loop's `run`: while this process sat blocked on the prompt,
+          // another terminal's `realm run respond` or an expiry enactment may have moved it —
+          // the #291 race. The map is only as good as the state it forks on.
+          let record: RunRecord;
+          try {
+            record = await store.get(runId);
+          } catch (getErr) {
+            // The same concurrent-writer reality that makes the fresh read necessary can also
+            // make it FAIL — a record purged from another terminal mid-prompt. Without this arm
+            // the new cancel path would crash with exactly the stack this feature exists to
+            // remove. `inspect` still earns its line: it is the only read surface, and its own
+            // answer for a missing record is a clean not-found rather than a stack.
+            const message = getErr instanceof Error ? getErr.message : String(getErr);
+            console.error(
+              `Prompt cancelled — detached from run '${runId}'. Its record could not be re-read: ${message}. Inspect: realm run inspect ${runId}`,
+            );
+            rl.close();
+            process.exit(1);
+          }
+          console.error(renderDetachMap(record, promptStep));
+          // process.exit SKIPS the finally, so close explicitly. (rl.close is idempotent, so
+          // the double-close on any path that reaches both is harmless — probed.)
+          rl.close();
+          // Exit 1, not 130: readline consumed the keypress and the process was never signalled,
+          // so 130 would claim a death that did not happen.
+          process.exit(1);
+        }
+        throw err;
       } finally {
         rl.close();
       }
