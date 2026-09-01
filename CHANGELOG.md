@@ -11,7 +11,7 @@ All notable changes to this project are documented here.
 - **`realm workflow list` and `realm workflow validate --registered <id>`** (issue #427). The
   registry was a black box: `register` wrote into it, everything else read from it by id, and
   nothing showed an operator what was in there — so a definition registered under an older realm
-  sat grandfathered and invisible until something tried to use it.
+  sat invisible until something tried to use it.
   `workflow list` prints what is registered, marking each definition current or legacy.
   `validate --registered <id>` then audits any one of them: it strips the keys the loader stamps
   at registration, feeds the rest back through the real loader, and reports what re-registering
