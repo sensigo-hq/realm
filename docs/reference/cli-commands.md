@@ -76,6 +76,29 @@ Creates `my-workflow/` containing `workflow.yaml`, `schema.json`, `.env.example`
 
 ---
 
+### `realm workflow list`
+
+Lists the workflow definitions in the local registry — what `realm workflow register` has put
+there, which is otherwise a black box.
+
+```bash
+realm workflow list
+realm workflow list --json
+```
+
+Columns: `ID  NAME  VERSION  ORIGIN  SCHEMA`. `SCHEMA` reads `1 (current)` for a definition
+registered under the current schema, and `legacy (re-register)` for an older one — those can no
+longer run at all: every runtime call (starting a run, executing a step, responding to a gate)
+refuses them with the same re-register message. Re-register from source to bring them back. Rows
+are sorted by id.
+
+Files the registry cannot parse, and files whose stored id differs from their filename, are
+reported on stderr rather than skipped silently — realm cannot audit what it cannot read, and a
+mismatched filename matters because `--registered` resolves by filename. Exit code is always 0:
+this is a read surface, and reporting the broken entry IS the signal.
+
+---
+
 ### `realm workflow validate <path>`
 
 Validates a workflow YAML without registering it. Reports schema errors, duplicate step IDs,
@@ -106,6 +129,19 @@ exits `0` — the workflow is `Valid:` regardless. `--strict` changes that: if *
 present, the summary line names the count and the command exits `1` instead. Nothing is checked
 that isn't already checked without the flag — `--strict` only changes what counts as success, so
 it's meant for CI gates that want to catch a typo before it reaches `register`.
+
+**`--registered <id>` (issue #427):** audits the STORED copy of a registered workflow instead of
+a file — the pre-upgrade check. It strips the keys the loader stamps at registration, feeds the
+rest back through the real loader, and reports what re-registering that definition today would
+say. Current-schema copies stay grandfathered at runtime — the audit changes nothing about your
+runs; it tells you what you would hit if you re-registered. A `legacy (re-register)` copy is
+already unreachable, and the audit tells you so.
+
+Two things worth knowing. It audits the loader you have INSTALLED, so the pre-upgrade journey is
+upgrade the CLI first, then audit — which is safe precisely because grandfathering holds. And it
+is a STRUCTURAL audit only: extension module resolution, adapter `config_schema` checks and
+agent-profile file resolution all need the source tree, which a stored copy does not have. When a
+definition declares either, the audit says so on its own line.
 
 **`--explain` (issue #422):** prints the full per-step `structured_output` adoption detail
 described below, in place of the one-line summary a default run prints. It changes nothing about

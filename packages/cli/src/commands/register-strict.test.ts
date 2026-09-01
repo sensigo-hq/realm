@@ -94,7 +94,11 @@ steps:
 
     expect(exitSpy).toHaveBeenCalledWith(1);
     const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    expect(errored).toContain('refusing to register due to --strict');
+    // issue #427: real pluralization, not `warning(s)`. This fixture has exactly one warning,
+    // and every pre-existing pin on this line was a count-agnostic substring — so the singular
+    // and plural forms both needed minting, or nothing would have reddened when the ternary
+    // went in.
+    expect(errored).toContain('has 1 warning; refusing to register due to --strict');
     const warnedHere = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     // SPLIT PINS (issue #392): a source position now sits between the key and the clause.
     expect(warnedHere).toContain("unknown key 'bogus_retry_key'");
@@ -337,5 +341,67 @@ steps:
     const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(errored).toMatch(/^Error: /m);
     expect(errored).not.toContain('Invalid workflow');
+  });
+});
+
+// issue #427 — the plural half of the pluralization pair. Without it the ternary is only pinned
+// in one direction, and a hardcoded 'warning' would pass everything above.
+describe('register --strict — the summary counts in the plural (issue #427)', () => {
+  let home: string;
+  let originalHome: string | undefined;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'realm-register-plural-'));
+    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
+    originalHome = process.env['HOME'];
+    process.env['HOME'] = home;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
+      throw new Error('process.exit');
+    }) as never);
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = originalHome;
+    vi.restoreAllMocks();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('two warnings read "has 2 warnings"', async () => {
+    const wfDir = mkdtempSync(join(tmpdir(), 'realm-register-plural-wf-'));
+    writeFileSync(
+      join(wfDir, 'workflow.yaml'),
+      `id: plural-reg
+name: Plural Reg
+version: 1
+steps:
+  a:
+    description: a
+    execution: agent
+    retry:
+      max_attempts: 3
+  b:
+    description: b
+    execution: agent
+    depends_on: [a]
+    retry:
+      max_attempts: 2
+`,
+      'utf8',
+    );
+
+    await expect(registerCommand.parseAsync([wfDir, '--strict'], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain('has 2 warnings; refusing to register due to --strict');
+    rmSync(wfDir, { recursive: true, force: true });
   });
 });

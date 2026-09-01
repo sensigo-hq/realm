@@ -21,6 +21,7 @@ import { diffCommand } from './commands/diff.js';
 import { initCommand } from './commands/init.js';
 import { testCommand } from './commands/test.js';
 import { watchCommand } from './commands/watch.js';
+import { workflowListCommand } from './commands/workflow-list.js';
 import { listCommand } from './commands/list.js';
 import { mcpCommand } from './commands/mcp.js';
 import { serveCommand } from './commands/serve.js';
@@ -35,6 +36,7 @@ import { listenCommand } from './commands/listen.js';
 /** Commands that operate on workflow definitions (realm workflow <cmd>). */
 export const workflowCommands = [
   initCommand,
+  workflowListCommand,
   validateCommand,
   registerCommand,
   watchCommand,
