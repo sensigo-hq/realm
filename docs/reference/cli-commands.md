@@ -265,8 +265,8 @@ piped or scripted invocation has nothing to answer with — so one is refused up
 run record is created. For scripted flows use `realm workflow test` (fixture-driven) or
 `realm listen` / `realm agent` (the production drives).
 
-**Cancelling a prompt detaches cleanly** (issue #447). Pressing Ctrl-D at a prompt used to dump a
-raw Node stack, which looked like a crash even though nothing was lost. It now exits with a short
+**Cancelling a prompt detaches cleanly** (issue #447). Pressing Ctrl-D or Ctrl-C at a prompt in the
+terminal used to dump a raw Node stack, which looked like a crash even though nothing was lost. It now exits with a short
 map: the run id, the step it was waiting on, the run's derived phase, and the exact next commands
 **for that run's state** — respond with the real gate id and choices when a gate is waiting,
 `realm agent --run-id` to re-attach otherwise, and inspect either way. The run is saved; every

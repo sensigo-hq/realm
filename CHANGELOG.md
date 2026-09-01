@@ -99,8 +99,8 @@ action. 0 are handled automatically` — every count now agrees with its own nou
 
 ### Fixed
 
-- **Cancelling a dev-run prompt no longer looks like a crash** (issue #447). Pressing Ctrl-D at a
-  `realm workflow run` prompt dumped a raw Node stack over an unhandled AbortError. The run had
+- **Cancelling a dev-run prompt no longer looks like a crash** (issue #447). Pressing Ctrl-D or Ctrl-C at a
+  `realm workflow run` prompt in the terminal dumped a raw Node stack over an unhandled AbortError. The run had
   always been saved — every settled step persists before the next prompt — but nothing said so,
   and a stack trace says the opposite.
   It now prints a detach map: the run id, the step it was waiting on, the run's DERIVED phase, and

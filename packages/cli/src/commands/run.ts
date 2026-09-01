@@ -345,11 +345,20 @@ export const runCommand = new Command('run')
         // `program.parse()`, so today that surfaces as an unhandled-rejection stack: a saved run
         // that looks like a crash.
         //
-        // CTRL-D ONLY, verified in a real pty on Node v24 (three probes, with Ctrl-D as the
-        // working control through the same harness): Ctrl-C is NOT this class here — the
-        // terminal's line discipline raises SIGINT and the process dies at 130 before readline
-        // sees the byte, so no rejection reaches this catch and no message of ours can print.
-        // Nothing in this feature claims otherwise; see the report.
+        // BOTH Ctrl-D and Ctrl-C land here on a real terminal — measured on this build: ^C at a
+        // live prompt printed the full map and exited 1. What decides it is the WIRING, not the
+        // key: readline enables raw mode only in terminal mode, which requires `output.isTTY`.
+        // With stdout PIPED, readline never takes the terminal path and ^C takes the
+        // signal/inert route instead (measured: the process died at 130) — out of this catch's
+        // reach, and outside anything the map claims.
+        //
+        // One timing caveat, worth recording because it produced a confident wrong answer during
+        // this work: the pty is COOKED until readline switches it, so a ^C delivered before that
+        // switch takes the cooked ISIG path and kills the process before any JS runs. A scripted
+        // `printf '\x03' | …` hits that window; the same harness with the byte delayed a second
+        // rejects ABORT_ERR-coded as expected. Cooked-mode ^D persists in the stream as EOF and
+        // still ends up ABORT_ERR-coded, which is exactly why it looked like a valid control and
+        // was not. No claim here about anyone typing that fast.
         //
         // Keyed on the CODE alone, never the message, which names the trigger and varies.
         //
