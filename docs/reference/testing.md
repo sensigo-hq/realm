@@ -42,11 +42,13 @@ describe('issue-triage fixtures', async () => {
 
 ### `runFixtureTests(options)`
 
-| Parameter      | Type                | Required | Description                                                                               |
-| -------------- | ------------------- | -------- | ----------------------------------------------------------------------------------------- |
-| `workflowPath` | string              | Yes      | Path to `workflow.yaml` or the directory containing it.                                   |
-| `fixturesPath` | string              | Yes      | Path to a directory of `*.yaml` fixture files.                                            |
-| `registry`     | `ExtensionRegistry` | No       | Registry with custom handlers/adapters used as a fallback. Fixture mocks take precedence. |
+| Parameter      | Type                     | Required | Description                                                                                                                                                                                                              |
+| -------------- | ------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `workflowPath` | string                   | Yes      | Path to `workflow.yaml` or the directory containing it.                                                                                                                                                                  |
+| `fixturesPath` | string                   | Yes      | Path to a directory of `*.yaml` fixture files.                                                                                                                                                                           |
+| `registry`     | `ExtensionRegistry`      | No       | Registry with custom handlers/adapters used as a fallback. Fixture mocks take precedence.                                                                                                                                |
+| `extensions`   | `{ registry, manifest }` | No       | Project extensions loaded for the workflow. Handlers and processors merge REAL into the fixture registry; an extension adapter the fixture does not mock gets a tripwire that throws rather than hitting a real service. |
+| `definition`   | `WorkflowDefinition`     | No       | An already-loaded definition. When given, the runner uses it verbatim and performs no load of its own — so it also prints no load-time warnings, because the caller that loaded it owns surfacing them.                  |
 
 Returns `Promise<TestResult[]>`. One `TestResult` per fixture file.
 

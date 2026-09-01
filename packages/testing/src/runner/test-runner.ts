@@ -50,6 +50,23 @@ export interface RunFixtureTestsOptions {
    * registry lookup and the mock-agent dispatcher fallback.
    */
   extensions?: { registry: ExtensionRegistry; manifest: ExtensionManifest };
+  /**
+   * An ALREADY-LOADED workflow definition (issue #450). When provided, the runner uses it
+   * verbatim and performs NO load of its own — which also means it prints no load-time warnings,
+   * because the caller that loaded it owns surfacing them.
+   *
+   * This exists because `realm workflow test` loaded the same file the runner did, so every
+   * loader warning printed twice. The CLI now loads once, prints once, and hands the definition
+   * down.
+   *
+   * When ABSENT the runner loads as it always has — the published contract for direct callers is
+   * unchanged, and pinned.
+   *
+   * `workflowPath` stays REQUIRED and simply becomes load-inert when this is supplied (its only
+   * consumer is that load). Keeping it required avoids turning this interface into a union for a
+   * field every caller already has to hand.
+   */
+  definition?: WorkflowDefinition;
 }
 
 /**
@@ -351,7 +368,8 @@ export async function runFixtureTests(options: RunFixtureTestsOptions): Promise<
         ? join(options.workflowPath, 'workflow.yaml')
         : options.workflowPath;
 
-  const definition = loadWorkflowFromFile(workflowFilePath);
+  // issue #450: the caller's definition wins, and skips the load entirely.
+  const definition = options.definition ?? loadWorkflowFromFile(workflowFilePath);
   const fixtures = loadFixturesFromDir(options.fixturesPath);
 
   return Promise.all(fixtures.map((fixture) => runSingleFixture(fixture, definition, options)));

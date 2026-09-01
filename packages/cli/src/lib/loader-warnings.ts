@@ -1,7 +1,12 @@
 // loader-warnings.ts — shared CLI surfacing for the structured loader-warning channel (issue
-// #169). Every LoaderWarning a CLI command prints funnels through printLoaderWarnings (the only
-// caller of renderLoaderWarning), and the dormant #170 boundary-reject is factored into ONE
-// shared helper so validate/register/watch can't drift.
+// #169). The BOUNDARY commands — validate, register, watch — funnel every LoaderWarning through
+// printLoaderWarnings, and the dormant #170 boundary-reject is factored into ONE shared helper so
+// they can't drift.
+//
+// One deliberate exception (issue #450): the execution-LENIENT `realm workflow test` renders
+// through renderLoaderWarning directly. printLoaderWarnings rewrites `— ignored` to
+// `— REFUSED below` for the codes a boundary refuses, and `test` refuses nothing — it proceeds
+// and can pass, so `— ignored` is the true word there and the substitution would not be.
 //
 // Precise as of issue #444: no command hand-rolls a ⚠ prefix for a LOADER WARNING. A few
 // adjacent one-off notices — register's sentinel lines, test's sentinel echo — still print their

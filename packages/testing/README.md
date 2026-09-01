@@ -52,7 +52,7 @@ Requires `@sensigo/realm` at the same version to be installed in your project.
 
 ## Usage — YAML Fixture Tests
 
-Fixture tests are the fastest way to test a complete workflow. Each fixture file declares the initial params, mock service responses, agent step outputs, and the expected final state. The `runFixtureTests` runner loads your workflow, drives it to completion using the fixture data, and returns a result for each fixture.
+Fixture tests are the fastest way to test a complete workflow. Each fixture file declares the initial params, mock service responses, agent step outputs, and the expected final state. The `runFixtureTests` runner loads your workflow — or uses the `definition` you pass it — drives it to completion using the fixture data, and returns a result for each fixture.
 
 ```ts
 // workflow-test.ts
@@ -154,11 +154,11 @@ describe('my-workflow programmatic', () => {
 
 ### Runner
 
-| Symbol                   | Description                                                                             |
-| ------------------------ | --------------------------------------------------------------------------------------- |
-| `runFixtureTests`        | Drive a workflow to completion for all fixtures in a directory. Returns `TestResult[]`. |
-| `RunFixtureTestsOptions` | Type — options for `runFixtureTests` (`workflowPath`, `fixturesPath`, `registry?`).     |
-| `TestResult`             | Type — result of a single fixture run (`name`, `passed`, `error?`).                     |
+| Symbol                   | Description                                                                                                                                                                                                                 |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runFixtureTests`        | Drive a workflow to completion for all fixtures in a directory. Returns `TestResult[]`.                                                                                                                                     |
+| `RunFixtureTestsOptions` | Type — options for `runFixtureTests` (`workflowPath`, `fixturesPath`, `registry?`, `extensions?`, `definition?` — pass an already-loaded definition and the runner skips its own load, and its load-time warnings with it). |
+| `TestResult`             | Type — result of a single fixture run (`name`, `passed`, `error?`).                                                                                                                                                         |
 
 ### Servers
 

@@ -99,6 +99,14 @@ action. 0 are handled automatically` — every count now agrees with its own nou
 
 ### Fixed
 
+- **`realm workflow test` printed every loader warning twice** (issue #450). The CLI loaded the
+  workflow and the fixture runner loaded the same file again, each printing as it went — so a
+  workflow with two warnings showed four lines, above a run that then passed.
+  The CLI now loads once and prints once, in the lenient channel's exact wording and still before
+  any extensions failure can hide them, then hands the loaded definition to the runner through the
+  new optional `RunFixtureTestsOptions.definition`. That option is public API and named here for
+  that reason: direct `runFixtureTests` callers who do not pass it are completely unaffected.
+
 - **Cancelling a dev-run prompt no longer looks like a crash** (issue #447). Pressing Ctrl-D or Ctrl-C at a
   `realm workflow run` prompt in the terminal dumped a raw Node stack over an unhandled AbortError. The run had
   always been saved — every settled step persists before the next prompt — but nothing said so,

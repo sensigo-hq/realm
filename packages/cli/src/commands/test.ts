@@ -3,7 +3,11 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadWorkflowFromFile, WorkflowError } from '@sensigo/realm';
+import {
+  loadWorkflowFromFileWithDiagnostics,
+  renderLoaderWarning,
+  WorkflowError,
+} from '@sensigo/realm';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
 import { runFixtureTests } from '@sensigo/realm-testing';
 import type { TestResult, RunFixtureTestsOptions } from '@sensigo/realm-testing';
@@ -56,10 +60,27 @@ export const testCommand = new Command('test')
 
     let results: TestResult[];
     try {
+      // issue #450: load SILENTLY and render once. The default `loadWorkflowFromFile` prints as
+      // it loads, and the fixture runner loaded the same file again — so every warning appeared
+      // twice.
+      const { definition, warnings } = loadWorkflowFromFileWithDiagnostics(
+        resolveWorkflowFilePath(workflowPath),
+      );
+      // PLACEMENT IS LOAD-BEARING: this loop must stay ABOVE the extensions load below. The
+      // printing wrapper it replaces emitted before extensions loading could throw, so on an
+      // extensions failure the operator still saw the workflow's own warnings. Moved below, every
+      // warning on that path would vanish silently.
+      //
+      // And renderLoaderWarning directly, NOT printLoaderWarnings: that helper rewrites
+      // `— ignored` to `— REFUSED below` for codes the boundary commands refuse, and post-#170
+      // that includes the unknown-key family. `realm workflow test` is execution-LENIENT — it
+      // proceeds and can pass — so "REFUSED below" above a passing run would be a false
+      // statement about what just happened.
+      for (const warning of warnings) console.warn(renderLoaderWarning(warning));
+
       // Resolve project extensions so custom HANDLERS run real and custom ADAPTERS get
       // fail-if-unmocked tripwires inside the fixture runner. Extension-free workflows
       // (without an override) pass no `extensions` — current behavior byte-for-byte.
-      const definition = loadWorkflowFromFile(resolveWorkflowFilePath(workflowPath));
       // Sentinel mode: fixtures never see real credentials — secret-bearing handlers are
       // constructed with sentinels and FAIL the fixture on first execution (runner-side).
       const loaded = await loadProjectExtensions(definition, {
@@ -78,6 +99,8 @@ export const testCommand = new Command('test')
       results = await runFixtureTests({
         workflowPath,
         fixturesPath: opts.fixtures,
+        // issue #450: the runner reuses this instead of re-loading (and re-printing) the file.
+        definition,
         ...(extensions !== undefined ? { extensions } : {}),
       });
     } catch (err) {
