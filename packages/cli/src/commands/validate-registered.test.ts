@@ -170,6 +170,21 @@ describe('validate --registered (issue #427)', () => {
     expect(text).toContain('Extensions/profiles declared — module resolution, config_schema');
     expect(text).toContain('Valid: stored-wf'); // it reached a verdict
     expect(text).not.toContain('Register this workflow from its YAML file');
+
+    // ORDER, per header line. The honesty line only means anything under the "Auditing…" frame,
+    // and nothing else pins that: header-before-VERDICT is true by construction (a refusing
+    // parse exits before a late header could print), but header-before-HONESTY-LINE was pinned
+    // by nothing — moving the header below it left 12/12 green.
+    //
+    // Per-member deliberately: a single first-line conjunct would be VACUOUS under header
+    // deletion (indexOf's -1 satisfies `< x`) and blind to a line-2-only reorder.
+    const honestyAt = text.indexOf('Extensions/profiles declared');
+    const headerAt = text.indexOf("Auditing the registered copy of 'stored-wf'");
+    expect(headerAt).toBeGreaterThanOrEqual(0);
+    expect(headerAt).toBeLessThan(honestyAt);
+    const gfAt = text.indexOf('stay grandfathered at runtime');
+    expect(gfAt).toBeGreaterThanOrEqual(0);
+    expect(gfAt).toBeLessThan(honestyAt);
   });
 
   it('R6b the honesty line also fires for an agent_profile, with no extensions key', async () => {

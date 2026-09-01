@@ -2,9 +2,12 @@
 //
 // The registry was a black box. `realm workflow register` wrote into it, everything else read
 // from it by id, and nothing showed an operator what was there — so a definition registered
-// under an older realm sat there indefinitely, grandfathered and invisible, until something
-// tried to use it. This is the read surface that makes a pre-upgrade audit possible: list what
-// you have, then audit each one with `realm workflow validate --registered <id>`.
+// under an older realm sat there indefinitely and invisibly. A CURRENT-SCHEMA one keeps running,
+// grandfathered; an older one is worse than that, because it cannot run at all — every runtime
+// consumer resolves through the store's get(), which refuses it. Either way nothing surfaced it
+// until something tried to use it. This is the read surface that makes a pre-upgrade audit
+// possible: list what you have, then audit each one with
+// `realm workflow validate --registered <id>`.
 import { Command } from 'commander';
 import { JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';

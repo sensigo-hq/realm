@@ -87,8 +87,10 @@ realm workflow list --json
 ```
 
 Columns: `ID  NAME  VERSION  ORIGIN  SCHEMA`. `SCHEMA` reads `1 (current)` for a definition
-registered under the current schema, and `legacy (re-register)` for an older one — those still
-run, but they are the ones to re-register before you rely on them. Rows are sorted by id.
+registered under the current schema, and `legacy (re-register)` for an older one — those can no
+longer run at all: every runtime call (starting a run, executing a step, responding to a gate)
+refuses them with the same re-register message. Re-register from source to bring them back. Rows
+are sorted by id.
 
 Files the registry cannot parse, and files whose stored id differs from their filename, are
 reported on stderr rather than skipped silently — realm cannot audit what it cannot read, and a
@@ -131,8 +133,9 @@ it's meant for CI gates that want to catch a typo before it reaches `register`.
 **`--registered <id>` (issue #427):** audits the STORED copy of a registered workflow instead of
 a file — the pre-upgrade check. It strips the keys the loader stamps at registration, feeds the
 rest back through the real loader, and reports what re-registering that definition today would
-say. Registered copies stay grandfathered at runtime, so this changes nothing about your runs; it
-tells you what you would hit if you re-registered.
+say. Current-schema copies stay grandfathered at runtime — the audit changes nothing about your
+runs; it tells you what you would hit if you re-registered. A `legacy (re-register)` copy is
+already unreachable, and the audit tells you so.
 
 Two things worth knowing. It audits the loader you have INSTALLED, so the pre-upgrade journey is
 upgrade the CLI first, then audit — which is safe precisely because grandfathering holds. And it

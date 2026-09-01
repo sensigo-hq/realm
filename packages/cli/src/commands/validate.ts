@@ -362,8 +362,10 @@ function hasTopLevelExtensions(content: string): boolean {
  *
  * What it audits is the INSTALLED loader — the same limitation kubectl documents. The
  * pre-upgrade journey is therefore: upgrade the CLI first, THEN audit. That is safe precisely
- * because grandfathering holds: a registered copy keeps running under the rules it was
- * registered with, so upgrading the CLI to look does not change what your runs do.
+ * because grandfathering holds for the copies it applies to: a CURRENT-SCHEMA registered copy
+ * keeps running under the rules it was registered with, so upgrading the CLI to look does not
+ * change what your runs do. A legacy (schema_version-less or older) copy is a different case
+ * entirely — see the legacy arm below: it is not grandfathered, it is already unreachable.
  */
 async function validateRegistered(id: string, strict: boolean): Promise<void> {
   const store = new JsonWorkflowStore();
