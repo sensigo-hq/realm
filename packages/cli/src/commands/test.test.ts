@@ -177,8 +177,18 @@ expected:
     // BOTH conjuncts are load-bearing, and they catch different mutations. A key-based substring
     // ALSO matches the `— REFUSED below` substituted form, so swapping this print to
     // printLoaderWarnings leaves the COUNT satisfied and reds only on the wording below.
-    expect(lines.filter((l: string) => l.includes("unknown key 'frobnicate'"))).toHaveLength(1);
-    expect(lines.filter((l: string) => l.includes("'retry' is inert"))).toHaveLength(1);
+    const unknownKeyLines = lines.filter((l: string) => l.includes("unknown key 'frobnicate'"));
+    const retryInertLines = lines.filter((l: string) => l.includes("'retry' is inert"));
+    expect(unknownKeyLines).toHaveLength(1);
+    expect(retryInertLines).toHaveLength(1);
+
+    // The `⚠ ` prefix belongs to renderLoaderWarning — THE LAW (#444, diagnostics.ts:264):
+    // one owner of the marker, so every warning surface looks alike. A message-only print here
+    // keeps every OTHER conjunct in this file green (MA-executed mutant: 9/9 passed), so these
+    // two are the law's only teeth on this surface. Asserted on the same extracted strings the
+    // counts pinned — which is what makes the [0] safe: fail-fast means the count guarded it.
+    expect(unknownKeyLines[0]).toMatch(/^⚠ /);
+    expect(retryInertLines[0]).toMatch(/^⚠ /);
 
     // `test` is execution-LENIENT: it proceeds and passes. "REFUSED below" over a passing run
     // would be a false statement about what just happened.
