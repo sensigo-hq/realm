@@ -1,9 +1,9 @@
 // Tests for @sensigo/realm-testing — covers all exported modules.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tmpdir } from 'node:os';
 import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { ExtensionRegistry } from '@sensigo/realm';
+import { ExtensionRegistry, loadWorkflowFromFile } from '@sensigo/realm';
 import type {
   EvidenceSnapshot,
   RunRecord,
@@ -900,6 +900,105 @@ describe('runFixtureTests', () => {
     expect(results).toHaveLength(1);
     expect(results[0]!.passed).toBe(true);
     expect(results[0]!.error).toBeUndefined();
+  });
+
+  // issue #450 — the optional `definition`. The CLI loaded the same file this runner loads, so
+  // every loader warning printed twice; the CLI now loads once and hands the definition down.
+  // These two cells pin both halves of the contract from the API side.
+  it('C2 WITHOUT a definition the runner still loads, and still prints — the published contract', async () => {
+    const withWarning = `
+id: warn-wf
+name: Warn WF
+version: 1
+frobnicate: true
+steps:
+  agent-step:
+    description: Agent step
+    execution: agent
+`;
+    writeFileSync(join(tmpDir, 'workflow.yaml'), withWarning);
+    writeFileSync(
+      join(tmpDir, 'fixtures', 'happy.yaml'),
+      `
+name: happy
+params: {}
+mocks: {}
+agent_responses:
+  agent-step:
+    result: success
+expected:
+  final_state: completed
+`,
+    );
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const results = await runFixtureTests({
+      workflowPath: join(tmpDir, 'workflow.yaml'),
+      fixturesPath: join(tmpDir, 'fixtures'),
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]!.passed).toBe(true);
+    // The load happened here, so the printing did too — a direct caller that never opted in is
+    // unaffected by the CLI's change.
+    expect(warnSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+    vi.restoreAllMocks();
+  });
+
+  it('C3 WITH a definition the runner uses it verbatim — the file is not consulted', async () => {
+    // The definition passed in DIVERGES from the file in a way the fixture outcome can see: the
+    // file's step declares an output_schema the fixture's response violates (so a file-load run
+    // FAILS), and the doctored copy drops that schema (so the same fixture PASSES). Anything
+    // weaker would pass whether or not the option is honoured.
+    const strictFile = `
+id: doctored-wf
+name: Doctored WF
+version: 1
+steps:
+  agent-step:
+    description: Agent step
+    execution: agent
+    output_schema:
+      type: object
+      additionalProperties: false
+      required: [must_have]
+      properties:
+        must_have: { type: string }
+`;
+    writeFileSync(join(tmpDir, 'workflow.yaml'), strictFile);
+    writeFileSync(
+      join(tmpDir, 'fixtures', 'happy.yaml'),
+      `
+name: happy
+params: {}
+mocks: {}
+agent_responses:
+  agent-step:
+    result: success
+expected:
+  final_state: completed
+`,
+    );
+
+    // Control: loaded from the file, the fixture's response violates the schema and it FAILS.
+    const fromFile = await runFixtureTests({
+      workflowPath: join(tmpDir, 'workflow.yaml'),
+      fixturesPath: join(tmpDir, 'fixtures'),
+    });
+    expect(fromFile[0]!.passed).toBe(false);
+
+    // Same file, same fixture — but the definition handed in has no output_schema.
+    const doctored = loadWorkflowFromFile(join(tmpDir, 'workflow.yaml'));
+    delete (doctored.steps['agent-step'] as { output_schema?: unknown }).output_schema;
+
+    const fromDefinition = await runFixtureTests({
+      workflowPath: join(tmpDir, 'workflow.yaml'),
+      fixturesPath: join(tmpDir, 'fixtures'),
+      definition: doctored,
+    });
+
+    expect(fromDefinition).toHaveLength(1);
+    expect(fromDefinition[0]!.passed).toBe(true);
   });
 
   it('agent step with no pre-built response causes fixture to fail', async () => {
