@@ -287,6 +287,178 @@ steps:
   // NESTED here on purpose: the harness beforeEach/afterEach — scratch HOME, isTTY, the throwing
   // exit spy — are scoped to this describe. A sibling would run against the REAL ~/.realm with a
   // REAL process.exit in the worker (mechanics lane, #459).
+  describe('exit codes that tell the truth (issue #468)', () => {
+    const errLines = (): string[] => errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    const logged = (): string => logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    /** The persisted record, read the way c POSITIVE's mock reads it (the #285 idiom: the store
+     *  is constructed AFTER the scratch HOME is live). */
+    const readRecord = async (): Promise<RunRecord> => {
+      const { JsonFileStore } = await import('@sensigo/realm');
+      const store = new JsonFileStore();
+      const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
+      return store.get(files[0]!.replace('.json', ''));
+    };
+
+    it("B1 a typo'd gate choice re-prompts the live gate instead of dying silently", async () => {
+      // Red-first on main (built dist, pty, paced per prompt): the ✗ line then SILENCE — the
+      // process exits 0 with the gate still pending, live. `{}` opens the gate through
+      // executeChain's confirm_required (NOT via planting — that idiom is c POSITIVE's, purpose-
+      // built for the catch route). Chain: mock output opens the gate, a typo'd choice, the real
+      // choice.
+      writeFileSync(
+        join(dir, 'workflow.yaml'),
+        `id: detach-wf
+name: Detach WF
+version: 1
+steps:
+  a:
+    description: gated
+    execution: auto
+    trust: human_confirmed
+    gate:
+      choices: [approve, reject]
+`,
+        'utf8',
+      );
+      mocks.question
+        .mockImplementationOnce(async () => '{}')
+        .mockImplementationOnce(async () => 'aprove')
+        .mockImplementationOnce(async () => 'approve');
+
+      await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
+
+      expect(mocks.question).toHaveBeenCalledTimes(3);
+      expect(mocks.question).toHaveBeenLastCalledWith('  Choice [approve/reject]: ');
+      const lines = errLines();
+      expect(lines.filter((l) => l.includes("Choice 'aprove' is not valid"))).toHaveLength(1);
+      expect(logged()).toContain('Run complete. Phase: completed');
+      expect(exitSpy).not.toHaveBeenCalled();
+      const rec = await readRecord();
+      expect(rec.run_phase).toBe('completed');
+    }, 20_000);
+
+    it('B2 leg 1: one schema-violating answer re-prompts the still-eligible step', async () => {
+      // Red-first on main: the ✗ line then SILENCE — exit 0, the record shows `rejections: {s1:
+      // 1}` (the #220 counting fired) yet the session died on a retryable step. output_schema
+      // forces validation; execution: agent is required — countRejection only counts agent steps.
+      writeFileSync(
+        join(dir, 'workflow.yaml'),
+        `id: detach-wf
+name: Detach WF
+version: 1
+steps:
+  s1:
+    description: s1
+    execution: agent
+    output_schema:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+`,
+        'utf8',
+      );
+      mocks.question
+        .mockImplementationOnce(async () => '{"wrong":1}')
+        .mockImplementationOnce(async () => '{"ok":true}');
+
+      await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
+
+      expect(mocks.question).toHaveBeenCalledTimes(2);
+      expect(errLines().filter((l) => l.includes('Output validation failed'))).toHaveLength(1);
+      expect(logged()).toContain('Run complete. Phase: completed');
+      expect(exitSpy).not.toHaveBeenCalled();
+    }, 20_000);
+
+    it('B2 bound leg: exactly six violations terminalize the run, and the exit says so', async () => {
+      // The forcing cell for decisions 1 AND 3 together. Red-first (main, literal deliverable):
+      // unconstructible — a bare continue never sees the terminalization, the loop asks a
+      // SEVENTH question, the mock chain (exactly six answers) is exhausted, and the #459 helper
+      // rejects on `undefined.trim()` — that rejection is the artifact this fix removes, not the
+      // pin. Post-fix, MA/lane-executed transcript: five `Output validation failed` + one
+      // `exhausted its validation-rejection budget (6/6)`, phase failed, sealed_by step_failure.
+      // The tail sits AFTER the finally, so the mocked exit's throw rejects parseAsync DIRECTLY —
+      // no catch sits between; rl is already closed.
+      writeFileSync(
+        join(dir, 'workflow.yaml'),
+        `id: detach-wf
+name: Detach WF
+version: 1
+steps:
+  s1:
+    description: s1
+    execution: agent
+    output_schema:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+`,
+        'utf8',
+      );
+      for (let i = 0; i < 6; i++) {
+        mocks.question.mockImplementationOnce(async () => '{"wrong":1}');
+      }
+
+      await expect(
+        runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' }),
+      ).rejects.toThrow('process.exit');
+
+      expect(mocks.question).toHaveBeenCalledTimes(6);
+      const lines = errLines();
+      expect(lines.filter((l) => l.includes('Output validation failed'))).toHaveLength(5);
+      expect(lines.some((l) => l.includes('exhausted its validation-rejection budget (6/6)'))).toBe(
+        true,
+      );
+      expect(logged()).toContain('Run complete. Phase: failed');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      const rec = await readRecord();
+      expect(rec.terminal_state).toBe(true);
+      expect(rec.run_phase).toBe('failed');
+    }, 20_000);
+
+    it("B3 a stall hands the run back with a TRUTHFUL map — never 'Prompt cancelled'", async () => {
+      // Red-first on main: the stall line alone, exit 0, no map, live run. First-iteration stall
+      // (an unsatisfiable `when`) asks no question at all — the else-fork map with the
+      // '(step unknown)' fallback, already pinned as a renderer unit at :139.
+      //
+      // MULTIPLE stderr calls here by design (the stall line + the map) — never copy c
+      // POSITIVE's toHaveLength(1) channel pin.
+      writeFileSync(
+        join(dir, 'workflow.yaml'),
+        `id: detach-wf
+name: Detach WF
+version: 1
+steps:
+  a:
+    description: a
+    execution: agent
+    when:
+      - 'run.params.never_true == true'
+`,
+        'utf8',
+      );
+
+      await expect(
+        runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' }),
+      ).rejects.toThrow('process.exit');
+
+      expect(mocks.question).not.toHaveBeenCalled();
+      const text = stderr();
+      expect(text).toContain('Workflow stalled — detached from run');
+      // The route-separation tooth: a default-headline regression reds this — the map's own
+      // ELSE-fork line is the same one a1's unit already pins, so what discriminates HERE is
+      // that it is NOT the cancel route's claim.
+      expect(text).not.toContain('Prompt cancelled');
+      expect(text).toContain('realm run inspect');
+      expect(text).toContain("at step '(step unknown)'");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    }, 20_000);
+  });
+
+  // NESTED here on purpose: the harness beforeEach/afterEach — scratch HOME, isTTY, the throwing
+  // exit spy — are scoped to this describe. A sibling would run against the REAL ~/.realm with a
+  // REAL process.exit in the worker (mechanics lane, #459).
   describe('re-prompt on bad answers (issue #459)', () => {
     const errLines = (): string[] => errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
     const logged = (): string => logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
@@ -326,6 +498,8 @@ steps:
       // output_summary, NOT input_summary: dev-run feeds userOutput as both, so the wrong field
       // passes coincidentally and pins nothing about what the dispatcher returned.
       expect((await readRecord()).evidence[0]!.output_summary).toEqual({ ok: true });
+      // Also the #468 completed-arm control (B4): a completed run resolves parseAsync bare and
+      // never calls process.exit — the seam an explicit process.exit(0) would break.
       expect(exitSpy).not.toHaveBeenCalled();
     }, 20_000);
 

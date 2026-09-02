@@ -64,14 +64,22 @@ function isWriterNonceRequired(): boolean {
  *
  * @internal Exported for testing only.
  */
-export function renderDetachMap(record: RunRecord, promptStep: string | undefined): string {
+export function renderDetachMap(
+  record: RunRecord,
+  promptStep: string | undefined,
+  opts?: { headline?: string },
+): string {
   // DERIVED, never the persisted field: a record can carry a stale `run_phase` that disagrees
   // with what its own seal says (issue #432's class), and a map that names the wrong phase sends
   // an operator to the wrong remedy.
   const phase = deriveRunPhase(record);
   const step = promptStep ?? record.pending_gate?.step_name ?? '(step unknown)';
+  // issue #468 — the default is the #447 cancel route's own claim, byte-identical. The stall
+  // route (below, in the loop) passes 'Workflow stalled': no prompt was ever cancelled there, and
+  // the hardcoded word would be a false statement about what just happened.
+  const headline = opts?.headline ?? 'Prompt cancelled';
   const lines = [
-    `Prompt cancelled — detached from run '${record.id}' at step '${step}' (phase: ${phase}). The run is saved.`,
+    `${headline} — detached from run '${record.id}' at step '${step}' (phase: ${phase}). The run is saved.`,
   ];
 
   if (record.terminal_state) {
@@ -301,7 +309,12 @@ export const runCommand = new Command('run')
               console.log(`  ✓ → ${run.run_phase}\n`);
             } else {
               console.error(`  ✗ ${respondResult.errors.join(', ')}\n`);
-              break;
+              // issue #468 — a FRESH read, not a break: most of this arm's members are a live
+              // gate re-asking (a typo, a stale choice) — rl.question blocks, no hot spin. The
+              // members that are NOT retryable (the gate/run moved or terminalized elsewhere) are
+              // exactly what this read converges: the next iteration sees the real state and
+              // either re-prompts honestly or reaches the stall/tail. Mirrors the ok arm above.
+              run = await store.get(runId);
             }
             continue;
           }
@@ -310,7 +323,16 @@ export const runCommand = new Command('run')
 
           if (eligibleSteps.length === 0) {
             console.error(`\nNo eligible steps in phase '${run.run_phase}'. Workflow stalled.`);
-            break;
+            // issue #468 — hands the run back with a truthful map instead of silently exiting 0.
+            // A fresh read: the loop's own snapshot is already current here (nothing awaited
+            // since the last read reached this branch in the same iteration), but the fresh read
+            // is the doctrine this file already keeps for every detach point (#447) — kept for
+            // consistency, not because a staleness gap is constructible in this spot.
+            const record = await store.get(runId);
+            console.error(renderDetachMap(record, promptStep, { headline: 'Workflow stalled' }));
+            // process.exit SKIPS the finally (the catch's own rule, below), so close explicitly.
+            rl.close();
+            process.exit(1);
           }
 
           // Take the first eligible step (linear workflow for dev mode)
@@ -363,13 +385,17 @@ export const runCommand = new Command('run')
             console.log(`  Gate opened for '${result.gate.step_name}'.\n`);
           } else {
             console.error(`  ✗ ${result.status}: ${result.errors.join(', ')}\n`);
-            break;
+            // issue #468 — a FRESH read, not a break: below the validation-exhaustion threshold
+            // the step is still eligible and this re-prompts it honestly; AT the threshold the
+            // run just terminalized in the store, and only a fresh read lets the while condition
+            // see that and exit to the tail — a bare continue would re-ask a dead run forever
+            // (verified: the mock chain exhausts and the answer never lands anywhere real).
+            run = await store.get(runId);
           }
         }
-
-        if (run.terminal_state) {
-          console.log(`Run complete. Phase: ${run.run_phase}`);
-        }
+        // Loop-head invariant (issue #468): exactly two exits from here — the while condition
+        // (terminal) and the stall below (mapped + exit 1). Every ✗ arm above re-reads then
+        // continues; no `break` remains in this loop.
       } catch (err) {
         // issue #447 — the operator cancelled the prompt. Ctrl-D at a pending `rl.question`
         // rejects with an AbortError carrying `code: 'ABORT_ERR'`. Nothing awaits
@@ -430,5 +456,22 @@ export const runCommand = new Command('run')
       } finally {
         rl.close();
       }
+
+      // issue #468 — the exit code tells the truth. `run` is declared outside the try, so by the
+      // time control reaches here the finally above has already closed `rl` on every path that
+      // gets this far (the catch's ABORT_ERR arm exits directly and never falls through to here).
+      // Only the while condition being false gets here — the stall exits from inside the try
+      // above — so `run.terminal_state` is always true at this point.
+      if (deriveRunPhase(run) === 'completed') {
+        console.log(`Run complete. Phase: ${run.run_phase}`);
+        // NATURAL RETURN — never process.exit(0): three declared controls (run-detach.test.ts's
+        // R1/R2/R3) pin the completed path as an unwrapped, un-exited resolution.
+        // completed-with-failed-steps (the #302 world) exits 0 too, here — outcome-keyed,
+        // consistent with the engine's own seal ruling; #304's run-health finding +
+        // terminal_reason are the disclosure channel, not this exit code.
+        return;
+      }
+      console.log(`Run complete. Phase: ${run.run_phase}`);
+      process.exit(1);
     },
   );

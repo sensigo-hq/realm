@@ -99,6 +99,17 @@ action. 0 are handled automatically` — every count now agrees with its own nou
 
 ### Fixed
 
+- **`realm workflow run` no longer dies silently on a typo'd gate choice, a schema-violating
+  answer, or a stalled workflow — and its exit code tells the truth** (issue #468). A typo'd gate
+  choice (`aprove`) printed the ✗ line and then went silent, the gate left pending — it now
+  re-asks the live gate. A schema-violating agent answer did the same, even though the step was
+  retryable — it now re-asks too, bounded by the same six-answer validation budget the engine
+  already enforces: at the limit the run fails and the exit says so. A stalled workflow (no
+  eligible steps) used to just print a line and vanish with a LIVE run behind it — it now hands
+  the run back with a truthful `Workflow stalled` map (never `Prompt cancelled` — no prompt was
+  ever cancelled) naming the next commands, and exits 1. Every terminal phase but `completed` now
+  exits 1 — previously all four exited 0, including `failed` and `aborted`.
+
 - **A typo at a `realm workflow run` prompt re-prompts instead of crashing the run** (issue #459).
   An answer that was not valid JSON dumped an uncaught `SyntaxError` with Node's crash footer and
   left the run wedged mid-step. It now says why (`Not valid JSON: …`) and asks again. Valid JSON

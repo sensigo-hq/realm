@@ -174,7 +174,12 @@ steps:
     const savedIsTTY = process.stdin.isTTY;
     try {
       process.stdin.isTTY = true;
-      await runCommand.parseAsync([file], { from: 'user' });
+      // issue #468 — the guard passed a terminal through to store.create, but the loop then
+      // stalls (no eligible steps): the run is left live and the process now exits honestly
+      // instead of silently exiting 0. The map/exit content is B3's job (run-detach.test.ts) —
+      // this cell's purpose stays the #426 guard, so only the entry/exit shape is pinned here.
+      await expect(runCommand.parseAsync([file], { from: 'user' })).rejects.toThrow('process.exit');
+      expect(exitSpy).toHaveBeenCalledWith(1);
       expect(runRecords()).toHaveLength(1);
     } finally {
       process.stdin.isTTY = savedIsTTY;
