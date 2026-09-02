@@ -134,3 +134,25 @@ export function renderLoadFailure(err: WorkflowError | string): string {
   }
   return renderLoadFailure(err.message);
 }
+
+/**
+ * The escalation line (issue #425). Extracted so the keyless branch below is reachable from a
+ * test: every WarningCode that escalates under the default policy happens to carry a key today,
+ * so no real fixture can drive it — and a clause nothing can exercise rots into a wrong guess
+ * about what a future keyless code would print.
+ *
+ * Shared by validate, register and watch (issue #451) — three callers earned it this home, per
+ * the one-caller rule recorded on validate's exitOnLoadFailure.
+ */
+export function renderEscalationLine(warnings: readonly LoaderWarning[]): string {
+  // Same default policy `rejectOnErrorSeverity` just gated on, so the list can never disagree
+  // with the refusal it explains.
+  const escalated = warnings.filter((w) => resolveSeverity(w.code) === 'error');
+  const list = escalated
+    .map((w) => (w.key === undefined ? w.code : `${w.code} '${w.key}'`))
+    .join(', ');
+  return (
+    `Invalid: ${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}, ` +
+    `${escalated.length} escalated to an error by policy: ${list}`
+  );
+}

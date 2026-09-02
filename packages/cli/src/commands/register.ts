@@ -20,8 +20,31 @@ import {
   rejectOnErrorSeverity,
   failsStrict,
   renderLoadFailure,
+  renderEscalationLine,
   wrapSentinelWarnings,
 } from '../lib/loader-warnings.js';
+
+/**
+ * Tags a failure thrown by the extensions load inside `loadWorkflowForRegistration` so the
+ * callers' catches can say `Error loading extensions:` — the sentence run and validate already
+ * print for this class (issue #451) — without guessing from the message. The message is the
+ * original's, byte for byte (register-extensions.test.ts's broken-module cell matches on it
+ * THROUGH this wrapper), and the original rides along as `cause`.
+ *
+ * Minted at exactly the two throw paths out of the extensions block: the real-mode load's
+ * non-secrets failure, and the sentinel retry. The retry can never throw ManifestSecretsError
+ * itself (sentinel mode resolves every name without reading a source), so nothing is wrapped
+ * twice. A WorkflowError from the two-pass re-validation is thrown OUTSIDE the block and keeps
+ * the family split.
+ *
+ * @internal Exported for watch.ts and for tests.
+ */
+export class ExtensionLoadError extends Error {
+  constructor(original: unknown) {
+    super(original instanceof Error ? original.message : String(original), { cause: original });
+    this.name = 'ExtensionLoadError';
+  }
+}
 
 /**
  * Loads and validates a workflow for registration. Extension-declaring workflows get the
@@ -31,6 +54,7 @@ import {
  * both callers (register's action, watch's registerFile) decide how to surface/act on warnings
  * (register supports `--strict` + the dormant #170 reject; watch just prints and continues).
  * @throws on any validation or extension-load failure — nothing is persisted on throw.
+ *         Extension-load failures are tagged `ExtensionLoadError` (issue #451).
  */
 export async function loadWorkflowForRegistration(
   filePath: string,
@@ -44,12 +68,20 @@ export async function loadWorkflowForRegistration(
   try {
     loaded = await loadProjectExtensions(definition);
   } catch (err) {
-    if (!(err instanceof ManifestSecretsError)) throw err;
+    // The guard is the degradation itself: only a secrets failure degrades, everything else is an
+    // extension-load failure and leaves tagged (issue #451). Dropping the conditional kills
+    // degradation — register-extensions.test.ts's sentinel control is the cell in this command's
+    // own home that sees it (the manifest E2E in extensions/ does too, one substring deep).
+    if (!(err instanceof ManifestSecretsError)) throw new ExtensionLoadError(err);
     console.warn(`⚠ ${err.message}`);
     console.warn(
       '⚠ Registering with SENTINEL credentials — execution paths still require real secret resolution.',
     );
-    loaded = await loadProjectExtensions(definition, { secretMode: 'sentinel' });
+    try {
+      loaded = await loadProjectExtensions(definition, { secretMode: 'sentinel' });
+    } catch (err) {
+      throw new ExtensionLoadError(err);
+    }
   }
   // Two-pass: re-validate with the resolved registry so step config is checked against
   // each adapter's config_schema before the definition is persisted. Its warnings are proven
@@ -84,9 +116,9 @@ export const registerCommand = new Command('register')
       // the registry are never re-parsed and are unaffected.
       if (rejectOnErrorSeverity(warnings)) {
         printLoaderWarnings(warnings);
-        console.error(
-          `Error: '${definition.id}' has a warning escalated to an error by policy — refusing to register.`,
-        );
+        // One grammar with validate (issue #451): the line names WHICH warning escalated. The id
+        // the old line carried is not missed — the operator just typed the path.
+        console.error(renderEscalationLine(warnings));
         process.exit(1);
         return;
       }
@@ -121,12 +153,18 @@ export const registerCommand = new Command('register')
       if (err instanceof WorkflowError && err.warnings !== undefined) {
         printLoaderWarnings(err.warnings);
       }
+      // issue #451 — an extensions-load failure gets the sentence run and validate print for it.
+      // First arm by placement only: an ExtensionLoadError is never a WorkflowError, so the
+      // order against the family split below is immaterial.
+      if (err instanceof ExtensionLoadError) {
+        console.error(`Error loading extensions: ${err.message}`);
+      }
       // issue #425 — THE FAMILY SPLIT. An `Invalid workflow:` message announces itself, so it
       // renders verbatim through the shared helper (which also lists a multi-error throw one per
-      // line). Everything else this catch can see — a store failure, a broken extension module —
+      // line). Everything else this catch can see — a store failure, an unreadable path —
       // announces nothing on its own, so it keeps the prefix that earns its place (#417). The
       // predicate carries the colon, byte-matching the helper's own check.
-      if (err instanceof WorkflowError && err.message.startsWith('Invalid workflow:')) {
+      else if (err instanceof WorkflowError && err.message.startsWith('Invalid workflow:')) {
         console.error(renderLoadFailure(err));
       } else {
         const message = err instanceof Error ? err.message : String(err);

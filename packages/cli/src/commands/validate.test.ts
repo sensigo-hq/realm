@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderLoadFailure } from '../lib/loader-warnings.js';
-import { renderEscalationLine } from './validate.js';
+import { renderLoadFailure, renderEscalationLine } from '../lib/loader-warnings.js';
 import type { LoaderWarning } from '@sensigo/realm';
 import { loadWorkflowFromString, WorkflowError } from '@sensigo/realm';
 

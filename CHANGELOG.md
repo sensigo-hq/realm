@@ -99,6 +99,18 @@ action. 0 are handled automatically` — every count now agrees with its own nou
 
 ### Fixed
 
+- **`realm workflow register` and `realm workflow watch` now say which warning was escalated, and
+  name an extensions failure as one** (issue #451). Both refused an escalated warning with
+  `… has a warning escalated to an error by policy — refusing to register.` — the workflow's id,
+  never the warning; `realm workflow validate` has named the culprit since 0.40.0. All three now
+  print the same line:
+  `Invalid: 1 warning, 1 escalated to an error by policy: UNKNOWN_STEP_KEY 'dependson'`.
+  Watch keeps its timestamp and a `— refusing to register.` tail, because unlike the other two it
+  does not exit. And every failure out of the extensions load now reports as
+  `Error loading extensions:` on register and watch, matching run and validate — a module that
+  cannot be resolved, a manifest naming an export the module lacks, and the orphaned-manifest
+  refusal, which register printed as a bare `Error:` and watch mislabelled `Invalid:`.
+
 - **`realm workflow test` printed every loader warning twice** (issue #450). The CLI loaded the
   workflow and the fixture runner loaded the same file again, each printing as it went — so a
   workflow with two warnings showed four lines, above a run that then passed.

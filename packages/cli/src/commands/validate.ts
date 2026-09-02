@@ -31,6 +31,7 @@ import {
 } from '../extensions/load-project-extensions.js';
 import {
   renderLoadFailure,
+  renderEscalationLine,
   printLoaderWarnings,
   rejectOnErrorSeverity,
   failsStrict,
@@ -309,32 +310,12 @@ function rejectIfPolicyEscalates(warnings: LoaderWarning[]): boolean {
   // three warnings above and no way to tell which of them was the refusal — the counts are the
   // aggregate this line adds, so it is the line that has to say.
   //
-  // register.ts and watch.ts carry sibling escalation lines and are deliberately NOT changed:
-  // neither aggregates counts, and on all three surfaces printLoaderWarnings' `— REFUSED below`
-  // substitution already marks each refused warning one line above.
+  // register and watch print the same line since issue #451 (watch adds its timestamp and a
+  // `— refusing to register.` tail, because it does not exit); it lives in lib/loader-warnings.ts
+  // for that reason. On all three surfaces printLoaderWarnings' `— REFUSED below` substitution
+  // already marks each refused warning one line above.
   console.error(renderEscalationLine(warnings));
   return true;
-}
-
-/**
- * The escalation line (issue #425). Extracted so the keyless branch below is reachable from a
- * test: every WarningCode that escalates under the default policy happens to carry a key today,
- * so no real fixture can drive it — and a clause nothing can exercise rots into a wrong guess
- * about what a future keyless code would print.
- *
- * @internal Exported for testing only.
- */
-export function renderEscalationLine(warnings: readonly LoaderWarning[]): string {
-  // Same default policy `rejectOnErrorSeverity` just gated on, so the list can never disagree
-  // with the refusal it explains.
-  const escalated = warnings.filter((w) => resolveSeverity(w.code) === 'error');
-  const list = escalated
-    .map((w) => (w.key === undefined ? w.code : `${w.code} '${w.key}'`))
-    .join(', ');
-  return (
-    `Invalid: ${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}, ` +
-    `${escalated.length} escalated to an error by policy: ${list}`
-  );
 }
 
 /** Pre-scan: does the YAML carry a top-level `extensions` key? (Parse errors → false; the
