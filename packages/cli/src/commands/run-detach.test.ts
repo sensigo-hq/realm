@@ -145,6 +145,7 @@ describe('the cancel path (issue #447)', () => {
   let dir: string;
   let savedHome: string | undefined;
   let savedTTY: boolean | undefined;
+  let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
@@ -170,7 +171,9 @@ steps:
 `,
       'utf8',
     );
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    // Captured since issue #459: `Run complete. Phase:` prints on console.log, which stderr()
+    // cannot see.
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
@@ -236,12 +239,23 @@ steps:
   }, 20_000);
 
   it('c NEGATIVE — a non-abort error still rethrows, loudly', async () => {
-    // A SyntaxError from JSON.parse at the same site is today's loud shape and stays that way.
-    mocks.question.mockImplementation(async () => 'not json at all {');
+    // Re-homed by issue #459. A SyntaxError from JSON.parse — the shape this cell used to ride —
+    // now RE-PROMPTS (operator input is handled where it is read), so it can no longer stand in
+    // for "a non-abort error". What this pin guards is the residual rethrow population: anything
+    // that is neither an abort nor operator input — here an I/O failure from the question itself,
+    // with no `code` — still propagates through the #447 catch's rethrow arm, loudly.
+    //
+    // The old body against the new helper did not fail an assertion, and did not hit the 20 s
+    // timeout either: a persistent bad answer re-prompts forever, and with the mock resolving as
+    // a microtask the loop never yields to the timer — the worker died of heap exhaustion at
+    // ~145 s (observed). That death was the flip.
+    mocks.question.mockImplementation(async () => {
+      throw new Error('EIO: i/o error, read');
+    });
 
     await expect(
       runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' }),
-    ).rejects.toThrow(/JSON/i);
+    ).rejects.toThrow(/EIO/);
 
     expect(exitSpy).not.toHaveBeenCalled();
     expect(stderr()).not.toContain('Prompt cancelled');
@@ -269,6 +283,122 @@ steps:
     expect(text).not.toContain('    at ');
     expect(exitSpy).toHaveBeenCalledWith(1);
   }, 20_000);
+
+  // NESTED here on purpose: the harness beforeEach/afterEach — scratch HOME, isTTY, the throwing
+  // exit spy — are scoped to this describe. A sibling would run against the REAL ~/.realm with a
+  // REAL process.exit in the worker (mechanics lane, #459).
+  describe('re-prompt on bad answers (issue #459)', () => {
+    const errLines = (): string[] => errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    const logged = (): string => logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    const reprompts = (): string[] =>
+      errLines().filter((l) => l.includes('Not valid JSON:') || l.includes('Not a JSON object'));
+    /** The persisted record, read the way c POSITIVE's mock reads it (the #285 idiom: the store is
+     *  constructed AFTER the scratch HOME is live). */
+    const readRecord = async (): Promise<RunRecord> => {
+      const { JsonFileStore } = await import('@sensigo/realm');
+      const store = new JsonFileStore();
+      const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
+      return store.get(files[0]!.replace('.json', ''));
+    };
+
+    it('R1 the agent site: bad JSON and every non-object re-ask, then the object settles', async () => {
+      // Red-first on main (built dist, pty, paced per prompt): `{broken` → an UNCAUGHT SyntaxError
+      // with Node's own crash footer, the run wedged mid-step. `42` and `[1]` → the run COMPLETED
+      // with a number / a list sealed as the step's output (`hash: 73475cb4…` — a type-lie in the
+      // evidence record). `null` → the ENGINE crashed (`TypeError: Cannot convert undefined or
+      // null to object` at executeStep's `_debug` check), the run wedged. One chain, all arms.
+      mocks.question
+        .mockImplementationOnce(async () => '{broken')
+        .mockImplementationOnce(async () => '42')
+        .mockImplementationOnce(async () => 'null')
+        .mockImplementationOnce(async () => '[1]')
+        .mockImplementationOnce(async () => '{"ok":true}');
+
+      await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
+
+      expect(mocks.question).toHaveBeenCalledTimes(5);
+      expect(mocks.question).toHaveBeenLastCalledWith('  Agent output JSON (Enter for {}): ');
+      const lines = errLines();
+      expect(lines.filter((l) => l.includes('Not valid JSON:'))).toHaveLength(1);
+      // Three, one per arm — number, null, array: the predicate's three disjuncts, each pinned.
+      expect(lines.filter((l) => l.includes('Not a JSON object'))).toHaveLength(3);
+      expect(logged()).toContain('Run complete. Phase: completed');
+      // output_summary, NOT input_summary: dev-run feeds userOutput as both, so the wrong field
+      // passes coincidentally and pins nothing about what the dispatcher returned.
+      expect((await readRecord()).evidence[0]!.output_summary).toEqual({ ok: true });
+      expect(exitSpy).not.toHaveBeenCalled();
+    }, 20_000);
+
+    it('R2 the auto/mock site is wired too — the per-member pin', async () => {
+      // The file has no auto fixture, so this cell writes its own: bare `execution: auto`, no
+      // handler — loader-legal; it prompts `  Mock output (auto) — JSON (Enter for {}): ` and
+      // settles through the dispatcher else-arm (probe-confirmed on the built dist). Red-first on
+      // main: `{bad` at that prompt is the agent site's uncaught SyntaxError, same shape.
+      writeFileSync(
+        join(dir, 'workflow.yaml'),
+        `id: detach-wf
+name: Detach WF
+version: 1
+steps:
+  m:
+    description: m
+    execution: auto
+`,
+        'utf8',
+      );
+      mocks.question
+        .mockImplementationOnce(async () => '{bad')
+        .mockImplementationOnce(async () => '{"n":1}');
+
+      await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
+
+      expect(mocks.question).toHaveBeenCalledTimes(2);
+      expect(mocks.question).toHaveBeenLastCalledWith(
+        '  Mock output (auto) — JSON (Enter for {}): ',
+      );
+      expect(errLines().filter((l) => l.includes('Not valid JSON:'))).toHaveLength(1);
+      expect(logged()).toContain('Run complete. Phase: completed');
+      expect((await readRecord()).evidence[0]!.output_summary).toEqual({ n: 1 });
+    }, 20_000);
+
+    it("R3 Enter alone still means {} — the default is the helper's now", async () => {
+      // Near-control: on main `''` already yields `{}` (executed: `hash: 44136fa3…`, output `{}`).
+      // Its red-first is mutant (iv) — the `''` arm dropped, `JSON.parse('')` throws.
+      mocks.question.mockImplementationOnce(async () => '');
+
+      await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
+
+      expect(mocks.question).toHaveBeenCalledTimes(1);
+      expect(reprompts()).toHaveLength(0);
+      expect(logged()).toContain('Run complete. Phase: completed');
+      expect((await readRecord()).evidence[0]!.output_summary).toEqual({});
+    }, 20_000);
+
+    it('R4 a re-prompt then a cancel: the #447 map still fires — the helper swallows nothing else', async () => {
+      // The composition of #459 with #447. `rl.question` sits OUTSIDE the helper's try, so the
+      // constructed ABORT_ERR (the file's pty-mirroring idiom, header) propagates to the #447
+      // catch exactly as before. TWO stderr calls here by design — the re-prompt line and the
+      // map — so c POSITIVE's single-call channel pin does not apply.
+      mocks.question
+        .mockImplementationOnce(async () => 'nope{')
+        .mockImplementationOnce(async () => {
+          throw Object.assign(new Error('Aborted with Ctrl+D'), { code: 'ABORT_ERR' });
+        });
+
+      await expect(
+        runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' }),
+      ).rejects.toThrow('process.exit');
+
+      expect(mocks.question).toHaveBeenCalledTimes(2);
+      expect(errLines().filter((l) => l.includes('Not valid JSON:'))).toHaveLength(1);
+      const text = stderr();
+      expect(text).toContain('Prompt cancelled — detached from run');
+      expect(text).toContain("at step 'a'");
+      expect(text).toContain('realm agent --run-id');
+      expect(text).not.toContain('    at ');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    }, 20_000);
+  });
 });
 
 describe('d the map names commands that exist (issue #447)', () => {
