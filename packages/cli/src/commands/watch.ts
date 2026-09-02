@@ -4,9 +4,10 @@ import { join, dirname, resolve, basename } from 'node:path';
 import { Command } from 'commander';
 import { loadWorkflowFromFileWithDiagnostics, WorkflowError } from '@sensigo/realm';
 import type { WorkflowRegistrar, LoaderWarning } from '@sensigo/realm';
-import { loadWorkflowForRegistration } from './register.js';
+import { loadWorkflowForRegistration, ExtensionLoadError } from './register.js';
 import {
   renderLoadFailure,
+  renderEscalationLine,
   printLoaderWarnings,
   rejectOnErrorSeverity,
 } from '../lib/loader-warnings.js';
@@ -49,9 +50,10 @@ async function registerFile(filePath: string, store: WorkflowRegistrar): Promise
     const { definition, warnings } = await loadWorkflowForRegistration(filePath);
     if (rejectOnErrorSeverity(warnings)) {
       printWarningsBlock(timestamp, warnings);
-      console.error(
-        `[${timestamp}] Invalid: '${definition.id}' has a warning escalated to an error by policy — refusing to register.`,
-      );
+      // One grammar with validate and register (issue #451) — plus a tail those two do not
+      // need. They exit, so the refusal is the exit; watch CONTINUES, and a line that only
+      // named the warning would leave it unsaid whether the file was registered anyway.
+      console.error(`[${timestamp}] ${renderEscalationLine(warnings)} — refusing to register.`);
       return;
     }
     await store.register(definition);
@@ -61,7 +63,11 @@ async function registerFile(filePath: string, store: WorkflowRegistrar): Promise
       `[${timestamp}] Registered: ${definition.id} v${definition.version} (${stepCount} ${stepCount === 1 ? 'step' : 'steps'})`,
     );
   } catch (err) {
-    if (err instanceof WorkflowError) {
+    if (err instanceof ExtensionLoadError) {
+      // issue #451 — the sentence run, validate and register print for this class. The
+      // watcher keeps running: fix the module, save, and the next pass re-registers.
+      console.error(`[${timestamp}] Error loading extensions: ${err.message}`);
+    } else if (err instanceof WorkflowError) {
       // issue #424 — see the comment at validate.ts's extension-free catch.
       if (err.warnings !== undefined) printWarningsBlock(timestamp, [...err.warnings]);
       console.error(`[${timestamp}] ${renderLoadFailure(err)}`);

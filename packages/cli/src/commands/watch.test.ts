@@ -90,14 +90,17 @@ steps:
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const watchPromise = watchWorkflow(filePath, store, controller.signal);
-    await new Promise((r) => setTimeout(r, 50));
-    controller.abort();
-    await watchPromise;
+    const errored = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    await until(() => errored().includes('refusing to register'));
 
     // Nothing reached the registrar.
     expect(store.registered).toHaveLength(0);
-    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    expect(errored).toContain('escalated to an error by policy — refusing to register');
+    // issue #451 — the whole line: watch's timestamp, the escalation grammar validate and register
+    // print (the culprit named), and the tail only watch needs — it does not exit, so the line has
+    // to say the file was NOT registered. The line this replaced named the id and not the warning.
+    expect(errored()).toMatch(
+      /^\[[^\]]+\] Invalid: 1 warning, 1 escalated to an error by policy: UNKNOWN_STEP_KEY 'dependson' — refusing to register\.$/m,
+    );
     expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).not.toContain(
       'Registered:',
     );
@@ -106,8 +109,19 @@ steps:
     expect(warned).toContain("did you mean 'depends_on'?");
     expect(warned).not.toContain('ignored');
 
+    // "the watcher stays up so the author can fix the key and get re-registered on the next save"
+    // — this describe's docstring has said so since the #170 flip, and until issue #451 no cell
+    // executed it: the old shape aborted after 50ms. The key is DELETED rather than corrected, for
+    // the reason the CONTROL below gives. Vim-style save, the harder case (#449).
+    atomicSave(filePath, UNKNOWN_KEY_YAML.replace('    dependson: [nothing]\n', ''));
+    await until(() => store.registered.length >= 1);
+    expect(store.registered).toHaveLength(1);
+    expect(store.registered[0]!.id).toBe('watch-unknown-key');
+
+    controller.abort();
+    await watchPromise;
     vi.restoreAllMocks();
-  });
+  }, 20_000);
 
   it('CONTROL: the same workflow with the stray key removed registers normally', async () => {
     // The key is DELETED rather than corrected to `depends_on`, because `[nothing]` names no real
@@ -609,4 +623,48 @@ describe('makeCoalescedTrigger (issue #449)', () => {
 
     vi.useRealTimers();
   });
+});
+
+// =================================================================================================
+// issue #451 — the extensions sentence at watch's catch
+// =================================================================================================
+
+describe('watchWorkflow — `Error loading extensions:` (issue #451)', () => {
+  it('a module that cannot be resolved reports `Error loading extensions:`, and the watcher survives', async () => {
+    // Red-first on main: `[ts] Error: Cannot resolve extension module '../../dist/does-not-exist.js'
+    // of workflow 'watch-test' (resolved: …): ENOENT …` — watch's else arm, the register quote's
+    // timestamped twin. The module path resolves against a trust root, so this cell builds the
+    // register-extensions.test.ts project tree rather than a bare temp dir.
+    const proj = join(tmpdir(), `realm-watch-test-${randomUUID()}`);
+    const wfDir = join(proj, 'workflows', 'wf');
+    mkdirSync(wfDir, { recursive: true });
+    writeFileSync(join(proj, 'package.json'), JSON.stringify({ type: 'module' }), 'utf8');
+    const filePath = join(wfDir, 'workflow.yaml');
+    writeFileSync(filePath, `${VALID_YAML}extensions: ../../dist/does-not-exist.js\n`, 'utf8');
+    const store = makeStore();
+    const controller = new AbortController();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    const errored = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    await until(() => errored().includes('does-not-exist.js'));
+
+    expect(store.registered).toHaveLength(0);
+    expect(errored()).toMatch(
+      /^\[[^\]]+\] Error loading extensions: Cannot resolve extension module '\.\.\/\.\.\/dist\/does-not-exist\.js' of workflow 'watch-test'/m,
+    );
+    expect(errored()).not.toMatch(/^\[[^\]]+\] Error: Cannot/m);
+
+    // Survives — the sentence is a report, not an exit: drop the extensions line, save, and the
+    // next pass registers.
+    atomicSave(filePath, VALID_YAML);
+    await until(() => store.registered.length >= 1);
+    expect(store.registered[0]!.id).toBe('watch-test');
+
+    controller.abort();
+    await watchPromise;
+    vi.restoreAllMocks();
+  }, 20_000);
 });

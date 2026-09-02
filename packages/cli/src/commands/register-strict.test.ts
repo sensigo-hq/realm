@@ -136,9 +136,21 @@ steps:
     const printed = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(printed).not.toContain('Registered: typo-reg-lenient');
     const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    expect(errored).toContain('escalated to an error by policy — refusing to register');
+    // issue #451 — the whole line, verbatim: the grammar validate has printed since #425, with the
+    // culprit named. The line this replaced (`Error: 'typo-reg-lenient' has a warning escalated to
+    // an error by policy — refusing to register.`) named the id and not the warning. No tail here:
+    // register exits, so the exit IS the refusal — the tail is watch's alone.
+    expect(errored).toMatch(
+      /^Invalid: 1 warning, 1 escalated to an error by policy: UNKNOWN_STEP_KEY 'dependson'$/m,
+    );
+    expect(errored).not.toContain('refusing to register');
     const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(warned).toContain("unknown key 'dependson'");
+    // Block THEN line — the warnings print before the line that explains them. The two live on
+    // different channels (warn / error), so the order is vitest's global invocation order.
+    expect(Math.max(...warnSpy.mock.invocationCallOrder)).toBeLessThan(
+      Math.min(...errSpy.mock.invocationCallOrder),
+    );
     rmSync(wfDir, { recursive: true, force: true });
   });
 });

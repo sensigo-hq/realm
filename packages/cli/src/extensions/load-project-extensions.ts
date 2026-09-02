@@ -226,8 +226,8 @@ export function checkForOrphanedManifests(sourceDir: string, trustRoot: string):
   // stack trace. WHICH sentence renders it depends on how the command reached this guard
   // (issue #445): validate's extension-FREE arm calls checkForOrphanedManifests directly and
   // renders `Invalid:`; a load that comes THROUGH loadProjectExtensions surfaces via each
-  // command's extension-load catch — `Error loading extensions:` on run and validate, `Error:`
-  // on register.
+  // command's extension-load catch — `Error loading extensions:` on run, validate, register and
+  // watch (issue #451 brought the last two in line).
   throw new WorkflowError(
     `${found} will NOT be loaded — manifests are read only from the deployment root ` +
       `'${join(trustRoot, 'realm.yaml')}'. Move it to '${join(trustRoot, 'realm.yaml')}' ` +
