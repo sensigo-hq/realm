@@ -361,17 +361,45 @@ steps:
       expect((await readRecord()).evidence[0]!.output_summary).toEqual({ n: 1 });
     }, 20_000);
 
-    it("R3 Enter alone still means {} — the default is the helper's now", async () => {
-      // Near-control: on main `''` already yields `{}` (executed: `hash: 44136fa3…`, output `{}`).
-      // Its red-first is mutant (iv) — the `''` arm dropped, `JSON.parse('')` throws.
-      mocks.question.mockImplementationOnce(async () => '');
+    it("R3 Enter alone still means {} — and so does whitespace: the default arm's two members", async () => {
+      // Near-control: on main `''` already yields `{}` (executed: `hash: 44136fa3…`, output `{}`), and
+      // so does `'   '` — the helper preserves both. Its red-first is mutant (iv) — the `''` arm
+      // dropped, `JSON.parse('')` throws.
+      //
+      // TWO members, one cell: the arm keys on `trimmed === ''`, and a `raw === ''` regression keeps
+      // the empty answer defaulting while a whitespace-only answer re-prompts (`JSON.parse('')` →
+      // `Unexpected end of JSON input`). The MA's executed mutant left every cell green with only the
+      // empty member pinned; this cell is the arm's only per-member tooth. Under that mutant the
+      // whitespace answer re-prompts, the two-answer chain is exhausted, and the third question's
+      // `undefined.trim()` REJECTS the parse — the red is that rejection, not a conjunct below.
+      writeFileSync(
+        join(dir, 'workflow.yaml'),
+        `id: detach-wf
+name: Detach WF
+version: 1
+steps:
+  s1:
+    description: s1
+    execution: agent
+  s2:
+    description: s2
+    execution: agent
+    depends_on: [s1]
+`,
+        'utf8',
+      );
+      mocks.question
+        .mockImplementationOnce(async () => '')
+        .mockImplementationOnce(async () => '   ');
 
       await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
 
-      expect(mocks.question).toHaveBeenCalledTimes(1);
+      expect(mocks.question).toHaveBeenCalledTimes(2);
       expect(reprompts()).toHaveLength(0);
       expect(logged()).toContain('Run complete. Phase: completed');
-      expect((await readRecord()).evidence[0]!.output_summary).toEqual({});
+      const rec = await readRecord();
+      expect(rec.evidence.find((e) => e.step_id === 's1')!.output_summary).toEqual({});
+      expect(rec.evidence.find((e) => e.step_id === 's2')!.output_summary).toEqual({});
     }, 20_000);
 
     it('R4 a re-prompt then a cancel: the #447 map still fires — the helper swallows nothing else', async () => {
