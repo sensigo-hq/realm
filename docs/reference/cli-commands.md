@@ -272,6 +272,12 @@ map: the run id, the step it was waiting on, the run's derived phase, and the ex
 `realm agent --run-id` to re-attach otherwise, and inspect either way. The run is saved; every
 settled step persisted before the prompt appeared.
 
+**A typo at a prompt re-prompts** (issue #459). An answer that is not valid JSON used to crash the
+run with an uncaught stack, the run wedged mid-step; it now says why (`Not valid JSON: …`) and asks
+again. An answer that is valid JSON but not an object — `42`, `null`, a list — asks again too: `42`
+or a list used to be accepted and sealed into the run's evidence as the step's output, and `null`
+crashed the run. Enter still means `{}`. Cancelling is unchanged (above).
+
 ---
 
 ### `realm workflow test <path>`

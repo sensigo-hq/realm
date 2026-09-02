@@ -94,6 +94,39 @@ export function renderDetachMap(record: RunRecord, promptStep: string | undefine
   return lines.join('\n');
 }
 
+/**
+ * Asks until the answer is usable: empty ⇒ {}, invalid JSON or a non-object ⇒ says why
+ * and re-asks (issue #459 — operator input gets a re-prompt, never the #123 rethrow;
+ * `42`/`null`/`[1]` are valid JSON that would lie through the object cast, MA-executed).
+ * Cancellation is untouched BY CONSTRUCTION: `rl.question` sits OUTSIDE the try, so an
+ * ABORT_ERR rejection propagates straight to the #447 catch and its detach map.
+ */
+async function askJsonObject(
+  rl: { question: (q: string) => Promise<string> },
+  prompt: string,
+): Promise<Record<string, unknown>> {
+  for (;;) {
+    const raw = await rl.question(prompt);
+    const trimmed = raw.trim();
+    if (trimmed === '') return {};
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) throw err; // belt — only JSON.parse is in the try
+      console.error(`  Not valid JSON: ${err.message} — try again (Enter for {}).`);
+      continue;
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      console.error(
+        '  Not a JSON object — the step\'s output must be an object like {"key": "value"}. Try again (Enter for {}).',
+      );
+      continue;
+    }
+    return parsed as Record<string, unknown>;
+  }
+}
+
 export const runCommand = new Command('run')
   .argument('<path>', 'Path to workflow directory or workflow.yaml file')
   .option('--params <json>', 'Initial run parameters as JSON string', '{}')
@@ -291,8 +324,7 @@ export const runCommand = new Command('run')
 
           if (stepDef.execution === 'agent') {
             promptStep = stepName;
-            const raw = await rl.question('  Agent output JSON (Enter for {}): ');
-            userOutput = raw.trim() === '' ? {} : (JSON.parse(raw) as Record<string, unknown>);
+            userOutput = await askJsonObject(rl, '  Agent output JSON (Enter for {}): ');
           } else {
             // auto step
             const hint =
@@ -302,8 +334,7 @@ export const runCommand = new Command('run')
                   ? `service: ${stepDef.uses_service}`
                   : 'auto';
             promptStep = stepName;
-            const raw = await rl.question(`  Mock output (${hint}) — JSON (Enter for {}): `);
-            userOutput = raw.trim() === '' ? {} : (JSON.parse(raw) as Record<string, unknown>);
+            userOutput = await askJsonObject(rl, `  Mock output (${hint}) — JSON (Enter for {}): `);
           }
 
           const dispatcher: StepDispatcher = async () => userOutput;

@@ -99,6 +99,13 @@ action. 0 are handled automatically` — every count now agrees with its own nou
 
 ### Fixed
 
+- **A typo at a `realm workflow run` prompt re-prompts instead of crashing the run** (issue #459).
+  An answer that was not valid JSON dumped an uncaught `SyntaxError` with Node's crash footer and
+  left the run wedged mid-step. It now says why (`Not valid JSON: …`) and asks again. Valid JSON
+  that is not an object asks again too — `42` or a list used to be accepted and sealed into the
+  run's evidence as the step's output, and `null` crashed the engine mid-step. Enter still means
+  `{}`; cancelling (Ctrl-D/Ctrl-C, the #447 map) and internal errors are unchanged.
+
 - **The workflow's own warnings now print before an extensions failure on register, validate and
   watch — and `realm agent` names that failure** (issues #463, #465). A workflow with an unknown
   key AND a broken `extensions:` module showed only `Error loading extensions: …` on register,
