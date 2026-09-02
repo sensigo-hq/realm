@@ -1,6 +1,6 @@
 // Tests for respondToGate — CLI respond command logic.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -302,6 +302,83 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
     // production-neutral (a real process.exit never returns). Assert the CALL, never the count.
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(logSpy).not.toHaveBeenCalled();
+    rmSync(proj, { recursive: true, force: true });
+  });
+
+  it('REPAIR-TOOL FLAG TRAVEL — --extensions-module and --project reach the hoisted resolution', async () => {
+    // MA novel probe (the #353 flag-travel class on newly-minted code): mutating the hoist to
+    // `loadProjectExtensions(workflow)` — dropping the options object — leaves every other cell
+    // green. Under that regression BOTH declared respond flags die silently: `--project` and
+    // `--extensions-module`, which the command's own help text calls the REPAIR TOOL ("module
+    // that REPLACES the workflow's declared 'extensions' modules") — the repair tool dying
+    // silently in exactly the broken-extensions scenario it exists for. This is the only pin on
+    // the hoist's options travel; `--project` rides the same object, pinned transitively.
+    //
+    // No red-first exists — green on the PR branch immediately (the option travel already
+    // works); its tooth is the mutant.
+    const { JsonFileStore, JsonWorkflowStore, executeStep, CURRENT_WORKFLOW_SCHEMA_VERSION } =
+      await import('@sensigo/realm');
+    const proj = mkdtempSync(join(tmpdir(), 'realm-respond-ext-repair-proj-'));
+    const runStore = new JsonFileStore();
+    const workflowStore = new JsonWorkflowStore();
+    const gateWorkflow = {
+      id: 'p466-repair-respond',
+      name: 'P466 Repair Respond',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      extensions: ['./nope.js'],
+      source_dir: proj,
+      trust_root: proj,
+      steps: {
+        'step-one': {
+          description: 'g',
+          execution: 'auto' as const,
+          trust: 'human_confirmed' as const,
+          gate: { choices: ['approve', 'reject'] },
+        },
+      },
+    };
+    await workflowStore.register(gateWorkflow);
+    const { run } = await runStore.create({
+      workflowId: gateWorkflow.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const gateEnvelope = await executeStep(runStore, gateWorkflow, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+
+    // The override module resolves against CWD ONLY (load-project-extensions.ts:729-737) —
+    // never `projectDir`/`--project` — so an ABSOLUTE path keeps this cell independent of
+    // vitest's cwd. gateWorkflow's one step needs no handlers.
+    const overridePath = join(proj, 'override.mjs');
+    writeFileSync(overridePath, 'export default { handlers: {} };\n', 'utf8');
+    // The override arm prints an unspied advisory (load-project-extensions.ts:734) — spied here
+    // only to keep test output clean; not asserted.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await respondCommand.parseAsync(
+      [
+        run.id,
+        '--gate',
+        gateEnvelope.gate!.gate_id,
+        '--choice',
+        'approve',
+        '--extensions-module',
+        overridePath,
+      ],
+      { from: 'user' },
+    );
+
+    // The override REACHED the loader — no sentence, the load was repaired.
+    expect(errored()).not.toContain('Error loading extensions');
+    const logged = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(logged).toContain('Responded:');
+    expect(logged).toContain("new state 'completed'");
+    expect(exitSpy).not.toHaveBeenCalled();
     rmSync(proj, { recursive: true, force: true });
   });
 
