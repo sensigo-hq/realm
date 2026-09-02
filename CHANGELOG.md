@@ -106,6 +106,17 @@ action. 0 are handled automatically` — every count now agrees with its own nou
   run's evidence as the step's output, and `null` crashed the engine mid-step. Enter still means
   `{}`; cancelling (Ctrl-D/Ctrl-C, the #447 map) and internal errors are unchanged.
 
+- **`realm run respond` and `realm run drain` now name an extensions failure, and
+  `realm workflow test` joins the sentence too — the census is closed** (issue #466). `respond`
+  and `drain --force` printed the bare resolver message with no prefix at all; `test`'s failure
+  rode the generic `Error: …` fallback. All eight CLI surfaces that load project extensions now
+  say `Error loading extensions:` — run, test, validate, register, watch, agent
+  (#445/#451/#465), respond and drain. Batch `drain --all --force` reports it per run
+  (`✗ <id>: Error loading extensions: …`) and keeps counting the runs it DID drain; an
+  already-enacted gate expiry stays counted even when the finalizer pass after it fails to
+  resolve. `respond`'s most common operator error — a bad run-id — is unaffected: that
+  classification is decided before extensions are ever touched.
+
 - **The workflow's own warnings now print before an extensions failure on register, validate and
   watch — and `realm agent` names that failure** (issues #463, #465). A workflow with an unknown
   key AND a broken `extensions:` module showed only `Error loading extensions: …` on register,
@@ -116,8 +127,7 @@ action. 0 are handled automatically` — every count now agrees with its own nou
   includes the extension-free arm's orphan refusal, `Invalid: Deployment manifest at …`, which
   swallowed the same way. And `realm agent`, which printed the failure as the bare
   `Error: Cannot resolve extension module …` of its outer catch, now says
-  `Error loading extensions:` like run, validate, register and watch (`realm workflow test` still
-  prints the bare form; issue #466 tracks the remaining surfaces).
+  `Error loading extensions:` like run, validate, register, watch, respond and drain.
 
 - **`realm workflow register` and `realm workflow watch` now say which warning was escalated, and
   name an extensions failure as one** (issue #451). Both refused an escalated warning with

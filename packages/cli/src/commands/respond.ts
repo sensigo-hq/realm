@@ -28,6 +28,8 @@ export async function respondToGate(
   // which COMPLETES the run fires its finalizers with project handlers — consistent with
   // `realm run`. Same options/cwd handling as run.ts; reuses loadProjectExtensions so the
   // orphan-manifest topology guard is honoured (no hand-rolled registry).
+  // Production always passes `registry` now (issue #466's action hoist) — this fallback is the
+  // test/direct-caller seam, kept for callers that resolve their own (none in production today).
   const effectiveRegistry =
     registry ??
     (
@@ -81,7 +83,34 @@ export const respondCommand = new Command('respond')
       const runStore = new JsonFileStore();
       const workflowStore = new JsonWorkflowStore();
       try {
-        const { choice, newState } = await respondToGate(runId, opts, runStore, workflowStore);
+        // issue #466 — the run/workflow fetches stay OUTSIDE the sentence-try: a bad run-id is
+        // respond's most common operator error, and it must never wear the extensions sentence
+        // (the naked catch below is its home, #477). Only the extension resolution itself is
+        // wrapped, in place, mirroring run.ts's exact arm.
+        const run = await runStore.get(runId);
+        const workflow = await workflowStore.get(run.workflow_id);
+        let registry: ExtensionRegistry;
+        try {
+          ({ registry } = await loadProjectExtensions(workflow, {
+            ...(opts.extensionsModule !== undefined
+              ? { overrideModule: opts.extensionsModule }
+              : {}),
+            projectDir: opts.project ?? process.cwd(),
+          }));
+        } catch (err) {
+          console.error(
+            `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(1);
+          return;
+        }
+        const { choice, newState } = await respondToGate(
+          runId,
+          opts,
+          runStore,
+          workflowStore,
+          registry,
+        );
         console.log(`Responded: ${runId} | choice '${choice}' | new state '${newState}'`);
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
