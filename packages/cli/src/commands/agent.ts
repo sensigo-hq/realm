@@ -310,7 +310,18 @@ export const agentCommand = new Command('agent')
 
           // Load project extensions + deployment manifest BEFORE the run is created
           // (fail-before-create); the loader registry flows directly into the run.
-          const loaded = await loadProjectExtensions(definition, extensionOpts);
+          // issue #465 — a failure here gets the sentence run/validate/register/watch print
+          // (run.ts's arm, verbatim) instead of riding the outer catch to a bare `Error:`. The
+          // workflow's own warnings already printed, above, on the core's lenient load.
+          let loaded: LoadedProjectExtensions;
+          try {
+            loaded = await loadProjectExtensions(definition, extensionOpts);
+          } catch (err) {
+            console.error(
+              `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            process.exit(1);
+          }
 
           const gateHandler = buildManifestGateHandler(loaded.notifiers, {
             store,
@@ -351,7 +362,7 @@ export const agentCommand = new Command('agent')
       } catch (err) {
         // issue #425 — THE FAMILY SPLIT. An `Invalid workflow:` message announces itself, so it
         // renders verbatim through the shared helper (which also lists a multi-error throw one per
-        // line). Everything else this catch can see — a store failure, a broken extension module —
+        // line). Everything else this catch can see — a store failure, a provider failure —
         // announces nothing on its own, so it keeps the prefix that earns its place (#417). The
         // predicate carries the colon, byte-matching the helper's own check.
         // This catch wraps the ENTIRE drive, so the else-arm carries provider failures, store
