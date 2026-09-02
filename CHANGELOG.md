@@ -99,6 +99,19 @@ action. 0 are handled automatically` — every count now agrees with its own nou
 
 ### Fixed
 
+- **The workflow's own warnings now print before an extensions failure on register, validate and
+  watch — and `realm agent` names that failure** (issues #463, #465). A workflow with an unknown
+  key AND a broken `extensions:` module showed only `Error loading extensions: …` on register,
+  validate and watch: the warning and its did-you-mean vanished, so you fixed the module, re-ran,
+  and only then learned about the typo. `realm workflow run` and `realm workflow test` already
+  printed the warning first; the three match them now, in the warning's own `— ignored` wording
+  (no policy refused it on this path — what follows is the extensions error). On validate that
+  includes the extension-free arm's orphan refusal, `Invalid: Deployment manifest at …`, which
+  swallowed the same way. And `realm agent`, which printed the failure as the bare
+  `Error: Cannot resolve extension module …` of its outer catch, now says
+  `Error loading extensions:` like run, validate, register and watch (`realm workflow test` still
+  prints the bare form; issue #466 tracks the remaining surfaces).
+
 - **`realm workflow register` and `realm workflow watch` now say which warning was escalated, and
   name an extensions failure as one** (issue #451). Both refused an escalated warning with
   `… has a warning escalated to an error by policy — refusing to register.` — the workflow's id,

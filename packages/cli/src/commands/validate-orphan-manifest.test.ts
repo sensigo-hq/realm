@@ -67,6 +67,26 @@ describe('realm workflow validate — orphaned-manifest guard (extension-free fr
     expect(out).toContain(join(base, 'realm.yaml')); // names the resolved trust root
   }, 25_000);
 
+  it("3. the workflow's own warnings print BEFORE the orphan refusal (issue #463)", async () => {
+    // Red-first on main (built dist): ONLY `Invalid: Deployment manifest at '…' will NOT be loaded
+    // — …`, zero warn lines, exit 1 — the extension-FREE arm's throw site swallowed the same way
+    // the extensions arm's did. Spawn-based: content + exit only.
+    const orphan = join(workflowDir, 'realm.yaml');
+    writeFileSync(orphan, ORPHAN_MANIFEST, 'utf8');
+    writeFileSync(workflowPath, `${WORKFLOW_YAML}    dependson: [nothing]\n`, 'utf8');
+    const { code, stdout, stderr } = await runCli(['workflow', 'validate', workflowPath]);
+    expect(code).toBe(1);
+    expect(stdout).not.toContain('Valid:');
+    expect(stderr).toContain("⚠ step 's1': unknown key 'dependson'");
+    expect(stderr).toContain("— ignored (did you mean 'depends_on'?)");
+    // The PLAIN form on this arm too: what follows is the manifest's placement refusal, not this
+    // warning's escalation — `— REFUSED below` would name the wrong cause.
+    expect(stderr).not.toContain('REFUSED below');
+    expect(stderr).toContain('Invalid: Deployment manifest at');
+    expect(stderr).toContain(orphan);
+    expect(stderr).toContain('will NOT be loaded');
+  }, 25_000);
+
   it('2. byte-identical happy path: no orphan → exactly the Valid line, exit 0', async () => {
     const { code, stdout, stderr } = await runCli(['workflow', 'validate', workflowPath]);
     expect(stderr).toBe('');

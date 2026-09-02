@@ -2,7 +2,11 @@
 import { watch, existsSync } from 'node:fs';
 import { join, dirname, resolve, basename } from 'node:path';
 import { Command } from 'commander';
-import { loadWorkflowFromFileWithDiagnostics, WorkflowError } from '@sensigo/realm';
+import {
+  loadWorkflowFromFileWithDiagnostics,
+  renderLoaderWarning,
+  WorkflowError,
+} from '@sensigo/realm';
 import type { WorkflowRegistrar, LoaderWarning } from '@sensigo/realm';
 import { loadWorkflowForRegistration, ExtensionLoadError } from './register.js';
 import {
@@ -36,12 +40,25 @@ import {
  * successful save. On console.warn, so it heads the block it belongs to rather than splitting
  * across channels.
  */
-function printWarningsBlock(timestamp: string, warnings: LoaderWarning[]): void {
+function printWarningsBlock(
+  timestamp: string,
+  warnings: LoaderWarning[],
+  opts?: { plain?: boolean },
+): void {
   if (warnings.length === 0) return;
   console.warn(
     `[${timestamp}] ${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}:`,
   );
-  printLoaderWarnings(warnings);
+  // issue #463 — `plain` renders without printLoaderWarnings' `— REFUSED below` substitution. On
+  // the extensions-failure path the escalation gate never ran and the refusal below is the
+  // extensions error, so the substitution would name the wrong cause (test.ts's render comment,
+  // #450's reasoning). The three boundary callers pass no opts and keep the substitution — there a
+  // refusal of the warning's own follows: the escalation line, or renderLoadFailure's `Invalid:`.
+  if (opts?.plain === true) {
+    for (const w of warnings) console.warn(renderLoaderWarning(w));
+  } else {
+    printLoaderWarnings(warnings);
+  }
 }
 
 async function registerFile(filePath: string, store: WorkflowRegistrar): Promise<void> {
@@ -66,6 +83,11 @@ async function registerFile(filePath: string, store: WorkflowRegistrar): Promise
     if (err instanceof ExtensionLoadError) {
       // issue #451 — the sentence run, validate and register print for this class. The
       // watcher keeps running: fix the module, save, and the next pass re-registers.
+      // issue #463 — the workflow's own warnings first, in the plain form (see printWarningsBlock);
+      // the block's empty-array return is the belt under the ABSENT guard.
+      if (err.warnings !== undefined) {
+        printWarningsBlock(timestamp, [...err.warnings], { plain: true });
+      }
       console.error(`[${timestamp}] Error loading extensions: ${err.message}`);
     } else if (err instanceof WorkflowError) {
       // issue #424 — see the comment at validate.ts's extension-free catch.

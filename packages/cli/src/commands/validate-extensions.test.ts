@@ -170,6 +170,50 @@ steps:
     expect(stderr).not.toContain('    at ');
   }, 20_000);
 
+  it("(f) the workflow's own warnings print BEFORE the extensions sentence (issue #463)", async () => {
+    // Red-first on main (built dist): ONLY the sentence, exit 1 — the unknown-key warning and the
+    // retry advisory both swallowed, so the author fixed the module, re-ran, and only then saw
+    // them. Both populations the success path counts are pinned: pass-1's (the typo) and
+    // findRetryWithoutExplicitTimeout's (an auto step with `retry:` and no `timeout_seconds`, the
+    // shape validate-retry-timeout-advisory.test.ts drives green). Spawn-based: warn and error
+    // both land on the child's stderr, so this asserts content + exit, never order.
+    const file = join(workflowDir, 'ext-missing-warned.yaml');
+    writeFileSync(
+      file,
+      `
+id: ext-missing-warned
+name: Ext Missing Warned
+version: 1
+extensions: ../../dist/does-not-exist.js
+steps:
+  s1:
+    description: step
+    execution: agent
+    dependson: [nothing]
+  s2:
+    description: retry step
+    execution: auto
+    retry:
+      max_attempts: 3
+      backoff: fixed
+      base_delay_ms: 10
+`,
+      'utf8',
+    );
+
+    const { code, stderr } = await runValidate([file]);
+    expect(code).toBe(1);
+    expect(stderr).toContain("⚠ step 's1': unknown key 'dependson'");
+    expect(stderr).toContain("— ignored (did you mean 'depends_on'?)");
+    expect(stderr).toContain("⚠ Step 's2': declares 'retry' but no 'timeout_seconds'");
+    // The PLAIN form: the escalation gate never ran here, and the refusal below is the
+    // extensions error, not this warning's — `— REFUSED below` would name the wrong cause.
+    expect(stderr).not.toContain('REFUSED below');
+    expect(stderr).toContain('Error loading extensions:');
+    expect(stderr).toContain('Cannot resolve extension module');
+    expect(stderr).not.toContain('Invalid:');
+  }, 20_000);
+
   it('(e) the orphaned-manifest refusal joins the extensions family on this arm', async () => {
     // issue #445, the disclosed render change: this WorkflowError used to reach the shared
     // `Invalid:` render. It is a deployment-layout problem, not an invalid workflow, and `run`

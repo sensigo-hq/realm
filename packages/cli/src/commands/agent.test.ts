@@ -4,7 +4,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import {
@@ -545,5 +545,86 @@ describe('manifest-secret redaction threading (fix holder)', () => {
     const persisted = JSON.stringify(evidence.output_summary);
     expect(persisted).toContain('[REDACTED]');
     expect(persisted).not.toContain('manifest-bound-secret-abc123');
+  });
+});
+
+// =================================================================================================
+// issue #465 — the extensions sentence at `realm agent`
+// =================================================================================================
+
+describe('agentCommand — `Error loading extensions:` (issue #465)', () => {
+  // A THROWING exit spy, unlike the guards describe's no-op — deliberately. Under a no-op exit the
+  // new catch COMPLETES, `loaded` stays undefined, the very next statement throws `TypeError:
+  // Cannot read properties of undefined (reading 'notifiers')` into the outer #425 catch, which
+  // prints `Error: Cannot read properties…` — and this cell's negative conjunct would red on a mock
+  // artifact, not on production behavior. With the throw, the outer catch re-renders the sentinel
+  // as `Error: process.exit` instead — expected, and harmless to both conjuncts.
+  let home: string;
+  let originalHome: string | undefined;
+  let savedKey: string | undefined;
+
+  beforeEach(() => {
+    // Scratch $HOME for the store handles the action constructs before loading (the #285 idiom).
+    home = mkdtempSync(join(tmpdir(), 'realm-agent-ext-home-'));
+    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
+    originalHome = process.env['HOME'];
+    process.env['HOME'] = home;
+    // The provider-key guard runs BEFORE the workflow is loaded (the #425 cells' precondition);
+    // a fake key reaches the load without the provider exploding.
+    savedKey = process.env['OPENAI_API_KEY'];
+    process.env['OPENAI_API_KEY'] = 'test-key';
+    vi.spyOn(process, 'exit').mockImplementation(((): never => {
+      throw new Error('process.exit');
+    }) as never);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = originalHome;
+    if (savedKey === undefined) delete process.env['OPENAI_API_KEY'];
+    else process.env['OPENAI_API_KEY'] = savedKey;
+    vi.restoreAllMocks();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('C6 a module that cannot be resolved reports `Error loading extensions:`, not a bare `Error:`', async () => {
+    // Red-first on main: the ⚠ ignored line (agent's warnings already print — the core's lenient
+    // load) then `Error: Cannot resolve extension module …` — the outer #425 catch's bare prefix.
+    // run, validate, register and watch all say which stage failed; agent now does too. (test,
+    // respond and drain still print the bare form — issue #466, not this PR.)
+    const proj = mkdtempSync(join(tmpdir(), 'realm-agent-ext-'));
+    const wfDir = join(proj, 'workflows', 'wf');
+    mkdirSync(wfDir, { recursive: true });
+    writeFileSync(join(proj, 'package.json'), JSON.stringify({ type: 'module' }), 'utf8');
+    const file = join(wfDir, 'workflow.yaml');
+    writeFileSync(
+      file,
+      `id: agent-ext
+name: Agent Ext
+version: 1
+extensions: ../../dist/does-not-exist.js
+steps:
+  a:
+    description: a
+    execution: agent
+`,
+      'utf8',
+    );
+
+    await expect(agentCommand.parseAsync(['node', 'realm', '--workflow', file])).rejects.toThrow(
+      'process.exit',
+    );
+
+    expect(process.exit).toHaveBeenCalledWith(1);
+    const errored = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .join('\n');
+    expect(errored).toMatch(
+      /^Error loading extensions: Cannot resolve extension module '\.\.\/\.\.\/dist\/does-not-exist\.js' of workflow 'agent-ext'/m,
+    );
+    expect(errored).not.toMatch(/^Error: Cannot/m);
+    rmSync(proj, { recursive: true, force: true });
   });
 });

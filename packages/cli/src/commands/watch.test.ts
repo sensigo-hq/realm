@@ -644,7 +644,7 @@ describe('watchWorkflow — `Error loading extensions:` (issue #451)', () => {
     const store = makeStore();
     const controller = new AbortController();
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const watchPromise = watchWorkflow(filePath, store, controller.signal);
@@ -656,9 +656,61 @@ describe('watchWorkflow — `Error loading extensions:` (issue #451)', () => {
       /^\[[^\]]+\] Error loading extensions: Cannot resolve extension module '\.\.\/\.\.\/dist\/does-not-exist\.js' of workflow 'watch-test'/m,
     );
     expect(errored()).not.toMatch(/^\[[^\]]+\] Error: Cannot/m);
+    // issue #463 — the ABSENT side of the warnings carry: a clean workflow carries none, so no
+    // header and no block — not even an empty one — precede the sentence.
+    expect(warnSpy).not.toHaveBeenCalled();
 
     // Survives — the sentence is a report, not an exit: drop the extensions line, save, and the
     // next pass registers.
+    atomicSave(filePath, VALID_YAML);
+    await until(() => store.registered.length >= 1);
+    expect(store.registered[0]!.id).toBe('watch-test');
+
+    controller.abort();
+    await watchPromise;
+    vi.restoreAllMocks();
+  }, 20_000);
+
+  it("C5 the workflow's own warnings print BEFORE the extensions sentence, and the watcher survives (issue #463)", async () => {
+    // Red-first on main: only `[ts] Error loading extensions: …` — the warning swallowed. Now the
+    // timestamped header, the PLAIN line, then the sentence; and the watcher keeps running.
+    const proj = join(tmpdir(), `realm-watch-test-${randomUUID()}`);
+    const wfDir = join(proj, 'workflows', 'wf');
+    mkdirSync(wfDir, { recursive: true });
+    writeFileSync(join(proj, 'package.json'), JSON.stringify({ type: 'module' }), 'utf8');
+    const filePath = join(wfDir, 'workflow.yaml');
+    writeFileSync(
+      filePath,
+      `${VALID_YAML}    dependson: [nothing]\nextensions: ../../dist/does-not-exist.js\n`,
+      'utf8',
+    );
+    const store = makeStore();
+    const controller = new AbortController();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    const errored = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    await until(() => errored().includes('does-not-exist.js'));
+
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(warned[0]).toMatch(/^\[[^\]]+\] 1 warning:$/);
+    expect(warned[1]).toContain("⚠ step 'step-one': unknown key 'dependson'");
+    expect(warned[1]).toContain("— ignored (did you mean 'depends_on'?)");
+    // The PLAIN form — the plain-mode flag's tooth. printLoaderWarnings would write `— REFUSED
+    // below` here, and what follows is the extensions error, not this warning's escalation.
+    expect(warned.join('\n')).not.toContain('REFUSED below');
+    expect(errored()).toMatch(
+      /^\[[^\]]+\] Error loading extensions: Cannot resolve extension module '\.\.\/\.\.\/dist\/does-not-exist\.js' of workflow 'watch-test'/m,
+    );
+    // Block BEFORE the sentence — two channels, vitest's global invocation order.
+    expect(Math.max(...warnSpy.mock.invocationCallOrder)).toBeLessThan(
+      Math.min(...errSpy.mock.invocationCallOrder),
+    );
+    expect(store.registered).toHaveLength(0);
+
+    // Survives: drop the typo and the extensions line, save, and the next pass registers.
     atomicSave(filePath, VALID_YAML);
     await until(() => store.registered.length >= 1);
     expect(store.registered[0]!.id).toBe('watch-test');

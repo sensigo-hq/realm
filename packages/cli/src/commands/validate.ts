@@ -17,6 +17,7 @@ import {
   shouldEnforceTimeout,
   DEFAULT_EXECUTION_TIMEOUT_SECONDS,
   resolveSeverity,
+  renderLoaderWarning,
   assessStructuredOutputEligibility,
   renderIneligibleMessage,
   JsonWorkflowStore,
@@ -522,9 +523,28 @@ export const validateCommand = new Command('validate')
         try {
           ({ definition, warnings: loaderWarnings } =
             loadWorkflowFromStringWithDiagnostics(content));
+        } catch (err) {
+          exitOnLoadFailure(err);
+        }
+        // Its own try (issue #463): each try owns one failure population — the #445 doctrine. A
+        // load failure above has nothing to print but itself; the guard below fails AFTER the
+        // workflow parsed, with its warnings in hand.
+        try {
           const workflowDir = dirname(resolve(filePath));
           checkForOrphanedManifests(workflowDir, findTrustRoot(workflowDir));
         } catch (err) {
+          // The workflow's own warnings before the refusal — the same set the success path counts,
+          // so nothing the author would otherwise see only on the NEXT run is withheld. Plain
+          // render: the escalation gate has not run, so printLoaderWarnings' `— REFUSED below`
+          // would name the wrong cause (test.ts's render comment, #450's reasoning). Unconditional:
+          // on the #123 non-WorkflowError rethrow population the warnings print before the loud
+          // crash — true statements either way. exitOnLoadFailure cannot print them twice: the
+          // orphan WorkflowError is minted bare in the CLI (load-project-extensions.ts), and the
+          // core `warnings` slot is set only by attachLoaderWarnings inside the core loader, which
+          // this throw never transits — which is exactly why this arm swallowed them until now.
+          for (const w of [...loaderWarnings, ...findRetryWithoutExplicitTimeout(definition)]) {
+            console.warn(renderLoaderWarning(w));
+          }
           exitOnLoadFailure(err);
         }
 
@@ -576,6 +596,15 @@ export const validateCommand = new Command('validate')
         // the WORKFLOW invalid, and calling them `Invalid:` sent an author to the wrong file.
         // The sentence is `realm run`'s, verbatim (run.ts) — the sibling surface renders this
         // identical failure class exactly so.
+        //
+        // issue #463 — the workflow's own warnings first: pass-1's plus the retry advisory, the
+        // same set the success path counts minus the sentinel wraps, which come from the load that
+        // just failed — there is nothing to wrap. Plain render (test.ts's render comment, #450's
+        // reasoning): the escalation gate has not run, so printLoaderWarnings' `— REFUSED below`
+        // would name the wrong cause.
+        for (const w of [...pass1Warnings, ...findRetryWithoutExplicitTimeout(definition)]) {
+          console.warn(renderLoaderWarning(w));
+        }
         console.error(
           `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
         );

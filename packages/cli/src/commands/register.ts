@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import { join } from 'node:path';
 import {
   loadWorkflowFromFileWithDiagnostics,
+  renderLoaderWarning,
   JsonWorkflowStore,
   WorkflowError,
 } from '@sensigo/realm';
@@ -37,12 +38,22 @@ import {
  * twice. A WorkflowError from the two-pass re-validation is thrown OUTSIDE the block and keeps
  * the family split.
  *
+ * Carries the workflow's own pass-1 loader warnings (issue #463 — the #424 carry shape on this
+ * vehicle) so the catch that renders the sentence can print them FIRST, instead of the author
+ * fixing the module, re-running, and only then learning about the typo. ABSENT, never `[]`: a
+ * construction that passes no warnings, or an empty list, leaves the field unset.
+ *
  * @internal Exported for watch.ts and for tests.
  */
 export class ExtensionLoadError extends Error {
-  constructor(original: unknown) {
+  readonly warnings?: readonly LoaderWarning[];
+
+  constructor(original: unknown, warnings?: readonly LoaderWarning[]) {
     super(original instanceof Error ? original.message : String(original), { cause: original });
     this.name = 'ExtensionLoadError';
+    // The if-guard form on purpose: a ternary to `undefined` is a TS2412 under the repo's
+    // exactOptionalPropertyTypes (lane-executed, #463).
+    if (warnings !== undefined && warnings.length > 0) this.warnings = [...warnings];
   }
 }
 
@@ -72,7 +83,7 @@ export async function loadWorkflowForRegistration(
     // extension-load failure and leaves tagged (issue #451). Dropping the conditional kills
     // degradation — register-extensions.test.ts's sentinel control is the cell in this command's
     // own home that sees it (the manifest E2E in extensions/ does too, one substring deep).
-    if (!(err instanceof ManifestSecretsError)) throw new ExtensionLoadError(err);
+    if (!(err instanceof ManifestSecretsError)) throw new ExtensionLoadError(err, pass1Warnings);
     console.warn(`⚠ ${err.message}`);
     console.warn(
       '⚠ Registering with SENTINEL credentials — execution paths still require real secret resolution.',
@@ -80,7 +91,7 @@ export async function loadWorkflowForRegistration(
     try {
       loaded = await loadProjectExtensions(definition, { secretMode: 'sentinel' });
     } catch (err) {
-      throw new ExtensionLoadError(err);
+      throw new ExtensionLoadError(err, pass1Warnings);
     }
   }
   // Two-pass: re-validate with the resolved registry so step config is checked against
@@ -157,6 +168,16 @@ export const registerCommand = new Command('register')
       // First arm by placement only: an ExtensionLoadError is never a WorkflowError, so the
       // order against the family split below is immaterial.
       if (err instanceof ExtensionLoadError) {
+        // issue #463 — the workflow's own warnings first, then the sentence (the #424 catch-render
+        // shape). The PLAIN render, not printLoaderWarnings: that helper rewrites `— ignored` to
+        // `— REFUSED below` for the codes this boundary refuses, and on this path the escalation
+        // gate never ran — the refusal below is the extensions error, so "REFUSED below" would name
+        // the wrong cause. `— ignored` is the core's statement about the PARSE, true here as on
+        // every surface, and the composition then reads exactly as `realm run` prints it
+        // (test.ts's render comment — #450's reasoning, generalized).
+        if (err.warnings !== undefined) {
+          for (const w of err.warnings) console.warn(renderLoaderWarning(w));
+        }
         console.error(`Error loading extensions: ${err.message}`);
       }
       // issue #425 — THE FAMILY SPLIT. An `Invalid workflow:` message announces itself, so it

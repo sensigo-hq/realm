@@ -184,6 +184,83 @@ handlers:
     );
     expect(errored).not.toContain('Error: Cannot');
     expect(joined(logSpy)).not.toContain('Registered:');
+    // issue #463 — the ABSENT side of the warnings carry, observable: a clean workflow carries
+    // nothing, so nothing prints on warn (lane-executed on main: warn count 0). ABSENT-never-[]
+    // is what keeps the catch's guard from ever printing an empty block here.
+    expect(warnSpy.mock.calls.filter((c: unknown[]) => String(c[0]).startsWith('⚠'))).toHaveLength(
+      0,
+    );
+  });
+
+  // issue #463 — the same BASE_YAML with a typo'd step key: pass-1 warns (unknown key + did-you-
+  // mean), and the question is whether that warning survives an extensions failure.
+  const TYPO_YAML = `${BASE_YAML}    dependson: [nothing]\n`;
+
+  it("C1 the workflow's own warnings print BEFORE the extensions sentence (issue #463)", async () => {
+    // Red-first on main: exactly one line, on error — `Error loading extensions: Cannot resolve …`
+    // — and NOTHING on warn. The unknown-key warning and its did-you-mean vanished, so the author
+    // fixed the module, re-ran, and only then learned about the typo. `realm run` prints the
+    // warning first; register now matches it byte for byte.
+    const file = writeWorkflow(`${TYPO_YAML}extensions: ../../dist/does-not-exist.js\n`);
+
+    await expect(registerCommand.parseAsync([file], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const warned = joined(warnSpy);
+    // The PLAIN form — the render-choice tooth. printLoaderWarnings would write `— REFUSED below`
+    // here, and what is below is the extensions error, not this warning's escalation: a false
+    // cause. `— ignored` is the core's statement about the parse, true on every surface.
+    expect(warned).toContain("⚠ step 's1': unknown key 'dependson'");
+    expect(warned).toContain("— ignored (did you mean 'depends_on'?)");
+    expect(warned).not.toContain('REFUSED below');
+    const errored = joined(errSpy);
+    expect(errored).toMatch(
+      /^Error loading extensions: Cannot resolve extension module '\.\.\/\.\.\/dist\/does-not-exist\.js' of workflow 'reg-wf'/m,
+    );
+    // Warning BEFORE the sentence — two channels, so vitest's global invocation order
+    // (register-strict.test.ts's idiom). With the carry dropped this conjunct passes VACUOUSLY
+    // (Math.max of an empty spread is -Infinity): the content conjuncts above are the carry's
+    // teeth; this one pins only the order.
+    expect(Math.max(...warnSpy.mock.invocationCallOrder)).toBeLessThan(
+      Math.min(...errSpy.mock.invocationCallOrder),
+    );
+    expect(joined(logSpy)).not.toContain('Registered:');
+  });
+
+  it("C2 the carry rides site (b) too — the sentinel retry's failure prints the warning first", async () => {
+    // S2's fixture plus the typo. Red-first on main: the two degradation ⚠ lines, then the
+    // sentence — no typo warning anywhere. Per-member: site (b)'s carry is otherwise unpinned.
+    // Executed shape (verify-first, on the built CLI): THREE warn calls, in this order — the
+    // secrets refusal (one multi-line message), the SENTINEL line, the carried `— ignored`
+    // warning; then the sentence on error.
+    writeFileSync(join(proj, 'realm.yaml'), SENTINEL_MANIFEST, 'utf8');
+    writeFileSync(join(proj, 'dist', 'mod.js'), EXPORTLESS_MODULE, 'utf8');
+    const file = writeWorkflow(TYPO_YAML);
+
+    await expect(registerCommand.parseAsync([file], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const warnCalls = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(warnCalls).toHaveLength(3);
+    expect(warnCalls[0]).toContain(
+      '⚠ Deployment manifest secrets: 1 unresolved secret reference(s):',
+    );
+    expect(warnCalls[1]).toBe(
+      '⚠ Registering with SENTINEL credentials — execution paths still require real secret resolution.',
+    );
+    expect(warnCalls[2]).toContain("⚠ step 's1': unknown key 'dependson'");
+    expect(warnCalls[2]).toContain("— ignored (did you mean 'depends_on'?)");
+    expect(joined(warnSpy)).not.toContain('REFUSED below');
+    expect(joined(errSpy)).toMatch(
+      /^Error loading extensions: Deployment manifest '[^']*realm\.yaml': handlers\.h1 — module '\.\/dist\/mod\.js#MissingExport' has no export 'MissingExport'/m,
+    );
+    expect(Math.max(...warnSpy.mock.invocationCallOrder)).toBeLessThan(
+      Math.min(...errSpy.mock.invocationCallOrder),
+    );
   });
 
   it('S1 CONTROL: unresolvable manifest secrets still DEGRADE to a sentinel registration', async () => {
