@@ -257,6 +257,16 @@ action. 0 are handled automatically` — every count now agrees with its own nou
 
 ### Security
 
+- **`fast-uri` 3.1.5 → 3.1.7** (issue #471) — four HIGH advisories against the installed 3.1.5, all patched
+  in 3.1.6: GHSA-5jgf-p345-68v8 (host confusion via skipped IDN canonicalization on scheme-relative
+  references), GHSA-f65p-4m7j-42xc (SSRF via malformed IPv6 normalization), GHSA-fph4-wmhf-6fwf (SSRF via
+  repeated hostname percent-decoding), GHSA-jqff-g426-hqxp (host confusion via percent-encoded scheme
+  normalization). In-range, lockfile-only (ajv declares `^3.0.1`), the single deduped copy under
+  `@modelcontextprotocol/sdk → ajv` / `ajv-formats → ajv`. Exposure LOW — the same non-consuming call
+  path as the #239 and #306 fixes, re-derived against the installed ajv 8.20 and 8.18: ajv hands `$ref`
+  strings to fast-uri's `parse`/`serialize`/`resolve` and uses the result only as a schema-lookup key and
+  a JSON-pointer fragment; nothing reads the parsed host or authority and no network is involved.
+
 - **A yarn-classic redaction hole is closed** (issue #407). Yarn 1.x flattens the entire
   package.json into `npm_package_*` environment variables, and 0.40.0 excluded that whole
   namespace from realm's redaction sweep by prefix. So under a yarn 1.x launch, an arbitrary
