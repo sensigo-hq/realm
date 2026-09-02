@@ -73,12 +73,34 @@ describe('realm workflow validate — orphaned-manifest guard (extension-free fr
     // the extensions arm's did. Spawn-based: content + exit only.
     const orphan = join(workflowDir, 'realm.yaml');
     writeFileSync(orphan, ORPHAN_MANIFEST, 'utf8');
-    writeFileSync(workflowPath, `${WORKFLOW_YAML}    dependson: [nothing]\n`, 'utf8');
+    // This cell's OWN YAML string, never the shared const: cell 2 pins that const's output byte
+    // for byte. The second step is the advisory population's member — an auto step with `retry:`
+    // and no `timeout_seconds`, the shape validate-retry-timeout-advisory.test.ts drives green.
+    writeFileSync(
+      workflowPath,
+      `${WORKFLOW_YAML}    dependson: [nothing]
+  s2:
+    description: retry step
+    execution: auto
+    depends_on: [s1]
+    retry:
+      max_attempts: 3
+      backoff: fixed
+      base_delay_ms: 10
+`,
+      'utf8',
+    );
     const { code, stdout, stderr } = await runCli(['workflow', 'validate', workflowPath]);
     expect(code).toBe(1);
     expect(stdout).not.toContain('Valid:');
     expect(stderr).toContain("⚠ step 's1': unknown key 'dependson'");
     expect(stderr).toContain("— ignored (did you mean 'depends_on'?)");
+    // The parity set's SECOND population (decision 5: catch-2 prints the SUCCESS-PATH set —
+    // pass-1's warnings plus the retry advisory). A loaderWarnings-only print keeps every other
+    // conjunct in this cell green (MA-executed mutant: 1516/1516), so this line is the parity
+    // decision's only tooth on this arm; C3 (validate-extensions.test.ts) is its twin on the
+    // extensions arm. Green the moment it lands — the member already ships; no red-first exists.
+    expect(stderr).toContain("declares 'retry' but no 'timeout_seconds'");
     // The PLAIN form on this arm too: what follows is the manifest's placement refusal, not this
     // warning's escalation — `— REFUSED below` would name the wrong cause.
     expect(stderr).not.toContain('REFUSED below');
