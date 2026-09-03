@@ -278,6 +278,20 @@ action. 0 are handled automatically` — every count now agrees with its own nou
 
 ### Security
 
+- **`qs` 6.15.2 → 6.16.0** (issue #476) — two MODERATE advisories against the installed 6.15.2:
+  GHSA-4mjr-xmp4-gh2g (DoS via attacker-controlled `isBuffer`), GHSA-x5fp-wj9c-mxmx (array-limit
+  bypass via bracket-key comma parsing). In-range, lockfile-only, the single deduped copy under
+  `@modelcontextprotocol/sdk → express → body-parser` / `→ express`. Exposure LOW/NONE, re-derived
+  end to end: realm's own runtime never imports `express` at all — the five SDK entry points its
+  production code reaches (`server/mcp.js`, `server/stdio.js`, `server/streamableHttp.js` — the
+  last is Hono-based, not Express — plus `client/index.js` and `client/stdio.js`) carry zero
+  `express` reference between them, confirmed both by reading their full import closure and by
+  importing them in isolation and inspecting what actually loaded; `express` and its `server/auth/**`
+  subtree exist in the SDK only for `createMcpExpressApp`, which nothing in realm calls. And even
+  where Express does run, its default `query parser` is `'simple'` (Node's own `querystring.parse`)
+  — the `'extended'` setting that maps onto `qs` is never enabled anywhere in this tree, so the
+  vulnerable parser is never invoked even if it were ever loaded.
+
 - **`fast-uri` 3.1.5 → 3.1.7** (issue #471) — four HIGH advisories against the installed 3.1.5, all patched
   in 3.1.6: GHSA-5jgf-p345-68v8 (host confusion via skipped IDN canonicalization on scheme-relative
   references), GHSA-f65p-4m7j-42xc (SSRF via malformed IPv6 normalization), GHSA-fph4-wmhf-6fwf (SSRF via
