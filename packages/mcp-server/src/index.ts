@@ -6,4 +6,4 @@ export type { WorkflowProtocol, ProtocolStep } from './protocol/generator.js';
 // issue #107: exported so the operator run-purge CLI command (packages/cli) can construct one
 // and register it as a PerRunArtifactStore alongside JsonFileStore/FailedAttemptStore.
 export { JsonTraceBufferStore } from './json-trace-buffer-store.js';
-export const VERSION = '0.40.0';
+export const VERSION = '0.41.0';

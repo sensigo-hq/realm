@@ -4,7 +4,16 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
+## [0.41.0] — 2026-09-03
+
+The CLI-honesty release. Sixteen fixes make the CLI's operator surfaces — `workflow run` (dev
+mode), `watch`, `test`, `validate`, `register`, `agent`, and the `run` group — stop crashing,
+lying, or going silent, including two behaviors broken since the day they shipped: `watch`
+exited after roughly 0.6 seconds and never watched anything, and a dev run exited 0 on `failed`
+and `aborted`. Two operator features land — `realm workflow list` with
+`validate --registered`, the pre-upgrade audit, and `realm listen --llm-timeout` — alongside a
+unification of the CLI's warning and error grammar and three security fixes, one of which
+closes a redaction hole whose exposure window is 0.40.0 only.
 
 **One BREAKING change**, which a 0.x minor is allowed to carry: pre-1.0, breaking changes ship
 in a minor when they are flagged here with upgrade guidance. This release carries no new refusal
