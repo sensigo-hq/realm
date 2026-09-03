@@ -27,7 +27,7 @@ All notable changes to this project are documented here.
   One case remains unobserved, stated rather than silently accepted: if an _ancestor_ of the
   watched directory moves and nothing inside changes afterward, the watch has no signal to act on
   and stays pointed at the old location — moving the watched directory itself, by contrast, is
-  always detected.
+  detected.
 
 ---
 

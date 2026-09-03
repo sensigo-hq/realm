@@ -255,7 +255,7 @@ restart the command once the path exists again. One residual case goes unobserve
 _ancestor_ of the watched directory is moved (the workflow's own directory keeps its name, just
 relocated under a renamed parent) and nothing inside it changes afterward, the watch has nothing
 to react to and stays silently pointed at the old location — moving the watched directory
-itself, by contrast, is always detected. The `profiles_dir` (agent profiles alongside the
+itself, by contrast, is detected. The `profiles_dir` (agent profiles alongside the
 workflow, watched for changes too) follows the same replace/re-arm rule but is never fatal on
 its own: its disappearance is reported on stderr and profile edits stop being watched, while the
 workflow YAML keeps being watched as before.

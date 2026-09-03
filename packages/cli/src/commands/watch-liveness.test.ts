@@ -101,7 +101,6 @@ class WatchChild {
   /** Resolves once at least `need` `Registered:` lines have been seen; rejects if the child dies. */
   waitForRegistrations(need: number, capMs = 15_000): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      this.waiter = { need, resolve, reject };
       const timer = setTimeout(() => {
         this.waiter = undefined;
         reject(
