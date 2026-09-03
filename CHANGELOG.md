@@ -4,6 +4,33 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **`realm workflow watch` no longer sits silently alive on a directory that is gone, and no
+  longer misattributes edits to a directory it left behind** (issue #453). Deleting the watched
+  directory used to print one `ENOENT` line and then keep the process running forever, watching
+  nothing — no further edit, anywhere, ever registered again. Moving the directory was worse: the
+  watcher silently followed the old inode, so every save into the _moved_ copy printed a
+  misleading `Invalid: Failed to read workflow file: ENOENT …` naming the _old_ path, blaming a
+  file the operator had just correctly saved. Both are now the same honest outcome: `watch`
+  prints `Error: The watched directory no longer exists …` and exits `1` — no more waiting on a
+  directory that will not come back; restart once the path exists again.
+  A fast delete-and-recreate (a build step, a `git checkout`) is now a **new capability, not
+  just a fix**: previously it ended in exactly the same silent death as the directory being
+  genuinely gone (one transient re-registration, then nothing ever again); `watch` now tells the
+  two apart and re-arms itself on the recreated directory instead of going quiet or
+  misattributing. The `profiles_dir`, watched alongside the workflow, follows the same rule but
+  is never fatal on its own: its disappearance now prints a line saying so, and the workflow YAML
+  keeps being watched as before — previously it just went silently dead.
+  One case remains unobserved, stated rather than silently accepted: if an _ancestor_ of the
+  watched directory moves and nothing inside changes afterward, the watch has no signal to act on
+  and stays pointed at the old location — moving the watched directory itself, by contrast, is
+  always detected.
+
+---
+
 ## [0.41.0] — 2026-09-03
 
 The CLI-honesty release. Sixteen fixes make the CLI's operator surfaces — `workflow run` (dev

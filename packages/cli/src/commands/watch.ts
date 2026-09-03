@@ -139,17 +139,49 @@ export function makeCoalescedTrigger(
 }
 
 /**
+ * issue #453 — thrown when the watched directory itself is gone: deleted, or moved somewhere the
+ * watch cannot follow (an ancestor moved, or the directory's own self-event arrived and the path
+ * is absent). The single source of that claim's text — minted here, thrown once, rendered once by
+ * the CLI catch below as `Error: ` + this message.
+ */
+const DEATH_MSG =
+  "The watched directory no longer exists — deleted, or moved out from under the watch. Nothing is watched any more; restart 'realm workflow watch' when the path exists again.";
+
+/**
+ * issue #453 — the profiles directory's own death is NOT fatal (it was optional at startup,
+ * issue #449's :257-260 non-goal): the YAML watch continues, and this is the honest replacement
+ * for what used to be silence. Timestamped like the file's other lines. Minted through this ONE
+ * helper for both call sites (the coalesced callback's maintenance branch, and the profiles
+ * loop's own catch-on-reopen arm) so the two can never drift apart.
+ */
+function renderProfilesGone(): string {
+  return `[${new Date().toISOString()}] The profiles directory is gone — profile edits are no longer watched. Restart watch if you recreate it.`;
+}
+
+/**
  * Watches a workflow YAML file and re-registers it into the given store on every change.
  * Also watches the profiles directory alongside the YAML — any file change there triggers
  * re-registration. If the profiles directory does not exist, only the YAML is watched.
  * Performs an initial registration before entering the watch loop.
- * Resolves when the watcher is closed (e.g. when the AbortSignal fires).
+ * Resolves when the watcher is closed (e.g. when the AbortSignal fires) — or THROWS when the
+ * watched directory stops existing (both watchers closed first — the throw never leaves a live
+ * watcher behind).
  *
- * Three mechanics worth knowing (issue #449):
+ * Four mechanics worth knowing (issues #449, #453):
  * - The YAML watch is on the file's DIRECTORY, filtered by basename — a file watch dies with the
  *   inode an atomic save renames away.
  * - Both watchers are persistent, so they hold the process open; Ctrl+C is what stops it.
  * - Each save's event burst is coalesced into one re-registration on a 100ms trailing edge.
+ * - The watched directory ITSELF can be replaced or removed. Replacement it can OBSERVE — the
+ *   directory's own rename event fires whether it was deleted or moved, and if the path still
+ *   exists afterwards (a fast delete+recreate, an atomic tree replace, a same-named sibling) the
+ *   watch closes its stale handle and re-arms fresh on the same path, silently. If the path does
+ *   NOT exist when that check runs, the watch stops and this function throws — never waits for
+ *   the path to come back; restart is the recovery, deliberately (the #449 posture: no
+ *   late-mount, no self-healing poll). Detection rides the platform's watcher events, so it
+ *   degrades to the pre-#453 behaviour wherever those events do not arrive — an ancestor
+ *   directory moving away, with no further activity inside, delivers nothing to this handle at
+ *   all (documented residual, not polled around).
  *
  * RESTART REQUIRED for three things, all read once at startup and never re-read: the extension
  * modules (ESM cache, note below), a `profiles/` directory created after the watch began, and a
@@ -221,63 +253,218 @@ export async function watchWorkflow(
   // `resolve`, so path math inside it is a trap.
   const watchDir = dirname(resolve(filePath));
   const watchName = basename(filePath);
+  // issue #453 — the directory's OWN basename: its rename event is surfaced with this name, not
+  // the watched file's (IN_DELETE_SELF/IN_MOVE_SELF; grounding P3a/P3b). Computed once, beside
+  // the names above — never recomputed on re-arm, since a re-arm always watches the SAME path.
+  const dirSelfName = basename(watchDir);
 
-  // ONE coalescer shared by both watchers, created after the initial registration above so that
-  // first pass stays immediate. See makeCoalescedTrigger for what actually bursts.
-  const coalesced = makeCoalescedTrigger(() => {
-    void registerFile(filePath, store);
-  }, COALESCE_MS);
+  // issue #453 — an INTERNAL controller, always present, so a fatal death or a watcher 'error'
+  // can stop BOTH loops even when the caller passed no signal at all (or the caller's signal
+  // never fires). `effSignal` is what every fs.watch call below actually receives.
+  const internal = new AbortController();
+  const effSignal =
+    signal === undefined ? internal.signal : AbortSignal.any([signal, internal.signal]);
 
-  const watchYaml = new Promise<void>((resolveWatch, reject) => {
-    // persistent: true (issue #449) — this was the liveness half. Non-persistent watchers do not
-    // hold the event loop, so the real CLI ran its initial registration and exited ~0.6s later
-    // while claiming to watch. No in-process test could ever see it: under vitest the runner's
-    // own loop keeps the process alive, which is exactly what `persistent` decides.
-    const watcher = watch(watchDir, { persistent: true, signal });
+  // The single funnel every fatal condition writes to; thrown once, after both loops have ended.
+  let fatal: Error | undefined;
 
-    watcher.on('change', (_eventType: string, filename: string | Buffer | null) => {
-      // `null` is in the type and means "the platform could not say which file" — treat it as
-      // possibly-ours rather than dropping a real edit. Buffer only under encoding:'buffer',
-      // which is never set here.
-      if (filename === watchName || filename === null) coalesced.trigger();
-    });
-
-    watcher.on('error', (err: Error) => {
-      reject(err);
-    });
-
-    watcher.on('close', () => {
-      // Before resolving, or a pending timer fires after the watch is over — re-registering into
-      // a store whose owner has finished with it.
-      coalesced.cancel();
-      resolveWatch();
-    });
-  });
-
-  // Only watch the profiles directory if it exists.
-  if (!existsSync(resolvedProfilesDir)) {
-    return watchYaml;
-  }
+  // issue #453 — the coalesced callback's two inputs, set by the 'change' handlers below and
+  // consumed (snapshotted, then cleared) at the TOP of the callback — never reset per-branch,
+  // which would create a two-readings ambiguity between the branch that sets them and the branch
+  // that reads them.
+  let selfEventSeen = false;
+  let profilesSelfSeen = false;
+  // Latches false the moment the profiles directory is found gone — a post-close straggler event
+  // on the (now-idle) old profiles watcher is then a no-op, never a second PROFILES_GONE line.
+  let profilesLoopLive = true;
 
   const profilesDirPath = resolvedProfilesDir;
-  const watchProfiles = new Promise<void>((resolveWatch, reject) => {
-    const watcher = watch(profilesDirPath, { persistent: true, signal });
 
-    watcher.on('change', () => {
-      coalesced.trigger();
-    });
+  // Each loop's "please end your current watcher with this outcome" request, set by the
+  // coalesced callback (or the loop's own error/catch arm) and read by that SAME watcher's
+  // 'close' handler once close() actually fires. Reset to 'aborted' at the top of every new
+  // iteration, so an iteration that never gets a request defaults to ending the whole loop.
+  let yamlPendingOutcome: 'aborted' | 'rearm' = 'aborted';
+  let profilesPendingOutcome: 'aborted' | 'rearm' | 'gone' = 'aborted';
+  // The CURRENT watcher's own close(), reachable from the coalesced callback so it can request a
+  // re-arm or a gone-stop without knowing which iteration is live.
+  let closeCurrentYaml: (() => void) | undefined;
+  let closeCurrentProfiles: (() => void) | undefined;
 
-    watcher.on('error', (err: Error) => {
-      reject(err);
-    });
+  // issue #453 — the single discriminate-first chokepoint. Both watchers' 'change' handlers
+  // funnel here (via the shared coalescer), so death, re-arm and profiles maintenance are decided
+  // in ONE place, in a fixed order, never per-branch.
+  function onCoalesced(): void {
+    const selfSeen = selfEventSeen;
+    const profSeen = profilesSelfSeen;
+    selfEventSeen = false;
+    profilesSelfSeen = false;
 
-    watcher.on('close', () => {
-      coalesced.cancel();
-      resolveWatch();
-    });
-  });
+    // (a) Death net — checked FIRST, unconditionally. This is what catches an ancestor-mv (no
+    // self event ever reaches this handle for that case — grounding addendum) and what makes an
+    // mv-then-immediate-write race die with the honest message instead of a misattributed one:
+    // a self event and a content event can both be pending when this runs, but the directory's
+    // absence is checked before either is acted on.
+    if (!existsSync(watchDir)) {
+      fatal ??= new Error(DEATH_MSG);
+      internal.abort();
+      return;
+    }
 
-  await Promise.all([watchYaml, watchProfiles]);
+    // (b) YAML re-arm. SILENT — no line: any positive wording ("replaced") is unprovable against
+    // the sibling-collision case (a file literally named like the directory emits the identical
+    // event shape — grounding E2c), so the only observable contract is whatever the next
+    // registerFile call prints. Requesting a re-arm on a directory that in fact never died (E2c)
+    // is harmless — the old watcher closes, a fresh one opens on the same live path.
+    if (selfSeen) {
+      yamlPendingOutcome = 'rearm';
+      closeCurrentYaml?.();
+    }
+
+    // (c) Profiles maintenance — independent of (b); either can fire alone.
+    if (profSeen && profilesLoopLive) {
+      if (!existsSync(profilesDirPath)) {
+        console.error(renderProfilesGone());
+        profilesLoopLive = false;
+        profilesPendingOutcome = 'gone';
+        closeCurrentProfiles?.();
+      } else {
+        profilesPendingOutcome = 'rearm';
+        closeCurrentProfiles?.();
+      }
+    }
+
+    // (d) Fall through. Runs on the re-arm and 'gone' paths alike — a profiles-deletion burst
+    // still re-registers once (today's census behaviour, kept); the death path already returned
+    // above and never reaches here.
+    void registerFile(filePath, store);
+  }
+
+  // ONE coalescer shared by both watchers' 'change' handlers, funneling into the discriminate-first
+  // chokepoint above — never wired directly to registerFile. See makeCoalescedTrigger for what
+  // actually bursts.
+  const coalesced = makeCoalescedTrigger(onCoalesced, COALESCE_MS);
+
+  async function yamlLoop(): Promise<void> {
+    for (;;) {
+      if (effSignal.aborted) return;
+
+      let watcher: ReturnType<typeof watch>;
+      try {
+        watcher = watch(watchDir, { persistent: true, signal: effSignal });
+      } catch (err) {
+        // issue #453 — fs.watch throws SYNC ENOENT on an absent path (grounding addendum): the
+        // re-arm's own TOCTOU window (the directory vanishing between the death net's existsSync
+        // and this re-creation). The YAML loop's version of this is always fatal.
+        fatal ??=
+          (err as NodeJS.ErrnoException).code === 'ENOENT' ? new Error(DEATH_MSG) : (err as Error);
+        internal.abort();
+        return;
+      }
+
+      yamlPendingOutcome = 'aborted';
+      const outcome = await new Promise<'aborted' | 'rearm'>((resolveIter) => {
+        closeCurrentYaml = () => watcher.close();
+
+        watcher.on('change', (_eventType: string, filename: string | Buffer | null) => {
+          // Self-name FIRST: in the pathological case where the directory is itself named
+          // `workflow.yaml` (dirSelfName === watchName), self-first still detects the
+          // directory's own death — it only degrades to a harmless extra re-arm on ordinary
+          // file saves, never the reverse.
+          if (filename === dirSelfName) {
+            selfEventSeen = true;
+            coalesced.trigger();
+          } else if (filename === watchName || filename === null) {
+            // `null` is in the type and means "the platform could not say which file" — treat
+            // it as possibly-ours rather than dropping a real edit. Buffer only under
+            // encoding:'buffer', which is never set here.
+            coalesced.trigger();
+          }
+        });
+
+        watcher.on('error', (err: Error) => {
+          // issue #453 — an errored FSWatcher never emits 'close' (Node nulls the handle in its
+          // error path specifically to avoid firing it — grounding addendum, executed against
+          // node internals). Waiting for 'close' here would deadlock forever with the other
+          // watcher already closed: settle this iteration's own promise directly.
+          fatal ??= err;
+          internal.abort();
+          yamlPendingOutcome = 'aborted';
+          resolveIter('aborted');
+        });
+
+        watcher.on('close', () => {
+          // A 'rearm' close must NOT cancel the coalescer: the OTHER watcher may have armed it
+          // inside this close gap, and cancelling here would silently drop a pending save.
+          if (yamlPendingOutcome === 'aborted') coalesced.cancel();
+          resolveIter(yamlPendingOutcome);
+        });
+      });
+
+      closeCurrentYaml = undefined;
+      if (outcome === 'aborted') return;
+      // outcome === 'rearm': loop — a fresh watcher opens on the same path next iteration.
+    }
+  }
+
+  async function profilesLoop(): Promise<void> {
+    for (;;) {
+      if (effSignal.aborted) return;
+
+      let watcher: ReturnType<typeof watch>;
+      try {
+        watcher = watch(profilesDirPath, { persistent: true, signal: effSignal });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          // issue #453 — the profiles directory is optional (issue #449's non-goal at startup);
+          // its disappearance is never fatal and never DEATH_MSG, whose "watched directory" claim
+          // would be false here. The YAML loop is untouched by this return.
+          console.error(renderProfilesGone());
+          profilesLoopLive = false;
+          return;
+        }
+        fatal ??= err as Error;
+        internal.abort();
+        return;
+      }
+
+      profilesPendingOutcome = 'aborted';
+      const outcome = await new Promise<'aborted' | 'rearm' | 'gone'>((resolveIter) => {
+        closeCurrentProfiles = () => watcher.close();
+
+        watcher.on('change', (_eventType: string, filename: string | Buffer | null) => {
+          if (filename === basename(profilesDirPath)) profilesSelfSeen = true;
+          // Still triggers unconditionally, matching today's behaviour: any change inside the
+          // profiles directory re-registers, self-name or not.
+          coalesced.trigger();
+        });
+
+        watcher.on('error', (err: Error) => {
+          fatal ??= err;
+          internal.abort();
+          profilesPendingOutcome = 'aborted';
+          resolveIter('aborted');
+        });
+
+        watcher.on('close', () => {
+          if (profilesPendingOutcome === 'aborted') coalesced.cancel();
+          resolveIter(profilesPendingOutcome);
+        });
+      });
+
+      closeCurrentProfiles = undefined;
+      if (outcome !== 'rearm') return;
+      // outcome === 'rearm': loop — a fresh watcher opens on the same path next iteration.
+    }
+  }
+
+  const loops = [yamlLoop()];
+  // Only watch the profiles directory if it exists at startup (issue #449's non-goal: no
+  // late-mount for a directory created after the watch began).
+  if (existsSync(resolvedProfilesDir)) loops.push(profilesLoop());
+
+  await Promise.all(loops);
+  if (fatal !== undefined) throw fatal;
 }
 
 export const watchCommand = new Command('watch')

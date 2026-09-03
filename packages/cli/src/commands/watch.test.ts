@@ -1,8 +1,8 @@
 // Tests for realm workflow watch — watchWorkflow function.
 import { describe, it, expect, vi } from 'vitest';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { mkdirSync, writeFileSync, renameSync } from 'node:fs';
+import { join, dirname, basename } from 'node:path';
+import { mkdirSync, writeFileSync, renameSync, rmSync, rmdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { WorkflowRegistrar, WorkflowDefinition } from '@sensigo/realm';
 import { watchWorkflow, makeCoalescedTrigger } from './watch.js';
@@ -714,6 +714,356 @@ describe('watchWorkflow — `Error loading extensions:` (issue #451)', () => {
     atomicSave(filePath, VALID_YAML);
     await until(() => store.registered.length >= 1);
     expect(store.registered[0]!.id).toBe('watch-test');
+
+    controller.abort();
+    await watchPromise;
+    vi.restoreAllMocks();
+  }, 20_000);
+});
+
+// =================================================================================================
+// issue #453 — the watched directory dies honestly (deleted, or moved out from under the watch),
+// and survives a replacement it can observe (self-name event + path present ⇒ re-arm).
+//
+// `until` never throws — it returns silently at its cap (:413-418) — so every `until` below is
+// followed by a stated trailing `expect`. Root vitest `testTimeout` is 5000ms and `until`'s own
+// 5000ms default cap exhausts it before any trailing expect runs, so every cell whose red path
+// rides a hang or an `until` cap takes the explicit 20_000 third argument.
+//
+// Verify red-first shapes PER CELL (`vitest -t '<name>'`), never from one full-file run: a
+// timed-out cell never reaches its `finally`, and its stranded watcher/spy state contaminates
+// later cells in the same run.
+// =================================================================================================
+
+const DEATH_PIN = 'The watched directory no longer exists';
+
+describe('watchWorkflow — the directory itself dies or is replaced (issue #453)', () => {
+  it('D1 the whole directory rm -rf’d → honest rejection, no further registration', async () => {
+    // Red-first on main: the promise never settles — a silent zombie on the dead inode.
+    const filePath = makeTempFile(VALID_YAML);
+    const dir = dirname(filePath);
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await until(() => store.registered.length >= 1);
+
+    rmSync(dir, { recursive: true, force: true });
+
+    await expect(watchPromise).rejects.toThrow(DEATH_PIN);
+    expect(store.registered.length).toBe(1);
+
+    controller.abort();
+    vi.restoreAllMocks();
+  }, 20_000);
+
+  it('D2 the directory moved away, no subsequent activity → honest rejection', async () => {
+    // Red-first on main: the promise never settles — the handle follows the inode, silently.
+    // The mv member of the self-name trigger is pinned HERE alone (no activity follows).
+    const filePath = makeTempFile(VALID_YAML);
+    const dir = dirname(filePath);
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await until(() => store.registered.length >= 1);
+
+    renameSync(dir, `${dir}-moved`);
+
+    await expect(watchPromise).rejects.toThrow(DEATH_PIN);
+
+    controller.abort();
+    vi.restoreAllMocks();
+  }, 20_000);
+
+  it('D2b discriminate-first ordering: mv + immediate write into the moved dir never misattributes', async () => {
+    // Red-first on main: a MISATTRIBUTED `Invalid: … ENOENT` about the OLD path prints, about a
+    // file the operator just correctly saved (E1). The death net must fire BEFORE the
+    // fall-through registerFile, even though a self event and a content event can both be
+    // pending when the coalesced callback runs.
+    const filePath = makeTempFile(VALID_YAML);
+    const dir = dirname(filePath);
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await until(() => store.registered.length >= 1);
+
+    const moved = `${dir}-moved`;
+    renameSync(dir, moved);
+    writeFileSync(join(moved, 'workflow.yaml'), yamlAt(2), 'utf8');
+
+    await expect(watchPromise).rejects.toThrow(DEATH_PIN);
+
+    // The settle makes mutant (iii)'s async ENOENT print (executed at ~+102ms) deterministically
+    // visible — the file's own negative-assertion idiom (:483-484).
+    await new Promise((r) => setTimeout(r, 300));
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).not.toContain('Failed to read workflow file');
+
+    controller.abort();
+    vi.restoreAllMocks();
+  }, 20_000);
+
+  it("D2c the death net's own member: an ancestor move delivers no self event", async () => {
+    // Red-first on main: same misattribution shape as D2b. No self event ever reaches this
+    // handle for an ancestor move (grounding addendum) — only the existsSync net can catch it,
+    // so this cell reds under mutant (ii) regardless of the re-arm catch.
+    const parent = join(tmpdir(), `realm-watch-test-${randomUUID()}`);
+    const wfDir = join(parent, 'wf');
+    mkdirSync(wfDir, { recursive: true });
+    const filePath = join(wfDir, 'workflow.yaml');
+    writeFileSync(filePath, VALID_YAML, 'utf8');
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await until(() => store.registered.length >= 1);
+
+    const movedParent = `${parent}-moved`;
+    renameSync(parent, movedParent);
+    writeFileSync(join(movedParent, 'wf', 'workflow.yaml'), yamlAt(2), 'utf8');
+
+    await expect(watchPromise).rejects.toThrow(DEATH_PIN);
+
+    await new Promise((r) => setTimeout(r, 300));
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).not.toContain('Failed to read workflow file');
+
+    controller.abort();
+    vi.restoreAllMocks();
+  }, 20_000);
+
+  it('D3 a fast delete+recreate (build steps) is survived: the watch re-arms', async () => {
+    // Red-first on main: the FIRST half passes on main already (the dying handle's own
+    // fall-through — a control, not this cell's tooth); red arrives at the SECOND half as an
+    // assertion failure after `until`'s silent cap — nothing observes the replacement.
+    const filePath = makeTempFile(yamlAt(1));
+    const dir = dirname(filePath);
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await until(() => store.registered.length >= 1);
+
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(filePath, yamlAt(2), 'utf8');
+
+    // The fall-through half — passes on main too (control, not this cell's tooth).
+    await until(() => store.registered.at(-1)?.version === 2, 20_000);
+    expect(store.registered.at(-1)!.version).toBe(2);
+
+    // The fresh watcher arms asynchronously across close→loop-iteration and nothing observable
+    // signals it — the watch-liveness:145-147 idiom.
+    await new Promise((r) => setTimeout(r, 250));
+
+    atomicSave(filePath, yamlAt(3));
+    // The liveness-after-re-arm conjunct — this cell's only tooth.
+    await until(() => store.registered.at(-1)?.version === 3, 20_000);
+    expect(store.registered.at(-1)!.version).toBe(3);
+
+    controller.abort();
+    await watchPromise;
+    vi.restoreAllMocks();
+  }, 20_000);
+
+  it('D4 a same-named sibling file is tolerated: a harmless re-arm, never a false kill', async () => {
+    // The sibling-collision case (E2c): a file literally named like the directory's own basename
+    // emits the SAME surfaced shape as the directory's own death. Distinct from cell "(c)" above
+    // (:465), whose sibling has a DIFFERENT name and stays byte-untouched — its `notes.txt` can
+    // never collide with `realm-watch-test-<uuid>`.
+    const filePath = makeTempFile(yamlAt(1));
+    const dir = dirname(filePath);
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await until(() => store.registered.length >= 1);
+
+    writeFileSync(join(dir, basename(dir)), 'not a workflow', 'utf8');
+
+    // Arming settle, same reason as D3.
+    await new Promise((r) => setTimeout(r, 250));
+
+    atomicSave(filePath, yamlAt(2));
+    await until(() => store.registered.at(-1)?.version === 2, 20_000);
+    expect(store.registered.at(-1)!.version).toBe(2);
+
+    controller.abort();
+    await watchPromise;
+    vi.restoreAllMocks();
+  }, 20_000);
+
+  it('D5 staged death: the file dies first (unchanged), then the bare directory dies too', async () => {
+    // First half is GREEN ON MAIN — today's behaviour, kept as the control. Second half: a bare
+    // rmdirSync after the yaml is already gone emits ONLY self-name events (executed) — red-first
+    // on main as a cell timeout, since main drops those events via the basename filter.
+    const filePath = makeTempFile(VALID_YAML);
+    const dir = dirname(filePath);
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await until(() => store.registered.length >= 1);
+
+    rmSync(filePath);
+    const errored = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    await until(() => errored().includes('Failed to read workflow file'), 20_000);
+    expect(errored()).toMatch(/^\[[^\]]+\] Invalid: Failed to read workflow file/m);
+    expect(store.registered.length).toBe(1);
+
+    rmdirSync(dir);
+    await expect(watchPromise).rejects.toThrow(DEATH_PIN);
+
+    controller.abort();
+    vi.restoreAllMocks();
+  }, 20_000);
+
+  it('D6 the profiles directory disappearing is disclosed, not silently dead', async () => {
+    // Red-first on main: assertion failure — the line does not exist on main.
+    const filePath = makeTempFile(yamlAt(1));
+    const dir = dirname(filePath);
+    const profilesDir = join(dir, 'profiles');
+    mkdirSync(profilesDir, { recursive: true });
+    writeFileSync(join(profilesDir, 'seed.md'), 'seed', 'utf8');
+
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await until(() => store.registered.length >= 1);
+
+    rmSync(profilesDir, { recursive: true, force: true });
+
+    const errored = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    await until(() => errored().includes('The profiles directory is gone'), 20_000);
+    // Settle before the exactly-once count: a straggler event on the (now-idle) old profiles
+    // watcher must be a no-op, never a second line — the latch's own contract.
+    await new Promise((r) => setTimeout(r, 300));
+
+    const goneLines = errSpy.mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .filter((l) => l.includes('The profiles directory is gone'));
+    expect(goneLines).toHaveLength(1);
+    expect(goneLines[0]).toMatch(
+      /^\[[^\]]+\] The profiles directory is gone — profile edits are no longer watched\./m,
+    );
+    expect(goneLines[0]).toContain('Restart watch');
+
+    // Version-keyed, not count-keyed: a count `until` would be satisfied vacuously by the
+    // gone-callback's own fall-through v1 bump.
+    atomicSave(filePath, yamlAt(2));
+    await until(() => store.registered.at(-1)?.version === 2, 20_000);
+    expect(store.registered.at(-1)!.version).toBe(2);
+
+    controller.abort();
+    await watchPromise;
+    vi.restoreAllMocks();
+  }, 20_000);
+
+  it('D7 the profiles directory re-arms after a fast delete+recreate', async () => {
+    // Red-first on main: the FIRST half passes on main already (the dying watcher's own
+    // fall-through bump); red arrives at the SECOND half. Sequenced so the naive same-step
+    // construction cannot pass vacuously via the fall-through bump alone (lane-2 F1): settle
+    // between the bump and the second write, and use a NEW profiles filename — a pre-existing
+    // file emits nothing after arming.
+    const filePath = makeTempFile(yamlAt(1));
+    const dir = dirname(filePath);
+    const profilesDir = join(dir, 'profiles');
+    mkdirSync(profilesDir, { recursive: true });
+    writeFileSync(join(profilesDir, 'seed.md'), 'seed', 'utf8');
+
+    const store = makeStore();
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await until(() => store.registered.length >= 1);
+    const afterStartup = store.registered.length;
+
+    rmSync(profilesDir, { recursive: true, force: true });
+    mkdirSync(profilesDir, { recursive: true });
+    writeFileSync(join(profilesDir, 'seed2.md'), 'seed2', 'utf8');
+
+    await until(() => store.registered.length > afterStartup, 20_000);
+    expect(store.registered.length).toBeGreaterThan(afterStartup);
+    const afterFallThrough = store.registered.length;
+
+    // Arming settle for the re-armed profiles watcher.
+    await new Promise((r) => setTimeout(r, 250));
+
+    writeFileSync(join(profilesDir, 'brand-new.md'), 'a new profile', 'utf8');
+    await until(() => store.registered.length > afterFallThrough, 20_000);
+    expect(store.registered.length).toBeGreaterThan(afterFallThrough);
+
+    controller.abort();
+    await watchPromise;
+    vi.restoreAllMocks();
+  }, 20_000);
+
+  it('D8 (ride-along, #453 comment 5508995297) a registrar-level throw survives the watcher', async () => {
+    // GREEN ON MAIN — its tooth is mutant (vii), dropping the `Error: ` prefix at the else arm.
+    const filePath = makeTempFile(yamlAt(1));
+    let callCount = 0;
+    const registered: WorkflowDefinition[] = [];
+    const store: WorkflowRegistrar & { registered: WorkflowDefinition[] } = {
+      registered,
+      async register(def) {
+        callCount += 1;
+        if (callCount === 1) {
+          throw new Error('EACCES: permission denied, open …tmp');
+        }
+        registered.push(def);
+      },
+      async get(id) {
+        const found = [...registered].reverse().find((d) => d.id === id);
+        if (!found) throw new Error(`Not found: ${id}`);
+        return found;
+      },
+      async list() {
+        return registered;
+      },
+    };
+    const controller = new AbortController();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    const errored = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    await until(() => errored().includes('EACCES'), 20_000);
+    expect(errored()).toMatch(/^\[[^\]]+\] Error: EACCES: permission denied, open …tmp$/m);
+
+    atomicSave(filePath, yamlAt(2));
+    await until(() => store.registered.length >= 1, 20_000);
+    expect(store.registered).toHaveLength(1);
 
     controller.abort();
     await watchPromise;
