@@ -387,6 +387,10 @@ export async function watchWorkflow(
           // error path specifically to avoid firing it — grounding addendum, executed against
           // node internals). Waiting for 'close' here would deadlock forever with the other
           // watcher already closed: settle this iteration's own promise directly.
+          // This arm has no test coverage on Linux — inotify never emits 'error' for the
+          // directory-death class this file cares about (the negative knowledge behind the whole
+          // design), so there is no reachable trigger to construct a cell from. Stated, not
+          // pretended: correctness here rests on the two executed facts cited above, not on a pin.
           fatal ??= err;
           internal.abort();
           yamlPendingOutcome = 'aborted';
@@ -440,6 +444,8 @@ export async function watchWorkflow(
         });
 
         watcher.on('error', (err: Error) => {
+          // Same settle-own-promise rule as the YAML loop's 'error' handler above, and the same
+          // no-cell-on-Linux disclosure applies here too.
           fatal ??= err;
           internal.abort();
           profilesPendingOutcome = 'aborted';
