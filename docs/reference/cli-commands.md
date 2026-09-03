@@ -242,6 +242,24 @@ Press `Ctrl+C` to stop watching.
 Errors from an invalid YAML edit are logged (with a timestamp) to stderr but do not crash
 the watcher — fix the file and save again to recover.
 
+**The watched file, and the watched directory.** Editing `workflow.yaml` itself is always
+survived, including an editor that deletes and recreates it on every save (a vim-style atomic
+write) — the invalid moment in between is logged and the recreated file is picked back up on
+its own. The directory holding it can also change: a fast delete-and-recreate (a build step, a
+`git checkout`) is survived too — the watch re-arms itself on the recreated directory and keeps
+going. What the watch cannot survive is the directory itself being genuinely gone — deleted with
+nothing to replace it, or moved somewhere the watch cannot follow — in which case it prints
+`Error: The watched directory no longer exists …` and exits `1` rather than sitting silently
+alive on a directory that no longer means anything; there is no waiting for it to come back,
+restart the command once the path exists again. One residual case goes unobserved: if an
+_ancestor_ of the watched directory is moved (the workflow's own directory keeps its name, just
+relocated under a renamed parent) and nothing inside it changes afterward, the watch has nothing
+to react to and stays silently pointed at the old location — moving the watched directory
+itself, by contrast, is detected. The `profiles_dir` (agent profiles alongside the
+workflow, watched for changes too) follows the same replace/re-arm rule but is never fatal on
+its own: its disappearance is reported on stderr and profile edits stop being watched, while the
+workflow YAML keeps being watched as before.
+
 **Development inner loop:**
 
 1. Start `realm workflow watch ./my-workflow` in one terminal.

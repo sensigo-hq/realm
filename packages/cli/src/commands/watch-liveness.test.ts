@@ -43,6 +43,7 @@ class WatchChild {
   private registeredCount = 0;
   private exited: { code: number | null } | undefined;
   private waiter: { need: number; resolve: () => void; reject: (e: Error) => void } | undefined;
+  private exitWaiter: { resolve: (r: { code: number | null }) => void } | undefined;
 
   constructor(args: string[], home: string, cwd: string) {
     this.child = spawn(process.execPath, [DIST_CLI, ...args], {
@@ -65,6 +66,15 @@ class WatchChild {
     this.child.on('exit', (code) => {
       this.exited = { code };
       this.settleIfReady();
+      // issue #453 — the SAME once-attached handler also feeds waitForExit's waiter, for the
+      // identical reason the registration waiter is fed this way (file head comment): a
+      // per-wait listener attached inside waitForExit could lose the race against an 'exit'
+      // that already fired between the `this.exited !== undefined` check and the attach.
+      if (this.exitWaiter !== undefined) {
+        const w = this.exitWaiter;
+        this.exitWaiter = undefined;
+        w.resolve({ code });
+      }
     });
   }
 
@@ -91,7 +101,6 @@ class WatchChild {
   /** Resolves once at least `need` `Registered:` lines have been seen; rejects if the child dies. */
   waitForRegistrations(need: number, capMs = 15_000): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      this.waiter = { need, resolve, reject };
       const timer = setTimeout(() => {
         this.waiter = undefined;
         reject(
@@ -110,6 +119,26 @@ class WatchChild {
         reject: (e) => done(() => reject(e)),
       };
       this.settleIfReady();
+    });
+  }
+
+  /**
+   * Resolves once the child has exited; rejects on timeout, carrying stdout so a hung-alive
+   * failure (the pre-#453 zombie shape) is diagnosable from the assertion message.
+   */
+  waitForExit(capMs = 15_000): Promise<{ code: number | null }> {
+    if (this.exited !== undefined) return Promise.resolve(this.exited);
+    return new Promise<{ code: number | null }>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.exitWaiter = undefined;
+        reject(new Error(`timed out waiting for exit. Output so far:\n${this.stdout}`));
+      }, capMs);
+      this.exitWaiter = {
+        resolve: (r) => {
+          clearTimeout(timer);
+          resolve(r);
+        },
+      };
     });
   }
 
@@ -169,6 +198,42 @@ describe('realm workflow watch — stays alive and keeps seeing edits (issue #44
       w.kill();
       rmSync(proj, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
+    }
+  }, 40_000);
+});
+
+describe('realm workflow watch — dies honestly when the directory is gone (issue #453)', () => {
+  it('D9 the watched directory deleted mid-session → honest exit 1, not a silent zombie', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'realm-watch-live-home-'));
+    // `cwd` is a SEPARATE surviving temp dir, deliberately never the project dir: deleting a
+    // spawned child's own cwd is its own confound, unrelated to what this cell pins.
+    const cwd = mkdtempSync(join(tmpdir(), 'realm-watch-live-cwd-'));
+    const proj = mkdtempSync(join(tmpdir(), 'realm-watch-live-proj-'));
+    const filePath = join(proj, 'workflow.yaml');
+    writeFileSync(filePath, yamlAt(1), 'utf8');
+
+    // ABSOLUTE yaml path — the CLI-prefix + exit-code members of this contract are pinned ONLY
+    // here; an in-process watchWorkflow cell cannot see either.
+    const w = new WatchChild(['workflow', 'watch', filePath], home, cwd);
+    try {
+      await w.waitForRegistrations(1);
+      // The watchers are established AFTER the v1 line prints, and nothing on stdout signals
+      // that moment — the same fixed-settle idiom as the sibling cell above.
+      await sleep(250);
+
+      rmSync(proj, { recursive: true, force: true });
+
+      const exit = await w.waitForExit(15_000);
+      expect(exit.code).toBe(1);
+      // stderr folds into the merged `output` buffer (:62-64) — that is where this must look.
+      expect(w.output).toContain('Error: The watched directory no longer exists');
+      expect(w.output).toContain("restart 'realm workflow watch'");
+    } finally {
+      w.kill();
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+      // proj is already gone by the cell's own action; a second removal is a harmless no-op.
+      rmSync(proj, { recursive: true, force: true });
     }
   }, 40_000);
 });
