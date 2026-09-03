@@ -454,6 +454,62 @@ steps:
       expect(text).toContain("at step '(step unknown)'");
       expect(exitSpy).toHaveBeenCalledWith(1);
     }, 20_000);
+
+    it("B5 the CHOICE arm's fresh read: a run terminalized externally during a bad choice converges honestly", async () => {
+      // The per-member tooth for the CHOICE ✗ arm's read (decision 1 has TWO reads — the gate arm
+      // and the step arm; B2's bound leg pins only the step arm's). Interpose idiom, c POSITIVE's
+      // own precedent: the SECOND question call side-effects on the stored record before
+      // returning, so the state the choice arm's fresh read must see is one the loop's own `run`
+      // snapshot never observed.
+      writeFileSync(
+        join(dir, 'workflow.yaml'),
+        `id: detach-wf
+name: Detach WF
+version: 1
+steps:
+  a:
+    description: gated
+    execution: auto
+    trust: human_confirmed
+    gate:
+      choices: [approve, reject]
+`,
+        'utf8',
+      );
+      mocks.question
+        .mockImplementationOnce(async () => '{}')
+        .mockImplementationOnce(async () => {
+          const { JsonFileStore } = await import('@sensigo/realm');
+          const store = new JsonFileStore();
+          const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
+          const id = files[0]!.replace('.json', '');
+          const fresh = await store.get(id);
+          // Strip the gate by destructuring — never `pending_gate: undefined`, a TS2412 under this
+          // repo's exactOptionalPropertyTypes.
+          const { pending_gate: _gone, ...rest } = fresh;
+          await store.update({
+            ...rest,
+            terminal_state: true,
+            run_phase: 'completed',
+            sealed_by: { arm: 'complete' },
+            completed_steps: [...rest.completed_steps, 'a'],
+          } as RunRecord);
+          // Then a BAD choice, on the now-terminal run.
+          return 'aprove';
+        });
+
+      await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
+
+      expect(mocks.question).toHaveBeenCalledTimes(2);
+      expect(stderr()).toContain("Run '");
+      expect(stderr()).toContain(
+        "is terminal; cannot submit a gate response — 'realm run resume' clears a stale pending gate on a resumable run, or 'realm run purge' removes the record entirely.",
+      );
+      expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain(
+        'Run complete. Phase: completed',
+      );
+      expect(exitSpy).not.toHaveBeenCalled();
+    }, 20_000);
   });
 
   // NESTED here on purpose: the harness beforeEach/afterEach — scratch HOME, isTTY, the throwing

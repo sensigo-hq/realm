@@ -394,7 +394,7 @@ export const runCommand = new Command('run')
           }
         }
         // Loop-head invariant (issue #468): exactly two exits from here — the while condition
-        // (terminal) and the stall below (mapped + exit 1). Every ✗ arm above re-reads then
+        // (terminal) and the stall (mapped + exit 1). Every ✗ arm above re-reads then
         // continues; no `break` remains in this loop.
       } catch (err) {
         // issue #447 — the operator cancelled the prompt. Ctrl-D at a pending `rl.question`
