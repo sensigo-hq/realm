@@ -120,6 +120,7 @@ describe('realm workflow test — one warning, one line (issue #450)', () => {
   let dir: string;
   let fixturesDir: string;
   let warnSpy: ReturnType<typeof vi.spyOn>;
+  let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
   const WARNING_WORKFLOW = `id: once-450
@@ -151,7 +152,7 @@ expected:
     writeFileSync(join(fixturesDir, 'happy.yaml'), HAPPY_FIXTURE, 'utf8');
     vi.spyOn(console, 'log').mockImplementation(() => {});
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
       throw new Error('process.exit');
     }) as never);
@@ -197,7 +198,7 @@ expected:
     expect(exitSpy).toHaveBeenCalledWith(0); // the fixture passed — the warnings never gate
   }, 20_000);
 
-  it('C4 warnings still print when the extensions load FAILS — placement pin', async () => {
+  it('C4 warnings still print when the extensions load FAILS — placement pin (and issue #466: the failure names itself)', async () => {
     // The print loop must sit ABOVE the extensions load. The printing wrapper it replaced
     // emitted before extensions loading could throw; a loop moved below would drop every warning
     // on this path, silently.
@@ -222,6 +223,17 @@ steps:
 
     const lines = warnLines();
     expect(lines.filter((l: string) => l.includes("unknown key 'frobnicate'"))).toHaveLength(1);
+    // issue #466 — the failure names itself now, matching run/validate/register/watch/agent
+    // (#445/#451/#465). The sentence starts `Error loading`, never `Error: `, which is what makes
+    // the negative conjunct discriminating rather than redundant with the positive.
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain('Error loading extensions: Cannot resolve extension module');
+    expect(errored).not.toMatch(/^Error: Cannot/m);
+    // NESTED-EXIT ARTIFACT: under this throwing exit spy, the inner catch's process.exit(1)
+    // itself throws, which propagates to the OUTER catch (still inside this same try/catch pair)
+    // — it prints `Error: process.exit` and calls exit again. Production is unaffected
+    // (process.exit never actually returns there), but the test must assert the CALL, never the
+    // call count or an exact stderr line-set.
     expect(exitSpy).toHaveBeenCalledWith(1);
   }, 20_000);
 

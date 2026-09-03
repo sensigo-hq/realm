@@ -388,4 +388,184 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     expect(reloaded1.finalizer_ledger?.['fin']?.status).toBe('completed');
     expect(reloaded2.finalizer_ledger?.['fin']?.status).toBe('completed');
   });
+
+  it('D1 (issue #466) single --force: a module that cannot be resolved reports `Error loading extensions:`', async () => {
+    // Red-first on main: the raw resolver message, no prefix — `Cannot resolve extension module
+    // …`, exit 1. run/validate/register/watch/agent/respond already named this failure.
+    await workflowStore.register({
+      id: 'drain-wf',
+      name: 'Drain WF',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        work: { description: 'w', execution: 'agent', depends_on: [] },
+        fin: {
+          description: 'f',
+          execution: 'finalizer',
+          on_outcome: 'always',
+          handler: 'fin-handler',
+        },
+      },
+    });
+    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+    await store.update({
+      ...run,
+      run_phase: 'completed',
+      terminal_state: true,
+      sealed_by: { arm: 'complete' },
+      terminal_reason: 'Workflow completed.',
+      finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+    });
+
+    await expect(
+      runDrainAction(run.id, { force: true }, store, workflowStore, {
+        ...DEPS,
+        resolveRegistry: async () => {
+          throw new Error("Cannot resolve extension module './nope.js'");
+        },
+      }),
+    ).rejects.toThrow('process.exit');
+
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toMatch(/^Error loading extensions: Cannot resolve extension module/m);
+    expect(errored).not.toMatch(/^Cannot resolve extension module/m);
+    // NESTED-EXIT ARTIFACT (the #466 class): the inner catch's process.exit(1) throws under this
+    // mock into the outer catch, which re-prints and exits again — production-neutral. Assert the
+    // call, never the count.
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const reloaded = await store.get(run.id);
+    expect(reloaded.finalizer_ledger?.['fin']?.status).toBe('pending');
+  });
+
+  it('D2 (issue #466) batch finalizer arm: `Error loading extensions:` per-run, counted as not-drained', async () => {
+    await workflowStore.register({
+      id: 'drain-wf',
+      name: 'Drain WF',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        work: { description: 'w', execution: 'agent', depends_on: [] },
+        fin: {
+          description: 'f',
+          execution: 'finalizer',
+          on_outcome: 'always',
+          handler: 'fin-handler',
+        },
+      },
+    });
+    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+    await store.update({
+      ...run,
+      run_phase: 'completed',
+      terminal_state: true,
+      sealed_by: { arm: 'complete' },
+      terminal_reason: 'Workflow completed.',
+      finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+    });
+
+    await runDrainAction(undefined, { all: true, force: true }, store, workflowStore, {
+      ...DEPS,
+      resolveRegistry: async () => {
+        throw new Error("Cannot resolve extension module './nope.js'");
+      },
+    });
+
+    // Two-space indent — a substring pin, never `^✗`-anchored (the drain family's own idiom).
+    expect(
+      errSpy.mock.calls.some((c: unknown[]) =>
+        String(c[0]).includes(
+          `  ✗ ${run.id}: Error loading extensions: Cannot resolve extension module './nope.js'`,
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('Drained 0/1 run(s).')),
+    ).toBe(true);
+    // No exit for a batch failure — the #478 line: only a per-run continue.
+    expect(exitSpy).not.toHaveBeenCalled();
+    const reloaded = await store.get(run.id);
+    expect(reloaded.finalizer_ledger?.['fin']?.status).toBe('pending');
+  });
+
+  it('D2b (issue #466) batch gate-enact arm: the enactment stays counted, only the drain fails', async () => {
+    // The per-member cell: the batch has TWO resolution sites (finalizer arm, gate-enact arm),
+    // and D2 alone leaves the gate arm's split invisible to a mutant. This arm's resolve is
+    // CONDITIONAL — reached only when the expiry enactment itself terminalizes the run with an
+    // actionable finalizer ledger — so the fixture is a gate step whose `settle_default` expiry
+    // is the run's LAST step, plus a sibling `execution: finalizer` step (`on_outcome: 'always'`)
+    // so the terminal seal mints a pending ledger entry via mintFresh. Reachability was confirmed
+    // by execution BEFORE this cell was written, with a WORKING registry: the ledger mints, and
+    // isBatchActionable goes true.
+    //
+    // Red-first (today's shape, MA-executed): `  ✓ <id>: gate enacted` (already printed — the
+    // enactment ran and counted BEFORE the resolve that fails) then `  ✗ <id>: Cannot resolve …`
+    // (raw, no prefix), then `Drained 1/1 run(s).` — the enactment stays counted even though the
+    // finalizer never drained.
+    const gatedFinWf: WorkflowDefinition = {
+      id: 'drain-expired-fin-wf',
+      name: 'Drain Expired Fin WF',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        approve: { description: 'a', execution: 'auto', depends_on: [], handler: 'h' },
+        fin: {
+          description: 'f',
+          execution: 'finalizer',
+          on_outcome: 'always',
+          handler: 'fin-handler',
+        },
+      },
+    };
+    await workflowStore.register(gatedFinWf);
+    const { run } = await store.create({
+      workflowId: gatedFinWf.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await store.update({
+      ...run,
+      in_progress_steps: ['approve'],
+      claims: { approve: { deadline: null } },
+      pending_gate: {
+        gate_id: 'gate-1',
+        step_name: 'approve',
+        preview: {},
+        choices: ['approve', 'reject'],
+        opened_at: '2020-01-01T00:00:00.000Z',
+        expires_at: '2020-01-01T00:05:00.000Z',
+        on_expiry: 'settle_default',
+        default_choice: 'approve',
+      },
+    });
+
+    await runDrainAction(
+      undefined,
+      { all: true, expired: true, force: true },
+      store,
+      workflowStore,
+      {
+        ...DEPS,
+        resolveRegistry: async () => {
+          throw new Error("Cannot resolve extension module './nope.js'");
+        },
+      },
+    );
+
+    const logged: string[] = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(logged.some((l: string) => l.includes(`  ✓ ${run.id}: gate enacted`))).toBe(true);
+    expect(logged.some((l: string) => l.includes('Drained 1/1 run(s).'))).toBe(true);
+    expect(
+      errSpy.mock.calls.some((c: unknown[]) =>
+        String(c[0]).includes(
+          `  ✗ ${run.id}: Error loading extensions: Cannot resolve extension module './nope.js'`,
+        ),
+      ),
+    ).toBe(true);
+    expect(exitSpy).not.toHaveBeenCalled();
+    const reloaded = await store.get(run.id);
+    expect(reloaded.terminal_state).toBe(true);
+    expect(reloaded.pending_gate).toBeUndefined();
+    // The drain itself failed — the ledger entry never advanced past pending.
+    expect(reloaded.finalizer_ledger?.['fin']?.status).toBe('pending');
+  });
 });

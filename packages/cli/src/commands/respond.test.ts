@@ -1,9 +1,10 @@
 // Tests for respondToGate — CLI respond command logic.
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { respondToGate } from './respond.js';
+import { respondToGate, respondCommand } from './respond.js';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -13,6 +14,7 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
 import type { WorkflowDefinition, StepHandler } from '@sensigo/realm';
+import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 
 const gateWorkflow: WorkflowDefinition = {
   id: 'respond-test-wf',
@@ -204,5 +206,193 @@ describe('respondToGate — fires finalizers on gate completion (registry thread
     expect(updated.failed_steps).not.toContain('record_outcome');
     expect(updated.completed_steps).not.toContain('record_outcome');
     expect(updated.finalizer_ledger?.['record_outcome']?.status).toBe('pending');
+  });
+});
+
+// =================================================================================================
+// issue #466 — the extensions sentence at `realm run respond`
+// =================================================================================================
+
+describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
+  let home: string;
+  let originalHome: string | undefined;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    clearProjectExtensionsCache();
+    home = mkdtempSync(join(tmpdir(), 'realm-respond-ext-home-'));
+    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
+    originalHome = process.env['HOME'];
+    process.env['HOME'] = home;
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
+      throw new Error('process.exit');
+    }) as never);
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = originalHome;
+    vi.restoreAllMocks();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const errored = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+
+  it('P1 a module that cannot be resolved reports `Error loading extensions:`, not the raw message', async () => {
+    // Red-first on main: the raw resolver message, NO prefix at all — `Cannot resolve extension
+    // module './nope.js' of workflow '…' …`, exit 1. run/validate/register/watch/agent already
+    // named this failure (#445/#451/#465); respond did not.
+    //
+    // Seeded via DIRECT store APIs: JsonWorkflowStore.register persists WITHOUT resolving
+    // extensions — the module never has to exist. source_dir/trust_root are REQUIRED (or the
+    // loader throws a DIFFERENT message, load-project-extensions.ts:748-759) — a real project dir
+    // stands in for both.
+    const { JsonFileStore, JsonWorkflowStore, executeStep, CURRENT_WORKFLOW_SCHEMA_VERSION } =
+      await import('@sensigo/realm');
+    const proj = mkdtempSync(join(tmpdir(), 'realm-respond-ext-proj-'));
+    const runStore = new JsonFileStore();
+    const workflowStore = new JsonWorkflowStore();
+    const gateWorkflow = {
+      id: 'p466-respond',
+      name: 'P466 Respond',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      extensions: ['./nope.js'],
+      source_dir: proj,
+      trust_root: proj,
+      steps: {
+        'step-one': {
+          description: 'g',
+          execution: 'auto' as const,
+          trust: 'human_confirmed' as const,
+          gate: { choices: ['approve', 'reject'] },
+        },
+      },
+    };
+    await workflowStore.register(gateWorkflow);
+    const { run } = await runStore.create({
+      workflowId: gateWorkflow.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const gateEnvelope = await executeStep(runStore, gateWorkflow, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+
+    await expect(
+      respondCommand.parseAsync(
+        [run.id, '--gate', gateEnvelope.gate!.gate_id, '--choice', 'approve'],
+        { from: 'user' },
+      ),
+    ).rejects.toThrow('process.exit');
+
+    expect(errored()).toMatch(
+      /^Error loading extensions: Cannot resolve extension module '\.\/nope\.js' of workflow 'p466-respond'/m,
+    );
+    expect(errored()).not.toMatch(/^Cannot resolve extension module/m);
+    // NESTED-EXIT ARTIFACT (the #466 test.ts twin): the inner catch's process.exit(1) throws
+    // under this mock, propagating to the OUTER catch, which re-prints and exits again —
+    // production-neutral (a real process.exit never returns). Assert the CALL, never the count.
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(logSpy).not.toHaveBeenCalled();
+    rmSync(proj, { recursive: true, force: true });
+  });
+
+  it('REPAIR-TOOL FLAG TRAVEL — --extensions-module and --project reach the hoisted resolution', async () => {
+    // MA novel probe (the #353 flag-travel class on newly-minted code): mutating the hoist to
+    // `loadProjectExtensions(workflow)` — dropping the options object — leaves every other cell
+    // green. Under that regression BOTH declared respond flags die silently: `--project` and
+    // `--extensions-module`, which the command's own help text calls the REPAIR TOOL ("module
+    // that REPLACES the workflow's declared 'extensions' modules") — the repair tool dying
+    // silently in exactly the broken-extensions scenario it exists for. This is the only pin on
+    // the hoist's options travel; `--project` rides the same object, pinned transitively.
+    //
+    // No red-first exists — green on the PR branch immediately (the option travel already
+    // works); its tooth is the mutant.
+    const { JsonFileStore, JsonWorkflowStore, executeStep, CURRENT_WORKFLOW_SCHEMA_VERSION } =
+      await import('@sensigo/realm');
+    const proj = mkdtempSync(join(tmpdir(), 'realm-respond-ext-repair-proj-'));
+    const runStore = new JsonFileStore();
+    const workflowStore = new JsonWorkflowStore();
+    const gateWorkflow = {
+      id: 'p466-repair-respond',
+      name: 'P466 Repair Respond',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      extensions: ['./nope.js'],
+      source_dir: proj,
+      trust_root: proj,
+      steps: {
+        'step-one': {
+          description: 'g',
+          execution: 'auto' as const,
+          trust: 'human_confirmed' as const,
+          gate: { choices: ['approve', 'reject'] },
+        },
+      },
+    };
+    await workflowStore.register(gateWorkflow);
+    const { run } = await runStore.create({
+      workflowId: gateWorkflow.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const gateEnvelope = await executeStep(runStore, gateWorkflow, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+
+    // The override module resolves against CWD ONLY (load-project-extensions.ts:729-737) —
+    // never `projectDir`/`--project` — so an ABSOLUTE path keeps this cell independent of
+    // vitest's cwd. gateWorkflow's one step needs no handlers.
+    const overridePath = join(proj, 'override.mjs');
+    writeFileSync(overridePath, 'export default { handlers: {} };\n', 'utf8');
+    // The override arm prints an unspied advisory (load-project-extensions.ts:734) — spied here
+    // only to keep test output clean; not asserted.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await respondCommand.parseAsync(
+      [
+        run.id,
+        '--gate',
+        gateEnvelope.gate!.gate_id,
+        '--choice',
+        'approve',
+        '--extensions-module',
+        overridePath,
+      ],
+      { from: 'user' },
+    );
+
+    // The override REACHED the loader — no sentence, the load was repaired.
+    expect(errored()).not.toContain('Error loading extensions');
+    const logged = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(logged).toContain('Responded:');
+    expect(logged).toContain("new state 'completed'");
+    expect(exitSpy).not.toHaveBeenCalled();
+    rmSync(proj, { recursive: true, force: true });
+  });
+
+  it('MISATTRIBUTION CONTROL — a bad run-id never wears the extensions sentence', async () => {
+    // The run/workflow fetches stay OUTSIDE the sentence-try (decision 3): respond's most common
+    // operator error must classify as itself, not as an extensions failure.
+    await expect(
+      respondCommand.parseAsync(['no-such-run', '--gate', 'g1', '--choice', 'approve'], {
+        from: 'user',
+      }),
+    ).rejects.toThrow('process.exit');
+
+    expect(errored()).not.toContain('Error loading extensions');
+    expect(errored()).toContain('Run not found');
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

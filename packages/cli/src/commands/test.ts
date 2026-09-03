@@ -83,10 +83,23 @@ export const testCommand = new Command('test')
       // (without an override) pass no `extensions` — current behavior byte-for-byte.
       // Sentinel mode: fixtures never see real credentials — secret-bearing handlers are
       // constructed with sentinels and FAIL the fixture on first execution (runner-side).
-      const loaded = await loadProjectExtensions(definition, {
-        ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
-        secretMode: 'sentinel',
-      });
+      let loaded: Awaited<ReturnType<typeof loadProjectExtensions>>;
+      try {
+        loaded = await loadProjectExtensions(definition, {
+          ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
+          secretMode: 'sentinel',
+        });
+      } catch (err) {
+        // issue #466 — the sentence run/validate/register/watch/agent already print for this
+        // class (#445/#451/#465), wrapped in its own try so it discriminates from the outer
+        // catch's family split below without a shared tag (this call is the only extension-load
+        // site test.ts reaches — no #451-style shared helper here).
+        console.error(
+          `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(1);
+        return;
+      }
       for (const warning of loaded.sentinelWarnings ?? []) console.warn(`⚠ ${warning}`);
       const hasExtensionContent =
         loaded.manifest.modules.length > 0 ||
@@ -106,7 +119,7 @@ export const testCommand = new Command('test')
     } catch (err) {
       // issue #425 — THE FAMILY SPLIT. An `Invalid workflow:` message announces itself, so it
       // renders verbatim through the shared helper (which also lists a multi-error throw one per
-      // line). Everything else this catch can see — a store failure, a broken extension module —
+      // line). Everything else this catch can see — a store failure, an unreadable fixtures path —
       // announces nothing on its own, so it keeps the prefix that earns its place (#417). The
       // predicate carries the colon, byte-matching the helper's own check.
       if (err instanceof WorkflowError && err.message.startsWith('Invalid workflow:')) {

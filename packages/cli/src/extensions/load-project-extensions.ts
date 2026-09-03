@@ -226,8 +226,11 @@ export function checkForOrphanedManifests(sourceDir: string, trustRoot: string):
   // stack trace. WHICH sentence renders it depends on how the command reached this guard
   // (issue #445): validate's extension-FREE arm calls checkForOrphanedManifests directly and
   // renders `Invalid:`; a load that comes THROUGH loadProjectExtensions surfaces via each
-  // command's extension-load catch — `Error loading extensions:` on run, validate, register and
-  // watch (issue #451 brought the last two in line).
+  // command's own extension-load catch as `Error loading extensions:` — every CLI surface that
+  // reaches this loader renders the failure that way (issue #466 closed the census: run, test,
+  // validate, register, watch, agent, respond, drain). serve/mcp resolve through this loader too
+  // (via makeRegistryProvider) but render via their MCP protocol envelopes, not a CLI sentence —
+  // out of this list by kind, not by omission.
   throw new WorkflowError(
     `${found} will NOT be loaded — manifests are read only from the deployment root ` +
       `'${join(trustRoot, 'realm.yaml')}'. Move it to '${join(trustRoot, 'realm.yaml')}' ` +
