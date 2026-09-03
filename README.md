@@ -162,7 +162,8 @@ Every step-executing entry point (`run`, `agent`, `listen`, `serve`, `mcp`, `tes
 | Command                          | Description                                                                             |
 | -------------------------------- | --------------------------------------------------------------------------------------- |
 | `realm workflow init <name>`     | Scaffold a new workflow project directory                                               |
-| `realm workflow validate <path>` | Validate a workflow YAML without registering it                                         |
+| `realm workflow list`            | List registered workflow definitions                                                    |
+| `realm workflow validate [path]` | Validate a workflow YAML without registering it                                         |
 | `realm workflow register <path>` | Register a workflow in the local store                                                  |
 | `realm workflow watch <path>`    | Watch a workflow YAML and re-register on every change                                   |
 | `realm workflow run <path>`      | Run a workflow interactively (development mode)                                         |

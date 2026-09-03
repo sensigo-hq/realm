@@ -6,6 +6,34 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+**One BREAKING change**, which a 0.x minor is allowed to carry: pre-1.0, breaking changes ship
+in a minor when they are flagged here with upgrade guidance. This release carries no new refusal
+classes — nothing a workflow file does becomes a load error. What changes are contracts around
+the edges: what gets redacted, what a dev-run's exit code means, and how long `watch` runs.
+
+#### Upgrading
+
+- **The redaction boundary moved, in both directions** (issue #407 — the BREAKING change).
+  Boolean- and dotted-version-shaped launcher values are no longer redacted from error messages
+  and persisted tool results, and a path under `$HOME` keeps its tail:
+  `Require stack: [REDACTED]/packages/…`. Anything matching the exact placement of `[REDACTED]`
+  in messages or evidence will see different text. In the other direction the entire
+  `npm_package_*` namespace and `npm_lifecycle_script` are swept again, closing a 0.40.0-only
+  hole: **if you launched realm under yarn 1.x on 0.40.0 with a secret in any package.json
+  field, treat that secret as exposed in that machine's messages and run records — rotate it and
+  purge the affected runs.** Records written by earlier releases are not rewritten.
+- **`realm workflow run` exit codes now tell the truth** (issue #468). Every terminal phase but
+  `completed` exits 1 — previously `failed` and `aborted` exited 0 — and a stalled workflow exits
+  1 with a detach map instead of vanishing with a live run behind it. (Completed-with-failed-steps
+  still exits 0, outcome-keyed.) Terminal automation driving the interactive runner through a pty
+  and checking `$?` will start seeing 1. Plain scripts cannot hit this: non-TTY stdin is refused
+  before any run is created (issue #426), and a prompt re-asks on bad input instead of sealing it
+  (issue #459).
+- **`realm workflow watch` no longer exits after one pass** (issue #449). It now holds the
+  process open until Ctrl-C — as its own banner always promised. Anything invoking `watch` where
+  a one-shot was meant (cron, CI) will now hang for the job's timeout; use
+  `realm workflow register` there.
+
 ### Added
 
 - **`realm workflow list` and `realm workflow validate --registered <id>`** (issue #427). The
@@ -58,6 +86,8 @@ All notable changes to this project are documented here.
   A workflow with several problems reported them as one paragraph joined by semicolons — and
   since a loader message can itself contain a semicolon, there was no reliable way to see where
   one ended. Each error now gets its own line under a count: `Invalid workflow — 2 errors:`.
+  The array is `WorkflowError.errors` — public API, named here for the same reason: a caller
+  catching `WorkflowError` directly can read the same boundaries the render uses.
   The escalation line said "at least one is escalated to an error by policy" above a list of
   warnings, leaving you to work out which. It now names them:
   `Invalid: 2 warnings, 1 escalated to an error by policy: UNKNOWN_STEP_KEY 'dependson'`.
@@ -69,7 +99,7 @@ action. 0 are handled automatically` — every count now agrees with its own nou
   printed `Error: Invalid workflow: …`, saying "invalid" twice before anything actionable.
   Errors that announce nothing on their own keep the prefix — the split is by family, not a
   blanket drop.
-  One further text change comes with that last item: an unreadable file passed to `realm run`
+  One further text change comes with that last item: an unreadable file passed to `realm workflow run`
   used to print `Error loading workflow: …` and now prints `Invalid: …`, the same prefix every
   other command already used for the same class.
 
@@ -138,12 +168,12 @@ action. 0 are handled automatically` — every count now agrees with its own nou
   includes the extension-free arm's orphan refusal, `Invalid: Deployment manifest at …`, which
   swallowed the same way. And `realm agent`, which printed the failure as the bare
   `Error: Cannot resolve extension module …` of its outer catch, now says
-  `Error loading extensions:` like run, validate, register, watch, respond and drain.
+  `Error loading extensions:` like run, test, validate, register, watch, respond and drain.
 
 - **`realm workflow register` and `realm workflow watch` now say which warning was escalated, and
   name an extensions failure as one** (issue #451). Both refused an escalated warning with
   `… has a warning escalated to an error by policy — refusing to register.` — the workflow's id,
-  never the warning; `realm workflow validate` has named the culprit since 0.40.0. All three now
+  never the warning — the same gap `realm workflow validate` closes in this release (issue #425, above). All three now
   print the same line:
   `Invalid: 1 warning, 1 escalated to an error by policy: UNKNOWN_STEP_KEY 'dependson'`.
   Watch keeps its timestamp and a `— refusing to register.` tail, because unlike the other two it
@@ -211,7 +241,9 @@ action. 0 are handled automatically` — every count now agrees with its own nou
   the first and run again: one defect per round trip.
   `validate`, `register` and `watch` now print the full set in one pass — the warnings, with
   their did-you-mean hints, above the error that stopped the load. Exit codes are unchanged, and
-  a failure with no warnings looks exactly as it did.
+  a failure with no warnings looks exactly as it did. The channel is `WorkflowError.warnings` —
+  public API, named here for the same reason #450's option is: any caller catching `WorkflowError`
+  directly can now read it.
 
 - **The documented MCP tool list named a tool that does not exist, and omitted one that does**
   (issue #420). `list_runs` was documented in the protocol reference and the README and has never
@@ -258,7 +290,8 @@ action. 0 are handled automatically` — every count now agrees with its own nou
   The `--stuck` documentation gains the label vocabulary it never had, and its selector list —
   stale by five kinds — is corrected in the same edit.
 
-- **Launcher metadata stops mangling messages and recorded tool results** (issue #407). realm
+- **BREAKING — Launcher metadata stops mangling messages and recorded tool results** (issue #407).
+  realm
   redacts every environment value over four characters, and package managers inject values that
   are not secrets at all. Under pnpm and yarn classic the word **"false"** was cut out of every
   message and every persisted tool result (`pnpm_config_verify_deps_before_run`,
@@ -297,7 +330,8 @@ action. 0 are handled automatically` — every count now agrees with its own nou
   references), GHSA-f65p-4m7j-42xc (SSRF via malformed IPv6 normalization), GHSA-fph4-wmhf-6fwf (SSRF via
   repeated hostname percent-decoding), GHSA-jqff-g426-hqxp (host confusion via percent-encoded scheme
   normalization). In-range, lockfile-only (ajv declares `^3.0.1`), the single deduped copy under
-  `@modelcontextprotocol/sdk → ajv` / `ajv-formats → ajv`. Exposure LOW — the same non-consuming call
+  `@modelcontextprotocol/sdk → ajv` / `ajv-formats → ajv`, plus realm core's own `ajv` — all resolve
+  the one copy. Exposure LOW — the same non-consuming call
   path as the #239 and #306 fixes, re-derived against the installed ajv 8.20 and 8.18: ajv hands `$ref`
   strings to fast-uri's `parse`/`serialize`/`resolve` and uses the result only as a schema-lookup key and
   a JSON-pointer fragment; nothing reads the parsed host or authority and no network is involved.

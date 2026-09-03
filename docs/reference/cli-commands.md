@@ -99,7 +99,7 @@ this is a read surface, and reporting the broken entry IS the signal.
 
 ---
 
-### `realm workflow validate <path>`
+### `realm workflow validate [path]`
 
 Validates a workflow YAML without registering it. Reports schema errors, duplicate step IDs,
 and invalid `depends_on` references.
@@ -108,6 +108,7 @@ and invalid `depends_on` references.
 realm workflow validate ./my-workflow
 realm workflow validate ./my-workflow --strict   # fail (exit 1) if any warning is present
 realm workflow validate ./my-workflow --explain  # full per-step structured_output detail
+realm workflow validate --registered my-workflow # audit the stored copy
 ```
 
 **One pass reports everything** (issue #424). A workflow can be wrong in more than one way at
@@ -277,6 +278,11 @@ run with an uncaught stack, the run wedged mid-step; it now says why (`Not valid
 again. An answer that is valid JSON but not an object — `42`, `null`, a list — asks again too: `42`
 or a list used to be accepted and sealed into the run's evidence as the step's output, and `null`
 crashed the run. Enter still means `{}`. Cancelling is unchanged (above).
+
+**The exit code tells the truth** (issue #468). Every terminal phase but `completed` exits 1 —
+previously all four exited 0. A stalled workflow prints `Workflow stalled — detached from run …`
+with the same remedy map as cancellation and exits 1. Completed-with-failed-steps still exits 0
+(outcome-keyed; the run-health finding is the disclosure).
 
 ---
 
