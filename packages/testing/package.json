@@ -39,7 +39,7 @@
   },
   "dependencies": {
     "@sensigo/realm": "*",
-    "js-yaml": "^4.2.0"
+    "js-yaml": "^5.2.3"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
