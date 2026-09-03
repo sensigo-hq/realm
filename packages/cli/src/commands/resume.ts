@@ -53,6 +53,7 @@ export async function resumeRun(
     classifyClaim,
     DRAIN_LEASE_MAX,
     deriveRunPhase,
+    getWorkflowForRun,
   } = await import('@sensigo/realm');
   const run = await runStore.get(runId);
 
@@ -92,7 +93,8 @@ export async function resumeRun(
     );
   }
 
-  const workflow = await workflowStore.get(run.workflow_id);
+  // issue #456: code-keyed one-time-register remedy, shared with every other run-context site.
+  const workflow = await getWorkflowForRun(workflowStore, run, { retryVerb: 'resume again' });
 
   const targetStep = workflow.steps[stepName];
   if (targetStep === undefined) {

@@ -1,7 +1,7 @@
 // replay command — re-evaluates preconditions with modified step outputs (read-only simulation).
 import { Command } from 'commander';
 import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
-import { checkPreconditions, buildSettlementNamespace } from '@sensigo/realm';
+import { checkPreconditions, buildSettlementNamespace, getWorkflowForRun } from '@sensigo/realm';
 import { formatPrecondColumn } from './replay-format.js';
 import type { ReplayStore } from '../store/replay-store.js';
 
@@ -169,7 +169,9 @@ export const replayCommand = new Command('replay')
 
     let definition;
     try {
-      definition = await workflowStore.get(run.workflow_id);
+      // issue #456: code-keyed one-time-register remedy, shared with every other run-context
+      // site. The catch shape below is unchanged — only the fetch itself changes.
+      definition = await getWorkflowForRun(workflowStore, run, { retryVerb: 'replay again' });
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);

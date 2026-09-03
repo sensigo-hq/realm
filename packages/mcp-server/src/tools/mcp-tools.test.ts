@@ -169,6 +169,35 @@ describe('mcp tool handlers', () => {
     expect(finalRun.run_phase).toBe('completed');
   });
 
+  it('C9 (issue #456) handleExecuteStepTool: a workflow-absent run carries the remedy + preserved error_code', async () => {
+    const workflowStore = new JsonWorkflowStore(workflowDir);
+    await workflowStore.register(makeAgentDef());
+    const runStore = new JsonFileStore(runDir);
+    const started = await handleStartRun(
+      { workflow_id: 'agent-wf', params: {} },
+      { runStore, workflowStore },
+    );
+
+    // A DIFFERENT, empty registry — simulating the dev-run scenario: the run exists, the
+    // workflow this process's registry knows about does not.
+    const emptyWorkflowDir = await mkdtemp(join(tmpdir(), 'realm-mcp-wf-empty-'));
+    const emptyWorkflowStore = new JsonWorkflowStore(emptyWorkflowDir);
+
+    const result = await handleExecuteStepTool(
+      { run_id: started.run_id, command: 'step-agent', params: { result: 'done' } },
+      { runStore, workflowStore: emptyWorkflowStore },
+    );
+
+    const envelope = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+    expect(envelope['status']).toBe('error');
+    // C15's rationale: error_code preservation is what a re-mint-as-ENGINE_INTERNAL mutant
+    // would break — MCP agents key on this field, not on message text.
+    expect(envelope['error_code']).toBe('STATE_WORKFLOW_NOT_FOUND');
+    const errors = envelope['errors'] as string[];
+    expect(errors[0]).toContain('most often');
+    expect(errors[0]).toContain('retry');
+  });
+
   it('handleExecuteStep accepts a top-level trace and persists it in evidence', async () => {
     const workflowStore = new JsonWorkflowStore(workflowDir);
     await workflowStore.register(makeAgentDef());
@@ -679,6 +708,10 @@ describe('registerStartRun — ResponseEnvelope error shape', () => {
     expect(envelope['run_id']).toBe('');
     expect(envelope['run_version']).toBe(0);
     expect(Array.isArray(envelope['next_actions'])).toBe(true);
+    // C11 (issue #456) — the by-id bare control: start_run has no run context to hedge from
+    // ("this run was created from a file without --register" would be false — no run exists),
+    // so it must never carry the remedy.
+    expect((envelope['errors'] as string[])[0]).not.toContain('most often');
     await client.close();
   });
 });

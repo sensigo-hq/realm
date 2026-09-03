@@ -7,6 +7,7 @@ import {
   submitHumanResponse,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
+  getWorkflowForRun,
   type ResponseEnvelope,
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
@@ -23,7 +24,9 @@ export async function handleSubmitHumanResponse(
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
   const run = await runStore.get(args.run_id);
-  const definition = await workflowStore.get(run.workflow_id);
+  // issue #456: code-keyed one-time-register remedy. Verb "retry" — deliberately neutral: the
+  // register command in the sentence is for the human this agent's report_to_user relays to.
+  const definition = await getWorkflowForRun(workflowStore, run, { retryVerb: 'retry' });
 
   // Per-definition registry (project extensions) — awaited before the call (fail-fast),
   // provider wins over `registry`. Mirrors execute-step.ts. Threaded into submitHumanResponse

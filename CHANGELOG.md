@@ -29,6 +29,21 @@ All notable changes to this project are documented here.
   and stays pointed at the old location — moving the watched directory itself, by contrast, is
   detected.
 
+- **A dev-mode run's id-addressed follow-ups now say why they can't find the workflow** (issue
+  #456). `realm workflow run <file>` never registers the workflow it runs, so the commands the
+  #447 detach map itself points an operator at afterward — `respond`, `resume`, `drain` — used to
+  fail with a bare `Workflow not found: …`, a dead end with no next step. They now say what
+  usually happened and what to do about it, the same remedy `realm agent --run-id` has shipped
+  since #411: `… — most often this run was created from a file without --register. Register the
+workflow (realm workflow register <file>) and <verb> again.` (`<verb>` names the command that
+  just failed.) The MCP tools an agent drives — `submit_human_response`, `execute_step`,
+  `append_trace` — carry the identical remedy in their error envelope, verb "retry", with the
+  error code preserved so an agent can still act on it programmatically. Twelve run-context call
+  sites, across the CLI and the MCP server, are now unified onto that one remedy through a single
+  shared, exported helper — `getWorkflowForRun` (public API, alongside `JsonWorkflowStore`) —
+  which `realm agent --run-id` itself now calls too, in place of the inline version it carried
+  before.
+
 ---
 
 ## [0.41.0] — 2026-09-03

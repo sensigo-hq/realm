@@ -148,3 +148,31 @@ describe('handleSubmitHumanResponse — fires finalizers on gate completion', ()
     expect(updated.finalizer_ledger?.['record_outcome']?.status).toBe('pending');
   });
 });
+
+describe('handleSubmitHumanResponse — a workflow-absent run carries the remedy (issue #456)', () => {
+  it('C8 rejects with "most often" and "retry" (the workflow fetch at :26 precedes gate logic)', async () => {
+    const runDir = await mkdtemp(join(tmpdir(), 'realm-mcp-shr-missing-run-'));
+    const workflowDir = await mkdtemp(join(tmpdir(), 'realm-mcp-shr-missing-wf-'));
+    const runStore = new JsonFileStore(runDir);
+    const workflowStore = new JsonWorkflowStore(workflowDir);
+    // Nothing registered in workflowStore — a dev-run whose workflow was never persisted.
+    const { run } = await runStore.create({
+      workflowId: 'dev456',
+      workflowVersion: 1,
+      params: {},
+    });
+
+    await expect(
+      handleSubmitHumanResponse(
+        { run_id: run.id, gate_id: 'g1', choice: 'approve' },
+        { runStore, workflowStore },
+      ),
+    ).rejects.toThrow(/most often/);
+    await expect(
+      handleSubmitHumanResponse(
+        { run_id: run.id, gate_id: 'g1', choice: 'approve' },
+        { runStore, workflowStore },
+      ),
+    ).rejects.toThrow(/retry/);
+  });
+});

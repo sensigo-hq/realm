@@ -389,6 +389,91 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     expect(reloaded2.finalizer_ledger?.['fin']?.status).toBe('completed');
   });
 
+  it('C6 (issue #456) single --force, workflow absent: the banner composition carries the remedy as ONE line', async () => {
+    // NOT registered — the workflow_id resolves to nothing. resolveRegistry's OWN throw is what
+    // must now carry the remedy — DEPS (below) carries no resolveRegistry override, so the real
+    // one (drain.ts's default) runs.
+    const { run } = await store.create({ workflowId: 'dev456', workflowVersion: 1, params: {} });
+    await store.update({
+      ...run,
+      run_phase: 'completed',
+      terminal_state: true,
+      sealed_by: { arm: 'complete' },
+      terminal_reason: 'Workflow completed.',
+      finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+    });
+
+    await expect(
+      runDrainAction(run.id, { force: true }, store, workflowStore, DEPS),
+    ).rejects.toThrow('process.exit');
+
+    // ONE line — two independent toContains over the joined stderr would pass split lines, so
+    // this checks a SINGLE call carries every fragment.
+    const calls: string[] = errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(
+      calls.some(
+        (line: string) =>
+          line.includes(
+            `Error loading extensions: Workflow not found: ${run.workflow_id} — most often`,
+          ) &&
+          line.includes('most often') &&
+          line.includes('drain again.'),
+      ),
+    ).toBe(true);
+    // NESTED-EXIT ARTIFACT (the #466 class, this file's :432-434 precedent comment): assert the
+    // call, never the count.
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('C7 (issue #456) batch --all --force, TWO workflow-absent runs: both ✗ lines carry the remedy', async () => {
+    const { run: run1 } = await store.create({
+      workflowId: 'dev456-a',
+      workflowVersion: 1,
+      params: {},
+    });
+    await store.update({
+      ...run1,
+      run_phase: 'completed',
+      terminal_state: true,
+      sealed_by: { arm: 'complete' },
+      terminal_reason: 'Workflow completed.',
+      finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+    });
+    const { run: run2 } = await store.create({
+      workflowId: 'dev456-b',
+      workflowVersion: 1,
+      params: {},
+    });
+    await store.update({
+      ...run2,
+      run_phase: 'completed',
+      terminal_state: true,
+      sealed_by: { arm: 'complete' },
+      terminal_reason: 'Workflow completed.',
+      finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+    });
+
+    await runDrainAction(undefined, { all: true, force: true }, store, workflowStore, DEPS);
+
+    // The verb conjunct is what mutant (iv) reds — a `most often`-only pin stays green under a
+    // verb swap, so both fragments are required on EACH run's line.
+    const calls: string[] = errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    for (const run of [run1, run2]) {
+      expect(
+        calls.some(
+          (line: string) =>
+            line.includes(`  ✗ ${run.id}: Error loading extensions: Workflow not found`) &&
+            line.includes('most often') &&
+            line.includes('drain again.'),
+        ),
+      ).toBe(true);
+    }
+    expect(
+      logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('Drained 0/2 run(s).')),
+    ).toBe(true);
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it('D1 (issue #466) single --force: a module that cannot be resolved reports `Error loading extensions:`', async () => {
     // Red-first on main: the raw resolver message, no prefix — `Cannot resolve extension module
     // …`, exit 1. run/validate/register/watch/agent/respond already named this failure.

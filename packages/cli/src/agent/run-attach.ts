@@ -10,7 +10,7 @@
 //    spawn_failed mechanics) so listen-spawned children fail their runs visibly; if it HAS
 //    begun executing, propagate the error with NO run mutation — a failed bystander attach
 //    can never kill a healthy in-flight run.
-import { sealRunLevel, WorkflowError } from '@sensigo/realm';
+import { sealRunLevel, getWorkflowForRun } from '@sensigo/realm';
 import type { RunStore, WorkflowRegistrar, WorkflowDefinition } from '@sensigo/realm';
 import {
   loadProjectExtensions,
@@ -81,28 +81,13 @@ export async function resolveRunAttach(
   // was never persisted, the attach fails with a bare "Workflow not found", and `--run-id
   // --workflow` is mutually exclusive — so the advice names the one thing that cannot work.
   //
-  // HEDGED, because this site genuinely cannot know the cause. A wiped store, a different $HOME
-  // and an unregistered file all produce the same code from the registrar; stating one of them as
-  // fact would be the same overreach in the opposite direction. Keyed on the stable code, never
-  // on the message text.
-  let definition: WorkflowDefinition;
-  try {
-    definition = await deps.workflowStore.get(run.workflow_id);
-  } catch (err) {
-    if (err instanceof WorkflowError && err.code === 'STATE_WORKFLOW_NOT_FOUND') {
-      throw new WorkflowError(
-        `${err.message} — most often this run was created from a file without --register. ` +
-          'Register the workflow (realm workflow register <file>) and re-attach.',
-        {
-          code: 'STATE_WORKFLOW_NOT_FOUND',
-          category: 'STATE',
-          agentAction: 'report_to_user',
-          retryable: false,
-        },
-      );
-    }
-    throw err;
-  }
+  // issue #456: the hedge reasoning, and the code-keyed wrap itself, now live at
+  // `getWorkflowForRun` (packages/core/src/workflow/registrar.ts) — this call site's own
+  // dependency type (`Pick<WorkflowRegistrar, 'get'>`, above) is exactly what forced the helper's
+  // narrowed signature, since every other run-context site passes a full registrar.
+  const definition: WorkflowDefinition = await getWorkflowForRun(deps.workflowStore, run, {
+    retryVerb: 're-attach',
+  });
   const loadExtensions = deps.loadExtensions ?? loadProjectExtensions;
 
   try {

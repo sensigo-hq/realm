@@ -68,9 +68,13 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
   async function seedExpiredGateRun(
     on_expiry: 'settle_default' | 'abort' | undefined,
     default_choice?: string,
+    // issue #456 — an optional override, EXTENDING this builder rather than minting a sibling:
+    // C6b/C7b need a non-terminal, enactable-expired-gate run whose workflow is NOT registered
+    // (the class's most natural member — a live dev-run the operator walked away from).
+    workflowId: string = gatedWf.id,
   ) {
     const { run } = await store.create({
-      workflowId: gatedWf.id,
+      workflowId,
       workflowVersion: 1,
       params: {},
     });
@@ -231,6 +235,49 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
       );
       const reloaded = await store.get(run.id);
       expect(reloaded.pending_gate).toBeDefined(); // untouched — finding-only never enacted
+    });
+  });
+
+  describe('workflow-absent, enactable-expired-gate runs carry the remedy (issue #456)', () => {
+    it('C6b per-run --expired --force: the bare exit-1 remedy (no banner) via :510', async () => {
+      // hasEnactableGate bypasses the non-terminal refusal (per-run mechanism: :493-494), so this
+      // NON-terminal run reaches the gate-enactment fetch — which now carries the remedy. No
+      // resolveRegistry precedes it on this path, so the render is BARE (no extensions banner).
+      const run = await seedExpiredGateRun('settle_default', 'approve', 'dev456');
+      await expect(
+        runDrainAction(run.id, { expired: true, force: true }, store, workflowStore, DEPS),
+      ).rejects.toThrow('process.exit');
+
+      const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+      expect(errored).toContain(`Workflow not found: ${run.workflow_id}`);
+      expect(errored).toContain('most often');
+      expect(errored).toContain('drain again');
+      expect(errored).not.toContain('Error loading extensions');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('C7b batch --all --expired --force: the banner-less ✗ line carries the remedy, batch continues', async () => {
+      const run = await seedExpiredGateRun('settle_default', 'approve', 'dev456');
+
+      await runDrainAction(
+        undefined,
+        { all: true, expired: true, force: true },
+        store,
+        workflowStore,
+        DEPS,
+      );
+
+      const calls: string[] = errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(
+        calls.some(
+          (line: string) =>
+            line.includes(`  ✗ ${run.id}: Workflow not found: ${run.workflow_id}`) &&
+            line.includes('most often') &&
+            line.includes('drain again') &&
+            !line.includes('Error loading extensions'),
+        ),
+      ).toBe(true);
+      expect(exitSpy).not.toHaveBeenCalled();
     });
   });
 });
