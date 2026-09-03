@@ -3,6 +3,7 @@ import { readFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import type { RunRecord } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
 import { atomicWriteFile } from '../store/atomic-write.js';
@@ -113,5 +114,69 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
       }
     }
     return { workflows, unreadable, mismatched };
+  }
+}
+
+/**
+ * Fetches the workflow definition a run-context resolution needs, wrapping a
+ * `STATE_WORKFLOW_NOT_FOUND` throw with the one-time-register remedy (issue #456) — the ONE
+ * chokepoint every run-context site (`respond`, `resume`, `replay`, `drain`, `agent --run-id`,
+ * and the MCP `submit_human_response`/`execute_step`/`append_trace` tools) calls, instead of each
+ * hand-wrapping its own raw `store.get(run.workflow_id)`.
+ *
+ * The `store` and `run` parameters are narrowed to exactly what this function uses
+ * (`Pick<WorkflowRegistrar, 'get'>` / `Pick<RunRecord, 'workflow_id'>`) — by necessity, not taste:
+ * `resolveRunAttach`'s own dependency type IS that narrower `Pick` (its test doubles are get-only,
+ * and a full `WorkflowRegistrar` parameter here would not compile at that call site). Every other
+ * caller passes a full registrar and a full run record, both structurally assignable to the
+ * narrower type.
+ *
+ * HEDGED reasoning, moved here from `run-attach.ts`'s inline comment (its call site now just
+ * points back here): this function genuinely cannot know WHY the workflow is missing. A wiped
+ * store, a different `$HOME`, and a run created from a file without `--register` all mint the
+ * identical `STATE_WORKFLOW_NOT_FOUND` from the registrar — so the remedy says "most often",
+ * never "because". Keyed on the stable error CODE, never on message text.
+ *
+ * PRECONDITION — run-context resolution ONLY. A by-id lookup with no run behind it (`start_run`,
+ * `start_run_batch`, `get_workflow_protocol`) must never call this: there the hedge would be
+ * false — "this run was created from a file without --register" presumes a run that does not
+ * exist yet.
+ *
+ * Every OTHER `WorkflowError` (e.g. `STATE_LEGACY_FORMAT`, which already carries its own correct
+ * "Re-register it with: …" remedy) passes through completely untouched, by identity — wrapping it
+ * would double-remedy. A non-`WorkflowError` throw also passes through untouched.
+ *
+ * issue #493 seam: if definition snapshots ever land on the run record, the snapshot-wins
+ * resolution order belongs INSIDE this function — every run-context caller updates for free.
+ *
+ * @param store Anything that can `.get()` a workflow by id.
+ * @param run   The run whose `workflow_id` to resolve.
+ * @param opts  `retryVerb` — the verb this call site's remedy should recommend retrying with
+ *              (e.g. `'re-attach'`, `'respond again'`, `'resume again'`, `'replay again'`,
+ *              `'drain again'`, or the MCP-neutral `'retry'`).
+ */
+export async function getWorkflowForRun(
+  store: Pick<WorkflowRegistrar, 'get'>,
+  run: Pick<RunRecord, 'workflow_id'>,
+  opts: { retryVerb: string },
+): Promise<WorkflowDefinition> {
+  try {
+    return await store.get(run.workflow_id);
+  } catch (err) {
+    if (err instanceof WorkflowError && err.code === 'STATE_WORKFLOW_NOT_FOUND') {
+      throw new WorkflowError(
+        `${err.message} — most often this run was created from a file without --register. ` +
+          `Register the workflow (realm workflow register <file>) and ${opts.retryVerb}.`,
+        {
+          code: err.code,
+          category: err.category,
+          agentAction: err.agentAction,
+          retryable: err.retryable,
+          details: err.details,
+          ...(err.warnings !== undefined ? { warnings: err.warnings } : {}),
+        },
+      );
+    }
+    throw err;
   }
 }

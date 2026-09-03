@@ -3,7 +3,7 @@ import { Command } from 'commander';
 import type { RunStore } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
 import type { ExtensionRegistry } from '@sensigo/realm';
-import { WorkflowError, submitHumanResponse } from '@sensigo/realm';
+import { WorkflowError, submitHumanResponse, getWorkflowForRun } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 
 /**
@@ -22,7 +22,8 @@ export async function respondToGate(
   registry?: ExtensionRegistry,
 ): Promise<{ choice: string; newState: string }> {
   const run = await runStore.get(runId);
-  const workflow = await workflowStore.get(run.workflow_id);
+  // issue #456: code-keyed one-time-register remedy, shared with every other run-context site.
+  const workflow = await getWorkflowForRun(workflowStore, run, { retryVerb: 'respond again' });
 
   // Resolve the project registry (unless a caller/test injected one) so that resolving a gate
   // which COMPLETES the run fires its finalizers with project handlers — consistent with
@@ -88,7 +89,11 @@ export const respondCommand = new Command('respond')
         // (the naked catch below is its home, #477). Only the extension resolution itself is
         // wrapped, in place, mirroring run.ts's exact arm.
         const run = await runStore.get(runId);
-        const workflow = await workflowStore.get(run.workflow_id);
+        // issue #456: code-keyed one-time-register remedy, shared with every other run-context
+        // site.
+        const workflow = await getWorkflowForRun(workflowStore, run, {
+          retryVerb: 'respond again',
+        });
         let registry: ExtensionRegistry;
         try {
           ({ registry } = await loadProjectExtensions(workflow, {

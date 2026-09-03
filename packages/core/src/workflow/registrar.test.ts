@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { JsonWorkflowStore } from './registrar.js';
+import { JsonWorkflowStore, getWorkflowForRun } from './registrar.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import type { WorkflowRegistrar } from './registrar.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
 
@@ -99,5 +100,67 @@ describe('JsonWorkflowStore', () => {
 
     const atomicIdx = [...src.matchAll(/\batomicWriteFile\(/g)];
     expect(atomicIdx).toHaveLength(1); // the one write path: register()
+  });
+});
+
+describe('getWorkflowForRun (issue #456)', () => {
+  let dir: string;
+  let store: JsonWorkflowStore;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-wf-remedy-test-'));
+    store = new JsonWorkflowStore(dir);
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('C14 happy path returns the definition (deep equality — a fresh parse per get, never the same object)', async () => {
+    const def = makeDefinition('wf-one');
+    await store.register(def);
+    const result = await getWorkflowForRun(
+      store,
+      { workflow_id: 'wf-one' },
+      { retryVerb: 're-attach' },
+    );
+    expect(result).toEqual(def);
+  });
+
+  it('C15 the wrapped throw preserves the CONTRACT — code, agentAction, retryable', async () => {
+    await expect(
+      getWorkflowForRun(store, { workflow_id: 'nonexistent' }, { retryVerb: 're-attach' }),
+    ).rejects.toMatchObject({
+      code: 'STATE_WORKFLOW_NOT_FOUND',
+      agentAction: 'report_to_user',
+      retryable: false,
+    });
+  });
+
+  it('C13 a STATE_LEGACY_FORMAT throw passes through by IDENTITY, untouched (toBe, not message-only)', async () => {
+    // A message-only check would pass under a rewrap-preserving-message mutant. Identity requires
+    // HOLDING the exact thrown instance — the real store (this file's :68-88 legacy-FILE idiom)
+    // mints its error internally and can't support toBe; that idiom stays below for the store's
+    // OWN cells. Here: a get-only mock throwing a CAPTURED sentinel (the run-attach :403/:429
+    // idiom).
+    const legacy = new WorkflowError('This workflow was registered with an older version', {
+      code: 'STATE_LEGACY_FORMAT',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+    });
+    const mockStore: Pick<WorkflowRegistrar, 'get'> = {
+      get: async () => {
+        throw legacy;
+      },
+    };
+    const err = await getWorkflowForRun(
+      mockStore,
+      { workflow_id: 'wf-one' },
+      { retryVerb: 're-attach' },
+    ).catch((e: unknown) => e);
+
+    expect(err).toBe(legacy);
+    expect((err as WorkflowError).message).not.toContain('most often');
   });
 });

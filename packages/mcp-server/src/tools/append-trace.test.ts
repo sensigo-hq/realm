@@ -282,6 +282,28 @@ describe('handleAppendTrace', () => {
       expect(result.buffer_count).toBe(1);
     }
   });
+
+  it('C10 (issue #456) a workflow-absent run carries the remedy', async () => {
+    // NON-terminal — the terminal guard at :254 precedes the workflow fetch at :276, so a
+    // terminal fixture would refuse there first and never reach this cell's target.
+    const { run: run } = await runStore.create({
+      workflowId: 'dev456',
+      workflowVersion: 1,
+      params: {},
+    });
+    await expect(
+      handleAppendTrace(
+        { run_id: run.id, step_id: 'step-agent', entries: [] },
+        { runStore, workflowStore, traceBufferStore },
+      ),
+    ).rejects.toThrow(/most often/);
+    await expect(
+      handleAppendTrace(
+        { run_id: run.id, step_id: 'step-agent', entries: [] },
+        { runStore, workflowStore, traceBufferStore },
+      ),
+    ).rejects.toThrow(/retry/);
+  });
 });
 
 describe('append_trace terminal-run guard (issue #187)', () => {

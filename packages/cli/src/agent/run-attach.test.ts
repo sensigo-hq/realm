@@ -404,6 +404,23 @@ describe('resolveRunAttach — a not-found workflow says what to do about it', (
     expect((err as Error).message).not.toContain('most often');
   });
 
+  it('C12 (issue #456) the COMPOSED message is byte-identical to the shipped remedy — full-string equality, not substring', async () => {
+    // The :375 substring pin above cannot see a template reword — a helper that dropped a word,
+    // doubled a space, or reordered a clause would still pass it. This cell pins the exact bytes.
+    const store = new InMemoryStore();
+    const runId = await createRun(store);
+    const err = await resolveRunAttach(runId, {
+      store,
+      workflowStore: notFoundStore(),
+      loadExtensions: okLoader(),
+    }).catch((e: unknown) => e);
+
+    expect((err as Error).message).toBe(
+      'Workflow not found: attach-wf — most often this run was created from a file without ' +
+        '--register. Register the workflow (realm workflow register <file>) and re-attach.',
+    );
+  });
+
   it('a DIFFERENT WorkflowError passes through untouched', async () => {
     // Keyed on the stable code, never on the message text. The legacy-format error is the
     // registrar's own adjacent throw and carries its own remediation already — appending

@@ -8,6 +8,7 @@ import {
   buildPreExecutionErrorEnvelope,
   deriveRunPhase,
   storeDeclaresNonceCarriage,
+  getWorkflowForRun,
   type AppendResult,
   type TraceBufferStore,
   type AgentTraceEntry,
@@ -273,7 +274,9 @@ export async function handleAppendTrace(
   }
 
   // 2. Load the workflow definition.
-  const definition = await workflowStore.get(run.workflow_id);
+  // issue #456: code-keyed one-time-register remedy. Verb "retry" — deliberately neutral: the
+  // register command in the sentence is for the human this agent's report_to_user relays to.
+  const definition = await getWorkflowForRun(workflowStore, run, { retryVerb: 'retry' });
 
   // 3. Find the step in the definition.
   const stepDef = definition.steps[args.step_id];

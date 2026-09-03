@@ -76,6 +76,50 @@ describe('respondToGate', () => {
     expect(updated.run_phase).toBe('completed');
   });
 
+  it('C1 (issue #456) a workflow-absent run carries the remedy — "most often" and "respond again"', async () => {
+    // Direct respondToGate call, bypassing the CLI action entirely — exercises :25's OWN fetch
+    // (the direct-caller/test seam; the CLI action's :91 prefetch never runs here).
+    const missingWfStore = new JsonWorkflowStore(
+      await mkdtemp(join(tmpdir(), 'realm-respond-missing-wf-')),
+    );
+    const { run: run } = await runStore.create({
+      workflowId: 'dev456',
+      workflowVersion: 1,
+      params: {},
+    });
+    // A gate must exist for submitHumanResponse to have something to resolve — but the
+    // workflow fetch at :25 happens BEFORE any gate logic, so a bare pending_gate suffices.
+    await runStore.update({
+      ...run,
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 'step-one',
+        preview: {},
+        choices: ['approve', 'reject'],
+        opened_at: new Date().toISOString(),
+      },
+    });
+
+    await expect(
+      respondToGate(
+        run.id,
+        { gate: 'g1', choice: 'approve' },
+        runStore,
+        missingWfStore,
+        new ExtensionRegistry(),
+      ),
+    ).rejects.toThrow(/most often/);
+    await expect(
+      respondToGate(
+        run.id,
+        { gate: 'g1', choice: 'approve' },
+        runStore,
+        missingWfStore,
+        new ExtensionRegistry(),
+      ),
+    ).rejects.toThrow(/respond again/);
+  });
+
   it('throws WorkflowError when gate_id does not match', async () => {
     const { run: run } = await runStore.create({
       workflowId: 'respond-test-wf',
@@ -393,6 +437,43 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
 
     expect(errored()).not.toContain('Error loading extensions');
     expect(errored()).toContain('Run not found');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    // issue #456: the by-id bare control — a bad run-id must never wear the OTHER remedy either.
+    expect(errored()).not.toContain('most often');
+  });
+
+  it('C2 (issue #456) a workflow-absent run carries the remedy via the ACTION path — "most often" and "respond again"', async () => {
+    // Via the CLI action (respondCommand.parseAsync) — exercises :91's OWN prefetch, which fails
+    // BEFORE respondToGate (and its own :25 fetch) is ever called. The action constructs its own
+    // default JsonWorkflowStore (under this describe's $HOME override) — nothing registered in
+    // it, matching the dev-run scenario exactly.
+    const { JsonFileStore } = await import('@sensigo/realm');
+    const runStore = new JsonFileStore();
+    const { run } = await runStore.create({
+      workflowId: 'dev456',
+      workflowVersion: 1,
+      params: {},
+    });
+    await runStore.update({
+      ...run,
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 'step-one',
+        preview: {},
+        choices: ['approve', 'reject'],
+        opened_at: new Date().toISOString(),
+      },
+    });
+
+    await expect(
+      respondCommand.parseAsync([run.id, '--gate', 'g1', '--choice', 'approve'], {
+        from: 'user',
+      }),
+    ).rejects.toThrow('process.exit');
+
+    expect(errored()).toContain('most often');
+    expect(errored()).toContain('respond again');
+    expect(errored()).not.toContain('Error loading extensions');
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

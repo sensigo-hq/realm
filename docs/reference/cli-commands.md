@@ -302,6 +302,12 @@ previously all four exited 0. A stalled workflow prints `Workflow stalled — de
 with the same remedy map as cancellation and exits 1. Completed-with-failed-steps still exits 0
 (outcome-keyed; the run-health finding is the disclosure).
 
+**Id-addressed follow-ups need the workflow registered** (issue #456). A dev-mode run never
+registers its workflow, so the id-addressed commands that come after it — `respond`, `resume`,
+`drain`, and `realm agent --run-id` — say so the first time one runs into it: `Workflow not
+found: … — most often this run was created from a file without --register. Register the
+workflow (realm workflow register <file>) and <verb> again.`
+
 ---
 
 ### `realm workflow test <path>`

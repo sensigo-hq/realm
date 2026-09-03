@@ -1,6 +1,9 @@
 // Tests for replayRun, parseOverride, and saveReplay business logic.
-import { describe, it, expect, vi } from 'vitest';
-import { replayRun, parseOverride, saveReplay } from './replay.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { replayRun, parseOverride, saveReplay, replayCommand } from './replay.js';
 import type { ReplayStore, ReplayRecord } from '../store/replay-store.js';
 import type { RunRecord, WorkflowDefinition, EvidenceSnapshot } from '@sensigo/realm';
 
@@ -414,5 +417,70 @@ describe('saveReplay', () => {
     // Simulate the action callback NOT calling saveReplay at all when opts.save is falsy.
     // saveReplay is only called when opts.save is true — so simply not calling it is the test.
     expect(mockStore.save).not.toHaveBeenCalled();
+  });
+});
+
+// =================================================================================================
+// issue #456 — this file has NO action-level harness (pure-function tests only); built on
+// respond.test.ts's #466 describe as the template (mkdtempSync HOME + action-time stores +
+// exit-spy-throws + errored() + parseAsync([...], {from:'user'})).
+// =================================================================================================
+
+describe('replayCommand — a workflow-absent run carries the remedy (issue #456)', () => {
+  let home: string;
+  let originalHome: string | undefined;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'realm-replay-remedy-home-'));
+    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
+    originalHome = process.env['HOME'];
+    process.env['HOME'] = home;
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
+      throw new Error('process.exit');
+    }) as never);
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = originalHome;
+    vi.restoreAllMocks();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const errored = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+
+  it('C5 carries "most often" and "replay again"', async () => {
+    // TERMINAL fixture — a non-terminal one adds the partial-replay warn line, which would
+    // contaminate this cell's assertions without changing its point.
+    const { JsonFileStore } = await import('@sensigo/realm');
+    const runStore = new JsonFileStore();
+    const { run } = await runStore.create({
+      workflowId: 'replay-missing-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await runStore.update({
+      ...run,
+      terminal_state: true,
+      run_phase: 'completed',
+      sealed_by: { arm: 'complete' },
+    });
+
+    await expect(replayCommand.parseAsync([run.id], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+
+    expect(errored()).toContain('most often');
+    expect(errored()).toContain('replay again');
+    // assert-the-call-never-the-count (the #466 idiom) — replay.ts's action has no outer
+    // try/catch wrapping this fetch's own, so a single exit is expected here, but pinning the
+    // CALL rather than the count keeps this cell robust to that detail changing.
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(logSpy).not.toHaveBeenCalled();
   });
 });

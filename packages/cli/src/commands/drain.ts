@@ -15,7 +15,7 @@ import type {
   CaptureEvidenceParams,
   SettlementResult,
 } from '@sensigo/realm';
-import { applySettlement } from '@sensigo/realm';
+import { applySettlement, getWorkflowForRun } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 
 /**
@@ -243,7 +243,9 @@ async function resolveRegistry(
   // Fetching the definition IS part of resolving the registry (loadProjectExtensions needs it) —
   // so a deleted-workflow record thrown from THIS call also renders under the extensions sentence
   // at every call site below (issue #466's adjudicated call: deliberate, not an oversight).
-  const workflow = await workflowStore.get(run.workflow_id);
+  // issue #456: the remedy sentence now self-describes (it names the file/register/verb itself),
+  // so the banner split stays exactly as #466 adjudicated it — no reopening.
+  const workflow = await getWorkflowForRun(workflowStore, run, { retryVerb: 'drain again' });
   const { registry } = await loadProjectExtensions(workflow, {
     ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
     projectDir: opts.project ?? process.cwd(),
@@ -432,7 +434,10 @@ export async function runDrainAction(
           );
           continue;
         }
-        const workflow = await workflowStore.get(r.workflow_id);
+        // issue #456: race-dead in practice (resolveRegistry's own get above just succeeded
+        // μs earlier) — adopted for uniformity, so drift can never creep in if that ever
+        // changes; the shared helper makes it structurally impossible either way.
+        const workflow = await getWorkflowForRun(workflowStore, r, { retryVerb: 'drain again' });
         const outcome = await deps.drainFinalizers(runStore, workflow, registry, r.id);
         drained += 1;
         for (const w of outcome.warnings) console.log(`  ⚠ ${r.id}: ${w}`);
@@ -446,7 +451,9 @@ export async function runDrainAction(
     // just terminalized (settle_default may or may not terminalize; abort always does).
     for (const r of gateActionable) {
       try {
-        const workflow = await workflowStore.get(r.workflow_id);
+        // issue #456: LIVE first fetch on this path — no resolveRegistry precedes it here, so
+        // this adoption's remedy is genuinely reachable (unlike the finalizer arm above).
+        const workflow = await getWorkflowForRun(workflowStore, r, { retryVerb: 'drain again' });
         const { run: enactedRun, applied } = await enactGateExpiry(runStore, workflow, r, now);
         if (!applied) {
           console.log(`  • ${r.id}: gate expiry already resolved (race) — skipped`);
@@ -507,7 +514,13 @@ export async function runDrainAction(
 
     let workingRun = run;
     if (hasEnactableGate) {
-      const workflowForGate = await workflowStore.get(run.workflow_id);
+      // issue #456: this run may be non-terminal (an enactable expired gate bypasses the
+      // terminal refusal above) — a LIVE dev-run the operator walked away from, the class's
+      // most natural member. No banner here: this throw reaches the OUTER catch (bare message
+      // + exit 1), never the extensions sentence.
+      const workflowForGate = await getWorkflowForRun(workflowStore, run, {
+        retryVerb: 'drain again',
+      });
       const { run: enactedRun, applied } = await enactGateExpiry(
         runStore,
         workflowForGate,
@@ -546,7 +559,11 @@ export async function runDrainAction(
       process.exit(1);
       return;
     }
-    const workflow = await workflowStore.get(workingRun.workflow_id);
+    // issue #456: race-dead in practice (resolveRegistry's own get above just succeeded μs
+    // earlier) — adopted for uniformity, same reasoning as the batch finalizer arm.
+    const workflow = await getWorkflowForRun(workflowStore, workingRun, {
+      retryVerb: 'drain again',
+    });
     const outcome = await deps.drainFinalizers(runStore, workflow, registry, runId);
     for (const w of outcome.warnings) console.log(`  ⚠ ${w}`);
     console.log(`Drained run '${runId}'.`);

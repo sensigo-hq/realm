@@ -74,6 +74,30 @@ describe('resumeRun', () => {
     expect(updated.failed_steps).not.toContain('step-one');
   });
 
+  it('C4 (issue #456) a workflow-absent run carries the remedy — "most often" and "resume again"', async () => {
+    // A plain failed/terminal record — the fixture reaches :95 past the aborted/phase checks.
+    const { run } = await runStore.create({
+      workflowId: 'resume-missing-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await runStore.update({
+      ...run,
+      run_phase: 'failed',
+      failed_steps: ['step-one'],
+      terminal_state: true,
+      sealed_by: { arm: 'step_failure' },
+      terminal_reason: 'Something went wrong',
+    });
+
+    await expect(resumeRun(run.id, 'step-one', runStore, workflowStore)).rejects.toThrow(
+      /most often/,
+    );
+    await expect(resumeRun(run.id, 'step-one', runStore, workflowStore)).rejects.toThrow(
+      /resume again/,
+    );
+  });
+
   it('throws when the run is in a non-resumable state (completed)', async () => {
     const { run: run } = await runStore.create({
       workflowId: 'resume-test-wf',

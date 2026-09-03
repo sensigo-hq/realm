@@ -247,6 +247,7 @@ export {
 } from './workflow/yaml-loader.js';
 export { JsonWorkflowStore } from './workflow/registrar.js';
 export type { WorkflowRegistrar } from './workflow/registrar.js';
+export { getWorkflowForRun } from './workflow/registrar.js';
 
 // Diagnostics — structured loader-warning channel (issue #169)
 export {
