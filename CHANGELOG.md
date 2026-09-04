@@ -8,6 +8,27 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **A declared-and-empty gate choice source is now a load error, in all three shapes it could
+  take** (issue #433). `gate.choices: []`, a gate-trusted step's `input_schema.properties.
+choice.enum: []` with no `gate.choices` list declared, and `gate: {choices:}` (a YAML-null
+  value) paired with an empty `enum` all used to load clean — and then mint a gate no response
+  could ever resolve: the dev-mode prompt rendered the unanswerable `Choice []:`, every
+  `submit_human_response` was refused against a trailing-empty expected list (`Choice 'approve'
+is not valid. Expected one of: `), `realm run inspect` printed no `Choices:` line at all, and
+  the run had no way out — `abandon` refused with advice that could never work ("resolve or
+  reject the gate via `submit_human_response`" — impossible against an empty list), and `purge`/
+  `drain` both refused a non-terminal run. Without an authored `gate.timeout_seconds` +
+  `on_expiry` expiry, such a run was **permanently undisposable**. All three shapes are now
+  refused at load time with a four-clause message naming the mechanism, the consequence, and the
+  remedy — declare at least one choice/enum value, or remove the key to fall back to the next
+  source in the chain (`gate.choices ?? input_schema.properties.choice.enum ?? ['approve',
+'reject']`) — cited at the offending key's own line where the source map can place it.
+  **Grandfathering**: a workflow already registered with an empty choice source keeps running
+  exactly as before (this is a load-time check, and an already-open gate is frozen regardless);
+  `realm workflow validate --registered` now flags such a stored copy for free. There is no
+  runtime mirror — the population is load-time-reachable only, confirmed empty in every shipped
+  example and fixture.
+
 - **`realm workflow watch` no longer sits silently alive on a directory that is gone, and no
   longer misattributes edits to a directory it left behind** (issue #453). Deleting the watched
   directory used to print one `ENOENT` line and then keep the process running forever, watching

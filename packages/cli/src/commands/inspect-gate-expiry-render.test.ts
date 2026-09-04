@@ -102,10 +102,14 @@ describe('inspectRun — Gate: line (issue #291)', () => {
   });
 
   it('an EMPTY choices array renders no Choices line at all', async () => {
-    // Production-reachable, not fixture armor: the loader has no non-empty check and the mint
-    // forwards `[]` past its default, so an authored `gate.choices: []` reaches a real record.
-    // Printing an empty "Choices:" would advertise a menu with nothing on it. That such a gate is
-    // human-unresolvable at all is a pre-existing loader gap — issue #433, not this render's.
+    // Reachable for a GRANDFATHERED registered copy (issue #433: the authored form — a fresh
+    // `gate.choices: []` — is a load error now; a copy registered BEFORE #433 shipped can still
+    // carry the empty array and keeps running). Not fixture armor: this render cell's own
+    // construction (makeRun/makeGate) bypasses the loader entirely, exactly the shape a
+    // grandfathered copy takes at read time. Printing an empty "Choices:" would advertise a menu
+    // with nothing on it. That such a gate is human-unresolvable at all is the pre-#433 wedge —
+    // closed at load time for newly-authored workflows, open only for the grandfathered
+    // population — not this render's to fix.
     const run = makeRun({ pending_gate: makeGate({ choices: [] }) });
     const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore());
     expect(result).toContain('Gate: approve');

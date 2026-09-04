@@ -266,4 +266,28 @@ describe('validate --registered (issue #427)', () => {
     expect(text).toContain('Registered workflows: realm workflow list');
     expect(text).not.toContain('    at ');
   });
+
+  it('C8 (issue #433) a stored copy with gate.choices: [] on a gate-trusted step is refused — message pin only, never a line cite (single-line JSON has none to give)', async () => {
+    plant(
+      'stored-wf',
+      stored({
+        steps: {
+          a: {
+            description: 'a',
+            execution: 'auto',
+            trust: 'human_confirmed',
+            gate: { choices: [] },
+          },
+        },
+      }),
+    );
+
+    await expect(
+      validateCommand.parseAsync(['--registered', 'stored-wf'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+
+    const text = out();
+    expect(text).toContain("'gate.choices', when declared, must be non-empty");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
 });
