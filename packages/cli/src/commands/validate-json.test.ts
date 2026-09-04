@@ -197,7 +197,7 @@ steps:
   // J3/J3b — the escalated-typo family.
   // ===============================================================================================
 
-  describe('J3/J3b — escalation', () => {
+  describe('J3/J3b/J3c — escalation', () => {
     function makeEscalatedFixture(dir: string): string {
       return writeWorkflow(
         dir,
@@ -246,6 +246,49 @@ steps:
       expect(result['strict']).toEqual({ requested: true, failed: false });
       expect(exitSpy).toHaveBeenCalledWith(1);
       rmSync(dir, { recursive: true, force: true });
+    }, 20_000);
+
+    it('J3c (correction) the extensions-arm escalation fork — a RESOLVABLE module + escalated dependson, no hard error: valid false, whole-string escalation, effective severity, exit 1', async () => {
+      // The third rejectOnErrorSeverity(accumulated) instance (validate.ts's extensions-arm
+      // `if (json)` tail) — implemented since the base implementation but reachable by no cell
+      // until now (MA review, the #453-D2c per-member-pin precedent). Reuses J7b's minimal
+      // resolvable-module shape: an empty registry is enough to route into the extensions arm
+      // and have BOTH passes succeed, so the only failure this fixture can produce is the
+      // escalation itself — never a load error, which would prove a different fork.
+      const proj = mkdtempSync(join(tmpdir(), 'realm-validate-json-j3c-'));
+      const workflowDir = join(proj, 'workflows', 'wf');
+      mkdirSync(join(proj, 'dist'), { recursive: true });
+      mkdirSync(workflowDir, { recursive: true });
+      writeFileSync(join(proj, 'package.json'), JSON.stringify({ type: 'module' }), 'utf8');
+      writeFileSync(join(proj, 'dist', 'registry.js'), 'export default {};\n', 'utf8');
+      const p = writeWorkflow(
+        workflowDir,
+        `id: j3c-wf
+name: J3c WF
+version: 1
+extensions: ../../dist/registry.js
+steps:
+  s1:
+    description: a
+    execution: auto
+    dependson: [nothing]
+`,
+      );
+
+      await expect(validateCommand.parseAsync([p, '--json'], { from: 'user' })).rejects.toThrow(
+        'process.exit',
+      );
+
+      const result = parseJson();
+      expect(result['valid']).toBe(false);
+      const errors = result['errors'] as string[];
+      expect(errors[0]).toMatch(/^Invalid: 1 warning/);
+      expect(errors[0]).toContain('escalated to an error by policy');
+      const diagnostics = result['diagnostics'] as LoaderWarning[];
+      expect(diagnostics[0]?.code).toBe('UNKNOWN_STEP_KEY');
+      expect(diagnostics[0]?.severity).toBe('error');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      rmSync(proj, { recursive: true, force: true });
     }, 20_000);
   });
 
@@ -838,6 +881,32 @@ steps:
             ),
             '--strict',
           ],
+        },
+        {
+          name: 'J3c (correction) the extensions-arm escalation fork',
+          setup: () => {
+            const proj = tmp('j3c');
+            const workflowDir = join(proj, 'workflows', 'wf');
+            mkdirSync(join(proj, 'dist'), { recursive: true });
+            mkdirSync(workflowDir, { recursive: true });
+            writeFileSync(join(proj, 'package.json'), JSON.stringify({ type: 'module' }), 'utf8');
+            writeFileSync(join(proj, 'dist', 'registry.js'), 'export default {};\n', 'utf8');
+            return [
+              writeWorkflow(
+                workflowDir,
+                `id: t-j3c
+name: T
+version: 1
+extensions: ../../dist/registry.js
+steps:
+  s1:
+    description: a
+    execution: auto
+    dependson: [nothing]
+`,
+              ),
+            ];
+          },
         },
         {
           name: 'J4 multi-error (extension-free)',
