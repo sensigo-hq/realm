@@ -44,6 +44,24 @@ workflow (realm workflow register <file>) and <verb> again.` (`<verb>` names the
   which `realm agent --run-id` itself now calls too, in place of the inline version it carried
   before.
 
+### Added
+
+- **`realm workflow validate --json`** (issue #454). Emits one JSON object on stdout and nothing
+  else — a machine-readable contract for CI gates and scripted pre-upgrade audits, in both file
+  mode and `--registered` mode. `valid` is the boundary truth (would a plain `register` accept
+  this file), reported separately from `strict`: a warning-only workflow reads `valid: true` even
+  when `--strict --json` fails and exits `1`, because `--strict` is a run mode you asked for, not
+  a property of the file. `diagnostics` is issue #169's structured loader-warning channel — one
+  entry per warning, `severity` always the effective severity under the default policy, never
+  `--strict`'s all-error mode. `errors` carries one string per hard failure, with issue #402's
+  per-step boundaries surviving as separate array entries — the same per-error granularity the
+  #424 warnings channel already gave the human report, now on the machine one too. Not
+  represented: the `structured_output` adoption nudge, `--explain`'s per-step detail (inert under
+  `--json`), and `--registered`'s audit headers — all human-informational, never part of the
+  contract. Exit codes are unchanged either way. See
+  [`docs/reference/cli-commands.md`](docs/reference/cli-commands.md#realm-workflow-validate-path)
+  for the full field-by-field contract.
+
 ---
 
 ## [0.41.0] — 2026-09-03
