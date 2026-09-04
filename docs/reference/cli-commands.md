@@ -109,6 +109,7 @@ realm workflow validate ./my-workflow
 realm workflow validate ./my-workflow --strict   # fail (exit 1) if any warning is present
 realm workflow validate ./my-workflow --explain  # full per-step structured_output detail
 realm workflow validate --registered my-workflow # audit the stored copy
+realm workflow validate ./my-workflow --json     # emit the result as JSON, and nothing else
 ```
 
 **One pass reports everything** (issue #424). A workflow can be wrong in more than one way at
@@ -147,6 +148,50 @@ definition declares either, the audit says so on its own line.
 **`--explain` (issue #422):** prints the full per-step `structured_output` adoption detail
 described below, in place of the one-line summary a default run prints. It changes nothing about
 what is validated and nothing about the exit code.
+
+**`--json` (issue #454):** emits one JSON object on stdout and nothing else — every other channel
+(the description line, the `structured_output` nudge, the `Extensions:` manifest line, and
+`--registered`'s audit headers) is suppressed. Works in both modes; exit codes are unchanged
+either way.
+
+```json
+{
+  "valid": true,
+  "mode": "file",
+  "path": "./my-workflow/workflow.yaml",
+  "workflow_id": "my-workflow",
+  "loader_version": "0.41.0",
+  "schema_version": null,
+  "error_count": 0,
+  "warning_count": 1,
+  "strict": { "requested": false, "failed": false },
+  "diagnostics": [
+    {
+      "code": "RETRY_NO_TIMEOUT",
+      "severity": "warn",
+      "scope": "step",
+      "step": "sync_data",
+      "message": "Step 'sync_data': declares 'retry' but no 'timeout_seconds' — …"
+    }
+  ],
+  "errors": []
+}
+```
+
+`valid` is the boundary truth — would a plain `register` accept this file — reported SEPARATELY
+from `strict`: a warning-only workflow is `valid: true` even when `--strict --json` fails and exits
+`1`, because `--strict` is a run mode you asked for, not a property of the file. `mode` is `"file"`
+or `"registered"`; `path` and `schema_version` are `null` in whichever mode does not apply.
+`workflow_id` is the parsed definition's id once one exists, otherwise the id you asked for
+(`--registered <id>`) or `null` if nothing parsed far enough to have one. `diagnostics` is issue
+#169's structured loader-warning channel, one entry per warning, with `severity` always the
+EFFECTIVE severity under the default policy — never `--strict`'s all-error mode, which stays its
+own `strict.failed` bit. `errors` holds one string per hard failure (issue #402's per-step
+boundaries survive as separate entries); channel prefixes like `Error:`/`Invalid:` are stripped,
+except two sentences that ship whole because the prefix IS the composed message (an unresolvable
+extensions module, and a warning escalated to an error by policy). Not represented at all: the
+`structured_output` adoption nudge, `--explain`'s per-step detail (inert under `--json`), and
+`--registered`'s audit headers — human-informational, not part of the contract.
 
 ```bash
 $ realm workflow validate ./my-workflow
