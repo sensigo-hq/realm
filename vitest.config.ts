@@ -27,9 +27,19 @@ export default defineConfig({
     pool: 'forks',
     isolate: true,
     // Kept at the default 5s DELIBERATELY: once the pool is bounded, pure tests finish in ms
-    // (100× margin) and the 3 genuinely-spawning CLI tests already self-protect with their own
-    // 20-25s per-test it()-timeouts (which override the global). Raising the global would only
-    // delay the loud-failure signal for a true hang. Explicit to document intent + guard a flip.
+    // (100× margin). Raising the global would only delay the loud-failure signal for a true hang.
+    // Explicit to document intent + guard a flip.
+    //
+    // CLASS RULE (issue #371 — the surgical-budget doctrine): heavy cells — child-spawn (`node
+    // dist` cold start), a heavy dynamic import of a built server, concurrency hammers, real-sleep
+    // retry fixtures — carry surgical 15-25s per-`it()` budgets AT BIRTH (which override this
+    // global); the 5s default stays the tight floor for the pure majority. The stale predecessor
+    // of this rule named "3 genuinely-spawning CLI tests" as self-protecting — the population grew
+    // without inheriting budgets, which is exactly how #371's starvation flakes happened. A new
+    // heavy cell that skips its budget re-arms the class loudly (a 5s timeout, not a silent pass)
+    // — that loud failure is the enforcement; there is no separate guard script for it.
+    // `turbo.json`'s `concurrency` key (also #371) now carries the other half of the de-starvation
+    // pairing this config's `maxWorkers` comment describes below.
     testTimeout: 5000,
     // No retry, as policy: the flakiness is 100% owned defects (starvation here; the slack race in
     // PR-B), removed by construction. Retry would only mask a genuine future regression

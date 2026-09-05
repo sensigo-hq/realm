@@ -705,7 +705,7 @@ describe('reliability', () => {
 
     expect(envelope.status).toBe('ok');
     expect(callCount).toBe(2);
-  }, 5000);
+  }, 15_000); // deflake #371: real-sleep pause × attempts — was 5000, ≥10× legit-work headroom under starvation; a true hang still fails loud
 });
 
 // Issue #140 — declaration-gated in-place timeout-retry with a clipping total-time cap.
@@ -777,7 +777,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
     expect(envelope.evidence[1]?.status).toBe('error');
     expect(envelope.evidence[2]?.attempt).toBe(3);
     expect(envelope.evidence[2]?.status).toBe('success');
-  }, 3000);
+  }, 15_000); // deflake #371: real 200ms-clipped attempts — was 3000, TIGHTER than the 5s global; ≥15× legit-work headroom, a true hang still fails loud
 
   it('two-laws UNOPTED deterministic companion pin (base_delay_ms:100 — ~300ms slack, cannot flake): timeout on a retry-configured-but-unopted step still fails terminally after 1 attempt', async () => {
     // Same shape as reliability.test.ts's pre-existing ":457" law (timeoutWithRetryDef) but with
@@ -913,7 +913,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
     expect(lastEvidence?.clipped_to_ms).toBeDefined();
     expect(lastEvidence?.clipped_to_ms).toBeLessThan(200);
     expect(lastEvidence?.exhausted_by).toBe('total_timeout');
-  }, 3000);
+  }, 15_000); // deflake #371: real clipped attempts — was 3000, tighter than the 5s global (same class as the two-laws cells above)
 
   it('cap smaller than the first attempt (OPTED): wraps within 1-2 attempts, exhausted_by total_timeout', async () => {
     // Same real-timer tolerance rationale as the flagship test above: attempt 1's clip consumes
@@ -1006,7 +1006,14 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
     expect(calls).toBe(1);
     expect(envelope.errors[0]).toContain('failed after 1 attempts');
     expect(envelope.error_details?.['exhausted_by']).toBe('total_timeout');
-    expect(elapsedMs).toBeLessThan(500); // the 200ms backoff was never actually slept
+    // deflake #371 (adjudicated by execution): this bound is a COARSE promptness check only, not
+    // the sleep guard's detector. Under a site-(c) guard-drop mutant, the 200ms backoff IS slept,
+    // then site (a) breaks at loop-top before attempt 2 — calls===1 still holds and elapsed≈200ms
+    // passes at any width >= ~250ms (it passed the pre-existing <500 too). The guard's real teeth
+    // are the sleep-guard-surfaces-429 cells' elapsed bounds below (:1175/:1263, excluding a
+    // 10s/5s retry_after sleep) plus sleepWouldExceedCap's unit pins + the source-text call-site
+    // pin (claim-liveness.test.ts). Widened for starvation immunity only.
+    expect(elapsedMs).toBeLessThan(2000);
   });
 
   // S1 correction (restores the record §2 "uniform wrap (unopted-capped clip-abort included)"
@@ -1170,10 +1177,13 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
     expect(envelope.error_details?.['lastError']).toMatch(/rate limited/i);
     expect(envelope.error_details?.['exhausted_by']).toBe('total_timeout');
     expect(envelope.error_details?.['retry_after']).toBe(10);
-    // The load-bearing assertion: this test completed in well under 1 second, proving the 10s
-    // retry_after sleep never actually happened (site (c) broke BEFORE delayMs was awaited).
-    expect(elapsedMs).toBeLessThan(2000);
-  }, 3000);
+    // The load-bearing assertion — and (deflake #371) the suite's PRIMARY DETECTOR for a dropped
+    // site-(c) sleep guard: if the 10s retry_after sleep actually happened, elapsed lands ≈10s
+    // and this bound reds (adjudicated by execution: the guard-drop mutant reds exactly this
+    // assert, `expected 10009 to be less than 5000`). Widened for starvation immunity — still
+    // excludes the 10s sleep 2× over.
+    expect(elapsedMs).toBeLessThan(5000);
+  }, 15_000); // deflake #371: was 3000, tighter than the 5s global; the elapsed bound above carries the sleep-guard detection, not this budget
 
   it('both-true tie: attemptsUsed===maxAttempts AND capExhausted both true — exhausted_by reports total_timeout, not attempts', async () => {
     // Deterministic-by-construction (no real-timer knife-edge): max_attempts:1 makes
@@ -1260,8 +1270,12 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
     // in the structured details, not the message — the discriminator-observable design point.
     expect(envelope.error_details?.['lastError']).toMatch(/rate limited/i);
     expect(envelope.error_details?.['exhausted_by']).toBe('total_timeout');
-    expect(elapsedMs).toBeLessThan(2000); // never actually slept the 5s retry_after
-  }, 3000);
+    // deflake #371 — the second DETECTOR (adjudicated by execution: the guard-drop mutant reds
+    // exactly this assert, `expected 5009 to be less than 3000`): a slept 5s retry_after lands
+    // ≈5s and reds it. Widened for starvation immunity, keeping a 2000ms discrimination gap
+    // below the excluded 5s sleep.
+    expect(elapsedMs).toBeLessThan(3000);
+  }, 15_000); // deflake #371: was 3000, tighter than the 5s global; the elapsed bound above carries the sleep-guard detection, not this budget
 
   it('programmatic gate law + advisory co-occurrence: on_timeout without idempotent never retries, and the envelope carries the advisory warning', async () => {
     // Hand-built definition (bypasses the loader's E1 hard-error) — proves the ENGINE independently
@@ -1399,7 +1413,12 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
     expect(calls).toBe(1); // the 2nd attempt never happened — the sleep guard broke first
     expect(envelope.errors[0]).toContain('failed after 1 attempts');
     expect(envelope.error_details?.['exhausted_by']).toBe('total_timeout');
-    expect(elapsedMs).toBeLessThan(500); // proves the 100ms backoff was never actually slept
+    // deflake #371: the same adjudication as the unopted-capped clip-abort cell above (:1009) —
+    // a guard-drop mutant sleeps 100ms then breaks at loop-top, so this bound cannot discriminate
+    // the guard at any starvation-immune width. Coarse promptness check only; the real teeth are
+    // the sleep-guard-surfaces cells (:1175/:1263) plus the claim-liveness unit/source-text pins
+    // this cell's own header comment above already names for the >= vs > boundary.
+    expect(elapsedMs).toBeLessThan(2000);
   });
 
   it("boundary: attempt 1 always proceeds even when the cap is ALREADY exhausted at capStart (site (a)'s attemptNum>1 guard)", async () => {

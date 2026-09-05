@@ -94,7 +94,10 @@ describe('composed journey (budget) — a server-directed Retry-After is observe
 
       expect(result).toBe('failed');
       // Not honored: a two-hour Retry-After that had been obeyed would not return in a second.
-      expect(elapsed).toBeLessThan(2000);
+      // deflake #371: widened 2000 → 15_000 for starvation immunity — stays below this cell's OWN
+      // 20_000 budget below (so the assert can still fire before a timeout would mask it) while
+      // still excluding the two-hour (7,200,000ms) Retry-After by a 480× margin.
+      expect(elapsed).toBeLessThan(15_000);
 
       const runId = (await store.list())[0]!.id;
       const run = await store.get(runId);

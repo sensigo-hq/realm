@@ -347,7 +347,9 @@ describe('the ceiling outranks a server-directed sleep (issue #401 leg B)', () =
     expect(payloadOf(err)?.last_observed_status).toBe(429);
     expect(payloadOf(err)?.retry_after_observed_ms).toBe(4000);
     // Raced, not awaited: it returns near the ceiling, nowhere near the four-second sleep.
-    expect(elapsed).toBeLessThan(2000);
+    // deflake #371: widened 2000 → 3000 for starvation immunity — ceiling is 700ms, so this stays
+    // a decisive 1000ms discrimination gap below the excluded 4000ms sleep.
+    expect(elapsed).toBeLessThan(3000);
 
     await new Promise((r) => setTimeout(r, 400)); // let the loser settle, in-cell
     process.off('unhandledRejection', trap);

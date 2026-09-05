@@ -88,5 +88,5 @@ describe('server entry point', () => {
     // the entry guard must stay false and the import must not hijack stdio.
     const mod = await import('./server.js');
     expect(typeof mod.createRealmMcpServer).toBe('function');
-  });
+  }, 15_000); // heavy dynamic import of the built server — matches its two spawn siblings above
 });

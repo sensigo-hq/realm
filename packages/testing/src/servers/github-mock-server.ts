@@ -1,6 +1,7 @@
 // GitHubMockServer — local HTTP server that replays fixture-defined GitHub API responses.
 import * as http from 'node:http';
 import * as fs from 'node:fs';
+import type { AddressInfo } from 'node:net';
 
 /** A static fixture entry that returns a pre-defined body. */
 interface StaticEntry {
@@ -21,7 +22,8 @@ type FixtureEntry = StaticEntry | EchoEntry;
  * Call `close()` in afterAll to release the port.
  */
 export interface GitHubMockServerHandle {
-  /** Base URL of the server, e.g. "http://localhost:3032". */
+  /** Base URL of the server, e.g. "http://localhost:49213" — the port ACTUALLY bound, not the
+   *  requested one (the default is ephemeral). */
   url: string;
   /** Closes the server and resolves when fully shut down. */
   close(): Promise<void>;
@@ -63,12 +65,15 @@ function matchRoute(method: string, urlPath: string, fixtureKey: string): boolea
  * Reads the fixture once at startup; does not re-read on each request.
  *
  * @param fixturePath - Absolute path to the fixture JSON file.
- * @param port - Port to bind to (default 3032).
+ * @param port - Port to bind to. Defaults to `0` (ephemeral, OS-assigned — hermetic: two
+ *   concurrent checkouts/suites on the same box can never collide on a fixed port). Pass an
+ *   explicit port to pin one; `url` is always derived from the port actually bound, so both
+ *   forms behave identically from the caller's side.
  * @returns A handle with the server URL and a `close()` method.
  */
 export async function startGitHubMockServer(
   fixturePath: string,
-  port = 3032,
+  port = 0,
 ): Promise<GitHubMockServerHandle> {
   const raw = fs.readFileSync(fixturePath, 'utf-8');
   const fixture = JSON.parse(raw) as Record<string, FixtureEntry>;
@@ -126,9 +131,13 @@ export async function startGitHubMockServer(
     });
     server.listen(port, '127.0.0.1', () => resolve());
   });
+  // Derive the URL from the port ACTUALLY bound, never the requested one: identical for an
+  // explicit port, and the only correct source for the ephemeral default (the OS assigns the
+  // real port at listen time — `server.address()` is where it becomes knowable).
+  const boundPort = (server.address() as AddressInfo).port;
 
   return {
-    url: `http://localhost:${port}`,
+    url: `http://localhost:${boundPort}`,
     close(): Promise<void> {
       return new Promise((resolve, reject) => {
         server.close((err?: Error) => {
