@@ -22,6 +22,7 @@ vi.mock('node:readline/promises', () => ({
   createInterface: vi.fn(() => ({ question: mocks.question, close: mocks.close })),
 }));
 
+import { createInterface } from 'node:readline/promises';
 import { runCommand, renderDetachMap } from './run.js';
 
 /** A minimal non-terminal record; overrides shape each fork. */
@@ -655,6 +656,111 @@ steps:
       expect(text).toContain('realm agent --run-id');
       expect(text).not.toContain('    at ');
       expect(exitSpy).toHaveBeenCalledWith(1);
+    }, 20_000);
+  });
+
+  // NESTED here on purpose: reuses the cancel-path describe's beforeEach/afterEach — scratch
+  // HOME, isTTY, the throwing exit spy (the same reasoning the two siblings above give).
+  describe('the prompt channel (issue #458)', () => {
+    let savedStdoutTTY: boolean | undefined;
+    let savedStderrTTY: boolean | undefined;
+
+    beforeEach(() => {
+      // The file never clears this mock between cells; a bare `.at(-1)` risks reading a STALE
+      // capture from an earlier c-cell whose ambient wiring happens to coincidentally match the
+      // expected channel — a real, EXECUTED false-green class (audit-closer lane, issue #458:
+      // a broken fixture that exited before the createInterface call still passed 21/21 by
+      // reading a stale capture). Scoped here so only this describe's cells pay the cost.
+      vi.mocked(createInterface).mockClear();
+    });
+
+    afterEach(() => {
+      // Ambient isTTY is `undefined` and not an own property on stdout/stderr under vitest forks
+      // (lane-probed) — the delete-when-undefined arm below is the one that ALWAYS runs.
+      if (savedStdoutTTY === undefined) delete (process.stdout as { isTTY?: boolean }).isTTY;
+      else process.stdout.isTTY = savedStdoutTTY;
+      if (savedStderrTTY === undefined) delete (process.stderr as { isTTY?: boolean }).isTTY;
+      else process.stderr.isTTY = savedStderrTTY;
+    });
+
+    it('P1 (the fix): stdout piped, stderr a terminal — prompts route to stderr', async () => {
+      savedStdoutTTY = process.stdout.isTTY;
+      savedStderrTTY = process.stderr.isTTY;
+      process.stdout.isTTY = false;
+      process.stderr.isTTY = true;
+
+      mocks.question.mockImplementationOnce(async () => {
+        throw Object.assign(new Error('Aborted with Ctrl+D'), { code: 'ABORT_ERR' });
+      });
+
+      await expect(
+        runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' }),
+      ).rejects.toThrow('process.exit');
+
+      const opts = vi.mocked(createInterface).mock.calls.at(-1)![0];
+      const channel =
+        opts.output === process.stderr
+          ? 'stderr'
+          : opts.output === process.stdout
+            ? 'stdout'
+            : 'other';
+      expect(channel).toBe('stderr');
+    }, 20_000);
+
+    it('P2 (control, unchanged wiring): both stdout and stderr are terminals — prompts stay on stdout', async () => {
+      // Stubbing BOTH streams (the population this cell's title names), never just stdout — and
+      // asserting output ONLY: adding a `terminal` assertion here would flip it red on main and
+      // destroy its control value (main's unconditional `output: process.stdout` never sets
+      // `terminal` at all, so it defaults to `output.isTTY`, which is also true here — but that
+      // coincidence is not this cell's job to pin).
+      savedStdoutTTY = process.stdout.isTTY;
+      savedStderrTTY = process.stderr.isTTY;
+      process.stdout.isTTY = true;
+      process.stderr.isTTY = true;
+
+      mocks.question.mockImplementationOnce(async () => {
+        throw Object.assign(new Error('Aborted with Ctrl+D'), { code: 'ABORT_ERR' });
+      });
+
+      await expect(
+        runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' }),
+      ).rejects.toThrow('process.exit');
+
+      const opts = vi.mocked(createInterface).mock.calls.at(-1)![0];
+      const channel =
+        opts.output === process.stderr
+          ? 'stderr'
+          : opts.output === process.stdout
+            ? 'stdout'
+            : 'other';
+      expect(channel).toBe('stdout');
+    }, 20_000);
+
+    it('P3 (the corner, per-conjunct teeth): both stdout and stderr are piped — prompts route to stderr AND terminal mode stays true', async () => {
+      // The `terminal` conjunct is the exit-truth pin: without it the both-piped corner
+      // regresses to the cooked never-settles exit-0 lie (mutant (ii)'s target).
+      savedStdoutTTY = process.stdout.isTTY;
+      savedStderrTTY = process.stderr.isTTY;
+      process.stdout.isTTY = false;
+      process.stderr.isTTY = false;
+
+      mocks.question.mockImplementationOnce(async () => {
+        throw Object.assign(new Error('Aborted with Ctrl+D'), { code: 'ABORT_ERR' });
+      });
+
+      await expect(
+        runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' }),
+      ).rejects.toThrow('process.exit');
+
+      const opts = vi.mocked(createInterface).mock.calls.at(-1)![0];
+      const channel =
+        opts.output === process.stderr
+          ? 'stderr'
+          : opts.output === process.stdout
+            ? 'stdout'
+            : 'other';
+      expect(channel).toBe('stderr');
+      expect(opts.terminal).toBe(true);
     }, 20_000);
   });
 });
