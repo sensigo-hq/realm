@@ -81,14 +81,14 @@ describe('gc --heal prints the retention-clock note on every branch (issue #367)
     expect(out).toContain('Healed 1 stale-phase record(s)'); // non-vacuity: it really healed
     expect(out).toContain(NOTE);
     expect(out).toContain('resets updated_at');
-  });
+  }, 20_000); // per-test: spawns the built CLI (node dist cold start) — legitimately exceeds the 5s default
 
   it('the dry-run-with-candidates branch — the operator deciding whether to run --force', async () => {
     await seedStalePhaseRecord('stale-dry');
     const out = await gc(['--heal']);
     expect(out).toContain('WOULD be healed'); // non-vacuity: candidates were found
     expect(out).toContain(NOTE);
-  });
+  }, 20_000); // per-test: spawns the built CLI — see above
 
   it('a heal that a boundary refusal blocks points at migrate, not at raw internals', async () => {
     // A parked incoherent record: heal tries to rewrite its phase, the seal boundary refuses, and
@@ -132,11 +132,11 @@ describe('gc --heal prints the retention-clock note on every branch (issue #367)
     // with the pointer removed.
     expect(out).toContain('Heal cannot fix that.');
     expect(out).toContain('see it in the incoherent bucket with both verdicts, and adjudicate it');
-  });
+  }, 20_000); // per-test: spawns the built CLI — see above
 
   it('the nothing-to-heal branch — where it already printed, kept', async () => {
     const out = await gc(['--heal']);
     expect(out).toContain('No stale-phase records found to heal.');
     expect(out).toContain(NOTE);
-  });
+  }, 20_000); // per-test: spawns the built CLI — see above
 });

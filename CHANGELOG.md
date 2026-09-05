@@ -6,6 +6,26 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **The house test-suite is de-starved, and `@sensigo/realm-testing`'s GitHub mock server binds
+  an ephemeral port by default** (issue #371). A structural class of local flakiness — every
+  bare `npx turbo run test --force` (the review command every MA/IA run has used) racing at
+  turbo's default concurrency, oversubscribing the box 2× because the de-starvation pairing this
+  repo shipped once before (`maxWorkers: '50%'` + `turbo run test --concurrency=2`) lived only in
+  the root npm script, never in `turbo.json` itself — is now closed structurally: `turbo.json`
+  carries a top-level `"concurrency": "2"`, so every invocation, bare `--force` included,
+  inherits the pairing (the npm script's own flag stays as belt). Measured cost: cold build
+  **+3.0s**, incremental build **~0**, lint **+7.8s** (its four tasks were fully parallel before);
+  test wall-clock time is unaffected. Alongside the structural fix, the heavy-cell population
+  that had grown without inheriting the suite's own surgical-timeout doctrine now carries budgets
+  again (test-only; no semantic assertion changed). Separately, `startGitHubMockServer` now
+  defaults to `port: 0` (an OS-assigned ephemeral port) instead of the fixed `3032` — hermetic by
+  default, so two concurrent checkouts or suites on one box can no longer collide on that port.
+  Passing an explicit port still works exactly as before; `handle.url` always reflects the port
+  actually bound, so existing callers reading `handle.url` (rather than hardcoding the old
+  default) are unaffected either way.
+
 ### Fixed
 
 - **`realm workflow run` detaches cleanly and exits truthfully with stdout redirected, not just

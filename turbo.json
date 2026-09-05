@@ -2,6 +2,7 @@
   "$schema": "https://turbo.build/schema.json",
   "//": "issue #367 (part 2): globalDependencies covers the files a verification task READS at runtime but that live outside every package's hash. Both entries were executed as real cache holes before being added: a mutated eslint rule served a FULL TURBO green (the lint task's hash never saw the root config), and a new terminal writer in scripts/ served a cached census green (the census is homed in cli, whose hash never sees root scripts/). eslint.config.ts imports only external packages today — if it ever imports a local helper, that file needs an entry here too.",
   "globalDependencies": ["eslint.config.ts", "scripts/**/*.mjs"],
+  "concurrency": "2",
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

@@ -108,5 +108,5 @@ describe('composed journey — a politely-failed tool call, all the way to the o
       else process.env['OPENAI_API_KEY'] = originalKey;
       rmSync(tempHome, { recursive: true, force: true });
     }
-  }, 25_000); // self-protect exactly this way rather than moving the global. // The global 5s default would kill the MCP spawn. The three genuinely-spawning CLI tests
+  }, 25_000); // The global 5s default would kill the MCP spawn; heavy cells self-protect exactly this way — a surgical per-it() budget at birth (issue #371's class rule), never a moved global.
 });

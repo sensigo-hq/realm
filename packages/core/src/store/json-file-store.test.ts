@@ -1528,7 +1528,7 @@ describe('JsonFileStore ENOENT hardening (issue #107)', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
-  });
+  }, 20_000); // per-test: a concurrency hammer (40 creates+updates + 8 concurrent list() readers) — see :1049
 
   it('list() drops a run file whose content vanishes mid-scan without affecting the rest', async () => {
     // A more targeted (non-racy) companion to the volume test above: seed several runs, delete one

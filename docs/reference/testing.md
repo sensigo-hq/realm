@@ -600,19 +600,19 @@ describe('GitHubAdapter', () => {
 
 ### `startGitHubMockServer(fixturePath, port?)`
 
-| Parameter     | Type   | Required | Description                                                      |
-| ------------- | ------ | -------- | ---------------------------------------------------------------- |
-| `fixturePath` | string | Yes      | Absolute path to a JSON fixture file. Read once at server start. |
-| `port`        | number | No       | Port to bind to. Defaults to `3032`.                             |
+| Parameter     | Type   | Required | Description                                                                                                                                                       |
+| ------------- | ------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fixturePath` | string | Yes      | Absolute path to a JSON fixture file. Read once at server start.                                                                                                  |
+| `port`        | number | No       | Port to bind to. Defaults to `0` (ephemeral, OS-assigned — hermetic: concurrent suites/checkouts on one box can never collide). Pass an explicit port to pin one. |
 
 Returns `Promise<GitHubMockServerHandle>`.
 
 ### `GitHubMockServerHandle`
 
-| Field   | Type                  | Description                                |
-| ------- | --------------------- | ------------------------------------------ |
-| `url`   | string                | Base URL, e.g. `http://localhost:3032`.    |
-| `close` | `() => Promise<void>` | Shuts the server down. Call in `afterAll`. |
+| Field   | Type                  | Description                                                                                                                                            |
+| ------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `url`   | string                | Base URL, e.g. `http://localhost:49213` — the port ACTUALLY bound (derived after listen, correct for both an explicit port and the ephemeral default). |
+| `close` | `() => Promise<void>` | Shuts the server down. Call in `afterAll`.                                                                                                             |
 
 Pass `handle.url` as `base_url` in the `GitHubAdapter` constructor or in the workflow YAML
 `config.base_url` field to redirect all GitHub API calls to the local server.
