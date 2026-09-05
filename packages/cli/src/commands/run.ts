@@ -262,7 +262,24 @@ export const runCommand = new Command('run')
       }
 
       // 4. Set up readline
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      //
+      // issue #458 — three load-bearing facts, in order: (a) prompts follow the SCREEN, not the
+      // pipe — with stdout redirected, the interactive surface (prompt text + echo) joins the
+      // reasons/maps that already print on stderr, and the log keeps the pure narrative (bash
+      // `read -p`'s norm, executed against every surveyed tool); (b) `terminal` keys on STDIN —
+      // the #426 guard above makes `process.stdin.isTTY` an invariant `true` here, and terminal
+      // mode is the only route into node's fixed ^C/^D AbortError path (nodejs/node#54030; the
+      // non-terminal path is unfixed and upstream-declined, nodejs/node#60344), which is what
+      // keeps cancellation ABORT_ERR-coded and the exit code truthful even with BOTH streams
+      // piped; (c) the both-piped corner cost — readline then writes prompts/echo/cursor codes
+      // into the stderr pipe and the human types blind — is accepted (matches bash's exact
+      // posture; a `/dev/tty` alternative is ecosystem-unprecedented in Node and
+      // documentation-discouraged).
+      const rl = createInterface({
+        input: process.stdin,
+        output: process.stdout.isTTY ? process.stdout : process.stderr,
+        terminal: process.stdin.isTTY,
+      });
 
       // 5. Execution loop
       let run = await store.get(runId);
@@ -403,12 +420,14 @@ export const runCommand = new Command('run')
         // `program.parse()`, so today that surfaces as an unhandled-rejection stack: a saved run
         // that looks like a crash.
         //
-        // BOTH Ctrl-D and Ctrl-C land here on a real terminal — measured on this build: ^C at a
-        // live prompt printed the full map and exited 1. What decides it is the WIRING, not the
-        // key: readline enables raw mode only in terminal mode, which requires `output.isTTY`.
-        // With stdout PIPED, readline never takes the terminal path and ^C takes the
-        // signal/inert route instead (measured: the process died at 130) — out of this catch's
-        // reach, and outside anything the map claims.
+        // BOTH Ctrl-D and Ctrl-C land here in EVERY wiring now (issue #458): readline's raw/
+        // terminal mode is keyed on stdin's TTY-ness at the `createInterface` call above — the
+        // #426 guard makes that an invariant `true` here, and terminal mode is the only route
+        // into node's fixed ABORT_ERR abort path (nodejs/node#54030). Before #458, terminal mode
+        // defaulted to `output.isTTY` instead, so a piped stdout left the pty cooked — history,
+        // not the present: ^C died on the raw ISIG signal path (measured then: exit 130, no map)
+        // and ^D drained the loop silently to a false exit 0 (the non-terminal case node closed
+        // not_planned, nodejs/node#60344) — both dead now, in every wiring.
         //
         // One timing caveat, worth recording because it produced a confident wrong answer during
         // this work: the pty is COOKED until readline switches it, so a ^C delivered before that

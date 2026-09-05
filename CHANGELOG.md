@@ -8,6 +8,24 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **`realm workflow run` detaches cleanly and exits truthfully with stdout redirected, not just
+  in a bare terminal** (issue #458). With stdout piped (`realm workflow run … > log`), Ctrl-C
+  used to die on the raw signal path — exit `130`, no detach map, a live wedged run left behind
+  with no guidance at all. Ctrl-D was worse: the pending prompt never settled, the process
+  **exited `0`** — a false success to any script or cron — with that same wedged run and zero
+  words about it (the underlying node mechanism: readline's Ctrl-C/Ctrl-D abort path was fixed
+  upstream in terminal mode only — nodejs/node#54030 — and the non-terminal case was reported
+  and closed `not_planned` at nodejs/node#60344, so waiting for an upstream fix was never an
+  option). Both keys now detach with the existing #447 map and exit `1` in every wiring,
+  because terminal mode is keyed on **stdin's** TTY-ness rather than stdout's — the one route
+  into node's fixed abort path, and true here by construction since dev-mode run already
+  refuses a non-terminal stdin (issue #426). The visible side effect operators will notice:
+  when stdout is not a terminal, prompts and what you type move to stderr, joining the cancel
+  map (which already printed there) — the log kept by `> log`/`| tee log` now carries the pure
+  run narrative instead of being interleaved with the conversation. One corner accepted
+  honestly: redirect both stdout and stderr and you type blind, but cancelling and the exit
+  code stay truthful regardless.
+
 - **`realm run list --stuck` no longer shows a self-contradicting row for a divergent store
   record** (issue #432). A record whose persisted `run_phase` says `running` while it actually
   carries a live `pending_gate` used to select into `--stuck` as idle (`never_claimed_idle`, the

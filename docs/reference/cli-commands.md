@@ -336,6 +336,14 @@ map: the run id, the step it was waiting on, the run's derived phase, and the ex
 `realm agent --run-id` to re-attach otherwise, and inspect either way. The run is saved; every
 settled step persisted before the prompt appeared.
 
+**Prompts follow the screen, not the pipe** (issue #458). With stdout redirected —
+`realm workflow run ./my-workflow | tee log` — prompts and what you type move to stderr, joining
+the cancel map above (which always printed there): the log keeps the run's narrative, the screen
+keeps the conversation. Ctrl-C and Ctrl-D still detach cleanly with the map and exit `1` in this
+wiring too — previously Ctrl-C died silently and Ctrl-D exited `0` with a wedged run behind it,
+neither one saying so. One corner, noted honestly: redirect BOTH stdout and stderr and you type
+blind, but cancelling and the exit code stay truthful either way.
+
 **A typo at a prompt re-prompts** (issue #459). An answer that is not valid JSON used to crash the
 run with an uncaught stack, the run wedged mid-step; it now says why (`Not valid JSON: …`) and asks
 again. An answer that is valid JSON but not an object — `42`, `null`, a list — asks again too: `42`
