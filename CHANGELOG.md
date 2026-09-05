@@ -15,13 +15,16 @@ All notable changes to this project are documented here.
   repo shipped once before (`maxWorkers: '50%'` + `turbo run test --concurrency=2`) lived only in
   the root npm script, never in `turbo.json` itself — is now closed structurally: `turbo.json`
   carries a top-level `"concurrency": "2"`, so every invocation, bare `--force` included,
-  inherits the pairing (the npm script's own flag stays as belt). Measured cost: cold build
-  **+3.0s**, incremental build **~0**, lint **+7.8s** (its four tasks were fully parallel before);
-  test wall-clock time is unaffected. Alongside the structural fix, the heavy-cell population
-  that had grown without inheriting the suite's own surgical-timeout doctrine now carries budgets
-  again (test-only; no semantic assertion changed). Separately, `startGitHubMockServer` now
-  defaults to `port: 0` (an OS-assigned ephemeral port) instead of the fixed `3032` — hermetic by
-  default, so two concurrent checkouts or suites on one box can no longer collide on that port.
+  inherits the pairing (the npm script's own flag stays as belt). Measured cost: `lint` is the
+  one task whose graph is fully independent across all four packages, so capping its concurrency
+  costs several real seconds (~5-8s on the dev boxes measured); cold and incremental `build` cost
+  is negligible by comparison, since `core` must build alone before the other three regardless of
+  any concurrency setting. `test` wall-clock time is unaffected. Alongside the structural fix, the
+  heavy-cell population that had grown without inheriting the suite's own surgical-timeout
+  doctrine now carries budgets again (test-only; no semantic assertion changed). Separately,
+  `startGitHubMockServer` now defaults to `port: 0` (an OS-assigned ephemeral port) instead of the
+  fixed `3032` — hermetic by default, so two concurrent checkouts or suites on one box can no
+  longer collide on that port.
   Passing an explicit port still works exactly as before; `handle.url` always reflects the port
   actually bound, so existing callers reading `handle.url` (rather than hardcoding the old
   default) are unaffected either way.
