@@ -407,11 +407,12 @@ export async function inspectRun(
     // `pending_gate.choices.includes(...)`) — and the field is frozen at mint, so a definition
     // edited after this gate opened never applies to it. Printed and accepted cannot drift.
     //
-    // Empty renders NOTHING rather than an empty menu: an authored `gate.choices: []` reaches a
-    // real record (the loader has no non-empty check), and that such a gate is human-unresolvable
-    // is issue #433's, not this line's. An ABSENT `choices` is out of contract — the field is
-    // required and always minted — and is trusted exactly as the Gate line above trusts
-    // `gate_id` and `step_name`.
+    // Empty renders NOTHING rather than an empty menu: the authored form is a load error since
+    // #433 — but a GRANDFATHERED registered copy (registered before #433 shipped) can still
+    // carry `gate.choices: []` and keeps running, and that such a gate is human-unresolvable
+    // stays true for that population, not this line's to fix. An ABSENT `choices` is out of
+    // contract — the field is required and always minted — and is trusted exactly as the Gate
+    // line above trusts `gate_id` and `step_name`.
     if (gate.choices.length > 0) {
       lines.push(`  Choices: ${gate.choices.join(', ')}`);
     }

@@ -1485,6 +1485,87 @@ function parseWorkflowString(
         );
       }
 
+      // issue #433: the effective STATIC gate choice source, hoisted per-step BEFORE the
+      // `gate:`-block-only region below. Member (b) below must fire even when there is NO `gate:`
+      // key at all (the executed g433b shape: a gate-trusted step with no gate block but an
+      // empty `input_schema.properties.choice.enum`), and the entire #291 region beneath this one
+      // is gated on `step['gate'] !== undefined` — it cannot host a check that must fire without
+      // one. Pure reads; the existing E2/membership cells (below) pin messages, not evaluation
+      // order, so hoisting these three declarations ahead of them is safe.
+      const gateObj =
+        typeof step['gate'] === 'object' && step['gate'] !== null
+          ? (step['gate'] as Record<string, unknown>)
+          : undefined;
+      const declaredGateChoices = gateObj?.['choices'];
+      const declaredChoiceEnum = (step['input_schema'] as JsonSchema | undefined)?.properties?.[
+        'choice'
+      ]?.enum;
+
+      // Renders the OFFENDING KEY's own line via its full nested path, falling back to the
+      // step's line and then to no position — the same two-rung univocal vocabulary
+      // `withKeyLine` documents above (issue #420: `(line N)` for the key, `(step at line N)`
+      // for the step; never conflated). `withKeyLine` itself is single-segment
+      // (`['steps', stepName, key]`) and cannot express a nested path like
+      // `['steps', stepName, 'gate', 'choices']`, so this is a local sibling rather than a call
+      // to it — no existing `withKeyLine` call site is touched.
+      const withPathLine = (path: readonly string[], message: string): string => {
+        const keyLine = sourceMap.posOf(path)?.line;
+        if (keyLine !== undefined) return `${message} (line ${keyLine})`;
+        const stepLine = sourceMap.posOf(['steps', stepName])?.line;
+        if (stepLine !== undefined) return `${message} (step at line ${stepLine})`;
+        return message;
+      };
+
+      // Member (a) (issue #433): a DECLARED `gate.choices` list that is empty is never right, on
+      // ANY step — gate-trusted or not (the #291 block's own posture just below: a `gate:` key
+      // is validated "regardless of trust"; the #417 strict-on-known-key policy agrees). An empty
+      // list on a gate-trusted step mints an unanswerable gate (every response is refused against
+      // an empty expected set) with no disposal path short of an authored expiry — on an ungated
+      // step it is dead weight either way, so the message is deliberately population-invariant
+      // rather than false for the ungated population.
+      if (Array.isArray(declaredGateChoices) && declaredGateChoices.length === 0) {
+        errors.push(
+          withPathLine(
+            ['steps', stepName, 'gate', 'choices'],
+            `Step '${stepName}': 'gate.choices', when declared, must be non-empty — an empty ` +
+              'list is never right: on a gate-trusted step (trust: human_confirmed/human_reviewed) ' +
+              'it mints a gate NO response can ever resolve (every submission is refused against ' +
+              'an empty expected list, and the live run wedges with no disposal path: abandon ' +
+              'refuses a pending gate; purge and drain refuse a live run; only an authored ' +
+              "'gate.timeout_seconds' + 'on_expiry' expiry could ever clear it). Declare at least " +
+              "one choice, or remove the key to fall back to 'input_schema.properties.choice.enum' " +
+              'or the default pair (approve/reject).',
+          ),
+        );
+      }
+
+      // Member (b) (issue #433): for a GATE-TRUSTED step with no `gate.choices` list declared
+      // (NULLISH — the mint's own `??` semantics; `gate: {choices:}` with a YAML-null value is
+      // the third executed wedge shape, and presence-keying would let it escape this check), a
+      // DECLARED-and-empty `input_schema.properties.choice.enum` is the effective choice source
+      // and the same class of error, under its own key. `choices: null` with no `enum` at all
+      // stays legal — the mint defaults to ['approve', 'reject'].
+      if (
+        (step['trust'] === 'human_confirmed' || step['trust'] === 'human_reviewed') &&
+        declaredGateChoices == null &&
+        Array.isArray(declaredChoiceEnum) &&
+        declaredChoiceEnum.length === 0
+      ) {
+        errors.push(
+          withPathLine(
+            ['steps', stepName, 'input_schema', 'properties', 'choice', 'enum'],
+            `Step '${stepName}': 'input_schema.properties.choice.enum' is this gate's effective ` +
+              "choice source (no 'gate.choices' list declared) and, when declared, must be " +
+              'non-empty — an empty list mints a gate NO response can ever resolve (every ' +
+              'submission is refused against an empty expected list, and the live run wedges ' +
+              'with no disposal path: abandon refuses a pending gate; purge and drain refuse a ' +
+              "live run; only an authored 'gate.timeout_seconds' + 'on_expiry' expiry could ever " +
+              "clear it). Declare at least one enum value, or remove 'enum' to get the default " +
+              'pair (approve/reject).',
+          ),
+        );
+      }
+
       // issue #291 (authorable gate timeout — the FIRST validation the `gate:` block has ever had):
       // the E2 positive-integer checks on timeout_seconds/reminder_seconds/reminder_max, the
       // on_expiry enum, default_choice's required-iff + choice-set validation, and the dead-config
@@ -1561,8 +1642,10 @@ function parseWorkflowString(
           // mirroring validation_exhaustion.mode:'default' requiring default_output); validated
           // against the step's own EFFECTIVE STATIC choice set — the EXACT same three-source
           // derivation the engine mints PendingGate.choices from (execution-loop.ts's gate-open
-          // site: gate.choices ?? input_schema.properties.choice.enum ?? ['approve','reject']) —
-          // so a load-time-legal default_choice can NEVER fail at enactment time.
+          // site: gate.choices ?? input_schema.properties.choice.enum ?? ['approve','reject']),
+          // sourced from the issue #433 hoist above (`declaredGateChoices ?? declaredChoiceEnum`
+          // — one chain, so this can never drift from the mint's) — so a load-time-legal
+          // default_choice can NEVER fail at enactment time.
           const hasDefaultChoice = 'default_choice' in gate;
           if (onExpiry === 'settle_default') {
             if (!hasDefaultChoice) {
@@ -1574,9 +1657,7 @@ function parseWorkflowString(
                 ),
               );
             } else {
-              const choicesRaw =
-                gate['choices'] ??
-                (step['input_schema'] as JsonSchema | undefined)?.properties?.['choice']?.enum;
+              const choicesRaw = declaredGateChoices ?? declaredChoiceEnum;
               const effectiveChoices = Array.isArray(choicesRaw)
                 ? (choicesRaw as string[])
                 : ['approve', 'reject'];

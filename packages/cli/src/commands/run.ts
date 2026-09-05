@@ -58,9 +58,10 @@ function isWriterNonceRequired(): boolean {
  *
  * The choices are joined with `|` deliberately: this is a usage template showing alternation, not
  * a list. (inspect renders them `', '` and the prompt `'/'`; three renderings, three purposes.)
- * An authored-empty `choices: []` renders an empty alternation — that run is already
- * human-unresolvable, which is issue #433's to make unmintable at the loader; not special-cased
- * here.
+ * An empty `choices: []` renders an empty alternation — that run is already human-unresolvable.
+ * The authored form is a load error since issue #433; a GRANDFATHERED registered copy (one
+ * registered before #433 shipped) can still carry it and keeps running — not special-cased here
+ * either way.
  *
  * @internal Exported for testing only.
  */

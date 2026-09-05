@@ -16,6 +16,22 @@ function expectThrows(yaml: string, substring: string): void {
   }
 }
 
+/** Like `expectThrows`, but pins several fragments of the SAME thrown message at once (issue
+ *  #433's four-clause errors — one substring check per clause). Additive; `expectThrows` above
+ *  is untouched. */
+function expectThrowsAll(yaml: string, substrings: readonly string[]): void {
+  expect(() => loadWorkflowFromString(yaml)).toThrow(WorkflowError);
+  try {
+    loadWorkflowFromString(yaml);
+    throw new Error('expected loadWorkflowFromString to throw');
+  } catch (err) {
+    const message = (err as WorkflowError).message;
+    for (const s of substrings) {
+      expect(message).toContain(s);
+    }
+  }
+}
+
 function gateWorkflow(gateBlock: string, extra = ''): string {
   return `
 id: gate-timeout-wf
@@ -210,4 +226,202 @@ steps:
       ).toEqual([]);
     });
   });
+});
+
+// =================================================================================================
+// issue #433 — a DECLARED-and-EMPTY gate choice source is a load error, all three member shapes:
+// (a) `gate.choices: []`; (b) a gate-trusted step's `input_schema.properties.choice.enum: []`
+// with no `gate.choices` list declared (nullish — `gate: {choices:}` YAML-null included); the
+// engine's own mint derivation (execution-loop.ts's gate-open site) is
+// `gate.choices ?? input_schema.properties.choice.enum ?? ['approve', 'reject']` — an empty ARRAY
+// from EITHER source defeats the `??` default, minting a gate no response can ever resolve, with
+// no disposal path short of an authored `gate.timeout_seconds` + `on_expiry` expiry (abandon,
+// purge, and drain all refuse a live, non-terminal wedge).
+//
+// `gateWorkflow()` above always emits a `gate:` block and hardcodes `trust: human_confirmed` — it
+// cannot express "no gate: block at all" (member (b)'s own live population) or an ungated step
+// (C6/C7's scope-boundary controls), so those cells use standalone fixture strings, following the
+// ":a step with no gate: block at all is unaffected" precedent just above.
+// =================================================================================================
+
+describe('yaml-loader — issue #433 gate choice source: declared-empty is a load error', () => {
+  describe('member (a): gate.choices declared and empty', () => {
+    it('C1 gate-trusted, choices: [] — the four-clause error, corrected remedy chain, key-line cite', () => {
+      expectThrowsAll(gateWorkflow('      choices: []'), [
+        "'gate.choices', when declared, must be non-empty",
+        'no disposal path',
+        "remove the key to fall back to 'input_schema.properties.choice.enum' or the default pair",
+        '(line 12)',
+      ]);
+    });
+  });
+
+  describe('member (b): a gate-trusted step, no gate.choices list declared, empty enum', () => {
+    it('C2 NO gate: block at all + enum: [] — the member-(b) error, enum key-line cite', () => {
+      expectThrowsAll(
+        `
+id: g433b-wf
+name: G433b
+version: 1
+steps:
+  approve:
+    description: Approve
+    execution: auto
+    handler: h
+    trust: human_confirmed
+    input_schema:
+      type: object
+      properties:
+        choice:
+          type: string
+          enum: []
+      required: [choice]
+`,
+        [
+          "'input_schema.properties.choice.enum' is this gate's effective choice source",
+          'no disposal path',
+          "remove 'enum' to get the default pair (approve/reject)",
+          '(line 16)',
+        ],
+      );
+    });
+
+    it('C2b gate: block PRESENT (timeout_seconds: 60, no choices) + enum: [] — same error', () => {
+      expectThrowsAll(
+        gateWorkflow(
+          '      timeout_seconds: 60',
+          `    input_schema:
+      type: object
+      properties:
+        choice:
+          type: string
+          enum: []
+      required: [choice]`,
+        ),
+        [
+          "'input_schema.properties.choice.enum' is this gate's effective choice source",
+          '(line 18)',
+        ],
+      );
+    });
+
+    it('C2c the third wedge: gate: {choices:} (YAML null) + enum: [] — member (b) fires (nullish keying)', () => {
+      expectThrowsAll(
+        gateWorkflow(
+          '      choices:',
+          `    input_schema:
+      type: object
+      properties:
+        choice:
+          type: string
+          enum: []
+      required: [choice]`,
+        ),
+        ["'input_schema.properties.choice.enum' is this gate's effective choice source"],
+      );
+    });
+  });
+
+  describe('controls (must NOT error)', () => {
+    it('C3 gate-trusted, no choices, no enum — loads (the mint default: execution-loop.test.ts:1680-1681, fixture :1644)', () => {
+      const def = loadWorkflowFromString(gateWorkflow('      timeout_seconds: 60'));
+      expect(def.steps['approve']!.gate?.choices).toBeUndefined();
+    });
+
+    it('C3b gate-trusted, gate: {choices:} (null-valued), NO enum — loads (the nullish shape alone is legal)', () => {
+      // choices: (YAML null) parses to and stays `null` on the loaded definition — it is not
+      // stripped — so this asserts null, not undefined (the C3 control above, which never
+      // declares the key at all, correctly asserts undefined).
+      const def = loadWorkflowFromString(gateWorkflow('      choices:'));
+      expect(def.steps['approve']!.gate?.choices).toBeNull();
+    });
+
+    it('C4 gate-trusted, choices: [approve, reject] — loads', () => {
+      const def = loadWorkflowFromString(gateWorkflow('      choices: [approve, reject]'));
+      expect(def.steps['approve']!.gate?.choices).toEqual(['approve', 'reject']);
+    });
+
+    it("C9 precedence control: choices: [approve] + enum: [] — loads (choices wins the chain, as the mint's ?? does)", () => {
+      const def = loadWorkflowFromString(
+        gateWorkflow(
+          '      choices: [approve]',
+          `    input_schema:
+      type: object
+      properties:
+        choice:
+          type: string
+          enum: []
+      required: [choice]`,
+        ),
+      );
+      expect(def.steps['approve']!.gate?.choices).toEqual(['approve']);
+    });
+  });
+
+  it('C5 composition: choices: [] + timeout_seconds + on_expiry: settle_default + default_choice — BOTH errors accumulate (#425)', () => {
+    // Red-first (lane-executed, NOT loads-clean): on main this fixture throws TODAY with exactly
+    // ONE err.errors entry (the pre-existing default_choice membership error, trailing-empty
+    // list, step-line cite) — the red this cell adds is the ABSENT non-empty boundary, not a
+    // clean load.
+    const yaml = gateWorkflow(
+      '      choices: []\n      timeout_seconds: 60\n      on_expiry: settle_default\n      default_choice: approve',
+    );
+    try {
+      loadWorkflowFromString(yaml);
+      throw new Error('expected loadWorkflowFromString to throw');
+    } catch (err) {
+      const errors = (err as WorkflowError).errors ?? [(err as WorkflowError).message];
+      expect(
+        errors.some((e) => e.includes("'gate.choices', when declared, must be non-empty")),
+      ).toBe(true);
+      expect(errors.some((e) => e.includes("is not one of the step's effective choices"))).toBe(
+        true,
+      );
+      expect(errors).toHaveLength(2);
+    }
+  });
+
+  it('C6 the scope boundary: UNGATED step, no gate block, enum: [] — still loads (a schema-validity question, different class)', () => {
+    const def = loadWorkflowFromString(`
+id: g433e-wf
+name: G433e
+version: 1
+steps:
+  step1:
+    description: a
+    execution: auto
+    handler: h
+    input_schema:
+      type: object
+      properties:
+        choice:
+          type: string
+          enum: []
+      required: [choice]
+`);
+    expect(def.steps['step1']!.trust).toBeUndefined();
+  });
+
+  it('C7 member (a) on an UNGATED step (gate: {choices: []}, no trust) — refused, SAME message (population-invariant)', () => {
+    expectThrows(
+      `
+id: g433f-wf
+name: G433f
+version: 1
+steps:
+  step1:
+    description: a
+    execution: auto
+    handler: h
+    gate:
+      choices: []
+`,
+      "'gate.choices', when declared, must be non-empty",
+    );
+  });
+
+  // The both-declared-empty composition (`gate.choices: []` + `enum: []`): member (a) fires
+  // (declaredGateChoices is `[]`, satisfying its own conjunct); member (b) stays silent (its
+  // `declaredGateChoices == null` conjunct is false — an empty ARRAY is not nullish). One error,
+  // not two; no dedicated cell (C1 + C9 already exercise each conjunct independently).
 });
