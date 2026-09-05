@@ -219,6 +219,35 @@ describe('classifyRunHealth', () => {
     });
   });
 
+  it('D2 (issue #432): the SAME wedged-sibling shape, but the persisted run_phase is DIVERGENT (running) — still forks to wedged_gate_sibling, not stale_claim', () => {
+    // Exactly the fixture above, changing ONE field: run_phase 'gate_waiting' → 'running'.
+    // deriveRunPhase still reads 'gate_waiting' off the live pending_gate, so the fork must
+    // still land on wedged_gate_sibling — before this fix it misforked to
+    // {kind: 'stale_claim', step: 'branch_b', reason: 'claim_stale'} (the red-first shape).
+    const run = makeRun({
+      run_phase: 'running', // divergent — the live pending_gate below actually derives 'gate_waiting'
+      in_progress_steps: ['gated', 'branch_b'],
+      claims: {
+        gated: { deadline: null },
+        branch_b: { deadline: new Date(NOW.getTime() - 60_000).toISOString() },
+      },
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 'gated',
+        choices: ['approve'],
+        opened_at: NOW.toISOString(),
+        preview: {},
+      },
+    });
+    const findings = classifyRunHealth(run, { now: NOW });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      kind: 'wedged_gate_sibling',
+      step: 'branch_b',
+      reason: 'claim_stale',
+    });
+  });
+
   it('a claim_unknown_age claim on a RUNNING (non-gated) run still gets kind stale_claim per the B1 table (reason carries the finer distinction)', () => {
     const run = makeRun({
       in_progress_steps: ['work'],
@@ -348,9 +377,42 @@ describe('classifyRunHealth', () => {
     expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
   });
 
-  it('never_claimed_idle does NOT fire on a gate_waiting run', () => {
+  it('never_claimed_idle does NOT fire on a genuinely gate-waiting run (a live pending_gate, no expiry)', () => {
+    // issue #432 (authorized edit — the OTHER divergence direction): this fixture used to set
+    // persisted `run_phase: 'gate_waiting'` with NO `pending_gate` at all, which deriveRunPhase
+    // reads as 'running' — a divergent record in its own right, just the mirror image of D1
+    // below. A genuinely gate-waiting run needs the live gate, not just the label; D1 is the
+    // divergent twin this cell is now kept distinct from (persisted 'running' + a live gate).
     const run = makeRun({
       run_phase: 'gate_waiting',
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 'gated',
+        choices: ['approve'],
+        opened_at: NOW.toISOString(),
+        preview: {},
+      },
+      updated_at: new Date(NOW.getTime() - 2 * DEFAULT_IDLE_THRESHOLD_MS).toISOString(),
+    });
+    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+  });
+
+  it('D1 (issue #432): a DIVERGENT record (persisted running, a live un-expired pending_gate) does NOT select as never_claimed_idle — the gate owns its story, not idle', () => {
+    // The #406 walk's trip-over 7, reproduced: a store record whose persisted run_phase says
+    // 'running' while a live pending_gate says otherwise. deriveRunPhase reads the record's own
+    // facts and says 'gate_waiting' — an un-expired live gate is never stuck-idle; it drops out
+    // of --stuck entirely (plain `list` still renders it, with its gate tail). Asserts the FULL
+    // findings array, not just kind-absence — no OTHER finding may leak through either.
+    const run = makeRun({
+      run_phase: 'running', // divergent — the live pending_gate below actually derives 'gate_waiting'
+      pending_gate: {
+        gate_id: 'g432',
+        step_name: 'ask',
+        choices: ['approve', 'reject'],
+        opened_at: NOW.toISOString(),
+        preview: {},
+      },
+      in_progress_steps: [],
       updated_at: new Date(NOW.getTime() - 2 * DEFAULT_IDLE_THRESHOLD_MS).toISOString(),
     });
     expect(classifyRunHealth(run, { now: NOW })).toEqual([]);

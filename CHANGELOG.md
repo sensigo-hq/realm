@@ -8,6 +8,25 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **`realm run list --stuck` no longer shows a self-contradicting row for a divergent store
+  record** (issue #432). A record whose persisted `run_phase` says `running` while it actually
+  carries a live `pending_gate` used to select into `--stuck` as idle (`never_claimed_idle`, the
+  bare `idle:` tail) on the SAME line that rendered the derived `gate_waiting` — one row telling
+  two stories about itself. The cause: `run-health.ts` classified on the persisted `run_phase`
+  field at two of its checks (the idle finding, and the claim-kind fork that names a sibling
+  step's wedge `stale_claim` vs. `wedged_gate_sibling`) instead of the derived phase every OTHER
+  check in the file already uses. Both now key on the same derived truth, computed once per
+  classification: a divergent record now classifies as what it actually is — an un-expired live
+  gate is never idle (it drops out of `--stuck` entirely; plain `realm run list` still shows it,
+  with its gate tail; the gate-kind findings own its story once it expires), and a wedged sibling
+  claim on such a record is correctly labeled `wedged_gate_sibling`, not `stale_claim`. This makes
+  the `--stuck` selector docs' own rationale, and the 0.40.0 changelog's "every run the list shows
+  says why" claim, true for this population too. Three OTHER persisted-`run_phase` control-flow
+  reads survive elsewhere in the engine (an idempotency-policy fork, an abandon-run refusal
+  disjunct, and a run-agent exit-tail check) — tracked separately at issue #499, not fixed here.
+  No CLI or docs changes: existing consumers were already coherent for every record shape they
+  construct, and this fix does not touch anything they display.
+
 - **A declared-and-empty gate choice source is now a load error, in all three shapes it could
   take** (issue #433). `gate.choices: []`, a gate-trusted step's `input_schema.properties.
 choice.enum: []` with no `gate.choices` list declared, and `gate: {choices:}` (a YAML-null

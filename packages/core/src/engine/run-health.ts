@@ -29,17 +29,23 @@
 //      step !== run.pending_gate?.step_name`. The open-gate claim is always `{deadline: null}` ⇒
 //      `claim_unknown_age` — excluding it is what keeps a healthy gate_waiting run at ZERO
 //      findings (the B1 negative pin); without the exclusion EVERY healthy gated run would flag.
-//      `kind` is keyed by PHASE, not by the claim's own state: `run_phase === 'gate_waiting'` ⇒
-//      `wedged_gate_sibling`, else `stale_claim` — so a `claim_unknown_age` claim on a `running`
-//      run still gets `kind: 'stale_claim'` per this table (the more precise distinction survives
-//      in `reason`, which mirrors the claim's own state string verbatim — single-sourced, never
-//      reinvented). Subsumes list.ts's pre-#221 `wedgedNonGatedClaims` (deleted there; see the
-//      source-text negative pin in list.test.ts).
+//      `kind` is keyed by the DERIVED phase (never the persisted `run_phase` field — issue #432: a
+//      divergent record, persisted `running` with a live `pending_gate`, must fork on what the
+//      record actually IS, not on a stale label), not by the claim's own state:
+//      `deriveRunPhase(run) === 'gate_waiting'` ⇒ `wedged_gate_sibling`, else `stale_claim` — so a
+//      `claim_unknown_age` claim on a genuinely `running` run still gets `kind: 'stale_claim'` per
+//      this table (the more precise distinction survives in `reason`, which mirrors the claim's
+//      own state string verbatim — single-sourced, never reinvented). Subsumes list.ts's pre-#221
+//      `wedgedNonGatedClaims` (deleted there; see the source-text negative pin in list.test.ts).
 //   3. Capability findings: `findCapabilityBlockedSteps(run)` ⇒ `capability_block`. That function's
 //      own eligibility cross-check already self-suppresses a stale marker whose step has since
 //      settled, so no extra suppression is needed here.
-//   4. `never_claimed_idle` (the #221 class): `run_phase === 'running' && in_progress_steps.length
-//      === 0 && (now − updated_at) >= idleThresholdMs`. Age-gated by DEFAULT_IDLE_THRESHOLD_MS
+//   4. `never_claimed_idle` (the #221 class): `deriveRunPhase(run) === 'running'` (never the
+//      persisted `run_phase` field — issue #432: a divergent record, persisted `running` with a
+//      live `pending_gate`, derives `gate_waiting` and must not select as idle at all — an
+//      un-expired live gate is the gate kinds' story to tell, not idle's) `&&
+//      in_progress_steps.length === 0 && (now − updated_at) >= idleThresholdMs`. Age-gated by
+//      DEFAULT_IDLE_THRESHOLD_MS
 //      (24h, engine-minted per the K8s/Prometheus convention that detection never REQUIRES an
 //      operator-supplied threshold) unless the caller overrides. `since`, `idle_ms`, and
 //      `evidence.idle_threshold_ms` are REQUIRED on this finding (pinned by the boundary +
@@ -369,6 +375,16 @@ export function classifyRunHealth(
   opts?: { now?: Date; idleThresholdMs?: number; definition?: WorkflowDefinition },
 ): RunHealthFinding[] {
   const now = opts?.now ?? new Date();
+  // issue #432: computed ONCE per classify call, ahead of every branch — the module's own D-3
+  // disposal rule (module doc item 6, eligibility.ts:259-264) applies to every control-flow read
+  // in this function, not just the completed_with_failed_steps check that already honored it. A
+  // divergent store record (persisted run_phase disagreeing with what the record's OTHER fields
+  // actually derive) must classify — and render — on the SAME truth; deriveRunPhase is pure and
+  // throw-free on every record shape (terminal or not), so hoisting it above the terminal branch
+  // costs nothing and lets all three consumers below (the terminal completed_with_failed_steps
+  // check, the claim-kind fork, and never_claimed_idle) share one value that can never disagree
+  // with itself.
+  const derivedPhase = deriveRunPhase(run);
 
   // Branch 1 — NARROWED first guard (issue #279, increment 1, PR-B, design record §6, explicitly
   // authorized): checked BEFORE the terminal short-circuit. A terminal run with a still-'pending'
@@ -410,7 +426,7 @@ export function classifyRunHealth(
     // issue #302 (disclosure gaps, item 6 above): a completed seal that still carries failed_steps
     // — designed recovery behavior, informational only. Keyed on the DERIVED phase (never the
     // persisted run_phase field, never the byte-equivalent direct terminal_reason check).
-    if (deriveRunPhase(run) === 'completed' && run.failed_steps.length > 0) {
+    if (derivedPhase === 'completed' && run.failed_steps.length > 0) {
       pendingFindings.push({
         kind: 'completed_with_failed_steps',
         reason:
@@ -440,8 +456,10 @@ export function classifyRunHealth(
   for (const c of classifyInProgressClaims(run, now)) {
     if (c.state === 'healthy') continue;
     if (c.step === run.pending_gate?.step_name) continue; // the open-gate claim is never a wedge
+    // issue #432: `derivedPhase`, never `run.run_phase` — the D-3 disposal rule (module doc item
+    // 6, eligibility.ts:259-264).
     findings.push({
-      kind: run.run_phase === 'gate_waiting' ? 'wedged_gate_sibling' : 'stale_claim',
+      kind: derivedPhase === 'gate_waiting' ? 'wedged_gate_sibling' : 'stale_claim',
       step: c.step,
       reason: c.state,
       evidence: { state: c.state, deadline: c.deadline },
@@ -520,9 +538,10 @@ export function classifyRunHealth(
   }
 
   // Branch 4 — never_claimed_idle (the #221 class). since/idle_ms/evidence.idle_threshold_ms are
-  // REQUIRED on this finding.
+  // REQUIRED on this finding. issue #432: `derivedPhase`, never `run.run_phase` — the D-3 disposal
+  // rule (module doc item 6, eligibility.ts:259-264).
   if (
-    run.run_phase === 'running' &&
+    derivedPhase === 'running' &&
     run.in_progress_steps.length === 0 &&
     now.getTime() - new Date(run.updated_at).getTime() >= idleThresholdMs
   ) {
