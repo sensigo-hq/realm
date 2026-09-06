@@ -248,6 +248,21 @@ export {
 export { JsonWorkflowStore } from './workflow/registrar.js';
 export type { WorkflowRegistrar } from './workflow/registrar.js';
 export { getWorkflowForRun } from './workflow/registrar.js';
+export {
+  GUARD_PROHIBITED_STEP_KEYS,
+  FINALIZER_PROHIBITED_STEP_KEYS,
+} from './workflow/yaml-loader.js';
+
+// Step-key consumption registry (issue #417 PR-2)
+export {
+  STEP_KEY_REGISTRY,
+  TRACKED_RESIDUALS,
+  FINALIZER_LOOP_PATTERN,
+  GUARD_LOOP_PATTERN,
+  normalizeSource,
+  countWitnessMatches,
+} from './workflow/step-key-registry.js';
+export type { StepKeyCell, StepKeyVia, StepKeyWitness } from './workflow/step-key-registry.js';
 
 // Diagnostics — structured loader-warning channel (issue #169)
 export {

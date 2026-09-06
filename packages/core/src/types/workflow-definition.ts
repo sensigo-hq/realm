@@ -453,7 +453,10 @@ export interface StepDefinition {
    * output_summary for human-readable terminal output. Uses {{ field }} syntax where
    * field is a dot-path into the step's output object. When absent, the CLI falls
    * back to the existing headline/message and JSON rendering behaviour.
-   * No engine evaluation — rendered client-side at run completion.
+   * No engine evaluation — rendered client-side, on two surfaces only: the run-completion
+   * result render is AGENT-steps-only (the CLI filters on execution === 'agent'), and the
+   * gate-preview render fires only when this step opens a gate. On a gateless non-agent step
+   * the template is never read (issue #417 PR-2 — the consumption registry's display×auto row).
    */
   display?: string;
   /**

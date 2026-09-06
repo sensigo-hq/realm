@@ -921,6 +921,37 @@ that change ships the mechanism.
 Every key is realm's, and an unrecognised one is a mistake rather than somebody else's field. The
 revisit trigger is concrete: third-party tooling that needs to annotate workflow YAML.
 
+### The step-key consumption registry (issue #417 PR-2)
+
+The refusals above are the known-key story for the handful of keys realm has reclassified one at a
+time (#402, #413, #369, and this file's own running list). The exhaustive, cross-checked version of
+the same story — every key in `KNOWN_STEP_KEYS` crossed with every execution kind, with the exact
+line in the engine or the loader that either reads it or refuses it — lives in
+`packages/core/src/workflow/step-key-registry.ts`. A conformance suite drives every prohibited,
+blocked_transitive, and inert row through the real loader and the real engine source on every test
+run, so the registry cannot drift silently from the code it describes.
+
+Two shapes of "not valid" appear there beyond the plain, unconditional prohibition documented
+above: a key can be refused only in combination with another field's absence — `tool_timeout`
+requires a non-empty `tools` list, and is refused only when that companion is missing, never on its
+own — and a key can be accepted on every kind while being genuinely read on only some, the rest
+tracked as a named, deliberate gap rather than silently dropped. Both are deliberate, beyond-field
+mechanisms: mature option registries elsewhere draw the same two-way distinction between an
+unconditional and a companion-conditioned restriction (Clang's `Options.td`, for one); realm's
+version additionally proves the distinction by execution on every test run, which no surveyed
+system does.
+
+**The `gate` key's empty-choices asymmetry (issue #433).** A declared-empty `gate.choices: []` is
+a load error on any step — refused, with the reason (an empty list mints a gate no response can
+ever resolve) and the remedy spelled out, regardless of whether the step is even gate-trusted. Its
+`enum` sibling (`input_schema.properties.choice.enum: []`) is refused only where it is the gate's
+effective choice source: a gate-trusted step with no `gate.choices` list declared. On an ungated
+step the same empty `enum` loads clean. The asymmetry the registry records: the `gate.choices: []`
+refusal fires on every execution kind, including `guard` and `finalizer`, where the `gate` key
+itself is never read (tracked as inert in the registry) — declared-empty is refused even where
+declared-anything else is otherwise merely inert. An empty source is never right on any kind, so
+it gets strictness where the rest of the key gets tracking.
+
 ## `llm_timeout_seconds` (the per-attempt model-request ceiling)
 
 ```yaml
