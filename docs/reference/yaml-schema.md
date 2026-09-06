@@ -921,6 +921,34 @@ that change ships the mechanism.
 Every key is realm's, and an unrecognised one is a mistake rather than somebody else's field. The
 revisit trigger is concrete: third-party tooling that needs to annotate workflow YAML.
 
+### The step-key consumption registry (issue #417 PR-2)
+
+The refusals above are the known-key story for the handful of keys realm has reclassified one at a
+time (#402, #413, #369, and this file's own running list). The exhaustive, cross-checked version of
+the same story — every key in `KNOWN_STEP_KEYS` crossed with every execution kind, with the exact
+line in the engine or the loader that either reads it or refuses it — lives in
+`packages/core/src/workflow/step-key-registry.ts`. A conformance suite drives every prohibited,
+blocked_transitive, and inert row through the real loader and the real engine source on every test
+run, so the registry cannot drift silently from the code it describes.
+
+Two shapes of "not valid" appear there beyond the plain, unconditional prohibition documented
+above: a key can be refused only in combination with another field's absence — `tool_timeout`
+requires a non-empty `tools` list, and is refused only when that companion is missing, never on its
+own — and a key can be accepted on every kind while being genuinely read on only some, the rest
+tracked as a named, deliberate gap rather than silently dropped. Both are deliberate, beyond-field
+mechanisms: mature option registries elsewhere draw the same two-way distinction between an
+unconditional and a companion-conditioned restriction (Clang's `Options.td`, for one); realm's
+version additionally proves the distinction by execution on every test run, which no surveyed
+system does.
+
+**The `gate` key's empty-choices asymmetry (issue #433).** `gate.choices: []` is accepted with no
+length check anywhere in the loader. On `auto`/`agent` steps — the only kinds where `gate` is
+actually read — that mints a live, human-unresolvable gate: `choice_not_eligible` fires forever,
+because the expected-choices list is empty and no answer can ever match it. On `guard`/`finalizer`
+steps, where `gate` is inert (tracked separately in the registry), the identical empty array is
+read by nothing and does nothing. The same malformed input is accepted everywhere; only on the
+kinds where the key is actually consumed does accepting it strand a run.
+
 ## `llm_timeout_seconds` (the per-attempt model-request ceiling)
 
 ```yaml

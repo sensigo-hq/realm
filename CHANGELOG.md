@@ -6,6 +6,26 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **A step-key consumption registry classifies every step field against every execution kind, and
+  a conformance suite proves the classification against the real loader and engine on every test
+  run** (issue #417 PR-2). Every key in a workflow step's schema, crossed with `auto`/`agent`/
+  `guard`/`finalizer`, is one of: consumed (with the exact source line that reads it, and — where
+  a live sub-population never reaches that line — a named advisory, a written waiver, or a
+  tracked issue explaining why the silence is not a defect); prohibited (refused unconditionally,
+  with the exact loader check that refuses it); prohibited only in combination with another
+  field's absence (`tool_timeout` without `tools`, the one existing case); or not applicable (a
+  key resolved away before any step is ever validated). A TypeScript `satisfies` clause makes a
+  future step key that ships without a row a compile error, and 197 new tests drive every
+  prohibited/inert/companion-conditioned cell through the real workflow loader on a
+  purpose-built fixture, and check every source-code witness by exact, comment-stripped count —
+  so the registry cannot drift silently from the code it describes. Zero behavior change; this PR
+  is the map, not the flip. `packages/core/src/workflow/step-key-registry.ts` is the source of
+  truth; see "The step-key consumption registry" in `docs/reference/yaml-schema.md`. A follow-up
+  arc (tracked in the design record) will mint the loader's own kind-prohibition messages FROM
+  this registry instead of the other way around.
+
 ### Changed
 
 - **The house test-suite is de-starved, and `@sensigo/realm-testing`'s GitHub mock server binds

@@ -277,6 +277,39 @@ const SERVICE_ENTRY_JSON_SCHEMA = {
 };
 
 const VALID_EXECUTIONS = new Set(['auto', 'agent', 'guard', 'finalizer']);
+// issue #417 PR-2: the two kind-prohibition lists, extracted to module scope and EXPORTED so the
+// consumption registry (step-key-registry.ts) can assert loop membership by VALUE rather than by
+// source text (the registry's witness rule 4). Zero behavior change — the loops below consume
+// these exact arrays; loop bodies are byte-identical to before.
+export const FINALIZER_PROHIBITED_STEP_KEYS = [
+  'depends_on',
+  'trigger_rule',
+  'abort_unless',
+  'abort_message',
+  'output_schema',
+  'agent_profile',
+  'tools',
+  'uses_service',
+  'service_method',
+  'operation',
+  'input_map',
+  'when',
+  'retry',
+] as const;
+export const GUARD_PROHIBITED_STEP_KEYS = [
+  'uses_service',
+  'handler',
+  'input_schema',
+  'output_schema',
+  'trust',
+  'agent_profile',
+  'trigger_rule',
+  'timeout_seconds',
+  'service_method',
+  'operation',
+  'input_map',
+  'tools',
+] as const;
 const VALID_FINALIZER_TRIGGERS = new Set([
   'complete',
   'fail',
@@ -942,22 +975,7 @@ function parseWorkflowString(
 
       // Finalizer step constraints (a workflow-level try/catch/finally). handler-only in v1.
       if (step['execution'] === 'finalizer') {
-        const prohibited = [
-          'depends_on',
-          'trigger_rule',
-          'abort_unless',
-          'abort_message',
-          'output_schema',
-          'agent_profile',
-          'tools',
-          'uses_service',
-          'service_method',
-          'operation',
-          'input_map',
-          'when',
-          'retry',
-        ];
-        for (const field of prohibited) {
+        for (const field of FINALIZER_PROHIBITED_STEP_KEYS) {
           if (step[field] !== undefined) {
             errors.push(
               withStepLine(
@@ -1032,21 +1050,7 @@ function parseWorkflowString(
 
       // Guard step constraints.
       if (step['execution'] === 'guard') {
-        const prohibited = [
-          'uses_service',
-          'handler',
-          'input_schema',
-          'output_schema',
-          'trust',
-          'agent_profile',
-          'trigger_rule',
-          'timeout_seconds',
-          'service_method',
-          'operation',
-          'input_map',
-          'tools',
-        ];
-        for (const field of prohibited) {
+        for (const field of GUARD_PROHIBITED_STEP_KEYS) {
           if (step[field] !== undefined) {
             errors.push(
               withStepLine(
