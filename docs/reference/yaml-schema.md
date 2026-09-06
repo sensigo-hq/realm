@@ -941,13 +941,16 @@ unconditional and a companion-conditioned restriction (Clang's `Options.td`, for
 version additionally proves the distinction by execution on every test run, which no surveyed
 system does.
 
-**The `gate` key's empty-choices asymmetry (issue #433).** `gate.choices: []` is accepted with no
-length check anywhere in the loader. On `auto`/`agent` steps — the only kinds where `gate` is
-actually read — that mints a live, human-unresolvable gate: `choice_not_eligible` fires forever,
-because the expected-choices list is empty and no answer can ever match it. On `guard`/`finalizer`
-steps, where `gate` is inert (tracked separately in the registry), the identical empty array is
-read by nothing and does nothing. The same malformed input is accepted everywhere; only on the
-kinds where the key is actually consumed does accepting it strand a run.
+**The `gate` key's empty-choices asymmetry (issue #433).** A declared-empty `gate.choices: []` is
+a load error on any step — refused, with the reason (an empty list mints a gate no response can
+ever resolve) and the remedy spelled out, regardless of whether the step is even gate-trusted. Its
+`enum` sibling (`input_schema.properties.choice.enum: []`) is refused only where it is the gate's
+effective choice source: a gate-trusted step with no `gate.choices` list declared. On an ungated
+step the same empty `enum` loads clean. The asymmetry the registry records: the `gate.choices: []`
+refusal fires on every execution kind, including `guard` and `finalizer`, where the `gate` key
+itself is never read (tracked as inert in the registry) — declared-empty is refused even where
+declared-anything else is otherwise merely inert. An empty source is never right on any kind, so
+it gets strictness where the rest of the key gets tracking.
 
 ## `llm_timeout_seconds` (the per-attempt model-request ceiling)
 
