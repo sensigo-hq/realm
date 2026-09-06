@@ -303,8 +303,8 @@ describe('dead failure condition — the message tells the truth about guards (i
       ),
     );
 
-    // Half 1 — the #369 prohibition, which the guard block emits FIRST (it runs at :827-850,
-    // before the dead-condition scan at :1602), so it is prepended in the join.
+    // Half 1 — the #369 prohibition, which the #517 registry mint emits FIRST (it runs at
+    // :1002-1018, before the dead-condition scan at :2088), so it is prepended in the join.
     // ONE distinctive substring per error, deliberately: the #369 message's own clauses are
     // pinned in yaml-loader.test.ts, and re-asserting them here would make this cell red whenever
     // that message is reworded — costing the message-content cell its discriminating power for no

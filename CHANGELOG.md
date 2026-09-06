@@ -22,11 +22,38 @@ All notable changes to this project are documented here.
   purpose-built fixture, and check every source-code witness by exact, comment-stripped count —
   so the registry cannot drift silently from the code it describes. Zero behavior change; this PR
   is the map, not the flip. `packages/core/src/workflow/step-key-registry.ts` is the source of
-  truth; see "The step-key consumption registry" in `docs/reference/yaml-schema.md`. A follow-up
-  arc (tracked in the design record) will mint the loader's own kind-prohibition messages FROM
-  this registry instead of the other way around.
+  truth; see "The step-key consumption registry" in `docs/reference/yaml-schema.md`. The
+  drive-flip that mints the loader's own kind-prohibition messages FROM this registry shipped in
+  this same release (#517 — see the entry under Changed below).
 
 ### Changed
+
+- **Wrong-kind step-key refusals are now minted from the consumption registry, with
+  where-the-key-actually-lives consequence clauses** (#517, the #417-PR2 drive-flip). What changes
+  on screen: the generic "is not valid on execution" / "is only valid on execution" messages now
+  carry a witness-backed consequence clause and remedy (for example, `timeout_seconds` on a guard
+  step is now refused with "the engine's execution loop enforces it as the time-bound on auto
+  dispatch and on a finalizer's drain" and its remedy), and cite the
+  offending KEY's own line instead of the step's; a key that used to draw several differently-worded
+  kind verdicts on one step draws exactly ONE (`agent_profile` on a finalizer: two errors before,
+  one now; `tools` on a guard: two kind refusals collapsed to one — its two companion-rule errors,
+  which are not kind refusals, still fire); a step with several misplaced keys reports them in YAML
+  declaration order; and `tools` on a non-agent step no longer appends `without 'handler' defined`
+  (that clause belongs to the agent-with-handler conflict, which keeps its own unchanged error).
+  The refusal POPULATION is unchanged in both directions — every key × kind refused before is
+  refused after, and nothing newly refused (golden-proven against the pre-flip loader over all 140
+  constructible registry cells); the six bespoke four-clause messages are byte-identical. One
+  narrowing on MALFORMED steps: when `execution` is missing or invalid, the per-key kind advice
+  that used to fire alongside the execution error no longer does (the registry has no row for a
+  kind nobody declared) — such workflows are still refused, by the execution error itself.
+- **`GUARD_PROHIBITED_STEP_KEYS` / `FINALIZER_PROHIBITED_STEP_KEYS` are now DERIVED from the
+  registry** (#517): membership grew from 12→20 and 13→19 (the keys whose refusals lived in
+  per-key checks joined their true sets; no member lost; `trust` correctly absent from the
+  finalizer set — its value-conditional check admits `trust: 'auto'`), and the declared type
+  widened from a literal tuple to a computed readonly string array. The
+  `FINALIZER_LOOP_PATTERN`/`GUARD_LOOP_PATTERN` exports are gone with the loops themselves;
+  the mint surface (`MINT_WITNESS_PATTERN`, `CONSUMED_HOME`, `SURFACE_NAME`,
+  `prohibitedKeysFor`, `consumedKindsFor`) is exported in their place.
 
 - **The house test-suite is de-starved, and `@sensigo/realm-testing`'s GitHub mock server binds
   an ephemeral port by default** (issue #371). A structural class of local flakiness — every

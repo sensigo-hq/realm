@@ -160,18 +160,22 @@ steps:
     timeout_seconds: 5
 `;
     assertSourceLine(src, 8, 'step_two:');
+    assertSourceLine(src, 13, 'timeout_seconds:');
     let message = '';
     try {
       loadWorkflowFromString(src);
     } catch (err) {
       message = (err as Error).message;
     }
-    // The suffix names where the STEP is — true of THIS message, and no longer true as a general
-    // statement (issue #417): the prohibition family now names the offending KEY's own line, so
-    // an author reading a long step is sent to the field rather than to its declaration. Errors
-    // outside that family, like this one, still name the step.
+    // #517: this message JOINED the key-line family — the registry mint cites the offending
+    // KEY's own line (`timeout_seconds: 5` sits on line 13, self-proven above) and appends the
+    // witness-backed consequence clause. Full-equality pin, updated to the new truth (the old
+    // form pinned the step-line cite of the deleted guard loop).
     expect(message).toContain(
-      "Step 'step_two': 'timeout_seconds' is not valid on execution: guard steps (step at line 8)",
+      "Step 'step_two': 'timeout_seconds' is not valid on execution: guard steps — the engine's " +
+        "execution loop enforces it as the time-bound on auto dispatch and on a finalizer's " +
+        "drain, and a guard's evaluation is never time-bounded, so here it would bound nothing. " +
+        'Move it to the auto or finalizer step it should bound, or remove it. (line 13)',
     );
   });
 

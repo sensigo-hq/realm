@@ -253,16 +253,25 @@ export {
   FINALIZER_PROHIBITED_STEP_KEYS,
 } from './workflow/yaml-loader.js';
 
-// Step-key consumption registry (issue #417 PR-2)
+// Step-key consumption registry (issue #417 PR-2; #517 the drive-flip — the two loop-pattern
+// exports are gone with the loops themselves, replaced by the mint surface)
 export {
   STEP_KEY_REGISTRY,
   TRACKED_RESIDUALS,
-  FINALIZER_LOOP_PATTERN,
-  GUARD_LOOP_PATTERN,
+  MINT_WITNESS_PATTERN,
+  CONSUMED_HOME,
+  SURFACE_NAME,
+  prohibitedKeysFor,
+  consumedKindsFor,
   normalizeSource,
   countWitnessMatches,
 } from './workflow/step-key-registry.js';
-export type { StepKeyCell, StepKeyVia, StepKeyWitness } from './workflow/step-key-registry.js';
+export type {
+  StepKeyCell,
+  StepKeyVia,
+  StepKeyWitness,
+  ConsumedHome,
+} from './workflow/step-key-registry.js';
 
 // Diagnostics — structured loader-warning channel (issue #169)
 export {

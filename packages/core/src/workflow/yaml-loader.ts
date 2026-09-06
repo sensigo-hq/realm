@@ -35,8 +35,38 @@ import {
   assessStructuredOutputEligibility,
   renderIneligibleMessage,
 } from './structured-output-eligibility.js';
+import {
+  STEP_KEY_REGISTRY,
+  CONSUMED_HOME,
+  prohibitedKeysFor,
+  consumedKindsFor,
+  type StepKeyCell,
+} from './step-key-registry.js';
+import type { ExecutionMode } from '../types/workflow-definition.js';
 
 type ConditionSurface = 'when' | 'abort_unless' | 'preconditions';
+
+/** #517 (the drive-flip): render ONE minted kind-prohibition from registry data. message_data
+ *  cells render their recorded bespoke text verbatim (byte-identical to the pre-flip checks —
+ *  golden-proven at the flip). Generic cells render the per-cell FRONT clause (the two-shape
+ *  truth: 'not_valid' keeps the old loop grammar against THIS kind; 'only_valid' keeps the old
+ *  twin grammar against the DERIVED consumed-kind set) and append the rung-2 consequence clause
+ *  from CONSUMED_HOME — witness-backed message truth (its claims are conformance-tested data). */
+function renderRegistryProhibition(
+  key: string,
+  kind: ExecutionMode,
+  cell: Extract<StepKeyCell, { c: 'prohibited' }>,
+): string {
+  if (cell.message_data !== undefined) return cell.message_data;
+  const home = CONSUMED_HOME[key as keyof typeof CONSUMED_HOME];
+  /* istanbul ignore next -- conformance guarantees totality over generic minted keys */
+  if (home === undefined) return `'${key}' is not valid on execution: ${kind} steps`;
+  const front =
+    cell.front === 'only_valid'
+      ? `'${key}' is only valid on execution: ${consumedKindsFor(key as never).join('/')} steps`
+      : `'${key}' is not valid on execution: ${kind} steps`;
+  return `${front} — ${home.mechanism} ${home.remedy}`;
+}
 
 /**
  * Validate one condition leaf at load time using the shared quote-aware splitter (the SAME split
@@ -277,39 +307,15 @@ const SERVICE_ENTRY_JSON_SCHEMA = {
 };
 
 const VALID_EXECUTIONS = new Set(['auto', 'agent', 'guard', 'finalizer']);
-// issue #417 PR-2: the two kind-prohibition lists, extracted to module scope and EXPORTED so the
-// consumption registry (step-key-registry.ts) can assert loop membership by VALUE rather than by
-// source text (the registry's witness rule 4). Zero behavior change — the loops below consume
-// these exact arrays; loop bodies are byte-identical to before.
-export const FINALIZER_PROHIBITED_STEP_KEYS = [
-  'depends_on',
-  'trigger_rule',
-  'abort_unless',
-  'abort_message',
-  'output_schema',
-  'agent_profile',
-  'tools',
-  'uses_service',
-  'service_method',
-  'operation',
-  'input_map',
-  'when',
-  'retry',
-] as const;
-export const GUARD_PROHIBITED_STEP_KEYS = [
-  'uses_service',
-  'handler',
-  'input_schema',
-  'output_schema',
-  'trust',
-  'agent_profile',
-  'trigger_rule',
-  'timeout_seconds',
-  'service_method',
-  'operation',
-  'input_map',
-  'tools',
-] as const;
+// issue #517 (the drive-flip): the two kind-prohibition sets are DERIVED from the consumption
+// registry — every key whose cell on the kind is prohibited WITHOUT an except arm. Their meaning
+// upgraded with #517 from "the loop's array" to "the prohibited set": they now also carry the
+// keys whose refusals used to live in per-key only-valid-on checks (guard 12→20 members,
+// finalizer 13→19), and their declared type widened from a literal tuple to a computed readonly
+// array — both disclosed in the changelog. The prohibition loops that consumed the old literal
+// arrays are deleted; the registry-driven mint below is the single enforcement mechanism.
+export const FINALIZER_PROHIBITED_STEP_KEYS: readonly string[] = prohibitedKeysFor('finalizer');
+export const GUARD_PROHIBITED_STEP_KEYS: readonly string[] = prohibitedKeysFor('guard');
 const VALID_FINALIZER_TRIGGERS = new Set([
   'complete',
   'fail',
@@ -973,19 +979,51 @@ function parseWorkflowString(
         );
       }
 
+      // issue #517 (the drive-flip): ONE registry-driven walk mints every kind-prohibition —
+      // for each declared key × the step's kind, a `prohibited` cell WITHOUT an except arm
+      // mints exactly one refusal, message text per-cell data (renderRegistryProhibition).
+      // Sits at the sequence position of the EARLIEST check it replaced (the old finalizer
+      // prohibited-field loop), so minted refusals still precede the structural finalizer/guard
+      // requirements below. Multi-fire is dead by construction (one lookup, one refusal per
+      // key×kind), and a multi-bad-key step now errors in YAML declaration order.
+      //
+      // Except-bearing cells are SKIPPED — their value-conditional checks stay hand-written
+      // (today exactly trust×finalizer, below). Companion/value/sub-key rules are not minted at
+      // all (the clang line): toolsMissing, the tools agent+handler clause, the gate block,
+      // retry E1-E3, structured_output literal+eligibility, trace_schema compile, pos-int
+      // checks all stay hand-written further down.
+      //
+      // The kind gate is deliberate: on a step whose `execution` is missing or not one of the
+      // four kinds, the registry has no row to consult, so NO per-key kind refusal is minted —
+      // the invalid-execution/missing-required error above is the whole verdict. (Pre-#517 the
+      // per-key `!== '<kind>'` twins ALSO fired on malformed kinds; that was per-key advice
+      // keyed to a kind nobody declared. The workflow is refused either way — the refusal
+      // POPULATION is unchanged; disclosed in the changelog.)
+      if (VALID_EXECUTIONS.has(step['execution'] as string)) {
+        const kind = step['execution'] as ExecutionMode;
+        for (const key of Object.keys(step)) {
+          // Unknown keys are UNKNOWN_STEP_KEY's business (warned above), never a registry row.
+          const row = (
+            STEP_KEY_REGISTRY as Record<string, Record<ExecutionMode, StepKeyCell> | undefined>
+          )[key];
+          if (row === undefined || step[key] === undefined) continue;
+          const cell = row[kind];
+          if (cell.c !== 'prohibited' || cell.except !== undefined) continue;
+          errors.push(
+            withKeyLine(
+              stepName,
+              key,
+              `Step '${stepName}': ${renderRegistryProhibition(key, kind, cell)}`,
+            ),
+          );
+        }
+      }
+
       // Finalizer step constraints (a workflow-level try/catch/finally). handler-only in v1.
       if (step['execution'] === 'finalizer') {
-        for (const field of FINALIZER_PROHIBITED_STEP_KEYS) {
-          if (step[field] !== undefined) {
-            errors.push(
-              withStepLine(
-                stepName,
-                `Step '${stepName}': '${field}' is not valid on execution: finalizer steps`,
-              ),
-            );
-          }
-        }
-        // A finalizer must not gate — reject any human-gate trust level.
+        // A finalizer must not gate — reject any human-gate trust level. Value-conditional
+        // (`trust: 'auto'` is lawful), which is why this is the registry's except-bearing cell
+        // and stays hand-written rather than minted (#517).
         if (step['trust'] !== undefined && step['trust'] !== 'auto') {
           errors.push(
             withStepLine(
@@ -1032,131 +1070,21 @@ function parseWorkflowString(
         }
       }
 
-      // on_outcome is only valid on execution: finalizer steps.
-      if (step['on_outcome'] !== undefined && step['execution'] !== 'finalizer') {
-        errors.push(
-          // Consumer: settlement.ts:145 (`finalizerTriggers`) — it is read only when selecting
-          // which finalizers a run's outcome should fire.
-          withKeyLine(
-            stepName,
-            'on_outcome',
-            `Step '${stepName}': 'on_outcome' is only valid on execution: finalizer steps — it ` +
-              'selects which finalizers run for a given outcome, and only finalizers are selected ' +
-              'that way, so here it would decide nothing. Move it to the finalizer that should ' +
-              'react to the outcome, or remove it.',
-          ),
-        );
-      }
-
-      // Guard step constraints.
+      // Guard step constraints (the guard kind-prohibitions, including `preconditions` — issue
+      // #369's own bespoke message, message_data-preserved — are minted by the #517 walk above).
       if (step['execution'] === 'guard') {
-        for (const field of GUARD_PROHIBITED_STEP_KEYS) {
-          if (step[field] !== undefined) {
-            errors.push(
-              withStepLine(
-                stepName,
-                `Step '${stepName}': '${field}' is not valid on execution: guard steps`,
-              ),
-            );
-          }
-        }
         if (step['abort_unless'] === undefined) {
           errors.push(
             withStepLine(stepName, `Step '${stepName}': execution: guard requires 'abort_unless'`),
           );
         }
-        // issue #369: `preconditions` gets its OWN error rather than joining `prohibited` above,
-        // because the generic message ("'x' is not valid on execution: guard steps") would not say
-        // the thing that matters — this field was ACCEPTED and INERT before this check existed, so
-        // an author who wrote one has a workflow that looks guarded and never was. The generic
-        // list's own message style is issue #366's territory; the other twelve are left alone.
-        //
-        // The claim "never evaluates it there" rests on `checkPreconditions` having exactly one
-        // engine call site (execution-loop.ts:1380, inside `executeStep`), which `executeGuardStep`
-        // never reaches. A test pins that count so a second call site reds this message.
-        if (step['preconditions'] !== undefined) {
-          errors.push(
-            withKeyLine(
-              stepName,
-              'preconditions',
-              `Step '${stepName}': 'preconditions' is not valid on execution: guard steps — the ` +
-                `engine never evaluates it there (a guard's execution evaluates only 'abort_unless'), ` +
-                `so the run would LOOK guarded while the declared check never ran. Move the condition ` +
-                `into 'abort_unless'. Whether guards gain a live condition surface is an open design ` +
-                `question (issue #366) — if admitted later, existing workflows are unaffected.`,
-            ),
-          );
-        }
       }
 
-      // abort_unless and abort_message are only valid on execution: guard steps.
-      if (step['abort_unless'] !== undefined && step['execution'] !== 'guard') {
-        errors.push(
-          // Consumer: execution-loop.ts:4828 — the condition list a guard evaluates before the
-          // run is allowed to continue.
-          withKeyLine(
-            stepName,
-            'abort_unless',
-            `Step '${stepName}': 'abort_unless' is only valid on execution: guard steps — it is ` +
-              'the condition list a guard evaluates before letting the run continue, and only ' +
-              'guard steps are evaluated that way, so here it would gate nothing. Put the check ' +
-              'on a guard step, or remove it.',
-          ),
-        );
-      }
-      if (step['abort_message'] !== undefined && step['execution'] !== 'guard') {
-        errors.push(
-          // Consumer: execution-loop.ts:4943 — the text reported when a guard aborts the run.
-          // The clause is about READERSHIP, not about who aborts: `handler_abort` and
-          // `gate_expiry_abort` are seal arms too (types/run-record.ts:603-617), so "only a guard
-          // aborts" would be false. What is true is that every reader of this key is a guard path.
-          withKeyLine(
-            stepName,
-            'abort_message',
-            `Step '${stepName}': 'abort_message' is only valid on execution: guard steps — it is ` +
-              'the text reported when a guard aborts the run, and nothing but a guard reads it, ' +
-              'so here it would never be read. Move it to the guard that performs the abort, or ' +
-              'remove it.',
-          ),
-        );
-      }
-
-      // agent_profile is only valid on agent steps.
-      if ('agent_profile' in step && step['execution'] !== 'agent') {
-        errors.push(
-          // Consumer: run-agent.ts:584 — resolved into the model prompt for the step.
-          withKeyLine(
-            stepName,
-            'agent_profile',
-            `Step '${stepName}': 'agent_profile' is only valid on execution: agent steps — its ` +
-              'content is resolved into the model prompt, and only an agent step makes a model ' +
-              'request, so here it would reach no model. Move it to the agent step whose prompt ' +
-              'it should shape, or remove it.',
-          ),
-        );
-      }
-
-      // llm_timeout_seconds (issue #401) is only valid on agent steps — no other execution kind
-      // makes a model request, so the key would be silently inert anywhere else. One `!== 'agent'`
-      // check covers auto/guard/finalizer.
-      if (step['llm_timeout_seconds'] !== undefined && step['execution'] !== 'agent') {
-        errors.push(
-          // Consumer: run-agent.ts:501-507 — the per-step clock resolution, which is the
-          // per-attempt bound on the step's model request. The range names the resolution rather
-          // than each read: :501 and :507 read the KEY, :503 reads the CLI flag it overrides.
-          withKeyLine(
-            stepName,
-            'llm_timeout_seconds',
-            `Step '${stepName}': 'llm_timeout_seconds' is only valid on execution: agent steps — ` +
-              'it bounds one model request, and no other kind makes one, so here it would bound ' +
-              'nothing. Move it to the agent step whose request it should bound, or remove it. ' +
-              "An auto step's dispatch is bounded by 'timeout_seconds', and a " +
-              "finalizer's handler by its own 'timeout_seconds'.",
-          ),
-        );
-      }
-      // ...and when present it must be a positive integer (the same convention as
-      // retry.total_timeout_seconds and gate.timeout_seconds).
+      // llm_timeout_seconds must be a positive integer when present (the same convention as
+      // retry.total_timeout_seconds and gate.timeout_seconds). Deliberately kind-BLIND, which
+      // makes it the pinned DOUBLE-fire control for #517: on a wrong-kind step BOTH the minted
+      // prohibition and this shape error fire — this check was never else-if-suppressed, unlike
+      // structured_output/validation_exhaustion/input_map's value checks below.
       if (
         step['llm_timeout_seconds'] !== undefined &&
         (!Number.isInteger(step['llm_timeout_seconds']) ||
@@ -1170,51 +1098,6 @@ function parseWorkflowString(
         );
       }
 
-      // timeout_seconds is NOT valid on an agent step (issue #402). Nothing enforces it there:
-      // `shouldEnforceTimeout` is `execution === 'auto'`, and agent dispatch is never wrapped in
-      // `withTimeout` at all. The key is now inert as well as unenforced — issue #412 deleted the
-      // `expected_timeout` display that used to render it into the NextAction, which is what made
-      // it actively misleading rather than merely useless. The error stays: an author who writes a
-      // bound should be told it does nothing, not left to find out. The message names both bounds
-      // that DO exist, scoped to realm's own drive (an externally driven step gets neither), on
-      // the RETRY_INERT_NON_AUTO precedent below.
-      //
-      // `=== 'agent'` EXACTLY, never `!== 'auto'`: finalizers consume this key twice — the drain
-      // lease (execution-loop.ts:5226) and the handler's own bound (:5030) — and guards already
-      // reject it in the prohibited-fields list above.
-      if (step['timeout_seconds'] !== undefined && step['execution'] === 'agent') {
-        errors.push(
-          withKeyLine(
-            stepName,
-            'timeout_seconds',
-            `Step '${stepName}': 'timeout_seconds' is not valid on execution: agent steps — ` +
-              'the engine never enforces it there (agent dispatch is never wrapped in a timeout), ' +
-              'so the step would LOOK time-bounded while nothing enforced the bound. ' +
-              "In realm's own drive the model request is bounded by 'llm_timeout_seconds' " +
-              "(or --llm-timeout) and tool calls by 'tool_timeout'.",
-          ),
-        );
-      }
-
-      // idempotent (issue #101 Phase 2) is only valid on execution: auto steps — the reliably
-      // time-boundable, deadline-carrying class. It is inert (no concrete deadline is ever written)
-      // on agent/guard/finalizer, so it is rejected there rather than silently ignored.
-      if (step['idempotent'] !== undefined && step['execution'] !== 'auto') {
-        errors.push(
-          // Consumers: execution-loop.ts:2526 (the `willRetry` conjunct gating `retry.on_timeout`;
-          // the :2115 advisory mirrors the rule for loader-bypassing definitions and, by its own
-          // header, never gates) and reclaim.ts:73 (reclaim eligibility) — both act on auto
-          // dispatch.
-          withKeyLine(
-            stepName,
-            'idempotent',
-            `Step '${stepName}': 'idempotent' is only valid on execution: auto steps — it gates ` +
-              "'retry.on_timeout' and reclaim eligibility, and both act on auto dispatch, so here " +
-              'it would gate nothing. Remove it, or move the work to an auto step if you need ' +
-              'either.',
-          ),
-        );
-      }
       // WARN (do not reject): an idempotent auto step in a finalizer-bearing workflow gets
       // `deadline: null` (issue #101), so the RECLAIM function is inert — `realm run reclaim --all`
       // can never select it. The author should know it stays per-step-manual-reclaim-only.
@@ -1246,31 +1129,16 @@ function parseWorkflowString(
         });
       }
 
-      // output_schema is only valid on execution: agent steps.
-      if (step['output_schema'] !== undefined && step['execution'] !== 'agent') {
-        errors.push(
-          withStepLine(
-            stepName,
-            `Step '${stepName}': 'output_schema' is only valid on execution: agent steps`,
-          ),
-        );
-      }
-
-      // issue #236 (L0 prevention layer): structured_output is only valid on execution: agent
-      // steps (mirrors output_schema's rule above), and its only legal value is the literal
+      // issue #236 (L0 prevention layer): structured_output's only legal value is the literal
       // 'strict'. On an opted-in step, Phase A REJECTS an ineligible verdict at load time — the
       // API provably rejects some legal schemas and silently weakens others, so authoring never
       // ships a schema the gate already knows is unsafe. Caveats are NOT rejected (informational
       // only, surfaced by validate's nudge — Deliverable 7); this loader block only ever REJECTS.
-      if (step['structured_output'] !== undefined) {
-        if (step['execution'] !== 'agent') {
-          errors.push(
-            withStepLine(
-              stepName,
-              `Step '${stepName}': 'structured_output' is only valid on execution: agent steps`,
-            ),
-          );
-        } else if (step['structured_output'] !== 'strict') {
+      // #517 re-gate: the kind half is minted by the registry walk above; the value checks
+      // below keep their old else-branch semantics via an explicit valid-kind conjunct — a
+      // wrong-kind step gets ONLY the minted refusal, never the value noise.
+      if (step['structured_output'] !== undefined && step['execution'] === 'agent') {
+        if (step['structured_output'] !== 'strict') {
           errors.push(
             withStepLine(
               stepName,
@@ -1308,15 +1176,9 @@ function parseWorkflowString(
       // then AJV-proven AT LOAD TIME (REFUSE — B10, reusing the runtime validator so load-time and
       // runtime verdicts can never diverge); `default_output` present without `mode: 'default'` WARNS
       // as dead config (never rejects — it's simply inert); an unknown sub-key WARNS.
-      if (step['validation_exhaustion'] !== undefined) {
-        if (step['execution'] !== 'agent') {
-          errors.push(
-            withStepLine(
-              stepName,
-              `Step '${stepName}': 'validation_exhaustion' is only valid on execution: agent steps`,
-            ),
-          );
-        } else if (
+      // #517 re-gate: kind half minted above; else-semantics preserved by the explicit conjunct.
+      if (step['validation_exhaustion'] !== undefined && step['execution'] === 'agent') {
+        if (
           typeof step['validation_exhaustion'] !== 'object' ||
           step['validation_exhaustion'] === null
         ) {
@@ -1453,26 +1315,6 @@ function parseWorkflowString(
             `Step '${stepName}': declares both input_schema and output_schema; the agent's submitted ` +
             `output is validated against both — prefer one to avoid divergence.`,
         });
-      }
-
-      // trace_schema is only valid on execution: agent steps.
-      if (step['trace_schema'] !== undefined && step['execution'] !== 'agent') {
-        errors.push(
-          withStepLine(
-            stepName,
-            `Step '${stepName}': 'trace_schema' is only valid on execution: agent steps`,
-          ),
-        );
-      }
-
-      // trace_validation_mode is only valid on execution: agent steps.
-      if (step['trace_validation_mode'] !== undefined && step['execution'] !== 'agent') {
-        errors.push(
-          withStepLine(
-            stepName,
-            `Step '${stepName}': 'trace_validation_mode' is only valid on execution: agent steps`,
-          ),
-        );
       }
 
       // trace_validation_mode must be 'warn' or 'enforce' when provided.
@@ -1959,30 +1801,23 @@ function parseWorkflowString(
         );
       }
 
-      // Validate input_map: only valid on execution: auto steps (both uses_service and handler).
-      if (step['input_map'] !== undefined) {
-        if (step['execution'] !== 'auto') {
-          errors.push(
-            withStepLine(
-              stepName,
-              `Step '${stepName}': 'input_map' is only valid on execution: auto steps`,
-            ),
-          );
-        } else {
-          // issue #392: input_map's errors are minted deep inside a recursive walk that knows only
-          // its path string, not the step's position. Collected here and suffixed on the way out,
-          // so ONE step's error list never mixes positioned and bare messages — a reader seeing
-          // "(step at line 12)" on three of five errors would reasonably wonder what is different about
-          // the other two, and nothing is.
-          const inputMapErrors: string[] = [];
-          validateInputMapNode(
-            step['input_map'] as Record<string, unknown>,
-            `Step '${stepName}': input_map`,
-            inputMapErrors,
-            0,
-          );
-          errors.push(...inputMapErrors.map((e) => withStepLine(stepName, e)));
-        }
+      // Validate input_map VALUES (auto only — the kind half is minted by the #517 walk; the
+      // explicit conjunct preserves the old else-branch: a wrong-kind step gets only the minted
+      // refusal, never the value noise).
+      if (step['input_map'] !== undefined && step['execution'] === 'auto') {
+        // issue #392: input_map's errors are minted deep inside a recursive walk that knows only
+        // its path string, not the step's position. Collected here and suffixed on the way out,
+        // so ONE step's error list never mixes positioned and bare messages — a reader seeing
+        // "(step at line 12)" on three of five errors would reasonably wonder what is different about
+        // the other two, and nothing is.
+        const inputMapErrors: string[] = [];
+        validateInputMapNode(
+          step['input_map'] as Record<string, unknown>,
+          `Step '${stepName}': input_map`,
+          inputMapErrors,
+          0,
+        );
+        errors.push(...inputMapErrors.map((e) => withStepLine(stepName, e)));
       }
 
       // Step config may hold any JSON value (scalars, arrays, nested objects). It is passed through
@@ -2264,9 +2099,9 @@ function parseWorkflowString(
           // guard arm's consequence below is forked — collapsing it back into one shared string
           // would make the error claim a wedge that cannot happen.
           //
-          // Post-#369 a guard declaring `preconditions` is REFUSED outright by the guard block
-          // above, so this arm now only ever fires ALONGSIDE that refusal: errors accumulate rather
-          // than short-circuit, and the guard block runs first, so both messages reach the author
+          // Post-#369 a guard declaring `preconditions` is REFUSED outright — since #517, by
+          // the registry mint near the top of Step 3 — so this arm now only ever fires ALONGSIDE
+          // that refusal: errors accumulate rather than short-circuit, and the mint runs first, so both messages reach the author
           // with the prohibition printed above this one. The arm is kept, not deleted — it is what
           // stops the dead-condition message from claiming a wedge that a guard cannot have, and a
           // definition reaching this code by any path other than a fresh YAML load (a
@@ -2357,10 +2192,15 @@ function parseWorkflowString(
         }
       }
 
-      // Validate tools: only valid on execution: agent steps without handler.
+      // Validate tools × handler (the COMPOUND half of the old tools rule — #517 split it: the
+      // non-agent kinds are minted from the registry above; this hand-written check keeps ONLY
+      // the agent-with-handler arm, whose predicate is a companion conflict, not a kind rule).
+      // Populations are disjoint by construction (this fires only on execution: 'agent'; the
+      // mint only on non-agent kinds), so the old multi-fire cannot re-appear.
       if (
         step['tools'] !== undefined &&
-        (step['execution'] !== 'agent' || step['handler'] !== undefined)
+        step['execution'] === 'agent' &&
+        step['handler'] !== undefined
       ) {
         errors.push(
           withStepLine(
@@ -2501,12 +2341,11 @@ function parseWorkflowString(
       }
 
       // Validate timeout_seconds: must be a positive integer (issue A3). Skipped on
-      // execution: guard — the guard-prohibited-fields check above already flatly rejects
-      // 'timeout_seconds' there ('is not valid on execution: guard steps'); re-checking its
-      // shape here would double-report the same root cause under a second, confusing message.
-      // Same suppression for the agent prohibition (issue #402), for the same reason: an author
-      // told BOTH that the key is invalid here and that its value has the wrong shape is being
-      // pointed at the shape, which is not the problem.
+      // execution: guard and agent — the #517 registry mint already flatly rejects
+      // 'timeout_seconds' on both kinds; re-checking its shape here would double-report the
+      // same root cause under a second, confusing message (an author told BOTH that the key is
+      // invalid here and that its value has the wrong shape is being pointed at the shape,
+      // which is not the problem).
       if (
         step['timeout_seconds'] !== undefined &&
         step['execution'] !== 'guard' &&
