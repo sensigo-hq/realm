@@ -92,13 +92,61 @@ export type StepKeyCell =
 /** Strips block and line comments, then collapses every whitespace run to a single space. Run on
  *  BOTH the real source and the registry's own pattern before matching, so a pattern can be
  *  written as a readable one-line slice of code that may itself span or sit beside comments in
- *  the file. The `[^:"']` lookback on the `//` strip keeps a `https://…` literal from being
- *  truncated as if it opened a line comment. */
+ *  the file. The single-char lookback on `//` keeps a `https://…` literal from being truncated as
+ *  if it opened a line comment.
+ *
+ *  Deliberately a manual, single left-to-right scan rather than the equivalent lazy-regex pair
+ *  (`/\/\*[\s\S]*?\*\//g` + a lookback-guarded `//` strip) that a first draft of this file
+ *  shipped: CodeQL flagged that pair as a genuine polynomial-time DoS — a run of unterminated
+ *  `/*` occurrences (no closing `*\/` anywhere after them) forces a full failed scan-to-end for
+ *  EACH occurrence, which is quadratic in the number of occurrences. The scan below still does at
+ *  most one `indexOf` per comment opener, but a failed `indexOf` (no closer anywhere in the rest
+ *  of the string) ends the whole pass immediately — linear, not quadratic, in the worst case. */
 export function normalizeSource(text: string): string {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:"'])\/\/[^\n]*/g, '$1')
-    .replace(/\s+/g, ' ');
+  let out = '';
+  const n = text.length;
+  let i = 0;
+  // Once a single `indexOf('*/', k)` call returns -1, no `/*` found at any LATER position can
+  // ever close either — its search range is a strict suffix of the one that already failed. This
+  // flag turns that monotonicity into a hard cap of ONE failed full-length scan for the entire
+  // call, however many unclosed `/*` occurrences follow — without it, a string built from many
+  // `/*` openers and no closer anywhere would cost one failed O(remaining-length) scan PER
+  // opener, which is exactly the quadratic shape CodeQL flagged in the lazy-regex draft this
+  // replaced.
+  let noMoreBlockClosersAhead = false;
+  while (i < n) {
+    const ch = text[i];
+    const nextCh = i + 1 < n ? text[i + 1] : '';
+    if (!noMoreBlockClosersAhead && ch === '/' && nextCh === '*') {
+      const close = text.indexOf('*/', i + 2);
+      if (close === -1) {
+        // No closer anywhere ahead — the original regex would fail to match here too, leaving
+        // this `/*` as literal text. Emit it as-is and continue scanning normally; the flag
+        // above stops this branch from ever paying for another full scan.
+        noMoreBlockClosersAhead = true;
+        out += ch;
+        i += 1;
+      } else {
+        out += ' ';
+        i = close + 2;
+      }
+      continue;
+    }
+    if (ch === '/' && nextCh === '/') {
+      const prevCh = i === 0 ? '' : text[i - 1];
+      if (prevCh === ':' || prevCh === '"' || prevCh === "'") {
+        out += ch;
+        i += 1;
+        continue;
+      }
+      const newlineAt = text.indexOf('\n', i);
+      i = newlineAt === -1 ? n : newlineAt; // the newline itself, if any, is left for the next pass
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out.replace(/\s+/g, ' ');
 }
 
 /** Exact non-overlapping occurrence count of `pattern` inside `source`, both normalized first. */
