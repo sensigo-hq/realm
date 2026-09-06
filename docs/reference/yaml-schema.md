@@ -941,6 +941,21 @@ unconditional and a companion-conditioned restriction (Clang's `Options.td`, for
 version additionally proves the distinction by execution on every test run, which no surveyed
 system does.
 
+**The drive-flip (issue #517).** Since #517 the registry does not merely DESCRIBE the
+kind-prohibitions — it MINTS them (rung 1 of the ladder recorded in #417's program map): the
+loader's per-step walk looks every declared key up in the registry and mints exactly one refusal
+per key × kind, with the message text carried as per-cell data. The upgraded generic messages'
+consequence clauses are witness-backed (rung 2): the clause that tells you where the key actually
+lives — "step eligibility reads it…", "the engine's execution loop enforces it…" — is rendered
+from the same `consumed_home` data whose derived kind-set, witness reference, and surface name the
+conformance suite asserts, so the message's factual claims and the tested citation are one object.
+(One honestly-stated residual: a wrong VERB in the mechanism prose is not machine-caught.)
+Multi-fire is dead by construction — a key that used to draw two differently-worded kind verdicts
+on one step (`agent_profile` on a finalizer, for instance) now draws exactly one — and a step with
+several misplaced keys reports them in YAML declaration order. Companion and value rules remain
+hand-written by design: even Clang, whose `Options.td` drives its option refusals from data, draws
+the line at companion predicates.
+
 **The `gate` key's empty-choices asymmetry (issue #433).** A declared-empty `gate.choices: []` is
 a load error on any step — refused, with the reason (an empty list mints a gate no response can
 ever resolve) and the remedy spelled out, regardless of whether the step is even gate-trusted. Its

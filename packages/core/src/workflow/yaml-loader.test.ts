@@ -3370,3 +3370,76 @@ steps:
     expect(err.warnings).toBe(first); // the second attach did nothing
   });
 });
+
+// =================================================================================================
+// issue #517 — the drive-flip: re-gate compounds, the double-fire control, and the malformed-kind
+// arm. The kind-prohibitions themselves are minted from the step-key registry and pinned cell-by-
+// cell in step-key-registry.test.ts; these cells pin the SEAMS the flip cut.
+// =================================================================================================
+describe('yaml-loader — #517 drive-flip seams', () => {
+  const loadError = (content: string): string => {
+    try {
+      loadWorkflowFromString(content);
+      throw new Error('expected a load error');
+    } catch (err) {
+      return (err as WorkflowError).message;
+    }
+  };
+
+  it('re-gate: input_map on an AGENT step with an invalid VALUE gets only the minted refusal', () => {
+    // Pre-flip the value walk sat in the kind check's else branch; the flip de-nested it and the
+    // surviving walk gained an explicit `=== 'auto'` conjunct. Dropping that conjunct would point
+    // the author at the mapping values on a step where the key does not belong at all.
+    const message = loadError(`
+id: im-agent-wf
+name: IM Agent
+version: 1
+steps:
+  work:
+    description: Work
+    execution: agent
+    input_map:
+      x: 123
+`);
+    expect(message).toContain("'input_map' is only valid on execution: auto steps");
+    expect(message).not.toContain('input_map.x');
+  });
+
+  it("the DOUBLE-fire control: llm_timeout_seconds' pos-int check was never suppressed — wrong kind AND wrong value both fire", () => {
+    // The negative space of the three re-gated keys: this value check is deliberately kind-blind
+    // (it was never else-if-suppressed), so the flip must NOT have folded it under the mint. An
+    // implementation that "tidied" it behind the kind conjunct reds here.
+    const message = loadError(`
+id: llm-double-wf
+name: LLM Double
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+    llm_timeout_seconds: -5
+`);
+    expect(message).toContain("'llm_timeout_seconds' is only valid on execution: agent steps");
+    expect(message).toContain("'llm_timeout_seconds' must be a positive integer");
+  });
+
+  it('MALFORMED KIND: an invalid execution value gets the execution error alone — no per-key kind advice', () => {
+    // The registry has no row for a kind nobody declared. Pre-#517 the per-key `!== '<kind>'`
+    // twins also fired here (kind advice keyed to a nonexistent kind); post-flip the invalid-
+    // execution error is the whole verdict. The workflow is refused either way — the refusal
+    // POPULATION is unchanged; the smaller error set on malformed steps is a disclosed change.
+    const message = loadError(`
+id: badkind-wf
+name: Bad Kind
+version: 1
+steps:
+  work:
+    description: Work
+    execution: bogus
+    on_outcome: fail
+`);
+    expect(message).toContain("invalid execution value 'bogus'");
+    expect(message).not.toContain("'on_outcome' is only valid on execution: finalizer steps");
+  });
+});

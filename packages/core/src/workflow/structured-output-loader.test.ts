@@ -41,6 +41,24 @@ describe('yaml-loader — structured_output (issue #236)', () => {
     expectMessage(yaml, "'structured_output' is only valid on execution: agent steps");
   });
 
+  it('#517 re-gate: WRONG KIND × WRONG VALUE gets ONLY the minted kind refusal, no value noise', () => {
+    // Pre-flip the else-if structure suppressed the literal check on a wrong-kind step; the flip
+    // de-nested the block, and the surviving value checks gained an explicit `=== 'agent'`
+    // conjunct to preserve exactly that else-semantics. This cell pins the conjunct: dropping it
+    // would point the author at the value, which is not the problem.
+    const yaml = CLEAN_SCHEMA_YAML.replace('execution: agent', 'execution: auto').replace(
+      'structured_output: strict',
+      'structured_output: bogus',
+    );
+    expectMessage(yaml, "'structured_output' is only valid on execution: agent steps");
+    try {
+      loadWorkflowFromString(yaml);
+    } catch (err) {
+      const message = (err as WorkflowError).message;
+      expect(message).not.toContain("must be the literal string 'strict'");
+    }
+  });
+
   it("rejects a value other than the literal 'strict'", () => {
     const yaml = CLEAN_SCHEMA_YAML.replace('structured_output: strict', 'structured_output: yes');
     expectMessage(yaml, "'structured_output' must be the literal string 'strict'");

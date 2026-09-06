@@ -14,10 +14,14 @@
 //           but on the COMPANION's own rules, and nothing may name the key under test any more;
 //   (3) core-file witnesses — every `where`/`by` pointer into a packages/core/ file is checked
 //       for an EXACT count match against real source (comment-stripped, whitespace-normalized);
-//   (4) loop membership by VALUE — every cell whose by-witness is one of the two kind-prohibition
-//       loop templates must, in aggregate, equal the loader's own exported prohibition arrays,
-//       member for member, in both directions (so a stale array and a stale registry can never
-//       silently agree with each other).
+//   (4) #517 truth cells — the mechanized message-claim-truth lens: every minted generic
+//       message's consequence clause is bound to the registry's own witness data (derived kinds,
+//       reference-identical site, byte-contained mechanism, SURFACE_NAME containment), plus the
+//       except invariant (both directions) and the prefix-stability family (the golden-derived
+//       front-clause grammar per generic cell, frozen here as a literal table). The old
+//       loop-membership-by-VALUE instrument is deleted with the loops themselves: the exported
+//       prohibition arrays are now COMPUTED from this registry (prohibitedKeysFor), so the
+//       membership assertion became an identity — a tautology pins nothing.
 // The CLI/mcp-server-file witnesses live in
 // packages/cli/src/step-key-registry-conformance.test.ts — this package only ever reads its own
 // source, per the purge-guard walker's convention for cross-package source-text assertions.
@@ -33,18 +37,16 @@ import yaml from 'js-yaml';
 import {
   STEP_KEY_REGISTRY,
   TRACKED_RESIDUALS,
-  FINALIZER_LOOP_PATTERN,
-  GUARD_LOOP_PATTERN,
+  CONSUMED_HOME,
+  SURFACE_NAME,
+  MINT_WITNESS_PATTERN,
+  consumedKindsFor,
   countWitnessMatches,
   type StepKeyCell,
   type StepKeyWitness,
   type StepKeyVia,
 } from './step-key-registry.js';
-import {
-  loadWorkflowFromStringWithDiagnostics,
-  GUARD_PROHIBITED_STEP_KEYS,
-  FINALIZER_PROHIBITED_STEP_KEYS,
-} from './yaml-loader.js';
+import { loadWorkflowFromStringWithDiagnostics } from './yaml-loader.js';
 import { KNOWN_STEP_KEYS, type ExecutionMode } from '../types/workflow-definition.js';
 import type { LoaderWarning } from './diagnostics.js';
 
@@ -167,20 +169,6 @@ describe('#417-PR2 — the step-key consumption registry (core conformance)', ()
     expect(Object.keys(STEP_KEY_REGISTRY).length * MODES.length).toBe(144);
   });
 
-  it('loop-membership cells equal the loader-exported prohibition arrays, by value, both ways', () => {
-    const keysProhibitedVia = (mode: ExecutionMode, loopPattern: string): string[] =>
-      [...KNOWN_STEP_KEYS].filter((key) => {
-        const cell = cellOf(key, mode);
-        return cell.c === 'prohibited' && cell.by.some((w) => w.pattern === loopPattern);
-      });
-    expect(keysProhibitedVia('guard', GUARD_LOOP_PATTERN).sort()).toEqual(
-      [...GUARD_PROHIBITED_STEP_KEYS].sort(),
-    );
-    expect(keysProhibitedVia('finalizer', FINALIZER_LOOP_PATTERN).sort()).toEqual(
-      [...FINALIZER_PROHIBITED_STEP_KEYS].sort(),
-    );
-  });
-
   it("the companion-pattern lock: a companion-shaped rule is never spelled 'prohibited' (D4-4)", () => {
     // The two-leg blocked_transitive assertion below cannot detect a TRUE blocked_transitive cell
     // mislabelled 'prohibited' — leg B (the companion-satisfied, zero-naming leg) simply vanishes
@@ -203,6 +191,178 @@ describe('#417-PR2 — the step-key consumption registry (core conformance)', ()
         }
       }
     }
+  });
+
+  // ————— #517: the drive-flip conformance families —————
+
+  // The golden-derived front-clause grammar per GENERIC minted cell, frozen as a LITERAL table
+  // (never derived from the registry's own `front` field — that would move with the mutation it
+  // exists to catch). 'not_valid' = the cell historically fired through a kind-prohibition loop
+  // and keeps that grammar; 'only_valid' = historically twin-only. Source of truth: the #517
+  // golden run against merge-base fb752ef (plans/issue-417-pr2/golden-compare.mjs).
+  const EXPECTED_FRONT: Record<string, 'not_valid' | 'only_valid'> = {
+    'depends_on×finalizer': 'not_valid',
+    'trigger_rule×guard': 'not_valid',
+    'trigger_rule×finalizer': 'not_valid',
+    'when×finalizer': 'not_valid',
+    'uses_service×guard': 'not_valid',
+    'uses_service×finalizer': 'not_valid',
+    'service_method×guard': 'not_valid',
+    'service_method×finalizer': 'not_valid',
+    'operation×guard': 'not_valid',
+    'operation×finalizer': 'not_valid',
+    'input_map×agent': 'only_valid',
+    'input_map×guard': 'not_valid',
+    'input_map×finalizer': 'not_valid',
+    'handler×guard': 'not_valid',
+    'input_schema×guard': 'not_valid',
+    'output_schema×auto': 'only_valid',
+    'output_schema×guard': 'not_valid',
+    'output_schema×finalizer': 'not_valid',
+    'trace_schema×auto': 'only_valid',
+    'trace_schema×guard': 'only_valid',
+    'trace_schema×finalizer': 'only_valid',
+    'trace_validation_mode×auto': 'only_valid',
+    'trace_validation_mode×guard': 'only_valid',
+    'trace_validation_mode×finalizer': 'only_valid',
+    'trust×guard': 'not_valid',
+    'timeout_seconds×guard': 'not_valid',
+    'retry×finalizer': 'not_valid',
+    'validation_exhaustion×auto': 'only_valid',
+    'validation_exhaustion×guard': 'only_valid',
+    'validation_exhaustion×finalizer': 'only_valid',
+    'tools×auto': 'only_valid',
+    'tools×guard': 'not_valid',
+    'tools×finalizer': 'not_valid',
+    'structured_output×auto': 'only_valid',
+    'structured_output×guard': 'only_valid',
+    'structured_output×finalizer': 'only_valid',
+  };
+
+  const isGenericMinted = (cell: StepKeyCell): cell is Extract<StepKeyCell, { c: 'prohibited' }> =>
+    cell.c === 'prohibited' && cell.except === undefined && cell.message_data === undefined;
+
+  it('#517 partition: minted cells carry message_data XOR front; except cells carry neither', () => {
+    const genericTags: string[] = [];
+    for (const key of KNOWN_STEP_KEYS) {
+      for (const mode of MODES) {
+        const cell = cellOf(key, mode);
+        if (cell.c !== 'prohibited') continue;
+        if (cell.except !== undefined) {
+          expect(
+            cell.message_data,
+            `${key}×${mode}: except cell must not carry message_data`,
+          ).toBeUndefined();
+          expect(cell.front, `${key}×${mode}: except cell must not carry front`).toBeUndefined();
+          continue;
+        }
+        if (cell.message_data !== undefined) {
+          expect(
+            cell.front,
+            `${key}×${mode}: message_data cell must not also carry front`,
+          ).toBeUndefined();
+        } else {
+          expect(
+            cell.front,
+            `${key}×${mode}: generic minted cell must declare its front grammar`,
+          ).toBeDefined();
+          expect(
+            CONSUMED_HOME[key],
+            `${key}: generic minted key must carry consumed_home (the consequence clause's data)`,
+          ).toBeDefined();
+          genericTags.push(`${key}×${mode}`);
+        }
+      }
+    }
+    // The frozen table covers exactly the generic minted population — no stale or missing rows.
+    expect(genericTags.sort()).toEqual(Object.keys(EXPECTED_FRONT).sort());
+  });
+
+  it('#517 prefix stability: every generic cell declares the golden-derived front grammar', () => {
+    for (const [tag, expected] of Object.entries(EXPECTED_FRONT)) {
+      const [key, mode] = tag.split('×') as [string, ExecutionMode];
+      const cell = cellOf(key, mode);
+      if (!isGenericMinted(cell)) throw new Error(`${tag}: not a generic minted cell?`);
+      expect(cell.front, `${tag}: front grammar drifted from the golden-derived table`).toBe(
+        expected,
+      );
+    }
+  });
+
+  it('#517 truth cell 1: consumed_home.kinds equals the DERIVED consumed-kind set, per key', () => {
+    for (const [key, home] of Object.entries(CONSUMED_HOME)) {
+      expect(
+        [...home.kinds].sort(),
+        `${key}: consumed_home.kinds has drifted from the registry's own consumed cells`,
+      ).toEqual(consumedKindsFor(key as (typeof KNOWN_STEP_KEYS)[number]).sort());
+    }
+  });
+
+  it("#517 truth cell 2: consumed_home.site is REFERENCE-identical to a consumed cell's where[] member", () => {
+    for (const [key, home] of Object.entries(CONSUMED_HOME)) {
+      const shared = MODES.some((mode) => {
+        const cell = cellOf(key, mode);
+        return cell.c === 'consumed' && cell.where.some((w) => w === home.site);
+      });
+      expect(
+        shared,
+        `${key}: consumed_home.site is not the SAME OBJECT as any consumed where[] member — the message's citation must BE the tested witness`,
+      ).toBe(true);
+    }
+  });
+
+  it('#517 truth cell 4: every mechanism names its surface — SURFACE_NAME[site.file] is contained', () => {
+    for (const [key, home] of Object.entries(CONSUMED_HOME)) {
+      const phrase = SURFACE_NAME[home.site.file];
+      expect(phrase, `${key}: no SURFACE_NAME entry for ${home.site.file}`).toBeDefined();
+      expect(
+        home.mechanism.includes(phrase!),
+        `${key}: mechanism does not name its surface ("${phrase}"):\n  ${home.mechanism}`,
+      ).toBe(true);
+    }
+  });
+
+  it('#517: SURFACE_NAME is total over every witness file the registry cites', () => {
+    const files = new Set<string>();
+    for (const key of KNOWN_STEP_KEYS) {
+      for (const mode of MODES) {
+        const cell = cellOf(key, mode);
+        if (cell.c === 'consumed') {
+          for (const w of cell.where) files.add(w.file);
+          if (cell.when !== undefined) files.add(cell.when.witness.file);
+        } else if (cell.c === 'prohibited' || cell.c === 'blocked_transitive') {
+          for (const w of cell.by) files.add(w.file);
+        }
+      }
+    }
+    for (const file of files) {
+      expect(SURFACE_NAME[file], `no operator phrase for witness file ${file}`).toBeDefined();
+    }
+  });
+
+  it('#517 except invariant (both directions): except ⇒ a live hand-written twin, and the mint skips it', () => {
+    // Direction 1: every except-bearing prohibited cell's by[] carries at least one NON-mint
+    // witness (its hand-written check; aliveness-in-source is the witness cells' job below).
+    const exceptCells: Array<{ key: string; mode: ExecutionMode }> = [];
+    for (const key of KNOWN_STEP_KEYS) {
+      for (const mode of MODES) {
+        const cell = cellOf(key, mode);
+        if (cell.c !== 'prohibited' || cell.except === undefined) continue;
+        exceptCells.push({ key, mode });
+        expect(
+          cell.by.some((w) => w.pattern !== MINT_WITNESS_PATTERN),
+          `${key}×${mode}: except-bearing cell has no live hand-written witness — nothing refuses it`,
+        ).toBe(true);
+      }
+    }
+    // Today exactly trust×finalizer — the mint's skip rule is asserted per-cell below.
+    expect(exceptCells).toEqual([{ key: 'trust', mode: 'finalizer' }]);
+    // Direction 2 (no double-fire): the hand-written check is the ONLY refusal — a mint that
+    // stopped skipping the except cell would add a second key-naming error here.
+    const outcome = load(buildFixture('trust', 'finalizer'));
+    expect(outcome.refused).toBe(true);
+    if (!outcome.refused) return;
+    expect(outcome.errors.filter((e) => namesKey(e, 'trust'))).toHaveLength(1);
   });
 
   it('every Via is well-formed: waived reasons are non-empty, tracked issues are #-numbers', () => {
@@ -231,17 +391,56 @@ describe('#417-PR2 — the step-key consumption registry (core conformance)', ()
       const cell = cellOf(key, mode);
 
       if (cell.c === 'prohibited') {
-        it(`prohibited: ${key}×${mode} — refused, at least one error names the key`, () => {
+        it(`prohibited: ${key}×${mode} — refused; ONE kind refusal names the key`, () => {
           const outcome = load(buildFixture(key, mode));
           expect(outcome.refused, `${key}×${mode} should have been refused`).toBe(true);
           if (!outcome.refused) return;
           const naming = outcome.errors.filter((e) => namesKey(e, key));
           expect(naming.length, outcome.errors.join('\n')).toBeGreaterThanOrEqual(1);
+          // #517 — the collapse, pinned permanently on MINTED cells: exactly ONE error carries a
+          // kind-refusal grammar for this key (companion rules like tools' requires-input_schema
+          // may still name it — they are not kind refusals and never collapse; the clang line).
+          // The except cell (trust×finalizer) is exempt: its hand-written value-scoped message
+          // opens `'trust: <value>'`, deliberately NOT the bare-key grammar, and its no-double-
+          // fire direction is the except-invariant cell above.
+          const kindRefusals = naming.filter(
+            (e) =>
+              e.includes(`'${key}' is not valid on execution:`) ||
+              e.includes(`'${key}' is only valid on execution:`),
+          );
+          if (cell.except !== undefined) return;
+          expect(
+            kindRefusals,
+            `expected exactly one kind refusal for ${key}×${mode}:\n${outcome.errors.join('\n')}`,
+          ).toHaveLength(1);
+          const minted = kindRefusals[0]!;
           if (cell.message_data !== undefined) {
+            // Post-flip this containment is a MINT-PLUMBING pin (the permanent floor): the mint
+            // renders message_data verbatim, so what it really guards is that the walk still
+            // routes this cell's data to the operator. The one-time byte-parity proof against
+            // the pre-flip, hand-written checks was the #517 golden run.
             expect(
-              outcome.errors.some((e) => e.includes(cell.message_data!)),
+              minted.includes(cell.message_data),
               `message_data no longer matches the loader's minted text:\n${outcome.errors.join('\n')}`,
             ).toBe(true);
+          } else {
+            // #517 prefix-stability (behavioral half) + truth cell 3: the minted generic message
+            // opens with the golden-derived front clause and carries its consequence clause
+            // (mechanism + remedy) verbatim.
+            const expectedGrammar = EXPECTED_FRONT[`${key}×${mode}`]!;
+            const front =
+              expectedGrammar === 'only_valid'
+                ? `'${key}' is only valid on execution: ${consumedKindsFor(key as (typeof KNOWN_STEP_KEYS)[number]).join('/')} steps`
+                : `'${key}' is not valid on execution: ${mode} steps`;
+            expect(
+              minted.includes(`${front} — `),
+              `minted front clause drifted for ${key}×${mode}:\n  expected front: ${front}\n  minted: ${minted}`,
+            ).toBe(true);
+            const home = CONSUMED_HOME[key as (typeof KNOWN_STEP_KEYS)[number]]!;
+            expect(minted.includes(home.mechanism), `mechanism not contained:\n${minted}`).toBe(
+              true,
+            );
+            expect(minted.includes(home.remedy), `remedy not contained:\n${minted}`).toBe(true);
           }
         });
         if (cell.except !== undefined && key === 'trust' && mode === 'finalizer') {

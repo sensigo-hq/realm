@@ -1,11 +1,14 @@
-// step-key-registry.ts — issue #417 PR-2: the step-key consumption registry.
+// step-key-registry.ts — issue #417 PR-2 (the map) + #517 (the drive-flip: MINTS the
+// kind-prohibitions FROM these cells).
 //
 // Every member of KNOWN_STEP_KEYS crossed with every ExecutionMode (36 × 4 = 144 cells) is
-// classified here with evidence: where the engine actually reads it, where the loader refuses
-// it, and — where it is accepted but does nothing — WHY that silence is not actually silent (an
-// advisory code, a written waiver, or an issue tracking a real defect). The `satisfies` clause at
-// the bottom of this file turns a missing key or a missing kind into a COMPILE error: a new step
-// key cannot ship without a row here.
+// classified here with evidence: where the engine actually reads it, where the loader refuses it
+// — since #517, the loader's per-step walk looks every declared key up here and MINTS exactly one
+// refusal per key × kind, with the message text carried as per-cell data; companion/value rules
+// stay hand-written (the clang line) — and, where it is accepted but does nothing, WHY that
+// silence is not actually silent (an advisory code, a written waiver, or an issue tracking a real
+// defect). The `satisfies` clause at the bottom of this file turns a missing key or a missing kind
+// into a COMPILE error: a new step key cannot ship without a row here.
 //
 // LITERAL-ONLY DISCIPLINE (design-d2 F7): STEP_KEY_REGISTRY below is a plain object literal.
 // Any derived/mapped construction — spreading over KNOWN_STEP_KEYS, Object.fromEntries, a helper
@@ -19,10 +22,14 @@
 //      future consolidation of call sites is a one-line registry edit, never a loosened match.
 //   3. Every pattern is a call or read SHAPE — a receiver plus an operator, or a call paren —
 //      never a bare identifier that could match anywhere.
-//   4. Loop membership is witnessed by VALUE, not by source text: the two kind-prohibition lists
-//      in yaml-loader.ts are exported consts (`GUARD_PROHIBITED_STEP_KEYS`,
-//      `FINALIZER_PROHIBITED_STEP_KEYS`); a cell whose `by` carries the loop's own error-template
-//      pattern is asserted a member of the matching exported array, in both directions.
+//   4. (#517, the by[]-successor model) Every MINTED prohibition's `by[]` is the ONE shared
+//      MINT witness — the mint walk's own error-construction shape in yaml-loader.ts. The old
+//      per-key firing conditions and the two prohibition loops that used to back this rule are
+//      gone; membership truth now lives in the DERIVED exports `GUARD_PROHIBITED_STEP_KEYS` /
+//      `FINALIZER_PROHIBITED_STEP_KEYS`, which are computed FROM this registry
+//      (`prohibitedKeysFor`) — so the old both-directions membership assertion became an
+//      identity and was retired along with the loops it checked. Except-bearing cells and
+//      `blocked_transitive` cells keep their own live, hand-written witnesses below.
 //
 // THE WITNESS-COLLISION CLASS: a witness is code-shaped text, which means it is visible to every
 // OTHER line-based source-text guard in this suite too (the #369 preconditions call-site walker,
@@ -32,16 +39,19 @@
 // call text a walker is specifically counting). A collision always manifests as an EXISTING
 // unrelated cell going red while this file's own tests are green.
 //
-// MESSAGE_DATA (future-proofing for #517, the eventual drive-flip): where a prohibition mints one
-// of the bespoke four-clause messages, the INVARIANT TAIL of that message — every byte after the
-// shared `Step '<name>': ` prefix, before any positional `(line N)`/`(step at line N)` suffix — is
-// recorded here verbatim and asserted byte-CONTAINED (never byte-equal; the step name and the
-// line cite both interpolate) in the loader's real output by this PR's own behavioral cell. This
-// also rides the `blocked_transitive` arm for the #413 tool_timeout texts, asserted on leg A only
-// — a drift lock, nothing more: #517 will never MINT a companion-rule message from this data,
-// since companion rules stay hand-written (the D3 amendment's reasoning). Where one loader
-// message serves more than one kind (a shared const), every cell minting it points at the SAME
-// string, so a corruption of that text reds every sharer at once — by design, not an accident.
+// MESSAGE_DATA (#517, SHIPPED): where a prohibition mints one of the bespoke four-clause
+// messages, the INVARIANT TAIL of that message — every byte after the shared `Step '<name>': `
+// prefix, before any positional `(line N)`/`(step at line N)` suffix — IS the loader's minted
+// text for that cell (the mint renders this data verbatim), asserted byte-CONTAINED (never
+// byte-equal; the step name and the line cite both interpolate) by the behavioral cells below.
+// Post-flip these containment cells are mint-plumbing pins — the permanent floor; the one-time
+// byte-parity proof against the PRE-flip, hand-written checks was the golden run
+// (plans/issue-417-pr2/golden-compare.mjs, captured at merge-base fb752ef). This also rides the
+// `blocked_transitive` arm for the #413 tool_timeout texts, asserted on leg A only — a drift lock,
+// nothing more: the mint never mints a companion-rule message from this data, since companion
+// rules stay hand-written (the D3 amendment's clang line). Where one loader message serves more
+// than one kind (a shared const), every cell minting it points at the SAME string, so a
+// corruption of that text reds every sharer at once — by design, not an accident.
 //
 // MISCLASSIFICATION-DETECTION LIMIT (D4-4): the two-leg blocked_transitive assertion catches a
 // `prohibited` cell wrongly re-armed as `blocked_transitive` (leg B demands zero naming errors,
@@ -79,6 +89,16 @@ export type StepKeyCell =
       line: 'key' | 'path' | 'step';
       except?: { desc: string; via: StepKeyVia };
       message_data?: string;
+      /** #517: the minted FRONT-CLAUSE grammar for a GENERIC (no-`message_data`) minted cell.
+       *  'not_valid'  → `'X' is not valid on execution: <this cell's kind> steps` — the historical
+       *                 kind-prohibition-loop grammar, preserved byte-for-byte (golden-proven).
+       *  'only_valid' → `'X' is only valid on execution: <derived consumed kinds> steps` — the
+       *                 historical twin-only grammar; the valid-kind set is DERIVED from this
+       *                 registry's own consumed cells (`consumedKindsFor`), never typed by hand.
+       *  Exactly the generic minted population carries this field: `message_data` XOR `front` on
+       *  every minted cell, and neither on an `except` cell — a conformance cell asserts the
+       *  partition. */
+      front?: 'not_valid' | 'only_valid';
     }
   | {
       c: 'blocked_transitive';
@@ -175,17 +195,16 @@ const RA = 'packages/cli/src/agent/run-agent.ts';
 const RECLAIM = 'packages/cli/src/commands/reclaim.ts';
 const GEN = 'packages/mcp-server/src/protocol/generator.ts';
 
-// The two kind-prohibition loops' own error-template strings, each appearing exactly once in
-// yaml-loader.ts (the `${field}` placeholder is what makes this a LOOP member, as opposed to a
-// per-key rule that happens to render a similarly-shaped sentence, e.g. trust×finalizer's
-// value-scoped check below). A `prohibited` cell whose `by` carries one of these two patterns is
-// asserted, by the core runner, to be exactly the membership of the matching exported array.
-export const FINALIZER_LOOP_PATTERN =
-  "`Step '${stepName}': '${field}' is not valid on execution: finalizer steps`,";
-export const GUARD_LOOP_PATTERN =
-  "`Step '${stepName}': '${field}' is not valid on execution: guard steps`,";
-const FIN_LOOP: StepKeyWitness = { file: YL, pattern: FINALIZER_LOOP_PATTERN };
-const GUARD_LOOP: StepKeyWitness = { file: YL, pattern: GUARD_LOOP_PATTERN };
+// #517 (the drive-flip): every minted prohibition's `by[]` carries this ONE witness — the mint
+// walk's own error-construction shape in yaml-loader.ts, exact-count 1. The per-key hand-written
+// firing conditions these cells used to cite, and the two kind-prohibition loops, are DELETED by
+// the flip; the mint is now the single enforcement mechanism, so this one shared witness is the
+// truthful successor (a corruption of the walk reds every minted cell's witness check at once —
+// by design). Except-bearing and `blocked_transitive` cells keep their own live, hand-written
+// witnesses below.
+export const MINT_WITNESS_PATTERN =
+  "errors.push( withKeyLine( stepName, key, `Step '${stepName}': ${renderRegistryProhibition(key, kind, cell)}`,";
+const MINT: StepKeyWitness = { file: YL, pattern: MINT_WITNESS_PATTERN };
 
 // ——— message_data: the invariant tails of the shipped bespoke messages (see header) ———
 const MSG_ON_OUTCOME =
@@ -230,80 +249,20 @@ const MSG_TOOL_TIMEOUT =
   "realm's own drive each tool call is capped at tool_timeout seconds (default 30); declare " +
   'at least one tool or remove the key.';
 
-// ——— shared by-witnesses: the FIRING CONDITION of a per-key loader rule, never the message text
-// itself (the message is asserted behaviorally, via message_data, wherever it is bespoke) ———
-const BY_ON_OUTCOME: StepKeyWitness = {
-  file: YL,
-  pattern: "if (step['on_outcome'] !== undefined && step['execution'] !== 'finalizer') {",
-};
-const BY_ABORT_UNLESS: StepKeyWitness = {
-  file: YL,
-  pattern: "if (step['abort_unless'] !== undefined && step['execution'] !== 'guard') {",
-};
-const BY_ABORT_MESSAGE: StepKeyWitness = {
-  file: YL,
-  pattern: "if (step['abort_message'] !== undefined && step['execution'] !== 'guard') {",
-};
-const BY_AGENT_PROFILE: StepKeyWitness = {
-  file: YL,
-  pattern: "if ('agent_profile' in step && step['execution'] !== 'agent') {",
-};
-const BY_LLM_TIMEOUT: StepKeyWitness = {
-  file: YL,
-  pattern: "if (step['llm_timeout_seconds'] !== undefined && step['execution'] !== 'agent') {",
-};
-const BY_IDEMPOTENT: StepKeyWitness = {
-  file: YL,
-  pattern: "if (step['idempotent'] !== undefined && step['execution'] !== 'auto') {",
-};
-const BY_INPUT_MAP: StepKeyWitness = {
-  file: YL,
-  pattern: "`Step '${stepName}': 'input_map' is only valid on execution: auto steps`,",
-};
-const BY_OUTPUT_SCHEMA: StepKeyWitness = {
-  file: YL,
-  pattern: "if (step['output_schema'] !== undefined && step['execution'] !== 'agent') {",
-};
-const BY_TRACE_SCHEMA: StepKeyWitness = {
-  file: YL,
-  pattern: "if (step['trace_schema'] !== undefined && step['execution'] !== 'agent') {",
-};
-const BY_TRACE_MODE: StepKeyWitness = {
-  file: YL,
-  pattern: "if (step['trace_validation_mode'] !== undefined && step['execution'] !== 'agent') {",
-};
-const BY_VALIDATION_EXHAUSTION: StepKeyWitness = {
-  file: YL,
-  pattern: "`Step '${stepName}': 'validation_exhaustion' is only valid on execution: agent steps`,",
-};
-const BY_STRUCTURED_OUTPUT: StepKeyWitness = {
-  file: YL,
-  pattern: "`Step '${stepName}': 'structured_output' is only valid on execution: agent steps`,",
-};
-const BY_TOOLS: StepKeyWitness = {
-  file: YL,
-  pattern:
-    "`Step '${stepName}': 'tools' is only valid on execution: agent steps without 'handler' defined`,",
-};
+// ——— surviving hand-written by-witnesses (#517): only the except-bearing trust×finalizer
+// value-conditional check and the blocked_transitive tool_timeout companion check keep live
+// per-key firing conditions in the loader; every other prohibition is minted (MINT, above) ———
 const BY_TOOL_TIMEOUT: StepKeyWitness = {
   file: YL,
   pattern: "if (step['tool_timeout'] !== undefined && toolsMissing) {",
-};
-const BY_TIMEOUT_ON_AGENT: StepKeyWitness = {
-  file: YL,
-  pattern: "if (step['timeout_seconds'] !== undefined && step['execution'] === 'agent') {",
-};
-const BY_PRECONDITIONS_GUARD: StepKeyWitness = {
-  file: YL,
-  pattern:
-    "if (step['preconditions'] !== undefined) { errors.push( withKeyLine( stepName, 'preconditions',",
 };
 const BY_TRUST_FINALIZER: StepKeyWitness = {
   file: YL,
   pattern: "if (step['trust'] !== undefined && step['trust'] !== 'auto') {",
 };
 
-// ——— recurring consumed witnesses (shared across more than one cell) ———
+// ——— recurring consumed witnesses (shared across more than one cell, and — new in #517 — also
+// referenced as a CONSUMED_HOME.site: the message's factual citation IS the tested witness) ———
 const W_WHEN_ELIG: StepKeyWitness = {
   file: ELIG,
   pattern: 'if (!evaluateWhen(step.when, evidenceByStep, run.params)) continue;',
@@ -349,6 +308,257 @@ const W_PROMPT_NEXTACTION: StepKeyWitness = {
   file: EL,
   pattern: 'step.prompt !== undefined ? renderTemplate(step.prompt, context) : undefined;',
 };
+const W_ADAPTER_DISPATCH: StepKeyWitness = {
+  file: EL,
+  pattern: "if (stepDef?.execution === 'auto' && stepDef.uses_service !== undefined) {",
+};
+const W_SERVICE_METHOD_READ: StepKeyWitness = {
+  file: EL,
+  pattern: "const method = stepDef.service_method ?? 'fetch';",
+};
+const W_OPERATION_READ: StepKeyWitness = {
+  file: EL,
+  pattern: 'const operation = stepDef.operation ?? options.command;',
+};
+const W_INPUT_MAP_RESOLVE: StepKeyWitness = {
+  file: EL,
+  pattern: 'const adapterParams = resolveInputMap(stepDef.input_map, options, pendingRun);',
+};
+const W_HANDLER_AUTO_DISPATCH: StepKeyWitness = {
+  file: EL,
+  pattern: "} else if (stepDef?.execution === 'auto' && stepDef.handler !== undefined) {",
+};
+const W_OUTPUT_SCHEMA_READ: StepKeyWitness = {
+  file: EL,
+  pattern: "stepDef?.execution === 'agent' && stepDef.output_schema !== undefined",
+};
+const W_TRACE_SCHEMA_READ: StepKeyWitness = {
+  file: EL,
+  pattern: 'if (stepDef.trace_schema !== undefined) {',
+};
+const W_TRACE_MODE_READ: StepKeyWitness = {
+  file: EL,
+  pattern: "const mode = stepDef.trace_validation_mode ?? 'warn';",
+};
+const W_RETRY_READ: StepKeyWitness = { file: EL, pattern: 'const retryConfig = stepDef?.retry;' };
+const W_VALIDATION_EXHAUSTION_READ: StepKeyWitness = {
+  file: EL,
+  pattern: 'stepDef.validation_exhaustion?.threshold ?? DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD;',
+};
+const W_STRUCTURED_OUTPUT_READ: StepKeyWitness = {
+  file: EL,
+  pattern: '...(stepDef?.structured_output !== undefined',
+  count: 3, // the attempt disclosure is minted at all three seal shapes (census lane 2)
+};
+const W_TIMEOUT_ENFORCE: StepKeyWitness = {
+  file: EL,
+  pattern: 'const enforceTimeout = stepDef !== undefined && shouldEnforceTimeout(stepDef);',
+};
+
+/** #517 rung 2: file-shorthand → the operator phrase a consequence clause names it by. TOTAL over
+ *  every file this registry cites as a witness (conformance-checked below — a missing entry is a
+ *  red cell, not a silent fallback). Operator words, never file basenames (D7-5). */
+export const SURFACE_NAME: Record<string, string> = {
+  [EL]: "the engine's execution loop",
+  [ELIG]: 'step eligibility',
+  [SETTLE]: 'finalizer selection',
+  [CL]: 'claim liveness',
+  [YL]: 'the workflow loader',
+  [RA]: "realm's own drive",
+  [RECLAIM]: 'the reclaim command',
+  [GEN]: 'the protocol briefing',
+};
+
+/** #517 rung 2: where a generic-prohibited key actually LIVES — the data behind the minted
+ *  message's witness-backed consequence clause. `kinds` is asserted deep-equal to the DERIVED set
+ *  of kinds whose cell is `consumed` (truth cell 1); `site` is REFERENCE-IDENTICAL to a member of
+ *  one of this key's consumed cells' `where[]` (truth cell 2) — the message's factual citation IS
+ *  the tested witness, one object; `mechanism` is asserted byte-contained in every minted generic
+ *  message for the key (truth cell 3) and must CONTAIN `SURFACE_NAME[site.file]` (truth cell 4).
+ *
+ *  STATED RESIDUAL (the D4-4 honesty line): a wrong VERB in the mechanism prose is not
+ *  machine-caught — the truth cells bind the surface named and the witness cited, not the
+ *  grammar of what the surface DOES with the key. That last inch stays on review.
+ *
+ *  `remedy` is per-key judgment: a re-admission clause appears ONLY where a genuine widening is
+ *  on the board (the three-clause doctrine — no boilerplate fourth clause). As of #517, no
+ *  generic-prohibited key has an open widening issue, so no entry below carries one. */
+export type ConsumedHome = {
+  kinds: ExecutionMode[];
+  mechanism: string;
+  site: StepKeyWitness;
+  remedy: string;
+};
+export const CONSUMED_HOME: Partial<Record<(typeof KNOWN_STEP_KEYS)[number], ConsumedHome>> = {
+  depends_on: {
+    kinds: ['auto', 'agent', 'guard'],
+    mechanism:
+      'step eligibility reads it to gate when a DAG step becomes runnable, and a finalizer is ' +
+      "selected by 'on_outcome' at settlement, never through the DAG, so here it would order " +
+      'nothing.',
+    site: W_DEPENDS_ON,
+    remedy: "Sequence the finalizer with 'on_outcome' instead, or remove it.",
+  },
+  trigger_rule: {
+    kinds: ['auto', 'agent'],
+    mechanism:
+      'step eligibility reads it to decide how dependency outcomes gate a DAG step, and only ' +
+      'auto/agent steps are gated that way, so here it would gate nothing.',
+    site: W_TRIGGER_RULE,
+    remedy: 'Move it to the auto or agent step it should gate, or remove it.',
+  },
+  when: {
+    kinds: ['auto', 'agent', 'guard'],
+    mechanism:
+      'step eligibility evaluates it before a step may run, and a finalizer is selected by the ' +
+      "run's outcome at settlement, never by eligibility, so here it would route nothing.",
+    site: W_WHEN_ELIG,
+    remedy: "Route the finalizer with 'on_outcome' instead, or remove it.",
+  },
+  uses_service: {
+    kinds: ['auto'],
+    mechanism:
+      "the engine's execution loop routes a step's work through the named service adapter only " +
+      'on the auto dispatch path, so here it would dispatch nothing.',
+    site: W_ADAPTER_DISPATCH,
+    remedy: 'Move it to an auto step, or remove it.',
+  },
+  service_method: {
+    kinds: ['auto'],
+    mechanism:
+      "the engine's execution loop reads it to pick the adapter operation on the auto dispatch " +
+      'path, so here it would pick nothing.',
+    site: W_SERVICE_METHOD_READ,
+    remedy: 'Move it to an auto step, or remove it.',
+  },
+  operation: {
+    kinds: ['auto'],
+    mechanism:
+      "the engine's execution loop reads it as the adapter operation name on the auto dispatch " +
+      'path, so here it would name nothing.',
+    site: W_OPERATION_READ,
+    remedy: 'Move it to an auto step, or remove it.',
+  },
+  input_map: {
+    kinds: ['auto'],
+    mechanism:
+      "the engine's execution loop resolves it into dispatch parameters on the auto path, so " +
+      'here it would map nothing.',
+    site: W_INPUT_MAP_RESOLVE,
+    remedy: 'Move it to an auto step, or remove it.',
+  },
+  handler: {
+    kinds: ['auto', 'agent', 'finalizer'],
+    mechanism:
+      "the engine's execution loop dispatches work through it on auto, agent and finalizer " +
+      "steps, and a guard's execution evaluates only 'abort_unless', so here it would run " +
+      'nothing.',
+    site: W_HANDLER_AUTO_DISPATCH,
+    remedy: 'Move it to a step of a kind that dispatches it, or remove it.',
+  },
+  input_schema: {
+    kinds: ['auto', 'agent'],
+    mechanism:
+      "the engine's execution loop validates a step's effective input against it at execution " +
+      "time, and a guard's execution evaluates only 'abort_unless', so here it would validate " +
+      'nothing.',
+    site: W_INPUT_SCHEMA_2B,
+    remedy: 'Move it to the auto or agent step whose input it should check, or remove it.',
+  },
+  output_schema: {
+    kinds: ['agent'],
+    mechanism:
+      "the engine's execution loop validates an agent step's submitted output against it, and " +
+      'only agent steps submit output that way, so here it would validate nothing.',
+    site: W_OUTPUT_SCHEMA_READ,
+    remedy: 'Move it to the agent step whose output it should check, or remove it.',
+  },
+  trace_schema: {
+    kinds: ['agent'],
+    mechanism:
+      "the engine's execution loop validates an agent step's appended trace against it, and " +
+      'only agent steps carry a validated trace, so here it would validate nothing.',
+    site: W_TRACE_SCHEMA_READ,
+    remedy: 'Move it to the agent step whose trace it should check, or remove it.',
+  },
+  trace_validation_mode: {
+    kinds: ['agent'],
+    mechanism:
+      "the engine's execution loop reads it to choose warn-or-enforce for 'trace_schema' " +
+      'validation, which only agent steps carry, so here it would choose nothing.',
+    site: W_TRACE_MODE_READ,
+    remedy: 'Move it to the agent step whose trace validation it should set, or remove it.',
+  },
+  trust: {
+    kinds: ['auto', 'agent'],
+    mechanism:
+      "the engine's execution loop reads it to mint a human gate before the step runs, and a " +
+      'guard is never gated that way, so here it would gate nothing.',
+    site: W_GATE_MINT_TRUST,
+    remedy: 'Move it to the auto or agent step that needs the gate, or remove it.',
+  },
+  timeout_seconds: {
+    kinds: ['auto', 'finalizer'],
+    mechanism:
+      "the engine's execution loop enforces it as the time-bound on auto dispatch and on a " +
+      "finalizer's drain, and a guard's evaluation is never time-bounded, so here it would " +
+      'bound nothing.',
+    site: W_TIMEOUT_ENFORCE,
+    remedy: 'Move it to the auto or finalizer step it should bound, or remove it.',
+  },
+  retry: {
+    kinds: ['auto'],
+    mechanism:
+      "the engine's execution loop reads it to re-attempt failed auto dispatch, and only auto " +
+      'attempts are retried that way, so here it would retry nothing.',
+    site: W_RETRY_READ,
+    remedy: 'Move it to the auto step whose attempts it should govern, or remove it.',
+  },
+  validation_exhaustion: {
+    kinds: ['agent'],
+    mechanism:
+      "the engine's execution loop counts an agent step's schema rejections against its " +
+      'threshold, and only agent submissions are counted that way, so here it would count ' +
+      'nothing.',
+    site: W_VALIDATION_EXHAUSTION_READ,
+    remedy: 'Move it to the agent step whose rejections it should bound, or remove it.',
+  },
+  tools: {
+    kinds: ['agent'],
+    mechanism:
+      "in realm's own drive it is the tool list offered to the model on an agent step, and " +
+      'only agent steps make model requests, so here it would offer nothing.',
+    site: W_TOOLS_PATH,
+    remedy: 'Move it to the agent step that should call the tools, or remove it.',
+  },
+  structured_output: {
+    kinds: ['agent'],
+    mechanism:
+      "the engine's execution loop records an agent step's strict-output mode on its attempt " +
+      'evidence, and only agent attempts carry it, so here it would constrain nothing.',
+    site: W_STRUCTURED_OUTPUT_READ,
+    remedy: 'Move it to the agent step whose output it should constrain, or remove it.',
+  },
+};
+
+/** #517: the TRUE prohibited set per kind — every key whose cell on `mode` is `prohibited`
+ *  WITHOUT an `except` arm (the except cell, today exactly trust×finalizer, keeps its
+ *  value-conditional hand-written check and is deliberately absent). The loader's exported
+ *  `GUARD_PROHIBITED_STEP_KEYS` / `FINALIZER_PROHIBITED_STEP_KEYS` are computed from this — one
+ *  source, no membership drift possible. */
+export function prohibitedKeysFor(mode: ExecutionMode): string[] {
+  return (Object.keys(STEP_KEY_REGISTRY) as Array<keyof typeof STEP_KEY_REGISTRY>).filter((key) => {
+    const cell: StepKeyCell = STEP_KEY_REGISTRY[key][mode];
+    return cell.c === 'prohibited' && cell.except === undefined;
+  });
+}
+
+/** #517: the kinds a key is actually CONSUMED on — the derived valid-kind set behind an
+ *  'only_valid' front clause (and truth cell 1's comparator for consumed_home.kinds). */
+export function consumedKindsFor(key: (typeof KNOWN_STEP_KEYS)[number]): ExecutionMode[] {
+  const modes: ExecutionMode[] = ['auto', 'agent', 'guard', 'finalizer'];
+  return modes.filter((mode) => STEP_KEY_REGISTRY[key][mode].c === 'consumed');
+}
 
 /**
  * Real program defects on a key×kind surface that cannot be expressed as a cell arm — the key
@@ -408,12 +618,7 @@ export const STEP_KEY_REGISTRY = {
   execution: {
     auto: {
       c: 'consumed',
-      where: [
-        {
-          file: EL,
-          pattern: "if (stepDef?.execution === 'auto' && stepDef.uses_service !== undefined) {",
-        },
-      ],
+      where: [W_ADAPTER_DISPATCH],
     },
     agent: {
       c: 'consumed',
@@ -432,13 +637,13 @@ export const STEP_KEY_REGISTRY = {
     auto: { c: 'consumed', where: [W_DEPENDS_ON] },
     agent: { c: 'consumed', where: [W_DEPENDS_ON] },
     guard: { c: 'consumed', where: [W_DEPENDS_ON] },
-    finalizer: { c: 'prohibited', by: [FIN_LOOP], line: 'step' },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
   },
   trigger_rule: {
     auto: { c: 'consumed', where: [W_TRIGGER_RULE] },
     agent: { c: 'consumed', where: [W_TRIGGER_RULE] },
-    guard: { c: 'prohibited', by: [GUARD_LOOP], line: 'step' },
-    finalizer: { c: 'prohibited', by: [FIN_LOOP], line: 'step' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
   },
   when: {
     auto: { c: 'consumed', where: [W_WHEN_ELIG] },
@@ -455,11 +660,11 @@ export const STEP_KEY_REGISTRY = {
         },
       },
     },
-    finalizer: { c: 'prohibited', by: [FIN_LOOP], line: 'step' },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
   },
   abort_unless: {
-    auto: { c: 'prohibited', by: [BY_ABORT_UNLESS], line: 'key', message_data: MSG_ABORT_UNLESS },
-    agent: { c: 'prohibited', by: [BY_ABORT_UNLESS], line: 'key', message_data: MSG_ABORT_UNLESS },
+    auto: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_ABORT_UNLESS },
+    agent: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_ABORT_UNLESS },
     guard: {
       c: 'consumed',
       where: [
@@ -472,16 +677,16 @@ export const STEP_KEY_REGISTRY = {
     },
     finalizer: {
       c: 'prohibited',
-      by: [FIN_LOOP, BY_ABORT_UNLESS], // multi-fire ×2 — both the loop and the dedicated check name it (census lane 1)
+      by: [MINT],
       line: 'key',
       message_data: MSG_ABORT_UNLESS,
     },
   },
   abort_message: {
-    auto: { c: 'prohibited', by: [BY_ABORT_MESSAGE], line: 'key', message_data: MSG_ABORT_MESSAGE },
+    auto: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_ABORT_MESSAGE },
     agent: {
       c: 'prohibited',
-      by: [BY_ABORT_MESSAGE],
+      by: [MINT],
       line: 'key',
       message_data: MSG_ABORT_MESSAGE,
     },
@@ -502,15 +707,15 @@ export const STEP_KEY_REGISTRY = {
     },
     finalizer: {
       c: 'prohibited',
-      by: [FIN_LOOP, BY_ABORT_MESSAGE],
+      by: [MINT],
       line: 'key',
       message_data: MSG_ABORT_MESSAGE,
     },
   },
   on_outcome: {
-    auto: { c: 'prohibited', by: [BY_ON_OUTCOME], line: 'key', message_data: MSG_ON_OUTCOME },
-    agent: { c: 'prohibited', by: [BY_ON_OUTCOME], line: 'key', message_data: MSG_ON_OUTCOME },
-    guard: { c: 'prohibited', by: [BY_ON_OUTCOME], line: 'key', message_data: MSG_ON_OUTCOME },
+    auto: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_ON_OUTCOME },
+    agent: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_ON_OUTCOME },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_ON_OUTCOME },
     finalizer: {
       c: 'consumed',
       where: [{ file: SETTLE, pattern: 'const raw = stepDef.on_outcome;' }],
@@ -530,34 +735,26 @@ export const STEP_KEY_REGISTRY = {
         },
       ],
     },
-    agent: { c: 'prohibited', by: [BY_IDEMPOTENT], line: 'key', message_data: MSG_IDEMPOTENT },
-    guard: { c: 'prohibited', by: [BY_IDEMPOTENT], line: 'key', message_data: MSG_IDEMPOTENT },
-    finalizer: { c: 'prohibited', by: [BY_IDEMPOTENT], line: 'key', message_data: MSG_IDEMPOTENT },
+    agent: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_IDEMPOTENT },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_IDEMPOTENT },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_IDEMPOTENT },
   },
   uses_service: {
     auto: {
       c: 'consumed',
-      where: [
-        {
-          file: EL,
-          pattern: "if (stepDef?.execution === 'auto' && stepDef.uses_service !== undefined) {",
-        },
-      ],
+      where: [W_ADAPTER_DISPATCH],
     },
     agent: { c: 'inert', via: { kind: 'tracked', issue: '#511' } },
-    guard: { c: 'prohibited', by: [GUARD_LOOP], line: 'step' },
-    finalizer: { c: 'prohibited', by: [FIN_LOOP], line: 'step' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
   },
   service_method: {
     auto: {
       c: 'consumed',
-      where: [{ file: EL, pattern: "const method = stepDef.service_method ?? 'fetch';" }],
+      where: [W_SERVICE_METHOD_READ],
       when: {
         desc: 'dispatch-arm-keyed: read only on the uses_service adapter dispatch path',
-        witness: {
-          file: EL,
-          pattern: "if (stepDef?.execution === 'auto' && stepDef.uses_service !== undefined) {",
-        },
+        witness: W_ADAPTER_DISPATCH,
       },
       inert_subpop: [
         {
@@ -571,19 +768,16 @@ export const STEP_KEY_REGISTRY = {
       ],
     },
     agent: { c: 'inert', via: { kind: 'tracked', issue: '#511' } },
-    guard: { c: 'prohibited', by: [GUARD_LOOP], line: 'step' },
-    finalizer: { c: 'prohibited', by: [FIN_LOOP], line: 'step' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
   },
   operation: {
     auto: {
       c: 'consumed',
-      where: [{ file: EL, pattern: 'const operation = stepDef.operation ?? options.command;' }],
+      where: [W_OPERATION_READ],
       when: {
         desc: 'dispatch-arm-keyed: read only on the uses_service adapter dispatch path',
-        witness: {
-          file: EL,
-          pattern: "if (stepDef?.execution === 'auto' && stepDef.uses_service !== undefined) {",
-        },
+        witness: W_ADAPTER_DISPATCH,
       },
       inert_subpop: [
         {
@@ -597,24 +791,16 @@ export const STEP_KEY_REGISTRY = {
       ],
     },
     agent: { c: 'inert', via: { kind: 'tracked', issue: '#511' } },
-    guard: { c: 'prohibited', by: [GUARD_LOOP], line: 'step' },
-    finalizer: { c: 'prohibited', by: [FIN_LOOP], line: 'step' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
   },
   input_map: {
     auto: {
       c: 'consumed',
-      where: [
-        {
-          file: EL,
-          pattern: 'const adapterParams = resolveInputMap(stepDef.input_map, options, pendingRun);',
-        },
-      ],
+      where: [W_INPUT_MAP_RESOLVE],
       when: {
         desc: 'dispatch-arm-keyed: resolved on the adapter path, and delivered to handlers via the resolved params',
-        witness: {
-          file: EL,
-          pattern: "if (stepDef?.execution === 'auto' && stepDef.uses_service !== undefined) {",
-        },
+        witness: W_ADAPTER_DISPATCH,
       },
       inert_subpop: [
         {
@@ -626,19 +812,14 @@ export const STEP_KEY_REGISTRY = {
         },
       ],
     },
-    agent: { c: 'prohibited', by: [BY_INPUT_MAP], line: 'step' },
-    guard: { c: 'prohibited', by: [GUARD_LOOP, BY_INPUT_MAP], line: 'step' },
-    finalizer: { c: 'prohibited', by: [FIN_LOOP, BY_INPUT_MAP], line: 'step' },
+    agent: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
   },
   handler: {
     auto: {
       c: 'consumed',
-      where: [
-        {
-          file: EL,
-          pattern: "} else if (stepDef?.execution === 'auto' && stepDef.handler !== undefined) {",
-        },
-      ],
+      where: [W_HANDLER_AUTO_DISPATCH],
       inert_subpop: [
         {
           desc: 'shadowed when uses_service is also declared: dispatch precedence tries the adapter arm first, and no both-declared check exists to flag it',
@@ -662,7 +843,7 @@ export const STEP_KEY_REGISTRY = {
         },
       },
     },
-    guard: { c: 'prohibited', by: [GUARD_LOOP], line: 'step' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
     finalizer: {
       c: 'consumed',
       where: [{ file: EL, pattern: 'const handlerName = stepDef?.handler;' }],
@@ -708,37 +889,32 @@ export const STEP_KEY_REGISTRY = {
       },
     },
     agent: { c: 'consumed', where: [W_INPUT_SCHEMA_2B] },
-    guard: { c: 'prohibited', by: [GUARD_LOOP], line: 'step' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
     finalizer: { c: 'inert', via: { kind: 'tracked', issue: '#512' } },
   },
   output_schema: {
-    auto: { c: 'prohibited', by: [BY_OUTPUT_SCHEMA], line: 'step' },
+    auto: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
     agent: {
       c: 'consumed',
-      where: [
-        {
-          file: EL,
-          pattern: "stepDef?.execution === 'agent' && stepDef.output_schema !== undefined",
-        },
-      ],
+      where: [W_OUTPUT_SCHEMA_READ],
     },
-    guard: { c: 'prohibited', by: [GUARD_LOOP, BY_OUTPUT_SCHEMA], line: 'step' },
-    finalizer: { c: 'prohibited', by: [FIN_LOOP, BY_OUTPUT_SCHEMA], line: 'step' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
   },
   trace_schema: {
-    auto: { c: 'prohibited', by: [BY_TRACE_SCHEMA], line: 'step' },
+    auto: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
     agent: {
       c: 'consumed',
-      where: [{ file: EL, pattern: 'if (stepDef.trace_schema !== undefined) {' }],
+      where: [W_TRACE_SCHEMA_READ],
     },
-    guard: { c: 'prohibited', by: [BY_TRACE_SCHEMA], line: 'step' },
-    finalizer: { c: 'prohibited', by: [BY_TRACE_SCHEMA], line: 'step' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
   },
   trace_validation_mode: {
-    auto: { c: 'prohibited', by: [BY_TRACE_MODE], line: 'step' },
+    auto: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
     agent: {
       c: 'consumed',
-      where: [{ file: EL, pattern: "const mode = stepDef.trace_validation_mode ?? 'warn';" }],
+      where: [W_TRACE_MODE_READ],
       inert_subpop: [
         {
           desc: 'declared without trace_schema: the only read sits inside the trace_schema branch and is never reached — silently ignored, with no dead-config advisory today despite two in-file precedents for that shape',
@@ -746,15 +922,15 @@ export const STEP_KEY_REGISTRY = {
         },
       ],
     },
-    guard: { c: 'prohibited', by: [BY_TRACE_MODE], line: 'step' },
-    finalizer: { c: 'prohibited', by: [BY_TRACE_MODE], line: 'step' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
   },
   preconditions: {
     auto: { c: 'consumed', where: [W_PRECONDITIONS] },
     agent: { c: 'consumed', where: [W_PRECONDITIONS] },
     guard: {
       c: 'prohibited',
-      by: [BY_PRECONDITIONS_GUARD],
+      by: [MINT],
       line: 'key',
       message_data: MSG_PRECONDITIONS_GUARD,
     },
@@ -781,7 +957,7 @@ export const STEP_KEY_REGISTRY = {
         },
       ],
     },
-    guard: { c: 'prohibited', by: [GUARD_LOOP], line: 'step' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
     finalizer: {
       c: 'prohibited',
       by: [BY_TRUST_FINALIZER],
@@ -800,10 +976,7 @@ export const STEP_KEY_REGISTRY = {
     auto: {
       c: 'consumed',
       where: [
-        {
-          file: EL,
-          pattern: 'const enforceTimeout = stepDef !== undefined && shouldEnforceTimeout(stepDef);',
-        },
+        W_TIMEOUT_ENFORCE,
         {
           file: CL,
           pattern:
@@ -817,11 +990,11 @@ export const STEP_KEY_REGISTRY = {
     },
     agent: {
       c: 'prohibited',
-      by: [BY_TIMEOUT_ON_AGENT],
+      by: [MINT],
       line: 'key',
       message_data: MSG_TIMEOUT_ON_AGENT,
     },
-    guard: { c: 'prohibited', by: [GUARD_LOOP], line: 'step' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
     finalizer: {
       c: 'consumed',
       where: [
@@ -839,26 +1012,20 @@ export const STEP_KEY_REGISTRY = {
   retry: {
     auto: {
       c: 'consumed',
-      where: [{ file: EL, pattern: 'const retryConfig = stepDef?.retry;' }],
+      where: [W_RETRY_READ],
     },
     agent: { c: 'inert', via: { kind: 'advisory', code: 'RETRY_INERT_NON_AUTO' } },
     guard: { c: 'inert', via: { kind: 'advisory', code: 'RETRY_INERT_NON_AUTO' } },
-    finalizer: { c: 'prohibited', by: [FIN_LOOP], line: 'step' },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
   },
   validation_exhaustion: {
-    auto: { c: 'prohibited', by: [BY_VALIDATION_EXHAUSTION], line: 'step' },
+    auto: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
     agent: {
       c: 'consumed',
-      where: [
-        {
-          file: EL,
-          pattern:
-            'stepDef.validation_exhaustion?.threshold ?? DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD;',
-        },
-      ],
+      where: [W_VALIDATION_EXHAUSTION_READ],
     },
-    guard: { c: 'prohibited', by: [BY_VALIDATION_EXHAUSTION], line: 'step' },
-    finalizer: { c: 'prohibited', by: [BY_VALIDATION_EXHAUSTION], line: 'step' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
   },
   instructions: {
     auto: {
@@ -997,7 +1164,7 @@ export const STEP_KEY_REGISTRY = {
     finalizer: { c: 'inert', via: { kind: 'tracked', issue: '#512' } },
   },
   agent_profile: {
-    auto: { c: 'prohibited', by: [BY_AGENT_PROFILE], line: 'key', message_data: MSG_AGENT_PROFILE },
+    auto: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_AGENT_PROFILE },
     agent: {
       c: 'consumed',
       where: [
@@ -1011,19 +1178,19 @@ export const STEP_KEY_REGISTRY = {
     },
     guard: {
       c: 'prohibited',
-      by: [GUARD_LOOP, BY_AGENT_PROFILE], // multi-fire ×2 (census lane 3)
+      by: [MINT],
       line: 'key',
       message_data: MSG_AGENT_PROFILE,
     },
     finalizer: {
       c: 'prohibited',
-      by: [FIN_LOOP, BY_AGENT_PROFILE], // multi-fire ×2 (census lane 3)
+      by: [MINT],
       line: 'key',
       message_data: MSG_AGENT_PROFILE,
     },
   },
   tools: {
-    auto: { c: 'prohibited', by: [BY_TOOLS], line: 'step' },
+    auto: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
     agent: {
       c: 'consumed',
       where: [W_TOOLS_PATH],
@@ -1034,8 +1201,8 @@ export const STEP_KEY_REGISTRY = {
         },
       ],
     },
-    guard: { c: 'prohibited', by: [GUARD_LOOP, BY_TOOLS], line: 'step' },
-    finalizer: { c: 'prohibited', by: [FIN_LOOP, BY_TOOLS], line: 'step' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
   },
   max_tool_calls: {
     auto: { c: 'inert', via: { kind: 'tracked', issue: '#510' } },
@@ -1095,22 +1262,16 @@ export const STEP_KEY_REGISTRY = {
     },
   },
   structured_output: {
-    auto: { c: 'prohibited', by: [BY_STRUCTURED_OUTPUT], line: 'step' },
+    auto: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
     agent: {
       c: 'consumed',
-      where: [
-        {
-          file: EL,
-          pattern: '...(stepDef?.structured_output !== undefined',
-          count: 3, // the attempt disclosure is minted at all three seal shapes (census lane 2)
-        },
-      ],
+      where: [W_STRUCTURED_OUTPUT_READ],
     },
-    guard: { c: 'prohibited', by: [BY_STRUCTURED_OUTPUT], line: 'step' },
-    finalizer: { c: 'prohibited', by: [BY_STRUCTURED_OUTPUT], line: 'step' },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'only_valid' },
   },
   llm_timeout_seconds: {
-    auto: { c: 'prohibited', by: [BY_LLM_TIMEOUT], line: 'key', message_data: MSG_LLM_TIMEOUT },
+    auto: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_LLM_TIMEOUT },
     agent: {
       c: 'consumed',
       where: [
@@ -1120,10 +1281,10 @@ export const STEP_KEY_REGISTRY = {
         },
       ],
     },
-    guard: { c: 'prohibited', by: [BY_LLM_TIMEOUT], line: 'key', message_data: MSG_LLM_TIMEOUT },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_LLM_TIMEOUT },
     finalizer: {
       c: 'prohibited',
-      by: [BY_LLM_TIMEOUT],
+      by: [MINT],
       line: 'key',
       message_data: MSG_LLM_TIMEOUT,
     },

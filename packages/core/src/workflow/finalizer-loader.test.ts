@@ -112,27 +112,69 @@ describe('yaml-loader — execution: finalizer', () => {
     expectMessage(yaml, "'on_outcome' must not be empty");
   });
 
-  // Every prohibited field must produce a targeted per-field error.
+  // Every prohibited field must produce a targeted per-field error — PER-MEMBER pins (#517, the
+  // ratified per-member rule): each member's expected text is ITS OWN truth, because the flip
+  // collapsed the old multi-fire. The ten loop-grammar members keep the historical front clause
+  // (now with an appended consequence clause — `toContain` sees the preserved prefix); the three
+  // members whose surviving refusal is a BESPOKE four-clause message (abort_unless,
+  // abort_message, agent_profile — their loop twin died in the collapse) pin a fragment of that
+  // bespoke text instead.
   it.each([
-    ['depends_on', 'depends_on: [work]'],
-    ['trigger_rule', 'trigger_rule: all_done'],
-    ['abort_unless', 'abort_unless: ["work.x == 1"]'],
-    ['abort_message', 'abort_message: nope'],
-    ['output_schema', 'output_schema: {type: object}'],
-    ['agent_profile', 'agent_profile: some_profile'],
-    ['tools', 'tools: [some_tool]'],
-    ['uses_service', 'uses_service: some_service'],
-    ['service_method', 'service_method: get'],
-    ['operation', 'operation: some_op'],
-    ['input_map', 'input_map: {foo: run.params.foo}'],
-    ['when', 'when: ["work.x == 1"]'],
-    ['retry', 'retry: {max_attempts: 3, backoff: fixed, base_delay_ms: 1}'],
-  ])('rejects prohibited field %s on a finalizer', (field, snippet) => {
+    ['depends_on', 'depends_on: [work]', "'depends_on' is not valid on execution: finalizer"],
+    [
+      'trigger_rule',
+      'trigger_rule: all_done',
+      "'trigger_rule' is not valid on execution: finalizer",
+    ],
+    [
+      'abort_unless',
+      'abort_unless: ["work.x == 1"]',
+      "'abort_unless' is only valid on execution: guard steps — it is the condition list a guard evaluates",
+    ],
+    [
+      'abort_message',
+      'abort_message: nope',
+      "'abort_message' is only valid on execution: guard steps — it is the text reported when a guard aborts",
+    ],
+    [
+      'output_schema',
+      'output_schema: {type: object}',
+      "'output_schema' is not valid on execution: finalizer",
+    ],
+    [
+      'agent_profile',
+      'agent_profile: some_profile',
+      "'agent_profile' is only valid on execution: agent steps — its content is resolved into the model prompt",
+    ],
+    ['tools', 'tools: [some_tool]', "'tools' is not valid on execution: finalizer"],
+    [
+      'uses_service',
+      'uses_service: some_service',
+      "'uses_service' is not valid on execution: finalizer",
+    ],
+    [
+      'service_method',
+      'service_method: get',
+      "'service_method' is not valid on execution: finalizer",
+    ],
+    ['operation', 'operation: some_op', "'operation' is not valid on execution: finalizer"],
+    [
+      'input_map',
+      'input_map: {foo: run.params.foo}',
+      "'input_map' is not valid on execution: finalizer",
+    ],
+    ['when', 'when: ["work.x == 1"]', "'when' is not valid on execution: finalizer"],
+    [
+      'retry',
+      'retry: {max_attempts: 3, backoff: fixed, base_delay_ms: 1}',
+      "'retry' is not valid on execution: finalizer",
+    ],
+  ])('rejects prohibited field %s on a finalizer', (_field, snippet, expected) => {
     const yaml = VALID_FINALIZER_YAML.replace(
       'handler: do_cleanup',
       `handler: do_cleanup\n    ${snippet}`,
     );
-    expectMessage(yaml, `'${field}' is not valid on execution: finalizer`);
+    expectMessage(yaml, expected);
   });
 
   it('rejects a human-gate trust on a finalizer (a finalizer must not gate)', () => {

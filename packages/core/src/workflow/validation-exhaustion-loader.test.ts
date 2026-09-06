@@ -56,6 +56,42 @@ steps:
       );
     });
 
+    it('#517 re-gate: WRONG KIND × WRONG VALUE gets ONLY the minted kind refusal, no sub-key noise', () => {
+      // The flip de-nested this block's else-if; the explicit `=== 'agent'` conjunct preserves
+      // the old suppression — a wrong-kind step must never be pointed at its threshold.
+      expectThrows(
+        `
+id: vx-auto-badvalue-wf
+name: VX Auto Bad Value
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+    validation_exhaustion:
+      threshold: 0
+`,
+        "'validation_exhaustion' is only valid on execution: agent steps",
+      );
+      try {
+        loadWorkflowFromString(`
+id: vx-auto-badvalue-wf
+name: VX Auto Bad Value
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+    validation_exhaustion:
+      threshold: 0
+`);
+      } catch (err) {
+        expect((err as WorkflowError).message).not.toContain('must be a positive integer');
+      }
+    });
+
     it('threshold range refusal: 0 is rejected', () => {
       expectThrows(
         `
