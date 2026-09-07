@@ -297,7 +297,7 @@ steps:
 | `human_confirmed` | The engine pauses and returns `status: confirm_required`. The run will not advance until `submit_human_response` is called with a valid gate choice. |
 | `human_reviewed`  | The human must demonstrate review via challenge before the gate can close.                                                                           |
 
-`trust` is only meaningful on `execution: auto` steps — an agent step already requires an explicit `execute_step` call.
+`trust` is meaningful on `execution: auto` and `execution: agent` steps — the gate mint has no kind conjunct at all, and both kinds are where the human-gate literals (`human_confirmed`/`human_reviewed`) can actually load. It is prohibited outright on `execution: guard` steps, and on `execution: finalizer` steps only the literal `auto` is accepted (and does nothing there — a finalizer must not gate).
 
 ---
 

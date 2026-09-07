@@ -175,7 +175,7 @@ steps:
       "Step 'step_two': 'timeout_seconds' is not valid on execution: guard steps — the engine's " +
         "execution loop enforces it as the time-bound on auto dispatch and on a finalizer's " +
         "drain, and a guard's evaluation is never time-bounded, so here it would bound nothing. " +
-        'Move it to the auto or finalizer step it should bound, or remove it. (line 13)',
+        'Move it to an auto or finalizer step it should bound, or remove it. (line 13)',
     );
   });
 

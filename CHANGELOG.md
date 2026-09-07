@@ -78,6 +78,38 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **Thirty wording defects in the loader's minted kind-refusal messages, each an executed or
+  source-traced false/overbroad claim about the engine, are corrected against the engine's real
+  behavior** (issue #417; the message-claim-truth sweep of the #517 registry mint). The sharpest:
+  `trust`'s guard refusal claimed the human gate is minted "before the step runs" — the gate
+  actually opens on the step's produced output, AFTER the work (and its side effects) ran;
+  `trigger_rule`'s guard refusal claimed a smuggled rule "would gate nothing" when the engine
+  would consume it and silently change when the guard runs; `input_map`'s finalizer refusal
+  claimed the key "would map nothing" when the finalizer drain resolves it in full;
+  `handler`'s refusal claimed the engine "dispatches work through it on agent steps" when the
+  agent path only advertises the handler as the next action's tool; `service_method`'s refusal
+  named the sibling `operation` key's axis. Remedies now name the condition that makes the key
+  live (`uses_service` for the adapter-dispatch family), never a destination where it would be
+  silently dead, and carry the open re-admission issues (#360 for `when` on finalizers, #366
+  for guard gating) per the four-clause policy. `ConsumedHome.mechanism`/`remedy` are now
+  per-kind-capable so one shared string can no longer be true for one refused kind and false
+  for the other; the truth cells assert every variant. Message fronts are byte-unchanged
+  (golden family (b) holds); the refusal population is unchanged.
+- **The `RETRY_INERT_NON_AUTO` and `TOTAL_TIMEOUT_NON_AUTO` advisories no longer co-fire beside
+  the finalizer's `retry` refusal** (issue #417). Both advisories' population gate is now the
+  registry's own `retry` cell (they fire exactly where the key is admitted-but-inert:
+  agent/guard), so a refused finalizer gets the refusal alone — previously the same thrown
+  error carried warnings claiming the config is "not an invalid one" beside the error saying it
+  is invalid, that "the built-in dispatch path never throws for these steps" (the drain throws
+  routinely), and that "an embedder-supplied throwing dispatcher may still consume this config"
+  (no dispatcher can reach a finalizer's retry). The guard arm's embedder-dispatcher sentence is
+  dropped for the same reason (guards are evaluated inline — no dispatcher, no retry read); the
+  agent arm, where the sentence is execution-true, is unchanged. A step whose `execution` value
+  is not one of the four kinds no longer draws these advisories either (it is already refused by
+  the invalid-execution error; same disclosure class as the #517 malformed-kind narrowing).
+  `when`'s depends_on-reference leaf check no longer tells a finalizer author to "Add it to
+  depends_on" (a dead pointer — `depends_on` is itself prohibited there); that kind mints
+  "Use 'run.params.*'" instead, forked on the registry's own `depends_on` cell.
 - **`realm workflow run` detaches cleanly and exits truthfully with stdout redirected, not just
   in a bare terminal** (issue #458). With stdout piped (`realm workflow run … > log`), Ctrl-C
   used to die on the raw signal path — exit `130`, no detach map, a live wedged run left behind

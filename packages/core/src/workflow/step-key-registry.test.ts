@@ -38,6 +38,8 @@ import {
   STEP_KEY_REGISTRY,
   TRACKED_RESIDUALS,
   CONSUMED_HOME,
+  homeText,
+  homeTextVariants,
   SURFACE_NAME,
   MINT_WITNESS_PATTERN,
   consumedKindsFor,
@@ -315,10 +317,81 @@ describe('#417-PR2 — the step-key consumption registry (core conformance)', ()
     for (const [key, home] of Object.entries(CONSUMED_HOME)) {
       const phrase = SURFACE_NAME[home.site.file];
       expect(phrase, `${key}: no SURFACE_NAME entry for ${home.site.file}`).toBeDefined();
+      // Per-kind capability: EVERY variant a PerKindText can mint must name the surface —
+      // iterating variants is strictly stronger than the old single-string containment.
+      for (const variant of homeTextVariants(home.mechanism)) {
+        expect(
+          variant.includes(phrase!),
+          `${key}: a mechanism variant does not name its surface ("${phrase}"):\n  ${variant}`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('per-kind variants: the mint renders each refused kind ITS OWN text — literal pins, never derived through homeText (a broken selector would satisfy a derived expectation)', () => {
+    // The literal table below is the discriminating half of the per-kind capability: the truth
+    // cells above assert containment of homeText(...), which a selector that always returns
+    // `default` would satisfy vacuously (the mint and the cell share the function). These pins
+    // name each variant's load-bearing clause AS A LITERAL, so dropping the per-kind selection
+    // reds here. One row per per-kind arm; the default arms are covered by the truth cells.
+    const LITERAL_VARIANT_PINS: Array<{
+      key: (typeof KNOWN_STEP_KEYS)[number];
+      mode: ExecutionMode;
+      contains: string;
+      absent: string;
+    }> = [
+      {
+        key: 'trigger_rule',
+        mode: 'guard',
+        // The guard truth: a smuggled rule would silently WORK (the opposite of inert).
+        contains: 'silently change when the guard runs',
+        absent: 'would gate nothing',
+      },
+      {
+        key: 'trigger_rule',
+        mode: 'finalizer',
+        contains: "selected by 'on_outcome' at settlement, never through the DAG",
+        absent: 'silently change when the guard runs',
+      },
+      {
+        key: 'uses_service',
+        mode: 'finalizer',
+        // The finalizer's real home for service work is its handler, not a DAG move.
+        contains: "Do the service call inside the finalizer's 'handler' instead",
+        absent: 'Move it to an auto step,',
+      },
+      {
+        key: 'input_map',
+        mode: 'finalizer',
+        // The drain WOULD resolve it (probe-executed) — refused outright, never called inert.
+        contains: 'refused here outright rather than trusted to be inert',
+        absent: 'would map nothing',
+      },
+      {
+        key: 'input_map',
+        mode: 'guard',
+        contains: 'so here it would map nothing',
+        absent: 'refused here outright',
+      },
+    ];
+    for (const pin of LITERAL_VARIANT_PINS) {
+      const outcome = load(buildFixture(pin.key, pin.mode));
+      expect(outcome.refused, `${pin.key}×${pin.mode} should refuse`).toBe(true);
+      if (!outcome.refused) continue;
+      const minted = outcome.errors.find(
+        (e) =>
+          e.includes(`'${pin.key}' is not valid on execution:`) ||
+          e.includes(`'${pin.key}' is only valid on execution:`),
+      );
+      expect(minted, `${pin.key}×${pin.mode}: no minted kind refusal`).toBeDefined();
       expect(
-        home.mechanism.includes(phrase!),
-        `${key}: mechanism does not name its surface ("${phrase}"):\n  ${home.mechanism}`,
+        minted!.includes(pin.contains),
+        `${pin.key}×${pin.mode}: variant clause missing:\n  ${minted}`,
       ).toBe(true);
+      expect(
+        minted!.includes(pin.absent),
+        `${pin.key}×${pin.mode}: OTHER kind's clause leaked in:\n  ${minted}`,
+      ).toBe(false);
     }
   });
 
@@ -437,10 +510,16 @@ describe('#417-PR2 — the step-key consumption registry (core conformance)', ()
               `minted front clause drifted for ${key}×${mode}:\n  expected front: ${front}\n  minted: ${minted}`,
             ).toBe(true);
             const home = CONSUMED_HOME[key as (typeof KNOWN_STEP_KEYS)[number]]!;
-            expect(minted.includes(home.mechanism), `mechanism not contained:\n${minted}`).toBe(
-              true,
-            );
-            expect(minted.includes(home.remedy), `remedy not contained:\n${minted}`).toBe(true);
+            // Per-kind capability: the minted message must carry THIS kind's variant verbatim
+            // (homeText selects the per-kind arm when one exists, else the default).
+            expect(
+              minted.includes(homeText(home.mechanism, mode)),
+              `mechanism not contained:\n${minted}`,
+            ).toBe(true);
+            expect(
+              minted.includes(homeText(home.remedy, mode)),
+              `remedy not contained:\n${minted}`,
+            ).toBe(true);
           }
         });
         if (cell.except !== undefined && key === 'trust' && mode === 'finalizer') {

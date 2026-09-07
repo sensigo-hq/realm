@@ -40,6 +40,7 @@ import {
   CONSUMED_HOME,
   prohibitedKeysFor,
   consumedKindsFor,
+  homeText,
   type StepKeyCell,
 } from './step-key-registry.js';
 import type { ExecutionMode } from '../types/workflow-definition.js';
@@ -65,7 +66,7 @@ function renderRegistryProhibition(
     cell.front === 'only_valid'
       ? `'${key}' is only valid on execution: ${consumedKindsFor(key as never).join('/')} steps`
       : `'${key}' is not valid on execution: ${kind} steps`;
-  return `${front} — ${home.mechanism} ${home.remedy}`;
+  return `${front} — ${homeText(home.mechanism, kind)} ${homeText(home.remedy, kind)}`;
 }
 
 /**
@@ -78,6 +79,14 @@ function validateConditionLeaf(
   leaf: string,
   stepName: string,
   dependsOn: string[],
+  /**
+   * The step's declared `execution` kind (undefined when missing/malformed — those steps are
+   * already refused by the invalid-execution error, and the remedy below keeps its generic
+   * form). Threaded through so `validateWhenReference` can fork its remedy tail on the
+   * registry's own `depends_on` cell — a kind where `depends_on` is prohibited must never be
+   * told to add one (the wrong-remedy composition class this correction fixes).
+   */
+  kind: ExecutionMode | undefined,
   errors: string[],
   /**
    * Appends the step's source line to a message (issue #392). REQUIRED rather than optional so
@@ -148,7 +157,7 @@ function validateConditionLeaf(
       return;
     }
     if (surface === 'when')
-      validateWhenReference(split.path, stepName, dependsOn, errors, withLine);
+      validateWhenReference(split.path, stepName, dependsOn, kind, errors, withLine);
     return;
   }
 
@@ -175,7 +184,7 @@ function validateConditionLeaf(
     return;
   }
   if (surface === 'when')
-    validateWhenReference(split.lhsPath, stepName, dependsOn, errors, withLine);
+    validateWhenReference(split.lhsPath, stepName, dependsOn, kind, errors, withLine);
 }
 
 /**
@@ -255,6 +264,8 @@ function validateWhenReference(
   path: string,
   stepName: string,
   dependsOn: string[],
+  /** @see validateConditionLeaf — forks the remedy tail on the registry's `depends_on` cell. */
+  kind: ExecutionMode | undefined,
   errors: string[],
   /**
    * Appends the step's source line to a message (issue #392). REQUIRED rather than optional so
@@ -277,10 +288,20 @@ function validateWhenReference(
     return;
   }
   if (!dependsOn.includes(first)) {
+    // The remedy's first arm is forked on the registry's own depends_on cell: on a kind where
+    // depends_on is prohibited (today exactly finalizer), 'Add it to depends_on' is a dead
+    // pointer — following it mints a second refusal (probe-executed; the wrong-remedy
+    // composition class this correction fixes). Derived from the cell so the fork can never
+    // drift from the mint.
+    const dependsOnLegal =
+      kind === undefined || STEP_KEY_REGISTRY.depends_on[kind].c === 'consumed';
+    const remedyTail = dependsOnLegal
+      ? `Add it to depends_on or use 'run.params.*'.`
+      : `Use 'run.params.*' — 'depends_on' is not valid on this step's kind.`;
     errors.push(
       withLine(
         stepName,
-        `Step '${stepName}': 'when' references step '${first}' which is not in its depends_on [${dependsOn.join(', ')}]. Add it to depends_on or use 'run.params.*'.`,
+        `Step '${stepName}': 'when' references step '${first}' which is not in its depends_on [${dependsOn.join(', ')}]. ${remedyTail}`,
       ),
     );
   }
@@ -928,6 +949,11 @@ function parseWorkflowString(
       // at all); the legacy when-only depends_on/run.params check (validateWhenReference) is
       // UNCHANGED — it still fires ONLY for `surface === 'when'`. This is a LIFT, not a new
       // computation — byte-identical to the previous block-local `dependsOn` for `when`'s own use.
+      // The step's kind, once, for every kind-forked check below (undefined = malformed or
+      // missing execution — already refused by the invalid-execution/required error).
+      const stepKind = VALID_EXECUTIONS.has(step['execution'] as string)
+        ? (step['execution'] as ExecutionMode)
+        : undefined;
       const dependsOn = Array.isArray(step['depends_on'])
         ? (step['depends_on'] as unknown[]).filter((d): d is string => typeof d === 'string')
         : [];
@@ -1588,6 +1614,14 @@ function parseWorkflowString(
           errors.push(withStepLine(stepName, `Step '${stepName}': 'retry' must be an object`));
         } else {
           const retry = step['retry'] as Record<string, unknown>;
+          // The one population gate both retry advisories (W5 + RETRY_INERT_NON_AUTO) share:
+          // the registry's own retry cell for this step's kind. `inert` = admitted-but-unread
+          // (agent/guard). On `consumed` (auto) neither advisory applies; on `prohibited`
+          // (finalizer) the #517 refusal above is the whole story and an advisory beside it
+          // would contradict it; on a malformed kind the invalid-execution error is the verdict.
+          const retryCellIsInert =
+            VALID_EXECUTIONS.has(step['execution'] as string) &&
+            STEP_KEY_REGISTRY.retry[step['execution'] as ExecutionMode].c === 'inert';
 
           // WARN (do not reject) on an unknown retry-block key — same non-breaking posture as the
           // step/workflow-level checks (issue #140). Noun overridden to 'retry' (not 'step') since
@@ -1691,8 +1725,11 @@ function parseWorkflowString(
 
           // W5 (CAP-ONLY advisory — the on_timeout half of this is already an E1 hard error, so
           // it never reaches here as a warning): the total-time cap only bounds `execution: 'auto'`
-          // dispatch — inert on any other step type that legally declares `retry:` today.
-          if (step['execution'] !== 'auto' && retry['total_timeout_seconds'] !== undefined) {
+          // dispatch — inert on any other step type that LEGALLY declares `retry:`. The gate is
+          // the registry's own retry cell: the advisory fires only where retry is admitted-but-
+          // inert (agent/guard), never beside the finalizer refusal it would contradict, and
+          // never on a malformed kind (already refused by the invalid-execution error).
+          if (retryCellIsInert && retry['total_timeout_seconds'] !== undefined) {
             warnings.push({
               code: 'TOTAL_TIMEOUT_NON_AUTO',
               severity: resolveSeverity('TOTAL_TIMEOUT_NON_AUTO'),
@@ -1701,20 +1738,22 @@ function parseWorkflowString(
               message:
                 `Step '${stepName}': 'retry.total_timeout_seconds' is inert on execution: ` +
                 `'${String(step['execution'])}' steps — the cap only bounds 'execution: auto' ` +
-                `dispatch, which is the only dispatch ever wrapped in a timeout.`,
+                `dispatch; no other kind's dispatch ever consumes it.`,
             });
           }
 
           // issue #218 (extends the W5 family): the BARE-KEYS advisory — no explicit
-          // total_timeout_seconds (that shape is W5's, above), but retry: is present on a step the
-          // built-in dispatch path never wraps in a throwing retry loop at all. Complementary to
-          // W5's own `!== undefined` conjunct on the SAME `execution !== 'auto'` gate, so for any
-          // non-auto retry block that reaches this point (finalizer+retry and invalid-cap shapes
-          // already hard-errored above; on_timeout: true already hard-errored via E1 unless
-          // idempotent is also declared, which is itself rejected by the pre-existing
-          // idempotent-non-auto check) exactly ONE of {W5, RETRY_INERT_NON_AUTO} ever fires — never
-          // both, never neither.
-          if (step['execution'] !== 'auto' && retry['total_timeout_seconds'] === undefined) {
+          // total_timeout_seconds (that shape is W5's, above), but retry: is present on a step no
+          // dispatching retry loop ever consumes it on. Complementary to W5's own `!== undefined`
+          // conjunct on the SAME registry-derived inert gate, so for any admitted-but-inert retry
+          // block exactly ONE of {W5, RETRY_INERT_NON_AUTO} ever fires — never both, never
+          // neither. The gate EXCLUDES the prohibited kind (finalizer): errors accumulate rather
+          // than halt, so the old `!== 'auto'` gate leaked this advisory beside the finalizer
+          // refusal, where every clause of it was false ("never throws" — the drain throws
+          // routinely; "may still consume" — no dispatcher can reach a finalizer's retry;
+          // "not an invalid one" — the co-fired error says it IS invalid). Registry-derived:
+          // it fires exactly where the retry cell is inert (agent/guard).
+          if (retryCellIsInert && retry['total_timeout_seconds'] === undefined) {
             const isAgent = step['execution'] === 'agent';
             const message = isAgent
               ? `Step '${stepName}': 'retry' is inert on execution: 'agent' steps — the built-in ` +
@@ -1723,9 +1762,9 @@ function parseWorkflowString(
                 `flag instead). An embedder-supplied throwing dispatcher may still consume this ` +
                 `config — a deliberate public-API capability, not an invalid one.`
               : `Step '${stepName}': 'retry' is inert on execution: '${String(step['execution'])}' ` +
-                `steps — the built-in dispatch path never throws for these steps, so this block can ` +
-                `never mint a second attempt here. An embedder-supplied throwing dispatcher may ` +
-                `still consume this config — a deliberate public-API capability, not an invalid one.`;
+                `steps — a guard's evaluation never traverses the dispatch path (its conditions ` +
+                `are evaluated inline, with no dispatcher and no retry read), so this block can ` +
+                `never mint a second attempt here.`;
             warnings.push({
               code: 'RETRY_INERT_NON_AUTO',
               severity: resolveSeverity('RETRY_INERT_NON_AUTO'),
@@ -1931,7 +1970,15 @@ function parseWorkflowString(
               withStepLine(stepName, `Step '${stepName}': 'when' must be a non-empty string`),
             );
           } else {
-            validateConditionLeaf('when', rawWhen, stepName, dependsOn, errors, withStepLine);
+            validateConditionLeaf(
+              'when',
+              rawWhen,
+              stepName,
+              dependsOn,
+              stepKind,
+              errors,
+              withStepLine,
+            );
           }
         } else if (Array.isArray(rawWhen)) {
           if (rawWhen.length === 0) {
@@ -1948,7 +1995,15 @@ function parseWorkflowString(
                   ),
                 );
               } else {
-                validateConditionLeaf('when', leaf, stepName, dependsOn, errors, withStepLine);
+                validateConditionLeaf(
+                  'when',
+                  leaf,
+                  stepName,
+                  dependsOn,
+                  stepKind,
+                  errors,
+                  withStepLine,
+                );
               }
             }
           }
@@ -1981,6 +2036,7 @@ function parseWorkflowString(
               rawAbort,
               stepName,
               dependsOn,
+              stepKind,
               errors,
               withStepLine,
             );
@@ -2005,6 +2061,7 @@ function parseWorkflowString(
                   leaf,
                   stepName,
                   dependsOn,
+                  stepKind,
                   errors,
                   withStepLine,
                 );
@@ -2048,6 +2105,7 @@ function parseWorkflowString(
                 leaf,
                 stepName,
                 dependsOn,
+                stepKind,
                 errors,
                 withStepLine,
               );
