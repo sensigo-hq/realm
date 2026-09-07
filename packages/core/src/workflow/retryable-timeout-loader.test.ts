@@ -576,7 +576,12 @@ steps:
     expect(w).toBeDefined();
     expect(w?.message).toContain("execution: 'guard'");
     expect(w?.message).not.toContain('--schema-retries');
-    expect(w?.message).toContain('embedder-supplied throwing dispatcher');
+    // The guard arm no longer carries the embedder-dispatcher clause: no dispatcher can reach
+    // a guard's retry config (guards are evaluated inline by executeGuardStep — no dispatcher
+    // parameter, no retry read; eligibility excludes guards from executeStep unconditionally).
+    // The clause stays on the AGENT arm, the one kind where it is execution-true.
+    expect(w?.message).toContain('never traverses the dispatch path');
+    expect(w?.message).not.toContain('embedder-supplied throwing dispatcher');
   });
 
   it("3. finalizer step, same block ⇒ load HARD-ERRORS with \"'retry' is not valid on execution: finalizer steps\" and no advisory is observable (composition pin; mirrors finalizer-loader.test.ts:99-106) — the issue's AC2 finalizer clause is satisfied by this PRE-EXISTING STRONGER rejection, not by the new advisory", () => {
@@ -602,6 +607,68 @@ steps:
 `,
       "'retry' is not valid on execution: finalizer steps",
     );
+    // The title's own claim, pinned (it was FALSE before the population fix: #424 carries
+    // warnings through a hard load error, and the old `!== 'auto'` gate minted the advisory
+    // beside this very refusal — "never throws" / "may still consume" / "not an invalid one",
+    // all false on the refused kind). The gate is now the registry's retry cell, so the
+    // refusal stands alone.
+    try {
+      loadWorkflowFromString(`
+id: retry-inert-finalizer-wf
+name: Retry Inert Finalizer
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+  cleanup:
+    description: Cleanup finalizer
+    execution: finalizer
+    on_outcome: always
+    handler: do_cleanup
+    retry:
+      max_attempts: 3
+      backoff: fixed
+      base_delay_ms: 10
+`);
+      throw new Error('expected loadWorkflowFromString to throw');
+    } catch (err) {
+      const codes = ((err as WorkflowError).warnings ?? []).map((w) => w.code);
+      expect(codes).not.toContain('RETRY_INERT_NON_AUTO');
+      expect(codes).not.toContain('TOTAL_TIMEOUT_NON_AUTO');
+    }
+  });
+
+  it('3b. finalizer step with an explicit total_timeout_seconds ⇒ the refusal stands alone — W5 does not co-fire beside it either (the same population gate)', () => {
+    try {
+      loadWorkflowFromString(`
+id: retry-cap-finalizer-wf
+name: Retry Cap Finalizer
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+  cleanup:
+    description: Cleanup finalizer
+    execution: finalizer
+    on_outcome: always
+    handler: do_cleanup
+    retry:
+      max_attempts: 3
+      total_timeout_seconds: 60
+`);
+      throw new Error('expected loadWorkflowFromString to throw');
+    } catch (err) {
+      expect((err as WorkflowError).message).toContain(
+        "'retry' is not valid on execution: finalizer steps",
+      );
+      const codes = ((err as WorkflowError).warnings ?? []).map((w) => w.code);
+      expect(codes).not.toContain('TOTAL_TIMEOUT_NON_AUTO');
+      expect(codes).not.toContain('RETRY_INERT_NON_AUTO');
+    }
   });
 
   it('4. auto step, same block ⇒ NO RETRY_INERT_NON_AUTO (and no W5)', () => {

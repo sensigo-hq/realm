@@ -381,14 +381,35 @@ export const SURFACE_NAME: Record<string, string> = {
  *  grammar of what the surface DOES with the key. That last inch stays on review.
  *
  *  `remedy` is per-key judgment: a re-admission clause appears ONLY where a genuine widening is
- *  on the board (the three-clause doctrine — no boilerplate fourth clause). As of #517, no
- *  generic-prohibited key has an open widening issue, so no entry below carries one. */
+ *  on the board (the three-clause doctrine — no boilerplate fourth clause). Two are open today:
+ *  #360 (when×finalizer — a mint-time 'when' evaluation for finalizers), carried by the `when`
+ *  remedy, and #366 (guard failure-gating), carried by the `trigger_rule` guard remedy; no other
+ *  entry has one.
+ *
+ *  `mechanism`/`remedy` are per-kind-CAPABLE (`PerKindText`, issue #417's message-claim-truth
+ *  sweep): a per-kind variant exists ONLY where one string cannot be truthful for every
+ *  prohibited kind at once (the same fork #362/#413 already use for per-key rules, lifted into
+ *  data here). The truth cells iterate EVERY variant a `PerKindText` can mint
+ *  (`homeTextVariants`); the mint selects the refused step's own kind (`homeText`). */
+export type PerKindText = string | ({ default: string } & Partial<Record<ExecutionMode, string>>);
 export type ConsumedHome = {
   kinds: ExecutionMode[];
-  mechanism: string;
+  mechanism: PerKindText;
   site: StepKeyWitness;
-  remedy: string;
+  remedy: PerKindText;
 };
+/** The minted text for one refused kind: the per-kind arm when one exists for it, else the
+ *  shared default. */
+export function homeText(text: PerKindText, kind: ExecutionMode): string {
+  if (typeof text === 'string') return text;
+  return text[kind] ?? text.default;
+}
+/** Every DISTINCT string a `PerKindText` can mint, across all kinds — what the truth cells
+ *  assert over (strictly stronger than asserting only the `default` arm). */
+export function homeTextVariants(text: PerKindText): string[] {
+  if (typeof text === 'string') return [text];
+  return [...new Set(Object.values(text))];
+}
 export const CONSUMED_HOME: Partial<Record<(typeof KNOWN_STEP_KEYS)[number], ConsumedHome>> = {
   depends_on: {
     kinds: ['auto', 'agent', 'guard'],
@@ -397,15 +418,35 @@ export const CONSUMED_HOME: Partial<Record<(typeof KNOWN_STEP_KEYS)[number], Con
       "selected by 'on_outcome' at settlement, never through the DAG, so here it would order " +
       'nothing.',
     site: W_DEPENDS_ON,
-    remedy: "Sequence the finalizer with 'on_outcome' instead, or remove it.",
+    // #417 wording defect: 'Sequence' overclaimed depends_on's own job — depends_on only ORDERS
+    // (a precondition on WHEN a step becomes eligible); 'on_outcome' is what actually SELECTS
+    // which finalizers run for a given outcome. 'Trigger' names the device that does the job.
+    remedy: "Trigger the finalizer with 'on_outcome' instead, or remove it.",
   },
   trigger_rule: {
     kinds: ['auto', 'agent'],
-    mechanism:
-      'step eligibility reads it to decide how dependency outcomes gate a DAG step, and only ' +
-      'auto/agent steps are gated that way, so here it would gate nothing.',
+    // #417 wording defect (falsity): a guard's OWN cell is gated by trigger_rule identically to
+    // a DAG step — the loader forbids the DECLARATION, not the mechanism; "would gate nothing"
+    // and "only auto/agent steps are gated that way" were both false for the guard population.
+    mechanism: {
+      default:
+        'step eligibility reads it to decide how dependency outcomes gate a DAG step, and a ' +
+        "finalizer is selected by 'on_outcome' at settlement, never through the DAG, so here " +
+        'it would gate nothing.',
+      guard:
+        'step eligibility reads it on a guard exactly as on a DAG step, so it would silently ' +
+        'change when the guard runs and when it is skipped; a guard is deliberately gated by ' +
+        'the plain success of its dependencies.',
+    },
     site: W_TRIGGER_RULE,
-    remedy: 'Move it to the auto or agent step it should gate, or remove it.',
+    remedy: {
+      default: "Trigger the finalizer with 'on_outcome' instead, or remove it.",
+      // issue #366 tracks widening guards to a configurable trigger rule — the in-tree
+      // precedent for a re-admission clause on a per-kind remedy arm.
+      guard:
+        'Move it to the auto or agent step it should gate, or remove it — a guard itself ' +
+        "always gates on 'all_success' (issue #366 tracks widening guards).",
+    },
   },
   when: {
     kinds: ['auto', 'agent', 'guard'],
@@ -413,7 +454,15 @@ export const CONSUMED_HOME: Partial<Record<(typeof KNOWN_STEP_KEYS)[number], Con
       'step eligibility evaluates it before a step may run, and a finalizer is selected by the ' +
       "run's outcome at settlement, never by eligibility, so here it would route nothing.",
     site: W_WHEN_ELIG,
-    remedy: "Route the finalizer with 'on_outcome' instead, or remove it.",
+    // issue #360 tracks a mint-time 'when' evaluation for finalizers (routing a cleanup step on
+    // which dependency failed) — the re-admission clause the four-clause policy asks for where a
+    // genuine widening is on the board. Today's honest remedy: the failure context 'when' would
+    // have carried is already reachable inside the handler.
+    remedy:
+      "Route the finalizer with 'on_outcome' instead, or remove it. 'on_outcome' matches run " +
+      'outcomes only — a condition (run params, step evidence) branches inside the handler, ' +
+      "whose context carries run_params and resources['$settlement'].<step>.failed (issue " +
+      "#360 tracks widening finalizers with a mint-time 'when').",
   },
   uses_service: {
     kinds: ['auto'],
@@ -421,40 +470,81 @@ export const CONSUMED_HOME: Partial<Record<(typeof KNOWN_STEP_KEYS)[number], Con
       "the engine's execution loop routes a step's work through the named service adapter only " +
       'on the auto dispatch path, so here it would dispatch nothing.',
     site: W_ADAPTER_DISPATCH,
-    remedy: 'Move it to an auto step, or remove it.',
+    remedy: {
+      default: 'Move it to an auto step, or remove it.',
+      // #417 wording defect (overclaim): "move it to an auto step" implies EVERY auto step
+      // reaches the adapter path; a finalizer's own home for the same service call is its
+      // handler, not a DAG relocation.
+      finalizer:
+        "Do the service call inside the finalizer's 'handler' instead (a finalizer runs " +
+        'handler-only), or remove it.',
+    },
   },
   service_method: {
     kinds: ['auto'],
+    // #417 wording defect (falsity): named the SIBLING key's axis — service_method picks the
+    // adapter METHOD, not the operation (that's `operation`, below) — and the "auto dispatch
+    // path" overclaimed scope: only a step that dispatches through 'uses_service' reads it.
     mechanism:
-      "the engine's execution loop reads it to pick the adapter operation on the auto dispatch " +
-      'path, so here it would pick nothing.',
+      "the engine's execution loop reads it to pick the adapter method on the uses_service " +
+      'adapter dispatch path, so here it would pick nothing.',
     site: W_SERVICE_METHOD_READ,
-    remedy: 'Move it to an auto step, or remove it.',
+    remedy: "Move it to an auto step that dispatches through 'uses_service', or remove it.",
   },
   operation: {
     kinds: ['auto'],
+    // #417 wording defect (overclaim): "the auto dispatch path" implied every auto step reads
+    // it; only the 'uses_service' adapter arm does.
     mechanism:
-      "the engine's execution loop reads it as the adapter operation name on the auto dispatch " +
-      'path, so here it would name nothing.',
+      "the engine's execution loop reads it as the adapter operation name on the uses_service " +
+      'adapter dispatch path, so here it would name nothing.',
     site: W_OPERATION_READ,
-    remedy: 'Move it to an auto step, or remove it.',
+    remedy: "Move it to an auto step that dispatches through 'uses_service', or remove it.",
   },
   input_map: {
     kinds: ['auto'],
-    mechanism:
-      "the engine's execution loop resolves it into dispatch parameters on the auto path, so " +
-      'here it would map nothing.',
+    mechanism: {
+      // #417 wording defect (overclaim + underclaim): "on the auto path" implied every auto
+      // step resolves it; only the two dispatch arms (uses_service, handler) do.
+      default:
+        "the engine's execution loop resolves it into dispatch parameters when an auto step " +
+        "dispatches through 'uses_service' or a handler, so here it would map nothing.",
+      // #417 wording defect (falsity, probe-executed): a finalizer's drain shares the SAME
+      // handler-dispatch code path that resolves input_map on auto — "would map nothing" is
+      // false; it would map something the finalizer's contract never wanted. Refused outright,
+      // not left to a true-but-misleading inertness claim.
+      finalizer:
+        "the engine's execution loop resolves it into dispatch parameters at handler dispatch " +
+        '— the finalizer drain shares that dispatch — so it is refused here outright rather ' +
+        "than trusted to be inert: a finalizer's handler takes no mapped input, and run data " +
+        'reaches it through its context instead.',
+    },
     site: W_INPUT_MAP_RESOLVE,
-    remedy: 'Move it to an auto step, or remove it.',
+    remedy: {
+      default:
+        "Move it to an auto step that dispatches through 'uses_service' or a handler, or " +
+        'remove it.',
+      finalizer:
+        "Move it to an auto step that dispatches through 'uses_service' or a handler, or " +
+        "remove it — a finalizer's handler already receives run params and step evidence " +
+        "through its context, and static values through 'config'.",
+    },
   },
   handler: {
     kinds: ['auto', 'agent', 'finalizer'],
+    // #417 wording defect (falsity, agent conjunct): the agent path never DISPATCHES through
+    // `handler` — the NextAction only ADVERTISES it as the tool name for the model to call; the
+    // auto conjunct also overclaimed (an auto step declaring BOTH uses_service and handler
+    // dispatches through the adapter arm first — the handler arm is shadowed, tracked #511).
     mechanism:
-      "the engine's execution loop dispatches work through it on auto, agent and finalizer " +
-      "steps, and a guard's execution evaluates only 'abort_unless', so here it would run " +
-      'nothing.',
+      "the engine's execution loop dispatches work through it on auto steps that do not also " +
+      "declare 'uses_service' and on finalizer steps, on an agent step the NextAction only " +
+      "names it as the tool for the agent to call, and a guard's execution evaluates only " +
+      "'abort_unless', so here it would run nothing.",
     site: W_HANDLER_AUTO_DISPATCH,
-    remedy: 'Move it to a step of a kind that dispatches it, or remove it.',
+    // single string, NOT per-kind: handler's only GENERIC-prohibited mint is ×guard (auto/agent/
+    // finalizer are all `consumed`), so one remedy suffices — no per-kind fork is needed here.
+    remedy: "Move it to an auto step without 'uses_service' or to a finalizer step, or remove it.",
   },
   input_schema: {
     kinds: ['auto', 'agent'],
@@ -463,7 +553,7 @@ export const CONSUMED_HOME: Partial<Record<(typeof KNOWN_STEP_KEYS)[number], Con
       "time, and a guard's execution evaluates only 'abort_unless', so here it would validate " +
       'nothing.',
     site: W_INPUT_SCHEMA_2B,
-    remedy: 'Move it to the auto or agent step whose input it should check, or remove it.',
+    remedy: 'Move it to an auto or agent step whose input it should check, or remove it.',
   },
   output_schema: {
     kinds: ['agent'],
@@ -471,15 +561,17 @@ export const CONSUMED_HOME: Partial<Record<(typeof KNOWN_STEP_KEYS)[number], Con
       "the engine's execution loop validates an agent step's submitted output against it, and " +
       'only agent steps submit output that way, so here it would validate nothing.',
     site: W_OUTPUT_SCHEMA_READ,
-    remedy: 'Move it to the agent step whose output it should check, or remove it.',
+    remedy: 'Move it to an agent step whose output it should check, or remove it.',
   },
   trace_schema: {
     kinds: ['agent'],
+    // #417 wording defect (minor): "appended trace" presupposed a trace already exists to
+    // append to — the schema validates the step's whole canonical trace, appended or not.
     mechanism:
-      "the engine's execution loop validates an agent step's appended trace against it, and " +
+      "the engine's execution loop validates an agent step's canonical trace against it, and " +
       'only agent steps carry a validated trace, so here it would validate nothing.',
     site: W_TRACE_SCHEMA_READ,
-    remedy: 'Move it to the agent step whose trace it should check, or remove it.',
+    remedy: 'Move it to an agent step whose trace it should check, or remove it.',
   },
   trace_validation_mode: {
     kinds: ['agent'],
@@ -487,15 +579,22 @@ export const CONSUMED_HOME: Partial<Record<(typeof KNOWN_STEP_KEYS)[number], Con
       "the engine's execution loop reads it to choose warn-or-enforce for 'trace_schema' " +
       'validation, which only agent steps carry, so here it would choose nothing.',
     site: W_TRACE_MODE_READ,
-    remedy: 'Move it to the agent step whose trace validation it should set, or remove it.',
+    remedy: 'Move it to an agent step whose trace validation it should set, or remove it.',
   },
   trust: {
     kinds: ['auto', 'agent'],
+    // #417 wording defect (falsity): the human gate does NOT open "before the step runs" — it
+    // opens on the step's PRODUCED output, after the work (and any side effects) already ran.
     mechanism:
-      "the engine's execution loop reads it to mint a human gate before the step runs, and a " +
-      'guard is never gated that way, so here it would gate nothing.',
+      "the engine's execution loop reads it to mint a human gate on the step's produced output " +
+      'before it settles, and a guard is never gated that way, so here it would gate nothing.',
     site: W_GATE_MINT_TRUST,
-    remedy: 'Move it to the auto or agent step that needs the gate, or remove it.',
+    // #417 wording defect (overclaim): "the auto or agent step that needs the gate" implied
+    // every trust value opens one — only the two human-gate literals do (issue #508 tracks the
+    // silent-un-gate hole for every other value, already in the registry's own trust×auto cell).
+    remedy:
+      'Move it to the auto or agent step that needs the gate — only ' +
+      "'human_confirmed' or 'human_reviewed' opens one — or remove it.",
   },
   timeout_seconds: {
     kinds: ['auto', 'finalizer'],
@@ -504,24 +603,32 @@ export const CONSUMED_HOME: Partial<Record<(typeof KNOWN_STEP_KEYS)[number], Con
       "finalizer's drain, and a guard's evaluation is never time-bounded, so here it would " +
       'bound nothing.',
     site: W_TIMEOUT_ENFORCE,
-    remedy: 'Move it to the auto or finalizer step it should bound, or remove it.',
+    remedy: 'Move it to an auto or finalizer step it should bound, or remove it.',
   },
   retry: {
     kinds: ['auto'],
+    // #417 wording defect (overclaim, board #26): "only auto attempts are retried that way"
+    // implied auto is the retry mechanism's OWN exclusivity boundary — but an embedder-supplied
+    // dispatcher on another kind could retry through the identical loop; the true boundary is
+    // structural: a finalizer never REACHES the dispatch loop at all (it runs on the seal-time
+    // drain, which never reads this key), so re-grounded on that mechanism instead.
     mechanism:
-      "the engine's execution loop reads it to re-attempt failed auto dispatch, and only auto " +
-      'attempts are retried that way, so here it would retry nothing.',
+      "the engine's execution loop reads it to re-attempt failed dispatch, and a finalizer " +
+      'never reaches that dispatch loop — it runs on the seal-time drain, which never reads ' +
+      'this key — so here it would retry nothing.',
     site: W_RETRY_READ,
-    remedy: 'Move it to the auto step whose attempts it should govern, or remove it.',
+    remedy: 'Move it to an auto step whose attempts it should govern, or remove it.',
   },
   validation_exhaustion: {
     kinds: ['agent'],
+    // #417 wording defect (overclaim): "schema rejections" without qualification undercounted
+    // the counted class — both input- and output-schema rejections count against the threshold.
     mechanism:
-      "the engine's execution loop counts an agent step's schema rejections against its " +
-      'threshold, and only agent submissions are counted that way, so here it would count ' +
-      'nothing.',
+      "the engine's execution loop counts an agent step's input- and output-schema rejections " +
+      'against its threshold, and only agent submissions are counted that way, so here it ' +
+      'would count nothing.',
     site: W_VALIDATION_EXHAUSTION_READ,
-    remedy: 'Move it to the agent step whose rejections it should bound, or remove it.',
+    remedy: 'Move it to an agent step whose rejections it should bound, or remove it.',
   },
   tools: {
     kinds: ['agent'],
@@ -529,15 +636,21 @@ export const CONSUMED_HOME: Partial<Record<(typeof KNOWN_STEP_KEYS)[number], Con
       "in realm's own drive it is the tool list offered to the model on an agent step, and " +
       'only agent steps make model requests, so here it would offer nothing.',
     site: W_TOOLS_PATH,
-    remedy: 'Move it to the agent step that should call the tools, or remove it.',
+    remedy: 'Move it to an agent step that should call the tools, or remove it.',
   },
   structured_output: {
     kinds: ['agent'],
+    // #417 wording defect (board #32, verb weakened per D8-6): the OLD text presented the
+    // engine's EVIDENCE RECORDING as the key's consumption home and let 'constrain' pivot on
+    // that recording as if it did the constraining. The engine never enforces the strict shape
+    // on the wire — it only records the mode it asked for. 'asks the model for schema-
+    // constrained output' names the real mechanism; recording stays a separate, accurate clause.
     mechanism:
-      "the engine's execution loop records an agent step's strict-output mode on its attempt " +
-      'evidence, and only agent attempts carry it, so here it would constrain nothing.',
+      "in realm's own drive it asks the model for schema-constrained output, and the engine's " +
+      'execution loop records that strict-output mode on the attempt evidence — only agent ' +
+      'steps make model requests, so here it would constrain nothing.',
     site: W_STRUCTURED_OUTPUT_READ,
-    remedy: 'Move it to the agent step whose output it should constrain, or remove it.',
+    remedy: 'Move it to an agent step whose output it should constrain, or remove it.',
   },
 };
 

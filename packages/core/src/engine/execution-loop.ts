@@ -5033,8 +5033,11 @@ async function buildFinalizedSeal(
     const now = new Date();
     const evidenceByStep = buildEvidenceByStep(record);
     const timeoutMs = (step.timeout_seconds ?? DRAIN_CEILING_SECONDS) * 1000;
-    // Minimal per-finalizer dispatch options: handler-only, no input (input_map prohibited),
-    // no agent dispatcher path. callHandler resolves the handler from the injected registry.
+    // Minimal per-finalizer dispatch options: handler-only, `input: {}` is only the
+    // absent-input_map fallback — callHandler still resolves a stepDef.input_map when a
+    // loader-bypassed definition carries one (the #519 residual class); the loader prohibition
+    // is what keeps the empty-input contract true for loader-validated workflows. No agent
+    // dispatcher path. callHandler resolves the handler from the injected registry.
     const options: ExecuteStepOptions = {
       runId: record.id,
       command: name,

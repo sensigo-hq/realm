@@ -2326,9 +2326,54 @@ ${actBlock}
 
   // --- Change 2: direct-depends_on reference check (when only) ---
   it('rejects a when referencing a step not in depends_on', () => {
-    expect(() => loadWorkflowFromString(wf('    when: "other_step.x == 1"'))).toThrow(
-      /references step 'other_step' which is not in its depends_on/,
-    );
+    // Control for the kind-forked remedy tail below: on a kind that CONSUMES depends_on the
+    // remedy's first arm is followable and the wording is unchanged.
+    try {
+      loadWorkflowFromString(wf('    when: "other_step.x == 1"'));
+      throw new Error('expected loadWorkflowFromString to throw');
+    } catch (err) {
+      const leaf = ((err as WorkflowError).errors ?? []).find((e) =>
+        e.includes("references step 'other_step' which is not in its depends_on"),
+      );
+      expect(leaf).toBeDefined();
+      expect(leaf).toContain("Add it to depends_on or use 'run.params.*'.");
+    }
+  });
+
+  it("the leaf-check remedy never points a finalizer at depends_on — 'Add it to depends_on' is a dead pointer there (depends_on is itself prohibited; following it mints a second refusal)", () => {
+    // The when-prohibition co-fires on this fixture (when×finalizer is a #517 minted cell);
+    // the LEAF check's own remedy must not recommend the co-refused key. Forked on the
+    // registry's own depends_on cell, so the fork can never drift from the mint.
+    const fixture = `
+id: leaf-fork-wf
+name: Leaf Fork
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+  cleanup:
+    description: Cleanup
+    execution: finalizer
+    on_outcome: always
+    handler: do_cleanup
+    when: "work.ok == true"
+`;
+    try {
+      loadWorkflowFromString(fixture);
+      throw new Error('expected loadWorkflowFromString to throw');
+    } catch (err) {
+      const errors = (err as WorkflowError).errors ?? [];
+      const leaf = errors.find((e) => e.includes("references step 'work'"));
+      expect(leaf).toBeDefined();
+      expect(leaf).toContain("Use 'run.params.*' — 'depends_on' is not valid on this step's kind.");
+      expect(leaf).not.toContain('Add it to depends_on');
+      // Both refusals present: the co-firing kind prohibition still carries the key out.
+      expect(errors.some((e) => e.includes("'when' is not valid on execution: finalizer"))).toBe(
+        true,
+      );
+    }
   });
 
   it('accepts a when referencing run.params.*', () => {
