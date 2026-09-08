@@ -3576,8 +3576,18 @@ steps:
   });
 
   describe('non-string / falsy-but-declared members — each is its own member, not a representative', () => {
-    it('trust: null does NOT reach closestKey (no did-you-mean clause) and is not misread as absent', () => {
+    it('trust: null does NOT reach closestKey (no did-you-mean clause) and is not misread as absent — auto', () => {
       const message = loadError(def('auto', 'null'));
+      expect(message).toContain("'trust: null' is not a recognized value");
+      expect(message).not.toContain('Did you mean');
+    });
+
+    // Per-kind, not a representative of the auto cell above: closestKey's null-guard is a VALUE
+    // check with no kind conjunct, so this cell exists to prove the guard's protection doesn't
+    // accidentally depend on which kind reached arm 3 — mutant (i) (drop the typeof guard) must
+    // TypeError on BOTH kinds, not just one.
+    it('trust: null does NOT reach closestKey (no did-you-mean clause) and is not misread as absent — agent', () => {
+      const message = loadError(def('agent', 'null'));
       expect(message).toContain("'trust: null' is not a recognized value");
       expect(message).not.toContain('Did you mean');
     });
