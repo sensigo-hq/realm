@@ -87,11 +87,13 @@ describe('validate --registered (issue #427)', () => {
     // engine-side dispatch check like the trust-value refusal is NOT grandfathered), so this pin
     // asserts the claim VERBATIM again rather than a substring — a substring would keep passing
     // through a future edit that quietly widened the claim back to something false.
+    // issue #508 correction (item 6): "this release's" was version-relative with no anchor on a
+    // permanent, unconditional string — replaced with a hard anchor (issue #508, realm 0.42.0).
     expect(text).toContain(
       'Registered copies stay grandfathered at runtime against LOADER changes — this reports ' +
-        "what re-registration today would say. A NEW engine-side dispatch check (this release's " +
-        'trust-value refusal, issue #508) is NOT grandfathered: it applies immediately, whatever ' +
-        'schema_version is on file.',
+        'what re-registration today would say. A NEW engine-side dispatch check (issue #508, ' +
+        'realm 0.42.0) is NOT grandfathered: it applies immediately, whatever schema_version ' +
+        'is on file.',
     );
     expect(text).toContain("'timeout_seconds' is not valid on execution: agent steps");
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -312,7 +314,10 @@ describe('validate --registered (issue #427)', () => {
 
     const text = out();
     expect(text).toContain("is a SERVICE's trust");
-    expect(text).toContain('no gate is opened');
+    // issue #508 correction (item 1): re-anchored to L1's own PREVENTED-harm consequence
+    // clause, distinct from L2's completed-refusal wording (execution-loop.test.ts pins that
+    // side) — an earlier draft's "no gate is opened" phrasing was ambiguous about mood.
+    expect(text).toContain('cannot create a run while the value is wrong');
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

@@ -222,13 +222,13 @@ workflow (realm workflow register <file>) and <verb> again.` (`<verb>` names the
   [`docs/reference/cli-commands.md`](docs/reference/cli-commands.md#realm-workflow-validate-path)
   for the full field-by-field contract.
 
-- **`realm run list`/`get_run_state`/`realm run inspect` (when given a workflow definition) now
-  surface a `trust_value_invalid` run-health finding for any ELIGIBLE step whose declared `trust`
-  the engine will refuse at its next dispatch** (issue #508). Definition-gated, like
-  `resolved_gate_with_eligible_guard` — `realm run list --stuck` never sees it (that surface
-  passes no definition), and a step not yet reachable in the DAG stays silent about a defect it
-  has not hit yet, rather than flooding a healthy run with a warning about a step nobody can act
-  on yet. See "Trust levels" in
+- **`get_run_state`/`realm run inspect` (when given a workflow definition) now surface a
+  `trust_value_invalid` run-health finding for any ELIGIBLE step whose declared `trust` the
+  engine will refuse at its next dispatch** (issue #508). Definition-gated, like
+  `resolved_gate_with_eligible_guard` — `realm run list` never sees it, `--stuck` included (that
+  command's only classification call site passes no definition), and a step not yet reachable in
+  the DAG stays silent about a defect it has not hit yet, rather than flooding a healthy run with
+  a warning about a step nobody can act on yet. See "Trust levels" in
   [`docs/reference/yaml-schema.md`](docs/reference/yaml-schema.md#trust-levels).
 
 ### Changed
@@ -239,8 +239,9 @@ workflow (realm workflow register <file>) and <verb> again.` (`<verb>` names the
   (`trust: engine_delivered` — six of realm's own nine shipped examples carried exactly this
   confusion), the retired `human_notified` value, `null`, or any other non-matching value all
   loaded clean and ran with **no gate at all** — the step executed unattended on a value the
-  author believed required human approval. `trust` now accepts exactly `'auto'` /
-  `'human_confirmed'` / `'human_reviewed'` (absent is still `'auto'`, unchanged); anything else
+  author believed required human approval. On `auto`/`agent` steps `trust` now accepts exactly
+  `'auto'` / `'human_confirmed'` / `'human_reviewed'` (absent is still `'auto'`, unchanged) —
+  `guard` accepts none of the three, and `finalizer` accepts only `'auto'`; anything else
   refuses at `validate`/`register`/`watch` with a message naming the offending value, the
   consequence, the accepted set, and the remedy. The engine ALSO refuses it again immediately
   before dispatch — the part that is **not grandfathered** (see Upgrading below): unlike a
@@ -254,10 +255,10 @@ workflow (realm workflow register <file>) and <verb> again.` (`<verb>` names the
   previous "none — engine handles this automatically" (auto) or "YOU execute this step" (agent),
   both false for a step that will never run.
 
-  **Upgrading:** run `realm workflow validate --registered <id>` against every workflow you have
-  registered, before upgrading if you can, and right after if you already have (the check itself
-  is new, so a pre-upgrade CLI binary cannot catch it either). A step it flags starts refusing at
-  dispatch the moment you upgrade, whether or not you re-register — there is no grace period for
+  **Upgrading:** upgrade first, then run `realm workflow validate --registered <id>` against
+  every workflow you have registered — the check itself is new, so a pre-upgrade CLI binary
+  cannot report it; there is no "check before you upgrade" option here. A step it flags starts
+  refusing at dispatch the moment you upgrade, whether or not you re-register — there is no grace period for
   this class, unlike the loader-only refusal classes earlier releases have shipped. A run already
   mid-flight on the affected step parks non-terminally rather than failing outright: no output
   map, no evidence, and no store write happens on refusal (the guard runs before the step is even
@@ -269,19 +270,21 @@ workflow (realm workflow register <file>) and <verb> again.` (`<verb>` names the
 
 - **A typo'd, confused, or otherwise unrecognized step-level `trust` value silently disabled its
   human-approval gate — no CVE; realm-local** (issue #508). `execution: auto`/`execution: agent`
-  steps have accepted an unvalidated `trust` field since realm's very first commit: the engine's
+  steps have accepted an unvalidated `trust` field since human gates first shipped: the engine's
   gate mint matched only the two literal strings `'human_confirmed'`/`'human_reviewed'`, and
   every other value — including the dominant real mistake, the SERVICE-level `trust` literal
   (`engine_delivered`/`engine_managed`/`agent_provided`) used on a step by accident — fell
-  through untouched and ran the step with no gate and no warning. **The affected window is the
-  entire project history through this release** — contrast the v0.40.0 changelog's `#407`
-  redaction entries, each scoped to a narrow, precisely-dated window; this defect has no such
-  boundary because the unvalidated check dates to realm's first commit. No data was exfiltrated
-  or corrupted by the defect itself — it is a missing CONTROL, not a leak — but a workflow author
-  relying on `trust: human_confirmed` to require a human sign-off before an irreversible action
-  (approving a payment, merging a change, sending a notification) got silent unattended execution
-  instead, whenever the declared value did not match one of the two accepted literals exactly.
-  See the Changed entry above for the fix.
+  through untouched and ran the step with no gate and no warning. **The affected window is
+  2026-04-03 (the commit that shipped human gates) through this release** — not literally "the
+  very first commit": that commit predates any code at all (design docs only), and `TrustLevel`
+  itself landed one day earlier, on 2026-04-02, with no gate mechanism yet to be unvalidated
+  against. Contrast the v0.40.0 changelog's `#407` redaction entries, each scoped to a narrow,
+  precisely-dated window of similar size; this one is wide because the defect is as old as the
+  feature it undermines. No data was exfiltrated or corrupted by the defect itself — it is a
+  missing CONTROL, not a leak — but a workflow author relying on `trust: human_confirmed` to
+  require a human sign-off before an irreversible action (approving a payment, merging a change,
+  sending a notification) got silent unattended execution instead, whenever the declared value
+  did not match one of the two accepted literals exactly. See the Changed entry above for the fix.
 
 ---
 

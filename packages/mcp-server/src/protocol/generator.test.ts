@@ -335,8 +335,13 @@ describe('generateProtocol — trust value refusal (issue #508)', () => {
     );
     const guard = protocol.steps.find((s) => s.id === 'gate_check')!;
     expect(guard.agent_involvement).toContain('do NOT call execute_step');
-    expect(guard.agent_involvement).toContain("declares 'trust: human_confirmed'");
-    expect(guard.agent_involvement).toContain('has no effect here');
+    // issue #508 correction (item 6): `human_confirmed` on a guard is the REFUSE verdict (a
+    // guard refuses ANY declared trust value, even a lawful-elsewhere one) — JSON.stringify
+    // (not String()) renders it quoted, and the note now says the loader refuses it, not that
+    // it merely "has no effect" (which would be true only for the OTHER, lawful_no_gate case —
+    // finalizer + 'auto', pinned separately below).
+    expect(guard.agent_involvement).toContain('declares \'trust: "human_confirmed"\'');
+    expect(guard.agent_involvement).toContain('which the loader refuses on guard steps');
     expect(guard.possible_gate).toBeUndefined();
   });
 
@@ -354,8 +359,11 @@ describe('generateProtocol — trust value refusal (issue #508)', () => {
     );
     const finalizer = protocol.steps[0]!;
     expect(finalizer.agent_involvement).toContain('do NOT call execute_step');
-    expect(finalizer.agent_involvement).toContain("declares 'trust: auto'");
-    expect(finalizer.agent_involvement).toContain('has no effect here');
+    // issue #508 correction (item 6): `auto` on a finalizer is the LAWFUL_NO_GATE verdict (the
+    // one truthful "accepted but inert" case) — distinct from the guard cell above, which is
+    // REFUSE and gets a different note.
+    expect(finalizer.agent_involvement).toContain('declares \'trust: "auto"\'');
+    expect(finalizer.agent_involvement).toContain('accepted but inert');
   });
 
   it('guard/finalizer WITHOUT a declared trust carry no disclosure clause (regression control)', () => {

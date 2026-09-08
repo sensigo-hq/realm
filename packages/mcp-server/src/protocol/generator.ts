@@ -84,15 +84,25 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
       // Engine-run steps — never agent-executed. Previously these fell through to the final
       // branch and were wrongly briefed as "YOU execute this step" (guard was already
       // mis-briefed; finalizer would be too). The agent must never call execute_step for them.
-      // issue #508: a `trust` value declared here is inert by construction (guard/finalizer
-      // never gate) — say so, rather than staying silent about a declaration the engine
-      // ignores. `trustVerdict` is 'refuse' for anything but absent/'auto' on these kinds; a
-      // refuse here is NOT dispatch-fatal (unlike auto/agent) since the engine never reads
-      // `trust` on this execution kind at all, so refusedStepCount is not incremented.
+      // issue #508: a `trust` value declared here is inert-or-invalid by construction
+      // (guard/finalizer never gate) — say so, rather than staying silent about a declaration
+      // the engine ignores. A refuse here is NOT dispatch-fatal (unlike auto/agent) since the
+      // engine never reads `trust` on this execution kind at all, so refusedStepCount is not
+      // incremented.
+      //
+      // issue #508 correction (item 6): two defects fixed. (1) `String()` made `null` and the
+      // string `"null"` indistinguishable, one line above a sibling branch that already uses
+      // `JSON.stringify` — switched to match. (2) the note rendered IDENTICALLY for a LAWFUL,
+      // accepted-but-inert value (`finalizer + 'auto'`) and an UNLAWFUL one the loader would
+      // refuse outright (`finalizer + 'human_confirmed'`, or ANY declared value on a guard) —
+      // now forks on `trustVerdict`, which is only ever 'lawful_no_gate' or 'refuse' inside this
+      // branch (absence is excluded by the outer `step.trust !== undefined` check).
       const trustNote =
-        step.trust !== undefined
-          ? ` (this step declares 'trust: ${String(step.trust)}', which has no effect here — ${step.execution} steps never gate)`
-          : '';
+        step.trust === undefined
+          ? ''
+          : trustVerdict === 'lawful_no_gate'
+            ? ` (this step declares 'trust: ${JSON.stringify(step.trust)}' — accepted but inert; ${step.execution} steps never gate)`
+            : ` (this step declares 'trust: ${JSON.stringify(step.trust)}', which the loader refuses on ${step.execution} steps — this definition reached the protocol without going through it)`;
       agent_involvement = `none — the engine runs this ${step.execution} step automatically; do NOT call execute_step for it${trustNote}.`;
     } else if (trustVerdict === 'refuse') {
       // issue #508 (L2 disclosure): this step's `trust` value is neither absent nor a
@@ -187,7 +197,15 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
     authoredQuickStart !== undefined && authoredQuickStart.trim() !== ''
       ? authoredQuickStart
       : refusedStepCount > 0
-        ? `Call start_run with workflow_id '${definition.id}'. ${refusedStepCount} of this workflow's ${totalSteps} ${totalSteps === 1 ? 'step' : 'steps'} ${refusedStepCount === 1 ? 'has' : 'have'} an invalid 'trust' value and will be refused by the engine (VALIDATION_TRUST_VALUE) before it can run — see that step's agent_involvement for what to tell the user. Steps with a valid definition proceed as normal. Follow the next_action in each response until the workflow completes.`
+        ? // issue #508 correction (item 6): both trailing clauses here were copied from the
+          // sibling branches below, where they are true, and are false in THIS one. "Steps with
+          // a valid definition proceed as normal" is false for any step that DEPENDS on the
+          // refused one — it never becomes eligible, so it returns status: blocked forever, not
+          // "normal". "Follow the next_action... until the workflow completes" is false twice
+          // over: the refusal envelope itself carries next_actions: [] by this PR's own design
+          // (execution-loop.ts omits `definition` specifically to keep that empty), and the run
+          // can never reach 'completed' while the refused step is never corrected.
+          `Call start_run with workflow_id '${definition.id}'. ${refusedStepCount} of this workflow's ${totalSteps} ${totalSteps === 1 ? 'step' : 'steps'} ${refusedStepCount === 1 ? 'has' : 'have'} an invalid 'trust' value and will be refused by the engine (VALIDATION_TRUST_VALUE) before it can run — see that step's agent_involvement for what to tell the user. Any step depending on it returns status: blocked until the workflow is corrected and re-registered (the refusal itself carries no next_action); steps that do not depend on it are unaffected.`
         : agentStepCount > 0
           ? `Call start_run with workflow_id '${definition.id}'. The engine will run auto steps automatically and return control at the first step requiring agent action. Follow the next_action in each response until the workflow completes.`
           : `Call start_run with workflow_id '${definition.id}'. The engine handles all steps automatically. Follow the next_action in each response until the workflow completes.`;

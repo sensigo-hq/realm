@@ -542,11 +542,12 @@ unknown-age claim, a wedged non-gated sibling on a `gate_waiting` run, a capabil
 in the header as `(threshold 24h)`), a terminal run with an undrained finalizer, a failing drive,
 an expired gate, a corrupted gate record, and a terminal run still carrying a pending gate.
 
-A tenth kind, `resolved_gate_with_eligible_guard`, is **structurally absent here**: its producer
-requires a workflow definition and `list` classifies definition-free, so it never fires on this
-surface. Two further kinds never select: `completed_with_failed_steps` (issue #302) and
-`structured_output_downgraded` (issue #316) — a completed run and a degraded-assurance disclosure
-are not "stuck" symptoms. Either can still appear on a run selected by one of the nine. The never-claimed check is **age-gated**: a
+Two more kinds are **structurally absent here**: `resolved_gate_with_eligible_guard` and
+`trust_value_invalid` (issue #508). Both producers require a workflow definition and `list`
+classifies definition-free, so neither ever fires on this surface. Two further kinds never
+select: `completed_with_failed_steps` (issue #302) and `structured_output_downgraded` (issue
+#316) — a completed run and a degraded-assurance disclosure are not "stuck" symptoms. Either can
+still appear on a run selected by one of the nine. The never-claimed check is **age-gated**: a
 run simply between agent drives is no longer flagged the instant its last claim settles (a
 disclosed behavior change from the prior unconditional check — see the CHANGELOG). Each flagged
 line appends its idle age plus finding labels.

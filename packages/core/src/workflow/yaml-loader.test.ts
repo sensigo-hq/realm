@@ -3525,7 +3525,10 @@ steps:
       const message = loadError(def('auto', 'engine_delivered'));
       expect(message).toContain("'trust: \"engine_delivered\"' is a SERVICE's trust");
       expect(message).toContain("declared under 'services: <name>: trust:'");
-      expect(message).toContain('no gate is opened');
+      // issue #508 correction (item 1): the consequence clause's own MOOD — prevented harm,
+      // distinct from execution-loop.ts's L2 completed-refusal wording, deliberately not the
+      // same text.
+      expect(message).toContain('cannot create a run while the value is wrong');
       expect(message).toContain("A step's 'trust' accepts auto, human_confirmed, human_reviewed.");
       expect(message).toContain('realm workflow register <path>');
     });
@@ -3545,14 +3548,25 @@ steps:
   describe('arm 2 — the retired human_notified tombstone', () => {
     it('auto step with trust: human_notified', () => {
       const message = loadError(def('auto', 'human_notified'));
-      expect(message).toContain("'trust: human_notified' was removed (#508)");
-      expect(message).toContain('zero consumers');
+      // issue #508 correction (item 4): "(#508)" -> "(issue #508)" — no shipped convention
+      // existed to reuse (that's #527's own subject), so this prompt names the one used here.
+      expect(message).toContain("'trust: human_notified' was removed (issue #508)");
+      // "(zero consumers)" was jargon in an operator message — removed. The plain facts survive
+      // ("never triggered a notification" / "never opened a gate") joined with "and", not the
+      // non-sequitur "so" (a notification mechanism failing does not CAUSE a gate mechanism to
+      // fail — REV 1 mis-counted this as three "no gate" occurrences; audit-corrected to two,
+      // with the literal substring "no gate" appearing once — this pin does not re-litigate that
+      // count, only the jargon and the non-sequitur).
+      expect(message).not.toContain('zero consumers');
+      expect(message).toContain('never triggered a notification and it never opened a gate');
+      // Says what to use instead, not just that the old value never did anything.
+      expect(message).toContain('Most workflows should simply delete the key');
       expect(message).not.toContain('is not a recognized');
     });
 
     it('agent step with trust: human_notified', () => {
       const message = loadError(def('agent', 'human_notified'));
-      expect(message).toContain("'trust: human_notified' was removed (#508)");
+      expect(message).toContain("'trust: human_notified' was removed (issue #508)");
     });
   });
 
@@ -3664,8 +3678,66 @@ steps:
     trust: nope
 `);
       // The KIND-prohibition (registry-minted) message, not L1's "is not a recognized value".
-      expect(message).not.toContain('is not a recognized value — no gate is opened');
+      // issue #508 correction: re-anchored to the NEW arm-3 conjunction after item 1's wording
+      // change — the old substring no longer occurs anywhere (even in arm 3's own real text),
+      // which would have made this pin pass trivially regardless of whether guard is actually
+      // routed away from L1 (confirmation theatre).
+      expect(message).not.toContain('is not a recognized value — refused at load');
       expect(message).toContain("'trust' is not valid on execution: guard steps");
+    });
+  });
+
+  // issue #508 correction (item 4, 5th bullet): a finalizer's non-gate-literal trust value used
+  // to get ONE flat "is not a recognized value" text regardless of WHICH kind of wrong value it
+  // was — the measured dominant mistake (a service-trust literal) got a less specific
+  // characterisation on a finalizer than on auto/agent, for no reason. Routed through the same
+  // three priority arms now, each with the finalizer-specific kind clause appended.
+  describe('finalizer trust routes through the same three priority arms (issue #508 correction)', () => {
+    function defFinalizer(trust: string): string {
+      return `
+id: trust-508-finalizer-wf
+name: Trust 508 Finalizer
+version: 1
+steps:
+  work:
+    description: work
+    execution: agent
+    depends_on: []
+  cleanup:
+    description: cleanup
+    execution: finalizer
+    handler: do_cleanup
+    on_outcome: always
+    trust: ${trust}
+`;
+    }
+
+    it('arm 1 (service-trust confusion) on a finalizer, WITH the finalizer kind clause appended', () => {
+      const message = loadError(defFinalizer('engine_delivered'));
+      expect(message).toContain("'trust: engine_delivered' is a SERVICE's trust level");
+      expect(message).toContain("only 'auto' is meaningful on execution: finalizer steps");
+    });
+
+    it('arm 2 (the human_notified tombstone) on a finalizer, WITH the finalizer kind clause appended', () => {
+      const message = loadError(defFinalizer('human_notified'));
+      expect(message).toContain("'trust: human_notified' was removed (issue #508)");
+      expect(message).toContain("only 'auto' is meaningful on execution: finalizer steps");
+    });
+
+    it('arm 3 (generic unrecognized) on a finalizer, WITH the finalizer kind clause appended', () => {
+      const message = loadError(defFinalizer('nope'));
+      expect(message).toContain("'trust: nope' is not a recognized value");
+      expect(message).toContain("only 'auto' is meaningful on execution: finalizer steps");
+    });
+
+    it('the gate-literal branch (human_confirmed) is UNCHANGED — its own reason already is the kind clause, no accepted-set tail appended', () => {
+      const message = loadError(defFinalizer('human_confirmed'));
+      expect(message).toContain(
+        "'trust: human_confirmed' is not valid on execution: finalizer steps (a finalizer must not gate)",
+      );
+      // The generic accepted-set tail belongs to the OTHER three arms only — appending it here
+      // would be redundant with "a finalizer must not gate", not clarifying.
+      expect(message).not.toContain("'trust' accepts auto, human_confirmed, human_reviewed");
     });
   });
 });

@@ -603,9 +603,19 @@ export const CONSUMED_HOME: Partial<Record<(typeof KNOWN_STEP_KEYS)[number], Con
     // every trust value opens one — only the two human-gate literals do; any other declared
     // value is refused outright at load or dispatch, never silently left un-gated (see the
     // registry's own trust×auto/trust×agent cells for the refusal witness).
+    //
+    // #508 correction (item 6): D2 §8's fix here was never actually shipped — only the comment
+    // above changed, the string did not — and "move it to the auto or agent step" is advice
+    // that DOES NOT WORK for the dominant measured wrong value, the service-trust literal
+    // (`engine_delivered`): auto/agent refuse it too (L1, yaml-loader.ts), so relocating it
+    // fixes nothing. Lead with what IS accepted, so a reader with that value learns immediately
+    // that moving it will not help.
     remedy:
-      'Move it to the auto or agent step that needs the gate — only ' +
-      "'human_confirmed' or 'human_reviewed' opens one — or remove it.",
+      "'trust' accepts 'auto', 'human_confirmed', or 'human_reviewed' — only the latter two " +
+      'open a gate, and only on an auto or agent step. If you meant to gate an auto/agent ' +
+      'step, move it there; if the value is something else (a typo, or a service-level ' +
+      "'trust:' declared on the wrong step), remove it instead — an auto/agent step refuses " +
+      'anything outside that set too.',
   },
   timeout_seconds: {
     kinds: ['auto', 'finalizer'],

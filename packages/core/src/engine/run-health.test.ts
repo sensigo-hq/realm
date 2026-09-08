@@ -632,6 +632,38 @@ describe('classifyRunHealth', () => {
         findings.some((f) => f.kind === 'trust_value_invalid' && f.step === 'gate_check'),
       ).toBe(false);
     });
+
+    // issue #508 correction (item 3): the finding used to disclose the CODE and nothing else —
+    // no accepted set, no did-you-mean, no remedy verb, unlike every sibling finding family. D2
+    // §7 accepted the L2 parking harm BECAUSE this finding would disclose it; disclosing the
+    // code without the fix does not discharge that.
+    it('carries the accepted set and a remedy pointer, matching the L1/L2 refusal messages', () => {
+      const definition = makeDef({
+        bad: { description: 'bad', execution: 'auto', trust: 'nope' as never, depends_on: [] },
+      });
+      const run = makeRun({ run_phase: 'running' });
+      const finding = classifyRunHealth(run, { now: NOW, definition }).find(
+        (f) => f.kind === 'trust_value_invalid',
+      );
+      expect(finding?.reason).toContain('Accepts auto, human_confirmed, human_reviewed');
+      expect(finding?.reason).toContain('realm workflow register <path>');
+    });
+
+    it('offers a did-you-mean suggestion when the value is a close typo', () => {
+      const definition = makeDef({
+        bad: {
+          description: 'bad',
+          execution: 'auto',
+          trust: 'human_confirmd' as never,
+          depends_on: [],
+        },
+      });
+      const run = makeRun({ run_phase: 'running' });
+      const finding = classifyRunHealth(run, { now: NOW, definition }).find(
+        (f) => f.kind === 'trust_value_invalid',
+      );
+      expect(finding?.reason).toContain("did you mean 'human_confirmed'?");
+    });
   });
 
   // ---------------------------------------------------------------------

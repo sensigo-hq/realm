@@ -536,9 +536,9 @@ async function validateRegistered(id: string, strict: boolean, json: boolean): P
     );
     console.log(
       'Registered copies stay grandfathered at runtime against LOADER changes — this reports ' +
-        'what re-registration today would say. A NEW engine-side dispatch check (this ' +
-        "release's trust-value refusal, issue #508) is NOT grandfathered: it applies " +
-        'immediately, whatever schema_version is on file.',
+        'what re-registration today would say. A NEW engine-side dispatch check (issue #508, ' +
+        'realm 0.42.0) is NOT grandfathered: it applies immediately, whatever schema_version ' +
+        'is on file.',
     );
   }
 

@@ -1755,6 +1755,43 @@ describe('executeStep', () => {
       expect(envelope.errors[0]).toContain('retry');
     });
 
+    // issue #508 correction (item 3): L2 used to carry LESS than L1 (yaml-loader.ts) — no
+    // accepted set, no did-you-mean — backwards, given L2 exists specifically for readers who
+    // inherited someone else's definition and are not looking at YAML.
+    it('carries the accepted set, matching L1', async () => {
+      const { envelope } = await refuseBadTrust('nope');
+      expect(envelope.errors[0]).toContain(
+        "A step's 'trust' accepts auto, human_confirmed, human_reviewed.",
+      );
+    });
+
+    it('offers a did-you-mean suggestion for a close typo', async () => {
+      const { envelope } = await refuseBadTrust('human_confirmd');
+      expect(envelope.errors[0]).toContain("Did you mean 'human_confirmed'?");
+    });
+
+    it('offers NO did-you-mean suggestion for a non-suggesting value', async () => {
+      const { envelope } = await refuseBadTrust('zzz');
+      expect(envelope.errors[0]).not.toContain('Did you mean');
+    });
+
+    it('never throws on a non-string trust value (the typeof guard before closestKey, mirroring L1)', async () => {
+      const { envelope } = await refuseBadTrust(null);
+      expect(envelope.status).toBe('error');
+      expect(envelope.errors[0]).toContain('trust: null');
+      expect(envelope.errors[0]).not.toContain('Did you mean');
+    });
+
+    // issue #508 correction (item 1): L2's own mood is COMPLETED refusal — a run already exists
+    // here, and refusing parks it rather than erasing it. Deliberately different text from L1's
+    // prevented-harm wording (yaml-loader.test.ts pins that side).
+    it('states its own COMPLETED-refusal mood: the run is parked, dependents return blocked — never L1s prevented-harm wording', async () => {
+      const { envelope } = await refuseBadTrust('nope');
+      expect(envelope.errors[0]).toContain('this run is now parked, non-terminal');
+      expect(envelope.errors[0]).toContain("returns 'blocked'");
+      expect(envelope.errors[0]).not.toContain('cannot create a run while the value is wrong');
+    });
+
     it('a lawful trust value on the same shape is NOT refused (control)', async () => {
       const { envelope } = await refuseBadTrust('auto');
       expect(envelope.status).toBe('ok');
