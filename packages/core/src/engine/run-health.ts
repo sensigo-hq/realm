@@ -110,12 +110,7 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { classifyInProgressClaims } from './claim-liveness.js';
 import { findCapabilityBlockedSteps } from './capability.js';
 import { findEligibleSteps, findEligibleGuardSteps, deriveRunPhase } from './eligibility.js';
-import { classifyStepTrust, TRUST_LEVELS } from '../types/workflow-definition.js';
-// issue #508 correction (item 3): a second `engine/ → workflow/` import edge (the first is
-// execution-loop.ts's, added the same PR) — audit-verified to create no cycle. Gives this
-// finding's `reason` the same accepted-set/did-you-mean richness the L1/L2 refusal messages
-// carry, since `inspect.ts` renders `reason` verbatim with no render-time remedy pointer added.
-import { closestKey } from '../workflow/diagnostics.js';
+import { classifyStepTrust, buildTrustRefusal } from '../types/workflow-definition.js';
 
 /**
  * Default age threshold for the `never_claimed_idle` finding (issue #221) — 24 hours. Engine-
@@ -567,26 +562,23 @@ export function classifyRunHealth(
     for (const stepName of findEligibleSteps(opts.definition, run)) {
       const stepDef = opts.definition.steps[stepName];
       if (classifyStepTrust(stepDef?.execution, stepDef?.trust) === 'refuse') {
-        // issue #508 correction (item 3): this finding used to carry the code and nothing else
-        // — no accepted set, no did-you-mean, no remedy verb, unlike every sibling finding
-        // family (`realm run drain`/`purge`/`respond`). D2 §7 accepted the L2 parking harm
-        // BECAUSE this finding would disclose it; disclosing the code without the fix does not
-        // discharge that. `inspect.ts` renders `reason` verbatim with no render-time pointer
-        // appended (unlike the terminal-with-stale-gate/gate-expired kinds, whose pointer is
-        // added at the CLI layer) — the remedy has to live in the string itself.
-        const rawTrust = stepDef?.trust;
-        const didYouMean =
-          typeof rawTrust === 'string' ? closestKey(rawTrust, TRUST_LEVELS) : undefined;
+        // issue #508 (final correction): this finding's `reason` is now `buildTrustRefusal`
+        // (types/workflow-definition.ts) — the same composer L1 (yaml-loader.ts), L2
+        // (execution-loop.ts), and the protocol briefing (generator.ts) all use, so this surface
+        // can no longer silently fall back to the generic "not a recognized value" text while
+        // the others name a service-trust confusion or the human_notified tombstone by their own
+        // arm. `stepDef!` is sound: `findEligibleSteps` never returns a guard/finalizer step
+        // name (eligibility.ts), so `stepDef.execution` is always 'auto' or 'agent' here.
         findings.push({
           kind: 'trust_value_invalid',
           step: stepName,
-          reason:
-            `'trust: ${JSON.stringify(rawTrust)}' is not a recognized value — the engine will ` +
-            `refuse this step at dispatch (VALIDATION_TRUST_VALUE). Accepts ` +
-            `${TRUST_LEVELS.join(', ')}` +
-            (didYouMean !== undefined ? `; did you mean '${didYouMean}'?` : '') +
-            ` — correct the value and 'realm workflow register <path>'.`,
-          evidence: { trust: rawTrust },
+          reason: buildTrustRefusal({
+            kind: stepDef!.execution,
+            value: stepDef!.trust,
+            step: stepName,
+            surface: 'finding',
+          }),
+          evidence: { trust: stepDef!.trust },
         });
       }
     }

@@ -15,10 +15,11 @@ import {
   KNOWN_WORKFLOW_KEYS,
   KNOWN_RETRY_KEYS,
   KNOWN_GATE_KEYS,
-  TRUST_LEVELS,
   SERVICE_TRUST_LEVELS,
   isGateTrust,
   classifyStepTrust,
+  buildTrustRefusal,
+  renderTrustValue,
 } from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import {
@@ -1061,38 +1062,31 @@ function parseWorkflowString(
           // an attempt to gate at all, so that reason would be false for it — the #523 class,
           // caught before shipping rather than after. `isGateTrust` is the pure-value question
           // (no kind involved, since this branch already knows the kind and has already
-          // excluded 'auto'); `String()` and the leading `'trust:` are kept exactly as before
-          // so the registry conformance runner's `namesKey` still matches this arm.
+          // excluded 'auto'); the leading `'trust:` is kept exactly as before so the registry
+          // conformance runner's `namesKey` (`error.includes("'trust")`) still matches this arm
+          // — `namesKey` needs the quote BEFORE `trust`, not around the value, so switching the
+          // value's own rendering below does not touch it.
           //
-          // issue #508 correction: the non-gate branch used to be ONE flat "not a recognized
-          // value" text for every non-gate value — but the measured DOMINANT wrong value on a
-          // finalizer is the same service-trust confusion as on auto/agent (`finalizer +
-          // engine_delivered`), and it deserves the SAME characterisation there, not a
-          // different, less specific one. Routed through the identical three priority arms
-          // (service-trust confusion → the human_notified tombstone → generic unrecognized),
-          // each then gets the finalizer-specific kind clause appended — never the auto/agent
-          // accepted-set-plus-live-run-remedy tail, which would wrongly imply the other two
-          // trust levels are meaningful here. The conformance fixture (`buildFixture`) exercises
-          // only the gate-literal branch (`human_confirmed`), so these three sub-arms are
-          // unreached by it — verified by grepping the fixture builder for this key.
+          // issue #508 (final correction): the gate-literal arm stays a hand-written KIND
+          // prohibition (the key is the offense, not the value — #517's own boundary), but now
+          // shares `renderTrustValue` with every other arm — a previous ruling to "keep
+          // `String()` here to satisfy `namesKey`" was wrong (verified above) and there was
+          // never a real reason for two renderers, even though `isGateTrust` only ever admits
+          // the two known-string gate literals here in practice. The non-gate branch (an
+          // unrecognized trust, a service-trust literal, the retired human_notified) routes
+          // through the SAME composer every other refusal surface uses — no second hand-built
+          // arm-selector, no second value renderer. The conformance fixture (`buildFixture`)
+          // exercises only the gate-literal branch (`human_confirmed`), so the composer's three
+          // sub-arms are unreached by it — verified by grepping the fixture builder for this key.
           const rawFinalizerTrust = step['trust'];
-          let finalizerMessage: string;
-          if (isGateTrust(rawFinalizerTrust)) {
-            // Unchanged from before this correction — a gate literal's own reason ("a finalizer
-            // must not gate") already IS the kind clause; appending the generic accepted-set
-            // tail here would be redundant, not clarifying.
-            finalizerMessage = `Step '${stepName}': 'trust: ${String(rawFinalizerTrust)}' is not valid on execution: finalizer steps (a finalizer must not gate)`;
-          } else {
-            const finalizerKindClause =
-              `'trust' accepts ${TRUST_LEVELS.join(', ')}, and only 'auto' is meaningful on ` +
-              `execution: finalizer steps.`;
-            const body = (SERVICE_TRUST_LEVELS as readonly unknown[]).includes(rawFinalizerTrust)
-              ? `Step '${stepName}': 'trust: ${String(rawFinalizerTrust)}' is a SERVICE's trust level (declared under 'services: <name>: trust:'), not a step's`
-              : rawFinalizerTrust === 'human_notified'
-                ? `Step '${stepName}': 'trust: human_notified' was removed (issue #508) — it never triggered a notification and it never opened a gate`
-                : `Step '${stepName}': 'trust: ${String(rawFinalizerTrust)}' is not a recognized value`;
-            finalizerMessage = `${body}. ${finalizerKindClause}`;
-          }
+          const finalizerMessage = isGateTrust(rawFinalizerTrust)
+            ? `Step '${stepName}': 'trust: ${renderTrustValue(rawFinalizerTrust)}' is not valid on execution: finalizer steps (a finalizer must not gate)`
+            : buildTrustRefusal({
+                kind: 'finalizer',
+                value: rawFinalizerTrust,
+                step: stepName,
+                surface: 'load',
+              });
           errors.push(withStepLine(stepName, finalizerMessage));
         }
         // v1 is handler-only.
@@ -1148,99 +1142,31 @@ function parseWorkflowString(
       // RECOGNIZED gate literal is meaningful, so an unrecognized one needs a VALUE verdict,
       // not a kind verdict.
       //
-      // NOT the four-clause kind-prohibition form #517 mints: that form's clause 3 ("where it
-      // does work instead") has no referent for a value refusal (`engine_delivered` does not
-      // "work instead" anywhere on a step), and its clause 4 (re-admission) would be the
-      // boilerplate the policy's own text forbids. This is its own, VALUE-refusal clause set:
-      // (1) the offending value, JSON.stringify-rendered (never `String()` — `String('')`
-      // renders the unreadable `'trust: '`); (2) the consequence, in ITS OWN mood; (3) the
-      // accepted set, derived from TRUST_LEVELS; (4) the remedy, including the live-run repair
-      // (a registered copy resolves its definition fresh on every read, so correcting the file
-      // and re-registering repairs an in-flight run too — MA-executed).
-      //
-      // issue #508 correction — the consequence clause's MOOD is deliberately NOT the same as
-      // execution-loop.ts's L2 refusal, and an earlier draft's instruction to harmonise them was
-      // wrong and is withdrawn: L1 (here) is PREVENTED harm — this refusal happens before any
-      // run of this workflow can exist, so nothing of it ever executes, gated or not. L2 is a
-      // COMPLETED refusal against a run that already exists — it parks that run, non-terminal,
-      // with its dependents returning 'blocked'. Harmonising the two wording would erase exactly
-      // the distinction that motivates shipping L2, the `trust_value_invalid` finding, and the
-      // CHANGELOG's Upgrading paragraph as three SEPARATE things.
-      //
-      // Three arms, priority order — the measured dominant wrong value first:
+      // issue #508 (final correction) — this whole value-refusal composition, for every kind and
+      // every surface, is now `buildTrustRefusal` (types/workflow-definition.ts, beside
+      // `classifyStepTrust`). Three prior rounds each hand-composed this text independently on
+      // this surface, execution-loop.ts's dispatch refusal, run-health.ts's finding, and the
+      // protocol generator's briefing — and every defect those rounds found (arm divergence, a
+      // String()-rendered array printing as its own first element, a grammar seam) fell out of
+      // that duplication. No site chooses an arm or renders a value on its own again; see the
+      // composer's own doc for the arm/mood/rendering contract in full.
       if (
         (stepKind === 'auto' || stepKind === 'agent') &&
         'trust' in step &&
         classifyStepTrust(stepKind, step['trust']) === 'refuse'
       ) {
-        const rawTrust = step['trust'];
-        const acceptedClause = `A step's 'trust' accepts ${TRUST_LEVELS.join(', ')}.`;
-        // issue #508 correction: dropped the referent-less "this run" — L1 fires on EVERY
-        // loader entry point (validate, validate --registered, register, watch, run, agent,
-        // listen, test), and on several of them (sharpest: `workflow run <path>`) no run has
-        // been created yet when this message prints. The live-run-repair FACT survives (a
-        // registered copy resolves its definition fresh on every read), just without a
-        // singular "this run" that has nothing to refer to on most of those entry points.
-        const remedyClause =
-          `Correct the value, then 'realm workflow register <path>' — any run of this workflow ` +
-          `picks up the corrected definition on its next attempt at this step.`;
-        // issue #508 correction: PREVENTED-harm mood — see the block comment above. Shared
-        // across all three arms so none of them can drift into L2's completed-refusal wording.
-        const consequenceClause =
-          `refused at load: this workflow cannot create a run while the value is wrong, so no ` +
-          `step of it — gated or not — ever executes under it`;
-        if ((SERVICE_TRUST_LEVELS as readonly unknown[]).includes(rawTrust)) {
-          // Arm 1: service-trust confusion — the measured dominant wrong value (six of realm's
-          // own nine shipped examples carried one). Names WHERE the value belongs, never what
-          // it does — `ServiceTrust` is read by nothing in-repo (issue #530), so asserting a
-          // mechanism for it here would be the identical falsity this PR removes from the docs.
-          errors.push(
-            withKeyLine(
-              stepName,
-              'trust',
-              `Step '${stepName}': 'trust: ${JSON.stringify(rawTrust)}' is a SERVICE's trust ` +
-                `level (declared under 'services: <name>: trust:'), not a step's — ` +
-                `${consequenceClause}. ${acceptedClause} ${remedyClause}`,
-            ),
-          );
-        } else if (rawTrust === 'human_notified') {
-          // Arm 2: the retired-value tombstone — names the removal and its reason, not the
-          // generic unrecognized-value text (OpenSSH's sDeprecated-opcode precedent: a retired
-          // token gets its own diagnostic, not silent absorption into "unrecognized").
-          //
-          // issue #508 correction: three fixes. (1) "(zero consumers)" was jargon in an
-          // operator-facing message — dropped; the plain "never triggered a notification and
-          // never opened a gate" already carries the same fact. (2) the "so" between those two
-          // facts was a non-sequitur (a notification mechanism failing does not CAUSE a gate
-          // mechanism to fail — they are two independent absences, not one causing the other) —
-          // now joined with "and". (3) tells the author what to use instead, not just that the
-          // old value never did anything: most authors want the key gone, not replaced.
-          errors.push(
-            withKeyLine(
-              stepName,
-              'trust',
-              `Step '${stepName}': 'trust: human_notified' was removed (issue #508) — it never ` +
-                `triggered a notification and it never opened a gate. Most workflows should ` +
-                `simply delete the key. ${consequenceClause}. ${acceptedClause} ${remedyClause}`,
-            ),
-          );
-        } else {
-          // Arm 3: generic unrecognized, plus did-you-mean. `closestKey` throws a TypeError on
-          // `null` — guarded by the `typeof` check, which also correctly excludes every other
-          // non-string value (123, [], {}) from the suggestion without a special case for each.
-          const didYouMean =
-            typeof rawTrust === 'string' ? closestKey(rawTrust, TRUST_LEVELS) : undefined;
-          errors.push(
-            withKeyLine(
-              stepName,
-              'trust',
-              `Step '${stepName}': 'trust: ${JSON.stringify(rawTrust)}' is not a recognized ` +
-                `value — ${consequenceClause}. ${acceptedClause}` +
-                (didYouMean !== undefined ? ` Did you mean '${didYouMean}'?` : '') +
-                ` ${remedyClause}`,
-            ),
-          );
-        }
+        errors.push(
+          withKeyLine(
+            stepName,
+            'trust',
+            buildTrustRefusal({
+              kind: stepKind,
+              value: step['trust'],
+              step: stepName,
+              surface: 'load',
+            }),
+          ),
+        );
       }
 
       // Guard step constraints (the guard kind-prohibitions, including `preconditions` — issue

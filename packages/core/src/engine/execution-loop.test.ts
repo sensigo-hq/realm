@@ -1782,6 +1782,26 @@ describe('executeStep', () => {
       expect(envelope.errors[0]).not.toContain('Did you mean');
     });
 
+    // issue #508 (final correction): the actual point of this round — before it, EVERY value
+    // reaching L2 got the flat generic "is not a recognized value" text, regardless of which
+    // mistake it was (measured: 8 of 28 auto/agent value×kind cells diverged from L1's own
+    // arm-selecting text on this exact dimension). `buildTrustRefusal` gives L2 the SAME arm
+    // selection L1 always had — these two cells are the ones the pre-composer suite had no way
+    // to catch, since every prior L2 cell used a generic-arm value.
+    it('routes engine_delivered through the SERVICE-confusion arm, not the generic text', async () => {
+      const { envelope } = await refuseBadTrust('engine_delivered');
+      expect(envelope.errors[0]).toContain("is a SERVICE's trust level");
+      expect(envelope.errors[0]).toContain("declared under 'services: <name>: trust:'");
+      expect(envelope.errors[0]).not.toContain('is not a recognized value');
+    });
+
+    it('routes human_notified through the tombstone arm, not the generic text', async () => {
+      const { envelope } = await refuseBadTrust('human_notified');
+      expect(envelope.errors[0]).toContain('was removed (issue #508)');
+      expect(envelope.errors[0]).toContain('most workflows should simply delete the key');
+      expect(envelope.errors[0]).not.toContain('is not a recognized value');
+    });
+
     // issue #508 correction (item 1): L2's own mood is COMPLETED refusal — a run already exists
     // here, and refusing parks it rather than erasing it. Deliberately different text from L1's
     // prevented-harm wording (yaml-loader.test.ts pins that side).

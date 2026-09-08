@@ -3550,23 +3550,26 @@ steps:
       const message = loadError(def('auto', 'human_notified'));
       // issue #508 correction (item 4): "(#508)" -> "(issue #508)" — no shipped convention
       // existed to reuse (that's #527's own subject), so this prompt names the one used here.
-      expect(message).toContain("'trust: human_notified' was removed (issue #508)");
+      // issue #508 (final correction): the value now renders quoted, via the composer's shared
+      // `renderTrustValue` (JSON.stringify, no exceptions — "no reason for two renderers").
+      expect(message).toContain('\'trust: "human_notified"\' was removed (issue #508)');
       // "(zero consumers)" was jargon in an operator message — removed. The plain facts survive
-      // ("never triggered a notification" / "never opened a gate") joined with "and", not the
-      // non-sequitur "so" (a notification mechanism failing does not CAUSE a gate mechanism to
-      // fail — REV 1 mis-counted this as three "no gate" occurrences; audit-corrected to two,
+      // ("never triggered a notification" / "never opened a gate") joined with commas/"and", not
+      // the non-sequitur "so" (a notification mechanism failing does not CAUSE a gate mechanism
+      // to fail — REV 1 mis-counted this as three "no gate" occurrences; audit-corrected to two,
       // with the literal substring "no gate" appearing once — this pin does not re-litigate that
-      // count, only the jargon and the non-sequitur).
+      // count, only the jargon and the non-sequitur). The composer folds the "what to use
+      // instead" guidance into the SAME flowing clause (never a second sentence starting
+      // lowercase after the consequence clause joins — the grammar seam this final round fixes).
       expect(message).not.toContain('zero consumers');
-      expect(message).toContain('never triggered a notification and it never opened a gate');
-      // Says what to use instead, not just that the old value never did anything.
-      expect(message).toContain('Most workflows should simply delete the key');
+      expect(message).toContain('it never triggered a notification, it never opened a gate');
+      expect(message).toContain('most workflows should simply delete the key');
       expect(message).not.toContain('is not a recognized');
     });
 
     it('agent step with trust: human_notified', () => {
       const message = loadError(def('agent', 'human_notified'));
-      expect(message).toContain("'trust: human_notified' was removed (issue #508)");
+      expect(message).toContain('\'trust: "human_notified"\' was removed (issue #508)');
     });
   });
 
@@ -3714,26 +3717,37 @@ steps:
 
     it('arm 1 (service-trust confusion) on a finalizer, WITH the finalizer kind clause appended', () => {
       const message = loadError(defFinalizer('engine_delivered'));
-      expect(message).toContain("'trust: engine_delivered' is a SERVICE's trust level");
+      expect(message).toContain("'trust: \"engine_delivered\"' is a SERVICE's trust level");
       expect(message).toContain("only 'auto' is meaningful on execution: finalizer steps");
+      // issue #508 (final correction): the finalizer's own consequence clause is no longer
+      // silently ABSENT — the SAME load-mood consequence auto/agent gets, since the mechanism
+      // (a load-time refusal) is identical; only the TAIL (accepted-set vs. kind clause) differs.
+      expect(message).toContain('cannot create a run while the value is wrong');
     });
 
     it('arm 2 (the human_notified tombstone) on a finalizer, WITH the finalizer kind clause appended', () => {
       const message = loadError(defFinalizer('human_notified'));
-      expect(message).toContain("'trust: human_notified' was removed (issue #508)");
+      expect(message).toContain('\'trust: "human_notified"\' was removed (issue #508)');
       expect(message).toContain("only 'auto' is meaningful on execution: finalizer steps");
     });
 
     it('arm 3 (generic unrecognized) on a finalizer, WITH the finalizer kind clause appended', () => {
       const message = loadError(defFinalizer('nope'));
-      expect(message).toContain("'trust: nope' is not a recognized value");
+      expect(message).toContain('\'trust: "nope"\' is not a recognized value');
       expect(message).toContain("only 'auto' is meaningful on execution: finalizer steps");
     });
 
-    it('the gate-literal branch (human_confirmed) is UNCHANGED — its own reason already is the kind clause, no accepted-set tail appended', () => {
+    // issue #508 (final correction): the title is corrected from "UNCHANGED" — the gate-literal
+    // branch's SHAPE (a hand-written kind prohibition, no accepted-set tail) stays exactly as
+    // before, but its value rendering is NOT unchanged: a reversed ruling ("keep String() here
+    // to satisfy namesKey") was wrong (namesKey needs the quote BEFORE `trust`, not around the
+    // value — executed both ways, both satisfy it identically), so this arm now shares the same
+    // `renderTrustValue` (quoted) every other arm uses. "There was never a reason for two
+    // renderers."
+    it("the gate-literal branch (human_confirmed) stays a kind prohibition — no accepted-set tail — but now shares the composer's quoted value renderer", () => {
       const message = loadError(defFinalizer('human_confirmed'));
       expect(message).toContain(
-        "'trust: human_confirmed' is not valid on execution: finalizer steps (a finalizer must not gate)",
+        '\'trust: "human_confirmed"\' is not valid on execution: finalizer steps (a finalizer must not gate)',
       );
       // The generic accepted-set tail belongs to the OTHER three arms only — appending it here
       // would be redundant with "a finalizer must not gate", not clarifying.

@@ -664,6 +664,48 @@ describe('classifyRunHealth', () => {
       );
       expect(finding?.reason).toContain("did you mean 'human_confirmed'?");
     });
+
+    // issue #508 (final correction): the actual point of this round. Before it, EVERY finding
+    // reason used the flat generic "is not a recognized value" text regardless of which mistake
+    // it was — the pre-existing "parked run" cell above uses `engine_delivered` but only checked
+    // for the bare substring `'engine_delivered'`, which the generic text ALSO would have
+    // satisfied (it appears inside the rendered value either way) — a coincidental pass that
+    // never actually proved arm selection. These two cells check the arm-specific clause
+    // directly, and the negative conjunct proves the generic text is NOT what fired.
+    it('routes engine_delivered through the SERVICE-confusion arm, not the generic text', () => {
+      const definition = makeDef({
+        bad: {
+          description: 'bad',
+          execution: 'auto',
+          trust: 'engine_delivered' as never,
+          depends_on: [],
+        },
+      });
+      const run = makeRun({ run_phase: 'running' });
+      const finding = classifyRunHealth(run, { now: NOW, definition }).find(
+        (f) => f.kind === 'trust_value_invalid',
+      );
+      expect(finding?.reason).toContain("is a SERVICE's trust level");
+      expect(finding?.reason).not.toContain('is not a recognized value');
+    });
+
+    it('routes human_notified through the tombstone arm, not the generic text', () => {
+      const definition = makeDef({
+        bad: {
+          description: 'bad',
+          execution: 'auto',
+          trust: 'human_notified' as never,
+          depends_on: [],
+        },
+      });
+      const run = makeRun({ run_phase: 'running' });
+      const finding = classifyRunHealth(run, { now: NOW, definition }).find(
+        (f) => f.kind === 'trust_value_invalid',
+      );
+      expect(finding?.reason).toContain('was removed (issue #508)');
+      expect(finding?.reason).toContain('most workflows should simply delete the key');
+      expect(finding?.reason).not.toContain('is not a recognized value');
+    });
   });
 
   // ---------------------------------------------------------------------

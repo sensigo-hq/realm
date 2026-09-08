@@ -1,7 +1,7 @@
 // Protocol generator — produces the full agent briefing from a WorkflowDefinition.
 // This is what an AI agent reads before starting a workflow run.
 import type { WorkflowDefinition, JsonSchema } from '@sensigo/realm';
-import { classifyStepTrust } from '@sensigo/realm';
+import { classifyStepTrust, buildTrustRefusal, renderTrustValue } from '@sensigo/realm';
 
 export interface ProtocolStepGate {
   choices: string[];
@@ -97,19 +97,35 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
       // refuse outright (`finalizer + 'human_confirmed'`, or ANY declared value on a guard) —
       // now forks on `trustVerdict`, which is only ever 'lawful_no_gate' or 'refuse' inside this
       // branch (absence is excluded by the outer `step.trust !== undefined` check).
+      //
+      // issue #508 (final correction): this is NOT a refusal — a disclosure of an inert-or-
+      // invalid declaration the engine never reads on this kind — so it keeps its own text
+      // rather than routing through `buildTrustRefusal`. It DOES now consume that composer's
+      // exported `renderTrustValue`, the one rendering rule every trust-value message shares
+      // (`JSON.stringify`, unconditionally), so this site's rendering cannot drift back apart
+      // from the refusal surfaces' even though its own prose stays bespoke.
       const trustNote =
         step.trust === undefined
           ? ''
           : trustVerdict === 'lawful_no_gate'
-            ? ` (this step declares 'trust: ${JSON.stringify(step.trust)}' — accepted but inert; ${step.execution} steps never gate)`
-            : ` (this step declares 'trust: ${JSON.stringify(step.trust)}', which the loader refuses on ${step.execution} steps — this definition reached the protocol without going through it)`;
+            ? ` (this step declares 'trust: ${renderTrustValue(step.trust)}' — accepted but inert; ${step.execution} steps never gate)`
+            : ` (this step declares 'trust: ${renderTrustValue(step.trust)}', which the loader refuses on ${step.execution} steps — this definition reached the protocol without going through it)`;
       agent_involvement = `none — the engine runs this ${step.execution} step automatically; do NOT call execute_step for it${trustNote}.`;
     } else if (trustVerdict === 'refuse') {
-      // issue #508 (L2 disclosure): this step's `trust` value is neither absent nor a
-      // recognized member — the engine will refuse it at dispatch (VALIDATION_TRUST_VALUE)
-      // before it runs at all. Briefing the agent to call execute_step (or to expect
-      // automatic execution) here would send it into a refusal it has no way to predict.
-      agent_involvement = `this step's 'trust: ${JSON.stringify(step.trust)}' is not a recognized value — the engine will refuse it with VALIDATION_TRUST_VALUE before running. Do NOT call execute_step for it; report this to the user, who must correct the workflow definition and re-register it.`;
+      // issue #508 (final correction): `buildTrustRefusal` (types/workflow-definition.ts) —
+      // the same composer L1/L2/the run-health finding all use, with its own `'briefing'`
+      // surface (added beyond the three originally sketched): `'dispatch'`'s "this run is now
+      // parked" wording is FALSE here — the agent has not called `execute_step` yet, so nothing
+      // has parked; only a CONDITIONAL "calling execute_step here will be refused" framing is
+      // true at protocol-generation time. Without this composer, this surface used to fall back
+      // to the flat generic arm regardless of value — the SAME defect the other three surfaces
+      // had before this correction.
+      agent_involvement = buildTrustRefusal({
+        kind: step.execution,
+        value: step.trust,
+        step: id,
+        surface: 'briefing',
+      });
       refusedStepCount++;
     } else if (step.execution === 'auto' && !hasGate) {
       agent_involvement = 'none — engine handles this automatically';

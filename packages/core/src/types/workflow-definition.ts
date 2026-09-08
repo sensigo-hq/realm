@@ -1,5 +1,10 @@
 // Typed representation of a parsed workflow YAML definition.
 import type { McpServerConfig } from './mcp-types.js';
+// issue #508 (final correction): a `types/ -> workflow/` edge, added for `buildTrustRefusal`
+// below — audit-verified to create no cycle (`diagnostics.ts` imports only from its own
+// directory's `source-positions.ts`, which imports only `js-yaml`'s types; neither imports
+// anything from this file).
+import { closestKey } from '../workflow/diagnostics.js';
 
 export type ExecutionMode = 'auto' | 'agent' | 'guard' | 'finalizer';
 
@@ -175,6 +180,189 @@ export function classifyStepTrust(kind: ExecutionMode | undefined, value: unknow
  */
 export function isGateTrust(value: unknown): boolean {
   return (GATE_TRUST_LEVELS as readonly unknown[]).includes(value);
+}
+
+/**
+ * Renders a `trust` value into prose — the ONE rendering rule every trust-value message shares,
+ * exported so a NON-refusal disclosure (the protocol generator's guard/finalizer inert-trust
+ * note) can consume it too, rather than hand-rolling its own renderer that could drift from this
+ * one. `JSON.stringify`, unconditionally, no exceptions: `String()` makes `''` print as the
+ * unreadable `'trust: '` (reads as MISSING, not empty), `null` print as `'trust: null'`
+ * (indistinguishable from the three-character string `"null"`), and — worst — an ARRAY print as
+ * its own first element (`String(['a','b'])` is `'a,b'`; a value the author declared as a list is
+ * shown as if it were a scalar, with no sign anything was ever dropped).
+ */
+export function renderTrustValue(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+/**
+ * Which of the three priority arms a `trust` value falls into — the ONE classification every
+ * refusal surface shares. Order matters: `SERVICE_TRUST_LEVELS` membership is checked before the
+ * literal `'human_notified'` tombstone, which is checked before the generic catch-all — none of
+ * the three sets overlap today, but the order is still the contract (a future retired value that
+ * happened to collide with a service-trust literal would need this documented, not guessed).
+ */
+type TrustRefusalArm = 'service' | 'removed' | 'generic';
+
+function selectTrustRefusalArm(value: unknown): TrustRefusalArm {
+  if ((SERVICE_TRUST_LEVELS as readonly unknown[]).includes(value)) return 'service';
+  if (value === 'human_notified') return 'removed';
+  return 'generic';
+}
+
+/**
+ * The surface a trust-refusal message is rendered for — each names a DIFFERENT real consequence,
+ * deliberately never harmonised into one shared sentence (issue #508 correction 1's ruling,
+ * reaffirmed here): `'load'` is PREVENTED harm (`yaml-loader.ts` — no run of the workflow can
+ * exist while the value is wrong); `'dispatch'` is a COMPLETED refusal against a run that already
+ * exists (`execution-loop.ts` — the run parks, non-terminal, dependents return `'blocked'`);
+ * `'finding'` is the run-health voice, describing a step that has not yet been dispatched but
+ * will be refused when it is (`run-health.ts`, rendered by `inspect`/`get_run_state`); `'briefing'`
+ * is the agent protocol's own pre-dispatch voice (`generator.ts`) — added beyond the three
+ * originally sketched because `'dispatch'`'s "this run is now parked" wording is FALSE there: the
+ * agent has not called `execute_step` yet, so nothing has parked — only `'briefing'`'s own
+ * conditional framing ("calling execute_step here WILL BE refused") is true at that point.
+ */
+export type TrustRefusalSurface = 'load' | 'dispatch' | 'finding' | 'briefing';
+
+function trustRefusalConsequence(surface: TrustRefusalSurface): string {
+  switch (surface) {
+    case 'load':
+      // No error-code mention: L1's throw carries `VALIDATION_WORKFLOW_SCHEMA` (yaml-loader.ts
+      // joins every load-time error into one `WorkflowError` under that single code) — never
+      // `VALIDATION_TRUST_VALUE`, which is exclusively L2's (execution-loop.ts's) code. Naming
+      // it here would be a claim this surface cannot back.
+      return (
+        'refused at load: this workflow cannot create a run while the value is wrong, so no ' +
+        'step of it — gated or not — ever executes under it'
+      );
+    case 'dispatch':
+      // No inline code mention either, but for the OPPOSITE reason: `error_code` is a real,
+      // separate, structured field on the envelope here (`VALIDATION_TRUST_VALUE`, set on the
+      // `WorkflowError` this text becomes the message of) — a reader with programmatic access
+      // already has it without parsing prose for it.
+      return (
+        'refused at dispatch: no gate opens and this step does not run; this run is now ' +
+        'parked, non-terminal, until the value is corrected, and any step depending on this ' +
+        "one returns 'blocked' in the meantime"
+      );
+    case 'finding':
+      // `RunHealthFinding` has no separate code field the way `dispatch`'s envelope does — the
+      // code is only ever visible if it is IN this string.
+      return 'the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE)';
+    case 'briefing':
+      // Same reasoning as `finding`: `ProtocolStep.agent_involvement` is a bare string, and this
+      // is a genuinely true prediction of what L2 will throw if the agent calls execute_step
+      // anyway — the code is real information, not decoration.
+      return (
+        'calling execute_step here will be refused (VALIDATION_TRUST_VALUE): no gate opens ' +
+        'and this step does not run; the run would then park, non-terminal, until the value ' +
+        "is corrected, with any step depending on this one returning 'blocked'"
+      );
+  }
+}
+
+/**
+ * The accepted-set / did-you-mean / remedy tail. `kind: 'finalizer'` is the ONE case that
+ * replaces this entirely with the finalizer's own kind clause — reachable only on
+ * `surface: 'load'` (see `buildTrustRefusal`'s own doc for why `dispatch`/`finding`/`briefing`
+ * never see a finalizer step at all): the generic accepted-set-plus-live-run-remedy text would
+ * wrongly imply the two human-gate literals are meaningful on a kind that can never gate.
+ */
+function trustRefusalTail(
+  kind: ExecutionMode,
+  surface: TrustRefusalSurface,
+  didYouMean: string | undefined,
+): string {
+  if (kind === 'finalizer') {
+    return (
+      `'trust' accepts ${TRUST_LEVELS.join(', ')}, and only 'auto' is meaningful on ` +
+      `execution: finalizer steps.`
+    );
+  }
+  switch (surface) {
+    case 'load':
+      return (
+        `A step's 'trust' accepts ${TRUST_LEVELS.join(', ')}.` +
+        (didYouMean !== undefined ? ` Did you mean '${didYouMean}'?` : '') +
+        ` Correct the value, then 'realm workflow register <path>' — any run of this ` +
+        `workflow picks up the corrected definition on its next attempt at this step.`
+      );
+    case 'dispatch':
+      return (
+        `A step's 'trust' accepts ${TRUST_LEVELS.join(', ')}.` +
+        (didYouMean !== undefined ? ` Did you mean '${didYouMean}'?` : '') +
+        ` Correct the value, then 'realm workflow register <path>' and retry this step — ` +
+        `this run picks up the corrected definition.`
+      );
+    case 'finding':
+      return (
+        `Accepts ${TRUST_LEVELS.join(', ')}` +
+        (didYouMean !== undefined ? `; did you mean '${didYouMean}'?` : '') +
+        ` — correct the value and 'realm workflow register <path>'.`
+      );
+    case 'briefing':
+      return (
+        `A step's 'trust' accepts ${TRUST_LEVELS.join(', ')}.` +
+        (didYouMean !== undefined ? ` Did you mean '${didYouMean}'?` : '') +
+        ` Do NOT call execute_step for it; report this to the user, who must correct the ` +
+        `workflow definition and re-register it.`
+      );
+  }
+}
+
+/**
+ * The ONE trust-refusal message composer (issue #508 final correction). Four consumers —
+ * `yaml-loader.ts`'s load-time refusal (auto/agent, and the finalizer's own non-gate-literal
+ * branch), `execution-loop.ts`'s dispatch-time refusal, `run-health.ts`'s `trust_value_invalid`
+ * finding, and the protocol generator's pre-dispatch agent briefing — used to hand-compose this
+ * text independently, and every defect this issue's prior rounds found (arm divergence across
+ * surfaces, mixed bare/quoted value rendering, an array printing as its own first element, a
+ * grammar seam where a sentence-ending clause met a lowercase continuation) fell out of that
+ * duplication, not out of four separate bugs. This function is the single point where value
+ * rendering, arm selection, and the per-surface consequence sentence are assembled — no call site
+ * chooses an arm or renders a value on its own again.
+ *
+ * `kind` only changes the output when `kind === 'finalizer'` — and even then, only reachable on
+ * `surface: 'load'`. `dispatch`/`finding`/`briefing` are all scoped, structurally, to
+ * `findEligibleSteps`'s auto/agent-only population (see each call site's own comment for why),
+ * so a finalizer step's trust value can only ever reach this function through `yaml-loader.ts`'s
+ * load-time check. `kind: 'guard'` must never reach this function at all: a guard's blanket
+ * `trust` prohibition is a KIND prohibition (the key is the offense, the value is irrelevant),
+ * minted by the #517 registry walk, and structurally never routes through a value-refusal
+ * composer.
+ */
+export function buildTrustRefusal(args: {
+  kind: ExecutionMode;
+  value: unknown;
+  step: string;
+  surface: TrustRefusalSurface;
+}): string {
+  const { kind, value, step, surface } = args;
+  const arm = selectTrustRefusalArm(value);
+  // `closestKey` throws a TypeError on `null` — guarded by the `typeof` check, which also
+  // correctly excludes every other non-string value (123, [], {}) from the suggestion without a
+  // special case for each. Only the generic arm ever suggests: a service-trust value or the
+  // retired tombstone are exact membership matches, not near-misses.
+  const didYouMean =
+    arm === 'generic' && typeof value === 'string' ? closestKey(value, TRUST_LEVELS) : undefined;
+  const rendered = renderTrustValue(value);
+
+  const armClause =
+    arm === 'service'
+      ? `'trust: ${rendered}' is a SERVICE's trust level (declared under 'services: <name>: ` +
+        `trust:'), not a step's`
+      : arm === 'removed'
+        ? `'trust: ${rendered}' was removed (issue #508): it never triggered a notification, ` +
+          `it never opened a gate, and most workflows should simply delete the key`
+        : `'trust: ${rendered}' is not a recognized value`;
+
+  const prefix = surface === 'load' || surface === 'dispatch' ? `Step '${step}': ` : '';
+  const consequence = trustRefusalConsequence(surface);
+  const tail = trustRefusalTail(kind, surface, didYouMean);
+
+  return `${prefix}${armClause} — ${consequence}. ${tail}`;
 }
 
 export interface JsonSchema {

@@ -286,9 +286,14 @@ describe('generateProtocol — trust value refusal (issue #508)', () => {
   }
 
   it('auto step with an invalid trust value is briefed as refused, not as automatic', () => {
+    // issue #508 (final correction): 'nope' — a genuinely generic-arm value. This test's original
+    // fixture, `trust: 'engine_delivered'`, was ITSELF an instance of the class this whole round
+    // fixes: it only ever asserted the GENERIC text, which the old (pre-composer) generator
+    // happened to always produce regardless of value — a coincidental pass that never actually
+    // proved which arm fired. See the dedicated arm-selection cells below for that proof.
     const protocol = generateProtocol(
       makeDef({
-        bad: { description: 'bad', execution: 'auto', trust: 'engine_delivered' as never },
+        bad: { description: 'bad', execution: 'auto', trust: 'nope' as never },
       }),
     );
     const step = protocol.steps[0]!;
@@ -302,7 +307,7 @@ describe('generateProtocol — trust value refusal (issue #508)', () => {
   it('agent step with an invalid trust value is briefed as refused, not as "YOU execute"', () => {
     const protocol = generateProtocol(
       makeDef({
-        bad: { description: 'bad', execution: 'agent', trust: 'human_notified' as never },
+        bad: { description: 'bad', execution: 'agent', trust: 'nope' as never },
       }),
     );
     const step = protocol.steps[0]!;
@@ -311,6 +316,34 @@ describe('generateProtocol — trust value refusal (issue #508)', () => {
     expect(step.agent_involvement).toContain('VALIDATION_TRUST_VALUE');
     expect(step.agent_involvement).toContain('Do NOT call execute_step');
     expect(step.possible_gate).toBeUndefined();
+  });
+
+  // issue #508 (final correction): the actual point of this round. `buildTrustRefusal` gives the
+  // briefing surface the SAME arm selection L1/L2/the run-health finding always had (or, for L2
+  // and the finding, now also have) — before it, EVERY value here got the flat generic text.
+  it('routes engine_delivered through the SERVICE-confusion arm on the briefing, not the generic text', () => {
+    const protocol = generateProtocol(
+      makeDef({
+        bad: { description: 'bad', execution: 'auto', trust: 'engine_delivered' as never },
+      }),
+    );
+    const step = protocol.steps[0]!;
+    expect(step.agent_involvement).toContain("is a SERVICE's trust level");
+    expect(step.agent_involvement).toContain("declared under 'services: <name>: trust:'");
+    expect(step.agent_involvement).not.toContain('is not a recognized value');
+    expect(step.agent_involvement).toContain('VALIDATION_TRUST_VALUE');
+  });
+
+  it('routes human_notified through the tombstone arm on the briefing, not the generic text', () => {
+    const protocol = generateProtocol(
+      makeDef({
+        bad: { description: 'bad', execution: 'agent', trust: 'human_notified' as never },
+      }),
+    );
+    const step = protocol.steps[0]!;
+    expect(step.agent_involvement).toContain('was removed (issue #508)');
+    expect(step.agent_involvement).toContain('most workflows should simply delete the key');
+    expect(step.agent_involvement).not.toContain('is not a recognized value');
   });
 
   it('null trust value on an auto step refuses (via JSON.stringify, distinguishable from a string)', () => {

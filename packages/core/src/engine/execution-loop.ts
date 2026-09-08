@@ -23,12 +23,7 @@ import type {
   InputMapNode,
   LiteralNode,
 } from '../types/workflow-definition.js';
-import { classifyStepTrust, isGateTrust, TRUST_LEVELS } from '../types/workflow-definition.js';
-// issue #508 correction (item 3): the first `engine/ → workflow/` import edge from this file —
-// audit-verified to create no cycle (`diagnostics.ts` imports only from its own directory). Used
-// to give the L2 refusal the SAME did-you-mean richness `yaml-loader.ts`'s L1 refusal already
-// has; the operator L2 exists for is the one least equipped to guess a correct value unaided.
-import { closestKey } from '../workflow/diagnostics.js';
+import { classifyStepTrust, isGateTrust, buildTrustRefusal } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
 import { persistsField } from '../store/store-fidelity.js';
 import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-store.js';
@@ -1404,31 +1399,24 @@ export async function executeStep(
   // enacting a DIFFERENT step's already-expired gate is lawful and must not be blocked by this
   // step's own trust defect.
   if (classifyStepTrust(stepDef?.execution, stepDef?.trust) === 'refuse') {
-    // issue #508 correction (item 3): this is the MOST degraded message an operator can hit —
-    // whoever reads it inherited someone else's definition (a registrar read-back, an
-    // embedder-constructed WorkflowDefinition), is not looking at YAML, and has no other way to
-    // learn what a valid value looks like. It used to carry LESS than L1's (yaml-loader.ts): no
-    // accepted set, no did-you-mean — backwards, given L2 exists specifically for the population
-    // L1 cannot reach. `typeof === 'string'` before `closestKey` mirrors L1's own arm-3 guard —
-    // not a stylistic echo: `closestKey` throws a TypeError on `null`.
-    const rawTrust = stepDef?.trust;
-    const didYouMean =
-      typeof rawTrust === 'string' ? closestKey(rawTrust, TRUST_LEVELS) : undefined;
+    // issue #508 (final correction): this whole message is now `buildTrustRefusal`
+    // (types/workflow-definition.ts) — the same composer L1 (yaml-loader.ts), the
+    // trust_value_invalid finding (run-health.ts), and the protocol briefing (generator.ts) all
+    // use, so this surface can no longer silently fall back to the generic "not a recognized
+    // value" text while the other three name a service-trust confusion or the human_notified
+    // tombstone by their own arm. `stepDef!` is sound here: `classifyStepTrust` only reaches
+    // 'refuse' when `stepDef?.trust !== undefined`, which is only possible when `stepDef` itself
+    // is defined (optional chaining on an undefined `stepDef` would make `.trust` undefined too,
+    // routing to the FIRST 'lawful_no_gate' arm instead) — and `stepDef.execution` is always
+    // 'auto' or 'agent' here by construction, per this function's own comment above (guard and
+    // finalizer never reach `executeStep` at all).
     const err = new WorkflowError(
-      `Step '${options.command}': 'trust: ${JSON.stringify(rawTrust)}' is not a recognized ` +
-        // issue #508 correction (item 1): COMPLETED-refusal mood, deliberately distinct from
-        // L1's prevented-harm wording (yaml-loader.ts) — by the time this runs, a real run
-        // already exists; refusing does not erase it, it parks it, non-terminal, with its
-        // dependents returning 'blocked'. An earlier draft's instruction to make the two
-        // messages read identically was wrong and is withdrawn — see yaml-loader.ts's own
-        // comment on this same clause for the full reasoning.
-        `value — refused at dispatch: no gate opens and this step does not run; this run is ` +
-        `now parked, non-terminal, until the value is corrected, and any step depending on ` +
-        `this one returns 'blocked' in the meantime. A step's 'trust' accepts ` +
-        `${TRUST_LEVELS.join(', ')}.` +
-        (didYouMean !== undefined ? ` Did you mean '${didYouMean}'?` : '') +
-        ` Correct the value, then 'realm workflow register <path>' and retry this step — ` +
-        `this run picks up the corrected definition.`,
+      buildTrustRefusal({
+        kind: stepDef!.execution,
+        value: stepDef!.trust,
+        step: options.command,
+        surface: 'dispatch',
+      }),
       {
         code: 'VALIDATION_TRUST_VALUE',
         category: 'VALIDATION',
