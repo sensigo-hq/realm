@@ -1639,6 +1639,127 @@ describe('executeStep', () => {
   // confirm_required next_actions population
   // ---------------------------------------------------------------------------
 
+  // issue #508 — the behavioural-equivalence pin `workflow-definition.ts`'s `TrustLevel` doc
+  // comment promises: `human_reviewed` is a RESERVED value with no distinct "challenge"
+  // mechanism built yet (issue #531 owns implement-or-permanently-alias) — today `isGateTrust`
+  // treats it identically to `human_confirmed` at the gate mint. Proven here by running the
+  // IDENTICAL workflow shape under each value and diffing everything except the random
+  // identifiers (gate_id, run_id) that necessarily differ per run.
+  it('trust: human_reviewed mints a gate structurally identical to trust: human_confirmed (issue #508 behavioural-equivalence pin)', async () => {
+    async function mintGate(trust: 'human_confirmed' | 'human_reviewed') {
+      const gateWorkflow: WorkflowDefinition = {
+        id: 'gate-equiv-wf',
+        name: 'Gate Equivalence Workflow',
+        version: 1,
+        steps: {
+          gate_step: { description: 'Gate step', execution: 'auto', trust, depends_on: [] },
+        },
+      };
+      const { run } = await store.create({
+        workflowId: 'gate-equiv-wf',
+        workflowVersion: 1,
+        params: { key: 'value' },
+      });
+      return executeStep(store, gateWorkflow, {
+        runId: run.id,
+        command: 'gate_step',
+        input: { key: 'value' },
+        dispatcher: echoDispatcher,
+      });
+    }
+
+    const confirmed = await mintGate('human_confirmed');
+    const reviewed = await mintGate('human_reviewed');
+
+    expect(confirmed.status).toBe('confirm_required');
+    expect(reviewed.status).toBe('confirm_required');
+    // step_name, choices, preview, display, agent_hint, response_spec — everything but the
+    // random gate_id — must be byte-identical between the two trust values.
+    expect(reviewed.gate?.step_name).toBe(confirmed.gate?.step_name);
+    expect(reviewed.gate?.choices).toEqual(confirmed.gate?.choices);
+    expect(reviewed.gate?.preview).toEqual(confirmed.gate?.preview);
+    expect(reviewed.gate?.display).toBe(confirmed.gate?.display);
+    expect(reviewed.gate?.agent_hint).toBe(confirmed.gate?.agent_hint);
+    expect(reviewed.gate?.response_spec).toEqual(confirmed.gate?.response_spec);
+    expect(reviewed.next_actions[0]?.instruction?.tool).toBe(
+      confirmed.next_actions[0]?.instruction?.tool,
+    );
+    expect(reviewed.next_actions[0]?.human_readable).toBe(
+      confirmed.next_actions[0]?.human_readable,
+    );
+    // orientation embeds the gate_id verbatim (legitimately differs per run — see below) —
+    // compared with the id stripped out instead of a bare toBe.
+    expect(reviewed.next_actions[0]?.orientation?.replace(/'[0-9a-f-]{36}'/, "'<gate_id>'")).toBe(
+      confirmed.next_actions[0]?.orientation?.replace(/'[0-9a-f-]{36}'/, "'<gate_id>'"),
+    );
+    // The one field that MUST differ — proof the two runs are genuinely independent, not a
+    // vacuous self-comparison.
+    expect(reviewed.gate?.gate_id).not.toBe(confirmed.gate?.gate_id);
+  });
+
+  // issue #508 — L2: the engine's fail-closed backstop for a `trust` value that bypassed the
+  // loader (a registrar read-back, or a hand-built WorkflowDefinition passed directly to
+  // executeStep — exactly what these fixtures do, never routing through loadWorkflowFromString).
+  describe('L2 — dispatch-time trust value refusal (issue #508)', () => {
+    async function refuseBadTrust(trust: unknown) {
+      const badDef: WorkflowDefinition = {
+        id: 'l2-508-wf',
+        name: 'L2 508',
+        version: 1,
+        steps: {
+          work: { description: 'work', execution: 'auto', trust: trust as never, depends_on: [] },
+        },
+      };
+      const { run } = await store.create({
+        workflowId: 'l2-508-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const before = await store.get(run.id);
+      const envelope = await executeStep(store, badDef, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echoDispatcher,
+      });
+      const after = await store.get(run.id);
+      return { envelope, before, after };
+    }
+
+    it('refuses with VALIDATION_TRUST_VALUE, report_to_user, not retryable', async () => {
+      const { envelope } = await refuseBadTrust('engine_delivered');
+      expect(envelope.status).toBe('error');
+      expect(envelope.error_code).toBe('VALIDATION_TRUST_VALUE');
+      expect(envelope.agent_action).toBe('report_to_user');
+    });
+
+    it('next_actions is [] — omitting `definition` from makeErrorEnvelope, not merely empty by coincidence', async () => {
+      // A non-empty next_actions here would mean the refused step's OWN eligibility loop-backed
+      // into its own refusal (buildNextActions would find 'work' still eligible and re-offer it),
+      // an infinite-retry trap for an agent following next_actions literally.
+      const { envelope } = await refuseBadTrust('engine_delivered');
+      expect(envelope.next_actions).toEqual([]);
+    });
+
+    it('the PRE-CLAIM pin: refusal never claims the step — in_progress_steps stays [], version unchanged', async () => {
+      const { before, after } = await refuseBadTrust('engine_delivered');
+      expect(after.in_progress_steps).toEqual([]);
+      expect(after.version).toBe(before.version);
+      expect(after.completed_steps).toEqual([]);
+    });
+
+    it('the live-run-repair remedy text names register + retry', async () => {
+      const { envelope } = await refuseBadTrust('nope');
+      expect(envelope.errors[0]).toContain('realm workflow register <path>');
+      expect(envelope.errors[0]).toContain('retry');
+    });
+
+    it('a lawful trust value on the same shape is NOT refused (control)', async () => {
+      const { envelope } = await refuseBadTrust('auto');
+      expect(envelope.status).toBe('ok');
+    });
+  });
+
   describe('confirm_required next_actions population', () => {
     it('confirm_required response has next_actions instruction pointing to submit_human_response', async () => {
       const gateWorkflow: WorkflowDefinition = {

@@ -83,8 +83,15 @@ describe('validate --registered (issue #427)', () => {
     expect(text).toContain(
       "Auditing the registered copy of 'stored-wf' (schema_version 1) with realm",
     );
+    // issue #508 — the header now narrows the grandfathering claim to LOADER changes (a NEW
+    // engine-side dispatch check like the trust-value refusal is NOT grandfathered), so this pin
+    // asserts the claim VERBATIM again rather than a substring — a substring would keep passing
+    // through a future edit that quietly widened the claim back to something false.
     expect(text).toContain(
-      'Registered copies stay grandfathered at runtime — this reports what re-registration today would say.',
+      'Registered copies stay grandfathered at runtime against LOADER changes — this reports ' +
+        "what re-registration today would say. A NEW engine-side dispatch check (this release's " +
+        'trust-value refusal, issue #508) is NOT grandfathered: it applies immediately, whatever ' +
+        'schema_version is on file.',
     );
     expect(text).toContain("'timeout_seconds' is not valid on execution: agent steps");
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -288,6 +295,24 @@ describe('validate --registered (issue #427)', () => {
 
     const text = out();
     expect(text).toContain("'gate.choices', when declared, must be non-empty");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('R8 a stored copy carrying an invalid trust value is refused by --registered too (issue #508) — no key-line assertion, deliberately: JSON.stringify(clone) is single-line, so posOf cannot place a meaningful key line in it', async () => {
+    plant(
+      'stored-wf',
+      stored({
+        steps: { a: { description: 'a', execution: 'agent', trust: 'engine_delivered' } },
+      }),
+    );
+
+    await expect(
+      validateCommand.parseAsync(['--registered', 'stored-wf'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+
+    const text = out();
+    expect(text).toContain("is a SERVICE's trust");
+    expect(text).toContain('no gate is opened');
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

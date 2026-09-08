@@ -538,6 +538,103 @@ describe('classifyRunHealth', () => {
   });
 
   // ---------------------------------------------------------------------
+  // issue #508 — trust_value_invalid: intersected with ELIGIBILITY (findEligibleSteps), never a
+  // whole-definition scan. Definition-gated, like resolved_gate_with_eligible_guard above.
+  // ---------------------------------------------------------------------
+  describe('trust_value_invalid (issue #508)', () => {
+    function makeDef(steps: WorkflowDefinition['steps']): WorkflowDefinition {
+      return { id: 'wf', name: 'wf', version: 1, steps };
+    }
+
+    it('a parked run whose eligible step has an unrecognized trust value gets exactly this finding', () => {
+      const definition = makeDef({
+        bad: {
+          description: 'bad',
+          execution: 'auto',
+          trust: 'engine_delivered' as never,
+          depends_on: [],
+        },
+      });
+      const run = makeRun({ run_phase: 'running' });
+      const findings = classifyRunHealth(run, { now: NOW, definition });
+      const finding = findings.find((f) => f.kind === 'trust_value_invalid');
+      expect(finding).toBeDefined();
+      expect(finding?.step).toBe('bad');
+      expect(finding?.reason).toContain('engine_delivered');
+      expect(finding?.reason).toContain('VALIDATION_TRUST_VALUE');
+      expect(finding?.evidence).toEqual({ trust: 'engine_delivered' });
+    });
+
+    it('a fresh run whose bad-trust step is NOT YET eligible (an unmet dependency) reports ZERO findings — the control that discriminates this design from a naive whole-definition scan', () => {
+      const definition = makeDef({
+        first: { description: 'first', execution: 'auto', handler: 'noop', depends_on: [] },
+        bad: {
+          description: 'bad',
+          execution: 'auto',
+          trust: 'engine_delivered' as never,
+          depends_on: ['first'],
+        },
+      });
+      // 'first' has not completed yet, so 'bad' is not in findEligibleSteps — its invalid trust
+      // must NOT be reported while it sits unreachable behind an unsatisfied dependency.
+      const run = makeRun({ run_phase: 'running' });
+      const findings = classifyRunHealth(run, { now: NOW, definition });
+      expect(findings.some((f) => f.kind === 'trust_value_invalid')).toBe(false);
+    });
+
+    it('definition-free ⇒ no trust_value_invalid finding, even though the same bad step would fire with a definition', () => {
+      const definition = makeDef({
+        bad: {
+          description: 'bad',
+          execution: 'auto',
+          trust: 'engine_delivered' as never,
+          depends_on: [],
+        },
+      });
+      const run = makeRun({ run_phase: 'running' });
+      const withDefinition = classifyRunHealth(run, { now: NOW, definition });
+      expect(withDefinition.some((f) => f.kind === 'trust_value_invalid')).toBe(true);
+      const withoutDefinition = classifyRunHealth(run, { now: NOW });
+      expect(withoutDefinition.some((f) => f.kind === 'trust_value_invalid')).toBe(false);
+    });
+
+    it('a terminal run reports [] — findEligibleSteps short-circuits terminal runs to [], so a bad-trust step on an otherwise-terminal record is never named', () => {
+      const definition = makeDef({
+        bad: {
+          description: 'bad',
+          execution: 'auto',
+          trust: 'engine_delivered' as never,
+          depends_on: [],
+        },
+      });
+      const run = makeRun({
+        terminal_state: true,
+        run_phase: 'completed',
+        terminal_reason: 'Workflow completed.',
+      });
+      expect(classifyRunHealth(run, { now: NOW, definition })).toEqual([]);
+    });
+
+    it('a guard carrying trust: human_confirmed is never named — findEligibleSteps never includes a guard step at all', () => {
+      const definition = makeDef({
+        work: { description: 'work', execution: 'agent', depends_on: [] },
+        gate_check: {
+          description: 'guard',
+          execution: 'guard',
+          depends_on: ['work'],
+          abort_unless: ["work.status == 'open'"],
+          trust: 'human_confirmed',
+        },
+      });
+      const run = makeRun({ completed_steps: ['work'], run_phase: 'running' });
+      const findings = classifyRunHealth(run, { now: NOW, definition });
+      expect(
+        findings.some((f) => f.kind === 'trust_value_invalid' && f.step === 'gate_check'),
+      ).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------
   // issue #302 (disclosure gaps) — the NEW completed_with_failed_steps finding class. Predicate:
   // terminal_state ∧ deriveRunPhase(run) === 'completed' ∧ failed_steps.length > 0. The hidden
   // hinge (eligibility.ts:65): deriveRunPhase's 'completed' branch requires

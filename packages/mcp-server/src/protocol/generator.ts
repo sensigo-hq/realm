@@ -1,6 +1,7 @@
 // Protocol generator — produces the full agent briefing from a WorkflowDefinition.
 // This is what an AI agent reads before starting a workflow run.
 import type { WorkflowDefinition, JsonSchema } from '@sensigo/realm';
+import { classifyStepTrust } from '@sensigo/realm';
 
 export interface ProtocolStepGate {
   choices: string[];
@@ -67,9 +68,14 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
   const steps: ProtocolStep[] = [];
   let agentStepCount = 0;
   let autoStepCount = 0;
+  // issue #508: steps L2 will refuse at dispatch — an invalid `trust` value. Tracked
+  // separately from agent/auto so neither count silently absorbs a step that will never
+  // actually run the way its execution kind implies.
+  let refusedStepCount = 0;
 
   for (const [id, step] of Object.entries(definition.steps)) {
-    const hasGate = step.trust === 'human_confirmed' || step.trust === 'human_reviewed';
+    const trustVerdict = classifyStepTrust(step.execution, step.trust);
+    const hasGate = trustVerdict === 'gates';
 
     let agent_involvement: string;
     let possible_gate: ProtocolStepGate | undefined;
@@ -78,7 +84,23 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
       // Engine-run steps — never agent-executed. Previously these fell through to the final
       // branch and were wrongly briefed as "YOU execute this step" (guard was already
       // mis-briefed; finalizer would be too). The agent must never call execute_step for them.
-      agent_involvement = `none — the engine runs this ${step.execution} step automatically; do NOT call execute_step for it.`;
+      // issue #508: a `trust` value declared here is inert by construction (guard/finalizer
+      // never gate) — say so, rather than staying silent about a declaration the engine
+      // ignores. `trustVerdict` is 'refuse' for anything but absent/'auto' on these kinds; a
+      // refuse here is NOT dispatch-fatal (unlike auto/agent) since the engine never reads
+      // `trust` on this execution kind at all, so refusedStepCount is not incremented.
+      const trustNote =
+        step.trust !== undefined
+          ? ` (this step declares 'trust: ${String(step.trust)}', which has no effect here — ${step.execution} steps never gate)`
+          : '';
+      agent_involvement = `none — the engine runs this ${step.execution} step automatically; do NOT call execute_step for it${trustNote}.`;
+    } else if (trustVerdict === 'refuse') {
+      // issue #508 (L2 disclosure): this step's `trust` value is neither absent nor a
+      // recognized member — the engine will refuse it at dispatch (VALIDATION_TRUST_VALUE)
+      // before it runs at all. Briefing the agent to call execute_step (or to expect
+      // automatic execution) here would send it into a refusal it has no way to predict.
+      agent_involvement = `this step's 'trust: ${JSON.stringify(step.trust)}' is not a recognized value — the engine will refuse it with VALIDATION_TRUST_VALUE before running. Do NOT call execute_step for it; report this to the user, who must correct the workflow definition and re-register it.`;
+      refusedStepCount++;
     } else if (step.execution === 'auto' && !hasGate) {
       agent_involvement = 'none — engine handles this automatically';
       autoStepCount++;
@@ -95,7 +117,7 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
       const immediateGateStep = Object.entries(definition.steps).find(
         ([, s]) =>
           s.execution === 'auto' &&
-          (s.trust === 'human_confirmed' || s.trust === 'human_reviewed') &&
+          classifyStepTrust(s.execution, s.trust) === 'gates' &&
           Array.isArray(s.depends_on) &&
           s.depends_on.length === 1 &&
           s.depends_on[0] === id,
@@ -155,10 +177,20 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
   // default. Treat it as absent instead; a genuinely non-empty value (including one with
   // incidental surrounding whitespace around real content) is still used verbatim.
   const authoredQuickStart = definition.protocol?.quick_start;
+  // issue #508: a two-branch fork (agent-present / all-auto-clean) has no honest thing to say
+  // when a refused step is ALSO present — "the engine handles all steps automatically" is false
+  // for a workflow that will refuse one of them before it ever runs, and "return control at the
+  // first step requiring agent action" says nothing about a step that never reaches dispatch at
+  // all. The refused-present branch is checked FIRST and independently of agent/auto
+  // composition — a workflow can carry a refused step alongside either of the other two shapes.
   const quick_start =
     authoredQuickStart !== undefined && authoredQuickStart.trim() !== ''
       ? authoredQuickStart
-      : `Call start_run with workflow_id '${definition.id}'. ${agentStepCount > 0 ? `The engine will run auto steps automatically and return control at the first step requiring agent action.` : `The engine handles all steps automatically.`} Follow the next_action in each response until the workflow completes.`;
+      : refusedStepCount > 0
+        ? `Call start_run with workflow_id '${definition.id}'. ${refusedStepCount} of this workflow's ${totalSteps} ${totalSteps === 1 ? 'step' : 'steps'} ${refusedStepCount === 1 ? 'has' : 'have'} an invalid 'trust' value and will be refused by the engine (VALIDATION_TRUST_VALUE) before it can run — see that step's agent_involvement for what to tell the user. Steps with a valid definition proceed as normal. Follow the next_action in each response until the workflow completes.`
+        : agentStepCount > 0
+          ? `Call start_run with workflow_id '${definition.id}'. The engine will run auto steps automatically and return control at the first step requiring agent action. Follow the next_action in each response until the workflow completes.`
+          : `Call start_run with workflow_id '${definition.id}'. The engine handles all steps automatically. Follow the next_action in each response until the workflow completes.`;
 
   const protocol: WorkflowProtocol = {
     workflow_id: definition.id,

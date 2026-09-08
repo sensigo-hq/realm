@@ -121,8 +121,9 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
     // These kinds carry no --stuck label, and issue #406 settled why for each — this is a
     // decision, not a status quo. `never_claimed_idle` IS the listing reason itself; the
     // threshold header already says it, and a per-step label would restate the line.
-    // `resolved_gate_with_eligible_guard` cannot reach this surface at all: its producer requires
-    // a workflow definition and `list` classifies definition-free, so a label would be dead code.
+    // `resolved_gate_with_eligible_guard` AND `trust_value_invalid` (issue #508) cannot reach
+    // this surface at all: both producers require a workflow definition and `list` classifies
+    // definition-free, so a label for either would be dead code.
     // `completed_with_failed_steps` and `structured_output_downgraded` are EXCLUDED from --stuck
     // selection (issues #302/#316, the filter below) — either can only co-ride a run selected by
     // some other finding, which renders its own label, so a label here would never be the reason
@@ -131,6 +132,7 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
     case 'resolved_gate_with_eligible_guard':
     case 'completed_with_failed_steps':
     case 'structured_output_downgraded':
+    case 'trust_value_invalid':
       return undefined;
     // issue #279 (increment 1, PR-B): a terminal run with an undrained finalizer — points at the
     // recovery verb directly in the label (appended-segment style; see the dedicated kind-filter

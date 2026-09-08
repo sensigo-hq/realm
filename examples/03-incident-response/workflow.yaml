@@ -26,7 +26,6 @@ steps:
     description: Load alert data from disk
     execution: auto
     depends_on: []
-    trust: engine_delivered
     uses_service: alerts
     operation: read
     input_map:

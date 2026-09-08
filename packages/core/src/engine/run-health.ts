@@ -68,7 +68,17 @@
 //          both a terminal run and an open gate (eligibility.ts), so this is checked unconditionally
 //          in the non-terminal path with no extra gating needed. Disclosed consequence (list.ts is
 //          frozen and passes no `definition` — this finding never surfaces there; ACCEPTABLE, not a
-//          list.ts defect).
+//          list.ts defect — see `trust_value_invalid` below, the SECOND finding this consequence
+//          now applies to).
+//   5b. issue #508 — `trust_value_invalid`: `opts.definition` supplied AND a step in
+//       `findEligibleSteps(definition, run)` (the DAG-eligibility set — auto/agent only,
+//       terminal-run and open-gate short-circuited to `[]` by that function itself) has a `trust`
+//       value `classifyStepTrust` classifies as `'refuse'`. Deliberately intersected with
+//       ELIGIBILITY, never a whole-definition scan: a bad step not yet reachable on a healthy
+//       fresh run must report ZERO findings (the control that discriminates this design from a
+//       naive scan — see the module's cells below), and a whole-definition scan would also name
+//       guard/finalizer steps whose declared `trust` the engine never even reads (L2 never
+//       reaches those kinds; see execution-loop.ts's own eligibility scoping).
 //   6. issue #302 (disclosure gaps) — `completed_with_failed_steps`: `run.terminal_state === true`
 //      ∧ `deriveRunPhase(run) === 'completed'` ∧ `run.failed_steps.length > 0` — checked inside
 //      branch 1, above its `pendingFindings.length > 0` return. A completed seal carrying
@@ -100,6 +110,7 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { classifyInProgressClaims } from './claim-liveness.js';
 import { findCapabilityBlockedSteps } from './capability.js';
 import { findEligibleSteps, findEligibleGuardSteps, deriveRunPhase } from './eligibility.js';
+import { classifyStepTrust } from '../types/workflow-definition.js';
 
 /**
  * Default age threshold for the `never_claimed_idle` finding (issue #221) — 24 hours. Engine-
@@ -142,7 +153,11 @@ export interface RunHealthFinding {
     // issue #311: for a strict step that also declares tools this fires on EVERY run by design
     // (permanent `unsupported_context_tools` baseline for the OUTPUT dimension) — read the
     // reason list, not the finding's presence. See the detector's own scope notes.
-    | 'structured_output_downgraded';
+    | 'structured_output_downgraded'
+    // issue #508: an ELIGIBLE step (auto/agent, on a definition that was supplied) whose `trust`
+    // value the engine will refuse at dispatch (VALIDATION_TRUST_VALUE) — see item 5b in the
+    // branch-conditioning table above. Definition-gated, like `resolved_gate_with_eligible_guard`.
+    | 'trust_value_invalid';
   /** The affected step, when the finding is step-scoped. Absent for `never_claimed_idle` — a
    *  run-level observation (no step is claimed at all). */
   step?: string;
@@ -534,6 +549,26 @@ export function classifyRunHealth(
         step: guardName,
         reason: `gate resolved; guard '${guardName}' awaits the next drive`,
       });
+    }
+  }
+
+  // issue #508 (module doc item 5b): trust_value_invalid — intersected with ELIGIBILITY
+  // (findEligibleSteps), never a whole-definition scan. findEligibleSteps already returns []
+  // for a terminal run or an open gate, and never includes a guard/finalizer step name at all
+  // (eligibility.ts), so this loop naturally satisfies every cell the finding needs: a bad step
+  // not yet reachable on a fresh run contributes nothing, and a guard's own declared (and
+  // engine-ignored) trust value is never named here.
+  if (opts?.definition !== undefined) {
+    for (const stepName of findEligibleSteps(opts.definition, run)) {
+      const stepDef = opts.definition.steps[stepName];
+      if (classifyStepTrust(stepDef?.execution, stepDef?.trust) === 'refuse') {
+        findings.push({
+          kind: 'trust_value_invalid',
+          step: stepName,
+          reason: `'trust: ${JSON.stringify(stepDef?.trust)}' is not a recognized value — the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE)`,
+          evidence: { trust: stepDef?.trust },
+        });
+      }
     }
   }
 

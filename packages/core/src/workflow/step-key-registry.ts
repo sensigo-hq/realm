@@ -289,7 +289,17 @@ const W_PRECONDITIONS: StepKeyWitness = {
 };
 const W_GATE_MINT_TRUST: StepKeyWitness = {
   file: EL,
-  pattern: "if (stepDef!.trust === 'human_confirmed' || stepDef!.trust === 'human_reviewed') {",
+  // single-sourced via isGateTrust (was two hand-copied literals, the drift the
+  // TRUST_LEVELS/GATE_TRUST_LEVELS vocabulary exists to close).
+  pattern: 'if (isGateTrust(stepDef!.trust)) {',
+};
+// The engine's fail-closed backstop: a step whose trust value is neither absent nor a
+// recognized member is refused at dispatch, pre-claim — this is what closes the un-gate hole
+// W_GATE_MINT_TRUST alone left open (an unrecognized value used to fall through the mint
+// untouched and run un-gated; now it never reaches the mint at all).
+const W_TRUST_VALUE_REFUSAL: StepKeyWitness = {
+  file: EL,
+  pattern: "classifyStepTrust(stepDef?.execution, stepDef?.trust) === 'refuse'",
 };
 const W_GATE_CHOICES: StepKeyWitness = {
   file: EL,
@@ -590,8 +600,9 @@ export const CONSUMED_HOME: Partial<Record<(typeof KNOWN_STEP_KEYS)[number], Con
       'before it settles, and a guard is never gated that way, so here it would gate nothing.',
     site: W_GATE_MINT_TRUST,
     // #417 wording defect (overclaim): "the auto or agent step that needs the gate" implied
-    // every trust value opens one — only the two human-gate literals do (issue #508 tracks the
-    // silent-un-gate hole for every other value, already in the registry's own trust×auto cell).
+    // every trust value opens one — only the two human-gate literals do; any other declared
+    // value is refused outright at load or dispatch, never silently left un-gated (see the
+    // registry's own trust×auto/trust×agent cells for the refusal witness).
     remedy:
       'Move it to the auto or agent step that needs the gate — only ' +
       "'human_confirmed' or 'human_reviewed' opens one — or remove it.",
@@ -1052,23 +1063,11 @@ export const STEP_KEY_REGISTRY = {
   trust: {
     auto: {
       c: 'consumed',
-      where: [W_GATE_MINT_TRUST],
-      inert_subpop: [
-        {
-          desc: "unrecognized literals load clean — there is no step-level trust VALUE validation at all — and silently UN-GATE the step, since the gate mint matches only the two literals 'human_confirmed'/'human_reviewed'",
-          via: { kind: 'tracked', issue: '#508' },
-        },
-      ],
+      where: [W_GATE_MINT_TRUST, W_TRUST_VALUE_REFUSAL],
     },
     agent: {
       c: 'consumed',
-      where: [W_GATE_MINT_TRUST],
-      inert_subpop: [
-        {
-          desc: 'unrecognized literals load clean and silently un-gate, the same hole as ×auto',
-          via: { kind: 'tracked', issue: '#508' },
-        },
-      ],
+      where: [W_GATE_MINT_TRUST, W_TRUST_VALUE_REFUSAL],
     },
     guard: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
     finalizer: {

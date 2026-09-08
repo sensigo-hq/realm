@@ -27,7 +27,6 @@ steps:
     description: Load article text from disk
     execution: auto
     depends_on: []
-    trust: engine_delivered
     uses_service: articles
     operation: read
     input_map:

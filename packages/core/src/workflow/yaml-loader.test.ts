@@ -3488,3 +3488,174 @@ steps:
     expect(message).not.toContain("'on_outcome' is only valid on execution: finalizer steps");
   });
 });
+
+// =================================================================================================
+// issue #508 — L1: an invalid step-level `trust` value on an auto/agent step is a load error.
+// Per-member cells (no representatives): the three arms, each on both auto and agent; every
+// distinct non-string/empty-string member; the did-you-mean/non-suggesting split; and the three
+// lawful values as controls.
+// =================================================================================================
+describe('yaml-loader — #508 trust value validation (L1)', () => {
+  const loadError = (content: string): string => {
+    try {
+      loadWorkflowFromString(content);
+      throw new Error('expected a load error');
+    } catch (err) {
+      return (err as WorkflowError).message;
+    }
+  };
+
+  // `trust` is YAML-embedded verbatim (never JS-stringified) so callers can pass raw YAML scalars
+  // — `null`, `''`, `123`, `[]` — that have no single JS-value representation as a template arg.
+  function def(execution: 'auto' | 'agent', trustYaml: string): string {
+    return `
+id: trust-508-wf
+name: Trust 508
+version: 1
+steps:
+  work:
+    description: Work
+    execution: ${execution}
+    trust: ${trustYaml}
+`;
+  }
+
+  describe('arm 1 — service-trust confusion (the dominant real mistake)', () => {
+    it('auto step with trust: engine_delivered', () => {
+      const message = loadError(def('auto', 'engine_delivered'));
+      expect(message).toContain("'trust: \"engine_delivered\"' is a SERVICE's trust");
+      expect(message).toContain("declared under 'services: <name>: trust:'");
+      expect(message).toContain('no gate is opened');
+      expect(message).toContain("A step's 'trust' accepts auto, human_confirmed, human_reviewed.");
+      expect(message).toContain('realm workflow register <path>');
+    });
+
+    it('agent step with trust: engine_managed', () => {
+      const message = loadError(def('agent', 'engine_managed'));
+      expect(message).toContain("'trust: \"engine_managed\"' is a SERVICE's trust");
+    });
+
+    it('the third service-trust literal (agent_provided) also fires arm 1, not arm 3', () => {
+      const message = loadError(def('auto', 'agent_provided'));
+      expect(message).toContain("is a SERVICE's trust");
+      expect(message).not.toContain('is not a recognized');
+    });
+  });
+
+  describe('arm 2 — the retired human_notified tombstone', () => {
+    it('auto step with trust: human_notified', () => {
+      const message = loadError(def('auto', 'human_notified'));
+      expect(message).toContain("'trust: human_notified' was removed (#508)");
+      expect(message).toContain('zero consumers');
+      expect(message).not.toContain('is not a recognized');
+    });
+
+    it('agent step with trust: human_notified', () => {
+      const message = loadError(def('agent', 'human_notified'));
+      expect(message).toContain("'trust: human_notified' was removed (#508)");
+    });
+  });
+
+  describe('arm 3 — generic unrecognized value, plus did-you-mean', () => {
+    it('auto step with a non-suggesting unrecognized value gets NO did-you-mean clause', () => {
+      const message = loadError(def('auto', 'zzz'));
+      expect(message).toContain('\'trust: "zzz"\' is not a recognized value');
+      expect(message).not.toContain('Did you mean');
+    });
+
+    it('agent step with a non-suggesting unrecognized value gets NO did-you-mean clause', () => {
+      const message = loadError(def('agent', 'zzz'));
+      expect(message).toContain('\'trust: "zzz"\' is not a recognized value');
+      expect(message).not.toContain('Did you mean');
+    });
+
+    it('a value one edit away from human_confirmed gets the did-you-mean suggestion', () => {
+      const message = loadError(def('auto', 'human_confirmd'));
+      expect(message).toContain("Did you mean 'human_confirmed'?");
+    });
+  });
+
+  describe('non-string / falsy-but-declared members — each is its own member, not a representative', () => {
+    it('trust: null does NOT reach closestKey (no did-you-mean clause) and is not misread as absent', () => {
+      const message = loadError(def('auto', 'null'));
+      expect(message).toContain("'trust: null' is not a recognized value");
+      expect(message).not.toContain('Did you mean');
+    });
+
+    it("trust: '' (empty string) DOES reach closestKey (typeof-string), distinct from null", () => {
+      const message = loadError(def('auto', "''"));
+      expect(message).toContain('\'trust: ""\' is not a recognized value');
+      // '' is far (Levenshtein) from every TRUST_LEVELS member at threshold 1 — no suggestion,
+      // but via the STRING path, not the non-string short-circuit null/123/[] take.
+      expect(message).not.toContain('Did you mean');
+    });
+
+    it('trust: 123 (a number) is refused without a TypeError — the typeof guard excludes it from closestKey', () => {
+      const message = loadError(def('auto', '123'));
+      expect(message).toContain("'trust: 123' is not a recognized value");
+      expect(message).not.toContain('Did you mean');
+    });
+
+    it('trust: [] (an array) is refused without a TypeError', () => {
+      const message = loadError(def('auto', '[]'));
+      expect(message).toContain("'trust: []' is not a recognized value");
+      expect(message).not.toContain('Did you mean');
+    });
+  });
+
+  describe('controls — the three lawful values load clean on both kinds', () => {
+    it.each(['auto', 'human_confirmed', 'human_reviewed'] as const)(
+      'auto step with trust: %s loads clean',
+      (trust) => {
+        expect(() => loadWorkflowFromString(def('auto', trust))).not.toThrow();
+        const parsed = loadWorkflowFromString(def('auto', trust));
+        expect(parsed.steps['work']?.trust).toBe(trust);
+      },
+    );
+
+    it.each(['auto', 'human_confirmed', 'human_reviewed'] as const)(
+      'agent step with trust: %s loads clean',
+      (trust) => {
+        expect(() => loadWorkflowFromString(def('agent', trust))).not.toThrow();
+      },
+    );
+
+    it('absent trust loads clean on both kinds (unchanged — the pre-#508 behavior)', () => {
+      const noTrust = (execution: 'auto' | 'agent') => `
+id: trust-508-wf
+name: Trust 508
+version: 1
+steps:
+  work:
+    description: Work
+    execution: ${execution}
+`;
+      expect(() => loadWorkflowFromString(noTrust('auto'))).not.toThrow();
+      expect(() => loadWorkflowFromString(noTrust('agent'))).not.toThrow();
+    });
+  });
+
+  describe('kind scoping — guard/finalizer never reach L1 at all (their own value rules are separate)', () => {
+    it('a guard step with a bad trust value is refused by the KIND prohibition, not by L1 — different message shape', () => {
+      const message = loadError(`
+id: trust-508-guard-wf
+name: Trust 508 Guard
+version: 1
+steps:
+  work:
+    description: work
+    execution: agent
+    depends_on: []
+  gate_check:
+    description: guard
+    execution: guard
+    depends_on: [work]
+    abort_unless: ["work.status == 'open'"]
+    trust: nope
+`);
+      // The KIND-prohibition (registry-minted) message, not L1's "is not a recognized value".
+      expect(message).not.toContain('is not a recognized value — no gate is opened');
+      expect(message).toContain("'trust' is not valid on execution: guard steps");
+    });
+  });
+});

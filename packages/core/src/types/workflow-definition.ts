@@ -22,9 +22,160 @@ export interface ProtocolConfig {
   rules?: string[];
 }
 
-export type TrustLevel = 'auto' | 'human_notified' | 'human_confirmed' | 'human_reviewed';
+// issue #508: `human_notified` retired — nothing ever informed anyone under it (zero consumers;
+// see `docs/reference/yaml-schema.md`'s trust-levels table, which now drops the row entirely
+// rather than describing a behavior that never existed). `human_reviewed` stays, but only as a
+// RESERVATION of the value — no challenge mechanism exists, so today it is an exact alias of
+// `human_confirmed` (see the behavioural-equivalence pin in `execution-loop.test.ts`); issue #531
+// owns the implement-or-permanently-alias decision.
+export type TrustLevel = 'auto' | 'human_confirmed' | 'human_reviewed';
 
 export type ServiceTrust = 'engine_delivered' | 'engine_managed' | 'agent_provided';
+
+/**
+ * Every value `TrustLevel` declares — the step-level vocabulary. Single-sourced (issue #508):
+ * before this, the two-literal gate test (`=== 'human_confirmed' || === 'human_reviewed'`) was
+ * copied by hand at FOUR call sites (the engine's gate mint, the protocol generator ×2, the
+ * loader's gate-choices check), and NO site validated the value at all — `human_confrimed`,
+ * `Human_Confirmed`, `engine_delivered`, `""`, `123`, `null` all loaded clean and ran with no
+ * gate. See `classifyStepTrust`/`isGateTrust` below, and `docs/reference/yaml-schema.md`'s
+ * `## Trust levels` section for the authoring contract.
+ *
+ * **`as const satisfies readonly TrustLevel[]` is NORMATIVE, not stylistic.** An explicit
+ * `readonly TrustLevel[]` type annotation WIDENS the array's member type to the full `TrustLevel`
+ * union regardless of which literals are actually listed — under that annotation, the
+ * `Exclude<>`-based drift guards below type-check even with members missing, shipping dead.
+ * `as const` preserves the literal tuple type the guards need to see a real difference. This is
+ * the house pattern (`KNOWN_STEP_KEYS`/`KNOWN_RETRY_KEYS` above), and verified here by actually
+ * deleting a member and confirming a real compile error results (not merely asserted).
+ */
+export const TRUST_LEVELS = [
+  'auto',
+  'human_confirmed',
+  'human_reviewed',
+] as const satisfies readonly TrustLevel[];
+
+/** The subset of `TRUST_LEVELS` that actually opens a human gate — `'auto'` is the sole
+ *  non-gating member of `TrustLevel`. Kept as its OWN array (not derived by filtering
+ *  `TRUST_LEVELS` at the type level) so a single hardcoded `TRUST_LEVELS` collapse at the mint
+ *  can never silently widen who gets gated — see `classifyStepTrust`'s arm-order comment for why
+ *  the drift this guards against is a real, previously-considered mutant shape. */
+export const GATE_TRUST_LEVELS = [
+  'human_confirmed',
+  'human_reviewed',
+] as const satisfies readonly TrustLevel[];
+
+/** Every value `ServiceTrust` declares — the `services: <name>: trust:` vocabulary. A DIFFERENT
+ *  key from a step's own `trust:` (the dominant real-world confusion this PR's L1 refusal names
+ *  directly — six of realm's nine shipped examples carried a `ServiceTrust` literal on a step).
+ *  Minted here, single-sourced, so the loader's own Ajv enum (`yaml-loader.ts`) and this PR's
+ *  service-trust-confusion refusal can never drift apart into a THIRD hardcoded copy. */
+export const SERVICE_TRUST_LEVELS = [
+  'engine_delivered',
+  'engine_managed',
+  'agent_provided',
+] as const satisfies readonly ServiceTrust[];
+
+// Compile-time drift guards, the same shape as KNOWN_STEP_KEYS above: each array must be an
+// EXACT partition of its type (Missing = the type has a value the array doesn't list; Extra = the
+// array lists something the type doesn't declare) — a mismatch in either direction is a real tsc
+// error, not a runtime check. GATE_TRUST_LEVELS gets an additional, asymmetric guard: it is
+// deliberately a PROPER SUBSET of TrustLevel (never gates on 'auto'), so instead of an exact
+// partition it asserts the subset relation is exact, i.e. TRUST_LEVELS minus GATE_TRUST_LEVELS
+// is precisely {'auto'} — which does catch a member silently dropped FROM the gate set (the
+// complement would then contain more than 'auto'), the direction that actually matters here.
+type _TrustLevelsMissing = Exclude<TrustLevel, (typeof TRUST_LEVELS)[number]>;
+type _TrustLevelsExtra = Exclude<(typeof TRUST_LEVELS)[number], TrustLevel>;
+const _trustLevelsMissingCheck: _TrustLevelsMissing extends never
+  ? true
+  : ['TRUST_LEVELS is missing a TrustLevel member', _TrustLevelsMissing] = true;
+const _trustLevelsExtraCheck: _TrustLevelsExtra extends never
+  ? true
+  : ['TRUST_LEVELS has a member TrustLevel does not declare', _TrustLevelsExtra] = true;
+
+type _NonGateTrustLevels = Exclude<
+  (typeof TRUST_LEVELS)[number],
+  (typeof GATE_TRUST_LEVELS)[number]
+>;
+const _gateTrustSubsetCheck: _NonGateTrustLevels extends 'auto'
+  ? 'auto' extends _NonGateTrustLevels
+    ? true
+    : ['GATE_TRUST_LEVELS is missing a non-gating TrustLevel member it should exclude', never]
+  : ['GATE_TRUST_LEVELS complement is not exactly {auto}', _NonGateTrustLevels] = true;
+
+type _ServiceTrustLevelsMissing = Exclude<ServiceTrust, (typeof SERVICE_TRUST_LEVELS)[number]>;
+type _ServiceTrustLevelsExtra = Exclude<(typeof SERVICE_TRUST_LEVELS)[number], ServiceTrust>;
+const _serviceTrustLevelsMissingCheck: _ServiceTrustLevelsMissing extends never
+  ? true
+  : ['SERVICE_TRUST_LEVELS is missing a ServiceTrust member', _ServiceTrustLevelsMissing] = true;
+const _serviceTrustLevelsExtraCheck: _ServiceTrustLevelsExtra extends never
+  ? true
+  : ['SERVICE_TRUST_LEVELS has a member ServiceTrust does not declare', _ServiceTrustLevelsExtra] =
+  true;
+
+/**
+ * The verdict of declaring a given `trust` VALUE on a step of a given execution KIND — issue
+ * #508's single predicate, replacing four independent hand-copies of the two-literal gate test.
+ *
+ * - `'gates'` — a recognized gate literal on a kind that can be gated (auto/agent): a human gate
+ *   opens on this step.
+ * - `'lawful_no_gate'` — either the key is absent (a no-op declaration is never a defect), or the
+ *   value is `'auto'` on a kind where `'auto'` is meaningful (auto/agent/finalizer): no gate, and
+ *   nothing is wrong.
+ * - `'refuse'` — every other case: an unrecognized/removed value, a service-trust value on a
+ *   step, ANY declared value on a guard (guards can never gate, by design), or a non-`'auto'`
+ *   value on a finalizer (a finalizer must not gate). The loader's L1 refuses this at load time
+ *   for auto/agent; the engine's L2 guard refuses it again for any defintion that reaches
+ *   execution without going through the loader.
+ */
+export type TrustVerdict = 'gates' | 'lawful_no_gate' | 'refuse';
+
+/**
+ * Classifies a step's declared `trust` value against its execution kind. `kind` is
+ * `ExecutionMode | undefined` because one real call site (`yaml-loader.ts`'s per-step walk) sees
+ * this before `execution` has been validated — a step with `execution: bogus` (or a missing
+ * `execution` at all) reaches trust classification before the malformed-kind error is the whole
+ * verdict, and `undefined` here must classify as harmlessly as an absent trust value: covered by
+ * the FIRST arm below.
+ *
+ * **Arm order is normative** (issue #508 design review, mutant (iii)): `GATE_TRUST_LEVELS`
+ * membership is tested BEFORE the `'auto'` shortcut on auto/agent. With the shortcut checked
+ * first, collapsing `GATE_TRUST_LEVELS` into `TRUST_LEVELS` (a plausible single-sourcing
+ * shortcut) would change NOTHING observable — 'auto' is caught by its own branch either way,
+ * and `TRUST_LEVELS` membership alone can never distinguish 'human_confirmed' from 'auto' when
+ * the shortcut already resolved it — making that mutation a GUARANTEED EQUIVALENT MUTANT rather
+ * than a real regression test. Testing `GATE_TRUST_LEVELS` first means the collapse is
+ * observable: `classifyStepTrust('auto', 'auto')` would flip from `'lawful_no_gate'` to
+ * `'gates'`, since `TRUST_LEVELS` (unlike `GATE_TRUST_LEVELS`) contains `'auto'`.
+ */
+export function classifyStepTrust(kind: ExecutionMode | undefined, value: unknown): TrustVerdict {
+  if (value === undefined) return 'lawful_no_gate';
+  if (kind === 'auto' || kind === 'agent') {
+    if ((GATE_TRUST_LEVELS as readonly unknown[]).includes(value)) return 'gates';
+    if (value === 'auto') return 'lawful_no_gate';
+    return 'refuse';
+  }
+  if (kind === 'finalizer') {
+    return value === 'auto' ? 'lawful_no_gate' : 'refuse';
+  }
+  // guard, and any kind outside the four (undefined, or a value the loader would itself refuse
+  // as an invalid `execution`) — trust is never meaningful there, declared or not.
+  return 'refuse';
+}
+
+/**
+ * Pure VALUE question — "is this a gate-opening literal" — for the two call sites that have no
+ * kind in scope at all: the engine's gate mint (`execution-loop.ts`, which only ever reaches a
+ * step whose kind already passed L1/L2, so the kind conjunct `classifyStepTrust` would add is
+ * inert there) and the loader's gate-choices-empty check (`yaml-loader.ts`, evaluated on a raw
+ * step object before this file's own kind-narrowing block). `classifyStepTrust` CONSUMES this
+ * function for its own 'gates' arm, so there remains exactly one membership fact — passing a
+ * fabricated kind to reach a single call site would not be single-sourcing, it would be lying to
+ * a parameter to get there.
+ */
+export function isGateTrust(value: unknown): boolean {
+  return (GATE_TRUST_LEVELS as readonly unknown[]).includes(value);
+}
 
 export interface JsonSchema {
   type?: string;

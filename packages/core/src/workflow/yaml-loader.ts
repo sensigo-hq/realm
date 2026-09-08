@@ -15,6 +15,10 @@ import {
   KNOWN_WORKFLOW_KEYS,
   KNOWN_RETRY_KEYS,
   KNOWN_GATE_KEYS,
+  TRUST_LEVELS,
+  SERVICE_TRUST_LEVELS,
+  isGateTrust,
+  classifyStepTrust,
 } from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import {
@@ -322,7 +326,7 @@ const SERVICE_ENTRY_JSON_SCHEMA = {
   required: ['adapter'],
   properties: {
     adapter: { type: 'string', minLength: 1 },
-    trust: { enum: ['engine_delivered', 'engine_managed', 'agent_provided'] },
+    trust: { enum: [...SERVICE_TRUST_LEVELS] },
     rate_limit: { type: 'object' },
   },
 };
@@ -1051,10 +1055,20 @@ function parseWorkflowString(
         // (`trust: 'auto'` is lawful), which is why this is the registry's except-bearing cell
         // and stays hand-written rather than minted (#517).
         if (step['trust'] !== undefined && step['trust'] !== 'auto') {
+          // issue #508: the reason forks on whether the declared value is actually a GATE
+          // literal — "a finalizer must not gate" is only true THEN. Any other value (an
+          // unrecognized trust, a service-trust literal, the retired human_notified) was never
+          // an attempt to gate at all, so that reason would be false for it — the #523 class,
+          // caught before shipping rather than after. `isGateTrust` is the pure-value question
+          // (no kind involved, since this branch already knows the kind and has already
+          // excluded 'auto'); `String()` and the leading `'trust:` are kept exactly as before
+          // so the registry conformance runner's `namesKey` still matches this arm.
           errors.push(
             withStepLine(
               stepName,
-              `Step '${stepName}': 'trust: ${String(step['trust'])}' is not valid on execution: finalizer steps (a finalizer must not gate)`,
+              isGateTrust(step['trust'])
+                ? `Step '${stepName}': 'trust: ${String(step['trust'])}' is not valid on execution: finalizer steps (a finalizer must not gate)`
+                : `Step '${stepName}': 'trust: ${String(step['trust'])}' is not a recognized value — 'trust' accepts ${TRUST_LEVELS.join(', ')}, and only 'auto' is meaningful on execution: finalizer steps.`,
             ),
           );
         }
@@ -1093,6 +1107,89 @@ function parseWorkflowString(
               );
             }
           }
+        }
+      }
+
+      // issue #508 (L1) — trust VALUE validation, auto/agent only. Before this check, an
+      // unrecognized or kind-inert `trust` (a typo, a service-trust literal, the retired
+      // `human_notified`) loaded clean, warned nothing, and ran with NO gate — the step's own
+      // declared human-approval control was silently disabled. Presence-keyed (`'trust' in
+      // step`, the same convention `trigger_rule` and `retry.backoff` already use below) so
+      // `trust:`/`trust: ~` (a null value, which loads clean today) is caught too — a blank
+      // declaration of a safety control is itself a false statement, not a no-op. `trust:`
+      // absent entirely is lawful (nothing was declared) and never reaches this block.
+      //
+      // Guard's OWN trust prohibition is minted by the #517 walk above (every value refused,
+      // no except arm); finalizer's is the hand-written except-cell just above (only 'auto' is
+      // lawful there). This block is what closes the remaining two kinds — the ones where a
+      // RECOGNIZED gate literal is meaningful, so an unrecognized one needs a VALUE verdict,
+      // not a kind verdict.
+      //
+      // NOT the four-clause kind-prohibition form #517 mints: that form's clause 3 ("where it
+      // does work instead") has no referent for a value refusal (`engine_delivered` does not
+      // "work instead" anywhere on a step), and its clause 4 (re-admission) would be the
+      // boilerplate the policy's own text forbids. This is its own, VALUE-refusal clause set:
+      // (1) the offending value, JSON.stringify-rendered (never `String()` — `String('')`
+      // renders the unreadable `'trust: '`); (2) the consequence — no gate opens, the step runs
+      // unattended; (3) the accepted set, derived from TRUST_LEVELS; (4) the remedy, including
+      // the live-run repair (a registered copy resolves its definition fresh on every read, so
+      // correcting the file and re-registering repairs an in-flight run too — MA-executed).
+      //
+      // Three arms, priority order — the measured dominant wrong value first:
+      if (
+        (stepKind === 'auto' || stepKind === 'agent') &&
+        'trust' in step &&
+        classifyStepTrust(stepKind, step['trust']) === 'refuse'
+      ) {
+        const rawTrust = step['trust'];
+        const acceptedClause = `A step's 'trust' accepts ${TRUST_LEVELS.join(', ')}.`;
+        const remedyClause =
+          `Correct the value, then 'realm workflow register <path>' — this run (and any other ` +
+          `live run of this workflow) picks up the corrected definition on its next attempt at ` +
+          `this step.`;
+        if ((SERVICE_TRUST_LEVELS as readonly unknown[]).includes(rawTrust)) {
+          // Arm 1: service-trust confusion — the measured dominant wrong value (six of realm's
+          // own nine shipped examples carried one). Names WHERE the value belongs, never what
+          // it does — `ServiceTrust` is read by nothing in-repo (issue #530), so asserting a
+          // mechanism for it here would be the identical falsity this PR removes from the docs.
+          errors.push(
+            withKeyLine(
+              stepName,
+              'trust',
+              `Step '${stepName}': 'trust: ${JSON.stringify(rawTrust)}' is a SERVICE's trust ` +
+                `level (declared under 'services: <name>: trust:'), not a step's — no gate is ` +
+                `opened; the step runs unattended. ${acceptedClause} ${remedyClause}`,
+            ),
+          );
+        } else if (rawTrust === 'human_notified') {
+          // Arm 2: the retired-value tombstone — names the removal and its reason, not the
+          // generic unrecognized-value text (OpenSSH's sDeprecated-opcode precedent: a retired
+          // token gets its own diagnostic, not silent absorption into "unrecognized").
+          errors.push(
+            withKeyLine(
+              stepName,
+              'trust',
+              `Step '${stepName}': 'trust: human_notified' was removed (#508) — nothing ever ` +
+                `informed anyone under it (zero consumers), so it never opened a gate either; no ` +
+                `gate is opened here now. ${acceptedClause} ${remedyClause}`,
+            ),
+          );
+        } else {
+          // Arm 3: generic unrecognized, plus did-you-mean. `closestKey` throws a TypeError on
+          // `null` — guarded by the `typeof` check, which also correctly excludes every other
+          // non-string value (123, [], {}) from the suggestion without a special case for each.
+          const didYouMean =
+            typeof rawTrust === 'string' ? closestKey(rawTrust, TRUST_LEVELS) : undefined;
+          errors.push(
+            withKeyLine(
+              stepName,
+              'trust',
+              `Step '${stepName}': 'trust: ${JSON.stringify(rawTrust)}' is not a recognized ` +
+                `value — no gate is opened; the step runs unattended. ${acceptedClause}` +
+                (didYouMean !== undefined ? ` Did you mean '${didYouMean}'?` : '') +
+                ` ${remedyClause}`,
+            ),
+          );
         }
       }
 
@@ -1418,7 +1515,7 @@ function parseWorkflowString(
       // and the same class of error, under its own key. `choices: null` with no `enum` at all
       // stays legal — the mint defaults to ['approve', 'reject'].
       if (
-        (step['trust'] === 'human_confirmed' || step['trust'] === 'human_reviewed') &&
+        isGateTrust(step['trust']) &&
         declaredGateChoices == null &&
         Array.isArray(declaredChoiceEnum) &&
         declaredChoiceEnum.length === 0
