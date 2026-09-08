@@ -9,6 +9,7 @@ import {
   submitHumanResponse,
 } from './execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { classifyRunHealth } from './run-health.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { InMemoryTraceBufferStore } from '../store/trace-buffer-store.js';
@@ -1799,6 +1800,50 @@ describe('executeStep', () => {
       expect(secondAttempt.status).toBe('ok');
       const after = await store.get(run.id);
       expect(after.completed_steps).toContain('work');
+    });
+
+    it('cross-cutting with run-health: the trust_value_invalid finding SURVIVES an executeStep refusal attempt — pre-claim placement is what keeps the step eligible for the finding to keep naming it', async () => {
+      // The mechanism this cell exists to prove: run-health.ts's trust_value_invalid finding is
+      // keyed on findEligibleSteps, which excludes a claimed/in-flight step. A guard placed
+      // AFTER claimStep (mutant ii) would claim the step before refusing it — silently REMOVING
+      // it from eligibility, and with it, the run-health finding that is the operator's only
+      // OTHER way to learn about the defect if they never call execute_step directly.
+      const badDef: WorkflowDefinition = {
+        id: 'l2-508-health-wf',
+        name: 'L2 508 health',
+        version: 1,
+        steps: {
+          work: { description: 'work', execution: 'auto', trust: 'nope' as never, depends_on: [] },
+        },
+      };
+      const { run } = await store.create({
+        workflowId: 'l2-508-health-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Before any attempt: the finding already fires (D's own "parked run" cell covers this
+      // shape directly — reasserted here only as the baseline for the delta below).
+      const before = await store.get(run.id);
+      const findingsBefore = classifyRunHealth(before, { definition: badDef });
+      expect(findingsBefore.some((f) => f.kind === 'trust_value_invalid')).toBe(true);
+
+      // One executeStep attempt — refused, per the cells above.
+      const envelope = await executeStep(store, badDef, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echoDispatcher,
+      });
+      expect(envelope.status).toBe('error');
+
+      // After the refusal: the finding STILL fires — the step was never claimed, so it is still
+      // eligible, so run-health can still see and name it. This is the cell mutant (ii) breaks.
+      const after = await store.get(run.id);
+      const findingsAfter = classifyRunHealth(after, { definition: badDef });
+      const finding = findingsAfter.find((f) => f.kind === 'trust_value_invalid');
+      expect(finding).toBeDefined();
+      expect(finding?.step).toBe('work');
     });
   });
 
