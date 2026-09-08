@@ -1758,6 +1758,48 @@ describe('executeStep', () => {
       const { envelope } = await refuseBadTrust('auto');
       expect(envelope.status).toBe('ok');
     });
+
+    it("the live-run-repair remedy ACTUALLY WORKS: the same run's next attempt with a corrected definition succeeds — the guard's pre-claim placement is what makes this possible", async () => {
+      const badDef: WorkflowDefinition = {
+        id: 'l2-508-repair-wf',
+        name: 'L2 508 repair',
+        version: 1,
+        steps: {
+          work: { description: 'work', execution: 'auto', trust: 'nope' as never, depends_on: [] },
+        },
+      };
+      const { run } = await store.create({
+        workflowId: 'l2-508-repair-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const firstAttempt = await executeStep(store, badDef, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echoDispatcher,
+      });
+      expect(firstAttempt.status).toBe('error');
+      expect(firstAttempt.error_code).toBe('VALIDATION_TRUST_VALUE');
+
+      // The remedy text says "register the corrected file, and retry — this run picks up the
+      // corrected definition". Simulated here by passing a corrected WorkflowDefinition to the
+      // SAME run+step on the next call — exactly what a real register+retry cycle changes.
+      const correctedDef: WorkflowDefinition = {
+        ...badDef,
+        steps: { work: { ...badDef.steps['work']!, trust: 'auto' } },
+      };
+      const secondAttempt = await executeStep(store, correctedDef, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echoDispatcher,
+      });
+      expect(secondAttempt.status).toBe('ok');
+      const after = await store.get(run.id);
+      expect(after.completed_steps).toContain('work');
+    });
   });
 
   describe('confirm_required next_actions population', () => {
