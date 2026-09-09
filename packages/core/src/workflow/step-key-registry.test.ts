@@ -438,6 +438,17 @@ describe('#417-PR2 — the step-key consumption registry (core conformance)', ()
     expect(outcome.errors.filter((e) => namesKey(e, 'trust'))).toHaveLength(1);
   });
 
+  it('#508: trust×auto/trust×agent carry no inert_subpop — an unrecognized value is now refused, never silently left un-gated', () => {
+    // Before #508, an unrecognized `trust` value fell through the gate mint untouched and ran
+    // un-gated — an inert_subpop the registry disclosed. #508 closes that: W_TRUST_VALUE_REFUSAL
+    // (asserted in the witness-count sweep above) proves the engine now refuses it outright. A
+    // reverted deletion here — the inert_subpop block silently re-added — would leave the REST
+    // of the suite green (the witness count cells don't look at inert_subpop at all), so this
+    // pin is the only thing that would catch that regression.
+    expect(cellOf('trust', 'auto')).not.toHaveProperty('inert_subpop');
+    expect(cellOf('trust', 'agent')).not.toHaveProperty('inert_subpop');
+  });
+
   it('every Via is well-formed: waived reasons are non-empty, tracked issues are #-numbers', () => {
     const vias: StepKeyVia[] = [];
     for (const key of KNOWN_STEP_KEYS) {

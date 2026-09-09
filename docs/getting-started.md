@@ -223,7 +223,7 @@ response reference, see [Built-in Service Adapters](reference/adapters.md).
 services:
   filesystem:
     adapter: filesystem
-    trust: engine_delivered
+    trust: engine_delivered # SERVICE trust level — a different key from a step's own 'trust:'
 
 steps:
   read_file:
@@ -271,7 +271,7 @@ For fully custom logic, add the service declaration to `workflow.yaml`:
 services:
   source:
     adapter: google_docs
-    trust: engine_delivered
+    trust: engine_delivered # SERVICE trust level — a different key from a step's own 'trust:'
 
 steps:
   fetch_document:
@@ -281,7 +281,7 @@ steps:
     uses_service: source
 ```
 
-When `trust: engine_delivered` is set, the agent cannot see or alter the service response — the engine injects it directly into the step's evidence.
+Whatever a service's `trust` is declared as (a different key from a step's own `trust:` — see [Trust levels](reference/yaml-schema.md#trust-levels)), the response is injected directly into the step's evidence and the agent never sees or alters it — realm does not yet branch on this value at all ([#530](https://github.com/sensigo-hq/realm/issues/530)).
 
 Implement the adapter in TypeScript and register it with `ExtensionRegistry`:
 

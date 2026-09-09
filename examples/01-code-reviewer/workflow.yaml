@@ -29,7 +29,6 @@ steps:
     description: Load the diff file from disk
     execution: auto
     depends_on: []
-    trust: engine_delivered
     uses_service: diffs
     operation: read
     input_map:

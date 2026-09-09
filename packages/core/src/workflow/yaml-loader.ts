@@ -15,6 +15,11 @@ import {
   KNOWN_WORKFLOW_KEYS,
   KNOWN_RETRY_KEYS,
   KNOWN_GATE_KEYS,
+  SERVICE_TRUST_LEVELS,
+  isGateTrust,
+  classifyStepTrust,
+  buildTrustRefusal,
+  renderTrustValue,
 } from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import {
@@ -322,7 +327,7 @@ const SERVICE_ENTRY_JSON_SCHEMA = {
   required: ['adapter'],
   properties: {
     adapter: { type: 'string', minLength: 1 },
-    trust: { enum: ['engine_delivered', 'engine_managed', 'agent_provided'] },
+    trust: { enum: [...SERVICE_TRUST_LEVELS] },
     rate_limit: { type: 'object' },
   },
 };
@@ -1051,12 +1056,38 @@ function parseWorkflowString(
         // (`trust: 'auto'` is lawful), which is why this is the registry's except-bearing cell
         // and stays hand-written rather than minted (#517).
         if (step['trust'] !== undefined && step['trust'] !== 'auto') {
-          errors.push(
-            withStepLine(
-              stepName,
-              `Step '${stepName}': 'trust: ${String(step['trust'])}' is not valid on execution: finalizer steps (a finalizer must not gate)`,
-            ),
-          );
+          // issue #508: the reason forks on whether the declared value is actually a GATE
+          // literal — "a finalizer must not gate" is only true THEN. Any other value (an
+          // unrecognized trust, a service-trust literal, the retired human_notified) was never
+          // an attempt to gate at all, so that reason would be false for it — the #523 class,
+          // caught before shipping rather than after. `isGateTrust` is the pure-value question
+          // (no kind involved, since this branch already knows the kind and has already
+          // excluded 'auto'); the leading `'trust:` is kept exactly as before so the registry
+          // conformance runner's `namesKey` (`error.includes("'trust")`) still matches this arm
+          // — `namesKey` needs the quote BEFORE `trust`, not around the value, so switching the
+          // value's own rendering below does not touch it.
+          //
+          // issue #508 (final correction): the gate-literal arm stays a hand-written KIND
+          // prohibition (the key is the offense, not the value — #517's own boundary), but now
+          // shares `renderTrustValue` with every other arm — a previous ruling to "keep
+          // `String()` here to satisfy `namesKey`" was wrong (verified above) and there was
+          // never a real reason for two renderers, even though `isGateTrust` only ever admits
+          // the two known-string gate literals here in practice. The non-gate branch (an
+          // unrecognized trust, a service-trust literal, the retired human_notified) routes
+          // through the SAME composer every other refusal surface uses — no second hand-built
+          // arm-selector, no second value renderer. The conformance fixture (`buildFixture`)
+          // exercises only the gate-literal branch (`human_confirmed`), so the composer's three
+          // sub-arms are unreached by it — verified by grepping the fixture builder for this key.
+          const rawFinalizerTrust = step['trust'];
+          const finalizerMessage = isGateTrust(rawFinalizerTrust)
+            ? `Step '${stepName}': 'trust: ${renderTrustValue(rawFinalizerTrust)}' is not valid on execution: finalizer steps (a finalizer must not gate)`
+            : buildTrustRefusal({
+                kind: 'finalizer',
+                value: rawFinalizerTrust,
+                step: stepName,
+                surface: 'load',
+              });
+          errors.push(withStepLine(stepName, finalizerMessage));
         }
         // v1 is handler-only.
         if (step['handler'] === undefined) {
@@ -1094,6 +1125,48 @@ function parseWorkflowString(
             }
           }
         }
+      }
+
+      // issue #508 (L1) — trust VALUE validation, auto/agent only. Before this check, an
+      // unrecognized or kind-inert `trust` (a typo, a service-trust literal, the retired
+      // `human_notified`) loaded clean, warned nothing, and ran with NO gate — the step's own
+      // declared human-approval control was silently disabled. Presence-keyed (`'trust' in
+      // step`, the same convention `trigger_rule` and `retry.backoff` already use below) so
+      // `trust:`/`trust: ~` (a null value, which loads clean today) is caught too — a blank
+      // declaration of a safety control is itself a false statement, not a no-op. `trust:`
+      // absent entirely is lawful (nothing was declared) and never reaches this block.
+      //
+      // Guard's OWN trust prohibition is minted by the #517 walk above (every value refused,
+      // no except arm); finalizer's is the hand-written except-cell just above (only 'auto' is
+      // lawful there). This block is what closes the remaining two kinds — the ones where a
+      // RECOGNIZED gate literal is meaningful, so an unrecognized one needs a VALUE verdict,
+      // not a kind verdict.
+      //
+      // issue #508 (final correction) — this whole value-refusal composition, for every kind and
+      // every surface, is now `buildTrustRefusal` (types/workflow-definition.ts, beside
+      // `classifyStepTrust`). Three prior rounds each hand-composed this text independently on
+      // this surface, execution-loop.ts's dispatch refusal, run-health.ts's finding, and the
+      // protocol generator's briefing — and every defect those rounds found (arm divergence, a
+      // String()-rendered array printing as its own first element, a grammar seam) fell out of
+      // that duplication. No site chooses an arm or renders a value on its own again; see the
+      // composer's own doc for the arm/mood/rendering contract in full.
+      if (
+        (stepKind === 'auto' || stepKind === 'agent') &&
+        'trust' in step &&
+        classifyStepTrust(stepKind, step['trust']) === 'refuse'
+      ) {
+        errors.push(
+          withKeyLine(
+            stepName,
+            'trust',
+            buildTrustRefusal({
+              kind: stepKind,
+              value: step['trust'],
+              step: stepName,
+              surface: 'load',
+            }),
+          ),
+        );
       }
 
       // Guard step constraints (the guard kind-prohibitions, including `preconditions` — issue
@@ -1418,7 +1491,7 @@ function parseWorkflowString(
       // and the same class of error, under its own key. `choices: null` with no `enum` at all
       // stays legal — the mint defaults to ['approve', 'reject'].
       if (
-        (step['trust'] === 'human_confirmed' || step['trust'] === 'human_reviewed') &&
+        isGateTrust(step['trust']) &&
         declaredGateChoices == null &&
         Array.isArray(declaredChoiceEnum) &&
         declaredChoiceEnum.length === 0

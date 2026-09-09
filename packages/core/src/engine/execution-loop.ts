@@ -23,6 +23,7 @@ import type {
   InputMapNode,
   LiteralNode,
 } from '../types/workflow-definition.js';
+import { classifyStepTrust, isGateTrust, buildTrustRefusal } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
 import { persistsField } from '../store/store-fidelity.js';
 import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-store.js';
@@ -1378,6 +1379,60 @@ export async function executeStep(
   }
 
   const stepDef = definition.steps[options.command];
+
+  // issue #508 (L2) — fail CLOSED, not merely fail-loud, on a trust value L1 would have refused
+  // at load. This is the layer that closes the population L1 cannot reach: a definition already
+  // sitting in the registry from before L1 shipped (`registrar.ts` reads back with ZERO
+  // validation), or one an embedder hands to this function directly without ever routing it
+  // through the loader at all. Guard/finalizer are excluded from `classifyStepTrust`'s 'refuse'
+  // population by construction here — `eligibility.ts`'s `findEligibleSteps` keeps them out of
+  // `executeStep` entirely, so `stepDef?.execution` this function ever sees is 'auto' or 'agent'
+  // (a mutant hardcoding the kind here would be an EQUIVALENT MUTANT; #519 owns validating a
+  // loader-bypassing definition's guard/finalizer steps structurally).
+  //
+  // MUST precede `store.claimStep` below (Step 3): `makeErrorEnvelope` is a pure builder that
+  // never writes, so a guard placed after the claim would leave an ORPHAN CLAIM — every retry
+  // then returns `STATE_STEP_ALREADY_CLAIMED` until the claim deadline expires, and the run-
+  // health finding below goes silent too (the orphan claim removes the step from eligibility,
+  // which is what the finding is keyed on) — the operator loses the recovery AND the
+  // explanation at once. Placed AFTER Step 1.5's `enactExpiredGateIfDue` above, deliberately:
+  // enacting a DIFFERENT step's already-expired gate is lawful and must not be blocked by this
+  // step's own trust defect.
+  if (classifyStepTrust(stepDef?.execution, stepDef?.trust) === 'refuse') {
+    // issue #508 (final correction): this whole message is now `buildTrustRefusal`
+    // (types/workflow-definition.ts) — the same composer L1 (yaml-loader.ts), the
+    // trust_value_invalid finding (run-health.ts), and the protocol briefing (generator.ts) all
+    // use, so this surface can no longer silently fall back to the generic "not a recognized
+    // value" text while the other three name a service-trust confusion or the human_notified
+    // tombstone by their own arm. `stepDef!` is sound here: `classifyStepTrust` only reaches
+    // 'refuse' when `stepDef?.trust !== undefined`, which is only possible when `stepDef` itself
+    // is defined (optional chaining on an undefined `stepDef` would make `.trust` undefined too,
+    // routing to the FIRST 'lawful_no_gate' arm instead) — and `stepDef.execution` is always
+    // 'auto' or 'agent' here by construction, per this function's own comment above (guard and
+    // finalizer never reach `executeStep` at all).
+    const err = new WorkflowError(
+      buildTrustRefusal({
+        kind: stepDef!.execution,
+        value: stepDef!.trust,
+        step: options.command,
+        surface: 'dispatch',
+      }),
+      {
+        code: 'VALIDATION_TRUST_VALUE',
+        category: 'VALIDATION',
+        agentAction: 'report_to_user',
+        retryable: false,
+        stepId: options.command,
+      },
+    );
+    // Deliberately NOT passing `definition`: `makeErrorEnvelope` appends
+    // `buildNextActions(definition, run)` whenever a definition is supplied and the error's
+    // agentAction isn't 'stop' (:1007-1009) — the refused step is by construction still
+    // eligible, so it would appear in its own refusal's `next_actions`, and an agent following
+    // them would loop forever. Omitting `definition` here is what keeps `next_actions: []`.
+    return makeErrorEnvelope(options, run, err);
+  }
+
   const evidenceByStep = buildEvidenceByStep(run);
 
   // Step 2a: Evaluate preconditions.
@@ -3242,7 +3297,9 @@ export async function executeStep(
   }
 
   // Step 5b: Gate check — if trust requires human confirmation, open a gate and halt.
-  if (stepDef!.trust === 'human_confirmed' || stepDef!.trust === 'human_reviewed') {
+  // issue #508: single-source membership via isGateTrust — was two hand-copied literals here,
+  // which is exactly the drift the #508 vocabulary (TRUST_LEVELS/GATE_TRUST_LEVELS) closes.
+  if (isGateTrust(stepDef!.trust)) {
     const gate_id = crypto.randomUUID();
     const choicesRaw =
       stepDef!.gate?.choices ?? stepDef!.input_schema?.properties?.['choice']?.enum;

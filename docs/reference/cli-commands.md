@@ -135,15 +135,26 @@ it's meant for CI gates that want to catch a typo before it reaches `register`.
 **`--registered <id>` (issue #427):** audits the STORED copy of a registered workflow instead of
 a file — the pre-upgrade check. It strips the keys the loader stamps at registration, feeds the
 rest back through the real loader, and reports what re-registering that definition today would
-say. Current-schema copies stay grandfathered at runtime — the audit changes nothing about your
-runs; it tells you what you would hit if you re-registered. A `legacy (re-register)` copy is
-already unreachable, and the audit tells you so.
+say. Current-schema copies stay grandfathered at runtime **against LOADER changes only** — the
+audit changes nothing about your runs; it tells you what you would hit if you re-registered. A
+`legacy (re-register)` copy is already unreachable, and the audit tells you so.
+
+**Grandfathering does not cover every kind of change (issue #508).** A new LOADER rule only
+applies going forward — a definition that was clean when it registered keeps running, and this
+audit is how you find out what re-registering it today would now refuse. A new **engine-side
+dispatch check** is different: it reads the CURRENT stored definition on every dispatch, so it
+applies immediately to every registered copy, upgrade or not — this release's trust-value refusal
+is one (an invalid `trust` on an already-registered step starts refusing at that step's next
+dispatch, with no re-registration involved). This audit still tells you about it (the loader now
+validates `trust` too), but "the audit changes nothing about your runs" is only true for the
+loader-only class.
 
 Two things worth knowing. It audits the loader you have INSTALLED, so the pre-upgrade journey is
-upgrade the CLI first, then audit — which is safe precisely because grandfathering holds. And it
-is a STRUCTURAL audit only: extension module resolution, adapter `config_schema` checks and
-agent-profile file resolution all need the source tree, which a stored copy does not have. When a
-definition declares either, the audit says so on its own line.
+upgrade the CLI first, then audit — which is safe for the loader-only class precisely because that
+grandfathering holds; it does NOT make an already-registered engine-side defect (like an invalid
+`trust`) safe to leave unaudited. And it is a STRUCTURAL audit only: extension module resolution,
+adapter `config_schema` checks and agent-profile file resolution all need the source tree, which a
+stored copy does not have. When a definition declares either, the audit says so on its own line.
 
 **`--explain` (issue #422):** prints the full per-step `structured_output` adoption detail
 described below, in place of the one-line summary a default run prints. It changes nothing about
@@ -531,11 +542,12 @@ unknown-age claim, a wedged non-gated sibling on a `gate_waiting` run, a capabil
 in the header as `(threshold 24h)`), a terminal run with an undrained finalizer, a failing drive,
 an expired gate, a corrupted gate record, and a terminal run still carrying a pending gate.
 
-A tenth kind, `resolved_gate_with_eligible_guard`, is **structurally absent here**: its producer
-requires a workflow definition and `list` classifies definition-free, so it never fires on this
-surface. Two further kinds never select: `completed_with_failed_steps` (issue #302) and
-`structured_output_downgraded` (issue #316) — a completed run and a degraded-assurance disclosure
-are not "stuck" symptoms. Either can still appear on a run selected by one of the nine. The never-claimed check is **age-gated**: a
+Two more kinds are **structurally absent here**: `resolved_gate_with_eligible_guard` and
+`trust_value_invalid` (issue #508). Both producers require a workflow definition and `list`
+classifies definition-free, so neither ever fires on this surface. Two further kinds never
+select: `completed_with_failed_steps` (issue #302) and `structured_output_downgraded` (issue
+#316) — a completed run and a degraded-assurance disclosure are not "stuck" symptoms. Either can
+still appear on a run selected by one of the nine. The never-claimed check is **age-gated**: a
 run simply between agent drives is no longer flagged the instant its last claim settles (a
 disclosed behavior change from the prior unconditional check — see the CHANGELOG). Each flagged
 line appends its idle age plus finding labels.

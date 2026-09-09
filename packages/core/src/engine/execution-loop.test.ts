@@ -9,6 +9,7 @@ import {
   submitHumanResponse,
 } from './execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { classifyRunHealth } from './run-health.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { InMemoryTraceBufferStore } from '../store/trace-buffer-store.js';
@@ -1638,6 +1639,270 @@ describe('executeStep', () => {
   // ---------------------------------------------------------------------------
   // confirm_required next_actions population
   // ---------------------------------------------------------------------------
+
+  // issue #508 — the behavioural-equivalence pin `workflow-definition.ts`'s `TrustLevel` doc
+  // comment promises: `human_reviewed` is a RESERVED value with no distinct "challenge"
+  // mechanism built yet (issue #531 owns implement-or-permanently-alias) — today `isGateTrust`
+  // treats it identically to `human_confirmed` at the gate mint. Proven here by running the
+  // IDENTICAL workflow shape under each value and diffing everything except the random
+  // identifiers (gate_id, run_id) that necessarily differ per run.
+  it('trust: human_reviewed mints a gate structurally identical to trust: human_confirmed (issue #508 behavioural-equivalence pin)', async () => {
+    async function mintGate(trust: 'human_confirmed' | 'human_reviewed') {
+      const gateWorkflow: WorkflowDefinition = {
+        id: 'gate-equiv-wf',
+        name: 'Gate Equivalence Workflow',
+        version: 1,
+        steps: {
+          gate_step: { description: 'Gate step', execution: 'auto', trust, depends_on: [] },
+        },
+      };
+      const { run } = await store.create({
+        workflowId: 'gate-equiv-wf',
+        workflowVersion: 1,
+        params: { key: 'value' },
+      });
+      return executeStep(store, gateWorkflow, {
+        runId: run.id,
+        command: 'gate_step',
+        input: { key: 'value' },
+        dispatcher: echoDispatcher,
+      });
+    }
+
+    const confirmed = await mintGate('human_confirmed');
+    const reviewed = await mintGate('human_reviewed');
+
+    expect(confirmed.status).toBe('confirm_required');
+    expect(reviewed.status).toBe('confirm_required');
+    // step_name, choices, preview, display, agent_hint, response_spec — everything but the
+    // random gate_id — must be byte-identical between the two trust values.
+    expect(reviewed.gate?.step_name).toBe(confirmed.gate?.step_name);
+    expect(reviewed.gate?.choices).toEqual(confirmed.gate?.choices);
+    expect(reviewed.gate?.preview).toEqual(confirmed.gate?.preview);
+    expect(reviewed.gate?.display).toBe(confirmed.gate?.display);
+    expect(reviewed.gate?.agent_hint).toBe(confirmed.gate?.agent_hint);
+    expect(reviewed.gate?.response_spec).toEqual(confirmed.gate?.response_spec);
+    expect(reviewed.next_actions[0]?.instruction?.tool).toBe(
+      confirmed.next_actions[0]?.instruction?.tool,
+    );
+    expect(reviewed.next_actions[0]?.human_readable).toBe(
+      confirmed.next_actions[0]?.human_readable,
+    );
+    // orientation embeds the gate_id verbatim (legitimately differs per run — see below) —
+    // compared with the id stripped out instead of a bare toBe.
+    expect(reviewed.next_actions[0]?.orientation?.replace(/'[0-9a-f-]{36}'/, "'<gate_id>'")).toBe(
+      confirmed.next_actions[0]?.orientation?.replace(/'[0-9a-f-]{36}'/, "'<gate_id>'"),
+    );
+    // The one field that MUST differ — proof the two runs are genuinely independent, not a
+    // vacuous self-comparison.
+    expect(reviewed.gate?.gate_id).not.toBe(confirmed.gate?.gate_id);
+  });
+
+  // issue #508 — L2: the engine's fail-closed backstop for a `trust` value that bypassed the
+  // loader (a registrar read-back, or a hand-built WorkflowDefinition passed directly to
+  // executeStep — exactly what these fixtures do, never routing through loadWorkflowFromString).
+  describe('L2 — dispatch-time trust value refusal (issue #508)', () => {
+    async function refuseBadTrust(trust: unknown) {
+      const badDef: WorkflowDefinition = {
+        id: 'l2-508-wf',
+        name: 'L2 508',
+        version: 1,
+        steps: {
+          work: { description: 'work', execution: 'auto', trust: trust as never, depends_on: [] },
+        },
+      };
+      const { run } = await store.create({
+        workflowId: 'l2-508-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const before = await store.get(run.id);
+      const envelope = await executeStep(store, badDef, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echoDispatcher,
+      });
+      const after = await store.get(run.id);
+      return { envelope, before, after };
+    }
+
+    it('refuses with VALIDATION_TRUST_VALUE, report_to_user, not retryable', async () => {
+      const { envelope } = await refuseBadTrust('engine_delivered');
+      expect(envelope.status).toBe('error');
+      expect(envelope.error_code).toBe('VALIDATION_TRUST_VALUE');
+      expect(envelope.agent_action).toBe('report_to_user');
+    });
+
+    it('next_actions is [] — omitting `definition` from makeErrorEnvelope, not merely empty by coincidence', async () => {
+      // A non-empty next_actions here would mean the refused step's OWN eligibility loop-backed
+      // into its own refusal (buildNextActions would find 'work' still eligible and re-offer it),
+      // an infinite-retry trap for an agent following next_actions literally.
+      const { envelope } = await refuseBadTrust('engine_delivered');
+      expect(envelope.next_actions).toEqual([]);
+    });
+
+    it('the PRE-CLAIM pin: refusal never claims the step — in_progress_steps stays [], version unchanged', async () => {
+      const { before, after } = await refuseBadTrust('engine_delivered');
+      expect(after.in_progress_steps).toEqual([]);
+      expect(after.version).toBe(before.version);
+      expect(after.completed_steps).toEqual([]);
+    });
+
+    it('the live-run-repair remedy text names register + retry', async () => {
+      const { envelope } = await refuseBadTrust('nope');
+      expect(envelope.errors[0]).toContain('realm workflow register <path>');
+      expect(envelope.errors[0]).toContain('retry');
+    });
+
+    // issue #508 correction (item 3): L2 used to carry LESS than L1 (yaml-loader.ts) — no
+    // accepted set, no did-you-mean — backwards, given L2 exists specifically for readers who
+    // inherited someone else's definition and are not looking at YAML.
+    it('carries the accepted set, matching L1', async () => {
+      const { envelope } = await refuseBadTrust('nope');
+      expect(envelope.errors[0]).toContain(
+        "A step's 'trust' accepts auto, human_confirmed, human_reviewed.",
+      );
+    });
+
+    it('offers a did-you-mean suggestion for a close typo', async () => {
+      const { envelope } = await refuseBadTrust('human_confirmd');
+      expect(envelope.errors[0]).toContain("Did you mean 'human_confirmed'?");
+    });
+
+    it('offers NO did-you-mean suggestion for a non-suggesting value', async () => {
+      const { envelope } = await refuseBadTrust('zzz');
+      expect(envelope.errors[0]).not.toContain('Did you mean');
+    });
+
+    it('never throws on a non-string trust value (the typeof guard before closestKey, mirroring L1)', async () => {
+      const { envelope } = await refuseBadTrust(null);
+      expect(envelope.status).toBe('error');
+      expect(envelope.errors[0]).toContain('trust: null');
+      expect(envelope.errors[0]).not.toContain('Did you mean');
+    });
+
+    // issue #508 (final correction): the actual point of this round — before it, EVERY value
+    // reaching L2 got the flat generic "is not a recognized value" text, regardless of which
+    // mistake it was (measured: 8 of 28 auto/agent value×kind cells diverged from L1's own
+    // arm-selecting text on this exact dimension). `buildTrustRefusal` gives L2 the SAME arm
+    // selection L1 always had — these two cells are the ones the pre-composer suite had no way
+    // to catch, since every prior L2 cell used a generic-arm value.
+    it('routes engine_delivered through the SERVICE-confusion arm, not the generic text', async () => {
+      const { envelope } = await refuseBadTrust('engine_delivered');
+      expect(envelope.errors[0]).toContain("is a SERVICE's trust level");
+      expect(envelope.errors[0]).toContain("declared under 'services: <name>: trust:'");
+      expect(envelope.errors[0]).not.toContain('is not a recognized value');
+    });
+
+    it('routes human_notified through the tombstone arm, not the generic text', async () => {
+      const { envelope } = await refuseBadTrust('human_notified');
+      expect(envelope.errors[0]).toContain('was removed (issue #508)');
+      expect(envelope.errors[0]).toContain('most workflows should simply delete the key');
+      expect(envelope.errors[0]).not.toContain('is not a recognized value');
+    });
+
+    // issue #508 correction (item 1): L2's own mood is COMPLETED refusal — a run already exists
+    // here, and refusing parks it rather than erasing it. Deliberately different text from L1's
+    // prevented-harm wording (yaml-loader.test.ts pins that side).
+    it('states its own COMPLETED-refusal mood: the run is parked, dependents return blocked — never L1s prevented-harm wording', async () => {
+      const { envelope } = await refuseBadTrust('nope');
+      expect(envelope.errors[0]).toContain('this run is now parked, non-terminal');
+      expect(envelope.errors[0]).toContain("returns 'blocked'");
+      expect(envelope.errors[0]).not.toContain('cannot create a run while the value is wrong');
+    });
+
+    it('a lawful trust value on the same shape is NOT refused (control)', async () => {
+      const { envelope } = await refuseBadTrust('auto');
+      expect(envelope.status).toBe('ok');
+    });
+
+    it("the live-run-repair remedy ACTUALLY WORKS: the same run's next attempt with a corrected definition succeeds — the guard's pre-claim placement is what makes this possible", async () => {
+      const badDef: WorkflowDefinition = {
+        id: 'l2-508-repair-wf',
+        name: 'L2 508 repair',
+        version: 1,
+        steps: {
+          work: { description: 'work', execution: 'auto', trust: 'nope' as never, depends_on: [] },
+        },
+      };
+      const { run } = await store.create({
+        workflowId: 'l2-508-repair-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const firstAttempt = await executeStep(store, badDef, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echoDispatcher,
+      });
+      expect(firstAttempt.status).toBe('error');
+      expect(firstAttempt.error_code).toBe('VALIDATION_TRUST_VALUE');
+
+      // The remedy text says "register the corrected file, and retry — this run picks up the
+      // corrected definition". Simulated here by passing a corrected WorkflowDefinition to the
+      // SAME run+step on the next call — exactly what a real register+retry cycle changes.
+      const correctedDef: WorkflowDefinition = {
+        ...badDef,
+        steps: { work: { ...badDef.steps['work']!, trust: 'auto' } },
+      };
+      const secondAttempt = await executeStep(store, correctedDef, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echoDispatcher,
+      });
+      expect(secondAttempt.status).toBe('ok');
+      const after = await store.get(run.id);
+      expect(after.completed_steps).toContain('work');
+    });
+
+    it('cross-cutting with run-health: the trust_value_invalid finding SURVIVES an executeStep refusal attempt — pre-claim placement is what keeps the step eligible for the finding to keep naming it', async () => {
+      // The mechanism this cell exists to prove: run-health.ts's trust_value_invalid finding is
+      // keyed on findEligibleSteps, which excludes a claimed/in-flight step. A guard placed
+      // AFTER claimStep (mutant ii) would claim the step before refusing it — silently REMOVING
+      // it from eligibility, and with it, the run-health finding that is the operator's only
+      // OTHER way to learn about the defect if they never call execute_step directly.
+      const badDef: WorkflowDefinition = {
+        id: 'l2-508-health-wf',
+        name: 'L2 508 health',
+        version: 1,
+        steps: {
+          work: { description: 'work', execution: 'auto', trust: 'nope' as never, depends_on: [] },
+        },
+      };
+      const { run } = await store.create({
+        workflowId: 'l2-508-health-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+
+      // Before any attempt: the finding already fires (D's own "parked run" cell covers this
+      // shape directly — reasserted here only as the baseline for the delta below).
+      const before = await store.get(run.id);
+      const findingsBefore = classifyRunHealth(before, { definition: badDef });
+      expect(findingsBefore.some((f) => f.kind === 'trust_value_invalid')).toBe(true);
+
+      // One executeStep attempt — refused, per the cells above.
+      const envelope = await executeStep(store, badDef, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echoDispatcher,
+      });
+      expect(envelope.status).toBe('error');
+
+      // After the refusal: the finding STILL fires — the step was never claimed, so it is still
+      // eligible, so run-health can still see and name it. This is the cell mutant (ii) breaks.
+      const after = await store.get(run.id);
+      const findingsAfter = classifyRunHealth(after, { definition: badDef });
+      const finding = findingsAfter.find((f) => f.kind === 'trust_value_invalid');
+      expect(finding).toBeDefined();
+      expect(finding?.step).toBe('work');
+    });
+  });
 
   describe('confirm_required next_actions population', () => {
     it('confirm_required response has next_actions instruction pointing to submit_human_response', async () => {

@@ -3488,3 +3488,270 @@ steps:
     expect(message).not.toContain("'on_outcome' is only valid on execution: finalizer steps");
   });
 });
+
+// =================================================================================================
+// issue #508 — L1: an invalid step-level `trust` value on an auto/agent step is a load error.
+// Per-member cells (no representatives): the three arms, each on both auto and agent; every
+// distinct non-string/empty-string member; the did-you-mean/non-suggesting split; and the three
+// lawful values as controls.
+// =================================================================================================
+describe('yaml-loader — #508 trust value validation (L1)', () => {
+  const loadError = (content: string): string => {
+    try {
+      loadWorkflowFromString(content);
+      throw new Error('expected a load error');
+    } catch (err) {
+      return (err as WorkflowError).message;
+    }
+  };
+
+  // `trust` is YAML-embedded verbatim (never JS-stringified) so callers can pass raw YAML scalars
+  // — `null`, `''`, `123`, `[]` — that have no single JS-value representation as a template arg.
+  function def(execution: 'auto' | 'agent', trustYaml: string): string {
+    return `
+id: trust-508-wf
+name: Trust 508
+version: 1
+steps:
+  work:
+    description: Work
+    execution: ${execution}
+    trust: ${trustYaml}
+`;
+  }
+
+  describe('arm 1 — service-trust confusion (the dominant real mistake)', () => {
+    it('auto step with trust: engine_delivered', () => {
+      const message = loadError(def('auto', 'engine_delivered'));
+      expect(message).toContain("'trust: \"engine_delivered\"' is a SERVICE's trust");
+      expect(message).toContain("declared under 'services: <name>: trust:'");
+      // issue #508 correction (item 1): the consequence clause's own MOOD — prevented harm,
+      // distinct from execution-loop.ts's L2 completed-refusal wording, deliberately not the
+      // same text.
+      expect(message).toContain('cannot create a run while the value is wrong');
+      expect(message).toContain("A step's 'trust' accepts auto, human_confirmed, human_reviewed.");
+      expect(message).toContain('realm workflow register <path>');
+    });
+
+    it('agent step with trust: engine_managed', () => {
+      const message = loadError(def('agent', 'engine_managed'));
+      expect(message).toContain("'trust: \"engine_managed\"' is a SERVICE's trust");
+    });
+
+    it('the third service-trust literal (agent_provided) also fires arm 1, not arm 3', () => {
+      const message = loadError(def('auto', 'agent_provided'));
+      expect(message).toContain("is a SERVICE's trust");
+      expect(message).not.toContain('is not a recognized');
+    });
+  });
+
+  describe('arm 2 — the retired human_notified tombstone', () => {
+    it('auto step with trust: human_notified', () => {
+      const message = loadError(def('auto', 'human_notified'));
+      // issue #508 correction (item 4): "(#508)" -> "(issue #508)" — no shipped convention
+      // existed to reuse (that's #527's own subject), so this prompt names the one used here.
+      // issue #508 (final correction): the value now renders quoted, via the composer's shared
+      // `renderTrustValue` (JSON.stringify, no exceptions — "no reason for two renderers").
+      expect(message).toContain('\'trust: "human_notified"\' was removed (issue #508)');
+      // "(zero consumers)" was jargon in an operator message — removed. The plain facts survive
+      // ("never triggered a notification" / "never opened a gate") joined with commas/"and", not
+      // the non-sequitur "so" (a notification mechanism failing does not CAUSE a gate mechanism
+      // to fail — REV 1 mis-counted this as three "no gate" occurrences; audit-corrected to two,
+      // with the literal substring "no gate" appearing once — this pin does not re-litigate that
+      // count, only the jargon and the non-sequitur). The composer folds the "what to use
+      // instead" guidance into the SAME flowing clause (never a second sentence starting
+      // lowercase after the consequence clause joins — the grammar seam this final round fixes).
+      expect(message).not.toContain('zero consumers');
+      expect(message).toContain('it never triggered a notification, it never opened a gate');
+      expect(message).toContain('most workflows should simply delete the key');
+      expect(message).not.toContain('is not a recognized');
+    });
+
+    it('agent step with trust: human_notified', () => {
+      const message = loadError(def('agent', 'human_notified'));
+      expect(message).toContain('\'trust: "human_notified"\' was removed (issue #508)');
+    });
+  });
+
+  describe('arm 3 — generic unrecognized value, plus did-you-mean', () => {
+    it('auto step with a non-suggesting unrecognized value gets NO did-you-mean clause', () => {
+      const message = loadError(def('auto', 'zzz'));
+      expect(message).toContain('\'trust: "zzz"\' is not a recognized value');
+      expect(message).not.toContain('Did you mean');
+    });
+
+    it('agent step with a non-suggesting unrecognized value gets NO did-you-mean clause', () => {
+      const message = loadError(def('agent', 'zzz'));
+      expect(message).toContain('\'trust: "zzz"\' is not a recognized value');
+      expect(message).not.toContain('Did you mean');
+    });
+
+    it('a value one edit away from human_confirmed gets the did-you-mean suggestion', () => {
+      const message = loadError(def('auto', 'human_confirmd'));
+      expect(message).toContain("Did you mean 'human_confirmed'?");
+    });
+  });
+
+  describe('non-string / falsy-but-declared members — each is its own member, not a representative', () => {
+    it('trust: null does NOT reach closestKey (no did-you-mean clause) and is not misread as absent — auto', () => {
+      const message = loadError(def('auto', 'null'));
+      expect(message).toContain("'trust: null' is not a recognized value");
+      expect(message).not.toContain('Did you mean');
+    });
+
+    // Per-kind, not a representative of the auto cell above: closestKey's null-guard is a VALUE
+    // check with no kind conjunct, so this cell exists to prove the guard's protection doesn't
+    // accidentally depend on which kind reached arm 3 — mutant (i) (drop the typeof guard) must
+    // TypeError on BOTH kinds, not just one.
+    it('trust: null does NOT reach closestKey (no did-you-mean clause) and is not misread as absent — agent', () => {
+      const message = loadError(def('agent', 'null'));
+      expect(message).toContain("'trust: null' is not a recognized value");
+      expect(message).not.toContain('Did you mean');
+    });
+
+    it("trust: '' (empty string) DOES reach closestKey (typeof-string), distinct from null", () => {
+      const message = loadError(def('auto', "''"));
+      expect(message).toContain('\'trust: ""\' is not a recognized value');
+      // '' is far (Levenshtein) from every TRUST_LEVELS member at threshold 1 — no suggestion,
+      // but via the STRING path, not the non-string short-circuit null/123/[] take.
+      expect(message).not.toContain('Did you mean');
+    });
+
+    it('trust: 123 (a number) is refused without a TypeError — the typeof guard excludes it from closestKey', () => {
+      const message = loadError(def('auto', '123'));
+      expect(message).toContain("'trust: 123' is not a recognized value");
+      expect(message).not.toContain('Did you mean');
+    });
+
+    it('trust: [] (an array) is refused without a TypeError', () => {
+      const message = loadError(def('auto', '[]'));
+      expect(message).toContain("'trust: []' is not a recognized value");
+      expect(message).not.toContain('Did you mean');
+    });
+  });
+
+  describe('controls — the three lawful values load clean on both kinds', () => {
+    it.each(['auto', 'human_confirmed', 'human_reviewed'] as const)(
+      'auto step with trust: %s loads clean',
+      (trust) => {
+        expect(() => loadWorkflowFromString(def('auto', trust))).not.toThrow();
+        const parsed = loadWorkflowFromString(def('auto', trust));
+        expect(parsed.steps['work']?.trust).toBe(trust);
+      },
+    );
+
+    it.each(['auto', 'human_confirmed', 'human_reviewed'] as const)(
+      'agent step with trust: %s loads clean',
+      (trust) => {
+        expect(() => loadWorkflowFromString(def('agent', trust))).not.toThrow();
+      },
+    );
+
+    it('absent trust loads clean on both kinds (unchanged — the pre-#508 behavior)', () => {
+      const noTrust = (execution: 'auto' | 'agent') => `
+id: trust-508-wf
+name: Trust 508
+version: 1
+steps:
+  work:
+    description: Work
+    execution: ${execution}
+`;
+      expect(() => loadWorkflowFromString(noTrust('auto'))).not.toThrow();
+      expect(() => loadWorkflowFromString(noTrust('agent'))).not.toThrow();
+    });
+  });
+
+  describe('kind scoping — guard/finalizer never reach L1 at all (their own value rules are separate)', () => {
+    it('a guard step with a bad trust value is refused by the KIND prohibition, not by L1 — different message shape', () => {
+      const message = loadError(`
+id: trust-508-guard-wf
+name: Trust 508 Guard
+version: 1
+steps:
+  work:
+    description: work
+    execution: agent
+    depends_on: []
+  gate_check:
+    description: guard
+    execution: guard
+    depends_on: [work]
+    abort_unless: ["work.status == 'open'"]
+    trust: nope
+`);
+      // The KIND-prohibition (registry-minted) message, not L1's "is not a recognized value".
+      // issue #508 correction: re-anchored to the NEW arm-3 conjunction after item 1's wording
+      // change — the old substring no longer occurs anywhere (even in arm 3's own real text),
+      // which would have made this pin pass trivially regardless of whether guard is actually
+      // routed away from L1 (confirmation theatre).
+      expect(message).not.toContain('is not a recognized value — refused at load');
+      expect(message).toContain("'trust' is not valid on execution: guard steps");
+    });
+  });
+
+  // issue #508 correction (item 4, 5th bullet): a finalizer's non-gate-literal trust value used
+  // to get ONE flat "is not a recognized value" text regardless of WHICH kind of wrong value it
+  // was — the measured dominant mistake (a service-trust literal) got a less specific
+  // characterisation on a finalizer than on auto/agent, for no reason. Routed through the same
+  // three priority arms now, each with the finalizer-specific kind clause appended.
+  describe('finalizer trust routes through the same three priority arms (issue #508 correction)', () => {
+    function defFinalizer(trust: string): string {
+      return `
+id: trust-508-finalizer-wf
+name: Trust 508 Finalizer
+version: 1
+steps:
+  work:
+    description: work
+    execution: agent
+    depends_on: []
+  cleanup:
+    description: cleanup
+    execution: finalizer
+    handler: do_cleanup
+    on_outcome: always
+    trust: ${trust}
+`;
+    }
+
+    it('arm 1 (service-trust confusion) on a finalizer, WITH the finalizer kind clause appended', () => {
+      const message = loadError(defFinalizer('engine_delivered'));
+      expect(message).toContain("'trust: \"engine_delivered\"' is a SERVICE's trust level");
+      expect(message).toContain("only 'auto' is meaningful on execution: finalizer steps");
+      // issue #508 (final correction): the finalizer's own consequence clause is no longer
+      // silently ABSENT — the SAME load-mood consequence auto/agent gets, since the mechanism
+      // (a load-time refusal) is identical; only the TAIL (accepted-set vs. kind clause) differs.
+      expect(message).toContain('cannot create a run while the value is wrong');
+    });
+
+    it('arm 2 (the human_notified tombstone) on a finalizer, WITH the finalizer kind clause appended', () => {
+      const message = loadError(defFinalizer('human_notified'));
+      expect(message).toContain('\'trust: "human_notified"\' was removed (issue #508)');
+      expect(message).toContain("only 'auto' is meaningful on execution: finalizer steps");
+    });
+
+    it('arm 3 (generic unrecognized) on a finalizer, WITH the finalizer kind clause appended', () => {
+      const message = loadError(defFinalizer('nope'));
+      expect(message).toContain('\'trust: "nope"\' is not a recognized value');
+      expect(message).toContain("only 'auto' is meaningful on execution: finalizer steps");
+    });
+
+    // issue #508 (final correction): the title is corrected from "UNCHANGED" — the gate-literal
+    // branch's SHAPE (a hand-written kind prohibition, no accepted-set tail) stays exactly as
+    // before, but its value rendering is NOT unchanged: a reversed ruling ("keep String() here
+    // to satisfy namesKey") was wrong (namesKey needs the quote BEFORE `trust`, not around the
+    // value — executed both ways, both satisfy it identically), so this arm now shares the same
+    // `renderTrustValue` (quoted) every other arm uses. "There was never a reason for two
+    // renderers."
+    it("the gate-literal branch (human_confirmed) stays a kind prohibition — no accepted-set tail — but now shares the composer's quoted value renderer", () => {
+      const message = loadError(defFinalizer('human_confirmed'));
+      expect(message).toContain(
+        '\'trust: "human_confirmed"\' is not valid on execution: finalizer steps (a finalizer must not gate)',
+      );
+      // The generic accepted-set tail belongs to the OTHER three arms only — appending it here
+      // would be redundant with "a finalizer must not gate", not clarifying.
+      expect(message).not.toContain("'trust' accepts auto, human_confirmed, human_reviewed");
+    });
+  });
+});

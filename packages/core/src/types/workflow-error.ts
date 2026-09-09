@@ -76,6 +76,13 @@ export type ErrorCode =
   | 'VALIDATION_EMPTY_VALUE'
   | 'VALIDATION_BATCH_TOO_LARGE'
   | 'VALIDATION_BATCH_ITEMS'
+  // issue #508 (L2): a step's `trust` value is neither absent nor a recognized TRUST_LEVELS
+  // member (a typo, a ServiceTrust value in the wrong place, or the retired 'human_notified'
+  // tombstone) — caught at dispatch as the fail-closed backstop for definitions that bypassed
+  // the loader's L1 refusal (registrar read-back, direct embedder use). Deliberately NOT added
+  // to VALIDATION_TELEMETRY_CODES (execute-step.ts) — that set is for agent-repairable
+  // submission defects; a bad `trust` is an authoring defect no agent can repair.
+  | 'VALIDATION_TRUST_VALUE'
   | 'STEP_HANDLER_ERROR'
   // ENGINE
   | 'ENGINE_INTERNAL'

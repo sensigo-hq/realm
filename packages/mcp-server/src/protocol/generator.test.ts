@@ -276,3 +276,176 @@ describe('generateProtocol — the summary agrees with its own counts (issue #42
     );
   });
 });
+
+// issue #508: a step whose `trust` value L2 will refuse at dispatch must be briefed as such —
+// never as "engine handles this automatically" (false: it will not run at all) or "YOU execute
+// this step" (false: the agent's own call will be refused before it dispatches).
+describe('generateProtocol — trust value refusal (issue #508)', () => {
+  function makeDef(steps: WorkflowDefinition['steps']): WorkflowDefinition {
+    return { id: 'trust-refuse-wf', name: 'Trust Refuse WF', version: 1, steps };
+  }
+
+  it('auto step with an invalid trust value is briefed as refused, not as automatic', () => {
+    // issue #508 (final correction): 'nope' — a genuinely generic-arm value. This test's original
+    // fixture, `trust: 'engine_delivered'`, was ITSELF an instance of the class this whole round
+    // fixes: it only ever asserted the GENERIC text, which the old (pre-composer) generator
+    // happened to always produce regardless of value — a coincidental pass that never actually
+    // proved which arm fired. See the dedicated arm-selection cells below for that proof.
+    const protocol = generateProtocol(
+      makeDef({
+        bad: { description: 'bad', execution: 'auto', trust: 'nope' as never },
+      }),
+    );
+    const step = protocol.steps[0]!;
+    expect(step.agent_involvement).not.toContain('none — engine handles this automatically');
+    expect(step.agent_involvement).toContain('not a recognized value');
+    expect(step.agent_involvement).toContain('VALIDATION_TRUST_VALUE');
+    expect(step.agent_involvement).toContain('Do NOT call execute_step');
+    expect(step.possible_gate).toBeUndefined();
+  });
+
+  it('agent step with an invalid trust value is briefed as refused, not as "YOU execute"', () => {
+    const protocol = generateProtocol(
+      makeDef({
+        bad: { description: 'bad', execution: 'agent', trust: 'nope' as never },
+      }),
+    );
+    const step = protocol.steps[0]!;
+    expect(step.agent_involvement).not.toContain('YOU execute');
+    expect(step.agent_involvement).toContain('not a recognized value');
+    expect(step.agent_involvement).toContain('VALIDATION_TRUST_VALUE');
+    expect(step.agent_involvement).toContain('Do NOT call execute_step');
+    expect(step.possible_gate).toBeUndefined();
+  });
+
+  // issue #508 (final correction): the actual point of this round. `buildTrustRefusal` gives the
+  // briefing surface the SAME arm selection L1/L2/the run-health finding always had (or, for L2
+  // and the finding, now also have) — before it, EVERY value here got the flat generic text.
+  it('routes engine_delivered through the SERVICE-confusion arm on the briefing, not the generic text', () => {
+    const protocol = generateProtocol(
+      makeDef({
+        bad: { description: 'bad', execution: 'auto', trust: 'engine_delivered' as never },
+      }),
+    );
+    const step = protocol.steps[0]!;
+    expect(step.agent_involvement).toContain("is a SERVICE's trust level");
+    expect(step.agent_involvement).toContain("declared under 'services: <name>: trust:'");
+    expect(step.agent_involvement).not.toContain('is not a recognized value');
+    expect(step.agent_involvement).toContain('VALIDATION_TRUST_VALUE');
+  });
+
+  it('routes human_notified through the tombstone arm on the briefing, not the generic text', () => {
+    const protocol = generateProtocol(
+      makeDef({
+        bad: { description: 'bad', execution: 'agent', trust: 'human_notified' as never },
+      }),
+    );
+    const step = protocol.steps[0]!;
+    expect(step.agent_involvement).toContain('was removed (issue #508)');
+    expect(step.agent_involvement).toContain('most workflows should simply delete the key');
+    expect(step.agent_involvement).not.toContain('is not a recognized value');
+  });
+
+  it('null trust value on an auto step refuses (via JSON.stringify, distinguishable from a string)', () => {
+    const protocol = generateProtocol(
+      makeDef({ bad: { description: 'bad', execution: 'auto', trust: null as never } }),
+    );
+    expect(protocol.steps[0]!.agent_involvement).toContain('trust: null');
+  });
+
+  it('guard step with a declared trust value discloses that the declaration is inert (does not affect the existing "do NOT call execute_step" briefing)', () => {
+    const protocol = generateProtocol(
+      makeDef({
+        work: { description: 'work', execution: 'agent', depends_on: [] },
+        gate_check: {
+          description: 'guard',
+          execution: 'guard',
+          depends_on: ['work'],
+          abort_unless: ["work.status == 'open'"],
+          trust: 'human_confirmed',
+        },
+      }),
+    );
+    const guard = protocol.steps.find((s) => s.id === 'gate_check')!;
+    expect(guard.agent_involvement).toContain('do NOT call execute_step');
+    // issue #508 correction (item 6): `human_confirmed` on a guard is the REFUSE verdict (a
+    // guard refuses ANY declared trust value, even a lawful-elsewhere one) — JSON.stringify
+    // (not String()) renders it quoted, and the note now says the loader refuses it, not that
+    // it merely "has no effect" (which would be true only for the OTHER, lawful_no_gate case —
+    // finalizer + 'auto', pinned separately below).
+    expect(guard.agent_involvement).toContain('declares \'trust: "human_confirmed"\'');
+    expect(guard.agent_involvement).toContain('which the loader refuses on guard steps');
+    expect(guard.possible_gate).toBeUndefined();
+  });
+
+  it('finalizer step with a declared trust value discloses the ignored declaration', () => {
+    const protocol = generateProtocol(
+      makeDef({
+        cleanup: {
+          description: 'finalizer',
+          execution: 'finalizer',
+          on_outcome: 'always',
+          handler: 'do_cleanup',
+          trust: 'auto',
+        },
+      }),
+    );
+    const finalizer = protocol.steps[0]!;
+    expect(finalizer.agent_involvement).toContain('do NOT call execute_step');
+    // issue #508 correction (item 6): `auto` on a finalizer is the LAWFUL_NO_GATE verdict (the
+    // one truthful "accepted but inert" case) — distinct from the guard cell above, which is
+    // REFUSE and gets a different note.
+    expect(finalizer.agent_involvement).toContain('declares \'trust: "auto"\'');
+    expect(finalizer.agent_involvement).toContain('accepted but inert');
+  });
+
+  it('guard/finalizer WITHOUT a declared trust carry no disclosure clause (regression control)', () => {
+    const protocol = generateProtocol(
+      makeDef({
+        work: { description: 'work', execution: 'agent', depends_on: [] },
+        gate_check: {
+          description: 'guard',
+          execution: 'guard',
+          depends_on: ['work'],
+          abort_unless: ["work.status == 'open'"],
+        },
+      }),
+    );
+    const guard = protocol.steps.find((s) => s.id === 'gate_check')!;
+    expect(guard.agent_involvement).not.toContain('declares');
+    expect(guard.agent_involvement).not.toContain('has no effect here');
+  });
+
+  it('a refused step is excluded from BOTH autoStepCount and agentStepCount', () => {
+    const protocol = generateProtocol(
+      makeDef({
+        good: { description: 'good', execution: 'auto', handler: 'noop' } as never,
+        bad: { description: 'bad', execution: 'auto', trust: 'nope' as never },
+      }),
+    );
+    // 0 agent steps, 1 auto step (the refused one does not count toward either).
+    expect(protocol.agent_steps_summary).toBe(
+      '0 of 2 steps require agent action. 1 is handled automatically.',
+    );
+  });
+
+  it('quick_start names a refused step and points at its own agent_involvement — the refused-present branch dominates even alongside an agent step', () => {
+    const protocol = generateProtocol(
+      makeDef({
+        bad: { description: 'bad', execution: 'auto', trust: 'nope' as never },
+        agentStep: { description: 'agent work', execution: 'agent' },
+      }),
+    );
+    expect(protocol.quick_start).toContain("1 of this workflow's 2 steps");
+    expect(protocol.quick_start).toContain('invalid');
+    expect(protocol.quick_start).toContain('VALIDATION_TRUST_VALUE');
+    expect(protocol.quick_start).not.toContain('handles all steps automatically');
+  });
+
+  it('quick_start refused-present branch is grammatically correct for a single refused step out of one', () => {
+    const protocol = generateProtocol(
+      makeDef({ bad: { description: 'bad', execution: 'auto', trust: 'nope' as never } }),
+    );
+    expect(protocol.quick_start).toContain("1 of this workflow's 1 step has an invalid");
+  });
+});
