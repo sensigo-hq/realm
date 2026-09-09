@@ -206,17 +206,22 @@ extensions module, and a warning escalated to an error by policy). Not represent
 
 ```bash
 $ realm workflow validate ./my-workflow
-⚠ step 'sync_data': unknown key 'dependson' (line 14) — REFUSED below (did you mean 'depends_on'?)
+⚠ step 'sync_data': unknown key 'dependson' (line 14) — ignored (did you mean 'depends_on'?)
 Invalid: 1 warning, 1 escalated to an error by policy: UNKNOWN_STEP_KEY 'dependson'
 $ echo $?
 1
 ```
 
-An unrecognized key is refused with or without `--strict` ([issue #170](https://github.com/sensigo-hq/realm/issues/170)),
+Every warning line reads `— ignored` — a true statement about what the parse did with the key,
+whether or not this run goes on to refuse the workflow over it ([issue #540](https://github.com/sensigo-hq/realm/issues/540)).
+The line below the warnings is what says whether — and which — warnings the run actually refuses
+over: an unrecognized key is refused with or without `--strict` ([issue #170](https://github.com/sensigo-hq/realm/issues/170)),
 and the policy check runs first — so this class never reaches the `failing due to --strict` line
-any more. `--strict` still does its job for everything that is genuinely a warning: a retry
-advisory, a dead config block, an unrecognized key inside `retry:` or `gate:`. Those keep printing
-`— ignored`, because on those the key really is ignored.
+any more. `--strict` still does its job for everything that is genuinely a warning under the
+default policy: a retry advisory, a dead config block, an unrecognized key inside `retry:` or
+`gate:`. Those warnings print the identical `— ignored` line above them; only the `Invalid: …
+escalated to an error by policy: …` line — present only when something actually escalates — tells
+you which.
 
 `realm run`, `realm agent`, and `realm listen` are unaffected — they load leniently, so a workflow
 already deployed with an unknown key keeps running.

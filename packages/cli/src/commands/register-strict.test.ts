@@ -105,7 +105,14 @@ steps:
     expect(warnedHere).toContain('— ignored');
     // reds under probe (a) — deliberate: the retry sub-family carries positions too.
     expect(warnedHere).toContain("unknown key 'bogus_retry_key' (line 13) — ignored");
-    expect(warnedHere).not.toContain('REFUSED below');
+    // RETIRED TEETH (issue #540 — "severity gate" class): UNKNOWN_RETRY_KEY resolves to 'warn'
+    // under the default policy, so printLoaderWarnings' now-deleted `— REFUSED below` substitution
+    // never applied to THIS warning even before the deletion — this pinned the GATE (only
+    // policy-escalated warnings get rewritten), not the fork between renderers. With the
+    // substitution gone entirely, it can no longer fail from any code's severity. Kept, widened to
+    // the em-dash form (never bare 'REFUSED', which collides with 'ECONNREFUSED' on stderr), as a
+    // standing anti-reintroduction guard.
+    expect(warnedHere).not.toContain('— REFUSED');
     expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).not.toContain(
       'Registered:',
     );

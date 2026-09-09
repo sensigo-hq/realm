@@ -65,8 +65,11 @@ steps:
   });
 
   it('the position is spliced BEFORE the "— ignored" clause, leaving that anchor intact', () => {
-    // The CLI's #170 refusal substitution rewrites "— ignored" at print time. If the position
-    // landed after that anchor, the two edits would be fighting over the same span.
+    // Historical reason (issue #540): the CLI used to rewrite "— ignored" to "— REFUSED below"
+    // at print time for a refusing boundary. Had the position landed after that anchor, the two
+    // edits would have fought over the same span. That substitution is deleted now — "— ignored"
+    // renders unmodified everywhere — but the splice-before-the-clause placement this test pins
+    // is still correct on its own terms, so the cell (and its literal expectation) stays.
     const { warnings } = loadWorkflowFromStringWithDiagnostics(WF);
     const w = warnings.find((x) => x.code === 'UNKNOWN_STEP_KEY');
     expect(w?.message).toBe(
