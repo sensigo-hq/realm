@@ -101,9 +101,14 @@ describe('realm workflow validate — orphaned-manifest guard (extension-free fr
     // decision's only tooth on this arm; C3 (validate-extensions.test.ts) is its twin on the
     // extensions arm. Green the moment it lands — the member already ships; no red-first exists.
     expect(stderr).toContain("declares 'retry' but no 'timeout_seconds'");
-    // The PLAIN form on this arm too: what follows is the manifest's placement refusal, not this
-    // warning's escalation — `— REFUSED below` would name the wrong cause.
-    expect(stderr).not.toContain('REFUSED below');
+    // RETIRED TEETH (issue #540 — "fork teeth" class): this pinned the PLAIN form on this arm too
+    // — what follows is the manifest's placement refusal, not this warning's escalation, so
+    // printLoaderWarnings' now-deleted "— REFUSED below" substitution would have named the wrong
+    // cause. Gone now — the two renderers are byte-identical — so this conjunct can no longer
+    // fail; kept, widened to the em-dash form (never bare 'REFUSED', which collides with
+    // 'ECONNREFUSED' on stderr), as a standing anti-reintroduction guard (#542 owns whether the
+    // two call shapes should unify).
+    expect(stderr).not.toContain('— REFUSED');
     expect(stderr).toContain('Invalid: Deployment manifest at');
     expect(stderr).toContain(orphan);
     expect(stderr).toContain('will NOT be loaded');

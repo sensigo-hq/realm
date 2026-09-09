@@ -71,11 +71,14 @@ export const testCommand = new Command('test')
       // extensions failure the operator still saw the workflow's own warnings. Moved below, every
       // warning on that path would vanish silently.
       //
-      // And renderLoaderWarning directly, NOT printLoaderWarnings: that helper rewrites
-      // `— ignored` to `— REFUSED below` for codes the boundary commands refuse, and post-#170
-      // that includes the unknown-key family. `realm workflow test` is execution-LENIENT — it
-      // proceeds and can pass — so "REFUSED below" above a passing run would be a false
-      // statement about what just happened.
+      // And renderLoaderWarning directly, NOT printLoaderWarnings: historically that helper
+      // rewrote `— ignored` to `— REFUSED below` for codes the boundary commands refuse, and
+      // post-#170 that includes the unknown-key family. `realm workflow test` is
+      // execution-LENIENT — it proceeds and can pass — so "REFUSED below" above a passing run
+      // would have been a false statement about what just happened. Issue #540 deleted that
+      // substitution — printLoaderWarnings now renders identically to this loop — but `test`
+      // keeps its own direct loop rather than adopting the helper (kept as two call shapes on
+      // purpose, see #542).
       for (const warning of warnings) console.warn(renderLoaderWarning(warning));
 
       // Resolve project extensions so custom HANDLERS run real and custom ADAPTERS get

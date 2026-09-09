@@ -204,6 +204,27 @@ workflow (realm workflow register <file>) and <verb> again.` (`<verb>` names the
   which `realm agent --run-id` itself now calls too, in place of the inline version it carried
   before.
 
+- **A loader warning's `— ignored` clause no longer flips to a different clause depending on
+  whether this run is about to refuse the workflow over it** (issue #540). Every warning line now
+  reads `— ignored` unconditionally — a true statement about what the parse did with the key,
+  on every surface, whether or not the run goes on to refuse over it. Previously, on the three
+  boundary commands (`validate`/`register`/`watch`), a warning that resolves to `'error'` under
+  the default policy was rewritten to `— REFUSED below`; that rewrite could name the WRONG cause
+  (a hard, unrelated error below the warning, not that warning's own escalation) and, being an
+  unanchored first-occurrence string replace over the whole rendered line, could corrupt an
+  author's own step name or key value if it happened to contain the literal substring `— ignored`.
+  **What moves, and what does not**: the refusal itself is unaffected — the same three commands
+  refuse the same workflows, for the same reasons, with the same exit code. What changes is only
+  the WORD next to the warning; the fact of the refusal is stated separately, immediately below,
+  by the existing `Invalid: N warnings, M escalated to an error by policy: CODE 'key'` line on the
+  boundary-refusal path. **The information this cost** (tracked as issue #544, not fixed here): on
+  three unrelated arms — a hard load error carrying accumulated warnings, the orphaned-manifest
+  refusal, and an extensions-load failure — the `errors[]` field (or its human-mode line) never
+  named the escalated key even before this change; an author who fixes the unrelated hard error
+  first, re-runs, and only then meets the unknown-key warning gets a two-pass round trip where
+  one pass would do. `docs/reference/yaml-schema.md` and `docs/reference/cli-commands.md` are
+  updated to match; no JSON field or schema changed.
+
 ### Added
 
 - **`realm workflow validate --json`** (issue #454). Emits one JSON object on stdout and nothing

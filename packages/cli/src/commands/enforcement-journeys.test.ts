@@ -84,8 +84,9 @@ steps:
     expect(first.out).toContain("unknown key 'dependson'");
     // The suggestion is the whole reason this is a one-edit fix rather than a doc hunt.
     expect(first.out).toContain("did you mean 'depends_on'?");
-    // And it must not tell the author the key was ignored, one line above refusing over it.
-    expect(first.out).not.toContain('ignored');
+    // issue #540: "— ignored" DOES appear, one line above the refusal — it is a true statement
+    // about the parse, not a claim about whether this run goes on to refuse the workflow.
+    expect(first.out).toContain('ignored');
 
     // Apply exactly what the message suggested.
     const second = await validate(write(withTypo.replace('dependson', 'depends_on')));
@@ -100,8 +101,10 @@ describe('J-A2 — the same typo, one level up: a workflow-level key (#170)', ()
   // scopes, so a change that reached one and not the other would be invisible: reverting
   // UNKNOWN_WORKFLOW_KEY alone to 'warn' left every cli cell green before this one existed.
   //
-  // One cell, three layers for the twin: the boundary refuses, the render corrects its own
-  // "— ignored" claim, and the author gets the suggestion that makes it a one-edit fix.
+  // One cell, three layers for the twin: the boundary refuses, the escalation line — separately
+  // — names the offending key, and the author gets the suggestion that makes it a one-edit fix.
+  // (issue #540: the render no longer corrects "— ignored" into anything; that clause is true of
+  // the parse on this path too, and stating the refusal is the escalation line's job alone.)
   const withTypo = `
 id: journey-a2
 name: Journey A2
@@ -113,14 +116,14 @@ steps:
     execution: auto
 `;
 
-  it('validate refuses a top-level typo, suggests the real key, and does not call it ignored', async () => {
+  it('validate refuses a top-level typo, suggests the real key, and still calls it ignored', async () => {
     const first = await validate(write(withTypo));
     expect(first.refused).toBe(true);
     expect(first.out).toContain('escalated to an error by policy');
     expect(first.out).toContain("unknown key 'descriptoin'");
     expect(first.out).toContain("did you mean 'description'?");
-    expect(first.out).not.toContain('ignored');
-    expect(first.out).toContain('REFUSED below');
+    expect(first.out).toContain('ignored');
+    expect(first.out).not.toContain('REFUSED below');
     // The scope is named too — "workflow 'journey-a2'", not a step — so the author knows which
     // level to look at. A step-scoped message here would send them hunting in the wrong place.
     expect(first.out).toContain("workflow 'journey-a2': unknown key 'descriptoin'");
@@ -383,7 +386,13 @@ steps:
     expect(warned).toContain("unknown key 'dependson'");
     // On this path "— ignored" is TRUE and is deliberately kept: the key really is ignored here.
     expect(warned).toContain('— ignored');
-    expect(warned).not.toContain('REFUSED below');
+    // RETIRED TEETH (issue #540 — "core path" class): this drives loadWorkflowFromFile directly,
+    // no CLI printer involved, so it could never have exercised the CLI's print-time substitution
+    // in the first place — deleting that substitution makes this conjunct permanently
+    // unfalsifiable rather than newly so. Kept, widened to the em-dash form (never bare
+    // 'REFUSED', which collides with 'ECONNREFUSED' on stderr), as a standing anti-drift guard on
+    // the core lenient render: nothing downstream of the loader should ever rewrite this text.
+    expect(warned).not.toContain('— REFUSED');
   });
 
   it('CONTRAST: the #369 and #338 refusals are NOT boundary-gated — they refuse on this path too', () => {
@@ -464,11 +473,18 @@ steps:
     expect(result.refused).toBe(true);
     // The error, unchanged.
     expect(result.out).toContain("'timeout_seconds' is not valid on execution: agent steps");
-    // And the warning that used to unwind with it — in its SUBSTITUTED form, because
-    // printLoaderWarnings rewrites "— ignored" to "— REFUSED below" for a code this boundary
-    // refuses, and that claim is true here: the line below it IS the refusal.
+    // The warning that used to unwind with it renders plainly. issue #540 corrected the FALSE
+    // justification that used to sit here: this comment used to claim printLoaderWarnings'
+    // "— REFUSED below" substitution was true on this arm — "the line below it IS the refusal" —
+    // but it is not: the error two lines above is an UNRELATED 'timeout_seconds' failure, not a
+    // refusal of the 'dependson' warning. That false claim was one of the two defects #540 fixed,
+    // and it survived review specifically because a green assertion's own comment vouched for it.
+    // The cost this arm pays for the fix: errors[] here never names 'dependson' — the author
+    // fixes timeout_seconds, re-runs, and only THEN meets the unknown-key warning. Tracked as
+    // issue #544, not fixed by this PR.
     expect(result.out).toContain("unknown key 'dependson'");
-    expect(result.out).toContain('— REFUSED below');
+    expect(result.out).toContain('— ignored');
+    expect(result.out).not.toContain('— REFUSED');
     expect(result.out).toContain("did you mean 'depends_on'?");
   });
 
