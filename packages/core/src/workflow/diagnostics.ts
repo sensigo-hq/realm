@@ -39,11 +39,13 @@ export type WarningCode =
   | 'DEAD_GATE_CONFIG';
 
 /**
- * A single structured diagnostic. `message` is the full human-readable text (matching, for every
- * unknown-key code, exactly what `renderLoaderWarning` would independently reconstruct from the
- * structured fields — kept in sync by construction, not by convention: see `findUnknownKeys`
- * below). `scope`/`id`/`step`/`key`/`did_you_mean` are populated only by the unknown-key family;
- * other codes carry just `code`/`severity`/`message`.
+ * A single structured diagnostic. `message` is the full human-readable text, minted once at the
+ * source (`findUnknownKeys` below, for the unknown-key family) — `renderLoaderWarning` never
+ * reconstructs it from the structured fields; it only ECHOES `message` verbatim, prefixed with
+ * `⚠ `. `scope`/`id`/`step`/`key`/`did_you_mean` are populated only by the unknown-key family and
+ * exist for consumers that want the PARTS (a machine reader, a different renderer), not for
+ * `renderLoaderWarning` to recompose from — that would risk a second, drifting copy of the same
+ * prose. Other codes carry just `code`/`severity`/`message`.
  */
 export interface LoaderWarning {
   code: WarningCode;
@@ -166,12 +168,12 @@ export function closestKey(key: string, allowList: readonly string[]): string | 
 /**
  * Builds the templated "unknown key" message text (everything after the `⚠ ` prefix).
  *
- * The position is spliced in HERE, at the mint, rather than at any render site (issue #392). Two
- * reasons. `renderLoaderWarning` is the single source of the `⚠ ` line format and stays
- * byte-untouched, so nothing downstream has to learn about positions. And the CLI's #170
- * substitution rewrites `— ignored` at print time for a refusing boundary — inserting before that
- * anchor leaves it intact, whereas inserting after it would leave the two edits fighting over the
- * same span.
+ * The position is spliced in HERE, at the mint, rather than at any render site (issue #392):
+ * `renderLoaderWarning` is the single source of the `⚠ ` line format and stays byte-untouched, so
+ * nothing downstream has to learn about positions. (Issue #540 removed the one other reason this
+ * comment used to give — a CLI print-time substitution that rewrote `— ignored` for a refusing
+ * boundary, and whose anchor this splice point had to land before. That substitution is gone;
+ * `— ignored` now renders unmodified everywhere. See `plans/issue-540/design-d2.md`.)
  *
  * The prose carries the START line only. A human reading an error wants somewhere to look, not a
  * range; the range lives on the structured channel where a span-editing agent can use it.

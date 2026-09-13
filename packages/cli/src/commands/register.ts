@@ -169,12 +169,14 @@ export const registerCommand = new Command('register')
       // order against the family split below is immaterial.
       if (err instanceof ExtensionLoadError) {
         // issue #463 — the workflow's own warnings first, then the sentence (the #424 catch-render
-        // shape). The PLAIN render, not printLoaderWarnings: that helper rewrites `— ignored` to
-        // `— REFUSED below` for the codes this boundary refuses, and on this path the escalation
-        // gate never ran — the refusal below is the extensions error, so "REFUSED below" would name
-        // the wrong cause. `— ignored` is the core's statement about the PARSE, true here as on
-        // every surface, and the composition then reads exactly as `realm run` prints it
-        // (test.ts's render comment — #450's reasoning, generalized).
+        // shape). The PLAIN render, not printLoaderWarnings: historically that helper rewrote
+        // `— ignored` to `— REFUSED below` for the codes this boundary refuses, and on this path
+        // the escalation gate never ran — the refusal below is the extensions error, so
+        // "REFUSED below" would have named the wrong cause. Issue #540 deleted that substitution
+        // — the two renderers now produce identical bytes — but the plain render stays here
+        // (kept as two call shapes on purpose, see #542); `— ignored` is the core's statement
+        // about the PARSE, true here as on every surface, and the composition then reads exactly
+        // as `realm run` prints it (test.ts's render comment — #450's reasoning, generalized).
         if (err.warnings !== undefined) {
           for (const w of err.warnings) console.warn(renderLoaderWarning(w));
         }

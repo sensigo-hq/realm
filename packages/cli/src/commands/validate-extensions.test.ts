@@ -206,9 +206,14 @@ steps:
     expect(stderr).toContain("⚠ step 's1': unknown key 'dependson'");
     expect(stderr).toContain("— ignored (did you mean 'depends_on'?)");
     expect(stderr).toContain("⚠ Step 's2': declares 'retry' but no 'timeout_seconds'");
-    // The PLAIN form: the escalation gate never ran here, and the refusal below is the
-    // extensions error, not this warning's — `— REFUSED below` would name the wrong cause.
-    expect(stderr).not.toContain('REFUSED below');
+    // RETIRED TEETH (issue #540 — "fork teeth" class): this pinned the PLAIN form — the
+    // escalation gate never ran here, and the refusal below is the extensions error, not this
+    // warning's, so printLoaderWarnings' now-deleted "— REFUSED below" substitution would have
+    // named the wrong cause. It's gone now — the two renderers are byte-identical — so this
+    // conjunct can no longer fail; kept, widened to the em-dash form (never bare 'REFUSED', which
+    // collides with 'ECONNREFUSED' on stderr), as a standing anti-reintroduction guard (#542 owns
+    // whether the two call shapes should unify).
+    expect(stderr).not.toContain('— REFUSED');
     expect(stderr).toContain('Error loading extensions:');
     expect(stderr).toContain('Cannot resolve extension module');
     expect(stderr).not.toContain('Invalid:');
