@@ -49,11 +49,14 @@ function printWarningsBlock(
   console.warn(
     `[${timestamp}] ${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}:`,
   );
-  // issue #463 — `plain` renders without printLoaderWarnings' `— REFUSED below` substitution. On
-  // the extensions-failure path the escalation gate never ran and the refusal below is the
-  // extensions error, so the substitution would name the wrong cause (test.ts's render comment,
-  // #450's reasoning). The three boundary callers pass no opts and keep the substitution — there a
-  // refusal of the warning's own follows: the escalation line, or renderLoadFailure's `Invalid:`.
+  // issue #463 — `plain` renders without going through printLoaderWarnings. On the
+  // extensions-failure path the escalation gate never ran and the refusal below is the
+  // extensions error, so printLoaderWarnings' now-deleted `— REFUSED below` substitution (issue
+  // #540) would have named the wrong cause here (test.ts's render comment, #450's reasoning). The
+  // substitution is gone — the two branches below now render identical bytes, kept as two call
+  // shapes on purpose (#542) — and the distinction still matters for WHICH population each caller
+  // is in: the three boundary callers pass no opts, because a refusal of the warning's own
+  // follows there — the escalation line, or renderLoadFailure's `Invalid:`.
   if (opts?.plain === true) {
     for (const w of warnings) console.warn(renderLoaderWarning(w));
   } else {

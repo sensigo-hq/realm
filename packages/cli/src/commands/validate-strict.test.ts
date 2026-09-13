@@ -94,10 +94,12 @@ steps:
     expect(warned).toContain("unknown key 'dependson'");
   });
 
-  it('the refusing boundary does NOT say the key was "ignored" — it was not', async () => {
-    // The warning is minted with "— ignored", which is true of the lenient loader and false here.
-    // Printed directly above "escalated to an error", it told the author the opposite of what was
-    // happening. The did-you-mean fragment — the half that lets them fix it in one edit — stays.
+  it('the refusing boundary still says "— ignored" — that describes the parse, and is true here too', async () => {
+    // issue #540: "— ignored" is a true statement about what the PARSE did with the key — dropped
+    // it — on every surface, including one that is about to refuse the workflow over it. The
+    // refusal is a SEPARATE fact, stated by the "escalated to an error by policy" line below,
+    // which names the offending code+key explicitly. The did-you-mean fragment — the half that
+    // lets the author fix it in one edit — stays either way.
     const wfPath = join(dir, 'workflow.yaml');
     writeFileSync(
       wfPath,
@@ -119,16 +121,19 @@ steps:
 
     const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(warned).toContain("unknown key 'dependson'");
-    expect(warned).not.toContain('ignored');
-    expect(warned).toContain('REFUSED below');
+    expect(warned).toContain('ignored');
+    expect(warned).not.toContain('REFUSED below');
     expect(warned).toContain("did you mean 'depends_on'?");
   });
 
-  it('the render substitution covers BOTH flipped codes, not just the step-level one', () => {
-    // Unit-level, driving printLoaderWarnings directly, because the two flipped codes travel
-    // different paths to get here and the cell above only exercises one of them. Narrowing the
-    // substitution to exclude UNKNOWN_WORKFLOW_KEY left the entire cli suite green before this
-    // existed — a conjunct pinned for one member of a set and no other.
+  it('printLoaderWarnings renders BOTH flipped codes verbatim, not just the step-level one', () => {
+    // issue #540: this used to pin that a print-time substitution reached BOTH escalatable codes,
+    // not just UNKNOWN_STEP_KEY — narrowing it to exclude UNKNOWN_WORKFLOW_KEY once left the
+    // entire cli suite green before this cell existed, a conjunct pinned for one member of a set
+    // and no other. The substitution is deleted now, but the SAME failure shape is still worth a
+    // name: a partial revert that reintroduced it for only one code would be exactly this class of
+    // bug again. Unit-level, driving printLoaderWarnings directly, because the two codes travel
+    // different paths to get here and the cell above only exercises one of them.
     const both: LoaderWarning[] = [
       {
         code: 'UNKNOWN_WORKFLOW_KEY',
@@ -155,9 +160,9 @@ steps:
     const lines = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]));
     expect(lines).toHaveLength(2);
     for (const line of lines) {
-      expect(line).toContain('REFUSED below');
-      expect(line).not.toContain('— ignored');
-      // The suggestion survives the substitution — it is the useful half of the line.
+      expect(line).not.toContain('REFUSED below');
+      expect(line).toContain('— ignored');
+      // The suggestion is present either way — it is the useful half of the line.
       expect(line).toContain('did you mean');
     }
     // And the workflow-scoped one is genuinely present, so this cannot pass on two step lines.
@@ -325,9 +330,12 @@ steps:
     const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(warned).toContain("unknown key 'dependson'");
     expect(warned).toContain("declares 'retry' but no 'timeout_seconds'");
-    // The retry advisory is NOT a flipped code, so its line keeps the lenient wording; only the
-    // refused code's "— ignored" is substituted. One render, two different truths.
-    expect(warned).toContain('REFUSED below');
+    // issue #540: BOTH lines say "— ignored" now, escalated or not — it is a true statement about
+    // the parse either way. What distinguishes the escalated one from the retry advisory is the
+    // escalation line above (asserted at :324-326), which names the code+key by itself; nothing
+    // downstream of the mint rewrites either line.
+    expect(warned).not.toContain('REFUSED below');
+    expect(warned).toContain('— ignored');
   });
 });
 

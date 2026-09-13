@@ -175,9 +175,12 @@ expected:
       testCommand.parseAsync([dir, '-f', fixturesDir], { from: 'user' }),
     ).rejects.toThrow('process.exit');
     const lines = warnLines();
-    // BOTH conjuncts are load-bearing, and they catch different mutations. A key-based substring
-    // ALSO matches the `— REFUSED below` substituted form, so swapping this print to
-    // printLoaderWarnings leaves the COUNT satisfied and reds only on the wording below.
+    // Historical reason for splitting this into a count check here and a wording check below
+    // (issue #540): a key-based substring ALSO matched printLoaderWarnings' then-existing
+    // `— REFUSED below` substituted form, so swapping this print to printLoaderWarnings would
+    // have left the COUNT satisfied and red only the wording check below. That substitution is
+    // deleted now — printLoaderWarnings and this loop render identically — so the wording check
+    // below can no longer discriminate that specific swap either; see its own comment.
     const unknownKeyLines = lines.filter((l: string) => l.includes("unknown key 'frobnicate'"));
     const retryInertLines = lines.filter((l: string) => l.includes("'retry' is inert"));
     expect(unknownKeyLines).toHaveLength(1);
@@ -191,10 +194,15 @@ expected:
     expect(unknownKeyLines[0]).toMatch(/^⚠ /);
     expect(retryInertLines[0]).toMatch(/^⚠ /);
 
-    // `test` is execution-LENIENT: it proceeds and passes. "REFUSED below" over a passing run
-    // would be a false statement about what just happened.
+    // RETIRED TEETH (issue #540 — "fork teeth" class): `test` is execution-LENIENT — it proceeds
+    // and passes — so "REFUSED below" over a passing run would have been a false statement about
+    // what just happened; that was this cell's reason to pin the substitution's absence here.
+    // printLoaderWarnings no longer substitutes ANYTHING, so this can no longer fail from any
+    // renderer. Kept, widened to the em-dash form (never bare 'REFUSED', which collides with
+    // 'ECONNREFUSED' on stderr), as a standing anti-reintroduction guard (#542 owns whether
+    // `test`'s own loop should unify with printLoaderWarnings).
     expect(lines.some((l: string) => l.includes('— ignored'))).toBe(true);
-    expect(lines.some((l: string) => l.includes('— REFUSED below'))).toBe(false);
+    expect(lines.some((l: string) => l.includes('— REFUSED'))).toBe(false);
     expect(exitSpy).toHaveBeenCalledWith(0); // the fixture passed — the warnings never gate
   }, 20_000);
 

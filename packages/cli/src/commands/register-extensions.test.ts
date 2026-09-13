@@ -209,12 +209,17 @@ handlers:
 
     expect(exitSpy).toHaveBeenCalledWith(1);
     const warned = joined(warnSpy);
-    // The PLAIN form — the render-choice tooth. printLoaderWarnings would write `— REFUSED below`
-    // here, and what is below is the extensions error, not this warning's escalation: a false
-    // cause. `— ignored` is the core's statement about the parse, true on every surface.
+    // RETIRED TEETH (issue #540 — "fork teeth" class): this pinned the PLAIN-form render choice —
+    // printLoaderWarnings' now-deleted "— REFUSED below" substitution would have named the wrong
+    // cause here (what is below is the extensions error, not this warning's escalation). The
+    // substitution is gone — the two renderers produce identical bytes now — so this conjunct can
+    // no longer fail. Kept, widened to the em-dash form (never bare 'REFUSED', which collides
+    // with 'ECONNREFUSED' on stderr), as a standing anti-reintroduction guard; the two call shapes
+    // are not being unified in this PR (#542). `— ignored` is the core's statement about the
+    // parse, true on every surface.
     expect(warned).toContain("⚠ step 's1': unknown key 'dependson'");
     expect(warned).toContain("— ignored (did you mean 'depends_on'?)");
-    expect(warned).not.toContain('REFUSED below');
+    expect(warned).not.toContain('— REFUSED');
     const errored = joined(errSpy);
     expect(errored).toMatch(
       /^Error loading extensions: Cannot resolve extension module '\.\.\/\.\.\/dist\/does-not-exist\.js' of workflow 'reg-wf'/m,
@@ -254,7 +259,10 @@ handlers:
     );
     expect(warnCalls[2]).toContain("⚠ step 's1': unknown key 'dependson'");
     expect(warnCalls[2]).toContain("— ignored (did you mean 'depends_on'?)");
-    expect(joined(warnSpy)).not.toContain('REFUSED below');
+    // RETIRED TEETH (issue #540, same "fork teeth" class as C1 above): widened to the em-dash
+    // form, permanently vacuous now that printLoaderWarnings never substitutes — kept as a
+    // standing anti-reintroduction guard.
+    expect(joined(warnSpy)).not.toContain('— REFUSED');
     expect(joined(errSpy)).toMatch(
       /^Error loading extensions: Deployment manifest '[^']*realm\.yaml': handlers\.h1 — module '\.\/dist\/mod\.js#MissingExport' has no export 'MissingExport'/m,
     );
