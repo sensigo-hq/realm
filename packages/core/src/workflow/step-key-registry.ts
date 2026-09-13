@@ -1260,11 +1260,10 @@ export const STEP_KEY_REGISTRY = {
       inert_subpop: [
         {
           desc: 'without gate trust: fully validated at load time (#291/#433) and never minted',
-          via: {
-            kind: 'waived',
-            reason:
-              "in-code-admitted posture — the #291 block's own header comment documents that a gate: block with no gate trust is inert and is deliberately validated anyway",
-          },
+          // issue #524: was `waived` quoting the loader's own header comment — not a witness,
+          // and nothing pinned the text (mutating it left the registry suite 205/205 green). The
+          // loader now emits ONE advisory naming the true cause on this exact population.
+          via: { kind: 'advisory', code: 'DEAD_GATE_CONFIG' },
         },
       ],
     },
@@ -1278,12 +1277,16 @@ export const STEP_KEY_REGISTRY = {
       inert_subpop: [
         {
           desc: 'without gate trust: validated, never minted',
-          via: { kind: 'waived', reason: 'in-code-admitted posture, see ×auto' },
+          via: { kind: 'advisory', code: 'DEAD_GATE_CONFIG' }, // issue #524, see ×auto
         },
       ],
     },
-    guard: { c: 'inert', via: { kind: 'tracked', issue: '#512' } },
-    finalizer: { c: 'inert', via: { kind: 'tracked', issue: '#512' } },
+    // issue #524: was `tracked #512` (a gate×guard/finalizer PROHIBITION is #512's own proposal,
+    // still open) — until #512 ships, the loader's #524 block advisory covers this population
+    // too (guard/finalizer never reach the gate mint at all, Step 5b `execution-loop.ts`), so it
+    // is `advisory`, not merely `tracked`, today. This pair is #512's red-first once it lands.
+    guard: { c: 'inert', via: { kind: 'advisory', code: 'DEAD_GATE_CONFIG' } },
+    finalizer: { c: 'inert', via: { kind: 'advisory', code: 'DEAD_GATE_CONFIG' } },
   },
   agent_profile: {
     auto: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_AGENT_PROFILE },

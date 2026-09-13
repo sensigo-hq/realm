@@ -1539,4 +1539,197 @@ steps:
     expect(envelope.status).toBe('ok');
     expect(calls).toBe(1);
   });
+
+  // issue #524 — W2's corrected text claims: each engine fact the loader's new
+  // TOTAL_TIMEOUT_BELOW_ATTEMPT message asserts, driven at the engine boundary (the loader's own
+  // claim-truth cells live in retryable-timeout-loader.test.ts and cite these as their model).
+  describe('issue #524 — W2 message claim-truth (engine)', () => {
+    it('at-stake first: a faster retryable failure still retries while max_attempts allows (P1b) — the exact claim W2 used to deny', async () => {
+      const def: WorkflowDefinition = {
+        id: 'w2-524-p1b-wf',
+        name: 'W2 524 P1b',
+        version: 1,
+        steps: {
+          'step-one': {
+            description: 'Fails once, then succeeds, faster than its per-attempt bound',
+            execution: 'auto',
+            depends_on: [],
+            timeout_seconds: 100,
+            retry: {
+              max_attempts: 3,
+              backoff: 'fixed',
+              base_delay_ms: 1,
+              total_timeout_seconds: 50,
+            },
+          },
+        },
+      };
+      const store = new JsonFileStore(dir);
+      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+
+      let calls = 0;
+      const dispatcher: StepDispatcher = () => {
+        calls++;
+        if (calls === 1) return Promise.reject(makeRetryableError());
+        return Promise.resolve({ ok: true });
+      };
+
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: {},
+        dispatcher,
+      });
+
+      expect(envelope.status).toBe('ok');
+      expect(envelope.evidence).toHaveLength(2);
+      expect(envelope.evidence[0]?.effective_timeout_seconds).toBe(50);
+    }, 15_000); // deflake #371: two real-store attempts under full-suite parallel load — tighter than the 5s global
+
+    it("an attempt that runs OUT its full bound exhausts the cap with no retry (HANG_A: uncapped-per-attempt, HANG_EQ: cap equals timeout — 'bounded', never 'clipped', at equality)", async () => {
+      const store = new JsonFileStore(dir);
+
+      // HANG_A: timeout 2s / cap 1s / max 3 — attempt 1 hangs, the cap (not the per-attempt
+      // timeout) is what fires first.
+      const hangA: WorkflowDefinition = {
+        id: 'w2-524-hanga-wf',
+        name: 'W2 524 HangA',
+        version: 1,
+        steps: {
+          'step-one': {
+            description: 'Hangs',
+            execution: 'auto',
+            depends_on: [],
+            timeout_seconds: 2,
+            retry: {
+              max_attempts: 3,
+              backoff: 'fixed',
+              base_delay_ms: 10,
+              total_timeout_seconds: 1,
+            },
+          },
+        },
+      };
+      const { run: runA } = await store.create({
+        workflowId: hangA.id,
+        workflowVersion: 1,
+        params: {},
+      });
+      const envelopeA = await executeStep(store, hangA, {
+        runId: runA.id,
+        command: 'step-one',
+        input: {},
+        dispatcher: hang,
+      });
+      expect(envelopeA.evidence).toHaveLength(1);
+      expect(envelopeA.error_details?.['exhausted_by']).toBe('total_timeout');
+
+      // HANG_EQ: cap 1s === timeout 1s, on_timeout+idempotent — attempt 1 is BOUNDED to the full
+      // declared timeout (no clip: `clipped_to_ms` absent), and still exhausts the cap at its own
+      // bound with nothing left for a retry.
+      const hangEq: WorkflowDefinition = {
+        id: 'w2-524-hangeq-wf',
+        name: 'W2 524 HangEq',
+        version: 1,
+        steps: {
+          'step-one': {
+            description: 'Hangs, cap equals timeout',
+            execution: 'auto',
+            depends_on: [],
+            timeout_seconds: 1,
+            idempotent: true,
+            retry: {
+              max_attempts: 3,
+              backoff: 'fixed',
+              base_delay_ms: 10,
+              on_timeout: true,
+              total_timeout_seconds: 1,
+            },
+          },
+        },
+      };
+      const { run: runEq } = await store.create({
+        workflowId: hangEq.id,
+        workflowVersion: 1,
+        params: {},
+      });
+      const envelopeEq = await executeStep(store, hangEq, {
+        runId: runEq.id,
+        command: 'step-one',
+        input: {},
+        dispatcher: hang,
+      });
+      expect(envelopeEq.evidence).toHaveLength(1);
+      expect(envelopeEq.evidence[0]?.clipped_to_ms).toBeUndefined();
+      expect(envelopeEq.error_details?.['exhausted_by']).toBe('total_timeout');
+    }, 15_000); // deflake #371: real 1-2s clipped hangs — well under the 5s global
+
+    it("its backoff wait fits the remaining cap — a wait that would NOT fit exhausts the cap before it ever sleeps (site (c)'s sleep guard)", async () => {
+      const def: WorkflowDefinition = {
+        id: 'w2-524-backoff-wf',
+        name: 'W2 524 Backoff',
+        version: 1,
+        steps: {
+          'step-one': {
+            description: 'Fails fast, backoff would blow the cap',
+            execution: 'auto',
+            depends_on: [],
+            timeout_seconds: 2,
+            retry: {
+              max_attempts: 3,
+              backoff: 'fixed',
+              base_delay_ms: 1500,
+              total_timeout_seconds: 1,
+            },
+          },
+        },
+      };
+      const store = new JsonFileStore(dir);
+      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+
+      const start = Date.now();
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: {},
+        dispatcher: () => Promise.reject(makeRetryableError()),
+      });
+      const elapsed = Date.now() - start;
+
+      expect(envelope.evidence).toHaveLength(1);
+      // deflake #371: never actually slept the 1500ms backoff — widened for starvation immunity,
+      // keeping a comfortable discrimination gap below the excluded 1500ms sleep.
+      expect(elapsed).toBeLessThan(800);
+      expect(envelope.error_details?.['exhausted_by']).toBe('total_timeout');
+    }, 15_000); // deflake #371: tighter than the 5s global; the elapsed bound above carries the detection
+
+    it("the 'max_attempts' qualifier is load-bearing: with NO max_attempts declared, a faster failure does NOT still retry (effective max_attempts is 1)", async () => {
+      const def = loadWorkflowFromString(`
+id: w2-524-nomax-wf
+name: W2 524 NoMax
+version: 1
+steps:
+  step-one:
+    description: Fails fast, no max_attempts declared
+    execution: auto
+    timeout_seconds: 100
+    retry:
+      backoff: fixed
+      base_delay_ms: 10
+      total_timeout_seconds: 50
+`);
+      const store = new JsonFileStore(dir);
+      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: {},
+        dispatcher: () => Promise.reject(makeRetryableError()),
+      });
+
+      expect(envelope.evidence).toHaveLength(1);
+      expect(envelope.error_details?.['exhausted_by']).toBe('attempts'); // not total_timeout — nothing left to exhaust
+    }, 15_000); // deflake #371: real-store attempt under full-suite parallel load — tighter than the 5s global
+  });
 });
