@@ -234,6 +234,24 @@ workflow (realm workflow register <file>) and <verb> again.` (`<verb>` names the
   one pass would do. `docs/reference/yaml-schema.md` and `docs/reference/cli-commands.md` are
   updated to match; no JSON field or schema changed.
 
+- **Two loader advisories no longer assert mechanisms that do not exist** (refs #524, the silent-
+  production members). `TOTAL_TIMEOUT_BELOW_ATTEMPT` (an `execution: auto` step whose
+  `retry.total_timeout_seconds` is at or below its per-attempt timeout) claimed "a retry can never
+  occur before the cap fires" — false: the engine's retry decision has no cap conjunct, and a fast
+  retryable failure retries while `max_attempts` allows it (executed: timeout 100s / cap 50s /
+  max 3, attempt 2 succeeded). The text now states what the engine does: each attempt is bounded
+  by the remaining cap, an attempt that runs to its bound exhausts the cap with no retry, and a
+  faster failure still retries while `max_attempts` allows and its backoff fits the remaining cap.
+  Off `execution: auto` the advisory still renders beside the kind refusal that already makes the
+  workflow invalid — a population gate that would exclude it there is tracked separately (#529),
+  not shipped here. The `DEAD_GATE_CONFIG` gate advisories (`on_expiry` without
+  `timeout_seconds`, `default_choice` without `settle_default`, `reminder_seconds >=
+timeout_seconds`) told a step with no gate trust to "set a timeout" — following it silenced the
+  advisory while the whole `gate:` block stayed inert (no gate is ever minted without `trust:
+human_confirmed`/`human_reviewed`). On such a step the loader now emits ONE advisory naming the
+  true cause; gate-trusted steps keep the member advisories byte-identical. `validate --registered`
+  surfaces both corrected texts on already-registered copies too (executed).
+
 ### Added
 
 - **`realm workflow validate --json`** (issue #454). Emits one JSON object on stdout and nothing

@@ -1698,6 +1698,66 @@ describe('executeStep', () => {
     expect(reviewed.gate?.gate_id).not.toBe(confirmed.gate?.gate_id);
   });
 
+  // issue #524 — the gate-remedy silence's engine-side claim-truth: the loader's new
+  // DEAD_GATE_CONFIG block advisory claims "no gate is ever minted" without gate trust, and "the
+  // engine mints a gate only where trust requires human confirmation" otherwise. Driven at Step
+  // 5b directly (the mint site, `isGateTrust(stepDef!.trust)` at execution-loop.ts) — this is the
+  // gate MINT decision, not gate EXPIRY (gate-expiry.test.ts drives applyExpireGate/
+  // applySettleGate on an ALREADY-open gate and never reaches this site at all).
+  describe('issue #524 — gate-mint claim-truth (the DEAD_GATE_CONFIG block advisory)', () => {
+    async function mintOrNot(trust: unknown, gate?: Record<string, unknown>) {
+      const def: WorkflowDefinition = {
+        id: 'gate-524-wf',
+        name: 'Gate 524',
+        version: 1,
+        steps: {
+          work: {
+            description: 'work',
+            execution: 'auto',
+            trust: trust as never,
+            gate: gate as never,
+            depends_on: [],
+          },
+        },
+      };
+      const { run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echoDispatcher,
+      });
+      const stored = await store.get(run.id);
+      return { envelope, stored };
+    }
+
+    it('no gate trust: no gate is ever minted, whatever the gate: block declares', async () => {
+      const { envelope, stored } = await mintOrNot(undefined, {
+        timeout_seconds: 300,
+        on_expiry: 'abort',
+      });
+      expect(envelope.status).toBe('ok');
+      expect(stored.pending_gate).toBeUndefined();
+      expect(stored.run_phase).toBe('completed');
+    });
+
+    it('CONTROL — trust: human_confirmed: a gate IS minted, frozen with the declared expires_at/on_expiry', async () => {
+      const { envelope, stored } = await mintOrNot('human_confirmed', {
+        timeout_seconds: 300,
+        on_expiry: 'abort',
+      });
+      expect(envelope.status).toBe('confirm_required');
+      expect(stored.pending_gate).toBeDefined();
+      expect(stored.pending_gate?.on_expiry).toBe('abort');
+      expect(stored.pending_gate?.expires_at).toBeDefined();
+      expect(stored.run_phase).toBe('gate_waiting');
+    });
+  });
+
   // issue #508 — L2: the engine's fail-closed backstop for a `trust` value that bypassed the
   // loader (a registrar read-back, or a hand-built WorkflowDefinition passed directly to
   // executeStep — exactly what these fixtures do, never routing through loadWorkflowFromString).
