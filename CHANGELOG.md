@@ -268,6 +268,28 @@ workflow (realm workflow register <file>) and <verb> again.` (`<verb>` names the
 
 ### Security
 
+- **Bumped `js-yaml` 4.3.1 → 4.3.2 — fixes a HIGH-severity denial-of-service in the workflow YAML
+  parser ([GHSA-2883-xcg3-v3hh](https://github.com/advisories/GHSA-2883-xcg3-v3hh) /
+  CVE-2026-84375, CVSS 7.5).** The sequel to the v0.30.0 bump that introduced the
+  `maxTotalMergeKeys` budget: that budget counted only _copied_ keys, so a merge source with zero
+  keys cost nothing against it while still driving a full pass over the source sequence — linear
+  bytes bought quadratic work. Lockfile-only, within the existing `^4.2.0` range; no manifest change.
+  This was not a realm configuration lapse: the `maxTotalMergeKeys` knob is inert against this
+  payload at every value including `0`, and realm's defaults were already the documented ones.
+  Exposure: every first-party parse reads an operator-named file, but `loadWorkflowFromString` /
+  `loadWorkflowFromStringWithDiagnostics` (`@sensigo/realm`) and `loadFixtureFromString`
+  (`@sensigo/realm-testing`) are published and take arbitrary text, so a consumer feeding them
+  untrusted YAML was affected — which is why this ships regardless. **Behaviour change — unlike the
+  v0.30.0 bump, 4.3.2 is not parsing-neutral.** Three populations newly refuse: a merge _sequence_
+  longer than 100 entries (`abnormal merge sequence size` — and this cap has no escape hatch:
+  `maxTotalMergeKeys: -1` does not lift it); more than 5,000 single-key `<<: *anchor` merges (each
+  merge source now costs a budget unit on top of its keys, so the effective 10,000 ceiling is halved
+  for that shape); and more than 10,000 empty-source merges (previously unbounded — the
+  vulnerability). Each refusal surfaces as the same catchable `RESOURCE_FORMAT_INVALID`. realm's own
+  corpus is unaffected _by construction_ — none of the 42 tracked YAML files contains a merge key;
+  the only four in the repository are single-anchor `<<: *d` scalars in three core test files, and
+  those pass 231/231 on 4.3.2. (Issue #547.)
+
 - **A typo'd, confused, or otherwise unrecognized step-level `trust` value silently disabled its
   human-approval gate — no CVE; realm-local** (issue #508). `execution: auto`/`execution: agent`
   steps have accepted an unvalidated `trust` field since human gates first shipped: the engine's
