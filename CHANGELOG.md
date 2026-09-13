@@ -285,8 +285,9 @@ workflow (realm workflow register <file>) and <verb> again.` (`<verb>` names the
   `maxTotalMergeKeys: -1` does not lift it); more than 5,000 single-key `<<: *anchor` merges (each
   merge source now costs a budget unit on top of its keys, so the effective 10,000 ceiling is halved
   for that shape); and more than 10,000 empty-source merges (previously unbounded — the
-  vulnerability). Each refusal surfaces as the same catchable `RESOURCE_FORMAT_INVALID`. realm's own
-  corpus is unaffected _by construction_ — none of the 42 tracked YAML files contains a merge key;
+  vulnerability). Through the workflow loader each refusal surfaces as the catchable
+  `RESOURCE_FORMAT_INVALID`; `loadFixtureFromString` propagates the raw `js-yaml` error. realm's
+  own corpus is unaffected _by construction_ — none of the 42 tracked YAML files contains a merge key;
   the only four in the repository are single-anchor `<<: *d` scalars in three core test files, and
   those pass 231/231 on 4.3.2. (Issue #547.)
 
