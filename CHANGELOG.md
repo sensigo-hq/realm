@@ -312,6 +312,24 @@ workflow (realm workflow register <file>) and <verb> again.` (`<verb>` names the
   the only four in the repository are single-anchor `<<: *d` scalars in three core test files, and
   those pass 231/231 on 4.3.2. (Issue #547.)
 
+- Bumped `hono` 4.13.0 → 4.13.7 (transitive via `@modelcontextprotocol/sdk`, which declares
+  `hono ^4.11.4` directly, and `@hono/node-server`, which peers on `^4`; in-range, lockfile-only,
+  Dependabot #550): three moderate advisories, all `< 4.13.5` —
+  [GHSA-gqvv-2mrq-wpjv](https://github.com/advisories/GHSA-gqvv-2mrq-wpjv) / CVE-2026-84365 (`toSSG()`
+  writes outside the output directory), [GHSA-g6gw-c38x-mqfc](https://github.com/advisories/GHSA-g6gw-c38x-mqfc)
+  / CVE-2026-84364 (unbounded dot-notation nesting in `parseBody()`), and
+  [GHSA-crvj-82cr-hjcx](https://github.com/advisories/GHSA-crvj-82cr-hjcx) / CVE-2026-84363 (the query
+  parser reads parameters after the URL fragment). Exposure NONE, derived by execution rather than
+  inherited from the v0.31.0/v0.34.0 triages: realm's only path to `@hono/node-server` is
+  `realm serve` (`listen`'s webhook receiver is a separate plain `node:http` server that touches
+  neither hono nor the SDK), a plain `node:http` server handing each request to the SDK's
+  `StreamableHTTPServerTransport`, which imports only the `getRequestListener` adapter from
+  `@hono/node-server` and nothing from `hono` — the adapter itself loads only `hono/ws`, an
+  import-free helper; its delegate
+  reads the URL through the web-standard `URL` API and the body through `Request.json()`. realm never
+  constructs a Hono app or `Context`, so `toSSG`, `parseBody` and Hono's query parser are unreachable.
+  Fixed in-range regardless. (Issue #546.)
+
 - **A typo'd, confused, or otherwise unrecognized step-level `trust` value silently disabled its
   human-approval gate — no CVE; realm-local** (issue #508). `execution: auto`/`execution: agent`
   steps have accepted an unvalidated `trust` field since human gates first shipped: the engine's
