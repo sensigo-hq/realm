@@ -242,6 +242,7 @@ export {
   loadWorkflowFromString,
   loadWorkflowFromFileWithDiagnostics,
   loadWorkflowFromStringWithDiagnostics,
+  resolveAgentProfiles,
   findTrustRoot,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from './workflow/yaml-loader.js';

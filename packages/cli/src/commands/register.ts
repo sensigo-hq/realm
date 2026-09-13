@@ -2,109 +2,20 @@
 // Registering MINTS the trust decision for project extensions: when the workflow declares
 // `extensions:`, the modules are fully loaded + duck-validated and step config is validated
 // against the resolved adapters' config_schema (two-pass) BEFORE anything is persisted.
+// The admission path itself lives in lib/load-workflow-for-admission.ts (issue #553) — validate
+// and watch take the identical path.
 import { Command } from 'commander';
 import { join } from 'node:path';
-import {
-  loadWorkflowFromFileWithDiagnostics,
-  renderLoaderWarning,
-  JsonWorkflowStore,
-  WorkflowError,
-} from '@sensigo/realm';
-import type { WorkflowDefinition, LoaderWarning } from '@sensigo/realm';
-import {
-  loadProjectExtensions,
-  type LoadedProjectExtensions,
-} from '../extensions/load-project-extensions.js';
-import { ManifestSecretsError } from '../extensions/manifest-secrets.js';
+import { renderLoaderWarning, JsonWorkflowStore, WorkflowError } from '@sensigo/realm';
+import type { WorkflowDefinition } from '@sensigo/realm';
 import {
   printLoaderWarnings,
   rejectOnErrorSeverity,
   failsStrict,
   renderLoadFailure,
   renderEscalationLine,
-  wrapSentinelWarnings,
 } from '../lib/loader-warnings.js';
-
-/**
- * Tags a failure thrown by the extensions load inside `loadWorkflowForRegistration` so the
- * callers' catches can say `Error loading extensions:` — the sentence run and validate already
- * print for this class (issue #451) — without guessing from the message. The message is the
- * original's, byte for byte (register-extensions.test.ts's broken-module cell matches on it
- * THROUGH this wrapper), and the original rides along as `cause`.
- *
- * Minted at exactly the two throw paths out of the extensions block: the real-mode load's
- * non-secrets failure, and the sentinel retry. The retry can never throw ManifestSecretsError
- * itself (sentinel mode resolves every name without reading a source), so nothing is wrapped
- * twice. A WorkflowError from the two-pass re-validation is thrown OUTSIDE the block and keeps
- * the family split.
- *
- * Carries the workflow's own pass-1 loader warnings (issue #463 — the #424 carry shape on this
- * vehicle) so the catch that renders the sentence can print them FIRST, instead of the author
- * fixing the module, re-running, and only then learning about the typo. ABSENT, never `[]`: a
- * construction that passes no warnings, or an empty list, leaves the field unset.
- *
- * @internal Exported for watch.ts and for tests.
- */
-export class ExtensionLoadError extends Error {
-  readonly warnings?: readonly LoaderWarning[];
-
-  constructor(original: unknown, warnings?: readonly LoaderWarning[]) {
-    super(original instanceof Error ? original.message : String(original), { cause: original });
-    this.name = 'ExtensionLoadError';
-    // The if-guard form on purpose: a ternary to `undefined` is a TS2412 under the repo's
-    // exactOptionalPropertyTypes (lane-executed, #463).
-    if (warnings !== undefined && warnings.length > 0) this.warnings = [...warnings];
-  }
-}
-
-/**
- * Loads and validates a workflow for registration. Extension-declaring workflows get the
- * full extension load + config_schema two-pass; extension-free workflows are untouched.
- * Returns the definition alongside every accumulated LoaderWarning (issue #169) — pass-1's
- * structural warnings plus the sentinel-credential warnings, if any. Prints NOTHING itself;
- * both callers (register's action, watch's registerFile) decide how to surface/act on warnings
- * (register supports `--strict` + the dormant #170 reject; watch just prints and continues).
- * @throws on any validation or extension-load failure — nothing is persisted on throw.
- *         Extension-load failures are tagged `ExtensionLoadError` (issue #451).
- */
-export async function loadWorkflowForRegistration(
-  filePath: string,
-): Promise<{ definition: WorkflowDefinition; warnings: LoaderWarning[] }> {
-  const { definition, warnings: pass1Warnings } = loadWorkflowFromFileWithDiagnostics(filePath);
-  // Full module load + duck validation + manifest construction + config_schema two-pass
-  // BEFORE persisting. Secret sources may be unavailable at provisioning time: degrade to
-  // SENTINEL construction with a loud WARN (never silent, never a registration blocker);
-  // execution paths still require real resolution.
-  let loaded: LoadedProjectExtensions;
-  try {
-    loaded = await loadProjectExtensions(definition);
-  } catch (err) {
-    // The guard is the degradation itself: only a secrets failure degrades, everything else is an
-    // extension-load failure and leaves tagged (issue #451). Dropping the conditional kills
-    // degradation — register-extensions.test.ts's sentinel control is the cell in this command's
-    // own home that sees it (the manifest E2E in extensions/ does too, one substring deep).
-    if (!(err instanceof ManifestSecretsError)) throw new ExtensionLoadError(err, pass1Warnings);
-    console.warn(`⚠ ${err.message}`);
-    console.warn(
-      '⚠ Registering with SENTINEL credentials — execution paths still require real secret resolution.',
-    );
-    try {
-      loaded = await loadProjectExtensions(definition, { secretMode: 'sentinel' });
-    } catch (err) {
-      throw new ExtensionLoadError(err, pass1Warnings);
-    }
-  }
-  // Two-pass: re-validate with the resolved registry so step config is checked against
-  // each adapter's config_schema before the definition is persisted. Its warnings are proven
-  // identical to pass-1's (same content, registry only adds config_schema checks) — discarded
-  // here to avoid double-counting the same unknown key twice.
-  loadWorkflowFromFileWithDiagnostics(filePath, loaded.registry);
-
-  return {
-    definition,
-    warnings: [...pass1Warnings, ...wrapSentinelWarnings(loaded.sentinelWarnings)],
-  };
-}
+import { loadWorkflowForAdmission, ExtensionLoadError } from '../lib/load-workflow-for-admission.js';
 
 export const registerCommand = new Command('register')
   .argument('<path>', 'Path to workflow directory or workflow.yaml file')
@@ -120,7 +31,9 @@ export const registerCommand = new Command('register')
         : join(inputPath, 'workflow.yaml');
 
     try {
-      const { definition, warnings } = await loadWorkflowForRegistration(filePath);
+      const { definition, warnings } = await loadWorkflowForAdmission(filePath, {
+        surface: 'register',
+      });
 
       // The issue #170 boundary-reject, LIVE since the flip — checked before --strict, so an
       // unknown key is refused with or without the flag. Store-registered definitions already in

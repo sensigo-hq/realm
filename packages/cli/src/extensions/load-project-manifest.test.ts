@@ -12,7 +12,7 @@ import {
   makeRegistryProvider,
   clearProjectExtensionsCache,
 } from './load-project-extensions.js';
-import { loadWorkflowForRegistration } from '../commands/register.js';
+import { loadWorkflowForAdmission } from '../lib/load-workflow-for-admission.js';
 
 let root: string;
 let counter = 0;
@@ -474,7 +474,9 @@ steps:
 
     // 1. Register with NO .env yet → degrade-with-WARN to sentinel (provisioning flow).
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { definition } = await loadWorkflowForRegistration(workflowPath);
+    const { definition } = await loadWorkflowForAdmission(workflowPath, {
+      surface: 'register',
+    });
     expect(definition.trust_root).toBe(root);
     expect(warn.mock.calls.flat().join(' ')).toContain('SENTINEL');
     warn.mockRestore();

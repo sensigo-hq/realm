@@ -167,27 +167,33 @@ describe('validate --registered (issue #427)', () => {
     expect(text).toContain('Registered workflows: realm workflow list');
   });
 
-  it('R6 an extensions-declaring stored copy: the honesty line, and a real verdict', async () => {
+  it('R6 an extensions-declaring stored copy whose tree is gone: the derived not-run line, and a real verdict', async () => {
     // The from-string loader HARD-THROWS on an `extensions` key with "Register this workflow
     // from its YAML file" — maximally misleading here, where the workflow IS registered. The
-    // key is deleted after the honesty line; both conjuncts below are what pin that.
+    // key is deleted before the parse; the third conjunct pins that. issue #553: the old
+    // hand-typed honesty line is gone — this is the line DERIVED from CONTEXT_DEPENDENT_CHECKS,
+    // whole-message. The fixture's `trust_root` (/somewhere) does not exist, so the extensions
+    // member is declared, not run; no profile ⇒ that member does not apply.
     plant('stored-wf', stored({ extensions: './dist/registry.js' }));
 
     await validateCommand.parseAsync(['--registered', 'stored-wf'], { from: 'user' });
 
     const text = out();
-    expect(text).toContain('Extensions/profiles declared — module resolution, config_schema');
+    expect(text).toContain(
+      '1 check not run (trust_root /somewhere no longer exists): extension modules, manifest and config_schema',
+    );
     expect(text).toContain('Valid: stored-wf'); // it reached a verdict
     expect(text).not.toContain('Register this workflow from its YAML file');
+    expect(text).not.toContain('Extensions/profiles declared'); // the old line is dead
 
-    // ORDER, per header line. The honesty line only means anything under the "Auditing…" frame,
-    // and nothing else pins that: header-before-VERDICT is true by construction (a refusing
-    // parse exits before a late header could print), but header-before-HONESTY-LINE was pinned
-    // by nothing — moving the header below it left 12/12 green.
+    // ORDER, per header line. The disclosure line only means anything under the "Auditing…"
+    // frame, and nothing else pins that: header-before-VERDICT is true by construction (a
+    // refusing parse exits before a late header could print), but header-before-LINE was
+    // pinned by nothing — moving the header below it left 12/12 green.
     //
     // Per-member deliberately: a single first-line conjunct would be VACUOUS under header
     // deletion (indexOf's -1 satisfies `< x`) and blind to a line-2-only reorder.
-    const honestyAt = text.indexOf('Extensions/profiles declared');
+    const honestyAt = text.indexOf('1 check not run');
     const headerAt = text.indexOf("Auditing the registered copy of 'stored-wf'");
     expect(headerAt).toBeGreaterThanOrEqual(0);
     expect(headerAt).toBeLessThan(honestyAt);
@@ -196,9 +202,11 @@ describe('validate --registered (issue #427)', () => {
     expect(gfAt).toBeLessThan(honestyAt);
   });
 
-  it('R6b the honesty line also fires for an agent_profile, with no extensions key', async () => {
-    // The OR-arm, pinned separately: profile FILE resolution is equally unavailable without the
-    // source tree, and a fixture carrying extensions would not prove this half.
+  it('R6b a profile-declaring copy whose tree is gone: BOTH members declared, two reasons', async () => {
+    // The profile member APPLIES here (a step declares agent_profile) and its `source_dir` is
+    // gone, so the line names two checks and two `; `-joined reasons, in member order (issue
+    // #553, audit round 2 F3). `existsSync` is what keeps this a declaration rather than the
+    // WRONG error (`resolveAgentProfiles` against the dead tree would name a path under it).
     plant(
       'stored-wf',
       stored({
@@ -209,7 +217,12 @@ describe('validate --registered (issue #427)', () => {
     await validateCommand.parseAsync(['--registered', 'stored-wf'], { from: 'user' });
 
     const text = out();
-    expect(text).toContain('agent-profile file resolution need the source tree');
+    expect(text).toContain(
+      '2 checks not run (source_dir /somewhere/on/the/registering/machine no longer exists; ' +
+        'trust_root /somewhere no longer exists): agent-profile file resolution, extension ' +
+        'modules, manifest and config_schema',
+    );
+    expect(text).not.toContain("agent_profile 'reviewer' not found");
     expect(text).toContain('Valid: stored-wf');
   });
 

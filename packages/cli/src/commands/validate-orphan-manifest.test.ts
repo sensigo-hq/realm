@@ -53,15 +53,18 @@ afterEach(() => {
   rmSync(base, { recursive: true, force: true });
 });
 
-describe('realm workflow validate — orphaned-manifest guard (extension-free from-string path)', () => {
-  it('1. an orphaned realm.yaml in the workflow dir → Invalid: + non-zero exit', async () => {
+describe('realm workflow validate — orphaned-manifest guard (the one admission path, issue #553)', () => {
+  it('1. an orphaned realm.yaml in the workflow dir → Error loading extensions: + non-zero exit', async () => {
+    // issue #553: register's text, byte-identical — the guard now fires inside the shared
+    // extensions pass on validate too, so the sentence is the #445 one, not `Invalid:`.
     const orphan = join(workflowDir, 'realm.yaml');
     writeFileSync(orphan, ORPHAN_MANIFEST, 'utf8');
     const { code, stdout, stderr } = await runCli(['workflow', 'validate', workflowPath]);
     expect(code).toBe(1);
     expect(stdout).not.toContain('Valid:');
     const out = stdout + stderr;
-    expect(out).toContain('Invalid:');
+    expect(out).toContain('Error loading extensions: Deployment manifest at');
+    expect(out).not.toContain('Invalid:');
     expect(out).toContain(orphan);
     expect(out).toContain('will NOT be loaded');
     expect(out).toContain(join(base, 'realm.yaml')); // names the resolved trust root
@@ -109,7 +112,7 @@ describe('realm workflow validate — orphaned-manifest guard (extension-free fr
     // 'ECONNREFUSED' on stderr), as a standing anti-reintroduction guard (#542 owns whether the
     // two call shapes should unify).
     expect(stderr).not.toContain('— REFUSED');
-    expect(stderr).toContain('Invalid: Deployment manifest at');
+    expect(stderr).toContain('Error loading extensions: Deployment manifest at');
     expect(stderr).toContain(orphan);
     expect(stderr).toContain('will NOT be loaded');
   }, 25_000);
