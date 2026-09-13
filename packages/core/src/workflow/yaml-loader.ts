@@ -1514,9 +1514,12 @@ function parseWorkflowString(
       // issue #291 (authorable gate timeout — the FIRST validation the `gate:` block has ever had):
       // the E2 positive-integer checks on timeout_seconds/reminder_seconds/reminder_max, the
       // on_expiry enum, default_choice's required-iff + choice-set validation, and the dead-config
-      // warn cells. Runs regardless of `trust` (a `gate:` block with no gate trust is already inert
-      // — no separate rejection needed; the existing render/mint paths never read it without a
-      // trust value).
+      // warn cells. The hard-error checks run regardless of `trust` (a shape/enum mistake is a
+      // mistake whether or not this step can ever gate). The dead-config ADVISORIES fork on
+      // `isGateTrust` (issue #524): the engine mints a gate only where trust requires human
+      // confirmation (Step 5b, `execution-loop.ts`) — on any other step the WHOLE block is inert,
+      // so a per-member remedy ("set a timeout") would be false: following it never makes the key
+      // live, it only silences the one diagnostic that said so.
       if (step['gate'] !== undefined) {
         if (typeof step['gate'] !== 'object' || step['gate'] === null) {
           errors.push(withStepLine(stepName, `Step '${stepName}': 'gate' must be an object`));
@@ -1592,6 +1595,10 @@ function parseWorkflowString(
           // — one chain, so this can never drift from the mint's) — so a load-time-legal
           // default_choice can NEVER fail at enactment time.
           const hasDefaultChoice = 'default_choice' in gate;
+          // issue #524: the one place this block's dead-config ADVISORIES fork. The mint only
+          // ever reads `gate.*` where `isGateTrust(trust)` holds (execution-loop.ts:3302,
+          // `W_GATE_MINT_TRUST`) — computed once so the three sites below can never disagree.
+          const gateTrusted = isGateTrust(step['trust']);
           if (onExpiry === 'settle_default') {
             if (!hasDefaultChoice) {
               errors.push(
@@ -1616,9 +1623,10 @@ function parseWorkflowString(
                 );
               }
             }
-          } else if (hasDefaultChoice) {
+          } else if (hasDefaultChoice && gateTrusted) {
             // default_choice with on_expiry:'abort' or with no on_expiry at all — inert, not an
             // error: WARN as dead config (the #220 DEAD_VALIDATION_EXHAUSTION_CONFIG precedent).
+            // Gate-trusted only (issue #524) — off gate trust the block advisory below covers it.
             warnings.push({
               code: 'DEAD_GATE_CONFIG',
               severity: resolveSeverity('DEAD_GATE_CONFIG'),
@@ -1630,36 +1638,74 @@ function parseWorkflowString(
             });
           }
 
-          // Dead config: on_expiry declared but no timeout_seconds — nothing will ever trigger the
-          // enforce clock, so the declared disposition can never enact.
-          if (onExpiry !== undefined && gate['timeout_seconds'] === undefined) {
-            warnings.push({
-              code: 'DEAD_GATE_CONFIG',
-              severity: resolveSeverity('DEAD_GATE_CONFIG'),
-              scope: 'step',
-              step: stepName,
-              message:
-                `Step '${stepName}': 'gate.on_expiry' is ignored without 'gate.timeout_seconds' — ` +
-                `set a timeout, or remove 'gate.on_expiry'.`,
-            });
-          }
+          if (gateTrusted) {
+            // Dead config: on_expiry declared but no timeout_seconds — nothing will ever trigger
+            // the enforce clock, so the declared disposition can never enact. Gate-trusted only
+            // (issue #524): off gate trust the block advisory below covers it.
+            if (onExpiry !== undefined && gate['timeout_seconds'] === undefined) {
+              warnings.push({
+                code: 'DEAD_GATE_CONFIG',
+                severity: resolveSeverity('DEAD_GATE_CONFIG'),
+                scope: 'step',
+                step: stepName,
+                message:
+                  `Step '${stepName}': 'gate.on_expiry' is ignored without 'gate.timeout_seconds' ` +
+                  `— set a timeout, or remove 'gate.on_expiry'.`,
+              });
+            }
 
-          // Dead notification ([F-A2-5]): reminder_seconds >= timeout_seconds means the FIRST
-          // reminder occurrence would never fire before the enforce clock expires.
-          if (
-            typeof gate['reminder_seconds'] === 'number' &&
-            typeof gate['timeout_seconds'] === 'number' &&
-            gate['reminder_seconds'] >= gate['timeout_seconds']
-          ) {
+            // Dead notification ([F-A2-5]): reminder_seconds >= timeout_seconds means the FIRST
+            // reminder occurrence would never fire before the enforce clock expires. Gate-trusted
+            // only (issue #524): off gate trust the block advisory below covers it.
+            if (
+              typeof gate['reminder_seconds'] === 'number' &&
+              typeof gate['timeout_seconds'] === 'number' &&
+              gate['reminder_seconds'] >= gate['timeout_seconds']
+            ) {
+              warnings.push({
+                code: 'DEAD_GATE_CONFIG',
+                severity: resolveSeverity('DEAD_GATE_CONFIG'),
+                scope: 'step',
+                step: stepName,
+                message:
+                  `Step '${stepName}': 'gate.reminder_seconds' (${String(gate['reminder_seconds'])}) ` +
+                  `>= 'gate.timeout_seconds' (${String(gate['timeout_seconds'])}) — the first ` +
+                  `reminder would never fire before the gate expires.`,
+              });
+            }
+          } else {
+            // issue #524 (the gate-remedy silence): without gate trust the mint never reads ANY
+            // key in this block, so a per-member remedy ("set a timeout") is false — following it
+            // would silence the diagnostic while the whole block stays exactly as dead. ONE
+            // advisory naming the true cause, unconditional on which keys are set (the block is
+            // equally inert whichever ones are). Position on the STRUCTURED channel only
+            // (`withKeyLine`/`withPathLine` are the ERROR-string helpers, consumed only by
+            // `errors.push` — no loader advisory carries a position today, and this one follows
+            // that convention: `renderLoaderWarning` prints `⚠ ${message}` alone). The kind list
+            // is DERIVED from the registry (`consumedKindsFor('trust')`, the #517
+            // `consumed_home.kinds` pattern) so the remedy can never drift from the vocabulary
+            // that actually gates it.
+            const gatePos = sourceMap.posOf(['steps', stepName, 'gate']);
+            const trustKinds = consumedKindsFor('trust');
             warnings.push({
               code: 'DEAD_GATE_CONFIG',
               severity: resolveSeverity('DEAD_GATE_CONFIG'),
               scope: 'step',
               step: stepName,
+              key: 'gate',
+              ...(gatePos !== undefined
+                ? {
+                    line: gatePos.line,
+                    column: gatePos.column,
+                    endLine: gatePos.endLine,
+                    endColumn: gatePos.endColumn,
+                  }
+                : {}),
               message:
-                `Step '${stepName}': 'gate.reminder_seconds' (${String(gate['reminder_seconds'])}) ` +
-                `>= 'gate.timeout_seconds' (${String(gate['timeout_seconds'])}) — the first reminder ` +
-                `would never fire before the gate expires.`,
+                `Step '${stepName}': the 'gate:' block is inert — this step declares no gate ` +
+                `trust ('trust: human_confirmed' or 'trust: human_reviewed'), so no gate is ever ` +
+                `minted and none of its keys are read. Remove the block, or (on an ` +
+                `${trustKinds.join(' or ')} step) declare that trust.`,
             });
           }
         }
@@ -1864,13 +1910,16 @@ function parseWorkflowString(
             });
           }
 
-          // W2: the cap can never cover even a single full-length attempt — (a) an EXPLICIT cap
-          // below an EXPLICIT timeout_seconds, or (b) on_timeout: true with a cap at-or-below the
-          // effective per-attempt timeout (retry-defeating: the opt-in can never yield a viable
-          // second attempt). Both conditions require an EXPLICIT total_timeout_seconds — the
-          // AMENDED default cap (the worst-case schedule) is, by construction, never below a
-          // single attempt for max_attempts ≥ 2, so this never fires on the bare 3600s-default
-          // population.
+          // W2 (issue #524 correction): the declared cap is at or below the per-attempt timeout —
+          // (a) an EXPLICIT cap below an EXPLICIT timeout_seconds, or (b) on_timeout: true with a
+          // cap at-or-below the effective per-attempt timeout. This does NOT mean "no retry can
+          // ever occur": `willRetry`'s first disjunct (execution-loop.ts) has no cap conjunct, so
+          // a retryable failure that returns faster than the (clipped) attempt bound still retries
+          // while 'max_attempts' allows another attempt — only an attempt that runs OUT its full
+          // bound exhausts the cap with nothing left for a retry. Both arms require an EXPLICIT
+          // total_timeout_seconds — the AMENDED default cap (the worst-case schedule) is, by
+          // construction, never below a single attempt for max_attempts ≥ 2, so this never fires
+          // on the bare 3600s-default population.
           const explicitCapSeconds =
             typeof retry['total_timeout_seconds'] === 'number'
               ? retry['total_timeout_seconds']
@@ -1892,9 +1941,11 @@ function parseWorkflowString(
                 step: stepName,
                 message:
                   `Step '${stepName}': 'retry.total_timeout_seconds: ${explicitCapSeconds}' is at ` +
-                  `or below its own effective per-attempt timeout (${effectivePerAttemptSeconds}s) ` +
-                  `— the cap can never cover a single full-length attempt, so a retry can never ` +
-                  `occur before the cap fires.`,
+                  `or below its per-attempt timeout (${effectivePerAttemptSeconds}s` +
+                  `${explicitTimeoutSeconds === undefined ? ', the default' : ''}) — each attempt ` +
+                  `is bounded by what remains of the cap, so an attempt that runs to its bound ` +
+                  `exhausts the cap with no retry; a faster failure still retries while ` +
+                  `'max_attempts' allows another attempt and its backoff wait fits the remaining cap.`,
               });
             }
           }

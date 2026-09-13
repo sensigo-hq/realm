@@ -270,7 +270,7 @@ steps:
     });
   });
 
-  describe('W2 — the cap can never cover even a single full-length attempt', () => {
+  describe('W2 — the cap is at or below the per-attempt timeout (issue #524 correction)', () => {
     it('(a) fires when an EXPLICIT cap is below an EXPLICIT timeout_seconds', () => {
       const { warnings } = loadWorkflowFromStringWithDiagnostics(`
 id: w2a-wf
@@ -290,7 +290,7 @@ steps:
       expect(w2).toBeDefined();
     });
 
-    it('(b) fires when on_timeout: true has a cap at-or-below the effective per-attempt timeout', () => {
+    it('(b) fires when on_timeout: true has a cap at or below the effective per-attempt timeout', () => {
       const { warnings } = loadWorkflowFromStringWithDiagnostics(`
 id: w2b-wf
 name: W2b
@@ -337,6 +337,116 @@ steps:
 `);
       const w2 = warnings.find((w) => w.code === 'TOTAL_TIMEOUT_BELOW_ATTEMPT');
       expect(w2).toBeDefined();
+      // issue #524: the fallback branch is the ONLY fixture with no explicit timeout_seconds —
+      // the ", the default" clause is only ever true here.
+      expect(w2?.message).toContain('is at or below its per-attempt timeout (3600s, the default)');
+    });
+
+    // issue #524 — one assertion per clause of the corrected text, on the fixtures that already
+    // exist above (arm-a: explicit cap below explicit timeout; arm-b: cap AT the effective
+    // timeout, the equality boundary; DEF: the fallback-to-default-3600s branch) plus a NEW
+    // NOMAX fixture for the one clause none of the three above can exercise. Whole-message
+    // `toContain` per clause (never a single whole-message `toBe`, since the interpolated
+    // numbers differ per fixture) — a one-word revert of the new text reds exactly its row.
+    describe('claim-truth rows (issue #524 — every clause of the corrected text, pinned)', () => {
+      it('arm-a (explicit cap below explicit timeout): every non-default-qualified clause', () => {
+        const { warnings } = loadWorkflowFromStringWithDiagnostics(`
+id: w2-524-clauses-a-wf
+name: W2 524 Clauses A
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+    timeout_seconds: 100
+    retry:
+      max_attempts: 3
+      total_timeout_seconds: 50
+`);
+        const message = warnings.find((w) => w.code === 'TOTAL_TIMEOUT_BELOW_ATTEMPT')?.message;
+        expect(message).toContain(
+          "'retry.total_timeout_seconds: 50' is at or below its per-attempt timeout (100s)",
+        );
+        expect(message).not.toContain(', the default'); // explicit timeout_seconds is declared
+        expect(message).toContain('each attempt is bounded by what remains of the cap');
+        expect(message).toContain(
+          'an attempt that runs to its bound exhausts the cap with no retry',
+        );
+        expect(message).toContain(
+          "a faster failure still retries while 'max_attempts' allows another attempt",
+        );
+        expect(message).toContain('its backoff wait fits the remaining cap');
+      });
+
+      it('arm-b at the EQUALITY boundary (cap === effective timeout): "at or below", not "below"', () => {
+        const { warnings } = loadWorkflowFromStringWithDiagnostics(`
+id: w2-524-clauses-eq-wf
+name: W2 524 Clauses EQ
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+    idempotent: true
+    timeout_seconds: 50
+    retry:
+      max_attempts: 3
+      on_timeout: true
+      total_timeout_seconds: 50
+`);
+        const message = warnings.find((w) => w.code === 'TOTAL_TIMEOUT_BELOW_ATTEMPT')?.message;
+        expect(message).toContain(
+          "'retry.total_timeout_seconds: 50' is at or below its per-attempt timeout (50s)",
+        );
+        expect(message).not.toContain(', the default');
+      });
+
+      it('DEF (fallback to DEFAULT_EXECUTION_TIMEOUT_SECONDS): the ", the default" clause', () => {
+        const { warnings } = loadWorkflowFromStringWithDiagnostics(`
+id: w2-524-clauses-def-wf
+name: W2 524 Clauses DEF
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+    idempotent: true
+    retry:
+      max_attempts: 2
+      on_timeout: true
+      total_timeout_seconds: 1800
+`);
+        const message = warnings.find((w) => w.code === 'TOTAL_TIMEOUT_BELOW_ATTEMPT')?.message;
+        expect(message).toContain(
+          "'retry.total_timeout_seconds: 1800' is at or below its per-attempt timeout (3600s, the default)",
+        );
+      });
+
+      it("NOMAX (no max_attempts declared): the message still carries the 'max_attempts' qualifier, unconditionally", () => {
+        const { warnings } = loadWorkflowFromStringWithDiagnostics(`
+id: w2-524-clauses-nomax-wf
+name: W2 524 Clauses NoMax
+version: 1
+steps:
+  work:
+    description: Work
+    execution: auto
+    handler: h
+    timeout_seconds: 100
+    retry:
+      total_timeout_seconds: 50
+`);
+        const message = warnings.find((w) => w.code === 'TOTAL_TIMEOUT_BELOW_ATTEMPT')?.message;
+        // The qualifier itself is what makes this true even though NOMAX's effective
+        // max_attempts is 1 (the engine cell above proves it does NOT still retry there) — the
+        // text says "while 'max_attempts' allows another attempt", never "always retries".
+        expect(message).toContain(
+          "a faster failure still retries while 'max_attempts' allows another attempt",
+        );
+      });
     });
 
     it('never fires on the bare 3600s-default population (no explicit total_timeout_seconds at all)', () => {
