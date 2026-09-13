@@ -159,6 +159,42 @@ ${ON_EXPIRY_BLOCK}
     });
   });
 
+  describe('cell 8b — the SECOND gate-trust member, human_reviewed, takes the gate-trusted arm (correction: unpinned at the :1601 fork)', () => {
+    // isGateTrust (GATE_TRUST_LEVELS) admits TWO values — human_confirmed and human_reviewed —
+    // but every cell above (and every pre-existing cell in gate-timeout-loader.test.ts, whose
+    // gateWorkflow helper hardcodes human_confirmed) exercises the gate-trusted arm with
+    // human_confirmed ONLY. The CODE already reads isGateTrust (both values), so this is a pin
+    // gap, not a bug: mutating the fork to `step['trust'] === 'human_confirmed'` left this file
+    // green until now.
+    it('human_reviewed + on_expiry: abort (no timeout_seconds) — exactly ONE DEAD_GATE_CONFIG, the UNCHANGED member text, never the block', () => {
+      const { warnings } = loadWorkflowFromStringWithDiagnostics(
+        gateWorkflow(
+          'auto',
+          '    description: work\n    handler: h\n    trust: human_reviewed',
+          '      on_expiry: abort',
+        ),
+      );
+      const gate = warnings.filter((w) => w.code === 'DEAD_GATE_CONFIG');
+      expect(gate).toHaveLength(1);
+      expect(gate[0]?.message).toBe(
+        "Step 'work': 'gate.on_expiry' is ignored without 'gate.timeout_seconds' — set a " +
+          "timeout, or remove 'gate.on_expiry'.",
+      );
+      expect(gate[0]?.message).not.toContain("gate:' block is inert");
+    });
+
+    it('human_reviewed + timeout_seconds + on_expiry: abort together — the live population, no warning at all (control, paired with the cell above)', () => {
+      const { warnings } = loadWorkflowFromStringWithDiagnostics(
+        gateWorkflow(
+          'auto',
+          '    description: work\n    handler: h\n    trust: human_reviewed',
+          '      timeout_seconds: 60\n      on_expiry: abort',
+        ),
+      );
+      expect(warnings.filter((w) => w.code === 'DEAD_GATE_CONFIG')).toEqual([]);
+    });
+  });
+
   describe('cell 9 — the registry-derived kind list can never drift from the vocabulary that gates it', () => {
     it("the rendered whole message contains every member of consumedKindsFor('trust'), joined 'X or Y'", () => {
       const { warnings } = loadWorkflowFromStringWithDiagnostics(
