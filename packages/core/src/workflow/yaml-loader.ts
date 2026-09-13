@@ -2644,9 +2644,7 @@ function parseWorkflowString(
     }
     const workflowContextRaw = doc['workflow_context'];
     if (workflowContextRaw !== undefined) {
-      for (const [name, entry] of Object.entries(
-        workflowContextRaw as Record<string, unknown>,
-      )) {
+      for (const [name, entry] of Object.entries(workflowContextRaw as Record<string, unknown>)) {
         if (name.endsWith('.raw')) {
           errors.push(
             withTopLevelLine(
