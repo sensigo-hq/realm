@@ -15,7 +15,10 @@ import {
   renderLoadFailure,
   renderEscalationLine,
 } from '../lib/loader-warnings.js';
-import { loadWorkflowForAdmission, ExtensionLoadError } from '../lib/load-workflow-for-admission.js';
+import {
+  loadWorkflowForAdmission,
+  ExtensionLoadError,
+} from '../lib/load-workflow-for-admission.js';
 
 export const registerCommand = new Command('register')
   .argument('<path>', 'Path to workflow directory or workflow.yaml file')

@@ -8,7 +8,10 @@ import {
   WorkflowError,
 } from '@sensigo/realm';
 import type { WorkflowRegistrar, LoaderWarning } from '@sensigo/realm';
-import { loadWorkflowForAdmission, ExtensionLoadError } from '../lib/load-workflow-for-admission.js';
+import {
+  loadWorkflowForAdmission,
+  ExtensionLoadError,
+} from '../lib/load-workflow-for-admission.js';
 import {
   renderLoadFailure,
   renderEscalationLine,
