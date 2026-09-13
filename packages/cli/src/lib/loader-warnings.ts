@@ -3,10 +3,23 @@
 // printLoaderWarnings, and the dormant #170 boundary-reject is factored into ONE shared helper so
 // they can't drift.
 //
-// One deliberate exception (issue #450): the execution-LENIENT `realm workflow test` renders
-// through renderLoaderWarning directly. printLoaderWarnings rewrites `— ignored` to
-// `— REFUSED below` for the codes a boundary refuses, and `test` refuses nothing — it proceeds
-// and can pass, so `— ignored` is the true word there and the substitution would not be.
+// issue #540: printLoaderWarnings used to rewrite the mint's "— ignored" clause to
+// "— REFUSED below" for any warning the boundary resolves to 'error', on the theory that
+// "ignored" is false once a boundary is about to refuse the workflow over it. That substitution
+// is gone: "— ignored" is a true statement about what the PARSE did (the key was dropped) on
+// EVERY surface, including this one — the refusal is a separate fact, already stated per-key by
+// renderEscalationLine below. The substitution could also name the WRONG cause on any arm that
+// bypasses renderEscalationLine's own gate (see the "hard-error carry"/orphan-manifest/extensions-
+// failure comments in validate.ts and register.ts) and, being a first-occurrence unanchored
+// string replace, could corrupt author-controlled text that happened to contain the clause
+// (issue #525 item 1). See
+// `plans/issue-540/design-d2.md` for the full adjudication between this and issue #170's
+// (superseded) legibility argument for the substitution.
+//
+// One consequence, since `test` was never the exception any more (issue #450): with the
+// substitution gone, printLoaderWarnings is now behaviorally identical to
+// `renderLoaderWarning`'s plain-render loop that `realm workflow test` already used directly.
+// Whether the two call shapes should unify is its own question — filed as #542, not answered here.
 //
 // Precise as of issue #444: no command hand-rolls a ⚠ prefix for a LOADER WARNING. A few
 // adjacent one-off notices — register's sentinel lines, test's sentinel echo — still print their
@@ -22,37 +35,14 @@ import {
 } from '@sensigo/realm';
 
 /**
- * The unknown-key warning is minted with "— ignored", which is true of the LENIENT loader
- * (run/agent/listen really do ignore the key and carry on) and false here: the only callers of
- * this function are validate/register/watch, and post-#170 those three REFUSE a workflow whose
- * warning resolves to 'error'. Printing "— ignored" one line above "escalated to an error" tells
- * the author the opposite of what is about to happen to them.
- *
- * Substituted at the RENDER, not the mint, precisely because the mint is shared with the lenient
- * path — where the original wording is true and worth keeping. The did-you-mean fragment is
- * untouched: it is the most useful half of the line and the reason the author can fix this in one
- * edit.
- */
-const IGNORED_CLAUSE = '— ignored';
-const REFUSED_CLAUSE = '— REFUSED below';
-
-/**
- * Prints every warning via the single renderLoaderWarning format source, correcting the
- * "— ignored" claim for any warning this boundary will actually refuse.
- *
- * Resolved against DEFAULT_POLICY, which is the policy the boundary-reject itself uses. A warning
- * that only fails under `--strict` still renders "— ignored" — see the report's design note; the
- * `--strict` path prints its own "failing due to --strict" line, so the author is not left
- * without an explanation.
+ * Prints every warning via the single renderLoaderWarning format source — no substitution (see
+ * the module header for why the former "— ignored" → "— REFUSED below" rewrite was deleted,
+ * issue #540). The `DEFAULT_POLICY` import above stays: `rejectOnErrorSeverity` and
+ * `failsStrict`, both exported from this module, still resolve against it.
  */
 export function printLoaderWarnings(warnings: readonly LoaderWarning[]): void {
   for (const w of warnings) {
-    const line = renderLoaderWarning(w);
-    console.warn(
-      resolveSeverity(w.code, DEFAULT_POLICY) === 'error'
-        ? line.replace(IGNORED_CLAUSE, REFUSED_CLAUSE)
-        : line,
-    );
+    console.warn(renderLoaderWarning(w));
   }
 }
 

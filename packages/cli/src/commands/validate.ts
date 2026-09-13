@@ -414,8 +414,9 @@ function rejectIfPolicyEscalates(warnings: LoaderWarning[]): boolean {
   //
   // register and watch print the same line since issue #451 (watch adds its timestamp and a
   // `— refusing to register.` tail, because it does not exit); it lives in lib/loader-warnings.ts
-  // for that reason. On all three surfaces printLoaderWarnings' `— REFUSED below` substitution
-  // already marks each refused warning one line above.
+  // for that reason. On all three surfaces the warnings printed one line above still read
+  // `— ignored` (issue #540 deleted the CLI's print-time rewrite to `— REFUSED below`) — this
+  // line is where the refusal, and WHICH warning triggered it, actually gets said.
   console.error(renderEscalationLine(warnings));
   return true;
 }
@@ -758,8 +759,11 @@ export const validateCommand = new Command('validate')
         } catch (err) {
           // The workflow's own warnings before the refusal — the same set the success path counts,
           // so nothing the author would otherwise see only on the NEXT run is withheld. Plain
-          // render: the escalation gate has not run, so printLoaderWarnings' `— REFUSED below`
-          // would name the wrong cause (test.ts's render comment, #450's reasoning). Unconditional
+          // render, not printLoaderWarnings — historically because printLoaderWarnings' now-deleted
+          // `— REFUSED below` substitution (issue #540) would have named the WRONG cause here: the
+          // escalation gate never ran on this arm, so nothing has actually decided any of these
+          // warnings is what's being refused. The two renderers produce identical bytes today, but
+          // stay two call shapes deliberately — see #542. Unconditional
           // in HUMAN mode: on the #123 non-WorkflowError rethrow population the warnings print
           // before the loud crash — true statements either way. exitOnLoadFailure cannot print
           // them twice: the orphan WorkflowError is minted bare in the CLI
@@ -889,9 +893,11 @@ export const validateCommand = new Command('validate')
         //
         // issue #463 — the workflow's own warnings first: pass-1's plus the retry advisory, the
         // same set the success path counts minus the sentinel wraps, which come from the load that
-        // just failed — there is nothing to wrap. Plain render (test.ts's render comment, #450's
-        // reasoning): the escalation gate has not run, so printLoaderWarnings' `— REFUSED below`
-        // would name the wrong cause.
+        // just failed — there is nothing to wrap. Plain render, not printLoaderWarnings —
+        // historically because printLoaderWarnings' now-deleted `— REFUSED below` substitution
+        // (issue #540) would have named the WRONG cause here: the escalation gate never ran on
+        // this arm either. Same two-call-shapes-on-purpose note as the orphan-manifest arm above
+        // (#542).
         //
         // issue #454 — the errors[] convention's OTHER exception: this sentence ships WHOLE, with
         // its `Error loading extensions: ` head — the #445 classification IS the composed

@@ -104,10 +104,12 @@ steps:
     expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).not.toContain(
       'Registered:',
     );
-    // The did-you-mean survives, and the false "ignored" claim does not.
+    // The did-you-mean survives, and "— ignored" survives too (issue #540): it is a true
+    // statement about the parse, not a claim about whether watch refuses over it — the escalation
+    // line above (asserted at :101-103) is what states the refusal and names the culprit.
     const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(warned).toContain("did you mean 'depends_on'?");
-    expect(warned).not.toContain('ignored');
+    expect(warned).toContain('ignored');
 
     // "the watcher stays up so the author can fix the key and get re-registered on the next save"
     // — this describe's docstring has said so since the #170 flip, and until issue #451 no cell
@@ -698,9 +700,15 @@ describe('watchWorkflow — `Error loading extensions:` (issue #451)', () => {
     expect(warned[0]).toMatch(/^\[[^\]]+\] 1 warning:$/);
     expect(warned[1]).toContain("⚠ step 'step-one': unknown key 'dependson'");
     expect(warned[1]).toContain("— ignored (did you mean 'depends_on'?)");
-    // The PLAIN form — the plain-mode flag's tooth. printLoaderWarnings would write `— REFUSED
-    // below` here, and what follows is the extensions error, not this warning's escalation.
-    expect(warned.join('\n')).not.toContain('REFUSED below');
+    // RETIRED TEETH (issue #540 — "fork teeth" class): this pinned that the plain-mode flag
+    // deliberately bypassed printLoaderWarnings, whose now-deleted "— REFUSED below" substitution
+    // would have named the wrong cause here (what follows is the extensions error, not this
+    // warning's escalation). The substitution is gone — printLoaderWarnings and the plain form now
+    // render identically — so this conjunct can no longer fail from either branch. Kept, widened
+    // to the em-dash form (never bare 'REFUSED', which collides with 'ECONNREFUSED' on stderr), as
+    // a standing anti-reintroduction guard: the fork itself (see printWarningsBlock) is not being
+    // unified with the plain render in this PR — see #542.
+    expect(warned.join('\n')).not.toContain('— REFUSED');
     expect(errored()).toMatch(
       /^\[[^\]]+\] Error loading extensions: Cannot resolve extension module '\.\.\/\.\.\/dist\/does-not-exist\.js' of workflow 'watch-test'/m,
     );
