@@ -28,6 +28,12 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- **BREAKING — `loadWorkflowFromString` / `loadWorkflowFromStringWithDiagnostics` refuse four shapes they silently accepted** (issue #553). The `context_wrapper` enum, the `workflow_context` name rules (no `.raw` suffix, `[\w.]+` only) and `source.path`-required moved from the file loader into the shared parser, so every surface — file, string, `validate --registered` — refuses them with one text, `Invalid workflow: … (line N)` on file surfaces.
+  #### Upgrading
+  Workflows carrying `context_wrapper` outside `xml`/`brackets`/`none`, a `workflow_context` name ending `.raw` or containing characters outside `[\w.]`, or an entry without `source.path` are now refused by `loadWorkflowFromString` exactly as they always were by every file-based surface; fix the workflow — there is no flag.
+- `realm workflow validate` now attempts real secret resolution before degrading to sentinel — it READS the deployment manifest's declared secret sources (dotenv files at the trust root, the environment) exactly as `register` does; it writes nothing. The degradation's second line says `Validating with SENTINEL credentials` (register's says `Registering`). Under `--json` those two ⚠ lines go to stderr; stdout stays the JSON object.
+- `validate --registered` replaces its hand-typed "not audited here" line with a derived one — `N check(s) not run (<reason>[; <reason>]): <check>[, <check>]` — and `--json` gains `checks_not_run: [{ id, reason }]` on every arm (`[]` in file mode, never absent). A non-empty set never flips `--strict`.
+
 - **Wrong-kind step-key refusals are now minted from the consumption registry, with
   where-the-key-actually-lives consequence clauses** (#517, the #417-PR2 drive-flip). What changes
   on screen: the generic "is not valid on execution" / "is only valid on execution" messages now
@@ -77,6 +83,9 @@ All notable changes to this project are documented here.
   default) are unaffected either way.
 
 ### Fixed
+
+- **`realm workflow validate` ≡ `realm workflow register`** (issue #553): validate takes register's admission path — file loader, unconditional project-extensions pass, real-then-sentinel secret resolution, `config_schema` two-pass — so the five refusals validate never ran on extension-free workflows now fire with register's exact message and exit code: a missing `agent_profile` file (`Invalid workflow: Step 's1': agent_profile 'x' not found. Searched: …`), the `context_wrapper` enum, the two `workflow_context` name rules and `source.path`-required (each `… (line N)`); an invalid `realm.yaml` at the trust root (`Error loading extensions: …`, byte-identical); an unresolvable manifest secret (the same ⚠ block, then `Valid:`); a missing file (the loader's `Failed to read workflow file: …` sentence, `Invalid:`-prefixed on validate, `Error:`-prefixed on register). `validate --registered` runs the four context rules on the stored copy and resolves profiles and the manifest against the recorded source tree when it still exists. Three shipped examples (`07-issue-triage`, `08-pr-review`, `09-webhook-pr-review`) now print their manifest-secrets ⚠ block on `validate` as they always did on `register`. `hasTopLevelExtensions` (the pre-scan that chose the string loader) is deleted.
+- **docs: `register` never incremented the version, and `register --strict` never shared `validate --strict`'s warning surface** (issue #561): `cli-commands.md` now states what each actually does.
 
 - **Thirty wording defects in the loader's minted kind-refusal messages, each an executed or
   source-traced false/overbroad claim about the engine, are corrected against the engine's real

@@ -119,11 +119,15 @@ the error, so a single run gives you the whole defect set. Previously the warnin
 the failure and only surfaced once the error was fixed, one layer per round trip. The same holds
 for `realm workflow register` and `realm workflow watch`.
 
-Workflows declaring `extensions:` (or validated with `--extensions-module <path>`) are loaded
-file-based, their extension modules are loaded, and step `config` is then validated against each
-resolved adapter's `config_schema` (two-pass). Extension-free workflows keep the historical
-string-based validation surface — a deliberate strictness asymmetry (file-context checks like
-agent-profile resolution only run for declaring workflows).
+`validate` runs the same admission path as `register` (issue #553): the file loader (agent-profile
+resolution, the `context_wrapper`/`workflow_context` rules), the project-extensions pass (extension
+modules, the deployment manifest, `config_schema` two-pass) and real-then-sentinel secret
+resolution — so what `validate` blesses `register` accepts, and what `register` refuses `validate`
+refuses, with the same message. `--registered` runs the same rules on the stored copy and, per
+check, resolves agent profiles against the recorded `source_dir` and the manifest against the
+recorded `trust_root` when the recorded paths still exist; otherwise it prints exactly which checks
+it could not run and why (`N check(s) not run (<reason>): <check>, …` — `checks_not_run` in
+`--json`; never a `--strict` failure).
 
 **`--strict` (issue #169):** by default, a non-fatal loader warning (an unknown workflow/step key,
 a retry-without-timeout advisory, a sentinel-credential fallback) is printed but the command still
@@ -265,9 +269,10 @@ gate table.
 
 ### `realm workflow register <path>`
 
-Registers a workflow in the local store (`~/.realm/workflows/`). Increments the version number
-on each call. Fails immediately if any agent profile declared in the workflow is not found in
-`profiles_dir`.
+Registers a workflow in the local store (`~/.realm/workflows/`). The stored copy carries the
+`version:` the workflow file declares — re-registering the same file overwrites the copy and keeps
+that number (the version is yours to bump, never incremented for you). Fails immediately if any
+agent profile declared in the workflow is not found in `profiles_dir`.
 
 ```bash
 realm workflow register ./my-workflow
@@ -279,11 +284,13 @@ Registering **mints the trust decision** for project extensions: when the workfl
 `config_schema` two-pass — all **before** anything is persisted. See the
 [Project extensions guide](project-extensions.md).
 
-**`--strict` (issue #169):** same warning surface as `validate --strict` (see above), but the
-consequence is stronger — a warning-bearing workflow is never written to the store at all
-(`store.register` is not called), and the command exits `1`. Without `--strict`, registration
-proceeds as always: the workflow is persisted and every warning is printed alongside the
-`Registered:` line.
+**`--strict` (issue #169):** refuses to persist a warning-bearing workflow — the warnings are
+printed, `store.register` is not called, and the command exits `1` with
+`Error: '<id>' v<version> has N warning(s); refusing to register due to --strict`. The warning
+population is the loader's (unknown keys, sentinel credentials); `register` does not run
+`validate`'s retry-without-timeout advisory, so the two flags do not count the same set (issue
+#464). Without `--strict`, registration proceeds as always: the workflow is persisted and every
+warning is printed alongside the `Registered:` line.
 
 ---
 

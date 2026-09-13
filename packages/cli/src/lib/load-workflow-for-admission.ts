@@ -92,8 +92,7 @@ export async function loadWorkflowForAdmission(
   manifest: LoadedProjectExtensions['manifest'];
 }> {
   const { definition, warnings: pass1Warnings } = loadWorkflowFromFileWithDiagnostics(filePath);
-  const override =
-    opts.overrideModule !== undefined ? { overrideModule: opts.overrideModule } : {};
+  const override = opts.overrideModule !== undefined ? { overrideModule: opts.overrideModule } : {};
   // Full module load + duck validation + manifest construction + config_schema two-pass
   // BEFORE persisting. Secret sources may be unavailable at provisioning time: degrade to
   // SENTINEL construction with a loud WARN (never silent, never a registration blocker);
