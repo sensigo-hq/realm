@@ -6,6 +6,107 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+The agreement release. `realm workflow validate` now gives `register`'s exact verdict, on every
+workflow, instead of a `Valid` that `register` was about to contradict (#553); a typo in the one
+step key that means "a human must approve this step" can no longer silently remove the approval
+(#508); and the loader's wrong-kind refusal messages are minted from a step-key consumption
+registry that a conformance suite proves against the real loader and engine on every test run
+(#417 PR-2, #517), with thirty of those messages' claims corrected against the engine's real
+behaviour. Around that: the retry total-time cap is truthful at its boundary (#573), a Gorgias
+per-ticket thread is no longer silently cut at one page (#575), `--stuck` and `watch` stop
+contradicting themselves (#432, #453), an empty gate choice list is refused instead of minting an
+undisposable run (#433), and two dependency bumps close four advisories.
+
+**Five BREAKING changes**, which a 0.x minor is allowed to carry: pre-1.0, breaking changes ship
+in a minor when they are flagged here with upgrade guidance. Three add load-refusal classes —
+things a workflow file could do that are now load errors: an invalid step `trust` value (#508,
+the one class that ALSO refuses at dispatch on already-registered copies), a declared-and-empty
+gate choice source (#433), and four `workflow_context`/`context_wrapper` shapes the published
+string loader used to accept (#553). The other two change what a published package does by
+default: the YAML parser refuses three merge-key shapes (a security fix, #547), and
+`@sensigo/realm-testing`'s GitHub mock server binds an ephemeral port instead of `3032` (#371).
+Two contract edges ride alongside, listed below but not counted: what a redirected
+`realm workflow run` prints where and exits with (#458), and when `realm workflow watch` exits
+(#453).
+
+Read **Upgrading** before you upgrade — the `trust` check is the one that can only be run after.
+
+#### Upgrading
+
+**Refusal classes, in two groups.**
+
+DETECTABLE BEFORE YOU UPGRADE — `realm workflow validate` on the PRE-upgrade binary already
+refuses these on every FILE surface; only the published string loader and stored copies are new:
+
+- **`loadWorkflowFromString` / `loadWorkflowFromStringWithDiagnostics` refuse four shapes they
+  silently accepted** (issue #553): a `context_wrapper` outside `xml`/`brackets`/`none`
+  (`'context_wrapper' must be 'xml', 'brackets', or 'none' (found: '…')`), a `workflow_context`
+  entry name ending in `.raw` (`workflow_context entry '…' must not end with '.raw'`) or carrying
+  characters outside `[\w.]` (`… must match [\w.]+ (underscores and dots only — no hyphens)`), or
+  an entry without `source.path` (`workflow_context.<name>.source.path is required`). Fix the
+  workflow; there is no flag. `validate --registered` now runs the same four rules on stored
+  copies, so a stored copy can fail an audit it used to pass. On the CLI, the same change makes
+  `realm workflow validate` return `register`'s verdict on extension-free workflows — a missing
+  `agent_profile` file (`Invalid workflow: Step '…': agent_profile '…' not found. Searched: …`), an
+  invalid `realm.yaml` at the trust root (`Error loading extensions: …`), a missing workflow file —
+  where it used to print `Valid` and exit 0. A CI gate built on `validate` can start failing on a
+  workflow that `register` was always going to refuse; that is the gate working.
+
+SURFACES AT FIRST LOAD AFTER UPGRADING — the pre-upgrade `validate` says nothing about these:
+
+- **A declared-and-empty gate choice source is a load error** (issue #433): `gate.choices: []`,
+  `input_schema.properties.choice.enum: []` with no `gate.choices` declared, and `gate: {choices:}`
+  (a YAML null) beside an empty `enum`. The refusal — `Step '…': 'gate.choices', when declared,
+must be non-empty — an empty list is never right …` (or its `enum` twin) — is cited at the key's
+  own line. Declare at least one choice, or remove the key to fall back to the next source in
+  `gate.choices ?? input_schema.properties.choice.enum ?? ['approve', 'reject']`. An already
+  REGISTERED copy keeps running as before (an open gate is frozen); `realm workflow validate
+--registered <id>` flags it.
+- **An invalid step-level `trust` value is a load error AND a dispatch-time refusal that is NOT
+  grandfathered** (issue #508 — the one item here that reaches already-registered workflows). On
+  `auto`/`agent` steps `trust` accepts exactly `auto`, `human_confirmed`, `human_reviewed`;
+  `guard` accepts none; `finalizer` accepts only `auto`. Anything else — a typo, the
+  service-level `engine_delivered`/`engine_managed`/`agent_provided` literal on a step (six of
+  realm's own nine examples carried it), the retired `human_notified` — is refused at
+  `validate`/`register`/`watch` (`A step's 'trust' accepts auto, human_confirmed, human_reviewed.
+Did you mean '…'? Correct the value, then 'realm workflow register <path>' — any run of this
+workflow picks up the corrected definition on its next attempt at this step.`) and refused
+  AGAIN by the engine before the step is claimed (`VALIDATION_TRUST_VALUE`: `refused at dispatch:
+no gate opens and this step does not run; this run is now parked, non-terminal, until the value
+is corrected, and any step depending on this one returns 'blocked' in the meantime`). Upgrade
+  first, then run `realm workflow validate --registered <id>` on EVERY registered workflow — the
+  check is new, so the pre-upgrade binary cannot report it. A flagged step starts refusing at its
+  next dispatch the moment you upgrade, re-registered or not; a run mid-flight on it parks (no
+  output map, no evidence, no store write — the guard runs before the step is even claimed) until
+  the workflow is corrected and re-registered. The new `trust_value_invalid` run-health finding
+  (`get_run_state`, or `realm run inspect` given a definition) is how you find it if `--registered`
+  did not. TypeScript consumers: `TrustLevel` no longer includes `'human_notified'`.
+- **The YAML parser (js-yaml 4.3.2, a security fix) refuses three merge-key shapes it accepted**
+  (issue #547): a merge sequence longer than 100 entries (`abnormal merge sequence size` — no
+  escape hatch; `maxTotalMergeKeys: -1` does not lift it), more than 5,000 single-key
+  `<<: *anchor` merges, more than 10,000 empty-source merges. Through the workflow loader each
+  surfaces as `RESOURCE_FORMAT_INVALID`; `loadFixtureFromString` propagates the raw `js-yaml`
+  error. No realm workflow is affected unless it uses merge keys — none of realm's 42 tracked
+  YAML files does — but a consumer feeding those published loaders such YAML must reshape it.
+
+**Contract edges — no refusal, but a different default or exit.**
+
+- **`@sensigo/realm-testing`: `startGitHubMockServer` binds an ephemeral port by default** (issue
+  #371) — `port` defaults to `0`, not `3032`. Anything that hardcoded `http://localhost:3032`
+  instead of reading `handle.url` breaks; pass `3032` explicitly to keep the old behaviour.
+- **`realm workflow run` with stdout redirected: prompts move to stderr and cancellation exits 1**
+  (issue #458). `realm workflow run … > log` now writes the prompts and what you type to stderr,
+  and Ctrl-C / Ctrl-D exit `1` with the detach map (Ctrl-D used to exit `0`; Ctrl-C `130`). Only
+  pty-driven automation that checks `$?` or parses stdout for the prompt can see this.
+- **`realm workflow watch` exits 1 when the watched directory disappears** (issue #453):
+  `Error: The watched directory no longer exists — deleted, or moved out from under the watch.
+Nothing is watched any more; restart 'realm workflow watch' when the path exists again.` It
+  used to stay alive on the dead inode forever. A delete-and-recreate (a build step,
+  `git checkout`) is survived — the watch re-arms — so only a genuine removal exits.
+
+**What is NOT re-validated**: a definition already in the registry never re-parses YAML — only the
+#508 dispatch check and the #553/#433 `validate --registered` audit reach stored copies.
+
 ### Added
 
 - **A step-key consumption registry classifies every step field against every execution kind, and
@@ -17,7 +118,8 @@ All notable changes to this project are documented here.
   with the exact loader check that refuses it); prohibited only in combination with another
   field's absence (`tool_timeout` without `tools`, the one existing case); or not applicable (a
   key resolved away before any step is ever validated). A TypeScript `satisfies` clause makes a
-  future step key that ships without a row a compile error, and 197 new tests drive every
+  future step key that ships without a row a compile error, and 211 new tests (197 in core,
+  14 in the CLI) drive every
   prohibited/inert/companion-conditioned cell through the real workflow loader on a
   purpose-built fixture, and check every source-code witness by exact, comment-stripped count —
   so the registry cannot drift silently from the code it describes. Zero behavior change; this PR
@@ -26,11 +128,42 @@ All notable changes to this project are documented here.
   drive-flip that mints the loader's own kind-prohibition messages FROM this registry shipped in
   this same release (#517 — see the entry under Changed below).
 
+- **`GUARD_PROHIBITED_STEP_KEYS` / `FINALIZER_PROHIBITED_STEP_KEYS` and the registry's mint
+  surface are new public exports of `@sensigo/realm`** (#521, #517). The two prohibited-key
+  sets are DERIVED from the consumption registry rather than hand-listed — 20 and 19 members,
+  typed as computed readonly string arrays; `trust` is correctly absent from the finalizer set
+  because its value-conditional check admits `trust: 'auto'`. Beside them: `MINT_WITNESS_PATTERN`,
+  `CONSUMED_HOME`, `SURFACE_NAME`, `prohibitedKeysFor`, `consumedKindsFor`. None of these
+  existed in 0.41.0, so nothing a consumer already imports changes shape.
+
+- **`realm workflow validate --json`** (issue #454). Emits one JSON object on stdout and nothing
+  else — a machine-readable contract for CI gates and scripted pre-upgrade audits, in both file
+  mode and `--registered` mode. `valid` is the boundary truth (would a plain `register` accept
+  this file), reported separately from `strict`: a warning-only workflow reads `valid: true` even
+  when `--strict --json` fails and exits `1`, because `--strict` is a run mode you asked for, not
+  a property of the file. `diagnostics` is issue #169's structured loader-warning channel — one
+  entry per warning, `severity` always the effective severity under the default policy, never
+  `--strict`'s all-error mode. `errors` carries one string per hard failure, with issue #402's
+  per-step boundaries surviving as separate array entries — the same per-error granularity the
+  #424 warnings channel already gave the human report, now on the machine one too. Not
+  represented: the `structured_output` adoption nudge, `--explain`'s per-step detail (inert under
+  `--json`), and `--registered`'s audit headers — all human-informational, never part of the
+  contract. Exit codes are unchanged either way. See
+  [`docs/reference/cli-commands.md`](docs/reference/cli-commands.md#realm-workflow-validate-path)
+  for the full field-by-field contract.
+
+- **`get_run_state`/`realm run inspect` (when given a workflow definition) now surface a
+  `trust_value_invalid` run-health finding for any ELIGIBLE step whose declared `trust` the
+  engine will refuse at its next dispatch** (issue #508). Definition-gated, like
+  `resolved_gate_with_eligible_guard` — `realm run list` never sees it, `--stuck` included (that
+  command's only classification call site passes no definition), and a step not yet reachable in
+  the DAG stays silent about a defect it has not hit yet, rather than flooding a healthy run with
+  a warning about a step nobody can act on yet. See "Trust levels" in
+  [`docs/reference/yaml-schema.md`](docs/reference/yaml-schema.md#trust-levels).
+
 ### Changed
 
 - **BREAKING — `loadWorkflowFromString` / `loadWorkflowFromStringWithDiagnostics` refuse four shapes they silently accepted** (issue #553). The `context_wrapper` enum, the `workflow_context` name rules (no `.raw` suffix, `[\w.]+` only) and `source.path`-required moved from the file loader into the shared parser, so every surface — file, string, `validate --registered` — refuses them with one text, `Invalid workflow: … (line N)` on file surfaces.
-  #### Upgrading
-  Workflows carrying `context_wrapper` outside `xml`/`brackets`/`none`, a `workflow_context` name ending `.raw` or containing characters outside `[\w.]`, or an entry without `source.path` are now refused by `loadWorkflowFromString` exactly as they always were by every file-based surface; fix the workflow — there is no flag.
 - `realm workflow validate` now attempts real secret resolution before degrading to sentinel — it READS the deployment manifest's declared secret sources (dotenv files at the trust root, the environment) exactly as `register` does; it writes nothing. The degradation's second line says `Validating with SENTINEL credentials` (register's says `Registering`). Under `--json` those two ⚠ lines go to stderr; stdout stays the JSON object.
 - `validate --registered` replaces its hand-typed "not audited here" line with a derived one, one check beside its own reason — `N check(s) not run: <check> (<reason>)[; <check> (<reason>)]` — and `--json` gains `checks_not_run: [{ id, reason }]` on every arm (`[]` in file mode, never absent, and also `[]` on any `valid: false` arm — a refusal ends the audit and is its own reason). A non-empty set never flips `--strict`, but the verdict line now names the count (`Valid: … — N check(s) not run`, `; `-joined with a failing `--strict`'s own clause when both fire). A copy created by the MCP `create_workflow` tool (`origin: 'agent'`) never records a source tree at all, whatever version created it, and its not-run reason says so instead of naming a version. `--extensions-module` now applies in `--registered` mode too; when the extensions check itself could not run (its recorded `trust_root` is gone), the reason gains `; --extensions-module not applied` rather than silently dropping the override.
 
@@ -52,17 +185,9 @@ All notable changes to this project are documented here.
   narrowing on MALFORMED steps: when `execution` is missing or invalid, the per-key kind advice
   that used to fire alongside the execution error no longer does (the registry has no row for a
   kind nobody declared) — such workflows are still refused, by the execution error itself.
-- **`GUARD_PROHIBITED_STEP_KEYS` / `FINALIZER_PROHIBITED_STEP_KEYS` are now DERIVED from the
-  registry** (#517): membership grew from 12→20 and 13→19 (the keys whose refusals lived in
-  per-key checks joined their true sets; no member lost; `trust` correctly absent from the
-  finalizer set — its value-conditional check admits `trust: 'auto'`), and the declared type
-  widened from a literal tuple to a computed readonly string array. The
-  `FINALIZER_LOOP_PATTERN`/`GUARD_LOOP_PATTERN` exports are gone with the loops themselves;
-  the mint surface (`MINT_WITNESS_PATTERN`, `CONSUMED_HOME`, `SURFACE_NAME`,
-  `prohibitedKeysFor`, `consumedKindsFor`) is exported in their place.
 
-- **The house test-suite is de-starved, and `@sensigo/realm-testing`'s GitHub mock server binds
-  an ephemeral port by default** (issue #371). A structural class of local flakiness — every
+- **BREAKING — `@sensigo/realm-testing`'s GitHub mock server binds an ephemeral port by
+  default; and the house test-suite is de-starved** (issue #371). A structural class of local flakiness — every
   bare `npx turbo run test --force` (the review command every MA/IA run has used) racing at
   turbo's default concurrency, oversubscribing the box 2× because the de-starvation pairing this
   repo shipped once before (`maxWorkers: '50%'` + `turbo run test --concurrency=2`) lived only in
@@ -82,11 +207,34 @@ All notable changes to this project are documented here.
   actually bound, so existing callers reading `handle.url` (rather than hardcoding the old
   default) are unaffected either way.
 
+- **BREAKING — an invalid step-level `trust` value is now a load error, and a dispatch-time
+  refusal too** (issue #508). Before this release, `trust` was validated NOWHERE: a typo
+  (`trust: 'huamn_confirmed'`), the SERVICE-level `trust` literal used on a step by mistake
+  (`trust: engine_delivered` — six of realm's own nine shipped examples carried exactly this
+  confusion), the retired `human_notified` value, `null`, or any other non-matching value all
+  loaded clean and ran with **no gate at all** — the step executed unattended on a value the
+  author believed required human approval. On `auto`/`agent` steps `trust` now accepts exactly
+  `'auto'` / `'human_confirmed'` / `'human_reviewed'` (absent is still `'auto'`, unchanged) —
+  `guard` accepts none of the three, and `finalizer` accepts only `'auto'`; anything else
+  refuses at `validate`/`register`/`watch` with a message naming the offending value, the
+  consequence, the accepted set, and the remedy. The engine ALSO refuses it again immediately
+  before dispatch — the part that is **not grandfathered** (see Upgrading above): unlike a
+  loader-only rule, this check reads the CURRENT stored definition on every dispatch, so an
+  already-registered workflow carrying a bad `trust` value starts refusing at that step's next
+  attempt, with no re-registration needed to trigger it and none possible to avoid it.
+  `human_notified` is retired from `TrustLevel` (zero real consumers — nothing ever read it);
+  `human_reviewed` is kept as a reserved alias of `human_confirmed` — no distinct "challenge"
+  mechanism exists — pending issue #531. The agent protocol (`get_workflow_protocol`) briefs a
+  refused step honestly ("the engine will refuse it… do NOT call execute_step") instead of the
+  previous "none — engine handles this automatically" (auto) or "YOU execute this step" (agent),
+  both false for a step that will never run.
+
 ### Fixed
 
 - **`realm workflow validate` ≡ `realm workflow register`** (issue #553): validate takes register's admission path — file loader, unconditional project-extensions pass, real-then-sentinel secret resolution, `config_schema` two-pass — so the five refusals validate never ran on extension-free workflows now fire with register's exact message and exit code: a missing `agent_profile` file (`Invalid workflow: Step 's1': agent_profile 'x' not found. Searched: …`), the `context_wrapper` enum, the two `workflow_context` name rules and `source.path`-required (each `… (line N)`); an invalid `realm.yaml` at the trust root (`Error loading extensions: …`, byte-identical); an unresolvable manifest secret (the same ⚠ block, then `Valid:`); a missing file (the loader's `Failed to read workflow file: …` sentence, `Invalid:`-prefixed on validate, `Error:`-prefixed on register). `validate --registered` runs the four context rules on the stored copy and resolves profiles and the manifest against the recorded source tree when it still exists. Three shipped examples (`07-issue-triage`, `08-pr-review`, `09-webhook-pr-review`) now print their manifest-secrets ⚠ block on `validate` as they always did on `register`. `hasTopLevelExtensions` (the pre-scan that chose the string loader) is deleted. An empty `workflow_context` entry (a name with nothing under it, e.g. `notes:`) used to crash `register` with a bare `Cannot read properties of null (reading 'source')` while `validate` said `Valid`; both now refuse it identically as a missing `source.path`.
 - **docs: `register` never incremented the version, and `register --strict` never shared `validate --strict`'s warning surface** (issue #561): `cli-commands.md` now states what each actually does.
-- **The retry total-time cap is truthful at its boundary** (issue #573): a `STEP_TIMEOUT` of an attempt whose bound was the remaining budget now always records `exhausted_by: 'total_timeout'` — by construction, not by a clock comparison (Node/libuv timers can fire early against any clock — typically under 1 ms — so the comparison could say "budget left" after the timer had already fired — about one fire in a hundred on a developer machine, 2 of 3 CI runs on one PR); at `total_timeout_seconds` equal to `timeout_seconds` the first attempt is bounded by its own timeout and is never reported `clipped_to_ms` (the budget was read twice, a millisecond apart); elapsed budget is measured on the monotonic clock; `duration_ms` stays wall-clock and may read slightly below the bound. The cap value and the claim horizon are unchanged. The `reliability.test.ts` boundary cell that reddened CI at random is now deterministic.
+- **The retry total-time cap is truthful at its boundary** (issue #573): a `STEP_TIMEOUT` of an attempt whose bound was the remaining budget now always records `exhausted_by: 'total_timeout'` — by construction, not by a clock comparison (Node/libuv timers can fire early against any clock — typically under 1 ms — so the comparison could say "budget left" after the timer had already fired — about one fire in a hundred on a developer machine; on one PR, both of its two CI runs went
+  red on their first attempt); at `total_timeout_seconds` equal to `timeout_seconds` the first attempt is bounded by its own timeout and is never reported `clipped_to_ms` (the budget was read twice, a millisecond apart); elapsed budget is measured on the monotonic clock; `duration_ms` stays wall-clock and may read slightly below the bound. The cap value and the claim horizon are unchanged. The `reliability.test.ts` boundary cell that reddened CI at random is now deterministic.
 
 - **Thirty wording defects in the loader's minted kind-refusal messages, each an executed or
   source-traced false/overbroad claim about the engine, are corrected against the engine's real
@@ -157,8 +305,8 @@ All notable changes to this project are documented here.
   No CLI or docs changes: existing consumers were already coherent for every record shape they
   construct, and this fix does not touch anything they display.
 
-- **A declared-and-empty gate choice source is now a load error, in all three shapes it could
-  take** (issue #433). `gate.choices: []`, a gate-trusted step's `input_schema.properties.
+- **BREAKING — a declared-and-empty gate choice source is now a load error, in all three shapes
+  it could take** (issue #433). `gate.choices: []`, a gate-trusted step's `input_schema.properties.
 choice.enum: []` with no `gate.choices` list declared, and `gate: {choices:}` (a YAML-null
   value) paired with an empty `enum` all used to load clean — and then mint a gate no response
   could ever resolve: the dev-mode prompt rendered the unanswerable `Choice []:`, every
@@ -237,7 +385,8 @@ workflow (realm workflow register <file>) and <verb> again.` (`<verb>` names the
 
 - **Two loader advisories no longer assert mechanisms that do not exist** (refs #524, the silent-
   production members). `TOTAL_TIMEOUT_BELOW_ATTEMPT` (an `execution: auto` step whose
-  `retry.total_timeout_seconds` is at or below its per-attempt timeout) claimed "a retry can never
+  `retry.total_timeout_seconds` is below its per-attempt timeout — or at or below it when
+  `retry.on_timeout: true`) claimed "a retry can never
   occur before the cap fires" — false: the engine's retry decision has no cap conjunct, and a fast
   retryable failure retries while `max_attempts` allows it (executed: timeout 100s / cap 50s /
   max 3, attempt 2 succeeded). The text now states what the engine does: each attempt is bounded
@@ -257,71 +406,10 @@ human_confirmed`/`human_reviewed`). On such a step the loader now emits ONE advi
   pagination (`next_page`) is now followed the same way the cursor-based endpoints' `next_cursor`
   already was.
 
-### Added
-
-- **`realm workflow validate --json`** (issue #454). Emits one JSON object on stdout and nothing
-  else — a machine-readable contract for CI gates and scripted pre-upgrade audits, in both file
-  mode and `--registered` mode. `valid` is the boundary truth (would a plain `register` accept
-  this file), reported separately from `strict`: a warning-only workflow reads `valid: true` even
-  when `--strict --json` fails and exits `1`, because `--strict` is a run mode you asked for, not
-  a property of the file. `diagnostics` is issue #169's structured loader-warning channel — one
-  entry per warning, `severity` always the effective severity under the default policy, never
-  `--strict`'s all-error mode. `errors` carries one string per hard failure, with issue #402's
-  per-step boundaries surviving as separate array entries — the same per-error granularity the
-  #424 warnings channel already gave the human report, now on the machine one too. Not
-  represented: the `structured_output` adoption nudge, `--explain`'s per-step detail (inert under
-  `--json`), and `--registered`'s audit headers — all human-informational, never part of the
-  contract. Exit codes are unchanged either way. See
-  [`docs/reference/cli-commands.md`](docs/reference/cli-commands.md#realm-workflow-validate-path)
-  for the full field-by-field contract.
-
-- **`get_run_state`/`realm run inspect` (when given a workflow definition) now surface a
-  `trust_value_invalid` run-health finding for any ELIGIBLE step whose declared `trust` the
-  engine will refuse at its next dispatch** (issue #508). Definition-gated, like
-  `resolved_gate_with_eligible_guard` — `realm run list` never sees it, `--stuck` included (that
-  command's only classification call site passes no definition), and a step not yet reachable in
-  the DAG stays silent about a defect it has not hit yet, rather than flooding a healthy run with
-  a warning about a step nobody can act on yet. See "Trust levels" in
-  [`docs/reference/yaml-schema.md`](docs/reference/yaml-schema.md#trust-levels).
-
-### Changed
-
-- **BREAKING — an invalid step-level `trust` value is now a load error, and a dispatch-time
-  refusal too** (issue #508). Before this release, `trust` was validated NOWHERE: a typo
-  (`trust: 'huamn_confirmed'`), the SERVICE-level `trust` literal used on a step by mistake
-  (`trust: engine_delivered` — six of realm's own nine shipped examples carried exactly this
-  confusion), the retired `human_notified` value, `null`, or any other non-matching value all
-  loaded clean and ran with **no gate at all** — the step executed unattended on a value the
-  author believed required human approval. On `auto`/`agent` steps `trust` now accepts exactly
-  `'auto'` / `'human_confirmed'` / `'human_reviewed'` (absent is still `'auto'`, unchanged) —
-  `guard` accepts none of the three, and `finalizer` accepts only `'auto'`; anything else
-  refuses at `validate`/`register`/`watch` with a message naming the offending value, the
-  consequence, the accepted set, and the remedy. The engine ALSO refuses it again immediately
-  before dispatch — the part that is **not grandfathered** (see Upgrading below): unlike a
-  loader-only rule, this check reads the CURRENT stored definition on every dispatch, so an
-  already-registered workflow carrying a bad `trust` value starts refusing at that step's next
-  attempt, with no re-registration needed to trigger it and none possible to avoid it.
-  `human_notified` is retired from `TrustLevel` (zero real consumers — nothing ever read it);
-  `human_reviewed` is kept as a reserved alias of `human_confirmed` — no distinct "challenge"
-  mechanism exists — pending issue #531. The agent protocol (`get_workflow_protocol`) briefs a
-  refused step honestly ("the engine will refuse it… do NOT call execute_step") instead of the
-  previous "none — engine handles this automatically" (auto) or "YOU execute this step" (agent),
-  both false for a step that will never run.
-
-  **Upgrading:** upgrade first, then run `realm workflow validate --registered <id>` against
-  every workflow you have registered — the check itself is new, so a pre-upgrade CLI binary
-  cannot report it; there is no "check before you upgrade" option here. A step it flags starts
-  refusing at dispatch the moment you upgrade, whether or not you re-register — there is no grace period for
-  this class, unlike the loader-only refusal classes earlier releases have shipped. A run already
-  mid-flight on the affected step parks non-terminally rather than failing outright: no output
-  map, no evidence, and no store write happens on refusal (the guard runs before the step is even
-  claimed), so nothing already-recorded is at risk — but that step will not advance until the
-  workflow is corrected and re-registered. The new `trust_value_invalid` run-health finding (see
-  Added, above) is how you find it if `--registered` did not catch it first.
-
 ### Security
 
-- **Bumped `js-yaml` 4.3.1 → 4.3.2 — fixes a HIGH-severity denial-of-service in the workflow YAML
+- **BREAKING — bumped `js-yaml` 4.3.1 → 4.3.2, fixing a HIGH-severity denial-of-service in the
+  workflow YAML
   parser ([GHSA-2883-xcg3-v3hh](https://github.com/advisories/GHSA-2883-xcg3-v3hh) /
   CVE-2026-84375, CVSS 7.5).** The sequel to the v0.30.0 bump that introduced the
   `maxTotalMergeKeys` budget: that budget counted only _copied_ keys, so a merge source with zero
@@ -342,7 +430,7 @@ human_confirmed`/`human_reviewed`). On such a step the loader now emits ONE advi
   `RESOURCE_FORMAT_INVALID`; `loadFixtureFromString` propagates the raw `js-yaml` error. realm's
   own corpus is unaffected _by construction_ — none of the 42 tracked YAML files contains a merge key;
   the only four in the repository are single-anchor `<<: *d` scalars in three core test files, and
-  those pass 231/231 on 4.3.2. (Issue #547.)
+  those passed 231/231 on 4.3.2 when the bump landed. (Issue #547.)
 
 - Bumped `hono` 4.13.0 → 4.13.7 (transitive via `@modelcontextprotocol/sdk`, which declares
   `hono ^4.11.4` directly, and `@hono/node-server`, which peers on `^4`; in-range, lockfile-only,
