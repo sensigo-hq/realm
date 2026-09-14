@@ -35,8 +35,10 @@ Read **Upgrading** before you upgrade — the `trust` check is the one that can 
 
 **Refusal classes, in two groups.**
 
-DETECTABLE BEFORE YOU UPGRADE — `realm workflow validate` on the PRE-upgrade binary already
-refuses these on every FILE surface; only the published string loader and stored copies are new:
+DETECTABLE BEFORE YOU UPGRADE — the PRE-upgrade binary already refuses these on every FILE
+surface (`realm workflow validate` for the four shapes below; `realm workflow register` for the
+CLI half, which `validate` let through); only the published string loader, stored copies, and
+`validate`'s own verdict are new:
 
 - **`loadWorkflowFromString` / `loadWorkflowFromStringWithDiagnostics` refuse four shapes they
   silently accepted** (issue #553): a `context_wrapper` outside `xml`/`brackets`/`none`
@@ -47,10 +49,11 @@ refuses these on every FILE surface; only the published string loader and stored
   workflow; there is no flag. `validate --registered` now runs the same four rules on stored
   copies, so a stored copy can fail an audit it used to pass. On the CLI, the same change makes
   `realm workflow validate` return `register`'s verdict on extension-free workflows — a missing
-  `agent_profile` file (`Invalid workflow: Step '…': agent_profile '…' not found. Searched: …`), an
-  invalid `realm.yaml` at the trust root (`Error loading extensions: …`), a missing workflow file —
-  where it used to print `Valid` and exit 0. A CI gate built on `validate` can start failing on a
-  workflow that `register` was always going to refuse; that is the gate working.
+  `agent_profile` file (`Invalid workflow: Step '…': agent_profile '…' not found. Searched: …`) and
+  an invalid `realm.yaml` at the trust root (`Error loading extensions: …`) — where it used to print
+  `Valid` and exit 0. (A missing workflow file already exited 1; only its wording changes, to the
+  loader's `Invalid: Failed to read workflow file: …`.) A CI gate built on `validate` can start
+  failing on a workflow that `register` was always going to refuse; that is the gate working.
 
 SURFACES AT FIRST LOAD AFTER UPGRADING — the pre-upgrade `validate` says nothing about these:
 
@@ -97,7 +100,8 @@ is corrected, and any step depending on this one returns 'blocked' in the meanti
 - **`realm workflow run` with stdout redirected: prompts move to stderr and cancellation exits 1**
   (issue #458). `realm workflow run … > log` now writes the prompts and what you type to stderr,
   and Ctrl-C / Ctrl-D exit `1` with the detach map (Ctrl-D used to exit `0`; Ctrl-C `130`). Only
-  pty-driven automation that checks `$?` or parses stdout for the prompt can see this.
+  pty-driven automation that checks `$?` or parses stdout for the prompt can see this — read the
+  prompt from stderr and treat exit `1` as cancellation.
 - **`realm workflow watch` exits 1 when the watched directory disappears** (issue #453):
   `Error: The watched directory no longer exists — deleted, or moved out from under the watch.
 Nothing is watched any more; restart 'realm workflow watch' when the path exists again.` It
@@ -163,7 +167,7 @@ Nothing is watched any more; restart 'realm workflow watch' when the path exists
 
 ### Changed
 
-- **BREAKING — `loadWorkflowFromString` / `loadWorkflowFromStringWithDiagnostics` refuse four shapes they silently accepted** (issue #553). The `context_wrapper` enum, the `workflow_context` name rules (no `.raw` suffix, `[\w.]+` only) and `source.path`-required moved from the file loader into the shared parser, so every surface — file, string, `validate --registered` — refuses them with one text, `Invalid workflow: … (line N)` on file surfaces.
+- **BREAKING — `loadWorkflowFromString` / `loadWorkflowFromStringWithDiagnostics` refuse four shapes they silently accepted** (issue #553). The `context_wrapper` enum, the `workflow_context` name rules (no `.raw` suffix, `[\w.]+` only) and `source.path`-required moved from the file loader into the shared parser, so every surface — file, string, `validate --registered` — refuses them with one text, `Invalid workflow: … (line N)` on file surfaces. The file loader's inline profile resolution is now the exported `resolveAgentProfiles(definition, workflowDir)` (`@sensigo/realm`), which `validate --registered` runs against the recorded source tree; new in this release — nothing a consumer already imports changes shape.
 - `realm workflow validate` now attempts real secret resolution before degrading to sentinel — it READS the deployment manifest's declared secret sources (dotenv files at the trust root, the environment) exactly as `register` does; it writes nothing. The degradation's second line says `Validating with SENTINEL credentials` (register's says `Registering`). Under `--json` those two ⚠ lines go to stderr; stdout stays the JSON object.
 - `validate --registered` replaces its hand-typed "not audited here" line with a derived one, one check beside its own reason — `N check(s) not run: <check> (<reason>)[; <check> (<reason>)]` — and `--json` gains `checks_not_run: [{ id, reason }]` on every arm (`[]` in file mode, never absent, and also `[]` on any `valid: false` arm — a refusal ends the audit and is its own reason). A non-empty set never flips `--strict`, but the verdict line now names the count (`Valid: … — N check(s) not run`, `; `-joined with a failing `--strict`'s own clause when both fire). A copy created by the MCP `create_workflow` tool (`origin: 'agent'`) never records a source tree at all, whatever version created it, and its not-run reason says so instead of naming a version. `--extensions-module` now applies in `--registered` mode too; when the extensions check itself could not run (its recorded `trust_root` is gone), the reason gains `; --extensions-module not applied` rather than silently dropping the override.
 
