@@ -663,4 +663,42 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     );
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
+
+  it('9b — the description line survives a not-run tail; only a failing --strict suppresses it (issue #553 correction C9 — the `!strictFailing` conjunct, MA novel probe)', async () => {
+    // (a) not-run tail, no --strict: the description prints right after the verdict line — a moved
+    // tree is a disclosure, not a reason to hide what the workflow is for.
+    planted({ description: 'Reviews a change.' });
+    rmSync(tree, { recursive: true, force: true });
+    await run([]);
+    const lines = out().split('\n');
+    const at = lines.indexOf('Valid: stored-wf v1 (1 step) — 1 check not run');
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(lines[at + 1]).toBe('  Reviews a change.');
+    expect(exitSpy).not.toHaveBeenCalled();
+
+    // (b) control — the SAME not-run copy under a failing --strict: the description is suppressed.
+    vi.clearAllMocks();
+    planted({
+      description: 'Reviews a change.',
+      steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } } },
+    });
+    rmSync(tree, { recursive: true, force: true });
+    await expect(run(['--strict'])).rejects.toThrow('process.exit');
+    expect(out()).toContain('failing due to --strict');
+    expect(out()).not.toContain('  Reviews a change.');
+
+    // (c) control — the SAME not-run copy under a PASSING --strict (no warnings): the description
+    // prints. The flag alone suppresses nothing; only the failing STATE does — `strictFailing` is
+    // `strict && failsStrict(warnings)`, and this half pins its second member (a `!strict` mutant
+    // leaves (a) and (b) green).
+    vi.clearAllMocks();
+    planted({ description: 'Reviews a change.' });
+    rmSync(tree, { recursive: true, force: true });
+    await run(['--strict']);
+    const strictLines = out().split('\n');
+    const strictAt = strictLines.indexOf('Valid: stored-wf v1 (1 step) — 1 check not run');
+    expect(strictAt).toBeGreaterThanOrEqual(0);
+    expect(strictLines[strictAt + 1]).toBe('  Reviews a change.');
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
 });
