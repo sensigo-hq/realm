@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   loadWorkflowFromString,
   loadWorkflowFromFile,
+  loadWorkflowFromFileWithDiagnostics,
+  loadWorkflowFromStringWithDiagnostics,
+  resolveAgentProfiles,
   attachLoaderWarnings,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from './yaml-loader.js';
@@ -3753,5 +3756,186 @@ steps:
       // would be redundant with "a finalizer must not gate", not clarifying.
       expect(message).not.toContain("'trust' accepts auto, human_confirmed, human_reviewed");
     });
+  });
+});
+
+// =================================================================================================
+// issue #553 — the four context rules live in the PARSER: one text on every surface.
+// =================================================================================================
+//
+// Until #553 these four checks sat in the file loader's post-parse block, so the public
+// `loadWorkflowFromString` (and validate's extension-free arm, and `validate --registered`)
+// silently ACCEPTED every one of these shapes while every file-based surface refused them —
+// with texts nobody pinned. Red-first on `05439cf`: all four `loadWorkflowFromString` calls
+// below returned a definition (executed). The texts are new by design, so the parity cell is
+// string-vs-file AFTER, never old-vs-new.
+describe('issue #553 — context_wrapper / workflow_context rules refuse identically from string and file', () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'realm-553-ctx-'));
+  });
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const head = `id: ctx-wf
+name: Context Workflow
+version: 1
+steps:
+  s1:
+    description: A step
+    execution: agent
+`;
+  // Four shapes, one per rule; the expected message is the WHOLE thing, cite included — line
+  // numbers are the key's own line in each fixture (the `(line N)` convention, issue #417).
+  const shapes: ReadonlyArray<{ name: string; yaml: string; message: string }> = [
+    {
+      name: 'context_wrapper outside xml/brackets/none',
+      yaml: `${head}context_wrapper: bogus_format\n`,
+      message:
+        "Invalid workflow: 'context_wrapper' must be 'xml', 'brackets', or 'none' (found: 'bogus_format') (line 8)",
+    },
+    {
+      name: 'a workflow_context name ending .raw',
+      yaml: `${head}workflow_context:\n  notes.raw:\n    source:\n      path: ./n.md\n`,
+      message:
+        "Invalid workflow: workflow_context entry 'notes.raw' must not end with '.raw' (line 9)",
+    },
+    {
+      name: 'a workflow_context name outside [\\w.]',
+      yaml: `${head}workflow_context:\n  my-notes:\n    source:\n      path: ./n.md\n`,
+      message:
+        "Invalid workflow: workflow_context entry 'my-notes' must match [\\w.]+ (underscores and dots only — no hyphens) (line 9)",
+    },
+    {
+      name: 'an entry without source.path',
+      yaml: `${head}workflow_context:\n  notes:\n    description: no source\n`,
+      // The ENTRY's line: the missing key has no line, and a cite never names an absent key.
+      message: 'Invalid workflow: workflow_context.notes.source.path is required (line 9)',
+    },
+    {
+      // issue #553 correction C3 — an MA novel probe on `05439cf`: `notes:` with NOTHING under
+      // it parses to `entry === null`, and the pre-#553 code's `entry['source']` crashed
+      // `register` with a bare V8 `Cannot read properties of null (reading 'source')` while
+      // `validate` said `Valid` (a #556-class bare crash AND a divergence, both at once). The
+      // `rawEntry?.['source']` optional-chain fixes it — nobody claimed the fix, so it must not
+      // ride unpinned.
+      name: 'an entry with nothing under it at all (workflow_context.notes: null)',
+      yaml: `${head}workflow_context:\n  notes:\n`,
+      message: 'Invalid workflow: workflow_context.notes.source.path is required (line 9)',
+    },
+  ];
+
+  it.each(shapes)(
+    'cell 4 — loadWorkflowFromString refuses $name, whole message',
+    ({ yaml, message }) => {
+      let caught: unknown;
+      try {
+        loadWorkflowFromString(yaml);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(WorkflowError);
+      expect((caught as WorkflowError).message).toBe(message);
+      expect((caught as WorkflowError).code).toBe('VALIDATION_WORKFLOW_SCHEMA');
+      // The #425 pre-join carrier holds the same single body.
+      expect((caught as WorkflowError).errors).toEqual([message.replace('Invalid workflow: ', '')]);
+    },
+  );
+
+  it.each(shapes)(
+    'cell 4 PARITY — the file loader says byte for byte what the string loader says ($name)',
+    ({ yaml }) => {
+      writeFileSync(join(tmpDir, 'workflow.yaml'), yaml);
+      const fromString = (() => {
+        try {
+          loadWorkflowFromStringWithDiagnostics(yaml);
+        } catch (err) {
+          return err;
+        }
+        return undefined;
+      })();
+      const fromFile = (() => {
+        try {
+          loadWorkflowFromFileWithDiagnostics(join(tmpDir, 'workflow.yaml'));
+        } catch (err) {
+          return err;
+        }
+        return undefined;
+      })();
+      expect(fromString).toBeInstanceOf(WorkflowError);
+      expect(fromFile).toBeInstanceOf(WorkflowError);
+      expect((fromFile as WorkflowError).message).toBe((fromString as WorkflowError).message);
+    },
+  );
+
+  it('the four accumulate into one Invalid workflow: throw (the #425 grammar), never a first-wins throw', () => {
+    // Pre-#553 the file loader threw at the FIRST bad entry; the parser pushes every one.
+    const yaml = `${head}context_wrapper: bogus\nworkflow_context:\n  a.raw:\n    source:\n      path: ./a.md\n  b-c:\n    description: none\n`;
+    let caught: unknown;
+    try {
+      loadWorkflowFromString(yaml);
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as WorkflowError).errors).toEqual([
+      "'context_wrapper' must be 'xml', 'brackets', or 'none' (found: 'bogus') (line 8)",
+      "workflow_context entry 'a.raw' must not end with '.raw' (line 10)",
+      "workflow_context entry 'b-c' must match [\\w.]+ (underscores and dots only — no hyphens) (line 13)",
+      'workflow_context.b-c.source.path is required (line 13)',
+    ]);
+  });
+});
+
+// The resolver `validate --registered` calls with the RECORDED source_dir (issue #553): the
+// former inline loop, exported. Semantics pinned here so the extraction cannot drift from what
+// the file loader did — the `Searched:` sentence names the profile path under the given dir.
+describe('resolveAgentProfiles (issue #553)', () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'realm-553-prof-'));
+  });
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('stamps resolved_profiles from <workflowDir>/profiles and hashes the content', () => {
+    mkdirSync(join(tmpDir, 'profiles'));
+    writeFileSync(join(tmpDir, 'profiles', 'reviewer.md'), '# Reviewer');
+    const def = loadWorkflowFromString(
+      'id: p\nname: P\nversion: 1\nsteps:\n  s1:\n    description: a\n    execution: agent\n    agent_profile: reviewer\n',
+    );
+    resolveAgentProfiles(def, tmpDir);
+    expect(def.resolved_profiles?.['reviewer']?.content).toBe('# Reviewer');
+    expect(def.resolved_profiles?.['reviewer']?.content_hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('refuses with the Searched: path under the GIVEN dir — one error per missing profile', () => {
+    const def = loadWorkflowFromString(
+      'id: p\nname: P\nversion: 1\nsteps:\n  s1:\n    description: a\n    execution: agent\n    agent_profile: nope\n  s2:\n    description: b\n    execution: agent\n    agent_profile: gone\n',
+    );
+    let caught: unknown;
+    try {
+      resolveAgentProfiles(def, tmpDir);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(WorkflowError);
+    expect((caught as WorkflowError).message).toBe(
+      `Invalid workflow: Step 's1': agent_profile 'nope' not found. Searched: ${join(tmpDir, 'profiles', 'nope.md')}; ` +
+        `Step 's2': agent_profile 'gone' not found. Searched: ${join(tmpDir, 'profiles', 'gone.md')}`,
+    );
+    expect((caught as WorkflowError).errors).toHaveLength(2);
+    expect(def.resolved_profiles).toBeUndefined();
+  });
+
+  it('the file loader delegates to it: same message, same path, through loadWorkflowFromFile', () => {
+    writeFileSync(
+      join(tmpDir, 'workflow.yaml'),
+      'id: p\nname: P\nversion: 1\nsteps:\n  s1:\n    description: a\n    execution: agent\n    agent_profile: nope\n',
+    );
+    expect(() => loadWorkflowFromFile(join(tmpDir, 'workflow.yaml'))).toThrow(
+      `Invalid workflow: Step 's1': agent_profile 'nope' not found. Searched: ${join(tmpDir, 'profiles', 'nope.md')}`,
+    );
   });
 });

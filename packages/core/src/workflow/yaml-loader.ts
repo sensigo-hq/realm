@@ -446,6 +446,65 @@ export function attachLoaderWarnings(err: WorkflowError, warnings: readonly Load
 }
 
 /**
+ * Resolves every `agent_profile` a definition declares against `<workflowDir>/<profiles_dir>`
+ * (default `profiles/`), stamping `resolved_profiles` on the definition and refusing — one
+ * `Invalid workflow:` error, one entry per missing profile (issue #425) — when any is absent.
+ *
+ * Exported (issue #553) because this is the ONE check a workflow's text cannot answer: it needs
+ * the source tree. `loadWorkflowFromFileCore` calls it with the file's directory; `validate
+ * --registered` calls it with the `source_dir` the registrar recorded, so the stored copy is
+ * audited by the same rule instead of by a synthesized file path (#493's snapshot doctrine: a
+ * synthesized path would audit the FILE, not the stored copy). Semantics are those of the
+ * former inline loop, byte for byte — the `Searched: <path>` sentence included.
+ * @throws WorkflowError (`VALIDATION_WORKFLOW_SCHEMA`) naming every missing profile.
+ */
+export function resolveAgentProfiles(definition: WorkflowDefinition, workflowDir: string): void {
+  const profilesDir =
+    definition.profiles_dir !== undefined
+      ? resolve(workflowDir, definition.profiles_dir)
+      : join(workflowDir, 'profiles');
+
+  const resolvedProfiles: Record<string, { content: string; content_hash: string }> = {};
+  const profileErrors: string[] = [];
+
+  for (const [stepName, step] of Object.entries(definition.steps)) {
+    if (step.agent_profile === undefined) continue;
+    const profileName = step.agent_profile;
+    if (profileName in resolvedProfiles) continue;
+
+    const profilePath = join(profilesDir, `${profileName}.md`);
+    let profileContent: string;
+    try {
+      profileContent = readFileSync(profilePath, 'utf8');
+    } catch {
+      profileErrors.push(
+        `Step '${stepName}': agent_profile '${profileName}' not found. Searched: ${profilePath}`,
+      );
+      continue;
+    }
+
+    const contentHash = createHash('sha256').update(profileContent).digest('hex');
+    resolvedProfiles[profileName] = { content: profileContent, content_hash: contentHash };
+  }
+
+  if (profileErrors.length > 0) {
+    throw new WorkflowError(`Invalid workflow: ${profileErrors.join('; ')}`, {
+      // issue #425: the pre-join strings, so a render can list them one per line. Two missing
+      // profiles are two problems, not one long sentence.
+      errors: [...profileErrors],
+      code: 'VALIDATION_WORKFLOW_SCHEMA',
+      category: 'VALIDATION',
+      agentAction: 'report_to_user',
+      retryable: false,
+    });
+  }
+
+  if (Object.keys(resolvedProfiles).length > 0) {
+    definition.resolved_profiles = resolvedProfiles;
+  }
+}
+
+/**
  * Pure core of loadWorkflowFromFile (issue #169): parses + resolves everything a file-based load
  * needs, but never prints and never chooses between the two public presentations — it always
  * returns the definition alongside every collected LoaderWarning. `loadWorkflowFromFile` (prints
@@ -485,105 +544,21 @@ function loadWorkflowFromFileCore(
   // `parseWorkflowString` owns those throws and has already attached, and attach-once means its
   // richer set survives.
   try {
-    // Resolve agent profiles — only possible when we have a file path.
+    // Resolve agent profiles — only possible when we have a source tree. Every check in this
+    // file-only block is DELEGATED to a named exported resolver (issue #553): `validate
+    // --registered` supplies the recorded source tree to the same function, so the stored copy
+    // is audited by the rule register applied, not by a paraphrase. An inline `throw` here is
+    // exactly what admission-context.test.ts (cli) refuses.
     const workflowDir = dirname(resolve(filePath));
-    const profilesDir =
-      definition.profiles_dir !== undefined
-        ? resolve(workflowDir, definition.profiles_dir)
-        : join(workflowDir, 'profiles');
+    resolveAgentProfiles(definition, workflowDir);
 
-    const resolvedProfiles: Record<string, { content: string; content_hash: string }> = {};
-    const profileErrors: string[] = [];
-
-    for (const [stepName, step] of Object.entries(definition.steps)) {
-      if (step.agent_profile === undefined) continue;
-      const profileName = step.agent_profile;
-      if (profileName in resolvedProfiles) continue;
-
-      const profilePath = join(profilesDir, `${profileName}.md`);
-      let profileContent: string;
-      try {
-        profileContent = readFileSync(profilePath, 'utf8');
-      } catch {
-        profileErrors.push(
-          `Step '${stepName}': agent_profile '${profileName}' not found. Searched: ${profilePath}`,
-        );
-        continue;
-      }
-
-      const contentHash = createHash('sha256').update(profileContent).digest('hex');
-      resolvedProfiles[profileName] = { content: profileContent, content_hash: contentHash };
-    }
-
-    if (profileErrors.length > 0) {
-      throw new WorkflowError(`Invalid workflow: ${profileErrors.join('; ')}`, {
-        // issue #425: the pre-join strings, so a render can list them one per line. Two missing
-        // profiles are two problems, not one long sentence.
-        errors: [...profileErrors],
-        code: 'VALIDATION_WORKFLOW_SCHEMA',
-        category: 'VALIDATION',
-        agentAction: 'report_to_user',
-        retryable: false,
-      });
-    }
-
-    if (Object.keys(resolvedProfiles).length > 0) {
-      definition.resolved_profiles = resolvedProfiles;
-    }
-
-    // Validate context_wrapper if present.
-    if (definition.context_wrapper !== undefined) {
-      const VALID_WRAPPER_FORMATS = new Set(['xml', 'brackets', 'none']);
-      if (!VALID_WRAPPER_FORMATS.has(definition.context_wrapper)) {
-        throw new WorkflowError(
-          `Invalid context_wrapper '${String(definition.context_wrapper)}'; must be 'xml', 'brackets', or 'none'`,
-          {
-            code: 'VALIDATION_WORKFLOW_SCHEMA',
-            category: 'VALIDATION',
-            agentAction: 'report_to_user',
-            retryable: false,
-          },
-        );
-      }
-    }
-
-    // Validate and resolve workflow_context entry paths.
+    // Resolve workflow_context entry paths. The four context-free rules (context_wrapper enum,
+    // `.raw` names, the name charset, `source.path` required) live in `parseWorkflowString`
+    // Step 3c since issue #553 — every surface, file or string, refuses them identically. Only
+    // the TRANSFORM needs `workflowDir`, so only the transform is here.
     if (definition.workflow_context !== undefined) {
-      for (const [name, entry] of Object.entries(definition.workflow_context)) {
-        if (name.endsWith('.raw')) {
-          throw new WorkflowError(
-            `workflow_context entry names must not end with '.raw' (found: '${name}')`,
-            {
-              code: 'VALIDATION_WORKFLOW_SCHEMA',
-              category: 'VALIDATION',
-              agentAction: 'report_to_user',
-              retryable: false,
-            },
-          );
-        }
-        if (!/^[\w.]+$/.test(name)) {
-          throw new WorkflowError(
-            `workflow_context entry name '${name}' is invalid; names must match [\\w.]+ (underscores and dots only — no hyphens)`,
-            {
-              code: 'VALIDATION_WORKFLOW_SCHEMA',
-              category: 'VALIDATION',
-              agentAction: 'report_to_user',
-              retryable: false,
-            },
-          );
-        }
-        const rawEntry = entry as unknown as Record<string, unknown>;
-        const rawSource = rawEntry['source'] as Record<string, unknown> | undefined;
-        if (rawSource === undefined || typeof rawSource['path'] !== 'string') {
-          throw new WorkflowError(`workflow_context.${name}.source.path is required`, {
-            code: 'VALIDATION_WORKFLOW_SCHEMA',
-            category: 'VALIDATION',
-            agentAction: 'report_to_user',
-            retryable: false,
-          });
-        }
-        // Resolve relative path to absolute.
-        entry.source.path = resolve(workflowDir, rawSource['path'] as string);
+      for (const entry of Object.values(definition.workflow_context)) {
+        entry.source.path = resolve(workflowDir, entry.source.path);
       }
     }
 
@@ -601,6 +576,8 @@ function loadWorkflowFromFileCore(
     // the deployment-manifest anchor (`<trust_root>/realm.yaml`), needed by extension-free
     // workflows that consume manifest-constructed adapters by name. Core resolves/stores
     // PATHS only — it never imports modules or reads the manifest; that is the CLI's job.
+    // `validate --registered` reads these two back to supply the source tree the stored copy's
+    // context-dependent checks need (issue #553).
     definition.source_dir = workflowDir;
     definition.trust_root = findTrustRoot(workflowDir);
     if (definition.extensions !== undefined) {
@@ -842,6 +819,17 @@ function parseWorkflowString(
       const stepLine = sourceMap.posOf(['steps', stepName])?.line;
       if (stepLine !== undefined) return `${message} (step at line ${stepLine})`;
       return message;
+    };
+
+    /**
+     * The TOP-LEVEL sibling of `withStepLine`/`withKeyLine` (issue #553): names the line of a
+     * workflow-level key such as `context_wrapper` or `workflow_context.<name>`. No step
+     * fallback — there is no step — and no position at all when the key cannot be placed:
+     * absent-never-wrong, the loader's standing cite doctrine.
+     */
+    const withTopLevelLine = (path: readonly string[], message: string): string => {
+      const line = sourceMap.posOf(path)?.line;
+      return line !== undefined ? `${message} (line ${line})` : message;
     };
 
     // Step 2: Top-level validation
@@ -2685,6 +2673,58 @@ function parseWorkflowString(
     if (triggerRaw !== undefined) {
       normalizeTriggerFilter(triggerRaw); // canonicalise shorthand BEFORE validation
       errors.push(...validateTriggerStructure(triggerRaw));
+    }
+
+    // Step 3c: workflow-level context blocks (issue #553). These four rules need nothing but the
+    // text, so they belong to every surface — file, string, `validate --registered`, the public
+    // `loadWorkflowFromString`. They lived in the file loader until #553 and were therefore
+    // invisible to `validate` (which parsed extension-free workflows from string) and to
+    // `--registered`; the public string loader silently accepted all four shapes. Pushed, never
+    // thrown: the accumulator mints `Invalid workflow:` once and the #425 per-line grammar composes.
+    const contextWrapperRaw = doc['context_wrapper'];
+    if (contextWrapperRaw !== undefined) {
+      const VALID_WRAPPER_FORMATS = new Set(['xml', 'brackets', 'none']);
+      if (!VALID_WRAPPER_FORMATS.has(contextWrapperRaw as string)) {
+        errors.push(
+          withTopLevelLine(
+            ['context_wrapper'],
+            `'context_wrapper' must be 'xml', 'brackets', or 'none' (found: '${String(contextWrapperRaw)}')`,
+          ),
+        );
+      }
+    }
+    const workflowContextRaw = doc['workflow_context'];
+    if (workflowContextRaw !== undefined) {
+      for (const [name, entry] of Object.entries(workflowContextRaw as Record<string, unknown>)) {
+        if (name.endsWith('.raw')) {
+          errors.push(
+            withTopLevelLine(
+              ['workflow_context', name],
+              `workflow_context entry '${name}' must not end with '.raw'`,
+            ),
+          );
+        }
+        if (!/^[\w.]+$/.test(name)) {
+          errors.push(
+            withTopLevelLine(
+              ['workflow_context', name],
+              `workflow_context entry '${name}' must match [\\w.]+ (underscores and dots only — no hyphens)`,
+            ),
+          );
+        }
+        const rawEntry = entry as Record<string, unknown> | null;
+        const rawSource = rawEntry?.['source'] as Record<string, unknown> | undefined;
+        if (rawSource === undefined || typeof rawSource['path'] !== 'string') {
+          // The ENTRY's line: the missing key has no line, and a cite must never name an absent
+          // key.
+          errors.push(
+            withTopLevelLine(
+              ['workflow_context', name],
+              `workflow_context.${name}.source.path is required`,
+            ),
+          );
+        }
+      }
     }
 
     if (errors.length > 0) {

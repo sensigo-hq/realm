@@ -112,18 +112,22 @@ realm workflow validate --registered my-workflow # audit the stored copy
 realm workflow validate ./my-workflow --json     # emit the result as JSON, and nothing else
 ```
 
-**One pass reports everything** (issue #424). A workflow can be wrong in more than one way at
+**One pass reports every warning beside the error** (issue #424). A workflow can be wrong in more than one way at
 once, and a hard error no longer hides the rest: when validation fails, the loader warnings that
 were live at the moment it failed — a typo and its did-you-mean, a retry advisory — print above
 the error, so a single run gives you the whole defect set. Previously the warnings unwound with
 the failure and only surfaced once the error was fixed, one layer per round trip. The same holds
 for `realm workflow register` and `realm workflow watch`.
 
-Workflows declaring `extensions:` (or validated with `--extensions-module <path>`) are loaded
-file-based, their extension modules are loaded, and step `config` is then validated against each
-resolved adapter's `config_schema` (two-pass). Extension-free workflows keep the historical
-string-based validation surface — a deliberate strictness asymmetry (file-context checks like
-agent-profile resolution only run for declaring workflows).
+`validate` runs the same admission path as `register` (issue #553): the file loader (agent-profile
+resolution, the `context_wrapper`/`workflow_context` rules), the project-extensions pass (extension
+modules, the deployment manifest, `config_schema` two-pass) and real-then-sentinel secret
+resolution — so what `validate` blesses `register` accepts, and what `register` refuses `validate`
+refuses, with the same message. `--registered` runs the same rules on the stored copy and, per
+check, resolves agent profiles against the recorded `source_dir` and the manifest against the
+recorded `trust_root` when the recorded paths still exist; otherwise it prints exactly which checks
+it could not run and why (`N check(s) not run: <check> (<reason>)[; <check> (<reason>)]` — each
+check beside its own reason — `checks_not_run` in `--json`; never a `--strict` failure).
 
 **`--strict` (issue #169):** by default, a non-fatal loader warning (an unknown workflow/step key,
 a retry-without-timeout advisory, a sentinel-credential fallback) is printed but the command still
@@ -152,24 +156,33 @@ loader-only class.
 Two things worth knowing. It audits the loader you have INSTALLED, so the pre-upgrade journey is
 upgrade the CLI first, then audit — which is safe for the loader-only class precisely because that
 grandfathering holds; it does NOT make an already-registered engine-side defect (like an invalid
-`trust`) safe to leave unaudited. And it is a STRUCTURAL audit only: extension module resolution,
-adapter `config_schema` checks and agent-profile file resolution all need the source tree, which a
-stored copy does not have. When a definition declares either, the audit says so on its own line.
+`trust`) safe to leave unaudited. And it is SUPPLY-OR-DECLARE, not blind to the source tree:
+agent-profile resolution and the project-extensions pass (modules, manifest, `config_schema`) each
+need a piece of it, and per check the audit uses the RECORDED `source_dir`/`trust_root` when that
+path still exists — running the check for real — or, when it does not, says so on its own line
+instead of guessing (`N check(s) not run: <check> (<reason>)[; …]`, each check beside its own
+reason). `--extensions-module` applies wherever the extensions pass actually runs, and its reason
+gains `; --extensions-module not applied` when the pass itself could not run. `checks_not_run` (in
+`--json`) and the line above both list only checks skipped for a missing recorded path — a refusal
+ends the audit outright and is its own reason, so a `valid: false` result always shows
+`checks_not_run: []` even though those checks were never reached.
 
 **`--explain` (issue #422):** prints the full per-step `structured_output` adoption detail
 described below, in place of the one-line summary a default run prints. It changes nothing about
 what is validated and nothing about the exit code.
 
-**`--json` (issue #454):** emits one JSON object on stdout and nothing else — every other channel
-(the description line, the `structured_output` nudge, the `Extensions:` manifest line, and
-`--registered`'s audit headers) is suppressed. Works in both modes; exit codes are unchanged
-either way.
+**`--json` (issue #454):** stdout carries only the JSON object — every other stdout channel (the
+description line, the `structured_output` nudge, the `Extensions:` manifest line, and
+`--registered`'s audit headers) is suppressed. Advisories printed WHILE the checks ran — the
+manifest-secrets `⚠` block, the sentinel-credentials line — may still reach stderr; they are not
+part of the JSON contract and `--json` does not silence them. Works in both modes; exit codes are
+unchanged either way.
 
 ```json
 {
   "valid": true,
   "mode": "file",
-  "path": "./my-workflow/workflow.yaml",
+  "path": "./my-workflow",
   "workflow_id": "my-workflow",
   "loader_version": "0.41.0",
   "schema_version": null,
@@ -185,7 +198,8 @@ either way.
       "message": "Step 'sync_data': declares 'retry' but no 'timeout_seconds' — …"
     }
   ],
-  "errors": []
+  "errors": [],
+  "checks_not_run": []
 }
 ```
 
@@ -265,9 +279,10 @@ gate table.
 
 ### `realm workflow register <path>`
 
-Registers a workflow in the local store (`~/.realm/workflows/`). Increments the version number
-on each call. Fails immediately if any agent profile declared in the workflow is not found in
-`profiles_dir`.
+Registers a workflow in the local store (`~/.realm/workflows/`). The stored copy carries the
+`version:` the workflow file declares — re-registering the same file overwrites the copy and keeps
+that number (the version is yours to bump, never incremented for you). Fails immediately if any
+agent profile declared in the workflow is not found in `profiles_dir`.
 
 ```bash
 realm workflow register ./my-workflow
@@ -279,11 +294,15 @@ Registering **mints the trust decision** for project extensions: when the workfl
 `config_schema` two-pass — all **before** anything is persisted. See the
 [Project extensions guide](project-extensions.md).
 
-**`--strict` (issue #169):** same warning surface as `validate --strict` (see above), but the
-consequence is stronger — a warning-bearing workflow is never written to the store at all
-(`store.register` is not called), and the command exits `1`. Without `--strict`, registration
-proceeds as always: the workflow is persisted and every warning is printed alongside the
-`Registered:` line.
+**`--strict` (issue #169):** refuses to persist a warning-bearing workflow — the warnings are
+printed, `store.register` is not called, and the command exits `1` with
+`Error: '<id>' v<version> has N warning(s); refusing to register due to --strict`. The warning
+population is the loader's — an unknown key inside a block such as `retry:` (unknown keys at the
+STEP level are refused by policy with or without the flag, so `--strict` never sees them as a mere
+warning) and the per-entry sentinel-credential fallback; `register` does not run `validate`'s
+retry-without-timeout advisory, so the two flags do not count the same set (issue #464). Without
+`--strict`, registration proceeds as always: the workflow is persisted and every warning is printed
+alongside the `Registered:` line.
 
 ---
 

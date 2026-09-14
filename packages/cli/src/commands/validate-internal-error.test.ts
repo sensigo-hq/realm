@@ -1,23 +1,24 @@
-// #123 correction, test 3 — genuine-bug-still-loud. validate's from-string branch catches
+// #123 correction, test 3 — genuine-bug-still-loud. validate's load-failure chokepoint catches
 // ONLY `WorkflowError` (→ `Invalid:` + exit 1) and MUST rethrow anything else, so a real
 // internal defect surfaces as a loud stack trace, never mislabeled as `Invalid`. If a future
 // change broadens the catch to `catch (err)`, this test goes red. In-process (mocked) because
-// a plain (non-WorkflowError) throw cannot be induced through the real from-string loader.
+// a plain (non-WorkflowError) throw cannot be induced through the real loader.
+//
+// issue #553: validate no longer has a from-string branch — an extension-free file takes the
+// same `loadWorkflowForAdmission` path register takes (file loader, extensions pass, pass 2),
+// so both cells below key on the FILE loader's counter; the from-string mock in the factory now
+// only ever fires on `--registered`, which no cell here drives.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Make loadWorkflowFromStringWithDiagnostics throw a PLAIN Error (an "internal bug") — this is
-// the variant validate.ts's from-string branch now calls (issue #169); keep everything else
-// (WorkflowError, findTrustRoot, …) real.
-//
-// issue #445 adds the EXTENSIONS-arm sibling below, which needs the FILE-based loader mocked too.
-// Two `vi.mock` factories for one specifier cannot coexist, so this single factory serves both:
-// FromString throws unconditionally (the original cell), FromFile is counter-keyed — the first
-// call (pass 1) delegates to the real implementation so the workflow genuinely loads and
-// loadProjectExtensions genuinely runs, and the second call (pass 2) throws the planted bug.
-// The counter lives in `vi.hoisted` because a plain module-level `let` is in the factory's TDZ.
+// One factory serves both cells (two `vi.mock` factories for one specifier cannot coexist):
+// FromFile is counter-keyed — the first call (pass 1) delegates to the real implementation so
+// the workflow genuinely loads and loadProjectExtensions genuinely runs, and the second call
+// (pass 2) throws the planted bug. FromString throws unconditionally (kept: it is what a
+// `--registered` audit would hit). Everything else (WorkflowError, …) stays real. The counter
+// lives in `vi.hoisted` because a plain module-level `let` is in the factory's TDZ.
 const planted = vi.hoisted(() => ({ fileCalls: 0 }));
 
 vi.mock('@sensigo/realm', async (importOriginal) => {
@@ -45,8 +46,10 @@ describe('validate — non-WorkflowError is NOT swallowed as Invalid', () => {
   let wfPath: string;
 
   beforeEach(() => {
-    // A real, extension-free workflow file so readFileSync succeeds and the from-string
-    // branch is reached (where the mocked loadWorkflowFromString throws its plain Error).
+    planted.fileCalls = 0;
+    clearProjectExtensionsCache();
+    // A real, extension-free workflow file: pass 1 loads for real, the (manifest-less)
+    // extensions pass runs for real, and pass 2 throws the planted plain Error.
     dir = mkdtempSync(join(tmpdir(), 'realm-validate-internal-'));
     wfPath = join(dir, 'workflow.yaml');
     writeFileSync(wfPath, 'id: x\nname: X\nversion: 1\nsteps: {}\n', 'utf8');
@@ -57,7 +60,7 @@ describe('validate — non-WorkflowError is NOT swallowed as Invalid', () => {
     vi.restoreAllMocks();
   });
 
-  it('rethrows a plain Error from the from-string branch (loud), never printing Invalid or exiting 1', async () => {
+  it('rethrows a plain Error from pass 2 on an extension-free file (loud), never printing Invalid or exiting 1', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit called — should not happen for an internal bug');
@@ -66,12 +69,15 @@ describe('validate — non-WorkflowError is NOT swallowed as Invalid', () => {
     // parseAsync must REJECT with the plain Error (the `else throw err`), not resolve via
     // the Invalid+exit path.
     await expect(validateCommand.parseAsync([wfPath], { from: 'user' })).rejects.toThrow(
-      'internal bug — not a WorkflowError',
+      'internal bug on pass 2 — not a WorkflowError',
     );
 
     expect(exitSpy).not.toHaveBeenCalled();
     const logged = errSpy.mock.calls.flat().map(String).join(' ');
     expect(logged).not.toContain('Invalid:');
+    // The extension-free file took the FILE loader twice (pass 1 real, pass 2 planted) — the
+    // #553 collapse: no from-string branch exists to take.
+    expect(planted.fileCalls).toBe(2);
   });
 });
 

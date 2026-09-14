@@ -60,7 +60,10 @@ describe('read-only commands never gain code-execution capability', () => {
     'sanity: %s.ts references the loader (directly or via a shared helper)',
     (name) => {
       const text = source(name);
-      const wired = text.includes(LOADER_REF) || text.includes('loadWorkflowForRegistration');
+      const wired =
+        text.includes(LOADER_REF) ||
+        text.includes('loadWorkflowForRegistration') ||
+        text.includes('load-workflow-for-admission');
       expect(wired).toBe(true);
     },
   );

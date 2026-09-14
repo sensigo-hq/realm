@@ -82,7 +82,7 @@ export function failsStrict(warnings: LoaderWarning[]): boolean {
  * and both baked a two-space `⚠  ` into the message. The prefix now belongs to
  * `renderLoaderWarning` alone, so the message here is the input string verbatim.
  *
- * register's caller is `loadWorkflowForRegistration`, which `watch` also uses — so the strip
+ * register's caller is `loadWorkflowForAdmission`, which `watch` and `validate` also use — so the strip
  * reaches watch too, and there is no third caller.
  */
 export function wrapSentinelWarnings(sentinelWarnings: string[] | undefined): LoaderWarning[] {

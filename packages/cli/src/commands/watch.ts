@@ -8,7 +8,10 @@ import {
   WorkflowError,
 } from '@sensigo/realm';
 import type { WorkflowRegistrar, LoaderWarning } from '@sensigo/realm';
-import { loadWorkflowForRegistration, ExtensionLoadError } from './register.js';
+import {
+  loadWorkflowForAdmission,
+  ExtensionLoadError,
+} from '../lib/load-workflow-for-admission.js';
 import {
   renderLoadFailure,
   renderEscalationLine,
@@ -67,7 +70,9 @@ function printWarningsBlock(
 async function registerFile(filePath: string, store: WorkflowRegistrar): Promise<void> {
   const timestamp = new Date().toISOString();
   try {
-    const { definition, warnings } = await loadWorkflowForRegistration(filePath);
+    const { definition, warnings } = await loadWorkflowForAdmission(filePath, {
+      surface: 'watch',
+    });
     if (rejectOnErrorSeverity(warnings)) {
       printWarningsBlock(timestamp, warnings);
       // One grammar with validate and register (issue #451) — plus a tail those two do not

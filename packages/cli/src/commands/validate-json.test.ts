@@ -492,6 +492,11 @@ steps:
       expect(result['valid']).toBe(false);
       const errors = result['errors'] as string[];
       expect(errors[0]).toContain('config validation failed against adapter config_schema');
+      // issue #553 (audit round 2 Q9): a pass-2 refusal leaves the shared helper as a bare
+      // WorkflowError, so the pass-1 definition rides BESIDE it (`admittedDefinitionOf`) and
+      // `workflow_id` is named exactly as the old extensions arm named it.
+      expect(result['workflow_id']).toBe('j6b-wf');
+      expect(result['checks_not_run']).toEqual([]);
       const diagnostics = result['diagnostics'] as LoaderWarning[];
       expect(diagnostics[0]?.code).toBe('RETRY_INERT_NON_AUTO');
       expect(exitSpy).toHaveBeenCalledWith(1);
@@ -618,6 +623,12 @@ steps:
       const diagnostics = result['diagnostics'] as LoaderWarning[];
       expect(diagnostics.some((d) => d.code === 'EXTENSION_SENTINEL')).toBe(true);
       expect(logOut()).not.toContain('Extensions: ');
+      // issue #553 (audit round 2 F6): the admission helper's two ⚠ lines reach STDERR under
+      // --json — stdout purity is #454's contract, and stderr may carry advisories on a contract
+      // arm. This population is new on validate (its old extensions arm went straight to
+      // sentinel and printed nothing); decided in validate.ts's ExtensionLoadError comment.
+      expect(warnOut()).toContain('⚠ Validating with SENTINEL credentials');
+      expect(result['checks_not_run']).toEqual([]);
       expect(exitSpy).not.toHaveBeenCalled();
       rmSync(proj, { recursive: true, force: true });
     }, 20_000);

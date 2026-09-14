@@ -1,18 +1,18 @@
 // realm validate <path> — validates a workflow YAML file without registering it.
 //
-// Strictness asymmetry (documented): extension-free workflows validate through the EXACT
-// from-string path used before project extensions existed (byte-identical behavior).
-// Workflows declaring `extensions:` (or validated with --extensions-module) go through
-// file-based loading so extension modules can be resolved, then a SECOND pass validates
-// step `config` against each resolved adapter's `config_schema` (two-pass).
+// ONE admission path (issue #553): `validate <file>` calls the same `loadWorkflowForAdmission`
+// register and watch call — file loader (agent-profile resolution), the unconditional
+// project-extensions pass (modules, manifest, config_schema two-pass), real-then-sentinel
+// secret resolution — so what validate blesses register accepts, and what register refuses
+// validate refuses, by construction. The pre-#553 "strictness asymmetry" (extension-free
+// workflows parsed from string, skipping every file-context check) is gone; `--registered`
+// runs the same rules on the stored copy and supplies-or-declares the context-dependent ones.
 import { Command } from 'commander';
-import { dirname, join, resolve } from 'node:path';
-import { readFileSync } from 'node:fs';
-import { load } from 'js-yaml';
+import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import {
   loadWorkflowFromStringWithDiagnostics,
-  loadWorkflowFromFileWithDiagnostics,
-  findTrustRoot,
+  resolveAgentProfiles,
   WorkflowError,
   shouldEnforceTimeout,
   DEFAULT_EXECUTION_TIMEOUT_SECONDS,
@@ -25,11 +25,8 @@ import {
   VERSION,
   type LoaderWarning,
 } from '@sensigo/realm';
-import type { WorkflowDefinition, ExtensionRegistry } from '@sensigo/realm';
-import {
-  loadProjectExtensions,
-  checkForOrphanedManifests,
-} from '../extensions/load-project-extensions.js';
+import type { WorkflowDefinition } from '@sensigo/realm';
+import type { LoadedProjectExtensions } from '../extensions/load-project-extensions.js';
 import {
   renderLoadFailure,
   renderEscalationLine,
@@ -38,6 +35,18 @@ import {
   failsStrict,
   wrapSentinelWarnings,
 } from '../lib/loader-warnings.js';
+import {
+  loadWorkflowForAdmission,
+  admitProjectExtensions,
+  ExtensionLoadError,
+  admittedDefinitionOf,
+} from '../lib/load-workflow-for-admission.js';
+import {
+  CONTEXT_DEPENDENT_CHECKS,
+  notRunReason,
+  renderChecksNotRunLine,
+  type CheckNotRun,
+} from '../lib/admission-context.js';
 
 /**
  * Advisory (issue A3, never rejects): an auto step declaring `retry:` but no `timeout_seconds`
@@ -87,26 +96,40 @@ export function findRetryWithoutExplicitTimeout(definition: WorkflowDefinition):
  * accumulator turns the summary line into a failing one and returns true (the caller exits 1);
  * otherwise the summary line — and, when present, the description line existing tests assert on
  * — print exactly as before and this returns false.
+ *
+ * `checksNotRun` (issue #553 correction C9, default 0 — the file-mode call site never passes it,
+ * since every check runs there) adds the FIRST tail clause when non-zero: `N check(s) not run`.
+ * There is no non-strict `— N warning(s)` tail today and this does not invent one — a
+ * warnings-bearing run without `--strict` and without a not-run count still prints the bare line,
+ * warnings above it. The failing-`--strict` clause, when both fire, comes SECOND, `; `-joined
+ * with the not-run clause — `— N check(s) not run; M warning(s); failing due to --strict` — and
+ * the description-suppression rule is UNCHANGED: only a failing `--strict` suppresses it, not a
+ * bare not-run disclosure (a moved tree is not a reason to hide the workflow's own description).
  */
 function printValidationOutcome(
   definition: WorkflowDefinition,
   warnings: LoaderWarning[],
   strict: boolean,
+  checksNotRun = 0,
 ): boolean {
   printLoaderWarnings(warnings);
   const stepCount = Object.keys(definition.steps).length;
   const base = `Valid: ${definition.id} v${definition.version} (${stepCount} ${stepCount === 1 ? 'step' : 'steps'})`;
-  if (strict && failsStrict(warnings)) {
-    console.log(
-      `${base} — ${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}; failing due to --strict`,
-    );
-    return true;
+  const strictFailing = strict && failsStrict(warnings);
+  const clauses: string[] = [];
+  if (checksNotRun > 0) {
+    clauses.push(`${checksNotRun} ${checksNotRun === 1 ? 'check' : 'checks'} not run`);
   }
-  console.log(base);
-  if (definition.description !== undefined) {
+  if (strictFailing) {
+    clauses.push(
+      `${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}; failing due to --strict`,
+    );
+  }
+  console.log(clauses.length > 0 ? `${base} — ${clauses.join('; ')}` : base);
+  if (!strictFailing && definition.description !== undefined) {
     console.log(`  ${definition.description}`);
   }
-  return false;
+  return strictFailing;
 }
 
 /** issue #236: the reasoning-position heuristic (design record §7, ratified via fixture C6) —
@@ -301,6 +324,15 @@ interface ValidateJsonEmit {
   strictFailed: boolean;
   diagnostics: readonly LoaderWarning[];
   errors: readonly string[];
+  /**
+   * issue #553 — the context-dependent checks `--registered` could not run, `[{ id, reason }]`.
+   * Emitted on EVERY arm and never absent (file mode: always `[]` — every check runs there), so
+   * a consumer can tell "ran all" from "old CLI". Lists ONLY skips caused by a missing recorded
+   * path (issue #553 correction C4) — a `valid: false` arm always emits `[]` here too, even
+   * though the context-dependent checks were never reached: the refusal ends the audit outright
+   * and is its own reason, not a "not run" one.
+   */
+  checksNotRun: readonly CheckNotRun[];
 }
 
 /**
@@ -325,6 +357,7 @@ function emitValidateJson(result: ValidateJsonEmit): void {
         strict: { requested: result.strictRequested, failed: result.strictFailed },
         diagnostics: result.diagnostics.map(normalizeDiagnosticSeverity),
         errors: result.errors,
+        checks_not_run: result.checksNotRun,
       },
       null,
       2,
@@ -352,6 +385,7 @@ interface ValidateJsonLoadFailureCtx {
   schemaVersion: number | null;
   diagnostics: readonly LoaderWarning[];
   strictRequested: boolean;
+  checksNotRun: readonly CheckNotRun[];
 }
 
 /**
@@ -389,6 +423,7 @@ function exitOnLoadFailure(err: unknown, jsonCtx?: ValidateJsonLoadFailureCtx): 
         strictFailed: false,
         diagnostics: jsonCtx.diagnostics,
         errors: err.errors ?? [err.message],
+        checksNotRun: jsonCtx.checksNotRun,
       });
       process.exit(1);
     }
@@ -421,22 +456,6 @@ function rejectIfPolicyEscalates(warnings: LoaderWarning[]): boolean {
   return true;
 }
 
-/** Pre-scan: does the YAML carry a top-level `extensions` key? (Parse errors → false; the
- *  real loader below reports them with its existing error surface.) */
-function hasTopLevelExtensions(content: string): boolean {
-  try {
-    const raw = load(content);
-    return (
-      typeof raw === 'object' &&
-      raw !== null &&
-      !Array.isArray(raw) &&
-      'extensions' in (raw as Record<string, unknown>)
-    );
-  } catch {
-    return false;
-  }
-}
-
 /**
  * `validate --registered <id>` — audit the STORED copy of a workflow (issue #427).
  *
@@ -451,7 +470,12 @@ function hasTopLevelExtensions(content: string): boolean {
  * change what your runs do. A legacy (schema_version-less or older) copy is a different case
  * entirely — see the legacy arm below: it is not grandfathered, it is already unreachable.
  */
-async function validateRegistered(id: string, strict: boolean, json: boolean): Promise<void> {
+async function validateRegistered(
+  id: string,
+  strict: boolean,
+  json: boolean,
+  overrideModule?: string,
+): Promise<void> {
   const store = new JsonWorkflowStore();
 
   let stored: WorkflowDefinition;
@@ -470,6 +494,7 @@ async function validateRegistered(id: string, strict: boolean, json: boolean): P
           strictFailed: false,
           diagnostics: [],
           errors: [err.message],
+          checksNotRun: [],
         });
         process.exit(1);
       }
@@ -494,6 +519,7 @@ async function validateRegistered(id: string, strict: boolean, json: boolean): P
           strictFailed: false,
           diagnostics: [],
           errors: [err.message],
+          checksNotRun: [],
         });
         process.exit(1);
       }
@@ -520,6 +546,7 @@ async function validateRegistered(id: string, strict: boolean, json: boolean): P
           strictFailed: false,
           diagnostics: [],
           errors: [notParseableMsg],
+          checksNotRun: [],
         });
         process.exit(1);
       }
@@ -543,50 +570,143 @@ async function validateRegistered(id: string, strict: boolean, json: boolean): P
     );
   }
 
+  // issue #553 — read the recorded context BEFORE the strip: these are the paths the
+  // context-dependent checks are supplied with (the file loader stamps both since v0.14;
+  // older copies carry neither, and say so below).
+  const recorded: Record<'source_dir' | 'trust_root', string | undefined> = {
+    source_dir: typeof stored.source_dir === 'string' ? stored.source_dir : undefined,
+    trust_root: typeof stored.trust_root === 'string' ? stored.trust_root : undefined,
+  };
+  const storedExtensions = stored.extensions;
+
   const clone = { ...stored } as Record<string, unknown>;
   for (const key of RUNTIME_ONLY_WORKFLOW_KEYS) delete clone[key];
-
-  const declaresProfile = Object.values(stored.steps ?? {}).some(
-    (step) => (step as { agent_profile?: unknown }).agent_profile !== undefined,
-  );
-  if ((clone['extensions'] !== undefined || declaresProfile) && !json) {
-    console.log(
-      'Extensions/profiles declared — module resolution, config_schema checks, and agent-profile ' +
-        'file resolution need the source tree and are not audited here; structural rules only.',
-    );
-  }
   // MUST delete: the from-string loader hard-throws on an `extensions` key (allowExtensions:
   // false) with "Register this workflow from its YAML file" — maximally misleading here, where
-  // the workflow IS registered and the operator asked about the stored copy. The honesty line
-  // above is what carries the real limitation.
+  // the workflow IS registered and the operator asked about the stored copy. The declared
+  // modules are re-attached to the parsed definition below, for the extensions pass that
+  // actually consumes them.
   delete clone['extensions'];
+  const stripped = JSON.stringify(clone);
+
+  // Supply or declare (issue #553): per member of CONTEXT_DEPENDENT_CHECKS, either the recorded
+  // path still exists and the check RUNS with it, or the check is declared not run — here, on
+  // the human line, and in `checks_not_run` on every `--json` arm from this point.
+  const notRun: CheckNotRun[] = [];
+  const registeredCtx = (
+    workflowId: string | null,
+    diagnostics: readonly LoaderWarning[],
+  ): ValidateJsonLoadFailureCtx => ({
+    mode: 'registered',
+    path: null,
+    workflowId,
+    schemaVersion: stored.schema_version ?? null,
+    diagnostics,
+    strictRequested: strict,
+    checksNotRun: notRun,
+  });
 
   let definition: WorkflowDefinition;
   let loaderWarnings: LoaderWarning[];
   try {
-    ({ definition, warnings: loaderWarnings } = loadWorkflowFromStringWithDiagnostics(
-      JSON.stringify(clone),
-    ));
+    // After #553 the four context-free rules (context_wrapper, the workflow_context names,
+    // source.path) run here too — the string loader carries them. No `(line N)`: the body is
+    // JSON, not the author's file.
+    ({ definition, warnings: loaderWarnings } = loadWorkflowFromStringWithDiagnostics(stripped));
   } catch (err) {
-    exitOnLoadFailure(
-      err,
-      json
-        ? {
-            mode: 'registered',
-            path: null,
-            workflowId: id,
-            schemaVersion: stored.schema_version ?? null,
-            diagnostics: warningsOf(err),
-            strictRequested: strict,
-          }
-        : undefined,
-    );
+    exitOnLoadFailure(err, json ? registeredCtx(id, warningsOf(err)) : undefined);
   }
 
-  // The extension-free arm's tail, minus the orphan-manifest check (there is no source tree to
-  // have one) and minus the adoption nudge (a stored copy is not where you edit; `--explain` is
-  // therefore inert in this mode, deliberately — no machinery for it).
-  const accumulated = [...loaderWarnings, ...findRetryWithoutExplicitTimeout(definition)];
+  const applicable = CONTEXT_DEPENDENT_CHECKS.filter((check) => check.applies(definition));
+  for (const check of applicable) {
+    const path = recorded[check.needs];
+    // `existsSync` is load-bearing for BOTH members: `resolveAgentProfiles` against a dead
+    // tree would name a path under the missing tree (the WRONG error), and
+    // `admitProjectExtensions` against a nonexistent trust root returns defaults SILENTLY
+    // (executed) — a copy whose tree moved would audit as if it had no manifest at all.
+    if (path === undefined || !existsSync(path)) {
+      const reason = notRunReason(check.needs, path, stored.origin);
+      // issue #553 correction C5 — the extensions member cannot apply an override it never
+      // reaches: say so beside the reason, never silently, on the human line AND
+      // `checks_not_run[].reason` alike, so 7c's label+reason parity holds by construction.
+      notRun.push({
+        id: check.id,
+        reason:
+          check.id === 'project_extensions' && overrideModule !== undefined
+            ? `${reason}; --extensions-module not applied`
+            : reason,
+      });
+    }
+  }
+  // The disclosure line — always on, never verbose-gated, the old honesty line's slot: after
+  // the header, before any verdict. Derived from the constant; nothing hand-typed. A non-empty
+  // set does NOT flip `--strict`: a disclosure, not a warning — a moved tree must not fail CI
+  // for a reason the operator cannot act on.
+  if (!json && notRun.length > 0) console.log(renderChecksNotRunLine(notRun));
+
+  let sentinelWarnings: string[] | undefined;
+  for (const check of applicable) {
+    if (notRun.some((n) => n.id === check.id)) continue;
+    if (check.id === 'agent_profile_resolution') {
+      try {
+        resolveAgentProfiles(definition, recorded.source_dir!);
+      } catch (err) {
+        exitOnLoadFailure(err, json ? registeredCtx(definition.id, loaderWarnings) : undefined);
+      }
+    } else {
+      // The extensions pass exactly as loadWorkflowForAdmission runs it — ONE shared call
+      // (issue #553 correction C2: `admitProjectExtensions` is now the single mint site for the
+      // sentinel-credentials advisory pair, replacing this arm's own hand-typed copy) — against
+      // the RECORDED paths, re-stamped on the parsed copy (the strip removed them).
+      if (recorded.source_dir !== undefined) definition.source_dir = recorded.source_dir;
+      definition.trust_root = recorded.trust_root!; // the member ran ⇒ recorded and present
+      if (storedExtensions !== undefined) definition.extensions = storedExtensions;
+      let loaded: LoadedProjectExtensions;
+      try {
+        loaded = await admitProjectExtensions(definition, {
+          surface: 'validate',
+          ...(overrideModule !== undefined ? { overrideModule } : {}),
+        });
+      } catch (err) {
+        // issue #445's sentence, issue #454's whole-message convention, issue #463's
+        // warnings-first — the file arm's shape, on the stored copy.
+        const accumulated = [...loaderWarnings, ...findRetryWithoutExplicitTimeout(definition)];
+        const msg = `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`;
+        if (json) {
+          emitValidateJson({
+            valid: false,
+            mode: 'registered',
+            path: null,
+            workflowId: definition.id,
+            schemaVersion: stored.schema_version ?? null,
+            strictRequested: strict,
+            strictFailed: false,
+            diagnostics: accumulated,
+            errors: [msg],
+            checksNotRun: notRun,
+          });
+          process.exit(1);
+        }
+        for (const w of accumulated) console.warn(renderLoaderWarning(w));
+        console.error(msg);
+        process.exit(1);
+      }
+      sentinelWarnings = loaded.sentinelWarnings;
+      try {
+        loadWorkflowFromStringWithDiagnostics(stripped, loaded.registry);
+      } catch (err) {
+        exitOnLoadFailure(err, json ? registeredCtx(definition.id, warningsOf(err)) : undefined);
+      }
+    }
+  }
+
+  // The file arm's tail, minus the adoption nudge (a stored copy is not where you edit;
+  // `--explain` is therefore inert in this mode, deliberately — no machinery for it).
+  const accumulated = [
+    ...loaderWarnings,
+    ...findRetryWithoutExplicitTimeout(definition),
+    ...wrapSentinelWarnings(sentinelWarnings),
+  ];
   if (json) {
     if (rejectOnErrorSeverity(accumulated)) {
       emitValidateJson({
@@ -599,6 +719,7 @@ async function validateRegistered(id: string, strict: boolean, json: boolean): P
         strictFailed: false,
         diagnostics: accumulated,
         errors: [renderEscalationLine(accumulated)],
+        checksNotRun: notRun,
       });
       process.exit(1);
     }
@@ -613,6 +734,7 @@ async function validateRegistered(id: string, strict: boolean, json: boolean): P
       strictFailed,
       diagnostics: accumulated,
       errors: [],
+      checksNotRun: notRun,
     });
     if (strictFailed) {
       process.exit(1);
@@ -622,7 +744,7 @@ async function validateRegistered(id: string, strict: boolean, json: boolean): P
   if (rejectIfPolicyEscalates(accumulated)) {
     process.exit(1);
   }
-  const strictFailed = printValidationOutcome(definition, accumulated, strict);
+  const strictFailed = printValidationOutcome(definition, accumulated, strict, notRun.length);
   if (strictFailed) {
     process.exit(1);
   }
@@ -687,7 +809,7 @@ export const validateCommand = new Command('validate')
       }
 
       if (opts.registered !== undefined) {
-        await validateRegistered(opts.registered, strict, json);
+        await validateRegistered(opts.registered, strict, json, opts.extensionsModule);
         return;
       }
 
@@ -696,262 +818,81 @@ export const validateCommand = new Command('validate')
           ? inputPath!
           : join(inputPath!, 'workflow.yaml');
 
-      let content: string;
+      // ONE call (issue #553) — the path register and watch take, byte for byte: the file
+      // loader (read failure → the loader's `Failed to read workflow file:` sentence; profile
+      // resolution; the four context rules), the unconditional extensions pass with real-then-
+      // sentinel secret resolution, the config_schema pass 2. Two failure populations leave it,
+      // and each keeps its own sentence (issue #445): an ExtensionLoadError is extension or
+      // deployment territory (an unresolvable module, a malformed `realm.yaml`, the #123
+      // orphaned-manifest refusal) and says `Error loading extensions:`; everything else is the
+      // workflow's own invalidity, rendered by exitOnLoadFailure (a non-WorkflowError rethrows
+      // loud — the #123 doctrine).
+      let definition: WorkflowDefinition;
+      let warnings: LoaderWarning[];
+      let manifest: LoadedProjectExtensions['manifest'];
       try {
-        content = readFileSync(filePath, 'utf8');
+        ({ definition, warnings, manifest } = await loadWorkflowForAdmission(filePath, {
+          ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
+          surface: 'validate',
+        }));
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (json) {
-          emitValidateJson({
-            valid: false,
-            mode: 'file',
-            path: inputPath!,
-            workflowId: null,
-            schemaVersion: null,
-            strictRequested: strict,
-            strictFailed: false,
-            diagnostics: [],
-            errors: [message],
-          });
-          process.exit(1);
-        }
-        console.error(`Error: ${message}`);
-        process.exit(1);
-        return;
-      }
-
-      if (!hasTopLevelExtensions(content) && opts.extensionsModule === undefined) {
-        // Extension-free: the exact current from-string path — byte-identical behavior,
-        // plus the orphaned-manifest guard (#123). The from-string loader stamps no
-        // source_dir/trust_root, so resolve the same trust root the file-based path would
-        // (findTrustRoot walks package.json/.git from the workflow dir) and run the guard
-        // structural-first — after the workflow parses, before the `Valid:` print. It throws
-        // WorkflowError, which exitOnLoadFailure renders as `Invalid:` + exit(1) — this arm's
-        // guard call is DIRECT, which is why it keeps that sentence while an extensions-declaring
-        // load surfaces the same guard as `Error loading extensions:` (issue #445). resolve()
-        // before dirname so a relative `workflow.yaml` doesn't collapse the walk to '.'.
-        let definition: WorkflowDefinition;
-        let loaderWarnings: LoaderWarning[];
-        try {
-          ({ definition, warnings: loaderWarnings } =
-            loadWorkflowFromStringWithDiagnostics(content));
-        } catch (err) {
-          exitOnLoadFailure(
-            err,
-            json
-              ? {
-                  mode: 'file',
-                  path: inputPath!,
-                  workflowId: null,
-                  schemaVersion: null,
-                  diagnostics: warningsOf(err),
-                  strictRequested: strict,
-                }
-              : undefined,
-          );
-        }
-        // Its own try (issue #463): each try owns one failure population — the #445 doctrine. A
-        // load failure above has nothing to print but itself; the guard below fails AFTER the
-        // workflow parsed, with its warnings in hand.
-        try {
-          const workflowDir = dirname(resolve(filePath));
-          checkForOrphanedManifests(workflowDir, findTrustRoot(workflowDir));
-        } catch (err) {
-          // The workflow's own warnings before the refusal — the same set the success path counts,
-          // so nothing the author would otherwise see only on the NEXT run is withheld. Plain
-          // render, not printLoaderWarnings — historically because printLoaderWarnings' now-deleted
-          // `— REFUSED below` substitution (issue #540) would have named the WRONG cause here: the
-          // escalation gate never ran on this arm, so nothing has actually decided any of these
-          // warnings is what's being refused. The two renderers produce identical bytes today, but
-          // stay two call shapes deliberately — see #542. Unconditional
-          // in HUMAN mode: on the #123 non-WorkflowError rethrow population the warnings print
-          // before the loud crash — true statements either way. exitOnLoadFailure cannot print
-          // them twice: the orphan WorkflowError is minted bare in the CLI
-          // (load-project-extensions.ts), and the core `warnings` slot is set only by
-          // attachLoaderWarnings inside the core loader, which this throw never transits — which
-          // is exactly why this arm swallowed them until now.
+        if (err instanceof ExtensionLoadError) {
+          // issue #463 — the workflow's own warnings first: pass-1's plus the retry advisory,
+          // the same set the success path counts minus the sentinel wraps, which come from the
+          // load that just failed — there is nothing to wrap. Plain render, not
+          // printLoaderWarnings — the escalation gate never ran on this arm (#540/#542).
           //
-          // issue #454 — THE ONE SPECIAL SITE: under --json this population never prints (stderr
-          // stays silent on a contract arm); its diagnostics travel in the jsonCtx instead, as the
-          // ACCUMULATED set (not `err.warnings`, which this orphan WorkflowError never carries —
-          // it is minted bare, as the paragraph above explains).
-          const accumulated = [...loaderWarnings, ...findRetryWithoutExplicitTimeout(definition)];
-          if (!json) {
-            for (const w of accumulated) {
-              console.warn(renderLoaderWarning(w));
-            }
-          }
-          exitOnLoadFailure(
-            err,
-            json
-              ? {
-                  mode: 'file',
-                  path: inputPath!,
-                  workflowId: definition.id,
-                  schemaVersion: null,
-                  diagnostics: accumulated,
-                  strictRequested: strict,
-                }
-              : undefined,
-          );
-        }
-
-        // Reporting, deliberately OUTSIDE the try (issue #445): these lines only run once the
-        // load succeeded, and their own `process.exit` calls have no business passing through a
-        // catch that exists to classify LOAD failures. Production-neutral — the exits still exit.
-        const accumulated = [...loaderWarnings, ...findRetryWithoutExplicitTimeout(definition)];
-        if (json) {
-          if (rejectOnErrorSeverity(accumulated)) {
+          // issue #454 — the errors[] convention's exception: this sentence ships WHOLE, with
+          // its `Error loading extensions: ` head — the #445 classification IS the composed
+          // message, not a channel prefix a caller prepends at print. Under `--json` the
+          // helper's two sentinel ⚠ lines may already have reached stderr (`console.warn`;
+          // register has no `--json`): stdout purity holds — #454's contract is stdout — and
+          // stderr may carry advisories on a contract arm (J7b pins it).
+          const failed = err.definition;
+          const accumulated = [
+            ...(err.warnings ?? []),
+            ...(failed !== undefined ? findRetryWithoutExplicitTimeout(failed) : []),
+          ];
+          const msg = `Error loading extensions: ${err.message}`;
+          if (json) {
             emitValidateJson({
               valid: false,
               mode: 'file',
               path: inputPath!,
-              workflowId: definition.id,
+              workflowId: failed?.id ?? null,
               schemaVersion: null,
               strictRequested: strict,
               strictFailed: false,
               diagnostics: accumulated,
-              errors: [renderEscalationLine(accumulated)],
+              errors: [msg],
+              checksNotRun: [],
             });
             process.exit(1);
           }
-          const strictFailed = strict && failsStrict(accumulated);
-          emitValidateJson({
-            valid: true,
-            mode: 'file',
-            path: inputPath!,
-            workflowId: definition.id,
-            schemaVersion: null,
-            strictRequested: strict,
-            strictFailed,
-            diagnostics: accumulated,
-            errors: [],
-          });
-          // issue #236: the nudge is suppressed entirely under --json (documented; --explain is
-          // inert with it — there is no machinery for it here at all).
-          if (strictFailed) {
-            process.exit(1);
-          }
-          return;
-        }
-        if (rejectIfPolicyEscalates(accumulated)) {
+          for (const w of accumulated) console.warn(renderLoaderWarning(w));
+          console.error(msg);
           process.exit(1);
         }
-        const strictFailed = printValidationOutcome(definition, accumulated, strict);
-        // issue #236: the nudge's own INFO channel — never affects the exit code below.
-        printStructuredOutputNudge(definition, { explain });
-        if (strictFailed) {
-          process.exit(1);
-        }
-        return;
-      }
-
-      // Extensions declared (or an override supplied): file-based two-pass validation.
-      //
-      // THREE tries, not one (issue #445). The old single catch spanned five concerns and
-      // rendered every one of them `Invalid: …` — including a user's unresolvable extension
-      // module, and including internal bugs. Each try now owns one failure population, and the
-      // reporting tail sits outside all of them.
-      let definition: WorkflowDefinition;
-      let pass1Warnings: LoaderWarning[];
-      try {
-        // Pass 1: structural validation + extension resolution metadata (source_dir/trust_root).
-        // The universal, registry-independent structural load — its warnings are what we count.
-        ({ definition, warnings: pass1Warnings } = loadWorkflowFromFileWithDiagnostics(filePath));
-      } catch (err) {
+        // A pass-2 (config_schema) refusal carries the pass-1 definition beside it, so
+        // `workflow_id` is named exactly as before the collapse (round-2 Q9); a pass-1 refusal
+        // has no definition to name.
         exitOnLoadFailure(
           err,
           json
             ? {
                 mode: 'file',
                 path: inputPath!,
-                workflowId: null,
+                workflowId: admittedDefinitionOf(err)?.id ?? null,
                 schemaVersion: null,
                 diagnostics: warningsOf(err),
                 strictRequested: strict,
+                checksNotRun: [],
               }
             : undefined,
         );
       }
 
-      let registry: ExtensionRegistry;
-      let manifest: Awaited<ReturnType<typeof loadProjectExtensions>>['manifest'];
-      let sentinelWarnings: string[] | undefined;
-      try {
-        ({ registry, manifest, sentinelWarnings } = await loadProjectExtensions(definition, {
-          ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
-          secretMode: 'sentinel',
-        }));
-      } catch (err) {
-        // issue #445 — a DIFFERENT population, and it gets its own sentence. Everything
-        // loadProjectExtensions throws is extension or deployment territory: an unresolvable
-        // module path, a failed import, a module whose default export is the wrong shape, a
-        // malformed `realm.yaml`, and the #123 orphaned-manifest refusal. None of those makes
-        // the WORKFLOW invalid, and calling them `Invalid:` sent an author to the wrong file.
-        // The sentence is `realm run`'s, verbatim (run.ts) — the sibling surface renders this
-        // identical failure class exactly so.
-        //
-        // issue #463 — the workflow's own warnings first: pass-1's plus the retry advisory, the
-        // same set the success path counts minus the sentinel wraps, which come from the load that
-        // just failed — there is nothing to wrap. Plain render, not printLoaderWarnings —
-        // historically because printLoaderWarnings' now-deleted `— REFUSED below` substitution
-        // (issue #540) would have named the WRONG cause here: the escalation gate never ran on
-        // this arm either. Same two-call-shapes-on-purpose note as the orphan-manifest arm above
-        // (#542).
-        //
-        // issue #454 — the errors[] convention's OTHER exception: this sentence ships WHOLE, with
-        // its `Error loading extensions: ` head — the #445 classification IS the composed
-        // message, not a channel prefix a caller prepends at print.
-        const accumulated = [...pass1Warnings, ...findRetryWithoutExplicitTimeout(definition)];
-        const msg = `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`;
-        if (json) {
-          emitValidateJson({
-            valid: false,
-            mode: 'file',
-            path: inputPath!,
-            workflowId: definition.id,
-            schemaVersion: null,
-            strictRequested: strict,
-            strictFailed: false,
-            diagnostics: accumulated,
-            errors: [msg],
-          });
-          process.exit(1);
-        }
-        for (const w of accumulated) {
-          console.warn(renderLoaderWarning(w));
-        }
-        console.error(msg);
-        process.exit(1);
-      }
-
-      try {
-        // Pass 2: step config validated against each resolved adapter's config_schema. Same
-        // content as pass 1, registry only adds config_schema checks — its warnings are proven
-        // identical to pass 1's, so they are deliberately discarded here (not collected) to avoid
-        // double-counting the same unknown key twice.
-        loadWorkflowFromFileWithDiagnostics(filePath, registry);
-      } catch (err) {
-        exitOnLoadFailure(
-          err,
-          json
-            ? {
-                mode: 'file',
-                path: inputPath!,
-                workflowId: definition.id,
-                schemaVersion: null,
-                diagnostics: warningsOf(err),
-                strictRequested: strict,
-              }
-            : undefined,
-        );
-      }
-
-      const accumulated = [
-        ...pass1Warnings,
-        ...findRetryWithoutExplicitTimeout(definition),
-        ...wrapSentinelWarnings(sentinelWarnings),
-      ];
+      const accumulated = [...warnings, ...findRetryWithoutExplicitTimeout(definition)];
       if (json) {
         if (rejectOnErrorSeverity(accumulated)) {
           emitValidateJson({
@@ -964,6 +905,7 @@ export const validateCommand = new Command('validate')
             strictFailed: false,
             diagnostics: accumulated,
             errors: [renderEscalationLine(accumulated)],
+            checksNotRun: [],
           });
           process.exit(1);
         }
@@ -978,6 +920,7 @@ export const validateCommand = new Command('validate')
           strictFailed,
           diagnostics: accumulated,
           errors: [],
+          checksNotRun: [],
         });
         // issue #422/#236: the Extensions manifest line and the nudge are both suppressed under
         // --json — human-informational, not represented (additive later if ever wanted).

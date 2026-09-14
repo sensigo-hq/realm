@@ -1,10 +1,11 @@
-// Tests for loadWorkflowForRegistration — register/watch MINT the trust decision:
+// Tests for loadWorkflowForAdmission — register/watch/validate MINT the trust decision:
 // full module load + duck validation + config_schema two-pass BEFORE persisting.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadWorkflowForRegistration, registerCommand } from './register.js';
+import { registerCommand } from './register.js';
+import { loadWorkflowForAdmission } from '../lib/load-workflow-for-admission.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 
 let proj: string;
@@ -39,9 +40,11 @@ function writeWorkflow(content: string): string {
   return file;
 }
 
-describe('loadWorkflowForRegistration', () => {
+describe('loadWorkflowForAdmission', () => {
   it('extension-free workflows load exactly as before (no loader involvement)', async () => {
-    const { definition } = await loadWorkflowForRegistration(writeWorkflow(BASE_YAML));
+    const { definition } = await loadWorkflowForAdmission(writeWorkflow(BASE_YAML), {
+      surface: 'register',
+    });
     expect(definition.id).toBe('reg-wf');
     expect(definition.extensions).toBeUndefined();
   });
@@ -52,8 +55,9 @@ describe('loadWorkflowForRegistration', () => {
       `export default { handlers: { h1: { id: 'h1', execute: async () => ({ data: {} }) } } };`,
       'utf8',
     );
-    const { definition } = await loadWorkflowForRegistration(
+    const { definition } = await loadWorkflowForAdmission(
       writeWorkflow(`${BASE_YAML}extensions: ../../dist/registry.js\n`),
+      { surface: 'register' },
     );
     expect(definition.extensions).toEqual(['../../dist/registry.js']);
     expect(definition.source_dir).toBe(workflowDir);
@@ -63,9 +67,9 @@ describe('loadWorkflowForRegistration', () => {
   it('a broken module fails registration BEFORE anything would be persisted', async () => {
     writeFileSync(join(proj, 'dist', 'registry.js'), `export default { handler: {} };`, 'utf8');
     await expect(
-      loadWorkflowForRegistration(
-        writeWorkflow(`${BASE_YAML}extensions: ../../dist/registry.js\n`),
-      ),
+      loadWorkflowForAdmission(writeWorkflow(`${BASE_YAML}extensions: ../../dist/registry.js\n`), {
+        surface: 'register',
+      }),
     ).rejects.toThrow(/unknown key 'handler'/);
   });
 
@@ -98,9 +102,9 @@ steps:
     config:
       wrong_key: x
 `;
-    await expect(loadWorkflowForRegistration(writeWorkflow(yaml))).rejects.toThrow(
-      /config validation failed against adapter config_schema/,
-    );
+    await expect(
+      loadWorkflowForAdmission(writeWorkflow(yaml), { surface: 'register' }),
+    ).rejects.toThrow(/config validation failed against adapter config_schema/);
   });
 });
 
@@ -108,7 +112,7 @@ steps:
 // issue #451 — the extensions sentence at register's catch, driven through the COMMAND
 // =================================================================================================
 //
-// loadWorkflowForRegistration tags every failure out of its extensions block ExtensionLoadError,
+// loadWorkflowForAdmission tags every failure out of its extensions block ExtensionLoadError,
 // and register's catch renders the tag as `Error loading extensions:` — the sentence run and
 // validate already print. The helper alone cannot show a render, so these cells drive
 // registerCommand end to end: spies on the three channels, a throwing exit spy, and a scratch $HOME
