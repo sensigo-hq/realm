@@ -534,6 +534,102 @@ describe("GorgiasAdapter fetch('get_messages')", () => {
     expect(data.truncated).toBe(false); // fetched the whole thread the caller asked for
   });
 
+  // ---------------------------------------------------------------------
+  // #575: GET /tickets/{id}/messages (the per-ticket endpoint — what every real get_messages
+  // call goes through) does not use the cursor contract the tests above assume. It uses an
+  // older page-based scheme: a `meta.next_page` relative URL instead of `meta.next_cursor`,
+  // with the terminal page omitting the `next_page` key entirely (not `null`). Fixtures below
+  // are shaped from the real captured shapes (see the prompt) adapted to this file's base_url,
+  // which — unlike production's `https://{domain}.gorgias.com/api` — carries no `/api` segment.
+  // ---------------------------------------------------------------------
+  it('page-based continuation (next_page only, no next_cursor key at all): two pages accumulate to the full thread, truncated: false', async () => {
+    const page1 = Array.from({ length: 30 }, (_, i) => makeMsg(i + 1));
+    const page2 = Array.from({ length: 25 }, (_, i) => makeMsg(i + 31));
+    respond(200, {
+      data: page1,
+      meta: {
+        page: 1,
+        per_page: 30,
+        item_count: 55,
+        nb_pages: 2,
+        next_page: '/tickets/10/messages?limit=100&page=2',
+      },
+    });
+    respond(200, {
+      data: page2,
+      meta: { page: 2, per_page: 30, item_count: 55, nb_pages: 2 }, // next_page key absent — terminal
+    });
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    const data = result.data as { messages: Array<{ id: number }>; truncated: boolean };
+    expect(data.messages).toHaveLength(55); // proves BOTH handlers were consumed, in order
+    expect(data.messages.map((m) => m.id)).toEqual(Array.from({ length: 55 }, (_, i) => i + 1));
+    expect(data.truncated).toBe(false);
+  });
+
+  it('explicit limit exceeded within page 1 (next_page present but limit already reached): exactly one request, truncated: true', async () => {
+    const page1 = Array.from({ length: 30 }, (_, i) => makeMsg(i + 1));
+    respond(200, {
+      data: page1,
+      meta: {
+        page: 1,
+        per_page: 30,
+        item_count: 55,
+        nb_pages: 2,
+        next_page: '/tickets/10/messages?limit=100&page=2',
+      },
+    });
+    // No second handler registered: a second request would land on "no handler registered"
+    // (500) and the fetch() call would throw, failing this test — that's what proves the
+    // adapter never issues it, mirroring the existing cursor-based
+    // 'params.limit = 2 with 3 messages on first page (cursor present)' test above.
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10, limit: 20 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages).toHaveLength(20);
+    expect(data.truncated).toBe(true);
+  });
+
+  it('multi-page thread via next_page only (100+100+50): returns the full 250-message thread, truncated: false', async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => makeMsg(i + 1));
+    const page2 = Array.from({ length: 100 }, (_, i) => makeMsg(i + 101));
+    const page3 = Array.from({ length: 50 }, (_, i) => makeMsg(i + 201));
+    respond(200, { data: page1, meta: { next_page: '/tickets/10/messages?limit=100&page=2' } });
+    respond(200, { data: page2, meta: { next_page: '/tickets/10/messages?limit=100&page=3' } });
+    respond(200, { data: page3, meta: {} }); // terminal — next_page key absent entirely
+
+    const adapter = makeAdapter();
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    const data = result.data as { messages: unknown[]; truncated: boolean };
+    expect(data.messages).toHaveLength(250);
+    expect(data.truncated).toBe(false);
+  });
+
+  // Discriminating case: every test above uses makeAdapter(), whose base_url has no path
+  // segment, so a correct `new URL(nextPage, this.baseUrl)` resolution and a plausible-but-wrong
+  // string concatenation (`${this.baseUrl}${nextPage}` — the pattern already used one line away
+  // for the first-page URL) would produce byte-identical request URLs against it. Against a
+  // path-bearing base (mirroring production's `.../api` shape), they diverge: concatenation
+  // doubles the shared segment. This test must fail under a concatenation implementation and
+  // pass under a new URL() one.
+  it('next_page resolves against baseUrl per the URL spec (path-bearing base): no doubled /api segment', async () => {
+    respond(200, {
+      data: [makeMsg(1)],
+      meta: { next_page: '/api/tickets/10/messages?limit=100&page=2' },
+    });
+    const captured = captureRequest({ data: [makeMsg(2)], meta: {} });
+
+    const adapter = new GorgiasAdapter('gorgias', {
+      domain: 'test',
+      auth: { type: 'basic', token: 'test@example.com:testapikey' },
+      base_url: `http://127.0.0.1:${port}/api`,
+    });
+    const result = await adapter.fetch('get_messages', { ticket_id: 10 }, {});
+    const data = result.data as { messages: Array<{ id: number }>; truncated: boolean };
+    expect(data.messages.map((m) => m.id)).toEqual([1, 2]);
+    expect(captured.url).toBe('/api/tickets/10/messages?limit=100&page=2');
+  });
+
   it('body_text and body_html are returned as-is', async () => {
     respond(200, {
       data: [makeMsg(1, { body_text: 'plain text', body_html: '<p>html</p>' })],

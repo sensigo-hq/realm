@@ -251,6 +251,10 @@ timeout_seconds`) told a step with no gate trust to "set a timeout" — followin
 human_confirmed`/`human_reviewed`). On such a step the loader now emits ONE advisory naming the
   true cause; gate-trusted steps keep the member advisories byte-identical. `validate --registered`
   surfaces both corrected texts on already-registered copies too (executed).
+- **`GorgiasAdapter.get_messages` no longer silently truncates a per-ticket thread at 30 messages
+  while reporting `truncated: false`** (issue #575) — the per-ticket endpoint's page-based
+  pagination (`next_page`) is now followed the same way the cursor-based endpoints' `next_cursor`
+  already was.
 
 ### Added
 

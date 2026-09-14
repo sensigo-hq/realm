@@ -351,6 +351,15 @@ export class GorgiasAdapter implements ServiceAdapter {
 
       const accumulated: GorgiasMessage[] = [];
       let cursor: string | undefined = undefined;
+      // #575: not every Gorgias list endpoint uses the cursor contract. GET /tickets/{id}/messages
+      // (the per-ticket path — what every real get_messages call goes through, since ticket_id is
+      // always supplied) uses an older page-based scheme instead: it hands back a complete
+      // `meta.next_page` relative URL rather than a `meta.next_cursor` token. When a response
+      // carries a next_page URL, `nextUrl` holds the fully-resolved request URL to use verbatim on
+      // the following iteration, bypassing `stableParts`/`cursor` entirely — Gorgias's next_page
+      // already encodes the full continuation query, so re-deriving it would risk drifting from
+      // what Gorgias actually asked us to fetch next.
+      let nextUrl: string | undefined = undefined;
       // INVARIANT: truncated === true iff at least one message the API would have returned for
       // this request was NOT included in `messages` — i.e. we stopped because of effectiveLimit,
       // never merely because the API ran out. (A1 fix: the prior version checked next_cursor===null
@@ -361,18 +370,24 @@ export class GorgiasAdapter implements ServiceAdapter {
       for (;;) {
         this.checkAborted(signal);
 
-        const urlParts = cursor !== undefined ? [...stableParts, `cursor=${cursor}`] : stableParts;
-        // Per-ticket endpoint when a ticket_id is supplied — the flat /messages?ticket_id= filter
-        // is inconsistent (returns 0, 1, or all messages for the same request; live evidence:
-        // ticket 71355453 → 0 via the flat filter vs 4 via the per-ticket path, same moment).
-        // Retained for the global-scan case (ticketId === null), where there is no id to path on.
-        const messagesPath = ticketId !== null ? `/tickets/${ticketId}/messages` : `/messages`;
-        const url = `${this.baseUrl}${messagesPath}?${urlParts.join('&')}`;
+        let url: string;
+        if (nextUrl !== undefined) {
+          url = nextUrl;
+        } else {
+          const urlParts =
+            cursor !== undefined ? [...stableParts, `cursor=${cursor}`] : stableParts;
+          // Per-ticket endpoint when a ticket_id is supplied — the flat /messages?ticket_id= filter
+          // is inconsistent (returns 0, 1, or all messages for the same request; live evidence:
+          // ticket 71355453 → 0 via the flat filter vs 4 via the per-ticket path, same moment).
+          // Retained for the global-scan case (ticketId === null), where there is no id to path on.
+          const messagesPath = ticketId !== null ? `/tickets/${ticketId}/messages` : `/messages`;
+          url = `${this.baseUrl}${messagesPath}?${urlParts.join('&')}`;
+        }
 
         const response = await this.executeRequest('GET', url, 'get_messages', undefined, signal);
         const json = response.data as {
           data: GorgiasMessage[];
-          meta: { next_cursor?: string | null };
+          meta: { next_cursor?: string | null; next_page?: string | null };
         };
 
         for (const message of json.data) {
@@ -384,12 +399,27 @@ export class GorgiasAdapter implements ServiceAdapter {
         }
 
         const nextCursor = json.meta.next_cursor ?? null;
+        const nextPage = json.meta.next_page ?? null;
+        const hasContinuation = nextCursor !== null || nextPage !== null;
+
         if (accumulated.length >= effectiveLimit) {
-          if (nextCursor !== null) truncated = true; // more pages remain past the limit
+          if (hasContinuation) truncated = true; // more pages remain past the limit
           break;
         }
-        if (nextCursor === null) break; // API exhausted with room to spare — nothing dropped
-        cursor = nextCursor;
+        if (!hasContinuation) break; // API exhausted with room to spare — nothing dropped
+
+        if (nextCursor !== null) {
+          cursor = nextCursor;
+          nextUrl = undefined;
+        } else if (nextPage !== null) {
+          // Follow the URL Gorgias gives you, the same way the cursor branch follows the cursor
+          // Gorgias gives you. next_page is an absolute-path reference (e.g.
+          // `/api/tickets/74952676/messages/?limit=100&page=2`); resolving it against this.baseUrl
+          // (which itself already carries `/api`, e.g. `https://{domain}.gorgias.com/api`) replaces
+          // the base's path with next_page's own path per the URL spec, rather than concatenating —
+          // exactly right, since next_page already includes its own `/api/...` prefix.
+          nextUrl = new URL(nextPage, this.baseUrl).toString();
+        }
       }
 
       return { status: 200, data: { messages: accumulated, truncated } };
