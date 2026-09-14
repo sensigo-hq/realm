@@ -3813,6 +3813,17 @@ steps:
       // The ENTRY's line: the missing key has no line, and a cite never names an absent key.
       message: 'Invalid workflow: workflow_context.notes.source.path is required (line 9)',
     },
+    {
+      // issue #553 correction C3 — an MA novel probe on `05439cf`: `notes:` with NOTHING under
+      // it parses to `entry === null`, and the pre-#553 code's `entry['source']` crashed
+      // `register` with a bare V8 `Cannot read properties of null (reading 'source')` while
+      // `validate` said `Valid` (a #556-class bare crash AND a divergence, both at once). The
+      // `rawEntry?.['source']` optional-chain fixes it — nobody claimed the fix, so it must not
+      // ride unpinned.
+      name: 'an entry with nothing under it at all (workflow_context.notes: null)',
+      yaml: `${head}workflow_context:\n  notes:\n`,
+      message: 'Invalid workflow: workflow_context.notes.source.path is required (line 9)',
+    },
   ];
 
   it.each(shapes)(

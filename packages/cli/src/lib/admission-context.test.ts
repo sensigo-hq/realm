@@ -88,42 +88,57 @@ describe('admission-context witness (issue #553)', () => {
 });
 
 describe('the derived line (issue #553)', () => {
-  it('singular, one reason, one label', () => {
+  it('singular, one member, label beside its own reason', () => {
     expect(
       renderChecksNotRunLine([
-        { id: 'project_extensions', reason: notRunReason('trust_root', '/gone') },
+        { id: 'project_extensions', reason: notRunReason('trust_root', '/gone', undefined) },
       ]),
     ).toBe(
-      '1 check not run (trust_root /gone no longer exists): extension modules, manifest and config_schema',
+      '1 check not run: project extensions (modules, manifest, config_schema) (trust_root /gone no longer exists)',
     );
   });
 
-  it('plural, two reasons `; `-joined in member order, labels `, `-joined in member order', () => {
+  it('plural, two members `; `-joined in member order, each label beside its own reason', () => {
     expect(
       renderChecksNotRunLine([
-        { id: 'agent_profile_resolution', reason: notRunReason('source_dir', '/gone/wf') },
-        { id: 'project_extensions', reason: notRunReason('trust_root', '/gone') },
+        {
+          id: 'agent_profile_resolution',
+          reason: notRunReason('source_dir', '/gone/wf', undefined),
+        },
+        { id: 'project_extensions', reason: notRunReason('trust_root', '/gone', undefined) },
       ]),
     ).toBe(
-      '2 checks not run (source_dir /gone/wf no longer exists; trust_root /gone no longer exists): ' +
-        'agent-profile file resolution, extension modules, manifest and config_schema',
+      '2 checks not run: agent-profile file resolution (source_dir /gone/wf no longer exists); ' +
+        'project extensions (modules, manifest, config_schema) (trust_root /gone no longer exists)',
     );
   });
 
-  it('identical reasons are deduplicated', () => {
+  it('identical reasons are NOT collapsed — each member stays beside its own', () => {
     expect(
       renderChecksNotRunLine([
         { id: 'agent_profile_resolution', reason: 'x' },
         { id: 'project_extensions', reason: 'x' },
       ]),
     ).toBe(
-      '2 checks not run (x): agent-profile file resolution, extension modules, manifest and config_schema',
+      '2 checks not run: agent-profile file resolution (x); project extensions (modules, manifest, config_schema) (x)',
     );
   });
 
-  it('the legacy reason names the missing field and the version', () => {
-    expect(notRunReason('source_dir', undefined)).toBe(
+  it('the legacy reason names the missing field and the version (origin: human or undefined — a file-registered copy)', () => {
+    expect(notRunReason('source_dir', undefined, 'human')).toBe(
       'no source_dir recorded (registered before v0.14)',
+    );
+    expect(notRunReason('source_dir', undefined, undefined)).toBe(
+      'no source_dir recorded (registered before v0.14)',
+    );
+  });
+
+  it('the create_workflow reason names the tool, not a version (origin: agent — issue #553 self-catch, a message-claim-truth correction)', () => {
+    expect(notRunReason('source_dir', undefined, 'agent')).toBe(
+      'no source_dir recorded (created by create_workflow, which registers without a source tree)',
+    );
+    expect(notRunReason('trust_root', undefined, 'agent')).toBe(
+      'no trust_root recorded (created by create_workflow, which registers without a source tree)',
     );
   });
 

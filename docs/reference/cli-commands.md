@@ -112,7 +112,7 @@ realm workflow validate --registered my-workflow # audit the stored copy
 realm workflow validate ./my-workflow --json     # emit the result as JSON, and nothing else
 ```
 
-**One pass reports everything** (issue #424). A workflow can be wrong in more than one way at
+**One pass reports every warning beside the error** (issue #424). A workflow can be wrong in more than one way at
 once, and a hard error no longer hides the rest: when validation fails, the loader warnings that
 were live at the moment it failed — a typo and its did-you-mean, a retry advisory — print above
 the error, so a single run gives you the whole defect set. Previously the warnings unwound with
@@ -126,8 +126,8 @@ resolution — so what `validate` blesses `register` accepts, and what `register
 refuses, with the same message. `--registered` runs the same rules on the stored copy and, per
 check, resolves agent profiles against the recorded `source_dir` and the manifest against the
 recorded `trust_root` when the recorded paths still exist; otherwise it prints exactly which checks
-it could not run and why (`N check(s) not run (<reason>): <check>, …` — `checks_not_run` in
-`--json`; never a `--strict` failure).
+it could not run and why (`N check(s) not run: <check> (<reason>)[; <check> (<reason>)]` — each
+check beside its own reason — `checks_not_run` in `--json`; never a `--strict` failure).
 
 **`--strict` (issue #169):** by default, a non-fatal loader warning (an unknown workflow/step key,
 a retry-without-timeout advisory, a sentinel-credential fallback) is printed but the command still
@@ -156,24 +156,33 @@ loader-only class.
 Two things worth knowing. It audits the loader you have INSTALLED, so the pre-upgrade journey is
 upgrade the CLI first, then audit — which is safe for the loader-only class precisely because that
 grandfathering holds; it does NOT make an already-registered engine-side defect (like an invalid
-`trust`) safe to leave unaudited. And it is a STRUCTURAL audit only: extension module resolution,
-adapter `config_schema` checks and agent-profile file resolution all need the source tree, which a
-stored copy does not have. When a definition declares either, the audit says so on its own line.
+`trust`) safe to leave unaudited. And it is SUPPLY-OR-DECLARE, not blind to the source tree:
+agent-profile resolution and the project-extensions pass (modules, manifest, `config_schema`) each
+need a piece of it, and per check the audit uses the RECORDED `source_dir`/`trust_root` when that
+path still exists — running the check for real — or, when it does not, says so on its own line
+instead of guessing (`N check(s) not run: <check> (<reason>)[; …]`, each check beside its own
+reason). `--extensions-module` applies wherever the extensions pass actually runs, and its reason
+gains `; --extensions-module not applied` when the pass itself could not run. `checks_not_run` (in
+`--json`) and the line above both list only checks skipped for a missing recorded path — a refusal
+ends the audit outright and is its own reason, so a `valid: false` result always shows
+`checks_not_run: []` even though those checks were never reached.
 
 **`--explain` (issue #422):** prints the full per-step `structured_output` adoption detail
 described below, in place of the one-line summary a default run prints. It changes nothing about
 what is validated and nothing about the exit code.
 
-**`--json` (issue #454):** emits one JSON object on stdout and nothing else — every other channel
-(the description line, the `structured_output` nudge, the `Extensions:` manifest line, and
-`--registered`'s audit headers) is suppressed. Works in both modes; exit codes are unchanged
-either way.
+**`--json` (issue #454):** stdout carries only the JSON object — every other stdout channel (the
+description line, the `structured_output` nudge, the `Extensions:` manifest line, and
+`--registered`'s audit headers) is suppressed. Advisories printed WHILE the checks ran — the
+manifest-secrets `⚠` block, the sentinel-credentials line — may still reach stderr; they are not
+part of the JSON contract and `--json` does not silence them. Works in both modes; exit codes are
+unchanged either way.
 
 ```json
 {
   "valid": true,
   "mode": "file",
-  "path": "./my-workflow/workflow.yaml",
+  "path": "./my-workflow",
   "workflow_id": "my-workflow",
   "loader_version": "0.41.0",
   "schema_version": null,
@@ -189,7 +198,8 @@ either way.
       "message": "Step 'sync_data': declares 'retry' but no 'timeout_seconds' — …"
     }
   ],
-  "errors": []
+  "errors": [],
+  "checks_not_run": []
 }
 ```
 
@@ -287,10 +297,12 @@ Registering **mints the trust decision** for project extensions: when the workfl
 **`--strict` (issue #169):** refuses to persist a warning-bearing workflow — the warnings are
 printed, `store.register` is not called, and the command exits `1` with
 `Error: '<id>' v<version> has N warning(s); refusing to register due to --strict`. The warning
-population is the loader's (unknown keys, sentinel credentials); `register` does not run
-`validate`'s retry-without-timeout advisory, so the two flags do not count the same set (issue
-#464). Without `--strict`, registration proceeds as always: the workflow is persisted and every
-warning is printed alongside the `Registered:` line.
+population is the loader's — an unknown key inside a block such as `retry:` (unknown keys at the
+STEP level are refused by policy with or without the flag, so `--strict` never sees them as a mere
+warning) and the per-entry sentinel-credential fallback; `register` does not run `validate`'s
+retry-without-timeout advisory, so the two flags do not count the same set (issue #464). Without
+`--strict`, registration proceeds as always: the workflow is persisted and every warning is printed
+alongside the `Registered:` line.
 
 ---
 

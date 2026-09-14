@@ -2,10 +2,12 @@
 // validate-orphan-manifest idiom: a unit call can pass while the command path stays blind).
 //
 // Red-first on `05439cf` (executed, origin dist): c1–c5 → validate `Valid: wf v1 (1 step)` exit 0
-// while register refused each; the invalid manifest → validate `Valid`, register `Error loading
-// extensions:`; the sentinel manifest → validate printed only `Valid`, register the ⚠ block;
-// the missing file → validate `Error: ENOENT: …` from its own readFileSync, register the
-// loader's `Failed to read workflow file:` sentence.
+// while register refused each; c6 (correction C3) → validate `Valid`, register CRASHED with a
+// bare V8 `Cannot read properties of null (reading 'source')` — never reaching a refusal at all;
+// the invalid manifest → validate `Valid`, register `Error loading extensions:`; the sentinel
+// manifest → validate printed only `Valid`, register the ⚠ block; the missing file → validate
+// `Error: ENOENT: …` from its own readFileSync, register the loader's `Failed to read workflow
+// file:` sentence.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFile } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -57,7 +59,7 @@ afterEach(() => {
   rmSync(base, { recursive: true, force: true });
 });
 
-describe('cell 1 — the five census members: validate refuses byte-identically to register', () => {
+describe('cell 1 — the six census members: validate refuses byte-identically to register', () => {
   const census: ReadonlyArray<{ name: string; yaml: string; message: (dir: string) => string }> = [
     {
       name: 'c1 agent_profile not found',
@@ -86,6 +88,15 @@ describe('cell 1 — the five census members: validate refuses byte-identically 
     {
       name: 'c5 source.path required',
       yaml: `${HEAD}${STEP}workflow_context:\n  notes:\n    description: no source\n`,
+      message: () => 'Invalid workflow: workflow_context.notes.source.path is required (line 9)',
+    },
+    {
+      // issue #553 correction C3 — on `05439cf` this member did not exist: validate said `Valid`
+      // and register crashed with a bare `Cannot read properties of null (reading 'source')`,
+      // never reaching this refusal at all. Nobody claimed the fix that made both surfaces agree
+      // here; this cell is what pins it.
+      name: 'c6 workflow_context entry with nothing under it',
+      yaml: `${HEAD}${STEP}workflow_context:\n  notes:\n`,
       message: () => 'Invalid workflow: workflow_context.notes.source.path is required (line 9)',
     },
   ];

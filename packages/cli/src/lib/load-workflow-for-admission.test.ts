@@ -33,6 +33,24 @@ describe('loadWorkflowForAdmission — wiring (issue #553)', () => {
     expect(hits).toEqual([]);
   });
 
+  it('the SENTINEL-credentials advisory is minted exactly ONCE across production source (issue #553 correction C2 — the #444/#508 two-mints-of-one-string class)', () => {
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+        e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)],
+      );
+    // Source text, comments included — the count is of the literal wherever it appears, not just
+    // executable mint sites. `validate --registered`'s own extensions arm used to hand-type a
+    // second copy of this exact sentence; correction C2 collapsed it to the one call through
+    // `admitProjectExtensions`.
+    const hits = walk(SRC).filter(
+      (f) =>
+        f.endsWith('.ts') &&
+        !f.endsWith('.test.ts') &&
+        readFileSync(f, 'utf8').includes('with SENTINEL credentials'),
+    );
+    expect(hits).toEqual([join(SRC, 'lib', 'load-workflow-for-admission.ts')]);
+  });
+
   it('ExtensionLoadError carries the pass-1 definition when given one, and no field when not', () => {
     const def = { id: 'x', name: 'X', version: 1, steps: {} } as never;
     const withDef = new ExtensionLoadError(new Error('boom'), undefined, def);

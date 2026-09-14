@@ -69,6 +69,43 @@ export function admittedDefinitionOf(err: unknown): WorkflowDefinition | undefin
 }
 
 /**
+ * The project-extensions pass ALONE (issue #553 correction C2) — the real load, degrading to
+ * SENTINEL credentials with a loud, surface-keyed WARN pair when a secret source is unavailable,
+ * and the RAW error on any other failure (the caller decides how to wrap/report it; this function
+ * throws nothing `ExtensionLoadError`-shaped itself). This is the ONE mint site for "⚠ …with
+ * SENTINEL credentials — execution paths still require real secret resolution." — before this
+ * extraction it was minted here AND hand-typed a second time in `validate --registered`'s own
+ * extensions arm (the #444/#508 two-mints-of-one-string class); both callers now share it.
+ * `overrideModule` is `--extensions-module`: it must travel into BOTH loads (the real attempt and
+ * the sentinel retry) or a repair flag dies in its own retry (the #353/#466 flag-travel class).
+ */
+export async function admitProjectExtensions(
+  definition: WorkflowDefinition,
+  opts: { surface: 'register' | 'watch' | 'validate'; overrideModule?: string },
+): Promise<LoadedProjectExtensions> {
+  const override = opts.overrideModule !== undefined ? { overrideModule: opts.overrideModule } : {};
+  // Full module load + duck validation + manifest construction BEFORE persisting. Secret sources
+  // may be unavailable at provisioning time: degrade to SENTINEL construction with a loud WARN
+  // (never silent, never a registration blocker); execution paths still require real resolution.
+  try {
+    return await loadProjectExtensions(definition, { ...override });
+  } catch (err) {
+    // The guard is the degradation itself: only a secrets failure degrades, everything else is
+    // the caller's to tag and report. Dropping the conditional kills degradation —
+    // register-extensions.test.ts's sentinel control is the cell in this command's own home that
+    // sees it (the manifest E2E in extensions/ does too, one substring deep).
+    if (!(err instanceof ManifestSecretsError)) throw err;
+    console.warn(`⚠ ${err.message}`);
+    // Surface-keyed (issue #553): validate registers nothing, so "Registering" there is a false
+    // claim; register and watch keep their text byte for byte.
+    console.warn(
+      `⚠ ${opts.surface === 'validate' ? 'Validating' : 'Registering'} with SENTINEL credentials — execution paths still require real secret resolution.`,
+    );
+    return await loadProjectExtensions(definition, { ...override, secretMode: 'sentinel' });
+  }
+}
+
+/**
  * Loads and validates a workflow for admission — register, watch and validate all take exactly
  * this path (issue #553). The file loader (agent-profile resolution included), then the
  * UNCONDITIONAL project-extensions load (modules, manifest, config_schema two-pass), degrading
@@ -78,8 +115,6 @@ export function admittedDefinitionOf(err: unknown): WorkflowDefinition | undefin
  * (validate's `Extensions:` line reports its counts). Prints NOTHING itself beyond the two
  * sentinel ⚠ lines; every caller decides how to surface/act on warnings (register supports
  * `--strict` + the dormant #170 reject; watch just prints and continues; validate reports).
- * `overrideModule` is `--extensions-module`: it must travel into BOTH loads or the repair flag
- * dies in its own scenario (the #353/#466 flag-travel class).
  * @throws on any validation or extension-load failure — nothing is persisted on throw.
  *         Extension-load failures are tagged `ExtensionLoadError` (issue #451).
  */
@@ -92,33 +127,11 @@ export async function loadWorkflowForAdmission(
   manifest: LoadedProjectExtensions['manifest'];
 }> {
   const { definition, warnings: pass1Warnings } = loadWorkflowFromFileWithDiagnostics(filePath);
-  const override = opts.overrideModule !== undefined ? { overrideModule: opts.overrideModule } : {};
-  // Full module load + duck validation + manifest construction + config_schema two-pass
-  // BEFORE persisting. Secret sources may be unavailable at provisioning time: degrade to
-  // SENTINEL construction with a loud WARN (never silent, never a registration blocker);
-  // execution paths still require real resolution.
   let loaded: LoadedProjectExtensions;
   try {
-    loaded = await loadProjectExtensions(definition, { ...override });
+    loaded = await admitProjectExtensions(definition, opts);
   } catch (err) {
-    // The guard is the degradation itself: only a secrets failure degrades, everything else is an
-    // extension-load failure and leaves tagged (issue #451). Dropping the conditional kills
-    // degradation — register-extensions.test.ts's sentinel control is the cell in this command's
-    // own home that sees it (the manifest E2E in extensions/ does too, one substring deep).
-    if (!(err instanceof ManifestSecretsError)) {
-      throw new ExtensionLoadError(err, pass1Warnings, definition);
-    }
-    console.warn(`⚠ ${err.message}`);
-    // Surface-keyed (issue #553): validate registers nothing, so "Registering" there is a false
-    // claim; register and watch keep their text byte for byte.
-    console.warn(
-      `⚠ ${opts.surface === 'validate' ? 'Validating' : 'Registering'} with SENTINEL credentials — execution paths still require real secret resolution.`,
-    );
-    try {
-      loaded = await loadProjectExtensions(definition, { ...override, secretMode: 'sentinel' });
-    } catch (err) {
-      throw new ExtensionLoadError(err, pass1Warnings, definition);
-    }
+    throw new ExtensionLoadError(err, pass1Warnings, definition);
   }
   // Two-pass: re-validate with the resolved registry so step config is checked against
   // each adapter's config_schema before the definition is persisted. Its warnings are proven

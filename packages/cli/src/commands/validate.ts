@@ -26,11 +26,7 @@ import {
   type LoaderWarning,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
-import {
-  loadProjectExtensions,
-  type LoadedProjectExtensions,
-} from '../extensions/load-project-extensions.js';
-import { ManifestSecretsError } from '../extensions/manifest-secrets.js';
+import type { LoadedProjectExtensions } from '../extensions/load-project-extensions.js';
 import {
   renderLoadFailure,
   renderEscalationLine,
@@ -41,6 +37,7 @@ import {
 } from '../lib/loader-warnings.js';
 import {
   loadWorkflowForAdmission,
+  admitProjectExtensions,
   ExtensionLoadError,
   admittedDefinitionOf,
 } from '../lib/load-workflow-for-admission.js';
@@ -99,26 +96,40 @@ export function findRetryWithoutExplicitTimeout(definition: WorkflowDefinition):
  * accumulator turns the summary line into a failing one and returns true (the caller exits 1);
  * otherwise the summary line — and, when present, the description line existing tests assert on
  * — print exactly as before and this returns false.
+ *
+ * `checksNotRun` (issue #553 correction C9, default 0 — the file-mode call site never passes it,
+ * since every check runs there) adds the FIRST tail clause when non-zero: `N check(s) not run`.
+ * There is no non-strict `— N warning(s)` tail today and this does not invent one — a
+ * warnings-bearing run without `--strict` and without a not-run count still prints the bare line,
+ * warnings above it. The failing-`--strict` clause, when both fire, comes SECOND, `; `-joined
+ * with the not-run clause — `— N check(s) not run; M warning(s); failing due to --strict` — and
+ * the description-suppression rule is UNCHANGED: only a failing `--strict` suppresses it, not a
+ * bare not-run disclosure (a moved tree is not a reason to hide the workflow's own description).
  */
 function printValidationOutcome(
   definition: WorkflowDefinition,
   warnings: LoaderWarning[],
   strict: boolean,
+  checksNotRun = 0,
 ): boolean {
   printLoaderWarnings(warnings);
   const stepCount = Object.keys(definition.steps).length;
   const base = `Valid: ${definition.id} v${definition.version} (${stepCount} ${stepCount === 1 ? 'step' : 'steps'})`;
-  if (strict && failsStrict(warnings)) {
-    console.log(
-      `${base} — ${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}; failing due to --strict`,
-    );
-    return true;
+  const strictFailing = strict && failsStrict(warnings);
+  const clauses: string[] = [];
+  if (checksNotRun > 0) {
+    clauses.push(`${checksNotRun} ${checksNotRun === 1 ? 'check' : 'checks'} not run`);
   }
-  console.log(base);
-  if (definition.description !== undefined) {
+  if (strictFailing) {
+    clauses.push(
+      `${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}; failing due to --strict`,
+    );
+  }
+  console.log(clauses.length > 0 ? `${base} — ${clauses.join('; ')}` : base);
+  if (!strictFailing && definition.description !== undefined) {
     console.log(`  ${definition.description}`);
   }
-  return false;
+  return strictFailing;
 }
 
 /** issue #236: the reasoning-position heuristic (design record §7, ratified via fixture C6) —
@@ -316,7 +327,10 @@ interface ValidateJsonEmit {
   /**
    * issue #553 — the context-dependent checks `--registered` could not run, `[{ id, reason }]`.
    * Emitted on EVERY arm and never absent (file mode: always `[]` — every check runs there), so
-   * a consumer can tell "ran all" from "old CLI".
+   * a consumer can tell "ran all" from "old CLI". Lists ONLY skips caused by a missing recorded
+   * path (issue #553 correction C4) — a `valid: false` arm always emits `[]` here too, even
+   * though the context-dependent checks were never reached: the refusal ends the audit outright
+   * and is its own reason, not a "not run" one.
    */
   checksNotRun: readonly CheckNotRun[];
 }
@@ -456,7 +470,12 @@ function rejectIfPolicyEscalates(warnings: LoaderWarning[]): boolean {
  * change what your runs do. A legacy (schema_version-less or older) copy is a different case
  * entirely — see the legacy arm below: it is not grandfathered, it is already unreachable.
  */
-async function validateRegistered(id: string, strict: boolean, json: boolean): Promise<void> {
+async function validateRegistered(
+  id: string,
+  strict: boolean,
+  json: boolean,
+  overrideModule?: string,
+): Promise<void> {
   const store = new JsonWorkflowStore();
 
   let stored: WorkflowDefinition;
@@ -603,10 +622,20 @@ async function validateRegistered(id: string, strict: boolean, json: boolean): P
     const path = recorded[check.needs];
     // `existsSync` is load-bearing for BOTH members: `resolveAgentProfiles` against a dead
     // tree would name a path under the missing tree (the WRONG error), and
-    // `loadProjectExtensions` against a nonexistent trust root returns defaults SILENTLY
+    // `admitProjectExtensions` against a nonexistent trust root returns defaults SILENTLY
     // (executed) — a copy whose tree moved would audit as if it had no manifest at all.
     if (path === undefined || !existsSync(path)) {
-      notRun.push({ id: check.id, reason: notRunReason(check.needs, path) });
+      const reason = notRunReason(check.needs, path, stored.origin);
+      // issue #553 correction C5 — the extensions member cannot apply an override it never
+      // reaches: say so beside the reason, never silently, on the human line AND
+      // `checks_not_run[].reason` alike, so 7c's label+reason parity holds by construction.
+      notRun.push({
+        id: check.id,
+        reason:
+          check.id === 'project_extensions' && overrideModule !== undefined
+            ? `${reason}; --extensions-module not applied`
+            : reason,
+      });
     }
   }
   // The disclosure line — always on, never verbose-gated, the old honesty line's slot: after
@@ -625,25 +654,19 @@ async function validateRegistered(id: string, strict: boolean, json: boolean): P
         exitOnLoadFailure(err, json ? registeredCtx(definition.id, loaderWarnings) : undefined);
       }
     } else {
-      // The extensions pass exactly as loadWorkflowForAdmission runs it — real secret
-      // resolution first, sentinel degradation with the same two ⚠ lines, `Error loading
-      // extensions:` on any other failure, then the config_schema pass 2 — against the
-      // RECORDED paths, re-stamped on the parsed copy (the strip removed them).
+      // The extensions pass exactly as loadWorkflowForAdmission runs it — ONE shared call
+      // (issue #553 correction C2: `admitProjectExtensions` is now the single mint site for the
+      // sentinel-credentials advisory pair, replacing this arm's own hand-typed copy) — against
+      // the RECORDED paths, re-stamped on the parsed copy (the strip removed them).
       if (recorded.source_dir !== undefined) definition.source_dir = recorded.source_dir;
       definition.trust_root = recorded.trust_root!; // the member ran ⇒ recorded and present
       if (storedExtensions !== undefined) definition.extensions = storedExtensions;
       let loaded: LoadedProjectExtensions;
       try {
-        try {
-          loaded = await loadProjectExtensions(definition);
-        } catch (err) {
-          if (!(err instanceof ManifestSecretsError)) throw err;
-          console.warn(`⚠ ${err.message}`);
-          console.warn(
-            '⚠ Validating with SENTINEL credentials — execution paths still require real secret resolution.',
-          );
-          loaded = await loadProjectExtensions(definition, { secretMode: 'sentinel' });
-        }
+        loaded = await admitProjectExtensions(definition, {
+          surface: 'validate',
+          ...(overrideModule !== undefined ? { overrideModule } : {}),
+        });
       } catch (err) {
         // issue #445's sentence, issue #454's whole-message convention, issue #463's
         // warnings-first — the file arm's shape, on the stored copy.
@@ -721,7 +744,7 @@ async function validateRegistered(id: string, strict: boolean, json: boolean): P
   if (rejectIfPolicyEscalates(accumulated)) {
     process.exit(1);
   }
-  const strictFailed = printValidationOutcome(definition, accumulated, strict);
+  const strictFailed = printValidationOutcome(definition, accumulated, strict, notRun.length);
   if (strictFailed) {
     process.exit(1);
   }
@@ -786,7 +809,7 @@ export const validateCommand = new Command('validate')
       }
 
       if (opts.registered !== undefined) {
-        await validateRegistered(opts.registered, strict, json);
+        await validateRegistered(opts.registered, strict, json, opts.extensionsModule);
         return;
       }
 

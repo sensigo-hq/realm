@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { validateCommand } from './validate.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, RUNTIME_ONLY_WORKFLOW_KEYS } from '@sensigo/realm';
 import { CONTEXT_DEPENDENT_CHECKS } from '../lib/admission-context.js';
@@ -181,7 +181,7 @@ describe('validate --registered (issue #427)', () => {
 
     const text = out();
     expect(text).toContain(
-      '1 check not run (trust_root /somewhere no longer exists): extension modules, manifest and config_schema',
+      '1 check not run: project extensions (modules, manifest, config_schema) (trust_root /somewhere no longer exists)',
     );
     expect(text).toContain('Valid: stored-wf'); // it reached a verdict
     expect(text).not.toContain('Register this workflow from its YAML file');
@@ -219,9 +219,8 @@ describe('validate --registered (issue #427)', () => {
 
     const text = out();
     expect(text).toContain(
-      '2 checks not run (source_dir /somewhere/on/the/registering/machine no longer exists; ' +
-        'trust_root /somewhere no longer exists): agent-profile file resolution, extension ' +
-        'modules, manifest and config_schema',
+      '2 checks not run: agent-profile file resolution (source_dir /somewhere/on/the/registering/machine no longer exists); ' +
+        'project extensions (modules, manifest, config_schema) (trust_root /somewhere no longer exists)',
     );
     expect(text).not.toContain("agent_profile 'reviewer' not found");
     expect(text).toContain('Valid: stored-wf');
@@ -463,7 +462,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     rmSync(tree, { recursive: true, force: true });
     await run([]);
     expect(out()).toContain(
-      `1 check not run (trust_root ${join(tree, 'wf')} no longer exists): extension modules, manifest and config_schema`,
+      `1 check not run: project extensions (modules, manifest, config_schema) (trust_root ${join(tree, 'wf')} no longer exists)`,
     );
     expect(out()).toContain('Valid: stored-wf');
   });
@@ -476,8 +475,8 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     rmSync(tree, { recursive: true, force: true });
     await run([]);
     expect(out()).toContain(
-      `2 checks not run (source_dir ${join(tree, 'wf')} no longer exists; trust_root ${join(tree, 'wf')} no longer exists): ` +
-        'agent-profile file resolution, extension modules, manifest and config_schema',
+      `2 checks not run: agent-profile file resolution (source_dir ${join(tree, 'wf')} no longer exists); ` +
+        `project extensions (modules, manifest, config_schema) (trust_root ${join(tree, 'wf')} no longer exists)`,
     );
     expect(out()).not.toContain("agent_profile 'reviewer' not found");
     expect(out()).toContain('Valid: stored-wf');
@@ -487,7 +486,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     planted({ source_dir: undefined, trust_root: undefined });
     await run([]);
     expect(out()).toContain(
-      '1 check not run (no trust_root recorded (registered before v0.14)): extension modules, manifest and config_schema',
+      '1 check not run: project extensions (modules, manifest, config_schema) (no trust_root recorded (registered before v0.14))',
     );
     expect(out()).toContain('Valid: stored-wf');
   });
@@ -496,9 +495,23 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     planted({ source_dir: undefined, trust_root: undefined }, true);
     await run([]);
     expect(out()).toContain(
-      '2 checks not run (no source_dir recorded (registered before v0.14); no trust_root recorded (registered before v0.14)): ' +
-        'agent-profile file resolution, extension modules, manifest and config_schema',
+      '2 checks not run: agent-profile file resolution (no source_dir recorded (registered before v0.14)); ' +
+        'project extensions (modules, manifest, config_schema) (no trust_root recorded (registered before v0.14))',
     );
+  });
+
+  it('7f — a create_workflow copy (origin: agent, no paths): both members declared, both name create_workflow (issue #553 correction C1)', async () => {
+    // `create_workflow` stamps `origin: 'agent'` and never records a source tree at all — not
+    // "before v0.14", a different mechanism entirely. Both members must name it, not the version.
+    planted({ origin: 'agent', source_dir: undefined, trust_root: undefined }, true);
+    await run([]);
+    expect(out()).toContain(
+      '2 checks not run: agent-profile file resolution ' +
+        '(no source_dir recorded (created by create_workflow, which registers without a source tree)); ' +
+        'project extensions (modules, manifest, config_schema) ' +
+        '(no trust_root recorded (created by create_workflow, which registers without a source tree))',
+    );
+    expect(out()).toContain('Valid: stored-wf');
   });
 
   it("7c — parity: JSON length === the human N, AND each JSON id's label appears in the human line, in order", async () => {
@@ -507,7 +520,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     await run([]);
     const line = out()
       .split('\n')
-      .find((l) => l.includes('not run ('));
+      .find((l) => l.includes('not run: '));
     expect(line).toBeDefined();
     const n = Number(/^(\d+) checks? not run/.exec(line!)?.[1]);
     vi.clearAllMocks();
@@ -519,14 +532,17 @@ describe('validate --registered — supply or declare (issue #553)', () => {
       { id: 'agent_profile_resolution', reason: `source_dir ${join(tree, 'wf')} no longer exists` },
       { id: 'project_extensions', reason: `trust_root ${join(tree, 'wf')} no longer exists` },
     ]);
-    // The label conjunct (audit round 2 F12): a count-only parity cannot see a dropped label.
-    const labelsPart = line!.slice(line!.indexOf('): ') + 3);
+    // The label+reason conjunct (audit round 2 F12 / correction C6): each JSON entry's label
+    // AND its own reason must appear TOGETHER, in order — a count-only parity cannot see a
+    // dropped label or a reason rendered beside the wrong member.
+    const partsPart = line!.slice(line!.indexOf('not run: ') + 'not run: '.length);
     let cursor = 0;
     for (const e of entries) {
       const label = CONTEXT_DEPENDENT_CHECKS.find((c) => c.id === e.id)!.label;
-      const at = labelsPart.indexOf(label, cursor);
-      expect(at, `${e.id} label in order`).toBeGreaterThanOrEqual(cursor);
-      cursor = at + label.length;
+      const pair = `${label} (${e.reason})`;
+      const at = partsPart.indexOf(pair, cursor);
+      expect(at, `${e.id} label+reason in order`).toBeGreaterThanOrEqual(cursor);
+      cursor = at + pair.length;
     }
   });
 
@@ -535,7 +551,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     rmSync(tree, { recursive: true, force: true });
     await run(['--strict']);
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(out()).toContain('1 check not run (');
+    expect(out()).toContain('1 check not run: ');
     expect(out()).toContain('Valid: stored-wf');
     expect(out()).not.toContain('failing due to --strict');
     vi.clearAllMocks();
@@ -563,5 +579,88 @@ describe('validate --registered — supply or declare (issue #553)', () => {
       `Error loading extensions: Deployment manifest '${join(tree, 'wf', 'realm.yaml')}' is not valid YAML:`,
     );
     expect(out()).not.toContain('not run');
+  });
+
+  it("8a — --extensions-module unresolvable, tree present → the file arm's exact message, travels through --registered too (issue #553 correction C2)", async () => {
+    planted();
+    await expect(run(['--extensions-module', './nope.mjs'])).rejects.toThrow('process.exit');
+    expect(out()).toContain(
+      `Error loading extensions: Cannot resolve --extensions-module './nope.mjs': ENOENT: no such file or directory, lstat '${resolve('./nope.mjs')}'`,
+    );
+  });
+
+  it('8b — tree moved + --extensions-module: the override cannot apply, said so beside the reason, never silently (issue #553 correction C5)', async () => {
+    planted();
+    rmSync(tree, { recursive: true, force: true });
+    await run(['--extensions-module', './nope.mjs']);
+    expect(out()).toContain(
+      `1 check not run: project extensions (modules, manifest, config_schema) ` +
+        `(trust_root ${join(tree, 'wf')} no longer exists; --extensions-module not applied)`,
+    );
+    // issue #553 correction C9 — the verdict tail carries the not-run count.
+    expect(out()).toContain('Valid: stored-wf v1 (1 step) — 1 check not run');
+    expect(exitSpy).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    await run(['--json', '--extensions-module', './nope.mjs']);
+    const j = parseJson();
+    expect((j['checks_not_run'] as Array<{ reason: string }>)[0]!.reason).toBe(
+      `trust_root ${join(tree, 'wf')} no longer exists; --extensions-module not applied`,
+    );
+  });
+
+  it('9 — the verdict tail carries the not-run count: five shapes on --registered (issue #553 correction C9)', async () => {
+    const validLine = (): string | undefined =>
+      out()
+        .split('\n')
+        .find((l) => l.startsWith('Valid:'));
+
+    // (1) every check ran → the bare line, no tail.
+    planted();
+    await run([]);
+    expect(validLine()).toBe('Valid: stored-wf v1 (1 step)');
+
+    // (2) warnings only, no --strict → the same bare line, warnings above.
+    vi.clearAllMocks();
+    planted({
+      steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } } },
+    });
+    await run([]);
+    expect(out()).toContain("'retry' is inert on execution: 'agent' steps");
+    expect(validLine()).toBe('Valid: stored-wf v1 (1 step)');
+
+    // (3) not-run only → the tail names it, no warning count.
+    vi.clearAllMocks();
+    planted();
+    rmSync(tree, { recursive: true, force: true });
+    await run([]);
+    expect(validLine()).toBe('Valid: stored-wf v1 (1 step) — 1 check not run');
+    expect(exitSpy).not.toHaveBeenCalled();
+
+    // (4) warnings + not-run, no --strict → the SAME tail as (3) — no warning count, exit 0.
+    vi.clearAllMocks();
+    planted({
+      steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } } },
+    });
+    rmSync(tree, { recursive: true, force: true });
+    await run([]);
+    expect(out()).toContain("'retry' is inert on execution: 'agent' steps");
+    expect(validLine()).toBe('Valid: stored-wf v1 (1 step) — 1 check not run');
+    expect(exitSpy).not.toHaveBeenCalled();
+
+    // (5) --strict failing + not-run → both clauses, `; `-joined, exit 1.
+    vi.clearAllMocks();
+    planted({
+      steps: {
+        a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } },
+        b: { description: 'b', execution: 'agent', retry: { max_attempts: 3 } },
+      },
+    });
+    rmSync(tree, { recursive: true, force: true });
+    await expect(run(['--strict'])).rejects.toThrow('process.exit');
+    expect(validLine()).toBe(
+      'Valid: stored-wf v1 (2 steps) — 1 check not run; 2 warnings; failing due to --strict',
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });
