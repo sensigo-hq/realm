@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
+## [0.42.0] — 2026-09-14
 
 The agreement release. `realm workflow validate` now gives `register`'s exact verdict, on every
 workflow, instead of a `Valid` that `register` was about to contradict (#553); a typo in the one
