@@ -2122,7 +2122,7 @@ export async function executeStep(
   // effectiveTimeoutSeconds is the single source of truth for the step's OWN declared/default
   // per-attempt bound; timeoutMs is derived from it so the two can never diverge.
   //
-  // Issue #140 (retryable timeout + total-time cap): capMs/capStart/capExhausted resolve ONCE
+  // Issue #140 (retryable timeout + total-time cap): capMs/capExhausted resolve ONCE
   // here too (same as timeoutMs), gated on `enforceTimeout && retryConfig !== undefined` — every
   // retry-configured auto step now gets a default total-time cap (resolveCapMs), whether or not it
   // opts into `retry.on_timeout`. What is NOT resolved once anymore is the PER-ATTEMPT bound
@@ -2156,9 +2156,17 @@ export async function executeStep(
     effectiveTimeoutSeconds !== undefined ? effectiveTimeoutSeconds * 1000 : undefined;
   const capMs =
     enforceTimeout && retryConfig !== undefined ? resolveCapMs(retryConfig, timeoutMs!) : undefined;
-  const capStart = Date.now(); // wall-clock — the SAME clock the claim horizon is measured against
   let capExhausted = false;
-  const remainingMs = () => capMs! - (Date.now() - capStart);
+  // issue #573 §C: elapsed budget is measured on the monotonic clock (`performance.now()`), not
+  // the wall clock — durations, never persisted horizons (the claim horizon is anchored at claim
+  // time, `json-file-store.ts:548`, and consumes only the cap's VALUE, never this clock). The
+  // cap clock starts at attempt 1's dispatch (set below, right before the first `withTimeout`
+  // call) — `capClockStart` stays `undefined` until then, so `elapsedCapMs()` is exactly `0` for
+  // any read before that, which is what makes attempt 1's budget equal the full cap by
+  // construction (§A/§B).
+  let capClockStart: number | undefined;
+  const elapsedCapMs = () => (capClockStart === undefined ? 0 : performance.now() - capClockStart);
+  const remainingMs = () => capMs! - elapsedCapMs();
 
   // Programmatic-gate advisory (#119-preserving): the loader refuses `on_timeout: true` without
   // `idempotent: true` at load (E1) — but a hand-built WorkflowDefinition (a custom embedder, or a
@@ -2203,11 +2211,29 @@ export async function executeStep(
 
   if (!bypassDispatch) {
     for (let attemptNum = 1; attemptNum <= maxAttempts; attemptNum++) {
+      // issue #573 §A/§B: the remaining budget is read ONCE per attempt, at the instant that
+      // matters — attempt 1 gets the FULL cap by construction (the cap clock has not started
+      // yet; `capClockStart` is set below, right before this attempt dispatches), so equality
+      // (`total_timeout_seconds === timeout_seconds`) bounds the first attempt, never clips it.
+      // Later attempts floor a fractional monotonic read to a whole millisecond BEFORE it bounds
+      // anything — a fraction that is not there is never granted, and `clipped_to_ms` /
+      // `effective_timeout_seconds` stay integer quantities exactly as they always were.
+      const remainingAtDispatch =
+        capMs === undefined
+          ? undefined
+          : attemptNum === 1
+            ? capMs
+            : Math.max(0, Math.floor(remainingMs()));
+
       // SITE (a) — issue #140, loop-top, BEFORE attemptsUsed is assigned: attempt 1 ALWAYS
       // proceeds regardless of capMs (the `attemptNum > 1` conjunct) — this guard exists solely for
-      // the clock-anomaly window between `capStart` above and here (a suspend/resume or NTP forward
-      // jump), never to gate the very first attempt.
-      if (capMs !== undefined && attemptNum > 1 && remainingMs() <= 0) {
+      // the clock-anomaly window between the previous attempt's cap check and here (a suspend/
+      // resume or NTP forward jump), never to gate the very first attempt. issue #573: consumes the
+      // SAME `remainingAtDispatch` read above — no second clock read reopens the double-read class
+      // one attempt later. The `Math.max(0, …)` floor above means a negative can never reach this
+      // comparison, so the conjunct is now defensive, not load-bearing — the drift window its
+      // predecessor comment described no longer exists (the budget is read once, not twice).
+      if (capMs !== undefined && attemptNum > 1 && remainingAtDispatch! <= 0) {
         capExhausted = true;
         break;
       }
@@ -2217,23 +2243,38 @@ export async function executeStep(
       let attemptError: WorkflowError | null = null;
       let resolvedParams: Record<string, unknown> | undefined;
 
-      // Per-attempt effective timeout (issue #140): uniform full-clip to whatever cap budget
-      // remains. Clip floor `max(0, remainingMs())` ensures a clock anomaly (see SITE (a) above)
-      // never passes a negative ms to withTimeout. capMs undefined ⇒ effectiveMs === timeoutMs,
-      // byte-identical to pre-#140 behavior (every non-retry-configured, or unopted-uncapped-by-
-      // total_timeout_seconds-being-absent-pre-amendment, auto step). `clippedToMs` records the
-      // per-attempt evidence value ONLY when the cap actually reduced the bound below the step's
-      // own declared/default timeout — never on an uncapped or not-yet-biting attempt.
+      // issue #573: `effectiveMs` / `clippedToMs` / `boundWasCap` are all derived from the single
+      // `remainingAtDispatch` read above — never a second call to `remainingMs()` (that reopened
+      // the double-read class one line above the bound: at equality, a tick between the two reads
+      // minted a phantom `clipped_to_ms: 999` on an attempt the cap never actually touched).
+      // capMs undefined ⇒ effectiveMs === timeoutMs, byte-identical to pre-#140 behavior (every
+      // non-retry-configured, or unopted-uncapped-by-total_timeout_seconds-being-absent, auto
+      // step). `clippedToMs` records the per-attempt evidence value ONLY when the cap actually
+      // reduced the bound below the step's own declared/default timeout — never on an uncapped or
+      // not-yet-biting attempt.
       const effectiveMs =
         timeoutMs !== undefined
-          ? capMs !== undefined
-            ? Math.min(timeoutMs, Math.max(0, remainingMs()))
+          ? remainingAtDispatch !== undefined
+            ? Math.min(timeoutMs, remainingAtDispatch)
             : timeoutMs
           : undefined;
       const clippedToMs =
-        capMs !== undefined && effectiveMs !== undefined && effectiveMs < timeoutMs!
+        remainingAtDispatch !== undefined && effectiveMs !== undefined && effectiveMs < timeoutMs!
           ? effectiveMs
           : undefined;
+      // issue #573 §A: true when this attempt's bound WAS the remaining budget (not the step's own
+      // declared/default timeout) — the fact SITE (b) needs to label a `STEP_TIMEOUT` as cap
+      // exhaustion BY CONSTRUCTION, because Node/libuv timers can fire up to ~1ms EARLY against any
+      // clock (loop time is floored to whole milliseconds), so comparing clocks again after the
+      // fact can read "budget left" when the timer has already fired.
+      const boundWasCap =
+        remainingAtDispatch !== undefined &&
+        effectiveMs !== undefined &&
+        effectiveMs >= remainingAtDispatch;
+      // issue #573 §C: the cap clock starts when attempt 1 is DISPATCHED (not when the loop is
+      // entered) — set exactly once, after the bound above is computed (attempt 1 never reads it)
+      // and immediately before the `try` that calls `withTimeout`.
+      if (attemptNum === 1) capClockStart = performance.now();
 
       try {
         const makeCall = (
@@ -2563,7 +2604,16 @@ export async function executeStep(
       // site (c) below re-checks once more right before an actual sleep). Fires on ANY dispatch
       // error once the cap is spent, not just STEP_TIMEOUT — the cap bounds the step's total
       // budget, regardless of which error exhausted it.
-      if (capMs !== undefined && remainingMs() <= 0) {
+      // issue #573 §A: an attempt bounded by the remaining budget (`boundWasCap`) that times out
+      // HAS consumed the budget — no clock comparison after the fact may say otherwise (a timer
+      // can fire up to ~1ms EARLY against any clock, so `remainingMs() <= 0` alone can read false
+      // the instant the timer has already fired). A synthetic `STEP_TIMEOUT` thrown directly by a
+      // hand-built dispatcher on a capped step whose bound equalled the budget is labelled cap
+      // exhaustion too — the bound WAS the budget.
+      if (
+        capMs !== undefined &&
+        (remainingMs() <= 0 || (attemptError.code === 'STEP_TIMEOUT' && boundWasCap))
+      ) {
         capExhausted = true;
       }
       const willRetry =
@@ -2592,7 +2642,9 @@ export async function executeStep(
         // exact-fit sleep is doomed too — never sleep into a wall). dispatchError already holds the
         // ACTUAL last error (e.g. a 429 with retry_after in its details); the post-loop wrap gate
         // below decides whether/how to wrap it — this site only decides whether to sleep at all.
-        if (capMs !== undefined && sleepWouldExceedCap(Date.now() - capStart, waitMs, capMs)) {
+        // issue #573 §C: the same monotonic elapsed-budget read as everywhere else in this cap's
+        // machinery — one clock for durations.
+        if (capMs !== undefined && sleepWouldExceedCap(elapsedCapMs(), waitMs, capMs)) {
           capExhausted = true;
           break;
         }

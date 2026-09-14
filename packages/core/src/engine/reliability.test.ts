@@ -1066,77 +1066,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
     expect(lastEvidence?.clipped_to_ms).toBe(0);
   });
 
-  // The test above cannot discriminate the clip floor (max(0, remainingMs())): the capStart→clip
-  // stretch is synchronous, so remainingMs() reads ~0 with or without the floor either way. This
-  // dedicated pin mocks Date.now so capStart reads T0 and the attempt-1 clip computation reads
-  // T0+10ms (simulating 10ms of clock drift/GC-pause between the two) — WITH the floor,
-  // effectiveMs clips to 0 (max(0, -10) = 0); WITHOUT it (probe: `max(0, remainingMs())` →
-  // `remainingMs()`), effectiveMs would read -10ms ⇒ effective_timeout_seconds === -0.01 ⇒ RED.
-  // Date-mocking leaves the real setTimeout the fixture needs untouched (only Date.now is spied).
-  //
-  // The mock is keyed on the CALLER's stack, not raw call order: JsonFileStore.claimStep acquires
-  // a proper-lockfile lock BEFORE execution-loop.ts's own Date.now() calls even begin (that
-  // library calls Date.now() internally for its own mtime-precision probing), so a naive
-  // call-order queue (mockReturnValueOnce ×2) silently intercepts THOSE calls instead of
-  // capStart/effectiveMs — discovered live while writing this pin. Filtering on
-  // `stack.includes('execution-loop.ts')` targets exactly the two calls this pin cares about
-  // (capStart, then the attempt-1 effectiveMs computation) regardless of how many lock-internal
-  // calls precede or follow them.
-  it('S1 floor pin: the clip floor prevents a negative effective_timeout_seconds under a simulated clock-drift window between capStart and attempt 1', async () => {
-    const def: WorkflowDefinition = {
-      id: 'clip-floor-pin-wf',
-      name: 'Clip Floor Pin',
-      version: 1,
-      steps: {
-        'step-one': {
-          description: 'Cap=0; Date.now mocked to simulate a 10ms drift before attempt 1 clips',
-          execution: 'auto',
-          depends_on: [],
-          timeout_seconds: 1,
-          retry: { max_attempts: 3, total_timeout_seconds: 0 },
-        },
-      },
-    };
-    const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-
-    const realNow = Date.now.bind(Date);
-    let executionLoopCallCount = 0;
-    const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
-      const isFromExecutionLoop = (new Error().stack ?? '').includes('execution-loop.ts');
-      if (!isFromExecutionLoop) return realNow(); // proper-lockfile's own internal calls, untouched
-      executionLoopCallCount++;
-      if (executionLoopCallCount === 1) return 1_000_000; // capStart reads T0
-      if (executionLoopCallCount === 2) return 1_000_010; // attempt-1's effectiveMs reads T0+10ms
-      return realNow(); // site (b) and beyond — real epoch dwarfs T0, capExhausted still ends up true
-    });
-
-    try {
-      let calls = 0;
-      const dispatcher: StepDispatcher = () => {
-        calls++;
-        return new Promise<Record<string, unknown>>(() => undefined);
-      };
-
-      const envelope = await executeStep(store, def, {
-        runId: run.id,
-        command: 'step-one',
-        input: {},
-        dispatcher,
-      });
-
-      expect(calls).toBe(1);
-      expect(envelope.evidence[0]?.effective_timeout_seconds).toBe(0);
-      // Rename-defang guard (correction 2): the `stack.includes('execution-loop.ts')` filter
-      // above silently stops discriminating anything if that file is ever renamed or split — every
-      // call would then fall through to realNow(), the mock would never fire, and this pin would
-      // stay green while proving nothing. Asserting the counter directly makes that failure mode
-      // loud: if the filter stops matching, executionLoopCallCount stays at 0, red here.
-      expect(executionLoopCallCount).toBeGreaterThanOrEqual(2);
-    } finally {
-      dateNowSpy.mockRestore();
-    }
-  });
+  // RETIRED (issue #573): this pin discriminated the clip floor across a SIMULATED drift window
+  // between `capStart` (attempt 1's cap-clock read) and the attempt-1 clip computation — a window
+  // that no longer exists (the budget is read once, at dispatch; see `remainingAtDispatch` above
+  // SITE (a)). C1/C2 in `describe('issue #573 …')` below pin the same property directly, against
+  // the real mechanism rather than a simulated one.
 
   it('sleep-guard-surfaces-429: a huge retry_after is never actually slept — the cap breaks BEFORE the sleep, bounding elapsed wall-clock time', async () => {
     const def: WorkflowDefinition = {
@@ -1731,5 +1665,337 @@ steps:
       expect(envelope.evidence).toHaveLength(1);
       expect(envelope.error_details?.['exhausted_by']).toBe('attempts'); // not total_timeout — nothing left to exhaust
     }, 15_000); // deflake #371: real-store attempt under full-suite parallel load — tighter than the 5s global
+  });
+
+  describe('issue #573 — the cap boundary is truthful by construction', () => {
+    let dir: string;
+
+    beforeEach(async () => {
+      dir = await mkdtemp(join(tmpdir(), 'realm-cap-573-'));
+    });
+
+    // Copies of the file's `hang` dispatcher and the `:1589` cell's HANG_A/HANG_EQ definitions —
+    // NOT shared by reference (those are locally scoped inside that `it` callback and cannot be
+    // imported; these are fresh literals with the same field values).
+    const hang573: StepDispatcher = () => new Promise<Record<string, unknown>>(() => undefined);
+
+    const hangA573: WorkflowDefinition = {
+      id: 'w573-hanga-wf',
+      name: 'W573 HangA',
+      version: 1,
+      steps: {
+        'step-one': {
+          description: 'Hangs',
+          execution: 'auto',
+          depends_on: [],
+          timeout_seconds: 2,
+          retry: {
+            max_attempts: 3,
+            backoff: 'fixed',
+            base_delay_ms: 10,
+            total_timeout_seconds: 1,
+          },
+        },
+      },
+    };
+
+    const hangEq573: WorkflowDefinition = {
+      id: 'w573-hangeq-wf',
+      name: 'W573 HangEq',
+      version: 1,
+      steps: {
+        'step-one': {
+          description: 'Hangs, cap equals timeout',
+          execution: 'auto',
+          depends_on: [],
+          timeout_seconds: 1,
+          idempotent: true,
+          retry: {
+            max_attempts: 3,
+            backoff: 'fixed',
+            base_delay_ms: 10,
+            on_timeout: true,
+            total_timeout_seconds: 1,
+          },
+        },
+      },
+    };
+
+    it('C1 — a frozen short read exhausts the cap by construction, not by comparing clocks after the fact (HANG_A; the red-first) (issue #573)', async () => {
+      const store = new JsonFileStore(dir);
+      const { run } = await store.create({
+        workflowId: hangA573.id,
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const realDateNow = Date.now.bind(Date);
+      const realPerfNow = performance.now.bind(performance);
+      let dateFirst: number | undefined;
+      let perfFirst: number | undefined;
+      let readsFromExecutionLoop = 0;
+
+      const dateSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+        const real = realDateNow();
+        if (!(new Error().stack ?? '').includes('execution-loop.ts')) return real;
+        readsFromExecutionLoop++;
+        if (dateFirst === undefined) dateFirst = real;
+        return Math.min(real, dateFirst + 999);
+      });
+      const perfSpy = vi.spyOn(performance, 'now').mockImplementation(() => {
+        const real = realPerfNow();
+        if (!(new Error().stack ?? '').includes('execution-loop.ts')) return real;
+        readsFromExecutionLoop++;
+        if (perfFirst === undefined) perfFirst = real;
+        return Math.min(real, perfFirst + 999);
+      });
+
+      try {
+        const envelope = await executeStep(store, hangA573, {
+          runId: run.id,
+          command: 'step-one',
+          input: {},
+          dispatcher: hang573,
+        });
+        // Rename-defang guard FIRST: if the `stack.includes('execution-loop.ts')` filter ever stops
+        // matching (a rename/split), this reds instead of silently proving nothing.
+        expect(readsFromExecutionLoop).toBeGreaterThanOrEqual(1);
+        expect(envelope.evidence).toHaveLength(1);
+        expect(envelope.error_details?.['exhausted_by']).toBe('total_timeout');
+        expect(envelope.evidence[0]?.clipped_to_ms).toBe(1000);
+      } finally {
+        dateSpy.mockRestore();
+        perfSpy.mockRestore();
+      }
+    }, 15_000);
+
+    it('C2 — the budget is read once, not twice a tick apart: no phantom clip at equality (HANG_EQ) (issue #573)', async () => {
+      const store = new JsonFileStore(dir);
+      const { run } = await store.create({
+        workflowId: hangEq573.id,
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const realDateNow = Date.now.bind(Date);
+      const realPerfNow = performance.now.bind(performance);
+      let dateFirst: number | undefined;
+      let dateCount = 0;
+      let perfFirst: number | undefined;
+      let perfCount = 0;
+
+      const dateSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+        const real = realDateNow();
+        if (!(new Error().stack ?? '').includes('execution-loop.ts')) return real;
+        dateCount++;
+        if (dateFirst === undefined) dateFirst = real;
+        return dateCount === 2 ? dateFirst + 1 : real;
+      });
+      const perfSpy = vi.spyOn(performance, 'now').mockImplementation(() => {
+        const real = realPerfNow();
+        if (!(new Error().stack ?? '').includes('execution-loop.ts')) return real;
+        perfCount++;
+        if (perfFirst === undefined) perfFirst = real;
+        return perfCount === 2 ? perfFirst + 1 : real;
+      });
+
+      try {
+        const envelope = await executeStep(store, hangEq573, {
+          runId: run.id,
+          command: 'step-one',
+          input: {},
+          dispatcher: hang573,
+        });
+        expect(envelope.evidence[0]?.clipped_to_ms).toBeUndefined();
+        expect(envelope.evidence[0]?.effective_timeout_seconds).toBe(1);
+        expect(envelope.error_details?.['exhausted_by']).toBe('total_timeout');
+      } finally {
+        dateSpy.mockRestore();
+        perfSpy.mockRestore();
+      }
+    }, 15_000);
+
+    it('C3 — the boundary is exact under fake timers: bounded (never clipped) at equality, correctly clipped when uncapped-per-attempt (issue #573)', async () => {
+      vi.useFakeTimers({
+        toFake: [
+          'setTimeout',
+          'clearTimeout',
+          'setInterval',
+          'clearInterval',
+          'Date',
+          'performance',
+          'hrtime',
+        ],
+      });
+      try {
+        const store = new JsonFileStore(dir);
+
+        const { run: runA } = await store.create({
+          workflowId: hangA573.id,
+          workflowVersion: 1,
+          params: {},
+        });
+        let dispatchedA = false;
+        const dispatcherA: StepDispatcher = () => {
+          dispatchedA = true;
+          return new Promise<Record<string, unknown>>(() => undefined);
+        };
+        const envPromiseA = executeStep(store, hangA573, {
+          runId: runA.id,
+          command: 'step-one',
+          input: {},
+          dispatcher: dispatcherA,
+        });
+        while (!dispatchedA) await new Promise((r) => setImmediate(r));
+        await vi.advanceTimersByTimeAsync(1000);
+        const envelopeA = await envPromiseA;
+        expect(envelopeA.error_details?.['exhausted_by']).toBe('total_timeout');
+        expect(envelopeA.evidence[0]?.clipped_to_ms).toBe(1000);
+
+        const { run: runEq } = await store.create({
+          workflowId: hangEq573.id,
+          workflowVersion: 1,
+          params: {},
+        });
+        let dispatchedEq = false;
+        const dispatcherEq: StepDispatcher = () => {
+          dispatchedEq = true;
+          return new Promise<Record<string, unknown>>(() => undefined);
+        };
+        const envPromiseEq = executeStep(store, hangEq573, {
+          runId: runEq.id,
+          command: 'step-one',
+          input: {},
+          dispatcher: dispatcherEq,
+        });
+        while (!dispatchedEq) await new Promise((r) => setImmediate(r));
+        await vi.advanceTimersByTimeAsync(1000);
+        const envelopeEq = await envPromiseEq;
+        expect(envelopeEq.evidence[0]?.clipped_to_ms).toBeUndefined();
+        expect(envelopeEq.error_details?.['exhausted_by']).toBe('total_timeout');
+      } finally {
+        vi.useRealTimers();
+      }
+    }, 15_000);
+
+    it("C4a — premise: setSystemTime moves Date.now, not performance.now nor a pending timer's firing instant (issue #573)", async () => {
+      vi.useFakeTimers({
+        toFake: [
+          'setTimeout',
+          'clearTimeout',
+          'setInterval',
+          'clearInterval',
+          'Date',
+          'performance',
+          'hrtime',
+        ],
+      });
+      try {
+        let fired = false;
+        setTimeout(() => {
+          fired = true;
+        }, 100);
+        const p0 = performance.now();
+        const d0 = Date.now();
+        vi.setSystemTime(d0 - 5);
+        expect(Date.now()).toBe(d0 - 5);
+        expect(performance.now()).toBe(p0);
+        await vi.advanceTimersByTimeAsync(99);
+        expect(fired).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(fired).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('C4b — a native wall-clock slew mid-attempt does not defeat cap exhaustion (issue #573)', async () => {
+      vi.useFakeTimers({
+        toFake: [
+          'setTimeout',
+          'clearTimeout',
+          'setInterval',
+          'clearInterval',
+          'Date',
+          'performance',
+          'hrtime',
+        ],
+      });
+      try {
+        const store = new JsonFileStore(dir);
+        const { run } = await store.create({
+          workflowId: hangA573.id,
+          workflowVersion: 1,
+          params: {},
+        });
+        let dispatched = false;
+        const dispatcher: StepDispatcher = () => {
+          dispatched = true;
+          return new Promise<Record<string, unknown>>(() => undefined);
+        };
+        const envPromise = executeStep(store, hangA573, {
+          runId: run.id,
+          command: 'step-one',
+          input: {},
+          dispatcher,
+        });
+        while (!dispatched) await new Promise((r) => setImmediate(r));
+        vi.setSystemTime(Date.now() - 5);
+        await vi.advanceTimersByTimeAsync(1000);
+        const envelope = await envPromise;
+        expect(envelope.error_details?.['exhausted_by']).toBe('total_timeout');
+      } finally {
+        vi.useRealTimers();
+      }
+    }, 15_000);
+
+    it('C5 — a clipped later attempt records whole-millisecond evidence (issue #573: the budget is floored before it bounds an attempt)', async () => {
+      const store = new JsonFileStore(dir);
+      const def: WorkflowDefinition = {
+        id: 'w573-domain-wf',
+        name: 'W573 Domain',
+        version: 1,
+        steps: {
+          'step-one': {
+            description: 'Fails retryably once, then hangs',
+            execution: 'auto',
+            depends_on: [],
+            timeout_seconds: 1,
+            retry: {
+              max_attempts: 3,
+              backoff: 'fixed',
+              base_delay_ms: 10,
+              total_timeout_seconds: 1,
+            },
+          },
+        },
+      };
+      let calls = 0;
+      const dispatcher: StepDispatcher = async () => {
+        calls += 1;
+        if (calls === 1) {
+          await new Promise((r) => setTimeout(r, 50));
+          throw new WorkflowError('Transient', {
+            code: 'SERVICE_RATE_LIMITED',
+            category: 'SERVICE',
+            agentAction: 'wait_and_proceed',
+            retryable: true,
+          });
+        }
+        return new Promise<Record<string, unknown>>(() => undefined);
+      };
+      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const env = await executeStep(store, def, {
+        runId: run.id,
+        command: 'step-one',
+        input: {},
+        dispatcher,
+      });
+      const a2 = env.evidence[1];
+      expect(env.evidence).toHaveLength(2);
+      expect(env.error_details?.['exhausted_by']).toBe('total_timeout');
+      expect(Number.isInteger(a2?.clipped_to_ms)).toBe(true);
+      expect(Number.isInteger((a2?.effective_timeout_seconds ?? 0) * 1000)).toBe(true);
+    }, 15_000);
   });
 });

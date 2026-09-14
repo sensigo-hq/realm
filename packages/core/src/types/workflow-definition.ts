@@ -437,18 +437,23 @@ export interface RetryConfig {
    */
   on_timeout?: boolean;
   /**
-   * Total wall-clock budget, in seconds, across every attempt of this step (issue #140,
-   * Temporal-ScheduleToClose-style) — bounds `max_attempts × per-attempt-timeout` (plus the
-   * declared backoffs and any runtime rate-limit `retry_after` sleep) from growing unbounded.
-   * Standalone-legal: does NOT require `on_timeout`. **AMENDED default:** when absent, every
-   * retry-configured `execution: 'auto'` step is capped at the shared worst-case-schedule
+   * Total budget, measured on the monotonic clock, in seconds, across every attempt of this step
+   * (issue #140, Temporal-ScheduleToClose-style) — bounds `max_attempts × per-attempt-timeout`
+   * (plus the declared backoffs and any runtime rate-limit `retry_after` sleep) from growing
+   * unbounded. Standalone-legal: does NOT require `on_timeout`. **AMENDED default:** when absent,
+   * every retry-configured `execution: 'auto'` step is capped at the shared worst-case-schedule
    * formula (`max_attempts × the step's own per-attempt timeout + the declared backoffs between
    * attempts` — the same formula the claim horizon uses) — so the default cap always equals the
    * step's own declared schedule and binds only when a runtime wait pushes an attempt's actual
    * wall-clock MATERIALLY past that schedule (event-loop scheduling overhead is charged to the
-   * budget too — negligible at production scales; a step with no `retry:` block has no cap, as
-   * there is nothing to bound). When the cap is reached mid-schedule, the step settles as
-   * `STEP_RETRY_EXHAUSTED` with `exhausted_by: 'total_timeout'` instead of sleeping past it.
+   * budget too — negligible at production scales, and a timer may fire early [typically under
+   * 1 ms] — the budget is never under-charged at the boundary [issue #573]; a step with no
+   * `retry:` block has no cap, as there is nothing to bound). When the cap is reached
+   * mid-schedule, the step settles as `STEP_RETRY_EXHAUSTED` with `exhausted_by: 'total_timeout'`
+   * instead of sleeping past it. At `total_timeout_seconds` equal to `timeout_seconds` the first
+   * attempt runs to its own timeout and, on timing out, exhausts the budget — it is never
+   * reported as clipped. Elapsed budget is measured on the monotonic clock; the persisted claim
+   * horizon stays wall-clock (it is anchored at claim time).
    * Positive integer (E2) — same convention as `timeout_seconds`. Inert on a non-`execution:
    * 'auto'` step (W5 warns) — the cap only bounds `auto` dispatch, which is the only dispatch
    * ever wrapped in a timeout.

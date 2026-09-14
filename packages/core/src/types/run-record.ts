@@ -401,7 +401,10 @@ export interface EvidenceSnapshot {
    * Issue #140: present ONLY on an attempt whose effective timeout was CLIPPED below the step's
    * own declared/default `timeout_seconds` by its total-time cap (`retry.total_timeout_seconds`,
    * explicit or the amended default) — the actual millisecond bound this attempt was clipped to.
-   * Absent on an uncapped attempt or one the cap hasn't started biting on yet.
+   * Absent on an uncapped attempt, on any attempt the cap has not reduced, and ALWAYS on the
+   * first attempt of a step whose `total_timeout_seconds` equals its `timeout_seconds` —
+   * equality is bounded, never clipped (issue #573: the budget is read once, at dispatch).
+   * Always a whole millisecond (issue #573).
    */
   clipped_to_ms?: number;
   /**
@@ -411,6 +414,13 @@ export interface EvidenceSnapshot {
    * both-true tie). Durable even when the settle path does NOT wrap the error into
    * `STEP_RETRY_EXHAUSTED` (the issue #134 recoverable-incapability carve-out never wraps) — this
    * evidence stamp is then the only record of *why* the step stopped.
+   *
+   * Issue #573: `'total_timeout'` is stamped BY CONSTRUCTION whenever the last attempt's bound
+   * was the remaining budget and it timed out — for a `STEP_TIMEOUT`, never by comparing clocks
+   * after the fact, because Node/libuv timers fire early against any clock (loop time is floored
+   * to whole milliseconds — under 1 ms on the machines that measured it, possibly more on a host
+   * with a coarse clock); `duration_ms` may therefore read slightly below the bound beside it,
+   * truthfully. Any OTHER error still exhausts the cap by the elapsed-budget comparison.
    */
   exhausted_by?: 'attempts' | 'total_timeout';
 }
