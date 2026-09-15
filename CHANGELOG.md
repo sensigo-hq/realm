@@ -6,6 +6,15 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+The extension-namespace release. A workflow file can now keep a YAML anchor host — or any tooling
+note — at the top of the file under an `x-` key, and `validate`, `register` and `watch` accept it,
+carry it verbatim, never read it, and name it on the verdict line (issue #559, with its case rule
+closed by issue #582). **No BREAKING changes:** nothing previously accepted is refused and no
+public export moved. The refusal set moved in the permissive direction only — a class of top-level
+keys 0.42.0 refused is now the author's — and the three refusals that remain in that area (a
+`x-realm-…` key, a capital-`X-` key, a step-level `x-` key) refuse exactly as 0.42.0 did, with
+better sentences. No `#### Upgrading` section is needed.
+
 ### Added
 
 - **A top-level `x-` key is now the author's own extension namespace** (issue #559) — a place for
@@ -13,16 +22,22 @@ All notable changes to this project are documented here.
   Docker Compose's `^x-` provides. `validate`, `register`, and `watch` accept it without a
   warning on any surface; it is carried verbatim into the registered copy and realm's loader and
   engine never read it. `validate`, `register` and `watch` name every accepted key on their own
-  verdict line — `Valid: code-reviewer v1 (3 steps) — 1 extension key carried, never read by realm:
-x-category-enum` — so an author who believed one configured something is told otherwise, not
-  left to find out the hard way. `x-realm-` is reserved for realm's own future extension keys
-  from the day the namespace opens: a key inside it refuses exactly as before, in every
-  capitalization (`x-Realm-foo` and `X-Realm-Foo` both refuse as reserved — issue #582), with a
-  message naming the reservation. `validate --json` gains `extension_keys: string[]` on every arm — the
-  accepted list on success, `[]` on every refusal (the `checks_not_run` shape: `[]` means
-  "nothing accepted", not "the file has none"). The namespace is top-level only — step keys stay
-  the closed #417 consumption registry, and a step-level `x-` key is still refused, with a
-  message pointing back to the top of the file.
+  verdict line — for the example above:
+  `Valid: code-reviewer v1 (3 steps) — 1 extension key carried, never read by realm: x-category-enum`
+  — so an author who believed one configured something is told otherwise, not left to find out
+  the hard way. `x-realm-` is reserved for realm's own future extension keys from the day the
+  namespace opens: a key inside it refuses exactly as before, in every capitalization
+  (`x-Realm-foo` and `X-Realm-Foo` both refuse as reserved — issue #582), with a message naming
+  the reservation. The author's own namespace is lowercase: a case-only miss such as `X-Foo` is
+  refused with a message that says so (`the extension namespace is lowercase: a key starting 'x-'
+is the author's, carried verbatim and never read; 'X-Foo' is not one.`) rather than the generic
+  unknown-key text, so the remedy is the right one first try. `validate --json` gains
+  `extension_keys: string[]` on every arm — the accepted list on success, `[]` on every refusal
+  (the `checks_not_run` shape: `[]` means "nothing accepted", not "the file has none"). The
+  namespace is top-level only — step keys stay the closed #417 consumption registry, and a
+  step-level `x-` key is still refused, with a message pointing back to the top of the file — and,
+  when the name is in the reserved prefix, telling the author to rename it on the way, so the move
+  works first try (issue #582).
 
   Before this change realm's posture matched GitHub Actions (refuses unknown top-level keys,
   ships anchors, no namespace); it now matches Docker Compose's mechanism and exceeds every
@@ -31,13 +46,27 @@ x-category-enum` — so an author who believed one configured something is told 
   retroactively (OpenAPI's `x-oai-`/`x-oas-`) — plus verbatim carriage where Kubernetes and Argo
   prune unknown fields instead.
 
+- **`@sensigo/realm` exports `isExtensionKey`, `EXTENSION_KEY_PREFIX` and
+  `RESERVED_EXTENSION_PREFIX`** (issue #559), so a consumer can partition a definition's top-level
+  keys exactly the way the loader does. The already-public `findUnknownKeys` gains an optional
+  `ctx.isExtension` predicate — additive: every existing call compiles and behaves identically.
+
 ### Changed
 
+- `realm run`, `realm agent`, `realm listen` and `realm workflow test` no longer print a
+  `⚠ … unknown key … — ignored` warning for a top-level `x-` key — they loaded such a file
+  leniently before and still do; the loader now mints nothing for it on any surface. The verdict
+  lines of `validate`, `register` and `watch` gain the extension-keys tail only when such a key is
+  present; every workflow without one prints byte-identical output (issue #559).
 - `docs/reference/yaml-schema.md`'s "Extension namespace" section is reversed: it used to state
   there was deliberately none, with a revisit trigger naming third-party tooling; the trigger that
   actually fired was an author's own YAML anchor host, not a third party, and the section now
-  documents the namespace issue #559 ships (the old text is preserved in a code comment for
-  context).
+  documents the namespace issue #559 ships (the old text is preserved in an HTML comment for
+  context). `docs/reference/cli-commands.md` gains the `extension_keys` contract and corrects a
+  sentence this change falsified — not every unknown-key warning line ends `— ignored` any more,
+  since the three targeted `x-` messages carry their remedy instead; `docs/reference/mcp-protocol.md`
+  states that `create_workflow` has no extension namespace (no file to carry keys into), so an
+  `x-` argument is still dropped and warned about there.
 
 ## [0.42.0] — 2026-09-14
 
