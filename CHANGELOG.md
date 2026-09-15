@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
+## [0.43.0] — 2026-09-16
 
 The extension-namespace release. A workflow file can now keep a YAML anchor host — or any tooling
 note — at the top of the file under an `x-` key, and `validate`, `register` and `watch` accept it,
