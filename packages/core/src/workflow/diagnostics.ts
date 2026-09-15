@@ -196,6 +196,28 @@ function renderUnknownKeyMessage(
 }
 
 /**
+ * The author-extension namespace (issue #559). A top-level key beginning `x-` is the AUTHOR's:
+ * realm carries it verbatim into the registered copy and never reads it — a place for YAML
+ * anchor hosts (e.g. a shared enum) and tooling notes. Docker Compose's `^x-` is the same
+ * mechanism, and its own docs direct anchors into it.
+ *
+ * `x-realm-` is reserved for realm's own future extension keys from the day the namespace
+ * opens — so a key in it is NOT an extension key and still refuses, with a message naming the
+ * reservation (OpenAPI reserved `x-oai-`/`x-oas-` only retroactively; realm does it up front).
+ *
+ * Case-sensitive: `X-Foo` is not an extension key (OpenAPI's and Compose's `^x-` are lowercase).
+ * The dash is load-bearing: `xtra` is not one. A bare `x-` IS one — an empty extension name is
+ * still the author's; it renders as `x-` in the disclosure clause.
+ */
+export const EXTENSION_KEY_PREFIX = 'x-' as const;
+export const RESERVED_EXTENSION_PREFIX = 'x-realm-' as const;
+
+/** True when `key` is the author's own extension key (see `EXTENSION_KEY_PREFIX`). */
+export function isExtensionKey(key: string): boolean {
+  return key.startsWith(EXTENSION_KEY_PREFIX) && !key.startsWith(RESERVED_EXTENSION_PREFIX);
+}
+
+/**
  * Finds every own-key of `obj` not present in `allowList` and returns one LoaderWarning per
  * offender. Pure — no printing, no throwing. Severity is resolved against DEFAULT_POLICY at
  * construction time (a caller applying a different policy, e.g. `--strict`, re-resolves
@@ -226,6 +248,16 @@ export function findUnknownKeys(
      * position map declined to place) and produces exactly the pre-#392 warning.
      */
     positionOf?: (key: string) => SourcePosition | undefined;
+    /**
+     * Skips a key entirely (issue #559) — no allow-list check, no warning. Passed by the ONE
+     * top-level workflow-key site in yaml-loader.ts, where `x-` keys are the author's namespace.
+     * The step site deliberately does NOT pass it: step keys are the #417 consumption registry, a
+     * closed set where an inert key is a load error by ratified policy — there is no namespace at
+     * step level.
+     *
+     * Optional, so every existing caller compiles and behaves byte-identically.
+     */
+    isExtension?: (key: string) => boolean;
   },
 ): LoaderWarning[] {
   const warnings: LoaderWarning[] = [];
@@ -233,6 +265,7 @@ export function findUnknownKeys(
     ctx.scope === 'workflow' ? `workflow '${ctx.id ?? '<unknown>'}'` : `step '${ctx.step}'`;
   const noun = ctx.noun ?? ctx.scope;
   for (const key of Object.keys(obj)) {
+    if (ctx.isExtension?.(key) === true) continue;
     if (allowList.includes(key)) continue;
     const did_you_mean = closestKey(key, allowList);
     const pos = ctx.positionOf?.(key);

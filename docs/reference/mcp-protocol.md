@@ -410,6 +410,11 @@ entry (`code: "UNKNOWN_CREATE_WORKFLOW_KEY"`) in `diagnostics` — an authoring 
 on the next call instead of repeating the same typo. A dropped key can never reach the registered
 definition, so a warning here always means the field had no effect.
 
+A top-level `x-` key is **not** the author-extension namespace here (issue #559) — this tool's
+`create_workflow` surface has no YAML anchors to host and no source file to carry them verbatim
+into, so an `x-` argument is dropped and warned about exactly like any other unrecognized one. The
+namespace exists for `realm workflow validate`/`register`/`watch`, which parse an actual file.
+
 Two top-level cases carry a targeted message instead of the generic text. `workflow_id` is the one
 an agent most plausibly invents: this tool mints its own id and returns it as `data.workflow_id`,
 so a `start_run` with a self-chosen id fails `STATE_WORKFLOW_NOT_FOUND` — set `metadata.name` to

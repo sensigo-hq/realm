@@ -14,6 +14,8 @@ import {
   failsStrict,
   renderLoadFailure,
   renderEscalationLine,
+  extensionKeysOf,
+  renderExtensionKeysClause,
 } from '../lib/loader-warnings.js';
 import {
   loadWorkflowForAdmission,
@@ -67,8 +69,12 @@ export const registerCommand = new Command('register')
         console.warn(`⚠ ${warning}`);
       }
       const stepCount = Object.keys(definition.steps).length;
+      // issue #559 — the author-extension names, on the SAME line as the verdict: register has
+      // no other clause today, so the tail composition validate uses is this one clause, always.
+      const extensionClause = renderExtensionKeysClause(extensionKeysOf(definition));
+      const extensionTail = extensionClause !== undefined ? ` — ${extensionClause}` : '';
       console.log(
-        `Registered: ${definition.id} v${definition.version} (${stepCount} ${stepCount === 1 ? 'step' : 'steps'})`,
+        `Registered: ${definition.id} v${definition.version} (${stepCount} ${stepCount === 1 ? 'step' : 'steps'})${extensionTail}`,
       );
       if (definition.description !== undefined) {
         console.log(`  ${definition.description}`);

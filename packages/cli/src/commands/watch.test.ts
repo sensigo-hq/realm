@@ -258,6 +258,62 @@ describe('watchWorkflow', () => {
   });
 });
 
+// issue #559 — `watch` is the third registering surface (validate/register/watch), and it printed
+// a bare `Registered:` line where `register` on the identical file names every accepted `x-` key.
+// The clause is composed through the SAME shared helper as validate/register (one mint, one
+// composer, three callers) — this pins the SURFACE actually printing it, not the phrase itself
+// (already pinned in `extension-namespace-559.test.ts` and `yaml-loader.test.ts`).
+describe('watch — the extension-keys clause on the Registered line (issue #559)', () => {
+  const EXT_YAML = `x-category-enum: &cats [billing, refund, other]
+id: watch-ext
+name: Watch Ext
+version: 1
+steps:
+  step-one:
+    description: First step
+    execution: agent
+`;
+
+  it('names every accepted key on its own Registered line', async () => {
+    const filePath = makeTempFile(EXT_YAML);
+    const store = makeStore();
+    const controller = new AbortController();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await new Promise((r) => setTimeout(r, 50));
+    controller.abort();
+    await watchPromise;
+
+    const logged = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(logged).toContain(
+      'Registered: watch-ext v1 (1 step) — 1 extension key carried, never read by realm: x-category-enum',
+    );
+    vi.restoreAllMocks();
+  });
+
+  it('CONTROL: a file with no extension key keeps the bare line (mirrors the #425 cell at :295)', async () => {
+    const filePath = makeTempFile(VALID_YAML);
+    const store = makeStore();
+    const controller = new AbortController();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const watchPromise = watchWorkflow(filePath, store, controller.signal);
+    await new Promise((r) => setTimeout(r, 50));
+    controller.abort();
+    await watchPromise;
+
+    const logged = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(logged).toContain('Registered: watch-test v1 (1 step)');
+    expect(logged).not.toContain('carried, never read by realm');
+    vi.restoreAllMocks();
+  });
+});
+
 // issue #425 — watch's own lines carry a timestamp and its warnings block did not, so on a busy
 // session the warnings floated free of the save that produced them. A gated header ties them
 // together; the clean-save control proves the gate.

@@ -2805,6 +2805,235 @@ steps:
     expect(out).not.toContain('did you mean');
     warn.mockRestore();
   });
+
+  // ---------------------------------------------------------------------
+  // issue #559 — the `x-` author-extension namespace at the top level.
+  // ---------------------------------------------------------------------
+
+  const CROWN_FIXTURE = `x-category-enum: &cats [billing, refund, other]
+# examples/01-code-reviewer/workflow.yaml
+id: code-reviewer
+name: Code Reviewer
+version: 1
+
+params_schema:
+  type: object
+  additionalProperties: false
+  required: [path]
+  properties:
+    category: { type: string, enum: *cats }
+    path:
+      type: string
+      description: 'Path to the diff file to review'
+
+services:
+  diffs:
+    adapter: filesystem
+    trust: engine_delivered
+
+steps:
+  read_diff:
+    description: Load the diff file from disk
+    execution: auto
+    depends_on: []
+    uses_service: diffs
+    operation: read
+    input_map:
+      path: run.params.path
+
+  review_changes:
+    description: Review the diff and produce a structured assessment.
+    execution: agent
+    depends_on: [read_diff]
+    prompt: Review the diff and produce a structured assessment.
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [severity, summary, breaking_changes, action_required]
+      properties:
+        severity:
+          type: string
+          enum: *cats
+        summary:
+          type: string
+          minLength: 20
+        breaking_changes:
+          type: boolean
+        action_required:
+          type: boolean
+
+  record_review:
+    description: Record the structured code review
+    execution: auto
+    depends_on: [review_changes]
+`;
+
+  it('the crown fixture loads with zero warnings and both anchor consumers expanded', () => {
+    const { definition, warnings } = loadWorkflowFromStringWithDiagnostics(CROWN_FIXTURE);
+    expect(warnings).toEqual([]);
+    expect((definition as unknown as Record<string, unknown>)['x-category-enum']).toEqual([
+      'billing',
+      'refund',
+      'other',
+    ]);
+    expect(
+      (definition.params_schema as { properties: { category: { enum: string[] } } }).properties
+        .category.enum,
+    ).toEqual(['billing', 'refund', 'other']);
+    expect(
+      (
+        definition.steps['review_changes']!.input_schema as {
+          properties: { severity: { enum: string[] } };
+        }
+      ).properties.severity.enum,
+    ).toEqual(['billing', 'refund', 'other']);
+  });
+
+  it('the public lenient loader prints nothing for the crown fixture (the execution-surface claim)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    loadWorkflowFromString(CROWN_FIXTURE);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('a reserved-prefix key at the top level is refused with the targeted message', () => {
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(`x-realm-foo: 1
+id: w
+name: W
+version: 1
+steps:
+  s:
+    description: d
+    execution: auto
+`);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.code).toBe('UNKNOWN_WORKFLOW_KEY');
+    expect(warnings[0]!.message).toBe(
+      "workflow 'w': unknown key 'x-realm-foo' (line 1) — the 'x-realm-' prefix is reserved for realm's own future extension keys; any other 'x-' name is yours to use (an extension key is carried verbatim and never read).",
+    );
+  });
+
+  it('a step-level `x-` key is refused with the targeted message and no did_you_mean', () => {
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(`id: w
+name: W
+version: 1
+steps:
+  s:
+    description: d
+    execution: auto
+    x-foo: 1
+`);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.code).toBe('UNKNOWN_STEP_KEY');
+    expect(warnings[0]!.message).toBe(
+      "step 's': unknown key 'x-foo' (line 8) — 'x-' extension keys are accepted only at the top level of a workflow file; step keys are a closed set. Move it to the top of the file.",
+    );
+    expect(warnings[0]!.did_you_mean).toBeUndefined();
+  });
+
+  it("a step-level `x-realm-` key gets the D3 (relocation) text, never D2's reservation text", () => {
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(`id: w
+name: W
+version: 1
+steps:
+  s:
+    description: d
+    execution: auto
+    x-realm-foo: 1
+`);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.code).toBe('UNKNOWN_STEP_KEY');
+    expect(warnings[0]!.message).toBe(
+      "step 's': unknown key 'x-realm-foo' (line 8) — 'x-' extension keys are accepted only at the top level of a workflow file; step keys are a closed set. Move it to the top of the file.",
+    );
+  });
+
+  it('a case-only near-miss at the top level gets the lowercase arm, whole message, at its own line', () => {
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(`X-Category-Enum: [a, b]
+id: w
+name: W
+version: 1
+steps:
+  s:
+    description: d
+    execution: auto
+`);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.code).toBe('UNKNOWN_WORKFLOW_KEY');
+    expect(warnings[0]!.message).toBe(
+      "workflow 'w': unknown key 'X-Category-Enum' (line 1) — the extension namespace is lowercase: a key starting 'x-' is the author's, carried verbatim and never read; 'X-Category-Enum' is not one.",
+    );
+  });
+
+  it('CONTROL: an upper-case RESERVED name still takes the RESERVATION arm (F3) — its remedy is executable', () => {
+    // `X-Realm-Foo` lowercases into the reserved sub-namespace and the reserved check is
+    // case-insensitive (checked FIRST), so it never reaches the case-only arm below. This is the
+    // control that would catch the opposite, wrong design: if the case-only arm were checked
+    // first, or the reserved arm stayed case-sensitive, this key would get the case-only
+    // message's remedy ("lowercase it") — which runs straight into a SECOND refusal, since
+    // lowercasing it produces `x-realm-foo`, itself reserved.
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(`X-Realm-Foo: 1
+id: w
+name: W
+version: 1
+steps:
+  s:
+    description: d
+    execution: auto
+`);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.message).toBe(
+      "workflow 'w': unknown key 'X-Realm-Foo' (line 1) — the 'x-realm-' prefix is reserved for realm's own future extension keys; any other 'x-' name is yours to use (an extension key is carried verbatim and never read).",
+    );
+    expect(warnings[0]!.message).not.toContain('the extension namespace is lowercase');
+  });
+
+  it('CONTROL: a top-level `xtra` and `X-Foo` keep the ordinary unchanged grammar', () => {
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(`xtra: 1
+X-Foo: 1
+id: w
+name: W
+version: 1
+steps:
+  s:
+    description: d
+    execution: auto
+`);
+    expect(warnings.map((w) => w.message)).toEqual([
+      "workflow 'w': unknown key 'xtra' (line 1) — ignored (not a recognized workflow field).",
+      // issue #559 correction: `X-Foo` no longer keeps the ordinary grammar — a case-only miss
+      // is the likeliest slip for a prefix convention and now gets its own targeted arm. `xtra`
+      // (no relation to the namespace) is the surviving half of this control and is unchanged —
+      // the one authorized edit to an existing cell in this correction.
+      "workflow 'w': unknown key 'X-Foo' (line 2) — the extension namespace is lowercase: a key starting 'x-' is the author's, carried verbatim and never read; 'X-Foo' is not one.",
+    ]);
+  });
+
+  it('the never-read witness (D5): no engine/loader source file mentions an `x-` literal outside diagnostics.ts', () => {
+    // Scope is deliberately ENGINE-ONLY (issue #559 audit F5): cli/mcp legitimately carry `x-`
+    // HTTP header literals (listen.ts, slack-gate-server.ts) — a claim about THOSE would fire on
+    // an unrelated population. The operator-visible claim is "never read by realm's loader and
+    // engine", not "realm never contains the string 'x-' anywhere" — the report states the wider
+    // repo-wide grep separately, unguarded by a cell.
+    const root = fileURLToPath(new URL('..', import.meta.url));
+    const hits: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!entry.name.endsWith('.ts') || entry.name.endsWith('.test.ts')) continue;
+        if (full.endsWith(join('workflow', 'diagnostics.ts'))) continue;
+        const src = readFileSync(full, 'utf8');
+        if (src.includes("'x-") || src.includes('"x-')) hits.push(full);
+      }
+    };
+    walk(join(root, 'engine'));
+    walk(join(root, 'workflow'));
+    expect(hits).toEqual([]);
+  });
 });
 
 describe('loadWorkflowFromString — llm_timeout_seconds validation (issue #401)', () => {

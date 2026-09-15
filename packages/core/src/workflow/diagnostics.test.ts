@@ -8,6 +8,7 @@ import {
   resolveSeverity,
   findUnknownKeys,
   renderLoaderWarning,
+  isExtensionKey,
   type LoaderWarning,
 } from './diagnostics.js';
 
@@ -102,6 +103,60 @@ describe('findUnknownKeys', () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]!.id).toBe('my-workflow');
     expect(warnings[0]!.step).toBeUndefined();
+  });
+
+  // issue #559 — the `isExtension` ctx field: a key it accepts mints nothing at all.
+  it('isExtension skips the matching key and still reports a non-matching one from the same object', () => {
+    const warnings = findUnknownKeys({ 'x-a': 1, nope: 2 }, ['id'], {
+      scope: 'workflow',
+      code: 'UNKNOWN_WORKFLOW_KEY',
+      id: 'w',
+      isExtension: isExtensionKey,
+    });
+    expect(warnings.map((w) => w.key)).toEqual(['nope']);
+  });
+
+  it('without isExtension, behaviour is byte-identical to before issue #559 (control)', () => {
+    const warnings = findUnknownKeys({ 'x-a': 1, nope: 2 }, ['id'], {
+      scope: 'workflow',
+      code: 'UNKNOWN_WORKFLOW_KEY',
+      id: 'w',
+    });
+    expect(warnings.map((w) => w.key)).toEqual(['x-a', 'nope']);
+  });
+});
+
+describe('isExtensionKey (issue #559)', () => {
+  it('accepts a top-level author key like x-category-enum', () => {
+    expect(isExtensionKey('x-category-enum')).toBe(true);
+  });
+
+  it('rejects the reserved x-realm- prefix', () => {
+    expect(isExtensionKey('x-realm-anything')).toBe(false);
+  });
+
+  it('is case-sensitive: X-Foo is not an extension key', () => {
+    expect(isExtensionKey('X-Foo')).toBe(false);
+  });
+
+  it('the dash is load-bearing: xtra is not an extension key', () => {
+    expect(isExtensionKey('xtra')).toBe(false);
+  });
+
+  it('a bare "x-" is still the author\'s (an empty extension name)', () => {
+    expect(isExtensionKey('x-')).toBe(true);
+  });
+
+  // issue #559 correction — "decided, not deferred": mixed case INSIDE the reserved part
+  // (`x-Realm-foo`, lowercase `x-` prefix but `Realm` capitalized) does not lowercase-match
+  // `startsWith('x-realm-')` at all (the check here is on the RAW string), so it is the
+  // author's own key, same as any other `x-` name — realm's own future keys are always
+  // spelled lowercase `x-realm-…`, which this cannot collide with. This is the per-member
+  // case-variant for the reserved-prefix member: `isExtensionKey` itself never lowercases;
+  // only the two MESSAGE arms in yaml-loader.ts's top-level `.map` do that, and only for a key
+  // that already failed this exact predicate (an upper-case `X-…`, never a lowercase `x-…`).
+  it("mixed case INSIDE the reserved part (x-Realm-foo) is still the author's key", () => {
+    expect(isExtensionKey('x-Realm-foo')).toBe(true);
   });
 });
 

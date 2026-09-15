@@ -4,6 +4,40 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **A top-level `x-` key is now the author's own extension namespace** (issue #559) — a place for
+  a YAML anchor host (a shared enum, a reusable block) or a tooling note, the same mechanism
+  Docker Compose's `^x-` provides. `validate`, `register`, and `watch` accept it without a
+  warning on any surface; it is carried verbatim into the registered copy and realm's loader and
+  engine never read it. `validate`, `register` and `watch` name every accepted key on their own
+  verdict line — `Valid: code-reviewer v1 (3 steps) — 1 extension key carried, never read by realm:
+x-category-enum` — so an author who believed one configured something is told otherwise, not
+  left to find out the hard way. `x-realm-` is reserved for realm's own future extension keys
+  from the day the namespace opens: a key inside it refuses exactly as before, with a message
+  naming the reservation. `validate --json` gains `extension_keys: string[]` on every arm — the
+  accepted list on success, `[]` on every refusal (the `checks_not_run` shape: `[]` means
+  "nothing accepted", not "the file has none"). The namespace is top-level only — step keys stay
+  the closed #417 consumption registry, and a step-level `x-` key is still refused, with a
+  message pointing back to the top of the file.
+
+  Before this change realm's posture matched GitHub Actions (refuses unknown top-level keys,
+  ships anchors, no namespace); it now matches Docker Compose's mechanism and exceeds every
+  surveyed engine on two points no one else does — the accepted keys are named to the author
+  (Compose is silent), and the reserved sub-namespace opens on day one rather than
+  retroactively (OpenAPI's `x-oai-`/`x-oas-`) — plus verbatim carriage where Kubernetes and Argo
+  prune unknown fields instead.
+
+### Changed
+
+- `docs/reference/yaml-schema.md`'s "Extension namespace" section is reversed: it used to state
+  there was deliberately none, with a revisit trigger naming third-party tooling; the trigger that
+  actually fired was an author's own YAML anchor host, not a third party, and the section now
+  documents the namespace issue #559 ships (the old text is preserved in a code comment for
+  context).
+
 ## [0.42.0] — 2026-09-14
 
 The agreement release. `realm workflow validate` now gives `register`'s exact verdict, on every

@@ -11,7 +11,8 @@ second line then states the refusal itself and names which warning triggered it 
 clause is a statement about what the parse did with the key, true on every surface, not about
 whether this run goes on to refuse the workflow over it ([issue #540](https://github.com/sensigo-hq/realm/issues/540)).
 `--strict` is no longer needed for this class — it now only tightens the warnings that remain
-warnings.
+warnings. The one exception: a top-level `x-` key is the author's own extension namespace (issue
+#559, below) and is never refused, on any surface.
 
 **Source positions** ([issue #392](https://github.com/sensigo-hq/realm/issues/392)) appear on
 loader diagnostics wherever the key can be placed exactly: the prose carries the start line, and
@@ -893,8 +894,9 @@ fetch_document:
 
 Two different mistakes get two different treatments, and the asymmetry is deliberate.
 
-**An unknown key is a mistake about the FILE.** You meant `depends_on` and typed `dependson`. The
-loader refuses it at the authoring boundary (`validate`, `register`, `watch`) and warns rather than
+**An unknown key is a mistake about the FILE — unless it is a top-level `x-` key, which is not a
+mistake at all (issue #559, below).** You meant `depends_on` and typed `dependson`. The loader
+refuses it at the authoring boundary (`validate`, `register`, `watch`) and warns rather than
 refuses at execution, so a deployed workflow keeps running while its author fixes the typo
 (issues #169/#170). `create_workflow` stays lenient permanently — an agent that invents a field
 should be told, not blocked.
@@ -937,9 +939,32 @@ in realm today — none has yet been needed. This paragraph is the committed pol
 refusal — a new prohibition or a removed key — whose population trace finds a deployed population;
 that change ships the mechanism.
 
-**Extension namespace.** There is deliberately none — no `x-` prefix, no reserved vendor block.
-Every key is realm's, and an unrecognised one is a mistake rather than somebody else's field. The
-revisit trigger is concrete: third-party tooling that needs to annotate workflow YAML.
+**Extension namespace (issue #559).** A top-level key beginning `x-` is the author's own — a place
+for a YAML anchor host (a shared enum, a reusable block) or a tooling note, exactly the way Docker
+Compose's `^x-` works, and Compose's own docs direct anchors into it. It mints no warning on any
+surface, is carried verbatim into the registered copy, and realm's loader and engine never read
+it. `validate`, `register` and `watch` name every accepted key on the verdict line — `— 1 extension key
+carried, never read by realm: x-category-enum` — so an author who believed one configured
+something is told otherwise, not left to find out the hard way.
+
+`x-realm-` is reserved for realm's own future extension keys from the day the namespace opens, so
+a key in it is refused today exactly like any other unrecognised one, with a message naming the
+reservation. The check is case-sensitive (`X-Foo` is not an extension key) — a case-only miss such
+as `X-Foo` at the top level is refused with a message that says so — and applies only at the
+TOP LEVEL: a step-level `x-` key is still refused — step keys are the closed consumption registry
+described below (issue #417 PR-2), where an inert key is a load error by ratified policy, and there
+is no namespace to open inside it. A genuine step-level need would add a new "extension, never
+consumed" class to that registry, not carve a hole in it.
+
+<!-- The paragraph this replaced foresaw its own revisit trigger in the wrong shape: "third-party
+tooling that needs to annotate workflow YAML" — the trigger that actually fired was an AUTHOR's own
+anchor host (bradley-max/cs1's `x-category-enum: &category-enum`), not a third party. Before this
+change, realm's posture matched GitHub Actions (refuses unknown top-level keys, ships anchors, has
+no namespace) — see issue #559, comment 5684502492 (the field survey — eleven engines read at
+source) for the grounding of this change. The replaced paragraph read: "There is deliberately none — no `x-` prefix,
+no reserved vendor block. Every key is realm's, and an unrecognised one is a mistake rather than
+somebody else's field. The revisit trigger is concrete: third-party tooling that needs to annotate
+workflow YAML." -->
 
 ### The step-key consumption registry (issue #417 PR-2)
 

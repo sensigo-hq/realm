@@ -34,6 +34,8 @@ import {
   rejectOnErrorSeverity,
   failsStrict,
   wrapSentinelWarnings,
+  extensionKeysOf,
+  renderExtensionKeysClause,
 } from '../lib/loader-warnings.js';
 import {
   loadWorkflowForAdmission,
@@ -105,12 +107,18 @@ export function findRetryWithoutExplicitTimeout(definition: WorkflowDefinition):
  * with the not-run clause — `— N check(s) not run; M warning(s); failing due to --strict` — and
  * the description-suppression rule is UNCHANGED: only a failing `--strict` suppresses it, not a
  * bare not-run disclosure (a moved tree is not a reason to hide the workflow's own description).
+ *
+ * `extensionKeys` (issue #559, default `[]`) adds a SECOND tail clause, between the not-run
+ * clause and the strict clause, naming every top-level `x-` key the definition carries — the
+ * accepted-but-unread namespace mints no warning of its own, so this is the only disclosure an
+ * author who believed `x-timeout` configured something gets.
  */
 function printValidationOutcome(
   definition: WorkflowDefinition,
   warnings: LoaderWarning[],
   strict: boolean,
   checksNotRun = 0,
+  extensionKeys: readonly string[] = [],
 ): boolean {
   printLoaderWarnings(warnings);
   const stepCount = Object.keys(definition.steps).length;
@@ -119,6 +127,10 @@ function printValidationOutcome(
   const clauses: string[] = [];
   if (checksNotRun > 0) {
     clauses.push(`${checksNotRun} ${checksNotRun === 1 ? 'check' : 'checks'} not run`);
+  }
+  const extensionClause = renderExtensionKeysClause(extensionKeys);
+  if (extensionClause !== undefined) {
+    clauses.push(extensionClause);
   }
   if (strictFailing) {
     clauses.push(
@@ -333,6 +345,13 @@ interface ValidateJsonEmit {
    * and is its own reason, not a "not run" one.
    */
   checksNotRun: readonly CheckNotRun[];
+  /**
+   * issue #559 — the author-extension (`x-`) keys the definition carries, in authored order.
+   * Emitted on EVERY arm (the `checksNotRun` precedent): the accepted list on a success arm,
+   * `[]` on every refusal or load-failure arm — the field reports what was ACCEPTED, so a
+   * `valid: false` arm always shows `[]` even when the file carries such keys.
+   */
+  extensionKeys: readonly string[];
 }
 
 /**
@@ -358,6 +377,7 @@ function emitValidateJson(result: ValidateJsonEmit): void {
         diagnostics: result.diagnostics.map(normalizeDiagnosticSeverity),
         errors: result.errors,
         checks_not_run: result.checksNotRun,
+        extension_keys: result.extensionKeys,
       },
       null,
       2,
@@ -424,6 +444,7 @@ function exitOnLoadFailure(err: unknown, jsonCtx?: ValidateJsonLoadFailureCtx): 
         diagnostics: jsonCtx.diagnostics,
         errors: err.errors ?? [err.message],
         checksNotRun: jsonCtx.checksNotRun,
+        extensionKeys: [],
       });
       process.exit(1);
     }
@@ -495,6 +516,7 @@ async function validateRegistered(
           diagnostics: [],
           errors: [err.message],
           checksNotRun: [],
+          extensionKeys: [],
         });
         process.exit(1);
       }
@@ -520,6 +542,7 @@ async function validateRegistered(
           diagnostics: [],
           errors: [err.message],
           checksNotRun: [],
+          extensionKeys: [],
         });
         process.exit(1);
       }
@@ -547,6 +570,7 @@ async function validateRegistered(
           diagnostics: [],
           errors: [notParseableMsg],
           checksNotRun: [],
+          extensionKeys: [],
         });
         process.exit(1);
       }
@@ -684,6 +708,7 @@ async function validateRegistered(
             diagnostics: accumulated,
             errors: [msg],
             checksNotRun: notRun,
+            extensionKeys: [],
           });
           process.exit(1);
         }
@@ -720,6 +745,7 @@ async function validateRegistered(
         diagnostics: accumulated,
         errors: [renderEscalationLine(accumulated)],
         checksNotRun: notRun,
+        extensionKeys: [],
       });
       process.exit(1);
     }
@@ -735,6 +761,7 @@ async function validateRegistered(
       diagnostics: accumulated,
       errors: [],
       checksNotRun: notRun,
+      extensionKeys: extensionKeysOf(definition),
     });
     if (strictFailed) {
       process.exit(1);
@@ -744,7 +771,13 @@ async function validateRegistered(
   if (rejectIfPolicyEscalates(accumulated)) {
     process.exit(1);
   }
-  const strictFailed = printValidationOutcome(definition, accumulated, strict, notRun.length);
+  const strictFailed = printValidationOutcome(
+    definition,
+    accumulated,
+    strict,
+    notRun.length,
+    extensionKeysOf(definition),
+  );
   if (strictFailed) {
     process.exit(1);
   }
@@ -866,6 +899,7 @@ export const validateCommand = new Command('validate')
               diagnostics: accumulated,
               errors: [msg],
               checksNotRun: [],
+              extensionKeys: [],
             });
             process.exit(1);
           }
@@ -906,6 +940,7 @@ export const validateCommand = new Command('validate')
             diagnostics: accumulated,
             errors: [renderEscalationLine(accumulated)],
             checksNotRun: [],
+            extensionKeys: [],
           });
           process.exit(1);
         }
@@ -921,6 +956,7 @@ export const validateCommand = new Command('validate')
           diagnostics: accumulated,
           errors: [],
           checksNotRun: [],
+          extensionKeys: extensionKeysOf(definition),
         });
         // issue #422/#236: the Extensions manifest line and the nudge are both suppressed under
         // --json — human-informational, not represented (additive later if ever wanted).
@@ -932,7 +968,13 @@ export const validateCommand = new Command('validate')
       if (rejectIfPolicyEscalates(accumulated)) {
         process.exit(1);
       }
-      const strictFailed = printValidationOutcome(definition, accumulated, strict);
+      const strictFailed = printValidationOutcome(
+        definition,
+        accumulated,
+        strict,
+        0,
+        extensionKeysOf(definition),
+      );
       if (manifest.modules.length > 0) {
         console.log(
           `Extensions: ${manifest.modules.map((m) => m.declared).join(', ')} ` +
