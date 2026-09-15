@@ -943,13 +943,14 @@ that change ships the mechanism.
 for a YAML anchor host (a shared enum, a reusable block) or a tooling note, exactly the way Docker
 Compose's `^x-` works, and Compose's own docs direct anchors into it. It mints no warning on any
 surface, is carried verbatim into the registered copy, and realm's loader and engine never read
-it. `validate` and `register` name every accepted key on the verdict line — `— 1 extension key
+it. `validate`, `register` and `watch` name every accepted key on the verdict line — `— 1 extension key
 carried, never read by realm: x-category-enum` — so an author who believed one configured
 something is told otherwise, not left to find out the hard way.
 
 `x-realm-` is reserved for realm's own future extension keys from the day the namespace opens, so
 a key in it is refused today exactly like any other unrecognised one, with a message naming the
-reservation. The check is case-sensitive (`X-Foo` is not an extension key) and applies only at the
+reservation. The check is case-sensitive (`X-Foo` is not an extension key) — a case-only miss such
+as `X-Foo` at the top level is refused with a message that says so — and applies only at the
 TOP LEVEL: a step-level `x-` key is still refused — step keys are the closed consumption registry
 described below (issue #417 PR-2), where an inert key is a load error by ratified policy, and there
 is no namespace to open inside it. A genuine step-level need would add a new "extension, never
@@ -959,8 +960,8 @@ consumed" class to that registry, not carve a hole in it.
 tooling that needs to annotate workflow YAML" — the trigger that actually fired was an AUTHOR's own
 anchor host (bradley-max/cs1's `x-category-enum: &category-enum`), not a third party. Before this
 change, realm's posture matched GitHub Actions (refuses unknown top-level keys, ships anchors, has
-no namespace) — see plans/issue-559/prior-art-extension-namespace-raw.md for the field survey this
-change is grounded in. The replaced paragraph read: "There is deliberately none — no `x-` prefix,
+no namespace) — see issue #559, comment 5684502492 (the field survey — eleven engines read at
+source) for the grounding of this change. The replaced paragraph read: "There is deliberately none — no `x-` prefix,
 no reserved vendor block. Every key is realm's, and an unrecognised one is a mistake rather than
 somebody else's field. The revisit trigger is concrete: third-party tooling that needs to annotate
 workflow YAML." -->

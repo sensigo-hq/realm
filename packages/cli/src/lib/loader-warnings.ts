@@ -136,6 +136,19 @@ export function renderLoadFailure(err: WorkflowError | string): string {
  * Shared by validate, register and watch (issue #451) — three callers earned it this home, per
  * the one-caller rule recorded on validate's exitOnLoadFailure.
  */
+export function renderEscalationLine(warnings: readonly LoaderWarning[]): string {
+  // Same default policy `rejectOnErrorSeverity` just gated on, so the list can never disagree
+  // with the refusal it explains.
+  const escalated = warnings.filter((w) => resolveSeverity(w.code) === 'error');
+  const list = escalated
+    .map((w) => (w.key === undefined ? w.code : `${w.code} '${w.key}'`))
+    .join(', ');
+  return (
+    `Invalid: ${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}, ` +
+    `${escalated.length} escalated to an error by policy: ${list}`
+  );
+}
+
 /**
  * The author-extension keys a definition carries, in authored order (issue #559).
  *
@@ -162,17 +175,4 @@ export function renderExtensionKeysClause(keys: readonly string[]): string | und
   if (keys.length === 0) return undefined;
   const noun = keys.length === 1 ? 'extension key' : 'extension keys';
   return `${keys.length} ${noun} carried, never read by realm: ${keys.join(', ')}`;
-}
-
-export function renderEscalationLine(warnings: readonly LoaderWarning[]): string {
-  // Same default policy `rejectOnErrorSeverity` just gated on, so the list can never disagree
-  // with the refusal it explains.
-  const escalated = warnings.filter((w) => resolveSeverity(w.code) === 'error');
-  const list = escalated
-    .map((w) => (w.key === undefined ? w.code : `${w.code} '${w.key}'`))
-    .join(', ');
-  return (
-    `Invalid: ${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}, ` +
-    `${escalated.length} escalated to an error by policy: ${list}`
-  );
 }

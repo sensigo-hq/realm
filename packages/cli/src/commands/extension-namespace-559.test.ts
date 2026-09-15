@@ -263,6 +263,30 @@ describe('the `x-` extension namespace — CLI disclosure (issue #559)', () => {
     expect(hits.map((h) => h.split('/src/')[1])).toEqual(['lib/loader-warnings.ts']);
   });
 
+  it('C11 a case-only miss prints the lowercase arm, the escalation line, exit 1, and no keys', async () => {
+    await expect(
+      validateCommand.parseAsync([write(`X-Category-Enum: [a, b]\n${PLAIN}`)], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(all()).toContain(
+      "⚠ workflow 'plain-wf': unknown key 'X-Category-Enum' (line 1) — the extension namespace is lowercase: a key starting 'x-' is the author's, carried verbatim and never read; 'X-Category-Enum' is not one.",
+    );
+    expect(all()).toContain(
+      "Invalid: 1 warning, 1 escalated to an error by policy: UNKNOWN_WORKFLOW_KEY 'X-Category-Enum'",
+    );
+  });
+
+  it('C11b --json on the case-only arm: extension_keys is [], valid false (a CONTROL — already true pre-correction, no red-first)', async () => {
+    await expect(
+      validateCommand.parseAsync([write(`X-Category-Enum: [a, b]\n${PLAIN}`), '--json'], {
+        from: 'user',
+      }),
+    ).rejects.toThrow('process.exit');
+    const obj = JSON.parse(logs().join('\n')) as Record<string, unknown>;
+    expect(obj['valid']).toBe(false);
+    expect(obj['extension_keys']).toEqual([]);
+  });
+
   it('the tail ORDER cell: not-run + extension + strict all compose, in that order', async () => {
     // A hand-planted stored record (the `register`-writes shape, issue #553's own fixture idiom):
     // source_dir/trust_root point at a tree that is then removed, so the project-extensions

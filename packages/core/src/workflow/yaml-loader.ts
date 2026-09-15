@@ -871,20 +871,50 @@ function parseWorkflowString(
           isExtension: isExtensionKey,
           positionOf: (key) => sourceMap.posOf([key]),
         }).map((w) => {
-          // TARGETED message for the reserved prefix (issue #559): same code, same policy — a
-          // sentence naming which half of the extension namespace is the author's and which is
-          // realm's, built by interpolating the exported consts, never a quoted literal — the D5
-          // never-read witness scans this very file for that exact quoting shape.
-          if (w.key === undefined || !w.key.startsWith(RESERVED_EXTENSION_PREFIX)) return w;
+          // TWO targeted messages (issue #559): same code, same policy — sentences built by
+          // interpolating the exported consts, never a quoted literal, because the D5 never-read
+          // witness scans this very file for that exact quoting shape.
+          //
+          // Both arms are POSITIVE `if`s that return, never a guard-and-early-return — that shape
+          // is load-bearing: a guard followed by an unconditional `return` makes any arm placed
+          // after it unreachable (and fails to compile — TS narrows `w.key` to `undefined` past
+          // the point the guard already excluded it). Ending in a bare `return w;` is what lets a
+          // future third arm append cleanly.
+          //
+          // ORDER matters: the reserved-prefix check runs FIRST, matched case-insensitively (a
+          // key that lowercases into `x-realm-…` is realm's reserved sub-namespace regardless of
+          // how the author capitalized it — the alternative, checking case-only first, would
+          // catch `X-Realm-Foo` under "you spelled the namespace right, just wrong case" and hand
+          // it a remedy that runs the author straight into the RESERVED refusal on the very next
+          // try). Because the reserved check already consumes every case-variant of its own
+          // prefix, the case-only arm below only ever sees a key that is NOT in the reserved
+          // sub-namespace under any capitalization.
+          if (w.key === undefined) return w;
           const at = w.line === undefined ? '' : ` (line ${w.line})`;
-          return {
-            ...w,
-            message:
-              `workflow '${workflowId}': unknown key '${w.key}'${at} — the ` +
-              `'${RESERVED_EXTENSION_PREFIX}' prefix is reserved for realm's own future ` +
-              `extension keys; any other '${EXTENSION_KEY_PREFIX}' name is yours to use (an ` +
-              `extension key is carried verbatim and never read).`,
-          };
+          if (w.key.toLowerCase().startsWith(RESERVED_EXTENSION_PREFIX)) {
+            return {
+              ...w,
+              message:
+                `workflow '${workflowId}': unknown key '${w.key}'${at} — the ` +
+                `'${RESERVED_EXTENSION_PREFIX}' prefix is reserved for realm's own future ` +
+                `extension keys; any other '${EXTENSION_KEY_PREFIX}' name is yours to use (an ` +
+                `extension key is carried verbatim and never read).`,
+            };
+          }
+          // A CASE-ONLY miss (e.g. `X-Foo`): the likeliest authoring slip for a prefix
+          // convention — the capital-`X-` habit comes from HTTP headers. Never reached by an
+          // actual lowercase `x-` key (those were already skipped by `isExtension` before the
+          // mint), so this arm fires only for a key that MEANT the namespace and missed the case.
+          if (w.key.toLowerCase().startsWith(EXTENSION_KEY_PREFIX)) {
+            return {
+              ...w,
+              message:
+                `workflow '${workflowId}': unknown key '${w.key}'${at} — the extension ` +
+                `namespace is lowercase: a key starting '${EXTENSION_KEY_PREFIX}' is the ` +
+                `author's, carried verbatim and never read; '${w.key}' is not one.`,
+            };
+          }
+          return w;
         }),
       );
     }

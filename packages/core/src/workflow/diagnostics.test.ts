@@ -146,6 +146,18 @@ describe('isExtensionKey (issue #559)', () => {
   it('a bare "x-" is still the author\'s (an empty extension name)', () => {
     expect(isExtensionKey('x-')).toBe(true);
   });
+
+  // issue #559 correction — "decided, not deferred": mixed case INSIDE the reserved part
+  // (`x-Realm-foo`, lowercase `x-` prefix but `Realm` capitalized) does not lowercase-match
+  // `startsWith('x-realm-')` at all (the check here is on the RAW string), so it is the
+  // author's own key, same as any other `x-` name — realm's own future keys are always
+  // spelled lowercase `x-realm-…`, which this cannot collide with. This is the per-member
+  // case-variant for the reserved-prefix member: `isExtensionKey` itself never lowercases;
+  // only the two MESSAGE arms in yaml-loader.ts's top-level `.map` do that, and only for a key
+  // that already failed this exact predicate (an upper-case `X-…`, never a lowercase `x-…`).
+  it("mixed case INSIDE the reserved part (x-Realm-foo) is still the author's key", () => {
+    expect(isExtensionKey('x-Realm-foo')).toBe(true);
+  });
 });
 
 describe('renderLoaderWarning — golden format', () => {

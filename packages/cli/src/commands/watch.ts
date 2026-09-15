@@ -17,24 +17,10 @@ import {
   renderEscalationLine,
   printLoaderWarnings,
   rejectOnErrorSeverity,
+  extensionKeysOf,
+  renderExtensionKeysClause,
 } from '../lib/loader-warnings.js';
 
-/**
- * Attempts to load and register a workflow YAML file.
- * Logs the result (success or validation error) to stdout/stderr.
- * Like `realm workflow register`, each (re-)registration mints the trust decision: when the
- * workflow declares `extensions:`, the modules load + duck-validate and step config gets the
- * config_schema two-pass BEFORE persisting. NOTE: long-lived watch processes keep the FIRST
- * imported content of each module path (ESM cache) — restart watch to pick up module changes.
- *
- * Prints every accumulated loader warning via printLoaderWarnings (issue #169) and applies the
- * issue #170 boundary-reject, LIVE since the flip — but never `--strict` (watch is a dev loop;
- * `--strict` is deliberately validate/register-only). Unlike validate/register this refuses
- * WITHOUT exiting: the watcher keeps running so the author can fix the key and be re-registered on
- * the next save, which is the whole point of a dev loop.
- * @param filePath Path to the workflow YAML file.
- * @param store    The registrar to register into.
- */
 /**
  * issue #425: watch's own lines are timestamped and its warnings block was not, so on a busy
  * watch session the warnings floated free of the save that produced them. One gated header ties
@@ -67,6 +53,22 @@ function printWarningsBlock(
   }
 }
 
+/**
+ * Attempts to load and register a workflow YAML file.
+ * Logs the result (success or validation error) to stdout/stderr.
+ * Like `realm workflow register`, each (re-)registration mints the trust decision: when the
+ * workflow declares `extensions:`, the modules load + duck-validate and step config gets the
+ * config_schema two-pass BEFORE persisting. NOTE: long-lived watch processes keep the FIRST
+ * imported content of each module path (ESM cache) — restart watch to pick up module changes.
+ *
+ * Prints every accumulated loader warning via printLoaderWarnings (issue #169) and applies the
+ * issue #170 boundary-reject, LIVE since the flip — but never `--strict` (watch is a dev loop;
+ * `--strict` is deliberately validate/register-only). Unlike validate/register this refuses
+ * WITHOUT exiting: the watcher keeps running so the author can fix the key and be re-registered on
+ * the next save, which is the whole point of a dev loop.
+ * @param filePath Path to the workflow YAML file.
+ * @param store    The registrar to register into.
+ */
 async function registerFile(filePath: string, store: WorkflowRegistrar): Promise<void> {
   const timestamp = new Date().toISOString();
   try {
@@ -84,8 +86,15 @@ async function registerFile(filePath: string, store: WorkflowRegistrar): Promise
     await store.register(definition);
     printWarningsBlock(timestamp, warnings);
     const stepCount = Object.keys(definition.steps).length;
+    // issue #559 — the SAME tail register composes, through the SAME helper. watch is the third
+    // member of the trio the escalation line is already shared with (#451), and the disclosure's
+    // whole purpose — an author who believed an `x-` key configured something is told otherwise —
+    // describes exactly the author sitting in this loop. The mint stays ONE: this composes the
+    // clause, it never mints a second one.
+    const extensionClause = renderExtensionKeysClause(extensionKeysOf(definition));
+    const extensionTail = extensionClause !== undefined ? ` — ${extensionClause}` : '';
     console.log(
-      `[${timestamp}] Registered: ${definition.id} v${definition.version} (${stepCount} ${stepCount === 1 ? 'step' : 'steps'})`,
+      `[${timestamp}] Registered: ${definition.id} v${definition.version} (${stepCount} ${stepCount === 1 ? 'step' : 'steps'})${extensionTail}`,
     );
   } catch (err) {
     if (err instanceof ExtensionLoadError) {

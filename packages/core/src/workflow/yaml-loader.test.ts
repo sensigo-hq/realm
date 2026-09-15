@@ -2948,6 +2948,46 @@ steps:
     );
   });
 
+  it('a case-only near-miss at the top level gets the lowercase arm, whole message, at its own line', () => {
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(`X-Category-Enum: [a, b]
+id: w
+name: W
+version: 1
+steps:
+  s:
+    description: d
+    execution: auto
+`);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.code).toBe('UNKNOWN_WORKFLOW_KEY');
+    expect(warnings[0]!.message).toBe(
+      "workflow 'w': unknown key 'X-Category-Enum' (line 1) — the extension namespace is lowercase: a key starting 'x-' is the author's, carried verbatim and never read; 'X-Category-Enum' is not one.",
+    );
+  });
+
+  it('CONTROL: an upper-case RESERVED name still takes the RESERVATION arm (F3) — its remedy is executable', () => {
+    // `X-Realm-Foo` lowercases into the reserved sub-namespace and the reserved check is
+    // case-insensitive (checked FIRST), so it never reaches the case-only arm below. This is the
+    // control that would catch the opposite, wrong design: if the case-only arm were checked
+    // first, or the reserved arm stayed case-sensitive, this key would get the case-only
+    // message's remedy ("lowercase it") — which runs straight into a SECOND refusal, since
+    // lowercasing it produces `x-realm-foo`, itself reserved.
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(`X-Realm-Foo: 1
+id: w
+name: W
+version: 1
+steps:
+  s:
+    description: d
+    execution: auto
+`);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.message).toBe(
+      "workflow 'w': unknown key 'X-Realm-Foo' (line 1) — the 'x-realm-' prefix is reserved for realm's own future extension keys; any other 'x-' name is yours to use (an extension key is carried verbatim and never read).",
+    );
+    expect(warnings[0]!.message).not.toContain('the extension namespace is lowercase');
+  });
+
   it('CONTROL: a top-level `xtra` and `X-Foo` keep the ordinary unchanged grammar', () => {
     const { warnings } = loadWorkflowFromStringWithDiagnostics(`xtra: 1
 X-Foo: 1
@@ -2961,7 +3001,11 @@ steps:
 `);
     expect(warnings.map((w) => w.message)).toEqual([
       "workflow 'w': unknown key 'xtra' (line 1) — ignored (not a recognized workflow field).",
-      "workflow 'w': unknown key 'X-Foo' (line 2) — ignored (not a recognized workflow field).",
+      // issue #559 correction: `X-Foo` no longer keeps the ordinary grammar — a case-only miss
+      // is the likeliest slip for a prefix convention and now gets its own targeted arm. `xtra`
+      // (no relation to the namespace) is the surviving half of this control and is unchanged —
+      // the one authorized edit to an existing cell in this correction.
+      "workflow 'w': unknown key 'X-Foo' (line 2) — the extension namespace is lowercase: a key starting 'x-' is the author's, carried verbatim and never read; 'X-Foo' is not one.",
     ]);
   });
 

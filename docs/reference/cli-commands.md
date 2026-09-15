@@ -238,8 +238,10 @@ $ echo $?
 1
 ```
 
-Every warning line reads `— ignored` — a true statement about what the parse did with the key,
-whether or not this run goes on to refuse the workflow over it ([issue #540](https://github.com/sensigo-hq/realm/issues/540)).
+Every unknown-key warning line reads `— ignored (…)` — a true statement about what the parse did
+with the key, whether or not this run goes on to refuse the workflow over it ([issue #540](https://github.com/sensigo-hq/realm/issues/540)) — except the **three** targeted `x-`
+messages (a step-level `x-` key, the reserved `x-realm-` prefix, and a case-only miss such as
+`X-Foo`), which replace that tail with the remedy itself ([issue #559](https://github.com/sensigo-hq/realm/issues/559)).
 The line below the warnings is what says whether — and which — warnings the run actually refuses
 over: an unrecognized key is refused with or without `--strict` ([issue #170](https://github.com/sensigo-hq/realm/issues/170)),
 and the policy check runs first — so this class never reaches the `failing due to --strict` line
@@ -249,8 +251,8 @@ default policy: a retry advisory, a dead config block, an unrecognized key insid
 escalated to an error by policy: …` line — present only when something actually escalates — tells
 you which. **The one exception:** a top-level `x-` key mints no warning at all — it is the
 author's own extension namespace, never refused (issue #559; see
-[`yaml-schema.md`](yaml-schema.md)'s "Extension namespace" section); `validate` and `register`
-instead name every one they accept, on the verdict line itself.
+[`yaml-schema.md`](yaml-schema.md)'s "Extension namespace" section); `validate`, `register` and
+`watch` instead name every one they accept, on the verdict line itself.
 
 `realm run`, `realm agent`, and `realm listen` are unaffected — they load leniently, so a workflow
 already deployed with an unknown key keeps running.

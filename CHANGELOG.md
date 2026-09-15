@@ -12,8 +12,8 @@ All notable changes to this project are documented here.
   a YAML anchor host (a shared enum, a reusable block) or a tooling note, the same mechanism
   Docker Compose's `^x-` provides. `validate`, `register`, and `watch` accept it without a
   warning on any surface; it is carried verbatim into the registered copy and realm's loader and
-  engine never read it. `validate` and `register` name every accepted key on their own verdict
-  line — `Valid: code-reviewer v1 (3 steps) — 1 extension key carried, never read by realm:
+  engine never read it. `validate`, `register` and `watch` name every accepted key on their own
+  verdict line — `Valid: code-reviewer v1 (3 steps) — 1 extension key carried, never read by realm:
 x-category-enum` — so an author who believed one configured something is told otherwise, not
   left to find out the hard way. `x-realm-` is reserved for realm's own future extension keys
   from the day the namespace opens: a key inside it refuses exactly as before, with a message
