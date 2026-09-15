@@ -287,6 +287,28 @@ describe('the `x-` extension namespace — CLI disclosure (issue #559)', () => {
     expect(obj['extension_keys']).toEqual([]);
   });
 
+  it('C12 (issue #582): a mixed-case reserved top-level key refuses with the reservation message, exit 1, extension_keys []', async () => {
+    await expect(
+      validateCommand.parseAsync([write(`x-Realm-foo: 1\n${PLAIN}`)], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(all()).toContain(
+      "⚠ workflow 'plain-wf': unknown key 'x-Realm-foo' (line 1) — the 'x-realm-' prefix is reserved for realm's own future extension keys; any other 'x-' name is yours to use (an extension key is carried verbatim and never read).",
+    );
+    expect(all()).toContain(
+      "Invalid: 1 warning, 1 escalated to an error by policy: UNKNOWN_WORKFLOW_KEY 'x-Realm-foo'",
+    );
+    logSpy.mockClear();
+    warnSpy.mockClear();
+    errSpy.mockClear();
+    await expect(
+      validateCommand.parseAsync([write(`x-Realm-foo: 1\n${PLAIN}`), '--json'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+    const obj = JSON.parse(logs().join('\n')) as Record<string, unknown>;
+    expect(obj['valid']).toBe(false);
+    expect(obj['extension_keys']).toEqual([]);
+  });
+
   it('the tail ORDER cell: not-run + extension + strict all compose, in that order', async () => {
     // A hand-planted stored record (the `register`-writes shape, issue #553's own fixture idiom):
     // source_dir/trust_root point at a tree that is then removed, so the project-extensions

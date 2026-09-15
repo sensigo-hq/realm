@@ -1026,15 +1026,25 @@ function parseWorkflowString(
           // TARGETED message for an `x-` step key (issue #559): the namespace is top-level only,
           // so the remedy is "move it", not "is this a typo" — did_you_mean is dropped because
           // the targeted message is complete (a suggestion across the boundary would be noise).
+          //
+          // The tail forks on whether the key falls in the RESERVED sub-namespace (issue #582):
+          // following the plain "move it to the top" remedy for a reserved name (e.g.
+          // `x-realm-foo`, `x-Realm-foo`) lands the author on the RESERVATION refusal one level
+          // up — a two-round-trip. The reserved check is case-insensitive here for the same
+          // reason `isExtensionKey` is: the reservation holds in every capitalization.
           if (w.key === undefined || !w.key.startsWith(EXTENSION_KEY_PREFIX)) return w;
           const at = w.line === undefined ? '' : ` (line ${w.line})`;
           const { did_you_mean: _dropped, ...rest } = w;
+          const reserved = w.key.toLowerCase().startsWith(RESERVED_EXTENSION_PREFIX);
           return {
             ...rest,
             message:
               `step '${stepName}': unknown key '${w.key}'${at} — '${EXTENSION_KEY_PREFIX}' ` +
               `extension keys are accepted only at the top level of a workflow file; step keys ` +
-              `are a closed set. Move it to the top of the file.`,
+              `are a closed set. Move it to the top of the file` +
+              (reserved
+                ? ` under a name outside the reserved '${RESERVED_EXTENSION_PREFIX}' prefix.`
+                : `.`),
           };
         }),
       );
