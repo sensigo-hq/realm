@@ -12,17 +12,21 @@ carry it verbatim, never read it, and name it on the verdict line (issue #559, w
 closed by issue #582). **No BREAKING changes:** nothing previously accepted is refused and no
 public export moved. The refusal set moved in the permissive direction only — a class of top-level
 keys 0.42.0 refused is now the author's — and the three refusals that remain in that area (a
-`x-realm-…` key, a capital-`X-` key, a step-level `x-` key) refuse exactly as 0.42.0 did, with
-better sentences. No `#### Upgrading` section is needed.
+`x-realm-…` key, a capital-`X-` key, a step-level `x-` key) refuse with the same code, the same
+policy and the same exit as 0.42.0 did, with better sentences — the step-level message also drops
+the now-pointless `did_you_mean` suggestion from its `--json` diagnostic, since the remedy is
+"move it", not "did you mean". No `#### Upgrading` section is needed.
 
 ### Added
 
 - **A top-level `x-` key is now the author's own extension namespace** (issue #559) — a place for
   a YAML anchor host (a shared enum, a reusable block) or a tooling note, the same mechanism
   Docker Compose's `^x-` provides. `validate`, `register`, and `watch` accept it without a
-  warning on any surface; it is carried verbatim into the registered copy and realm's loader and
-  engine never read it. `validate`, `register` and `watch` name every accepted key on their own
-  verdict line — for the example above:
+  warning on any surface; it is carried into the registered copy verbatim as data (the copy is
+  JSON, so a YAML anchor on it resolves there, as every other anchor in the file does) and realm's
+  loader and engine never read it — nor bound or check its content in any way: it is the author's
+  data, not a sandbox. `validate`, `register` and `watch` name every accepted key on their own
+  verdict line — for a workflow whose one extension key is `x-category-enum`:
   `Valid: code-reviewer v1 (3 steps) — 1 extension key carried, never read by realm: x-category-enum`
   — so an author who believed one configured something is told otherwise, not left to find out
   the hard way. `x-realm-` is reserved for realm's own future extension keys from the day the
@@ -57,7 +61,8 @@ is the author's, carried verbatim and never read; 'X-Foo' is not one.`) rather t
   `⚠ … unknown key … — ignored` warning for a top-level `x-` key — they loaded such a file
   leniently before and still do; the loader now mints nothing for it on any surface. The verdict
   lines of `validate`, `register` and `watch` gain the extension-keys tail only when such a key is
-  present; every workflow without one prints byte-identical output (issue #559).
+  present; every workflow without one prints a byte-identical verdict line (issue #559 — its
+  `--json` object does gain the `extension_keys` member, `[]`, on every arm).
 - `docs/reference/yaml-schema.md`'s "Extension namespace" section is reversed: it used to state
   there was deliberately none, with a revisit trigger naming third-party tooling; the trigger that
   actually fired was an author's own YAML anchor host, not a third party, and the section now
