@@ -2931,7 +2931,7 @@ steps:
     expect(warnings[0]!.did_you_mean).toBeUndefined();
   });
 
-  it("a step-level `x-realm-` key gets the D3 (relocation) text, never D2's reservation text", () => {
+  it('a step-level `x-realm-` key gets the D1b RESERVED-variant relocation text (issue #582 — the authorized flip)', () => {
     const { warnings } = loadWorkflowFromStringWithDiagnostics(`id: w
 name: W
 version: 1
@@ -2944,7 +2944,41 @@ steps:
     expect(warnings).toHaveLength(1);
     expect(warnings[0]!.code).toBe('UNKNOWN_STEP_KEY');
     expect(warnings[0]!.message).toBe(
-      "step 's': unknown key 'x-realm-foo' (line 8) — 'x-' extension keys are accepted only at the top level of a workflow file; step keys are a closed set. Move it to the top of the file.",
+      "step 's': unknown key 'x-realm-foo' (line 8) — 'x-' extension keys are accepted only at the top level of a workflow file; step keys are a closed set. Move it to the top of the file under a name outside the reserved 'x-realm-' prefix.",
+    );
+  });
+
+  it('issue #582 (i): a mixed-case top-level key that lowercases into the reserved sub-namespace is refused with the reservation message', () => {
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(`x-Realm-foo: 1
+id: w
+name: W
+version: 1
+steps:
+  s:
+    description: d
+    execution: auto
+`);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.code).toBe('UNKNOWN_WORKFLOW_KEY');
+    expect(warnings[0]!.message).toBe(
+      "workflow 'w': unknown key 'x-Realm-foo' (line 1) — the 'x-realm-' prefix is reserved for realm's own future extension keys; any other 'x-' name is yours to use (an extension key is carried verbatim and never read).",
+    );
+  });
+
+  it('issue #582 (ii): a mixed-case RESERVED key at step level gets the D1b reserved-variant text, not the old D3 tail', () => {
+    const { warnings } = loadWorkflowFromStringWithDiagnostics(`id: w
+name: W
+version: 1
+steps:
+  s:
+    description: d
+    execution: auto
+    x-Realm-foo: 1
+`);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.code).toBe('UNKNOWN_STEP_KEY');
+    expect(warnings[0]!.message).toBe(
+      "step 's': unknown key 'x-Realm-foo' (line 8) — 'x-' extension keys are accepted only at the top level of a workflow file; step keys are a closed set. Move it to the top of the file under a name outside the reserved 'x-realm-' prefix.",
     );
   });
 

@@ -205,6 +205,12 @@ function renderUnknownKeyMessage(
  * opens — so a key in it is NOT an extension key and still refuses, with a message naming the
  * reservation (OpenAPI reserved `x-oai-`/`x-oas-` only retroactively; realm does it up front).
  *
+ * The reserved sub-namespace is matched in EVERY capitalization — `x-Realm-foo` and `x-REALM-foo`
+ * are NOT the author's keys (issue #582): the reservation exists so no case-variant can sit
+ * beside a future realm key, so it must not depend on the author's Shift key. The reservation is
+ * the PREFIX `x-realm-` (OpenAPI reserves `x-oai-` the same way): the dash-less word `x-realm` is
+ * the author's.
+ *
  * Case-sensitive: `X-Foo` is not an extension key (OpenAPI's and Compose's `^x-` are lowercase).
  * The dash is load-bearing: `xtra` is not one. A bare `x-` IS one — an empty extension name is
  * still the author's; it renders as `x-` in the disclosure clause.
@@ -214,7 +220,9 @@ export const RESERVED_EXTENSION_PREFIX = 'x-realm-' as const;
 
 /** True when `key` is the author's own extension key (see `EXTENSION_KEY_PREFIX`). */
 export function isExtensionKey(key: string): boolean {
-  return key.startsWith(EXTENSION_KEY_PREFIX) && !key.startsWith(RESERVED_EXTENSION_PREFIX);
+  return (
+    key.startsWith(EXTENSION_KEY_PREFIX) && !key.toLowerCase().startsWith(RESERVED_EXTENSION_PREFIX)
+  );
 }
 
 /**

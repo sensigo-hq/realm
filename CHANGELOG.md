@@ -16,8 +16,9 @@ All notable changes to this project are documented here.
   verdict line — `Valid: code-reviewer v1 (3 steps) — 1 extension key carried, never read by realm:
 x-category-enum` — so an author who believed one configured something is told otherwise, not
   left to find out the hard way. `x-realm-` is reserved for realm's own future extension keys
-  from the day the namespace opens: a key inside it refuses exactly as before, with a message
-  naming the reservation. `validate --json` gains `extension_keys: string[]` on every arm — the
+  from the day the namespace opens: a key inside it refuses exactly as before, in every
+  capitalization (`x-Realm-foo` and `X-Realm-Foo` both refuse as reserved — issue #582), with a
+  message naming the reservation. `validate --json` gains `extension_keys: string[]` on every arm — the
   accepted list on success, `[]` on every refusal (the `checks_not_run` shape: `[]` means
   "nothing accepted", not "the file has none"). The namespace is top-level only — step keys stay
   the closed #417 consumption registry, and a step-level `x-` key is still refused, with a

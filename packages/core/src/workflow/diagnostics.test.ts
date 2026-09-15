@@ -147,16 +147,23 @@ describe('isExtensionKey (issue #559)', () => {
     expect(isExtensionKey('x-')).toBe(true);
   });
 
-  // issue #559 correction — "decided, not deferred": mixed case INSIDE the reserved part
-  // (`x-Realm-foo`, lowercase `x-` prefix but `Realm` capitalized) does not lowercase-match
-  // `startsWith('x-realm-')` at all (the check here is on the RAW string), so it is the
-  // author's own key, same as any other `x-` name — realm's own future keys are always
-  // spelled lowercase `x-realm-…`, which this cannot collide with. This is the per-member
-  // case-variant for the reserved-prefix member: `isExtensionKey` itself never lowercases;
-  // only the two MESSAGE arms in yaml-loader.ts's top-level `.map` do that, and only for a key
-  // that already failed this exact predicate (an upper-case `X-…`, never a lowercase `x-…`).
-  it("mixed case INSIDE the reserved part (x-Realm-foo) is still the author's key", () => {
-    expect(isExtensionKey('x-Realm-foo')).toBe(true);
+  // issue #582: mixed case INSIDE the reserved part (`x-Realm-foo`, lowercase `x-` prefix but
+  // `Realm` capitalized) DOES lowercase-match `x-realm-` — the reservation is matched in EVERY
+  // capitalization, so no case-variant can sit beside a future realm key. `isExtensionKey` itself
+  // now lowercases the RESERVED_EXTENSION_PREFIX comparison (not the whole key: `x-` stays a
+  // case-sensitive prefix, per the "is case-sensitive: X-Foo is not an extension key" cell above)
+  // — so this is NOT the author's key, and never was meant to be; the pre-#582 predicate was the
+  // defect.
+  it("mixed case inside the reserved part (x-Realm-foo) is NOT the author's key — the reservation holds in every capitalization (issue #582)", () => {
+    expect(isExtensionKey('x-Realm-foo')).toBe(false);
+  });
+
+  it('the reservation holds for x-REALM-foo too (issue #582)', () => {
+    expect(isExtensionKey('x-REALM-foo')).toBe(false);
+  });
+
+  it("CONTROL: x-realm (no trailing dash) is still the author's key", () => {
+    expect(isExtensionKey('x-realm')).toBe(true);
   });
 });
 

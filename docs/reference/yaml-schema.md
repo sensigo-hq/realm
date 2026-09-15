@@ -949,9 +949,12 @@ something is told otherwise, not left to find out the hard way.
 
 `x-realm-` is reserved for realm's own future extension keys from the day the namespace opens, so
 a key in it is refused today exactly like any other unrecognised one, with a message naming the
-reservation. The check is case-sensitive (`X-Foo` is not an extension key) — a case-only miss such
-as `X-Foo` at the top level is refused with a message that says so — and applies only at the
-TOP LEVEL: a step-level `x-` key is still refused — step keys are the closed consumption registry
+reservation. The author's namespace is lowercase: `X-Foo` is not an extension key, and at the top
+level it is refused with a message that says so. The reserved `x-realm-` sub-namespace is matched
+in every capitalization — `x-Realm-foo` is refused as reserved — so no case-variant can sit beside
+a future realm key. The namespace applies only at the TOP LEVEL: a step-level `x-` key is still
+refused, with a message pointing back to the top of the file (and, for a name inside the reserved
+sub-namespace, asking for a name outside it) — step keys are the closed consumption registry
 described below (issue #417 PR-2), where an inert key is a load error by ratified policy, and there
 is no namespace to open inside it. A genuine step-level need would add a new "extension, never
 consumed" class to that registry, not carve a hole in it.
