@@ -728,3 +728,81 @@ steps:
     expect(result.out).not.toContain('Invalid: Invalid workflow:');
   });
 });
+
+// issue #559 — the `x-` author-extension namespace. Two journeys: a misplaced (step-level) `x-`
+// key, which stays refused (the namespace is top-level only) with a remedy that actually works
+// when followed; and a name inside the reserved `x-realm-` sub-namespace, which stays refused
+// with a remedy that also works when followed.
+describe('J-E — an author puts an `x-` note on a step, then moves it to the top (#559)', () => {
+  const misplaced = `
+id: journey-e
+name: Journey E
+version: 1
+steps:
+  step_one:
+    description: First step
+    execution: auto
+    x-note: keep this handy
+`;
+  const relocated = `
+x-note: keep this handy
+id: journey-e
+name: Journey E
+version: 1
+steps:
+  step_one:
+    description: First step
+    execution: auto
+`;
+
+  it('validate refuses at the step, names the remedy, and the remedy works', async () => {
+    const first = await validate(write(misplaced));
+    expect(first.refused).toBe(true);
+    expect(first.out).toContain("unknown key 'x-note'");
+    expect(first.out).toContain(
+      "'x-' extension keys are accepted only at the top level of a workflow file; step keys are a closed set. Move it to the top of the file.",
+    );
+
+    const second = await validate(write(relocated));
+    expect(second.refused).toBe(false);
+    expect(second.out).toContain('Valid: journey-e v1 (1 step)');
+    expect(second.out).toContain('1 extension key carried, never read by realm: x-note');
+  });
+});
+
+describe('J-F — an author names a key inside the reserved x-realm- sub-namespace, then renames it (#559)', () => {
+  const reserved = `
+x-realm-note: keep this handy
+id: journey-f
+name: Journey F
+version: 1
+steps:
+  step_one:
+    description: First step
+    execution: auto
+`;
+  const renamed = `
+x-note: keep this handy
+id: journey-f
+name: Journey F
+version: 1
+steps:
+  step_one:
+    description: First step
+    execution: auto
+`;
+
+  it('validate refuses the reserved name, names the remedy, and the remedy works', async () => {
+    const first = await validate(write(reserved));
+    expect(first.refused).toBe(true);
+    expect(first.out).toContain("unknown key 'x-realm-note'");
+    expect(first.out).toContain(
+      "the 'x-realm-' prefix is reserved for realm's own future extension keys; any other 'x-' name is yours to use (an extension key is carried verbatim and never read).",
+    );
+
+    const second = await validate(write(renamed));
+    expect(second.refused).toBe(false);
+    expect(second.out).toContain('Valid: journey-f v1 (1 step)');
+    expect(second.out).toContain('1 extension key carried, never read by realm: x-note');
+  });
+});

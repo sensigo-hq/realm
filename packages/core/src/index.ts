@@ -280,6 +280,9 @@ export {
   resolveSeverity,
   findUnknownKeys,
   renderLoaderWarning,
+  EXTENSION_KEY_PREFIX,
+  RESERVED_EXTENSION_PREFIX,
+  isExtensionKey,
 } from './workflow/diagnostics.js';
 export type { WarningCode, LoaderWarning } from './workflow/diagnostics.js';
 

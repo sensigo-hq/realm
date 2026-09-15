@@ -8,6 +8,7 @@ import {
   resolveSeverity,
   findUnknownKeys,
   renderLoaderWarning,
+  isExtensionKey,
   type LoaderWarning,
 } from './diagnostics.js';
 
@@ -102,6 +103,48 @@ describe('findUnknownKeys', () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]!.id).toBe('my-workflow');
     expect(warnings[0]!.step).toBeUndefined();
+  });
+
+  // issue #559 — the `isExtension` ctx field: a key it accepts mints nothing at all.
+  it('isExtension skips the matching key and still reports a non-matching one from the same object', () => {
+    const warnings = findUnknownKeys({ 'x-a': 1, nope: 2 }, ['id'], {
+      scope: 'workflow',
+      code: 'UNKNOWN_WORKFLOW_KEY',
+      id: 'w',
+      isExtension: isExtensionKey,
+    });
+    expect(warnings.map((w) => w.key)).toEqual(['nope']);
+  });
+
+  it('without isExtension, behaviour is byte-identical to before issue #559 (control)', () => {
+    const warnings = findUnknownKeys({ 'x-a': 1, nope: 2 }, ['id'], {
+      scope: 'workflow',
+      code: 'UNKNOWN_WORKFLOW_KEY',
+      id: 'w',
+    });
+    expect(warnings.map((w) => w.key)).toEqual(['x-a', 'nope']);
+  });
+});
+
+describe('isExtensionKey (issue #559)', () => {
+  it('accepts a top-level author key like x-category-enum', () => {
+    expect(isExtensionKey('x-category-enum')).toBe(true);
+  });
+
+  it('rejects the reserved x-realm- prefix', () => {
+    expect(isExtensionKey('x-realm-anything')).toBe(false);
+  });
+
+  it('is case-sensitive: X-Foo is not an extension key', () => {
+    expect(isExtensionKey('X-Foo')).toBe(false);
+  });
+
+  it('the dash is load-bearing: xtra is not an extension key', () => {
+    expect(isExtensionKey('xtra')).toBe(false);
+  });
+
+  it('a bare "x-" is still the author\'s (an empty extension name)', () => {
+    expect(isExtensionKey('x-')).toBe(true);
   });
 });
 

@@ -167,6 +167,13 @@ gains `; --extensions-module not applied` when the pass itself could not run. `c
 ends the audit outright and is its own reason, so a `valid: false` result always shows
 `checks_not_run: []` even though those checks were never reached.
 
+**`extension_keys` (issue #559) has the identical shape.** It lists the top-level `x-` keys the
+definition carries — realm's author-extension namespace, carried verbatim and never read — and is
+present on every arm: the accepted list on a success arm, `[]` on every refusal or load-failure
+arm. As with `checks_not_run`, `[]` on a `valid: false` result means "nothing was ACCEPTED", not
+"the file has none" — a refused file may well carry `x-` keys the audit never got far enough to
+report.
+
 **`--explain` (issue #422):** prints the full per-step `structured_output` adoption detail
 described below, in place of the one-line summary a default run prints. It changes nothing about
 what is validated and nothing about the exit code.
@@ -199,9 +206,13 @@ unchanged either way.
     }
   ],
   "errors": [],
-  "checks_not_run": []
+  "checks_not_run": [],
+  "extension_keys": []
 }
 ```
+
+A file that also carried a top-level `x-category-enum` key would show `"extension_keys":
+["x-category-enum"]` on this same success arm — nothing else in the object changes shape.
 
 `valid` is the boundary truth — would a plain `register` accept this file — reported SEPARATELY
 from `strict`: a warning-only workflow is `valid: true` even when `--strict --json` fails and exits
@@ -214,9 +225,10 @@ EFFECTIVE severity under the default policy — never `--strict`'s all-error mod
 own `strict.failed` bit. `errors` holds one string per hard failure (issue #402's per-step
 boundaries survive as separate entries); channel prefixes like `Error:`/`Invalid:` are stripped,
 except two sentences that ship whole because the prefix IS the composed message (an unresolvable
-extensions module, and a warning escalated to an error by policy). Not represented at all: the
-`structured_output` adoption nudge, `--explain`'s per-step detail (inert under `--json`), and
-`--registered`'s audit headers — human-informational, not part of the contract.
+extensions module, and a warning escalated to an error by policy). `extension_keys` is the accepted top-level `x-` keys, in authored order (issue #559). Not
+represented at all: the `structured_output` adoption nudge, `--explain`'s per-step detail (inert
+under `--json`), and `--registered`'s audit headers — human-informational, not part of the
+contract.
 
 ```bash
 $ realm workflow validate ./my-workflow
@@ -235,7 +247,10 @@ any more. `--strict` still does its job for everything that is genuinely a warni
 default policy: a retry advisory, a dead config block, an unrecognized key inside `retry:` or
 `gate:`. Those warnings print the identical `— ignored` line above them; only the `Invalid: …
 escalated to an error by policy: …` line — present only when something actually escalates — tells
-you which.
+you which. **The one exception:** a top-level `x-` key mints no warning at all — it is the
+author's own extension namespace, never refused (issue #559; see
+[`yaml-schema.md`](yaml-schema.md)'s "Extension namespace" section); `validate` and `register`
+instead name every one they accept, on the verdict line itself.
 
 `realm run`, `realm agent`, and `realm listen` are unaffected — they load leniently, so a workflow
 already deployed with an unknown key keeps running.
@@ -299,7 +314,8 @@ printed, `store.register` is not called, and the command exits `1` with
 `Error: '<id>' v<version> has N warning(s); refusing to register due to --strict`. The warning
 population is the loader's — an unknown key inside a block such as `retry:` (unknown keys at the
 STEP level are refused by policy with or without the flag, so `--strict` never sees them as a mere
-warning) and the per-entry sentinel-credential fallback; `register` does not run `validate`'s
+warning; a top-level `x-` key mints no warning at all and so is never counted here either — issue
+#559) and the per-entry sentinel-credential fallback; `register` does not run `validate`'s
 retry-without-timeout advisory, so the two flags do not count the same set (issue #464). Without
 `--strict`, registration proceeds as always: the workflow is persisted and every warning is printed
 alongside the `Registered:` line.

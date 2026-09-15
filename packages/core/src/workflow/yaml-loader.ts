@@ -27,6 +27,9 @@ import {
   renderLoaderWarning,
   resolveSeverity,
   closestKey,
+  isExtensionKey,
+  EXTENSION_KEY_PREFIX,
+  RESERVED_EXTENSION_PREFIX,
   type LoaderWarning,
 } from './diagnostics.js';
 import { createSourcePositionCollector, type SourcePositionMap } from './source-positions.js';
@@ -844,13 +847,20 @@ function parseWorkflowString(
 
     const doc = raw as Record<string, unknown>;
 
-    // WARN (do not reject) on a key that isn't authorable — checked against KNOWN_WORKFLOW_KEYS
-    // ONLY (not RUNTIME_ONLY_WORKFLOW_KEYS), and BEFORE any loader-stamped field is added below.
+    // Mints a warning for a key that isn't authorable — checked against KNOWN_WORKFLOW_KEYS ONLY
+    // (not RUNTIME_ONLY_WORKFLOW_KEYS), and BEFORE any loader-stamped field is added below.
     // Deliberately excluding runtime-only keys from "known" here means hand-authoring one (e.g.
     // `schema_version:` or `model:` in YAML) warns too — those fields are stamped by the loader
     // and any authored value is silently overwritten/ignored, which is exactly the kind of mistake
-    // this check exists to surface (issue #144). Non-breaking by design: siblings #170
-    // (hard-reject) and #169 (structured warnings channel) are deliberately out of scope here.
+    // this check exists to surface (issue #144). Under the #170 flip UNKNOWN_WORKFLOW_KEY is
+    // 'error', so the authoring boundary (validate/register/watch) REFUSES the file over it while
+    // execution surfaces stay lenient.
+    //
+    // ONE exception (issue #559): a key in the author's extension namespace (`isExtensionKey`)
+    // mints NOTHING — it is the author's own field (a YAML anchor host, a tooling note), carried
+    // verbatim into the definition (the cast below adds no field pick) and never read by realm.
+    // The reserved sub-namespace does NOT get that pass: a `x-realm-` key falls through to the
+    // ordinary mint below and is retargeted (the `.map` after) to a message naming the reservation.
     {
       const workflowId = typeof doc['id'] === 'string' ? doc['id'] : '<unknown>';
       warnings.push(
@@ -858,7 +868,23 @@ function parseWorkflowString(
           scope: 'workflow',
           code: 'UNKNOWN_WORKFLOW_KEY',
           id: workflowId,
+          isExtension: isExtensionKey,
           positionOf: (key) => sourceMap.posOf([key]),
+        }).map((w) => {
+          // TARGETED message for the reserved prefix (issue #559): same code, same policy — a
+          // sentence naming which half of the extension namespace is the author's and which is
+          // realm's, built by interpolating the exported consts, never a quoted literal — the D5
+          // never-read witness scans this very file for that exact quoting shape.
+          if (w.key === undefined || !w.key.startsWith(RESERVED_EXTENSION_PREFIX)) return w;
+          const at = w.line === undefined ? '' : ` (line ${w.line})`;
+          return {
+            ...w,
+            message:
+              `workflow '${workflowId}': unknown key '${w.key}'${at} — the ` +
+              `'${RESERVED_EXTENSION_PREFIX}' prefix is reserved for realm's own future ` +
+              `extension keys; any other '${EXTENSION_KEY_PREFIX}' name is yours to use (an ` +
+              `extension key is carried verbatim and never read).`,
+          };
         }),
       );
     }
@@ -954,12 +980,32 @@ function parseWorkflowString(
       // WARN (do not reject) on an unknown step key — runs after template resolution above, so a
       // template-expanded step's keys are checked too. Same non-breaking posture as the
       // workflow-level check (issue #144).
+      //
+      // NO extension namespace at step level (issue #559): step keys are the #417 consumption
+      // registry, a closed set where an inert key is a load error by ratified policy. So NO
+      // `isExtension` ctx is passed here, and EVERY key starting with the raw `x-` prefix —
+      // `x-realm-…` included, since the reservation is a top-level-only concept — still mints
+      // UNKNOWN_STEP_KEY, retargeted below to a message pointing the author at the top level.
       warnings.push(
         ...findUnknownKeys(step, KNOWN_STEP_KEYS, {
           scope: 'step',
           code: 'UNKNOWN_STEP_KEY',
           step: stepName,
           positionOf: (key) => sourceMap.posOf(['steps', stepName, key]),
+        }).map((w) => {
+          // TARGETED message for an `x-` step key (issue #559): the namespace is top-level only,
+          // so the remedy is "move it", not "is this a typo" — did_you_mean is dropped because
+          // the targeted message is complete (a suggestion across the boundary would be noise).
+          if (w.key === undefined || !w.key.startsWith(EXTENSION_KEY_PREFIX)) return w;
+          const at = w.line === undefined ? '' : ` (line ${w.line})`;
+          const { did_you_mean: _dropped, ...rest } = w;
+          return {
+            ...rest,
+            message:
+              `step '${stepName}': unknown key '${w.key}'${at} — '${EXTENSION_KEY_PREFIX}' ` +
+              `extension keys are accepted only at the top level of a workflow file; step keys ` +
+              `are a closed set. Move it to the top of the file.`,
+          };
         }),
       );
 

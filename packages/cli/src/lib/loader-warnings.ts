@@ -29,9 +29,11 @@ import {
   renderLoaderWarning,
   resolveSeverity,
   DEFAULT_POLICY,
+  isExtensionKey,
   type WorkflowError,
   type LoaderWarning,
   type WarningCode,
+  type WorkflowDefinition,
 } from '@sensigo/realm';
 
 /**
@@ -134,6 +136,34 @@ export function renderLoadFailure(err: WorkflowError | string): string {
  * Shared by validate, register and watch (issue #451) — three callers earned it this home, per
  * the one-caller rule recorded on validate's exitOnLoadFailure.
  */
+/**
+ * The author-extension keys a definition carries, in authored order (issue #559).
+ *
+ * `x-` keys never mint a warning, so without this they would be the one thing realm accepts and
+ * says nothing about — silent acceptance is Docker Compose's contract and below realm's own
+ * disclosure ethos. The keys ARE in the definition (the loader's cast carries every top-level key
+ * through untouched), so this reads them straight off it.
+ */
+export function extensionKeysOf(definition: WorkflowDefinition): string[] {
+  return Object.keys(definition).filter(isExtensionKey);
+}
+
+/**
+ * The ONE mint of the extension-keys disclosure clause (issue #559) — `undefined` when there is
+ * nothing to disclose, so a caller composes `?? nothing`. Every consumer (validate's verdict
+ * tail, register's own line) renders through this so the noun and the phrase cannot drift
+ * between them.
+ *
+ * The phrase `carried, never read by realm` is minted HERE and nowhere else — the literal-count
+ * cell anchors on it rather than the bare words `extension key`, which recur in comments and in
+ * the plural form.
+ */
+export function renderExtensionKeysClause(keys: readonly string[]): string | undefined {
+  if (keys.length === 0) return undefined;
+  const noun = keys.length === 1 ? 'extension key' : 'extension keys';
+  return `${keys.length} ${noun} carried, never read by realm: ${keys.join(', ')}`;
+}
+
 export function renderEscalationLine(warnings: readonly LoaderWarning[]): string {
   // Same default policy `rejectOnErrorSeverity` just gated on, so the list can never disagree
   // with the refusal it explains.

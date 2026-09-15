@@ -113,6 +113,29 @@ describe('create_workflow — structured diagnostics (issue #169)', () => {
     expect(diag!.message).not.toContain('(line');
   });
 
+  it('a top-level `x-` key is NOT the author-extension namespace here (issue #559): it still warns via UNKNOWN_CREATE_WORKFLOW_KEY, and the registered definition lacks it', async () => {
+    // Decided, not deferred (issue #559 design D5): the `x-` namespace exists for YAML authoring
+    // (anchors, tooling notes) — a JSON tool surface has no anchors, and `buildWorkflowDefinition`
+    // copies an explicit field list rather than spreading, so an unknown key here is dropped
+    // loudly the same way any other one is. This cell pins TODAY's behaviour so a future change
+    // cannot silently start letting `x-` keys leak into a create_workflow-built definition.
+    const args = {
+      steps: [{ id: 'step-a', description: 'Do something' }],
+      'x-note': 'keep this handy',
+    } as unknown as CreateWorkflowArgs;
+
+    const result = await handleCreateWorkflow(args, stores);
+
+    expect(result.status).toBe('ok');
+    const diag = result.diagnostics!.find((d) => d.key === 'x-note');
+    expect(diag).toBeDefined();
+    expect(diag!.code).toBe('UNKNOWN_CREATE_WORKFLOW_KEY');
+    expect(result.warnings.some((w) => w.includes("unknown key 'x-note'"))).toBe(true);
+
+    const def = await stores.workflowStore.get(result.data['workflow_id'] as string);
+    expect('x-note' in (def as unknown as Record<string, unknown>)).toBe(false);
+  });
+
   it('UNKNOWN_CREATE_WORKFLOW_KEY still warns (never refuses) even when UNKNOWN_STEP_KEY is flipped to error (issue #170 leniency proof)', async () => {
     const original = DEFAULT_POLICY.UNKNOWN_STEP_KEY;
     DEFAULT_POLICY.UNKNOWN_STEP_KEY = 'error';
