@@ -4,6 +4,93 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+One BREAKING change, for TypeScript consumers of one public function only — no workflow, run
+record or CLI invocation changes shape. Realm is pre-1.0, so a breaking change ships in a minor;
+read **Upgrading** before you take this version.
+
+The release's subject is a class of refusals that were telling operators the wrong thing. A run
+whose registered workflow copy could not be read got one sentence — "register it again from its
+path" — whether the copy was missing, permission-denied, a directory, empty, corrupt, or a legacy
+record, and whether or not there was any file left to register. Two of those shapes did not print
+a sentence at all: `realm workflow list` crashed with a stack trace on a `null`-root entry and on
+an unreadable registry directory, and a `chmod 000` copy escaped as a bare `EACCES: permission
+denied` with no code and no remedy.
+
+#### Upgrading
+
+**`getWorkflowForRun`'s `run` parameter is now a full `RunRecord`.** It was
+`Pick<RunRecord, 'workflow_id'>`; the function now reads `terminal_state` and `pending_gate` to
+compose its remedy (a terminal run is told there is nothing to retry; a gate-waiting run is told
+which gate to answer). Every in-repo caller already passed a full record from `store.get()`, so
+this is a compile-time change for external TypeScript consumers only:
+
+```ts
+// before
+await getWorkflowForRun(store, { workflow_id: run.workflow_id }, { retryVerb: 'retry' });
+// after
+await getWorkflowForRun(store, run, { retryVerb: 'retry', verb: 'retry' });
+```
+
+`verb` (the bare imperative for the terminal sentence) is required beside `retryVerb`;
+`terminalOk: true` is optional and belongs at the call sites whose happy path IS a terminal run.
+
+### Added
+
+- **`STATE_WORKFLOW_UNREADABLE`** — a new `ErrorCode` for the class realm previously reported as
+  "not found": the registered copy exists (or its registry does) but cannot be read. Its message
+  names the errno and the path. (Issue #558.)
+- **`definition_unresolvable` run-health finding** — this run's workflow copy cannot be resolved.
+  It is produced by `realm run inspect`, by `realm run list --stuck` (which now SELECTS every such
+  run, including one whose copy is corrupt), and by `get_run_state` for LIVE, non-gate-waiting
+  runs — the terminal guard and the `awaiting_human` branch both pre-empt the definition read
+  there, which the MCP reference now states. On `--stuck` it renders as
+  `definition_unresolvable (<class>) (realm run abandon <run-id>)`. A registry entry larger than
+  4 MB is named by its SIZE and never parsed by the listing — a listing must not be the surface
+  that detonates an expansion bomb (issue #557); `realm workflow validate --registered <id>` is
+  the surface that parses. That cap applies ONLY to the listing: `get()` stays uncapped, per
+  #552's Resolution. (Issue #558.)
+- **`JsonWorkflowStore.probe()` and `getSync()`** — concrete methods (off the `WorkflowRegistrar`
+  interface, the `listWithDiagnostics` precedent), plus the `probeClassToError`,
+  `parseFailureError` and `STUCK_DEFINITION_PARSE_CAP_BYTES` exports and the `ProbeResult` /
+  `ProbeFailureClass` types. The CLI's `--stuck` closure mints the SAME errors `get()` does, so a
+  broken copy speaks with one voice on every surface. (Issue #558.)
+- **`getWorkflowForRun`'s `verb` and `terminalOk` options** (additive). (Issue #558.)
+- **`listWithDiagnostics()`'s `unreadable` element carries `class` and `errno`** — `class` is one
+  of `missing`, `unreadable`, `not_a_file`, `empty`, `registry_broken`, `parse`; `errno` is
+  present only for the OS-error classes, so no fabricated errno reaches a screen. (Issue #558.)
+
+### Changed
+
+- **BREAKING —** `getWorkflowForRun` takes a full `RunRecord`. See **Upgrading**. (Issue #558.)
+- `realm workflow list`'s ⚠ census prints ONE sentence per CLASS instead of one
+  "could not be parsed" sentence for every failure — which was false for four of the five classes
+  (a `chmod 000` file was reported as unparseable). The parse sentence itself is byte-identical to
+  what it was. (Issue #558.)
+- `realm workflow validate --registered` refuses a corrupt, empty or unreadable stored copy with a
+  clean line and exit 1, with `--json` parity, where it crashed with a stack trace. (Issue #558.)
+
+### Fixed
+
+- **Every "can't read this run's workflow" refusal now says which of eight things is wrong, and
+  how to end the run today.** The eight: the copy is missing · it is permission-denied · a
+  directory sits where the file belongs · it is 0 bytes · its JSON root is not an object · its
+  JSON is corrupt · it is a legacy record · the registry directory itself cannot be read. Each
+  refusal names the class, the path, the way out (`realm run abandon <run-id>`, or — for a
+  gate-waiting run — the gate to answer) and, where there is one, the repair. (Issue #558.)
+- `realm workflow list` no longer crashes with a stack trace on a `null`-root registry entry or on
+  an unreadable registry directory; both print one ⚠ line and exit 0. (Issue #558.)
+- `realm run inspect`'s `(workflow definition not found — showing run record only)` no longer
+  claims "not found" for a copy that exists: it forks by class and carries the store's own
+  sentence. (Issue #558.)
+- A TERMINAL run's `respond`, `resume`, `realm agent --run-id` and the MCP `execute_step`,
+  `append_trace` and `submit_human_response` tools no longer tell an operator or an agent to
+  "retry" when there is nothing to retry — they say the run is terminal, name the derived phase,
+  and still name the repair when the copy itself is broken. (Issue #558.)
+
+---
+
 ## [0.44.0] — 2026-09-16
 
 The schema-admission release. Every authored JSON-Schema block — the workflow's `params_schema` and

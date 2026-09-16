@@ -147,6 +147,17 @@ fact.
 Because recording a failure writes to the run, it also bumps `updated_at`. That is intentional: a
 run whose drive is dying stops looking untouched at the moment it stops being driven.
 
+**`definition_unresolvable` run-health finding (issue #558):** this run's registered workflow copy
+cannot be resolved — it is missing, unreadable (a permission, a directory where a file belongs),
+empty, corrupt, a legacy record, or its registry directory itself cannot be read. `evidence`
+carries `workflow_id`, the error `code`, and `class` when the failure had one. **Scope, stated:**
+`get_run_state` produces it for LIVE, non-gate-waiting runs only — a terminal run's `run_health`
+is hard-zeroed by the frozen #279-R3 guard (#331 is its own revisit condition) and a run with an
+open `pending_gate` takes the `awaiting_human` branch, which never reads the definition. The CLI's
+`realm run inspect` and `realm run list --stuck` carry the finding for EVERY run, terminal
+included. The way out is the one the CLI prints beside the refusal: end the run with
+`realm run abandon <run-id>`, or — if the run is waiting on a human gate — answer the gate.
+
 **`structured_output_downgraded` run-health finding (issue #316):** the remedy for the
 per-step-evidence gap above, for the OTHER downgrade causes (a live API rejection, a gate
 ineligibility, an unsupported provider — anything except the `external_agent` case, which is
@@ -323,11 +334,13 @@ On success returns `{ started, failed }`:
 
 On failure (before any item is processed) returns a `ResponseEnvelope` with `status: error` and `agent_action: provide_input`.
 
-| Error code                   | Cause                                                                      |
-| ---------------------------- | -------------------------------------------------------------------------- |
-| `VALIDATION_BATCH_TOO_LARGE` | `items.length` exceeds `max_items`. No runs were created.                  |
-| `VALIDATION_BATCH_ITEMS`     | One or more items failed `params_schema` validation. No runs were created. |
-| `STATE_WORKFLOW_NOT_FOUND`   | `workflow_id` is not registered.                                           |
+| Error code                   | Cause                                                                                                                                                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `VALIDATION_BATCH_TOO_LARGE` | `items.length` exceeds `max_items`. No runs were created.                                                                                                                                                          |
+| `VALIDATION_BATCH_ITEMS`     | One or more items failed `params_schema` validation. No runs were created.                                                                                                                                         |
+| `STATE_WORKFLOW_NOT_FOUND`   | `workflow_id` is not registered.                                                                                                                                                                                   |
+| `STATE_WORKFLOW_UNREADABLE`  | The registered copy exists (or its registry does) but cannot be read — a permission, a directory where a file belongs, or an unreadable registry directory (issue #558). The message names the errno and the path. |
+| `RESOURCE_FORMAT_INVALID`    | On a run-context tool: the registered copy is empty, is not parseable JSON, or parsed as something that is not a workflow object (issue #558).                                                                     |
 
 ---
 

@@ -423,6 +423,31 @@ registers its workflow, so the id-addressed commands that come after it — `res
 found: … — most often this run was created from a file without --register. Register the
 workflow (realm workflow register <file>) and <verb> again.`
 
+**The remedy is per CLASS, not always "register it again"** (issue #558). A run's registered
+workflow copy can be unreachable in more than one way, and registering is the right answer for
+only one of them. Every run-context refusal now names which:
+
+| what is wrong                            | what the refusal says                                                                                                                                         | the way out                                                      |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| the copy is missing                      | `Workflow not found: <id> — most often …`                                                                                                                     | register the workflow from its file                              |
+| the copy exists but cannot be read       | `the registered copy of '<id>' could not be read (<errno>: <path>)`                                                                                           | fix that path (a permission, a mount)                            |
+| a directory sits where the file belongs  | `<path> is a directory, not a workflow file`                                                                                                                  | fix that path                                                    |
+| the copy is empty or corrupt             | `… is empty (0 bytes) — not a workflow` / `… is not parseable JSON: …`                                                                                        | re-register from source, or remove the corrupt copy at that path |
+| the copy is a legacy record              | `This workflow was registered with an older version of Realm. …`                                                                                              | re-register it (the message already says how)                    |
+| the registry directory cannot be read    | `the workflow registry at <dir> cannot be read (<errno>)`                                                                                                     | fix that directory                                               |
+| an AGENT created it and its copy is gone | `Workflow '<id>' not found — this run's workflow was created by an agent (create_workflow) and its stored copy is gone; there is no source file to register.` | there is nothing to register — end the run                       |
+
+Each of those also carries the way to end the run today. For a run with no open gate that is
+`To end the run: realm run abandon <run-id>.` For a run waiting on a human gate it names the gate
+instead, because answering it is the thing that actually ends it: `This run is waiting on human
+gate '<step>' — answer it (realm run respond <run-id> --gate <gate-id> --choice <one of: …>);
+ending a gate-waiting run is #558 PR-V.` On a run that is already terminal the refusal says so —
+`The run is terminal (<phase>); there is nothing to <verb>.` — and, when the copy itself is
+broken, still names the repair, because that copy is shared with every other run of that workflow.
+
+`realm run list --stuck` selects every run whose workflow copy cannot be resolved, so the class is
+visible without opening each run.
+
 ---
 
 ### `realm workflow test <path>`
@@ -614,6 +639,7 @@ line appends its idle age plus finding labels.
 | `<step>=gate_expired(<disposition>)`, and `<step>=gate_expired(finding_only) (realm run respond)` | the gate is past `expires_at`. `abort` and `settle_default` enact themselves at the next enactment point (`realm run drain --expired` can force them). `finding_only` means nothing will enact itself — a human response ends it: `realm run respond <run-id> --gate <gate-id> --choice <choice>`, with the gate id and choices shown by `realm run inspect`. A wrong choice is safe: the run refuses with `Choice '<x>' is not valid. Expected one of: …` and no state changes |
 | `<step>=gate_corruption`                                                                          | a settled gate entry coexists with a live pending gate of the same id — a store that diverged, not an engine path                                                                                                                                                                                                                                                                                                                                                               |
 | `<step>=stale_gate (realm run purge)`                                                             | a terminal run still carrying a pending gate — one written by an older realm, before terminal seals stripped their gates. Purge DISPOSES of the record; a `failed` or `abandoned` run can instead continue via `realm run resume` (only those two phases are resumable — purge's own dry-run counts how many selected runs qualify). For a grandfathered record disposal is the usual intent, which is why the label points at purge                                            |
+| `definition_unresolvable (<class>) (realm run abandon <run-id>)`                                  | this run's registered workflow copy cannot be resolved (issue #558). `<class>` is `missing`, `unreadable`, `not_a_file`, `empty`, `registry_broken`, `too_large` (over the 4 MB listing parse cap — `realm workflow validate --registered <id>` parses it), or the error code when the copy parsed as something that is not a workflow. `realm run inspect <run-id>` carries the full sentence and the repair                                                                   |
 
 `never_claimed_idle` carries no label of its own: it IS the reason the run is listed, and the
 header's threshold already says so. `--older-than <duration>` overrides the idle-age
