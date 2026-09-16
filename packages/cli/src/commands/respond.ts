@@ -23,7 +23,10 @@ export async function respondToGate(
 ): Promise<{ choice: string; newState: string }> {
   const run = await runStore.get(runId);
   // issue #456: code-keyed one-time-register remedy, shared with every other run-context site.
-  const workflow = await getWorkflowForRun(workflowStore, run, { retryVerb: 'respond again' });
+  const workflow = await getWorkflowForRun(workflowStore, run, {
+    retryVerb: 'respond again',
+    verb: 'respond',
+  });
 
   // Resolve the project registry (unless a caller/test injected one) so that resolving a gate
   // which COMPLETES the run fires its finalizers with project handlers — consistent with
@@ -93,6 +96,7 @@ export const respondCommand = new Command('respond')
         // site.
         const workflow = await getWorkflowForRun(workflowStore, run, {
           retryVerb: 'respond again',
+          verb: 'respond',
         });
         let registry: ExtensionRegistry;
         try {

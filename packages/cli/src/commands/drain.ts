@@ -245,7 +245,11 @@ async function resolveRegistry(
   // at every call site below (issue #466's adjudicated call: deliberate, not an oversight).
   // issue #456: the remedy sentence now self-describes (it names the file/register/verb itself),
   // so the banner split stays exactly as #466 adjudicated it — no reopening.
-  const workflow = await getWorkflowForRun(workflowStore, run, { retryVerb: 'drain again' });
+  const workflow = await getWorkflowForRun(workflowStore, run, {
+    retryVerb: 'drain again',
+    verb: 'drain',
+    terminalOk: true,
+  });
   const { registry } = await loadProjectExtensions(workflow, {
     ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
     projectDir: opts.project ?? process.cwd(),
@@ -437,7 +441,11 @@ export async function runDrainAction(
         // issue #456: race-dead in practice (resolveRegistry's own get above just succeeded
         // μs earlier) — adopted for uniformity, so drift can never creep in if that ever
         // changes; the shared helper makes it structurally impossible either way.
-        const workflow = await getWorkflowForRun(workflowStore, r, { retryVerb: 'drain again' });
+        const workflow = await getWorkflowForRun(workflowStore, r, {
+          retryVerb: 'drain again',
+          verb: 'drain',
+          terminalOk: true,
+        });
         const outcome = await deps.drainFinalizers(runStore, workflow, registry, r.id);
         drained += 1;
         for (const w of outcome.warnings) console.log(`  ⚠ ${r.id}: ${w}`);
@@ -453,7 +461,11 @@ export async function runDrainAction(
       try {
         // issue #456: LIVE first fetch on this path — no resolveRegistry precedes it here, so
         // this adoption's remedy is genuinely reachable (unlike the finalizer arm above).
-        const workflow = await getWorkflowForRun(workflowStore, r, { retryVerb: 'drain again' });
+        const workflow = await getWorkflowForRun(workflowStore, r, {
+          retryVerb: 'drain again',
+          verb: 'drain',
+          terminalOk: true,
+        });
         const { run: enactedRun, applied } = await enactGateExpiry(runStore, workflow, r, now);
         if (!applied) {
           console.log(`  • ${r.id}: gate expiry already resolved (race) — skipped`);
@@ -520,6 +532,8 @@ export async function runDrainAction(
       // + exit 1), never the extensions sentence.
       const workflowForGate = await getWorkflowForRun(workflowStore, run, {
         retryVerb: 'drain again',
+        verb: 'drain',
+        terminalOk: true,
       });
       const { run: enactedRun, applied } = await enactGateExpiry(
         runStore,
@@ -563,6 +577,8 @@ export async function runDrainAction(
     // earlier) — adopted for uniformity, same reasoning as the batch finalizer arm.
     const workflow = await getWorkflowForRun(workflowStore, workingRun, {
       retryVerb: 'drain again',
+      verb: 'drain',
+      terminalOk: true,
     });
     const outcome = await deps.drainFinalizers(runStore, workflow, registry, runId);
     for (const w of outcome.warnings) console.log(`  ⚠ ${w}`);

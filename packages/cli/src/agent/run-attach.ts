@@ -87,6 +87,7 @@ export async function resolveRunAttach(
   // narrowed signature, since every other run-context site passes a full registrar.
   const definition: WorkflowDefinition = await getWorkflowForRun(deps.workflowStore, run, {
     retryVerb: 're-attach',
+    verb: 're-attach',
   });
   const loadExtensions = deps.loadExtensions ?? loadProjectExtensions;
 

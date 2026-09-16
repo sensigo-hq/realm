@@ -94,7 +94,10 @@ export async function resumeRun(
   }
 
   // issue #456: code-keyed one-time-register remedy, shared with every other run-context site.
-  const workflow = await getWorkflowForRun(workflowStore, run, { retryVerb: 'resume again' });
+  const workflow = await getWorkflowForRun(workflowStore, run, {
+    retryVerb: 'resume again',
+    verb: 'resume',
+  });
 
   const targetStep = workflow.steps[stepName];
   if (targetStep === undefined) {

@@ -171,7 +171,11 @@ export const replayCommand = new Command('replay')
     try {
       // issue #456: code-keyed one-time-register remedy, shared with every other run-context
       // site. The catch shape below is unchanged — only the fetch itself changes.
-      definition = await getWorkflowForRun(workflowStore, run, { retryVerb: 'replay again' });
+      definition = await getWorkflowForRun(workflowStore, run, {
+        retryVerb: 'replay again',
+        verb: 'replay',
+        terminalOk: true,
+      });
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);

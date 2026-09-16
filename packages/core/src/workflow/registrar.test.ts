@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonWorkflowStore, getWorkflowForRun } from './registrar.js';
+import type { RunRecord } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { WorkflowRegistrar } from './registrar.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -121,15 +122,18 @@ describe('getWorkflowForRun (issue #456)', () => {
     await store.register(def);
     const result = await getWorkflowForRun(
       store,
-      { workflow_id: 'wf-one' },
-      { retryVerb: 're-attach' },
+      { workflow_id: 'wf-one' } as unknown as RunRecord,
+      { retryVerb: 're-attach', verb: 're-attach' },
     );
     expect(result).toEqual(def);
   });
 
   it('C15 the wrapped throw preserves the CONTRACT — code, agentAction, retryable', async () => {
     await expect(
-      getWorkflowForRun(store, { workflow_id: 'nonexistent' }, { retryVerb: 're-attach' }),
+      getWorkflowForRun(store, { workflow_id: 'nonexistent' } as unknown as RunRecord, {
+        retryVerb: 're-attach',
+        verb: 're-attach',
+      }),
     ).rejects.toMatchObject({
       code: 'STATE_WORKFLOW_NOT_FOUND',
       agentAction: 'report_to_user',
@@ -156,8 +160,8 @@ describe('getWorkflowForRun (issue #456)', () => {
     };
     const err = await getWorkflowForRun(
       mockStore,
-      { workflow_id: 'wf-one' },
-      { retryVerb: 're-attach' },
+      { workflow_id: 'wf-one' } as unknown as RunRecord,
+      { retryVerb: 're-attach', verb: 're-attach' },
     ).catch((e: unknown) => e);
 
     expect(err).toBe(legacy);
