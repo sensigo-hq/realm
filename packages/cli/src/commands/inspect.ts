@@ -236,14 +236,28 @@ export async function inspectRun(
   let definitionMissing = false;
   let trustRoot: string | undefined;
   let definition: WorkflowDefinition | undefined;
+  // issue #558 PR-T — the failure is KEPT (the bare `catch {` threw it away, so every class
+  // printed "not found", false for a copy that exists). It names the line below and feeds
+  // classifyRunHealth's `definition_unresolvable` finding.
+  let definitionError: { code: string; message: string; class?: string } | undefined;
   try {
     const def = await workflowStore.get(run.workflow_id);
     workflowLabel = `${def.id} v${def.version}`;
     trustRoot = def.trust_root;
     definition = def;
-  } catch {
+  } catch (err) {
     workflowLabel = run.workflow_id;
     definitionMissing = true;
+    // Duck-typed on the error's own fields rather than `instanceof WorkflowError`: this module
+    // deliberately takes core through ONE static import list, and the two fields read here are
+    // the store's own contract.
+    const we = err as { code?: string; message?: string; details?: Record<string, unknown> };
+    const cls = we.details?.['class'];
+    definitionError = {
+      code: typeof we.code === 'string' ? we.code : 'ENGINE_INTERNAL',
+      message: typeof we.message === 'string' ? we.message : String(err),
+      ...(typeof cls === 'string' ? { class: cls } : {}),
+    };
   }
 
   // Color the phase label \u2014 derived, never the persisted run_phase (issue #279, increment 2,
@@ -426,7 +440,10 @@ export async function inspectRun(
   // Note: `realm run reclaim` is a separate, independent consumer of the underlying record facts
   // (settle sets, capability_blocks, reclaim-audit evidence) — it does NOT call this function; see
   // its own classifyNoActiveClaim discriminator in reclaim-step.ts.
-  const runHealth = classifyRunHealth(run, definition !== undefined ? { definition } : {});
+  const runHealth = classifyRunHealth(run, {
+    ...(definition !== undefined ? { definition } : {}),
+    ...(definitionError !== undefined ? { definitionError } : {}),
+  });
   if (runHealth.length > 0) {
     lines.push('');
     lines.push(`Run Health (${runHealth.length} finding(s)):`);
@@ -446,7 +463,18 @@ export async function inspectRun(
 
   if (definitionMissing) {
     lines.push('');
-    lines.push('(workflow definition not found \u2014 showing run record only)');
+    // issue #558 PR-T — forked by CLASS from the store's own table. "not found" was printed for
+    // EVERY failure, including an EACCES copy that exists, a corrupt copy and a legacy record.
+    const detail = definitionError?.message ?? '';
+    lines.push(
+      definitionError?.code === 'STATE_WORKFLOW_UNREADABLE'
+        ? `(workflow definition could not be read: ${detail} \u2014 showing run record only)`
+        : definitionError?.code === 'RESOURCE_FORMAT_INVALID'
+          ? `(workflow definition is corrupt: ${detail} \u2014 showing run record only)`
+          : definitionError?.code === 'STATE_LEGACY_FORMAT'
+            ? `(workflow definition is a legacy record: ${detail} \u2014 showing run record only)`
+            : '(workflow definition not found \u2014 showing run record only)',
+    );
   }
 
   // Group evidence snapshots by step_id, preserving first-appearance order.

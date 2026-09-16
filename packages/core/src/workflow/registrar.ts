@@ -105,6 +105,17 @@ export function parseFailureError(workflowId: string, path: string, cause: unkno
   );
 }
 
+/**
+ * issue #558 PR-T — the cap on what `run list --stuck` will PARSE while classifying a run's
+ * workflow copy. Measured (design §2.4): the largest real registry entry on the owner's store is
+ * 65 KB; the smallest #557 expansion bomb is 136 MB. A listing must never be the surface that
+ * detonates one, so above this size the finding NAMES the size and reads zero bytes — the
+ * operator is pointed at `validate --registered`, which is the surface that parses.
+ *
+ * This cap does NOT apply to `get()`: the run path stays uncapped by #552's Resolution.
+ */
+export const STUCK_DEFINITION_PARSE_CAP_BYTES = 4 * 1024 * 1024;
+
 export interface WorkflowRegistrar {
   /** Persist a WorkflowDefinition under its id, overwriting any previous registration. */
   register(definition: WorkflowDefinition): Promise<void>;
@@ -169,10 +180,35 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
     }
     if (!st.isFile()) return { ok: false, class: 'not_a_file', path: filePath };
     if (st.size === 0) return { ok: false, class: 'empty', path: filePath };
+    // `statSync` SUCCEEDS on a `chmod 000` file — stat needs only search permission on the
+    // parent directory. Without this call the ONE class this PR is named for (permission)
+    // escapes `readFileSync` as a raw non-`WorkflowError` and passes `getWorkflowForRun` by
+    // identity: a bare `EACCES: permission denied`, no code, no remedy (executed).
+    try {
+      accessSync(filePath, constants.R_OK);
+    } catch (err) {
+      const errno = (err as NodeJS.ErrnoException).code;
+      return {
+        ok: false,
+        class: 'unreadable',
+        ...(errno !== undefined ? { errno } : {}),
+        path: filePath,
+      };
+    }
     return { ok: true, bytes: st.size };
   }
 
   async get(workflowId: string): Promise<WorkflowDefinition> {
+    return this.getSync(workflowId);
+  }
+
+  /**
+   * issue #558 PR-T — `get()`'s body, synchronously. `get()` awaits nothing; the `--stuck` probe
+   * closure classifies inside a synchronous filter and must reuse this EXACT policy (parse →
+   * root → legacy) so a corrupt, null-root or legacy copy speaks with one voice on every surface
+   * rather than through a second, drifting re-derivation.
+   */
+  getSync(workflowId: string): WorkflowDefinition {
     const filePath = join(this.dir, `${workflowId}.json`);
     const probed = this.probe(workflowId);
     if (!probed.ok) throw probeClassToError(probed, workflowId);
@@ -250,12 +286,24 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
    */
   async listWithDiagnostics(): Promise<{
     workflows: WorkflowDefinition[];
-    unreadable: Array<{ file: string; class: ProbeFailureClass | 'parse'; reason: string }>;
+    unreadable: Array<{
+      file: string;
+      class: ProbeFailureClass | 'parse';
+      /** issue #558 PR-T — present only for the OS-error classes; `workflow list`'s per-class
+       *  sentence names it. Absent for `parse`, `empty` and `not_a_file` (a directory is not an
+       *  OS error — fabricating an errno is a false statement about the operating system). */
+      errno?: string;
+      reason: string;
+    }>;
     mismatched: Array<{ file: string; id: string }>;
   }> {
     const workflows: WorkflowDefinition[] = [];
-    const unreadable: Array<{ file: string; class: ProbeFailureClass | 'parse'; reason: string }> =
-      [];
+    const unreadable: Array<{
+      file: string;
+      class: ProbeFailureClass | 'parse';
+      errno?: string;
+      reason: string;
+    }> = [];
     const mismatched: Array<{ file: string; id: string }> = [];
     // issue #558 PR-T: an unreadable registry DIRECTORY is a diagnostic, never a throw out of
     // this method (main crashed `workflow list` with a stack trace at readdirSync).
@@ -276,6 +324,7 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
           {
             file: this.dir,
             class: 'registry_broken',
+            ...(errno !== undefined ? { errno } : {}),
             reason: probeClassToError(failure, this.dir).message,
           },
         ],
@@ -290,6 +339,7 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
         unreadable.push({
           file: entry,
           class: probed.class,
+          ...(probed.errno !== undefined ? { errno: probed.errno } : {}),
           reason: probeClassToError(probed, id).message,
         });
         continue;
@@ -384,12 +434,14 @@ export async function getWorkflowForRun(
         ...(err.warnings !== undefined ? { warnings: err.warnings } : {}),
       });
 
-    // The terminal conjunct: these sites read the definition BEFORE their own terminal check, so
-    // "retry" on a terminal run is a falsity. `terminalOk` is passed at the six sites whose happy
-    // path IS terminal (replay, drain ×5).
+    // The terminal conjunct: the six sites without `terminalOk` read the definition BEFORE their
+    // own terminal check, so "retry" on a terminal run is a falsity. `terminalOk: true` is passed
+    // at the SEVEN sites whose happy path IS terminal (replay, drain ×5, resume — `resume.ts:84`
+    // refuses any phase outside RESUMABLE_PHASES = {failed, abandoned}, both terminal, BEFORE the
+    // definition is read at `:97`).
     if (run.terminal_state === true && opts.terminalOk !== true) {
       throw copy(
-        `${err.message} — the run is terminal (${deriveRunPhase(run)}); there is nothing to ${opts.verb}.`,
+        `${err.message}. The run is terminal (${deriveRunPhase(run)}); there is nothing to ${opts.verb}.`,
       );
     }
 
@@ -419,7 +471,7 @@ export async function getWorkflowForRun(
         );
       case 'STATE_WORKFLOW_UNREADABLE':
         throw copy(
-          `${err.message} — this run's workflow cannot be read. To end the run: ${disposal}. ` +
+          `${err.message}. This run's workflow cannot be read. To end the run: ${disposal}. ` +
             `To repair: fix ${String((err.details as Record<string, unknown> | undefined)?.['path'] ?? '')} and ${opts.retryVerb}.`,
         );
       case 'RESOURCE_FORMAT_INVALID':
@@ -429,7 +481,7 @@ export async function getWorkflowForRun(
             `at ${String((err.details as Record<string, unknown> | undefined)?.['path'] ?? '')}, then ${opts.retryVerb}.`,
         );
       case 'STATE_LEGACY_FORMAT':
-        throw copy(`${err.message} To end the run instead: ${disposal}.`);
+        throw copy(`${err.message}. To end the run instead: ${disposal}.`);
       default:
         throw err;
     }

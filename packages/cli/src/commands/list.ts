@@ -142,6 +142,14 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
     // issue #401: the drive died and nothing has happened since. The step prefix appears only
     // when there IS a step — a pre-step-selection failure rendering as a bare leading `=` is a
     // rendering bug, not a convention.
+    // issue #558 PR-T — the class, then the way out. `evidence.class` is the probe's own class
+    // when there was one; the code otherwise (a parse failure has no probe class).
+    case 'definition_unresolvable': {
+      const cls = f.evidence?.['class'];
+      const code = f.evidence?.['code'];
+      const which = typeof cls === 'string' ? cls : typeof code === 'string' ? code : 'unknown';
+      return `definition_unresolvable (${which})`;
+    }
     case 'drive_failing': {
       const errorClass = f.evidence?.['error_class'];
       const label = `drive_failing(${typeof errorClass === 'string' ? errorClass : 'unknown'})`;
@@ -219,6 +227,9 @@ export async function listRuns(
   stuck?: boolean,
   idleThresholdMs?: number,
   failedAttemptStore?: FailedAttemptStore,
+  workflowProbe?: (
+    workflowId: string,
+  ) => { code: string; message: string; class?: string } | undefined,
 ): Promise<string> {
   const runs = await store.list(workflowId);
   const effectiveIdleThresholdMs = idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
@@ -234,7 +245,14 @@ export async function listRuns(
       // Note: `realm run reclaim` is a separate, independent consumer of the underlying record
       // facts (settle sets, capability_blocks, reclaim-audit evidence) — it does NOT call this
       // function; see its own classifyNoActiveClaim discriminator in reclaim-step.ts.
-      const findings = classifyRunHealth(r, { idleThresholdMs: effectiveIdleThresholdMs });
+      // issue #558 PR-T: the 7th parameter (the #219 injection precedent) — `listRuns` holds no
+      // registrar, so the --stuck action constructs the probe and passes it; `undefined` ⇒ zero
+      // `definition_unresolvable` findings, never a crash.
+      const definitionError = workflowProbe?.(r.workflow_id);
+      const findings = classifyRunHealth(r, {
+        idleThresholdMs: effectiveIdleThresholdMs,
+        ...(definitionError !== undefined ? { definitionError } : {}),
+      });
       if (findings.length > 0) findingsByRun.set(r.id, findings);
       // issue #302: a completed run is not stuck — deliberately INVERTS the
       // terminal_pending_finalizer precedent (which selects AND labels). A run whose entire
@@ -343,6 +361,32 @@ export async function listRuns(
       if (gateCauseLabels.length > 0) {
         line += `  ${gateCauseLabels.join(', ')}`;
       }
+      // issue #558 PR-T — the RESIDUAL group, and the reason it exists: `renderFindingLabel` is
+      // `never`-exhaustive, but the five hard-coded groups above are NOT — a kind in none of them
+      // renders NO label at all (selected and silent, executed on main). This group takes every
+      // kind the groups above did not, so a new kind is visible the day it is labelled. The run id
+      // is in scope HERE, which is what lets the label carry an executable remedy.
+      const groupedKinds = new Set<RunHealthFinding['kind']>([
+        'stale_claim',
+        'wedged_gate_sibling',
+        'capability_block',
+        'drive_failing',
+        'terminal_pending_finalizer',
+        'gate_expired_awaiting_drive',
+        'gate_corruption',
+        'terminal_with_stale_gate',
+      ]);
+      const residualLabels = findings
+        .filter((f) => !groupedKinds.has(f.kind))
+        .map((f) =>
+          f.kind === 'definition_unresolvable'
+            ? `${renderFindingLabel(f) ?? ''} (realm run abandon ${run.id})`
+            : renderFindingLabel(f),
+        )
+        .filter((l): l is string => l !== undefined && l !== '');
+      if (residualLabels.length > 0) {
+        line += `  ${residualLabels.join(', ')}`;
+      }
       // issue #219: cause attribution, appended LAST — best-effort, per-run (one run's sidecar
       // I/O failure never aborts the rest of the list). `records.length === 0` (no throw) means
       // absence — the CLI-driven / no-sidecar / parked-between-drives case — renders nothing
@@ -405,6 +449,56 @@ export const listCommand = new Command('list')
       const failedAttemptStore =
         opts.stuck === true ? new FailedAttemptStore(store.runsDirPath) : undefined;
 
+      // issue #558 PR-T — the --stuck probe closure. The 4 MB parse cap lives HERE and NOWHERE
+      // else: `get()` stays uncapped (#552's door B, its Resolution). Memoised per workflow id
+      // per invocation — a hundred runs of one workflow cost one probe.
+      let workflowProbe:
+        | ((workflowId: string) => { code: string; message: string; class?: string } | undefined)
+        | undefined;
+      if (opts.stuck === true) {
+        const { JsonWorkflowStore, probeClassToError, STUCK_DEFINITION_PARSE_CAP_BYTES } =
+          await import('@sensigo/realm');
+        const wfStore = new JsonWorkflowStore();
+        const memo = new Map<
+          string,
+          { code: string; message: string; class?: string } | undefined
+        >();
+        workflowProbe = (workflowId: string) => {
+          if (memo.has(workflowId)) return memo.get(workflowId);
+          let result: { code: string; message: string; class?: string } | undefined;
+          const probed = wfStore.probe(workflowId);
+          if (!probed.ok) {
+            const err = probeClassToError(probed, workflowId);
+            result = { code: err.code, message: err.message, class: probed.class };
+          } else if (probed.bytes > STUCK_DEFINITION_PARSE_CAP_BYTES) {
+            // Zero bytes read. A #557 bomb is NAMED by its size, never parsed.
+            const mb = (probed.bytes / (1024 * 1024)).toFixed(1);
+            result = {
+              code: 'RESOURCE_FORMAT_INVALID',
+              message: `too large: ${mb} MB — not parsed; realm workflow validate --registered ${workflowId} parses it`,
+            };
+          } else {
+            try {
+              wfStore.getSync(workflowId);
+            } catch (err) {
+              const we = err as {
+                code?: string;
+                message?: string;
+                details?: Record<string, unknown>;
+              };
+              const cls = we.details?.['class'];
+              result = {
+                code: we.code ?? 'ENGINE_INTERNAL',
+                message: we.message ?? String(err),
+                ...(typeof cls === 'string' ? { class: cls } : {}),
+              };
+            }
+          }
+          memo.set(workflowId, result);
+          return result;
+        };
+      }
+
       if (opts.stuck === true && opts.status !== undefined) {
         console.error('--stuck cannot be combined with --status.');
         process.exit(1);
@@ -443,6 +537,7 @@ export const listCommand = new Command('list')
           opts.stuck,
           idleThresholdMs,
           failedAttemptStore,
+          workflowProbe,
         );
         console.log(output);
       } catch (err) {

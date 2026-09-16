@@ -157,7 +157,12 @@ export interface RunHealthFinding {
     // issue #508: an ELIGIBLE step (auto/agent, on a definition that was supplied) whose `trust`
     // value the engine will refuse at dispatch (VALIDATION_TRUST_VALUE) — see item 5b in the
     // branch-conditioning table above. Definition-gated, like `resolved_gate_with_eligible_guard`.
-    | 'trust_value_invalid';
+    | 'trust_value_invalid'
+    // issue #558 PR-T: this run's registered workflow copy cannot be read — missing, permission-
+    // denied, a directory, empty, corrupt JSON, a legacy record, or a registry directory that
+    // itself cannot be read. Fires on ANY run, live or terminal: the class is about the COPY, not
+    // the phase. Supplied by the caller (`definitionError`) — this function never touches a store.
+    | 'definition_unresolvable';
   /** The affected step, when the finding is step-scoped. Absent for `never_claimed_idle` — a
    *  run-level observation (no step is claimed at all). */
   step?: string;
@@ -387,7 +392,15 @@ function formatAgo(ms: number): string {
  */
 export function classifyRunHealth(
   run: RunRecord,
-  opts?: { now?: Date; idleThresholdMs?: number; definition?: WorkflowDefinition },
+  opts?: {
+    now?: Date;
+    idleThresholdMs?: number;
+    definition?: WorkflowDefinition;
+    /** issue #558 PR-T — the failure the CALLER got when it tried to resolve this run's
+     *  workflow copy. Additive to the existing bag; absent ⇒ zero `definition_unresolvable`
+     *  findings, never a crash. */
+    definitionError?: { code: string; message: string; class?: string };
+  },
 ): RunHealthFinding[] {
   const now = opts?.now ?? new Date();
   // issue #432: computed ONCE per classify call, ahead of every branch — the module's own D-3
@@ -602,6 +615,24 @@ export function classifyRunHealth(
         ...(opts?.definition !== undefined
           ? { eligible_steps: findEligibleSteps(opts.definition, run) }
           : {}),
+      },
+    });
+  }
+
+  // issue #558 PR-T — on ANY run, live or terminal: the class is about the copy, not the phase.
+  if (opts?.definitionError !== undefined) {
+    const de = opts.definitionError;
+    findings.push({
+      kind: 'definition_unresolvable',
+      // NOTE (audit divergence): the prompt's literal carries `severity: 'warning'`.
+      // `RunHealthFinding` has NO `severity` field (kind/step?/reason/since?/idle_ms?/evidence?)
+      // and no other kind sets one — TS2353, executed. Dropped; the label and the --stuck
+      // selection ARE the signal.
+      reason: `this run's workflow '${run.workflow_id}' cannot be read (${de.code}): ${de.message}`,
+      evidence: {
+        workflow_id: run.workflow_id,
+        code: de.code,
+        ...(de.class !== undefined ? { class: de.class } : {}),
       },
     });
   }

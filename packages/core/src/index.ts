@@ -261,6 +261,15 @@ export {
 export { JsonWorkflowStore } from './workflow/registrar.js';
 export type { WorkflowRegistrar } from './workflow/registrar.js';
 export { getWorkflowForRun } from './workflow/registrar.js';
+// issue #558 PR-T — the classification table, its builders and the listing cap. The CLI's
+// `--stuck` probe closure mints the SAME errors `get()` does, so a corrupt or unreadable copy
+// speaks with one voice on every surface.
+export {
+  probeClassToError,
+  parseFailureError,
+  STUCK_DEFINITION_PARSE_CAP_BYTES,
+} from './workflow/registrar.js';
+export type { ProbeResult, ProbeFailureClass } from './workflow/registrar.js';
 export {
   GUARD_PROHIBITED_STEP_KEYS,
   FINALIZER_PROHIBITED_STEP_KEYS,

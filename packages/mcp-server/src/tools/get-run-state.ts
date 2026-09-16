@@ -26,6 +26,17 @@ import {
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 
+/** issue #558 PR-T — the store's own classification, passed through to classifyRunHealth. */
+function toDefinitionError(err: unknown): { code: string; message: string; class?: string } {
+  const we = err as { code?: string; message?: string; details?: Record<string, unknown> };
+  const cls = we.details?.['class'];
+  return {
+    code: typeof we.code === 'string' ? we.code : 'ENGINE_INTERNAL',
+    message: typeof we.message === 'string' ? we.message : String(err),
+    ...(typeof cls === 'string' ? { class: cls } : {}),
+  };
+}
+
 export interface HandleRunStateStores {
   /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
   runStore?: RunStore;
@@ -272,6 +283,8 @@ export async function handleGetRunState(
   let nextActions: NextAction[] = [];
   let nextActionsStatus: NextActionsStatus;
   let definition: WorkflowDefinition | undefined;
+  // issue #558 PR-T — the failure the definition read produced, when it produced one.
+  let definitionError: { code: string; message: string; class?: string } | undefined;
   if (run.terminal_state) {
     nextActionsStatus = 'skipped_terminal';
   } else if (run.pending_gate !== undefined) {
@@ -279,7 +292,13 @@ export async function handleGetRunState(
   } else {
     definition =
       stores?.workflowStore !== undefined
-        ? await stores.workflowStore.get(run.workflow_id).catch(() => undefined)
+        ? await stores.workflowStore.get(run.workflow_id).catch((err: unknown) => {
+            // issue #558 PR-T — KEEP the failure: it feeds the `definition_unresolvable` finding
+            // below instead of being discarded. Live runs only: the terminal guard at the
+            // classify call is the pre-existing frozen R3 guard (#331), untouched here.
+            definitionError = toDefinitionError(err);
+            return undefined;
+          })
         : undefined;
     if (definition === undefined) {
       nextActionsStatus = 'workflow_unresolved';
@@ -338,7 +357,10 @@ export async function handleGetRunState(
   // finalized BEFORE this line runs — nothing below this point may write back to it.
   const runHealth: RunHealthFinding[] = run.terminal_state
     ? []
-    : classifyRunHealth(run, definition !== undefined ? { definition } : {});
+    : classifyRunHealth(run, {
+        ...(definition !== undefined ? { definition } : {}),
+        ...(definitionError !== undefined ? { definitionError } : {}),
+      });
   if (runHealth.length > 0) {
     warnings.push(
       `this run has ${runHealth.length} active run-health finding(s) — see 'run_health' for detail.`,
