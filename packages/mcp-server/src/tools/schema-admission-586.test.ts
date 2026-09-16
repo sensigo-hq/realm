@@ -177,6 +177,21 @@ describe('#586 create_workflow — its own admission door', () => {
     expect(await readdir(workflowDir)).toEqual([]);
   });
 
+  it("a STRICT-CLASS input_schema (unknown keyword) opens 'is refused by realm's validator' at this door", async () => {
+    const result = await handleCreateWorkflow(
+      {
+        steps: [{ id: 'a', description: 'a', input_schema: { type: 'object', foo: 1 } as never }],
+      } as never,
+      stores,
+    );
+    expect(result.status).toBe('error');
+    expect(JSON.stringify(result)).toContain(
+      "Step 'a': 'input_schema' is refused by realm's validator — strict mode: unknown keyword: \\\"foo\\\". Every execute_step",
+    );
+    expect(JSON.stringify(result)).not.toContain('is not a valid JSON Schema');
+    expect(await readdir(workflowDir)).toEqual([]);
+  });
+
   it('the STRICT twin is refused by the same check, before the eligibility walk', async () => {
     const result = await handleCreateWorkflow(
       {

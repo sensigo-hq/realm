@@ -16,6 +16,7 @@ import { WorkflowError } from '../types/workflow-error.js';
 import {
   compileSchema,
   validateRunParams,
+  composeSchemaFailure,
   validateInputSchema,
   validateOutputSchema,
 } from '../validation/input-schema.js';
@@ -276,7 +277,7 @@ describe('#586 schema admission — the four authored keys', () => {
   it('null is refused with its own clause and NO consequence clause', () => {
     const { message } = refusalOf(wf({ stepExtra: '    input_schema:\n' }));
     expect(message).toContain(
-      "Step 's1': 'input_schema' is null, not a schema (a JSON-Schema block is an object, or the boolean true/false); fix the schema.",
+      "Step 's1': 'input_schema' is null, not a schema (a JSON-Schema block is an object, or the boolean true/false); write a schema under 'input_schema', or remove it.",
     );
     // No dangling "that error" referent: nothing compiled, so there is no error to refer to.
     expect(message).not.toContain('would be rejected with that error');
@@ -735,6 +736,78 @@ describe('#586 schema admission — the four authored keys', () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // 5c. The expected-type family, PER MEMBER (the review's member sweep found `a whole number`
+  // unpinned): every word a draft-07 block can put after "must be" (one per single-type slot of
+  // the meta-schema — exhaustive over the reachable set), each driven through the loader with a
+  // keyword it constrains to that type — and the remedy names it. The seventh word, `null`, and
+  // the two-type join have no draft-07 slot: pinned at the composer below.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  const EXPECTED_TYPES: Array<[string, string, string]> = [
+    ['minLength: 1.5', 'minLength', 'a whole number'],
+    ['minimum: x', 'minimum', 'a number'],
+    ['required: a', 'required', 'a list'],
+    ['title: 1', 'title', 'text'],
+    ['uniqueItems: yes', 'uniqueItems', 'true or false'],
+    ['properties: []', 'properties', 'an object'],
+  ];
+  for (const [line, kw, words] of EXPECTED_TYPES) {
+    it(`expected type — '${kw}' must be ${words}, and the remedy names it`, () => {
+      const { message } = refusalOf(
+        wf({ stepExtra: `    input_schema:\n      type: object\n      ${line}\n` }),
+      );
+      const value = line.slice(line.indexOf(': ') + 2);
+      expect(message).toContain(`'${kw}' must be ${words} ('${kw}: ${value}' here)`);
+      expect(message).toContain(`; give '${kw}' ${words}.`);
+      expect(message).toContain('(line 10)');
+    });
+  }
+
+  it("an empty enum's remedy names both acts — add a value, or remove the key", () => {
+    const { message } = refusalOf(
+      wf({ stepExtra: '    input_schema:\n      type: object\n      enum: []\n' }),
+    );
+    expect(message).toContain("'enum' must not be empty ('enum: []' here)");
+    expect(message).toContain("; add at least one value to 'enum', or remove it.");
+  });
+
+  it('composer-only arms — a missing required property and a two-type expectation (no draft-07 block reaches them; the composer stays total)', () => {
+    expect(
+      composeSchemaFailure(
+        { keyword: 'required', instancePath: '', message: '', params: { missingProperty: 'y' } },
+        'input_schema',
+        {},
+      ),
+    ).toEqual({ detail: "'input_schema' is missing 'y'", remedy: "add 'y'", segments: [] });
+    expect(
+      composeSchemaFailure(
+        {
+          keyword: 'type',
+          instancePath: '/x',
+          message: '',
+          params: { type: ['string', 'number'] },
+        },
+        'input_schema',
+        { x: true },
+      ),
+    ).toEqual({
+      detail: "'x' must be text or a number ('x: true' here)",
+      remedy: "give 'x' text or a number",
+      segments: ['x'],
+    });
+    expect(
+      composeSchemaFailure(
+        { keyword: 'type', instancePath: '/x', message: '', params: { type: 'null' } },
+        'input_schema',
+        { x: 1 },
+      ),
+    ).toEqual({
+      detail: "'x' must be null ('x: 1' here)",
+      remedy: "give 'x' null",
+      segments: ['x'],
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
   // 6. `compileSchema` — the equivalence pin and the witness.
   // ─────────────────────────────────────────────────────────────────────────────────────────────
   it('equivalence: the capturing and the silent construction give IDENTICAL verdicts', () => {
@@ -797,6 +870,15 @@ describe('#586 schema admission — the four authored keys', () => {
   // ─────────────────────────────────────────────────────────────────────────────────────────────
   // 7. `validateRunParams` — the params voice.
   // ─────────────────────────────────────────────────────────────────────────────────────────────
+  it("the typed wrap forks its opener by class — a STRICT-mode refusal says realm's validator refuses", () => {
+    expect(() => validateRunParams({}, { type: 'object', foo: 1 } as never, 'w')).toThrow(
+      "Workflow 'w' declares a params_schema that realm's validator refuses — strict mode: unknown keyword: \"foo\". No run was created.",
+    );
+    expect(() => validateRunParams({}, { type: 'object', foo: 1 } as never, 'w')).not.toThrow(
+      'is not a valid JSON Schema',
+    );
+  });
+
   it('the typed wrap speaks the $ref sentence too — one composer for every door', () => {
     expect(() => validateRunParams({}, { $ref: '#/definitions/nope' } as never, 'w')).toThrow(
       "Workflow 'w' declares a params_schema that is not a valid JSON Schema — '$ref' points at a definition this block does not have ('$ref: #/definitions/nope' here). No run was created.",

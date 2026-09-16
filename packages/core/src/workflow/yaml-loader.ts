@@ -1186,12 +1186,14 @@ function parseWorkflowString(
       // `false` rejects every value, which is a choice, not a defect).
       // The null arm carries NO consequence clause, on every kind: the other clauses say "would
       // be rejected with THAT error", and when nothing compiled there is no "that error" to refer
-      // to — a dangling referent is the #524 class. The remedy carries the whole instruction.
+      // to — a dangling referent is the #524 class. The remedy carries the whole instruction —
+      // and it names the two ACTS (the review walk found the bare "fix the schema" here, the one
+      // non-act remedy left among the siblings, on the commonest typo: a key typed and left empty).
       if (block === null) {
         errors.push(
           cite(
             `${where}'${key}' is null, not a schema (a JSON-Schema block is an object, or the ` +
-              `boolean true/false); fix the schema.`,
+              `boolean true/false); write a schema under '${key}', or remove it.`,
           ),
         );
         return true;
