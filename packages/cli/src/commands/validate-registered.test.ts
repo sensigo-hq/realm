@@ -5,9 +5,10 @@
 // `register` would accept. These cells pin the four verdict shapes it can reach, the honesty
 // line, and the fidelity of the strip.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { validateCommand } from './validate.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, RUNTIME_ONLY_WORKFLOW_KEYS } from '@sensigo/realm';
 import { CONTEXT_DEPENDENT_CHECKS } from '../lib/admission-context.js';
@@ -275,8 +276,11 @@ describe('validate --registered (issue #427)', () => {
   });
 
   it('R9 a corrupt stored file is reported as unparseable, without a stack', async () => {
-    // get()'s try wraps ONLY the read — JSON.parse sits outside it — so this arrives as a bare
-    // code-less SyntaxError, which the third catch arm exists for.
+    // issue #558 PR-T: this used to arrive as a bare code-less SyntaxError, because `get()`'s try
+    // wrapped only the read and `JSON.parse` sat outside it — the third catch arm existed for
+    // exactly that. The store now CLASSIFIES it (`parseFailureError`, byte-identical bytes) and
+    // this surface keys on the CODE. The shape below is unchanged, and that is the point: the
+    // arm moved, the operator's two lines did not.
     writeFileSync(join(wfDir, 'broken.json'), '{ not json', 'utf8');
 
     await expect(
@@ -287,6 +291,92 @@ describe('validate --registered (issue #427)', () => {
     expect(text).toContain("Error: the registered copy of 'broken' is not parseable JSON:");
     expect(text).toContain('Registered workflows: realm workflow list');
     expect(text).not.toContain('    at ');
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // issue #558 PR-T — the arms re-keyed on CODE. `validate.ts`'s `:581` rethrow is the #123 bug
+  // guard ("an unexpected WorkflowError is a bug, and bugs stay loud"); PR-T's two new codes
+  // would have fallen into it and printed a STACK TRACE where main printed a clean line.
+  it('T-U1 a chmod-000 stored copy gets the two-line human shape, exit 1, no stack', async () => {
+    plant('locked', stored({ id: 'locked' }));
+    chmodSync(join(wfDir, 'locked.json'), 0o000);
+
+    await expect(
+      validateCommand.parseAsync(['--registered', 'locked'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+
+    const text = out();
+    expect(text).toContain("Error: the registered copy of 'locked' could not be read (EACCES:");
+    expect(text).toContain('Registered workflows: realm workflow list');
+    expect(text).not.toContain('    at ');
+    chmodSync(join(wfDir, 'locked.json'), 0o644);
+  });
+
+  it('T-U2 an EMPTY stored copy, and a DIRECTORY where a file belongs', async () => {
+    writeFileSync(join(wfDir, 'blank.json'), '', 'utf8');
+    await expect(
+      validateCommand.parseAsync(['--registered', 'blank'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+    expect(out()).toContain(
+      "Error: the registered copy of 'blank' is empty (0 bytes) — not a workflow",
+    );
+    expect(out()).not.toContain('    at ');
+  });
+
+  it('T-U3 a `null` JSON root is a refusal of the COPY, not a crash', async () => {
+    writeFileSync(join(wfDir, 'nul.json'), 'null', 'utf8');
+    await expect(
+      validateCommand.parseAsync(['--registered', 'nul'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+    expect(out()).toContain(
+      "Error: the registered copy of 'nul' is JSON but not a workflow object (it is null)",
+    );
+  });
+
+  it('T-U4 --json parity: valid:false, the store sentence as the single error, checks_not_run [], and NOTHING on stderr', async () => {
+    plant('locked2', stored({ id: 'locked2' }));
+    chmodSync(join(wfDir, 'locked2.json'), 0o000);
+
+    await expect(
+      validateCommand.parseAsync(['--registered', 'locked2', '--json'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+
+    const parsed = JSON.parse(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')) as {
+      valid: boolean;
+      errors: string[];
+      checks_not_run: unknown[];
+    };
+    expect(parsed.valid).toBe(false);
+    expect(parsed.errors).toHaveLength(1);
+    expect(parsed.errors[0]).toContain(
+      "the registered copy of 'locked2' could not be read (EACCES",
+    );
+    expect(parsed.checks_not_run).toEqual([]);
+    expect(errSpy.mock.calls).toHaveLength(0);
+    chmodSync(join(wfDir, 'locked2.json'), 0o644);
+  });
+
+  it('T-U5 the `:581` rethrow\u2019s population is EMPTY — every WorkflowError code get() can throw is handled above it', () => {
+    // Derived from the store\u2019s own table rather than remembered: probeClassToError mints
+    // exactly three codes and parseFailureError one, and the legacy mint is the fifth. Each has
+    // an arm ABOVE the rethrow, so nothing reaches the bug guard — which STAYS, as armor.
+    const FROM_GET = [
+      'STATE_WORKFLOW_NOT_FOUND',
+      'STATE_WORKFLOW_UNREADABLE',
+      'RESOURCE_FORMAT_INVALID',
+      'STATE_LEGACY_FORMAT',
+    ];
+    const src = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), 'validate.ts'),
+      'utf8',
+    );
+    const body = src.slice(src.indexOf('async function validateRegistered'));
+    const guardAt = body.indexOf('#123');
+    expect(guardAt).toBeGreaterThan(-1);
+    const aboveGuard = body.slice(0, guardAt);
+    for (const code of FROM_GET) {
+      expect(aboveGuard, `${code} must be handled above the #123 rethrow`).toContain(code);
+    }
   });
 
   it('C8 (issue #433) a stored copy with gate.choices: [] on a gate-trusted step is refused — message pin only, never a line cite (single-line JSON has none to give)', async () => {

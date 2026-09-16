@@ -414,6 +414,33 @@ export function classifyRunHealth(
   // with itself.
   const derivedPhase = deriveRunPhase(run);
 
+  /**
+   * issue #558 PR-T — this run's registered workflow copy could not be resolved by the CALLER
+   * (`opts.definitionError`). ONE builder, called on BOTH paths (the `gate_corruption` /
+   * `terminal_with_stale_gate` precedent, which are checked in both branches for the same
+   * reason): the class is about the COPY, not the phase, and branch 1 returns before the live
+   * path can run — so a terminal run whose copy cannot be read, exactly the run an operator is
+   * trying to dispose of, would otherwise report nothing at all (executed).
+   *
+   * NOTE (audit divergence, round-2 N-B1): the design record's literal carries
+   * `severity: 'warning'`. `RunHealthFinding` has NO `severity` field and none of the 13 other
+   * kinds sets one (TS2353, executed) — adding it is a decision about all 14 kinds, not a line in
+   * this PR. The label and the `--stuck` selection ARE the signal.
+   */
+  const definitionUnresolvableFinding = (): RunHealthFinding | undefined => {
+    const de = opts?.definitionError;
+    if (de === undefined) return undefined;
+    return {
+      kind: 'definition_unresolvable',
+      reason: `this run's workflow '${run.workflow_id}' cannot be read (${de.code}): ${de.message}`,
+      evidence: {
+        workflow_id: run.workflow_id,
+        code: de.code,
+        ...(de.class !== undefined ? { class: de.class } : {}),
+      },
+    };
+  };
+
   // Branch 1 — NARROWED first guard (issue #279, increment 1, PR-B, design record §6, explicitly
   // authorized): checked BEFORE the terminal short-circuit. A terminal run with a still-'pending'
   // finalizer_ledger entry gets EXACTLY these findings and returns immediately — no claim,
@@ -470,6 +497,11 @@ export function classifyRunHealth(
     // run_health on a terminal run, the frozen #279-R3 guard below — see the module doc).
     const terminalDowngrade = findStructuredOutputDowngrades(run);
     if (terminalDowngrade !== undefined) pendingFindings.push(terminalDowngrade);
+    // issue #558 PR-T — minted here as well as on the live path. Branch 1 returns [] for every
+    // other class of terminal record, so without this a terminal run whose workflow copy cannot
+    // be read — exactly the run an operator is trying to dispose of — reports nothing at all.
+    const terminalDefinitionFinding = definitionUnresolvableFinding();
+    if (terminalDefinitionFinding !== undefined) pendingFindings.push(terminalDefinitionFinding);
     if (pendingFindings.length > 0) return pendingFindings;
     // terminal ∧ no pending ledger entries ∧ not completed-with-failed-steps ∧ no recorded
     // structured-output downgrade ⇒ [] (byte-identical to pre-#279 behavior for every OTHER class
@@ -619,23 +651,9 @@ export function classifyRunHealth(
     });
   }
 
-  // issue #558 PR-T — on ANY run, live or terminal: the class is about the copy, not the phase.
-  if (opts?.definitionError !== undefined) {
-    const de = opts.definitionError;
-    findings.push({
-      kind: 'definition_unresolvable',
-      // NOTE (audit divergence): the prompt's literal carries `severity: 'warning'`.
-      // `RunHealthFinding` has NO `severity` field (kind/step?/reason/since?/idle_ms?/evidence?)
-      // and no other kind sets one — TS2353, executed. Dropped; the label and the --stuck
-      // selection ARE the signal.
-      reason: `this run's workflow '${run.workflow_id}' cannot be read (${de.code}): ${de.message}`,
-      evidence: {
-        workflow_id: run.workflow_id,
-        code: de.code,
-        ...(de.class !== undefined ? { class: de.class } : {}),
-      },
-    });
-  }
+  // issue #558 PR-T — the live path's half; branch 1 mints the SAME finding from the SAME builder.
+  const liveDefinitionFinding = definitionUnresolvableFinding();
+  if (liveDefinitionFinding !== undefined) findings.push(liveDefinitionFinding);
 
   return findings;
 }

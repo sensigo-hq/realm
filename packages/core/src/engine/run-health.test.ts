@@ -1391,3 +1391,65 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
     });
   });
 });
+
+// -----------------------------------------------------------------------------------------------
+// issue #558 PR-T — `definition_unresolvable`. Minted from `opts.definitionError` on BOTH paths:
+// the terminal branch returns before the live path can run, and a terminal run whose workflow copy
+// cannot be read is exactly the run an operator is trying to dispose of.
+describe('definition_unresolvable (issue #558 PR-T)', () => {
+  const ERR = {
+    code: 'STATE_WORKFLOW_UNREADABLE',
+    message: "the registered copy of 'wf' could not be read (EACCES: /x/wf.json)",
+    class: 'unreadable',
+  };
+
+  it('DU1 a LIVE run gets the finding, with the workflow id, the code and the class in evidence', () => {
+    const findings = classifyRunHealth(makeRun({ run_phase: 'running' }), { definitionError: ERR });
+    const f = findings.find((x) => x.kind === 'definition_unresolvable');
+    expect(f).toBeDefined();
+    expect(f?.reason).toBe(
+      "this run's workflow 'wf' cannot be read (STATE_WORKFLOW_UNREADABLE): " +
+        "the registered copy of 'wf' could not be read (EACCES: /x/wf.json)",
+    );
+    expect(f?.evidence).toEqual({
+      workflow_id: 'wf',
+      code: 'STATE_WORKFLOW_UNREADABLE',
+      class: 'unreadable',
+    });
+  });
+
+  it('DU2 a TERMINAL run gets it too — branch 1 returns [] for every other class of terminal record', () => {
+    const findings = classifyRunHealth(
+      makeRun({ terminal_state: true, run_phase: 'failed', failed_steps: ['s1'] }),
+      { definitionError: ERR },
+    );
+    expect(findings.map((f) => f.kind)).toContain('definition_unresolvable');
+  });
+
+  it('DU3 no definitionError ⇒ no such finding, on either path (the option is additive)', () => {
+    expect(
+      classifyRunHealth(makeRun({ run_phase: 'running' })).some(
+        (f) => f.kind === 'definition_unresolvable',
+      ),
+    ).toBe(false);
+    expect(
+      classifyRunHealth(makeRun({ terminal_state: true, run_phase: 'completed' })).some(
+        (f) => f.kind === 'definition_unresolvable',
+      ),
+    ).toBe(false);
+  });
+
+  it('DU4 the finding carries NO `severity` key — no kind in this module has one (round-2 N-B1)', () => {
+    const f = classifyRunHealth(makeRun({ run_phase: 'running' }), { definitionError: ERR }).find(
+      (x) => x.kind === 'definition_unresolvable',
+    );
+    expect(Object.keys(f!)).toEqual(['kind', 'reason', 'evidence']);
+  });
+
+  it('DU5 a class-less failure (a parse error carries only a path) still mints, with code alone', () => {
+    const f = classifyRunHealth(makeRun({ run_phase: 'running' }), {
+      definitionError: { code: 'RESOURCE_FORMAT_INVALID', message: 'not parseable JSON: boom' },
+    }).find((x) => x.kind === 'definition_unresolvable');
+    expect(f?.evidence).toEqual({ workflow_id: 'wf', code: 'RESOURCE_FORMAT_INVALID' });
+  });
+});
