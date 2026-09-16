@@ -13,6 +13,7 @@ import {
   deriveDefaultedSteps,
   deriveRunPhase,
   computeGateDueState,
+  getWorkflowForRun,
 } from '@sensigo/realm';
 // issue #221 correction: the CLI's first command→command import (sanctioned — harmless
 // module-level Command construction; `listCommand` is a standalone Commander object never
@@ -242,7 +243,14 @@ export async function inspectRun(
   // classifyRunHealth's `definition_unresolvable` finding.
   let definitionError: { code: string; message: string; class?: string } | undefined;
   try {
-    const def = await workflowStore.get(run.workflow_id);
+    // issue #558 PR-T (review fold C8) — through the ONE helper every other surface uses, so the
+    // line below carries the composed sentence: the class, the way out and the repair. It was
+    // the one surface with no remedy at all (the fresh walk). `terminalOk`: inspect reads any run.
+    const def = await getWorkflowForRun(workflowStore, run, {
+      retryVerb: 'inspect again',
+      verb: 'inspect',
+      terminalOk: true,
+    });
     workflowLabel = `${def.id} v${def.version}`;
     trustRoot = def.trust_root;
     definition = def;
@@ -464,17 +472,14 @@ export async function inspectRun(
 
   if (definitionMissing) {
     lines.push('');
-    // issue #558 PR-T — forked by CLASS from the store's own table. "not found" was printed for
-    // EVERY failure, including an EACCES copy that exists, a corrupt copy and a legacy record.
-    const detail = definitionError?.message ?? '';
+    // issue #558 PR-T — the helper's composed sentence already names the class ("could not be
+    // read (EACCES: …)", "is not parseable JSON", "was registered with an older version"), the
+    // way out and the repair — a class prefix here said "could not be read" twice (executed on
+    // the pre-fold build). The bare "not found" line survives only for a non-WorkflowError escape.
     lines.push(
-      definitionError?.code === 'STATE_WORKFLOW_UNREADABLE'
-        ? `(workflow definition could not be read: ${detail} \u2014 showing run record only)`
-        : definitionError?.code === 'RESOURCE_FORMAT_INVALID'
-          ? `(workflow definition is corrupt: ${detail} \u2014 showing run record only)`
-          : definitionError?.code === 'STATE_LEGACY_FORMAT'
-            ? `(workflow definition is a legacy record: ${detail} \u2014 showing run record only)`
-            : '(workflow definition not found \u2014 showing run record only)',
+      definitionError !== undefined
+        ? `(showing run record only \u2014 ${definitionError.message})`
+        : '(workflow definition not found \u2014 showing run record only)',
     );
   }
 

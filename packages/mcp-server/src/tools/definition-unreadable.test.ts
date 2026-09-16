@@ -1,6 +1,7 @@
 // issue #558 PR-T — the MCP half of the terminal conjunct. `execute_step`, `append_trace` and
 // `submit_human_response` read the run's definition BEFORE their own terminal check, so on a
 // terminal run their remedy ("retry") is a falsity. They do NOT pass `terminalOk`.
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { getWorkflowForRun, WorkflowError } from '@sensigo/realm';
@@ -83,5 +84,15 @@ describe('the MCP tools’ (retryVerb, verb) pair (issue #558 PR-T)', () => {
       expect(call, `${f} must name the bare verb`).toContain("verb: 'retry'");
       expect(call, `${f} must NOT pass terminalOk`).not.toContain('terminalOk');
     }
+  });
+  it('WITNESS get_run_state narrows the definition failure with instanceof — never a duck-typed `err as { code?`', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const src = readFileSync(
+      join(fileURLToPath(new URL('.', import.meta.url)), 'get-run-state.ts'),
+      'utf8',
+    );
+    expect(src).not.toMatch(/err as \{\s*code\?:/);
+    expect(src).toContain('err instanceof WorkflowError');
   });
 });

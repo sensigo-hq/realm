@@ -578,7 +578,13 @@ async function validateRegistered(
         process.exit(1);
       }
       console.error(`Error: ${err.message}`);
-      console.error('Registered workflows: realm workflow list');
+      // Review fold C21 (walk 5): the not-found pointer was printed here too, and `workflow list`'s
+      // TABLE omits an unreadable copy — a correct id was made to look like a typo. This copy IS
+      // registered; the census ⚠ line is where it appears.
+      // (C23, walk 6: "marks it ⚠" sent readers looking for a ⚠ inside the table.)
+      console.error(
+        'This copy IS registered — realm workflow list counts it under "could not be read" instead of listing it.',
+      );
       process.exit(1);
     }
     if (!(err instanceof WorkflowError)) {

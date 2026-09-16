@@ -154,8 +154,10 @@ carries `workflow_id`, the error `code`, and `class` when the failure had one. *
 `get_run_state` produces it for LIVE, non-gate-waiting runs only — a terminal run's `run_health`
 is hard-zeroed by the frozen #279-R3 guard (#331 is its own revisit condition) and a run with an
 open `pending_gate` takes the `awaiting_human` branch, which never reads the definition. The CLI's
-`realm run inspect` and `realm run list --stuck` carry the finding for EVERY run, terminal
-included. The way out is the one the CLI prints beside the refusal: end the run with
+`realm run inspect` and `realm run list --stuck` mint it for every LIVE run, gate-waiting
+included — there the `--stuck` label points at `realm run inspect`, whose sentence carries the
+repair and the answer command (`abandon` refuses a gate-waiting run); a terminal run's copy
+matters only to `replay`/`drain`, which name the repair themselves. The way out is the one the CLI prints beside the refusal: end the run with
 `realm run abandon <run-id>`, or — if the run is waiting on a human gate — answer the gate.
 
 **`structured_output_downgraded` run-health finding (issue #316):** the remedy for the

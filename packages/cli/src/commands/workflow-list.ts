@@ -68,13 +68,20 @@ export const workflowListCommand = new Command('list')
       return;
     }
 
-    const rows = sorted.map((w) => ({
-      id: w.id,
-      name: w.name,
-      version: String(w.version),
-      origin: w.origin ?? '-',
-      schema: schemaCell(w.schema_version),
-    }));
+    const rows = sorted.map((w) => {
+      // A legacy record (`{ id }` alone — #427 lists it; its SCHEMA column is the disclosure) has
+      // no name and no version: the type says string, the file does not. Read through a Partial
+      // view so the table renders `-` instead of dying at `.length` (executed on main with
+      // `{"id":"w1"}`: a raw TypeError — the fresh walk's T4; review fold C10).
+      const partial: Partial<Pick<typeof w, 'name' | 'version'>> = w;
+      return {
+        id: w.id,
+        name: partial.name ?? '-',
+        version: partial.version === undefined ? '-' : String(partial.version),
+        origin: w.origin ?? '-',
+        schema: schemaCell(w.schema_version),
+      };
+    });
 
     const widths = {
       id: Math.max(2, ...rows.map((r) => r.id.length)),
@@ -91,7 +98,20 @@ export const workflowListCommand = new Command('list')
         `${pad(r.id, widths.id)}  ${pad(r.name, widths.name)}  ${pad(r.version, widths.version)}  ${pad(r.origin, widths.origin)}  ${r.schema}`,
       );
     }
-    console.log(`\n${rows.length} ${rows.length === 1 ? 'workflow' : 'workflows'} registered.`);
+    // issue #558 PR-T (review fold C7) — the count names what it could NOT count: `validate
+    // --registered` sends an operator here for a copy that exists but cannot be read, and a bare
+    // "0 workflows registered." then contradicts the ⚠ line beneath it (the fresh walk's minor).
+    // No "(below)": the ⚠ detail is stderr, and a stdout-only reader would be pointed at nothing
+    // (walk 4; review fold C19).
+    const registryBroken = unreadable.some((u) => u.class === 'registry_broken');
+    const unreadableSuffix = registryBroken
+      ? '; the registry itself could not be read'
+      : unreadable.length > 0
+        ? `; ${unreadable.length} ${unreadable.length === 1 ? 'file' : 'files'} in the registry could not be read`
+        : '';
+    console.log(
+      `\n${rows.length} ${rows.length === 1 ? 'workflow' : 'workflows'} registered${unreadableSuffix}.`,
+    );
 
     // The census lines go to stderr: they are not part of the listing a script would consume,
     // and an operator piping stdout should still see them.
@@ -145,14 +165,20 @@ export const workflowListCommand = new Command('list')
           },
         ];
         for (const g of groups) {
-          const members = unreadable.filter((u) => u.class === g.cls);
-          if (members.length === 0) continue;
-          const names = members.map((u) => u.file).join(', ');
-          const errno = members[0]?.errno ?? 'unknown';
-          console.warn(
-            (members.length === 1 ? g.one(names, errno) : g.many(members.length, names, errno)) +
-              TAIL,
-          );
+          const inClass = unreadable.filter((u) => u.class === g.cls);
+          if (inClass.length === 0) continue;
+          // One sentence per (class, errno): two files failing for DIFFERENT reasons never share
+          // a sentence that names only one of them (executed: an EACCES file was reported under
+          // a sibling's ELOOP).
+          const errnos = [...new Set(inClass.map((u) => u.errno ?? 'unknown'))];
+          for (const errno of errnos) {
+            const members = inClass.filter((u) => (u.errno ?? 'unknown') === errno);
+            const names = members.map((u) => u.file).join(', ');
+            console.warn(
+              (members.length === 1 ? g.one(names, errno) : g.many(members.length, names, errno)) +
+                TAIL,
+            );
+          }
         }
       }
     }

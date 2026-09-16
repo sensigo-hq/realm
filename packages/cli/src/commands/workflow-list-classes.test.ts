@@ -3,7 +3,7 @@
 // chmod-000 file was reported as unparseable (executed on main), and a `null`-root entry or an
 // unreadable registry directory crashed the command with a stack trace.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workflowListCommand } from './workflow-list.js';
@@ -121,6 +121,42 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
     expect(lines).toContain(`⚠ 2 files in the registry could not be parsed: b.json, c.json${TAIL}`);
   });
 
+  it('K7 two unreadable files with DIFFERENT errnos get one sentence EACH — never one sentence naming one errno for both', async () => {
+    plant('a');
+    chmodSync(join(wfDir, 'a.json'), 0o000);
+    // A symlink loop: `statSync` fails with ELOOP — a second, different errno in the same class.
+    symlinkSync(join(wfDir, 'b.json'), join(wfDir, 'b.json'));
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit');
+    }) as never);
+
+    await workflowListCommand.parseAsync([], { from: 'user' });
+
+    // The review's probe on the closer's build: `2 files … could not be read (ELOOP): b.json, a.json`
+    // — the EACCES file reported under its sibling's errno.
+    expect(stderr()).toContain(
+      `⚠ 1 file in the registry could not be read (EACCES): a.json${TAIL}`,
+    );
+    expect(stderr()).toContain(`⚠ 1 file in the registry could not be read (ELOOP): b.json${TAIL}`);
+    expect(stderr()).not.toContain('2 files in the registry could not be read');
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('K8 a LEGACY record with no name and no version is LISTED with `-` cells — never a crash (main died at `.length`; review fold C10)', async () => {
+    writeFileSync(join(wfDir, 'wleg.json'), '{"id":"wleg"}', 'utf8');
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit');
+    }) as never);
+
+    await workflowListCommand.parseAsync([], { from: 'user' });
+
+    const out = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    const row = out.split('\n').find((l: string) => l.startsWith('wleg')) ?? '';
+    expect(row).toMatch(/^wleg\s+-\s+-\s+-\s+/);
+    expect(out).toContain('1 workflow registered.');
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it('K6 an unreadable REGISTRY DIRECTORY prints exactly ONE line, no table, exit 0 (main crashed at readdirSync)', async () => {
     plant('a');
     chmodSync(wfDir, 0o000);
@@ -133,7 +169,7 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
     const lines = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]));
     expect(lines).toEqual([`⚠ the workflow registry at ${wfDir} cannot be read (EACCES)${TAIL}`]);
     expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain(
-      '0 workflows registered.',
+      '0 workflows registered; the registry itself could not be read.',
     );
     expect(exitSpy).not.toHaveBeenCalled();
   });

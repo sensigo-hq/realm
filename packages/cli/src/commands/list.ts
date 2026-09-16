@@ -148,11 +148,13 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
       return f.step !== undefined && f.step !== '' ? `${f.step}=${label}` : label;
     }
     // issue #558 PR-T — the class, then the way out. `evidence.class` is the probe's own class
-    // when there was one; the code otherwise (a parse failure has no probe class).
+    // when there was one, the closure's word for the parse/legacy classes otherwise.
     case 'definition_unresolvable': {
       const cls = f.evidence?.['class'];
-      const code = f.evidence?.['code'];
-      const which = typeof cls === 'string' ? cls : typeof code === 'string' ? code : 'unknown';
+      // Review fold C15: a WORD or `unknown`, never the error CODE — the slot C2 exists to keep
+      // human (the audit's contradiction question: the closure's non-WorkflowError escape carried
+      // no class and this fallback printed `(ENGINE_INTERNAL)` one arm over).
+      const which = typeof cls === 'string' ? cls : 'unknown';
       return `definition_unresolvable (${which})`;
     }
     default: {
@@ -203,6 +205,16 @@ export function renderCauseSegment(result: FailedAttemptReadResult): string {
 }
 
 /**
+ * issue #558 PR-T — what the `--stuck` definition probe reports per workflow id: a typed failure
+ * (which becomes a `definition_unresolvable` finding) or `uninspected` for a copy over the listing
+ * cap (which becomes the stderr footer and NEVER a finding — an unread copy is a check that did not
+ * run, not a broken copy; review fold C4).
+ */
+export type StuckDefinitionProbe =
+  | { code: string; message: string; class?: string }
+  | { uninspected: { bytes: number; capBytes: number } };
+
+/**
  * Lists runs from the store, sorted by updated_at descending.
  * @param workflowId        Optional filter — only show runs from this workflow.
  * @param store             Store holding run records.
@@ -218,6 +230,9 @@ export function renderCauseSegment(result: FailedAttemptReadResult): string {
  *                          `JsonFileStore` and its real `runsDirPath` getter) constructs this and
  *                          passes it in; `undefined` means best-effort skip — no cause attribution
  *                          — never a crash. `listRuns` never constructs one itself.
+ * @param workflowProbe     issue #558 PR-T: the `--stuck` definition probe (memoised per workflow
+ *                          id by the caller, which holds the registrar); see
+ *                          {@link StuckDefinitionProbe}. `undefined` ⇒ zero findings, no footer.
  * @returns                 Formatted output string.
  */
 export async function listRuns(
@@ -227,15 +242,15 @@ export async function listRuns(
   stuck?: boolean,
   idleThresholdMs?: number,
   failedAttemptStore?: FailedAttemptStore,
-  workflowProbe?: (
-    workflowId: string,
-  ) => { code: string; message: string; class?: string } | undefined,
+  workflowProbe?: (workflowId: string) => StuckDefinitionProbe | undefined,
 ): Promise<string> {
   const runs = await store.list(workflowId);
   const effectiveIdleThresholdMs = idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
 
   let filtered = runs;
   const findingsByRun = new Map<string, RunHealthFinding[]>();
+  // issue #558 PR-T (review fold C4): copies over the listing cap, by workflow id — the footer.
+  const uninspected = new Map<string, { bytes: number; capBytes: number; runs: number }>();
   if (stuck === true) {
     filtered = runs.filter((r) => {
       // issue #221: classifyRunHealth is the SAME shared predicate get_run_state/inspect (the
@@ -248,7 +263,13 @@ export async function listRuns(
       // issue #558 PR-T: the 7th parameter (the #219 injection precedent) — `listRuns` holds no
       // registrar, so the --stuck action constructs the probe and passes it; `undefined` ⇒ zero
       // `definition_unresolvable` findings, never a crash.
-      const definitionError = workflowProbe?.(r.workflow_id);
+      const probed = workflowProbe?.(r.workflow_id);
+      if (probed !== undefined && 'uninspected' in probed) {
+        const entry = uninspected.get(r.workflow_id) ?? { ...probed.uninspected, runs: 0 };
+        entry.runs += 1;
+        uninspected.set(r.workflow_id, entry);
+      }
+      const definitionError = probed !== undefined && 'code' in probed ? probed : undefined;
       const findings = classifyRunHealth(r, {
         idleThresholdMs: effectiveIdleThresholdMs,
         ...(definitionError !== undefined ? { definitionError } : {}),
@@ -279,10 +300,43 @@ export async function listRuns(
     filtered = runs.filter((r) => deriveRunPhase(r) === statusFilter);
   }
 
+  // issue #558 PR-T (review fold C4) — the listing cap's disclosure. A copy over the cap was
+  // never read, so nothing is KNOWN about it: it is not a finding (a finding claims the run needs
+  // action — the fresh walk executed a VALID 5 MB copy rendered as `definition_unresolvable`
+  // with `realm run abandon` as its remedy), it is a check that did not run, stated (the #553
+  // `checks not run` shape) — on stderr, so the row shape CS1's reapers parse stays untouched,
+  // and BEFORE the empty-list early return: a run listed for nothing else still has its copy named.
+  // Review fold C18 (walk 4): ONE line per definition, only facts and pasteable commands — the
+  // earlier "its runs are listed here only for some other finding" sat beside a list with none of
+  // them in it, and two definitions on one line degraded the commands to an `<id>` placeholder.
+  if (uninspected.size > 0) {
+    for (const [id, u] of uninspected) {
+      const capMb = Math.round(u.capBytes / (1024 * 1024));
+      const one = u.runs === 1;
+      console.error(
+        `⚠ workflow definition ${id} (${(u.bytes / (1024 * 1024)).toFixed(1)} MiB, ${u.runs} run${one ? '' : 's'}) ` +
+          `was not inspected by --stuck (over the ${capMb} MiB listing cap): ` +
+          `${one ? 'this run was' : 'these runs were'} not checked for a broken definition; ` +
+          `realm run list --workflow ${id} lists ${one ? 'it' : 'them'}, ` +
+          `realm workflow validate --registered ${id} reads the copy.`,
+      );
+    }
+  }
+
+  // Review fold C20 (walk 5): the stdout verdict says when the sweep was partial — the ⚠ lines
+  // are stderr, and a reader of stdout alone was handed an unqualified clean bill of health for
+  // a store whose over-cap copies were never inspected. No positional word: stderr may be gone.
+  // Review fold C22 (walk 6): the ids ride the stdout verdict too — a stdout-only reader had a
+  // count and no way to learn WHICH definitions (the ⚠ lines are stderr).
+  const skipped =
+    uninspected.size > 0
+      ? `; ${uninspected.size} definition${uninspected.size === 1 ? '' : 's'} not inspected: ${[...uninspected.keys()].join(', ')}`
+      : '';
+
   if (filtered.length === 0) {
     const scope = workflowId !== undefined ? ` for workflow '${workflowId}'` : '';
     return stuck === true
-      ? `No stuck runs found${scope} (threshold ${formatThreshold(effectiveIdleThresholdMs)}).`
+      ? `No stuck runs found${scope} (threshold ${formatThreshold(effectiveIdleThresholdMs)}${skipped}).`
       : `No runs found${scope}.`;
   }
 
@@ -290,7 +344,7 @@ export async function listRuns(
 
   const lines: string[] = [];
   if (stuck === true) {
-    lines.push(`Stuck runs (threshold ${formatThreshold(effectiveIdleThresholdMs)}):`);
+    lines.push(`Stuck runs (threshold ${formatThreshold(effectiveIdleThresholdMs)}${skipped}):`);
   }
   for (const run of filtered) {
     // issue #279 (increment 2, PR-C — D-3 leg vi): derive ONCE per run, used for both the
@@ -380,7 +434,10 @@ export async function listRuns(
         .filter((f) => !groupedKinds.has(f.kind))
         .map((f) =>
           f.kind === 'definition_unresolvable'
-            ? `${renderFindingLabel(f) ?? ''} (realm run abandon ${run.id})`
+            ? // A gate-waiting run cannot be abandoned (abandon-run.ts refuses it) — its copy
+              // must be repaired before the gate can be answered, and `inspect` carries that
+              // sentence with the path and the answer command (review fold C13).
+              `${renderFindingLabel(f) ?? ''} (realm run ${derivedPhase === 'gate_waiting' ? 'inspect' : 'abandon'} ${run.id})`
             : renderFindingLabel(f),
         )
         .filter((l): l is string => l !== undefined && l !== '');
@@ -452,53 +509,62 @@ export const listCommand = new Command('list')
       // issue #558 PR-T — the --stuck probe closure. The 4 MB parse cap lives HERE and NOWHERE
       // else: `get()` stays uncapped (#552's door B, its Resolution). Memoised per workflow id
       // per invocation — a hundred runs of one workflow cost one probe.
-      let workflowProbe:
-        | ((workflowId: string) => { code: string; message: string; class?: string } | undefined)
-        | undefined;
+      let workflowProbe: ((workflowId: string) => StuckDefinitionProbe | undefined) | undefined;
       if (opts.stuck === true) {
-        const { JsonWorkflowStore, probeClassToError, STUCK_DEFINITION_PARSE_CAP_BYTES } =
-          await import('@sensigo/realm');
+        const {
+          JsonWorkflowStore,
+          WorkflowError,
+          probeClassToError,
+          STUCK_DEFINITION_PARSE_CAP_BYTES,
+        } = await import('@sensigo/realm');
         const wfStore = new JsonWorkflowStore();
-        const memo = new Map<
-          string,
-          { code: string; message: string; class?: string } | undefined
-        >();
+        const memo = new Map<string, StuckDefinitionProbe | undefined>();
         workflowProbe = (workflowId: string) => {
           if (memo.has(workflowId)) return memo.get(workflowId);
-          let result: { code: string; message: string; class?: string } | undefined;
+          let result: StuckDefinitionProbe | undefined;
           const probed = wfStore.probe(workflowId);
           if (!probed.ok) {
             const err = probeClassToError(probed, workflowId);
             result = { code: err.code, message: err.message, class: probed.class };
           } else if (probed.bytes > STUCK_DEFINITION_PARSE_CAP_BYTES) {
-            // Zero bytes read. A #557 bomb is NAMED by its size, never parsed.
-            //
-            // `class: 'too_large'` is the closure's OWN word, beside the message it also authors
-            // here. Without it this result and a corrupt copy both render
-            // `definition_unresolvable (RESOURCE_FORMAT_INVALID)` on the --stuck line and an
-            // operator cannot tell "too big to parse" from "broken" on the one surface this
-            // deliverable exists for (executed — both rows were byte-identical).
-            const mb = (probed.bytes / (1024 * 1024)).toFixed(1);
+            // Zero bytes read. A #557 bomb is NAMED by its size, never parsed — and never JUDGED:
+            // an unread copy is a check that did not run, not a broken copy (the fresh walk
+            // executed a VALID 5 MB copy listed as `definition_unresolvable` with `realm run
+            // abandon` as its remedy). `listRuns` turns this into the stderr footer, not a row.
             result = {
-              code: 'RESOURCE_FORMAT_INVALID',
-              class: 'too_large',
-              message: `too large: ${mb} MB — not parsed; realm workflow validate --registered ${workflowId} parses it`,
+              uninspected: { bytes: probed.bytes, capBytes: STUCK_DEFINITION_PARSE_CAP_BYTES },
             };
           } else {
             try {
               wfStore.getSync(workflowId);
             } catch (err) {
-              const we = err as {
-                code?: string;
-                message?: string;
-                details?: Record<string, unknown>;
-              };
-              const cls = we.details?.['class'];
-              result = {
-                code: we.code ?? 'ENGINE_INTERNAL',
-                message: we.message ?? String(err),
-                ...(typeof cls === 'string' ? { class: cls } : {}),
-              };
+              // Narrowed with `instanceof` — never duck-typed on `err.code` (house rule). A
+              // non-WorkflowError escape (a TOCTOU remnant) is reported, never a crash.
+              if (err instanceof WorkflowError) {
+                const cls = (err.details as Record<string, unknown> | undefined)?.['class'];
+                // The class slot on the --stuck line holds a WORD for every class (executed: a
+                // corrupt copy rendered `(RESOURCE_FORMAT_INVALID)` beside `(missing)`) — the
+                // parse and legacy classes carry no probe class, so the closure names them.
+                const word =
+                  typeof cls === 'string'
+                    ? cls
+                    : err.code === 'RESOURCE_FORMAT_INVALID'
+                      ? 'corrupt'
+                      : err.code === 'STATE_LEGACY_FORMAT'
+                        ? 'legacy'
+                        : undefined;
+                result = {
+                  code: err.code,
+                  message: err.message,
+                  ...(word !== undefined ? { class: word } : {}),
+                };
+              } else {
+                result = {
+                  code: 'ENGINE_INTERNAL',
+                  message: err instanceof Error ? err.message : String(err),
+                  class: 'unknown',
+                };
+              }
             }
           }
           memo.set(workflowId, result);

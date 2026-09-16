@@ -441,14 +441,26 @@ export async function getWorkflowForRun(
      * `withRetry: false` is the terminal branch: nothing to retry, but the COPY is still broken
      * for every other run of that workflow, so the repair is still worth naming.
      */
+    // A terminal run's leftover pending_gate (the #282 zombie class) is not answerable — only a
+    // LIVE run's gate shapes the text below.
+    const gate = run.terminal_state === true ? undefined : run.pending_gate;
+    const answer =
+      gate === undefined
+        ? undefined
+        : `realm run respond ${run.id} --gate ${gate.gate_id} --choice <one of: ${gate.choices.join(', ')}>`;
+    // The repair's closing act: the retry verb for a gate-less run; for a gate-waiting run the
+    // gate itself, since that is what the operator was trying to do (review fold C12).
+    const then = answer === undefined ? opts.retryVerb : `answer the gate (${answer})`;
     const repairClause = (withRetry: boolean): string | undefined => {
       if (err.code === 'STATE_WORKFLOW_UNREADABLE')
-        return `To repair: fix ${path}${withRetry ? ` and ${opts.retryVerb}` : ''}.`;
+        return `To repair: fix ${path}${withRetry ? ` and ${then}` : ''}.`;
       if (err.code === 'RESOURCE_FORMAT_INVALID')
+        // Re-register is the ONE repair. "or remove the corrupt copy" was offered here and repairs
+        // nothing — after `rm` the next attempt says "Workflow not found" and asks for the register
+        // the operator may have no source for (executed; the fresh walk's T5). Review fold C11.
         return (
           `To repair: re-register the workflow from its source ` +
-          `(realm workflow register <path-to-workflow>) or remove the corrupt copy at ${path}` +
-          `${withRetry ? `, then ${opts.retryVerb}` : ''}.`
+          `(realm workflow register <path-to-workflow>)${withRetry ? `, then ${then}` : ''}.`
         );
       // `missing` self-remedies (the #456 hedge / the agent-created sentence) and `legacy`
       // carries its own "Re-register it with: …" — neither gets a second repair clause.
@@ -474,12 +486,26 @@ export async function getWorkflowForRun(
      * own sentence instead. PR-V replaces the gate fork's tail with the void (MASTER-PLAN rule
      * 15); `realm run abandon` has exactly one option today, so nothing else is printable.
      */
+    // Review fold C12 — the gate fork. The earlier text offered "answer it (realm run respond …)"
+    // as the way out: the exact command that had just failed on this unreadable copy, and it named
+    // "#558 PR-V" to an operator, which reads as a flag to search for (the fresh walk's T11/T12).
+    // Now the clause states the two facts — the gate cannot be answered until the copy reads, and
+    // `realm run abandon` refuses a gate-waiting run (abandon-run.ts) — and the REPAIR clause ends
+    // in the answer command. PR-V's void replaces this sentence (its sweep list carries it).
     const disposalSentence = (leadIn: string): string =>
-      run.pending_gate === undefined
+      gate === undefined
         ? `${leadIn} realm run abandon ${run.id}.`
-        : `This run is waiting on human gate '${run.pending_gate.step_name}' — answer it ` +
-          `(realm run respond ${run.id} --gate ${run.pending_gate.gate_id} --choice <one of: ` +
-          `${run.pending_gate.choices.join(', ')}>); ending a gate-waiting run is #558 PR-V.`;
+        : `This run is waiting on human gate '${gate.step_name}', which cannot be answered until ` +
+          `its workflow can be read; realm run abandon refuses a run that is waiting on a gate.`;
+
+    // Reached with `terminal_state` only through `terminalOk` (the sites whose happy path IS a
+    // terminal run — drain, replay, resume, inspect): there is nothing left to END, so the
+    // disposal clause is omitted — `realm run abandon` refuses a finished run (executed on the
+    // pre-fold build: drain and replay both printed "To end the run: realm run abandon <id>"
+    // for a failed run, and abandon then said "cannot abandon a finished run"). Review fold C9.
+    const terminal = run.terminal_state === true;
+    const join = (...parts: Array<string | undefined>): string =>
+      parts.filter((p): p is string => p !== undefined && p !== '').join(' ');
 
     switch (err.code) {
       case 'STATE_WORKFLOW_NOT_FOUND':
@@ -490,7 +516,7 @@ export async function getWorkflowForRun(
           ? copy(
               `Workflow '${run.workflow_id}' not found — this run's workflow was created by an ` +
                 `agent (create_workflow) and its stored copy is gone; there is no source file ` +
-                `to register. ${disposalSentence('To end the run:')}`,
+                `to register.${terminal ? '' : ` ${disposalSentence('To end the run:')}`}`,
             )
           : copy(
               // The #456 arm, pinned whole-message by `run-attach.test.ts` C12 and 28 substring
@@ -501,15 +527,36 @@ export async function getWorkflowForRun(
             );
       case 'STATE_WORKFLOW_UNREADABLE':
         throw copy(
-          `${err.message}. This run's workflow cannot be read. ` +
-            `${disposalSentence('To end the run:')} ${repairClause(true) ?? ''}`,
+          join(
+            `${err.message}.`,
+            terminal
+              ? undefined
+              : gate === undefined
+                ? `This run's workflow cannot be read. ${disposalSentence('To end the run:')}`
+                : disposalSentence(''),
+            repairClause(true),
+          ),
         );
       case 'RESOURCE_FORMAT_INVALID':
         throw copy(
-          `${err.message}. ${disposalSentence('To end the run:')} ${repairClause(true) ?? ''}`,
+          join(
+            `${err.message}.`,
+            terminal ? undefined : disposalSentence('To end the run:'),
+            repairClause(true),
+          ),
         );
       case 'STATE_LEGACY_FORMAT':
-        throw copy(`${err.message}. ${disposalSentence('To end the run instead:')}`);
+        // The store's own message already carries the re-register remedy (wrapping it again would
+        // double-remedy — this function's JSDoc); a gate-waiting run is told what comes after it.
+        throw copy(
+          join(
+            `${err.message}.`,
+            terminal ? undefined : disposalSentence('To end the run instead:'),
+            terminal || answer === undefined
+              ? undefined
+              : `Once re-registered, answer the gate (${answer}).`,
+          ),
+        );
       default:
         throw err;
     }

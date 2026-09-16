@@ -101,7 +101,8 @@ describe('realm workflow list (issue #427)', () => {
     expect(stderr()).toContain(
       '⚠ 1 file in the registry could not be parsed: garbage.json — realm cannot audit what it cannot read.',
     );
-    expect(stdout()).toContain('1 workflow registered.'); // singular, and the good one still lists
+    // singular, the good one still lists, and the count names what it could not count (C7)
+    expect(stdout()).toContain('1 workflow registered; 1 file in the registry could not be read.');
     expect(exitSpy).not.toHaveBeenCalled();
   });
 

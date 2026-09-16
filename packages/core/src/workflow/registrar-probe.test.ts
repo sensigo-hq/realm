@@ -379,6 +379,43 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     );
   });
 
+  it('C-k (review fold C9) a TERMINAL run through a terminalOk site never gets "To end the run" — abandon refuses a finished run — while the repair survives, whole-message', async () => {
+    const unreadable = {
+      get: async () => {
+        throw new WorkflowError(
+          "the registered copy of 'gate-558' could not be read (EACCES: /x)",
+          {
+            code: 'STATE_WORKFLOW_UNREADABLE',
+            category: 'STATE',
+            agentAction: 'stop',
+            retryable: false,
+            details: { class: 'unreadable', errno: 'EACCES', path: '/x' },
+          },
+        );
+      },
+    };
+    const err = (await getWorkflowForRun(unreadable, TERMINAL, {
+      retryVerb: 'drain again',
+      verb: 'drain',
+      terminalOk: true,
+    }).catch((e: unknown) => e)) as WorkflowError;
+    expect(err.message).toBe(
+      "the registered copy of 'gate-558' could not be read (EACCES: /x). To repair: fix /x and drain again.",
+    );
+    expect(err.message).not.toContain('To end the run');
+    // The LIVE control for the same store: the way out is back.
+    const live = (await getWorkflowForRun(
+      unreadable,
+      { ...TERMINAL, terminal_state: false },
+      {
+        retryVerb: 'drain again',
+        verb: 'drain',
+        terminalOk: true,
+      },
+    ).catch((e: unknown) => e)) as WorkflowError;
+    expect(live.message).toContain(`To end the run: realm run abandon ${TERMINAL.id}.`);
+  });
+
   it('C-d the disposal fork, gate-LESS: "To end the run: realm run abandon <id>."', async () => {
     await shape.empty();
     const err = (await getWorkflowForRun(store, makeRun(), RESPOND).catch(
@@ -387,24 +424,57 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     expect(err.message).toBe(
       "the registered copy of 'gate-558' is empty (0 bytes) — not a workflow. " +
         'To end the run: realm run abandon run-1. To repair: re-register the workflow from its ' +
-        'source (realm workflow register <path-to-workflow>) or remove the corrupt copy at ' +
-        `${file}, then respond again.`,
+        'source (realm workflow register <path-to-workflow>), then respond again.',
     );
   });
 
-  it('C-e the disposal fork, gate-WAITING: the LEAD-IN forks too — it names the gate, the choices and the PR-V boundary, and never says "To end the run: this run is waiting…"', async () => {
+  it('C-e the disposal fork, gate-WAITING (corrupt): the gate cannot be answered until the copy reads, abandon refuses, and the REPAIR ends in the answer command — never the failed command as the way out, never a ticket reference (review fold C12)', async () => {
     await shape.empty();
     const err = (await getWorkflowForRun(store, GATE_WAITING, RESPOND).catch(
       (e: unknown) => e,
     )) as WorkflowError;
     expect(err.message).toBe(
       "the registered copy of 'gate-558' is empty (0 bytes) — not a workflow. " +
-        "This run is waiting on human gate 'confirm' — answer it (realm run respond run-1 " +
-        '--gate g1 --choice <one of: approve, reject>); ending a gate-waiting run is #558 PR-V. ' +
+        "This run is waiting on human gate 'confirm', which cannot be answered until its " +
+        'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
         'To repair: re-register the workflow from its source (realm workflow register ' +
-        `<path-to-workflow>) or remove the corrupt copy at ${file}, then respond again.`,
+        '<path-to-workflow>), then answer the gate (realm run respond run-1 --gate g1 ' +
+        '--choice <one of: approve, reject>).',
     );
-    expect(err.message).not.toContain('To end the run: this run is waiting');
+    expect(err.message).not.toContain('To end the run');
+    expect(err.message).not.toContain('PR-V');
+    expect(err.message).not.toContain('answer it (');
+  });
+
+  it('C-e2 the gate fork on an UNREADABLE copy: "fix <path> and answer the gate (…)" — the per-member twin of C-e', async () => {
+    await shape.chmod000();
+    const err = (await getWorkflowForRun(store, GATE_WAITING, RESPOND).catch(
+      (e: unknown) => e,
+    )) as WorkflowError;
+    expect(err.message).toBe(
+      `the registered copy of 'gate-558' could not be read (EACCES: ${file}). ` +
+        "This run is waiting on human gate 'confirm', which cannot be answered until its " +
+        'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
+        `To repair: fix ${file} and answer the gate (realm run respond run-1 --gate g1 ` +
+        '--choice <one of: approve, reject>).',
+    );
+    expect(err.message).not.toContain("This run's workflow cannot be read.");
+  });
+
+  it('C-e3 the gate fork on a LEGACY copy: the store\'s own re-register remedy once, then "Once re-registered, answer the gate (…)"', async () => {
+    await shape.legacy();
+    const err = (await getWorkflowForRun(store, GATE_WAITING, RESPOND).catch(
+      (e: unknown) => e,
+    )) as WorkflowError;
+    expect(err.message).toBe(
+      'This workflow was registered with an older version of Realm. ' +
+        'Re-register it with: realm workflow register <path-to-workflow>. ' +
+        "This run is waiting on human gate 'confirm', which cannot be answered until its " +
+        'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
+        'Once re-registered, answer the gate (realm run respond run-1 --gate g1 ' +
+        '--choice <one of: approve, reject>).',
+    );
+    expect(err.message.split('realm workflow register').length - 1).toBe(1); // one remedy, never doubled
   });
 
   it('C-f the suffix heuristic: an agent-shaped id gets the no-source sentence, a plain id keeps the #456 hedge, and a HUMAN id carrying a 16-hex suffix gets the agent one too (a SHAPE heuristic, stated)', async () => {

@@ -1393,9 +1393,10 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
 });
 
 // -----------------------------------------------------------------------------------------------
-// issue #558 PR-T — `definition_unresolvable`. Minted from `opts.definitionError` on BOTH paths:
-// the terminal branch returns before the live path can run, and a terminal run whose workflow copy
-// cannot be read is exactly the run an operator is trying to dispose of.
+// issue #558 PR-T — `definition_unresolvable`. Minted from `opts.definitionError` on the LIVE
+// path for non-gate-waiting runs only (review fold C6): a terminal run's copy matters only to
+// replay/drain, and a gate-waiting run's way out is its gate — `abandon`, the finding's one
+// remedy, refuses both.
 describe('definition_unresolvable (issue #558 PR-T)', () => {
   const ERR = {
     code: 'STATE_WORKFLOW_UNREADABLE',
@@ -1418,9 +1419,26 @@ describe('definition_unresolvable (issue #558 PR-T)', () => {
     });
   });
 
-  it('DU2 a TERMINAL run gets it too — branch 1 returns [] for every other class of terminal record', () => {
+  it('DU2 a TERMINAL run gets NO finding — its copy matters only to replay/drain, and the one remedy (abandon) refuses a finished run (review fold C6)', () => {
     const findings = classifyRunHealth(
       makeRun({ terminal_state: true, run_phase: 'failed', failed_steps: ['s1'] }),
+      { definitionError: ERR },
+    );
+    expect(findings.map((f) => f.kind)).not.toContain('definition_unresolvable');
+  });
+
+  it('DU6 a GATE-WAITING run gets the finding too — its gate cannot be answered until the copy reads, so a sweep must find it (review fold C13; the --stuck label forks to inspect)', () => {
+    const findings = classifyRunHealth(
+      makeRun({
+        run_phase: 'gate_waiting',
+        pending_gate: {
+          gate_id: 'g1',
+          step_name: 'gated',
+          choices: ['approve'],
+          opened_at: NOW.toISOString(),
+          preview: {},
+        },
+      }),
       { definitionError: ERR },
     );
     expect(findings.map((f) => f.kind)).toContain('definition_unresolvable');

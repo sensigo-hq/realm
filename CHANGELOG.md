@@ -42,15 +42,23 @@ await getWorkflowForRun(store, run, { retryVerb: 'retry', verb: 'retry' });
   "not found": the registered copy exists (or its registry does) but cannot be read. Its message
   names the errno and the path. (Issue #558.)
 - **`definition_unresolvable` run-health finding** — this run's workflow copy cannot be resolved.
-  It is produced by `realm run inspect`, by `realm run list --stuck` (which now SELECTS every such
-  run, including one whose copy is corrupt), and by `get_run_state` for LIVE, non-gate-waiting
-  runs — the terminal guard and the `awaiting_human` branch both pre-empt the definition read
-  there, which the MCP reference now states. On `--stuck` it renders as
-  `definition_unresolvable (<class>) (realm run abandon <run-id>)`. A registry entry larger than
-  4 MB is named by its SIZE and never parsed by the listing — a listing must not be the surface
-  that detonates an expansion bomb (issue #557); `realm workflow validate --registered <id>` is
-  the surface that parses. That cap applies ONLY to the listing: `get()` stays uncapped, per
-  #552's Resolution. (Issue #558.)
+  `realm run inspect`, `realm run list --stuck` (which now SELECTS every such run, including one
+  whose copy is corrupt) mint it for every LIVE run — a terminal run's copy matters only to
+  `replay`/`drain`, which name the repair themselves; `get_run_state` alone leaves gate-waiting
+  runs out (its frozen `awaiting_human` branch never reads the definition, #331). On `--stuck` it
+  renders as `definition_unresolvable (<class>) (realm run abandon <run-id>)` — or
+  `(realm run inspect <run-id>)` on a gate-waiting run, whose copy must be repaired before its
+  gate can be answered (`abandon` refuses a gate-waiting run) — where `<class>` is always a word
+  (`missing`, `unreadable`, `not_a_file`, `empty`, `registry_broken`, `corrupt`, `legacy`, or
+  `unknown` for a failure realm could not classify — never an error code). A registry entry
+  larger than 4 MiB is never parsed by the listing — a listing must not be the
+  surface that detonates an expansion bomb (issue #557) — and an unread copy is never JUDGED: it
+  is not a finding but a check that did not run, stated on one stderr line per definition
+  (`⚠ workflow definition <id> (<size> MiB, <n> run(s)) was not inspected by --stuck (over the
+4 MiB listing cap): these runs were not checked for a broken definition; realm run list
+--workflow <id> lists them, realm workflow validate --registered <id> reads the copy.`), and the
+  stdout verdict carries the count and the ids (`… (threshold 24h; 1 definition not inspected: <id>)`). That cap
+  applies ONLY to the listing: `get()` stays uncapped, per #552's Resolution. (Issue #558.)
 - **`JsonWorkflowStore.probe()` and `getSync()`** — concrete methods (off the `WorkflowRegistrar`
   interface, the `listWithDiagnostics` precedent), plus the `probeClassToError`,
   `parseFailureError` and `STUCK_DEFINITION_PARSE_CAP_BYTES` exports and the `ProbeResult` /
@@ -67,9 +75,13 @@ await getWorkflowForRun(store, run, { retryVerb: 'retry', verb: 'retry' });
 - `realm workflow list`'s ⚠ census prints ONE sentence per CLASS instead of one
   "could not be parsed" sentence for every failure — which was false for four of the five classes
   (a `chmod 000` file was reported as unparseable). The parse sentence itself is byte-identical to
-  what it was. (Issue #558.)
+  what it was. Its count line names what it could not count —
+  `0 workflows registered; 1 file in the registry could not be read.` — so the surface
+  `validate --registered` points at never contradicts its own ⚠ line. (Issue #558.)
 - `realm workflow validate --registered` refuses a corrupt, empty or unreadable stored copy with a
-  clean line and exit 1, with `--json` parity, where it crashed with a stack trace. (Issue #558.)
+  clean line and exit 1, with `--json` parity, where it crashed with a stack trace — and no longer
+  follows it with the not-found pointer (`Registered workflows: realm workflow list`, whose table
+  omits such a copy): it says the copy IS registered and that `workflow list` counts it under "could not be read". (Issue #558.)
 
 ### Fixed
 
@@ -77,17 +89,29 @@ await getWorkflowForRun(store, run, { retryVerb: 'retry', verb: 'retry' });
   how to end the run today.** The eight: the copy is missing · it is permission-denied · a
   directory sits where the file belongs · it is 0 bytes · its JSON root is not an object · its
   JSON is corrupt · it is a legacy record · the registry directory itself cannot be read. Each
-  refusal names the class, the path, the way out (`realm run abandon <run-id>`, or — for a
-  gate-waiting run — the gate to answer) and, where there is one, the repair. (Issue #558.)
-- `realm workflow list` no longer crashes with a stack trace on a `null`-root registry entry or on
-  an unreadable registry directory; both print one ⚠ line and exit 0. (Issue #558.)
+  refusal names the class, the path, the way out (`realm run abandon <run-id>`; a gate-waiting
+  run is told its gate cannot be answered until the copy reads and that `abandon` refuses it, and
+  its repair clause ends in the answer command) and, where there is one, the repair — for a
+  corrupt copy that is re-registering it; "remove the corrupt copy" repairs nothing and is no
+  longer offered. (Issue #558.)
+- `realm workflow list` no longer crashes with a stack trace on a `null`-root registry entry, on
+  an unreadable registry directory (both print one ⚠ line and exit 0) or on a legacy record that
+  carries no name or version (listed with `-` cells). (Issue #558.)
 - `realm run inspect`'s `(workflow definition not found — showing run record only)` no longer
-  claims "not found" for a copy that exists: it forks by class and carries the store's own
-  sentence. (Issue #558.)
+  claims "not found" for a copy that exists: the line composes through the same helper as every
+  other surface and carries the class, the way out and the repair —
+  `(showing run record only — <the composed sentence>)`. (Issue #558.)
+- `realm run drain` no longer prints a missing or unreadable workflow copy under
+  `Error loading extensions:` — nothing about extensions had failed; the copy's own composed
+  sentence prints on its own line (`✗ <run-id>: …` in batch mode), and only a project-extensions
+  failure wears the heading. (Issue #558.)
 - A TERMINAL run's `respond`, `resume`, `realm agent --run-id` and the MCP `execute_step`,
   `append_trace` and `submit_human_response` tools no longer tell an operator or an agent to
   "retry" when there is nothing to retry — they say the run is terminal, name the derived phase,
-  and still name the repair when the copy itself is broken. (Issue #558.)
+  and still name the repair when the copy itself is broken. The surfaces whose happy path IS a
+  terminal run (`drain`, `replay`, `resume`, `inspect`) never print
+  "To end the run: realm run abandon <run-id>" for one — `abandon` refuses a finished run.
+  (Issue #558.)
 
 ---
 

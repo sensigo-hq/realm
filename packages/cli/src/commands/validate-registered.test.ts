@@ -289,7 +289,10 @@ describe('validate --registered (issue #427)', () => {
 
     const text = out();
     expect(text).toContain("Error: the registered copy of 'broken' is not parseable JSON:");
-    expect(text).toContain('Registered workflows: realm workflow list');
+    expect(text).toContain(
+      'This copy IS registered — realm workflow list counts it under "could not be read" instead of listing it.',
+    );
+    expect(text).not.toContain('Registered workflows:'); // the not-found pointer, C21
     expect(text).not.toContain('    at ');
   });
 
@@ -307,7 +310,10 @@ describe('validate --registered (issue #427)', () => {
 
     const text = out();
     expect(text).toContain("Error: the registered copy of 'locked' could not be read (EACCES:");
-    expect(text).toContain('Registered workflows: realm workflow list');
+    expect(text).toContain(
+      'This copy IS registered — realm workflow list counts it under "could not be read" instead of listing it.',
+    );
+    expect(text).not.toContain('Registered workflows:'); // the not-found pointer, C21
     expect(text).not.toContain('    at ');
     chmodSync(join(wfDir, 'locked.json'), 0o644);
   });

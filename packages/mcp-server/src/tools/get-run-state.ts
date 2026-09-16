@@ -28,12 +28,21 @@ import { sseJsonStringify } from '../sse-json.js';
 
 /** issue #558 PR-T — the store's own classification, passed through to classifyRunHealth. */
 function toDefinitionError(err: unknown): { code: string; message: string; class?: string } {
-  const we = err as { code?: string; message?: string; details?: Record<string, unknown> };
-  const cls = we.details?.['class'];
+  // Narrowed with `instanceof` — never duck-typed on `err.code` (house rule).
+  if (err instanceof WorkflowError) {
+    const cls = (err.details as Record<string, unknown> | undefined)?.['class'];
+    return {
+      code: err.code,
+      message: err.message,
+      ...(typeof cls === 'string' ? { class: cls } : {}),
+    };
+  }
+  // The class slot is a word on every surface (review fold C15 — the CLI's closure says
+  // `unknown` for the same escape).
   return {
-    code: typeof we.code === 'string' ? we.code : 'ENGINE_INTERNAL',
-    message: typeof we.message === 'string' ? we.message : String(err),
-    ...(typeof cls === 'string' ? { class: cls } : {}),
+    code: 'ENGINE_INTERNAL',
+    message: err instanceof Error ? err.message : String(err),
+    class: 'unknown',
   };
 }
 

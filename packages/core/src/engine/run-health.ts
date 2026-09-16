@@ -416,11 +416,11 @@ export function classifyRunHealth(
 
   /**
    * issue #558 PR-T — this run's registered workflow copy could not be resolved by the CALLER
-   * (`opts.definitionError`). ONE builder, called on BOTH paths (the `gate_corruption` /
-   * `terminal_with_stale_gate` precedent, which are checked in both branches for the same
-   * reason): the class is about the COPY, not the phase, and branch 1 returns before the live
-   * path can run — so a terminal run whose copy cannot be read, exactly the run an operator is
-   * trying to dispose of, would otherwise report nothing at all (executed).
+   * (`opts.definitionError`). ONE builder, called on the LIVE path only (review fold C6): a
+   * terminal run's copy matters only to `replay`/`drain`, which name the repair themselves, and
+   * the finding's one remedy (`realm run abandon`) refuses a finished run — branch 1 therefore
+   * returns without it, deliberately. Gate-waiting runs DO get it (review fold C13); the CLI's
+   * `--stuck` label forks to `realm run inspect` for them.
    *
    * NOTE (audit divergence, round-2 N-B1): the design record's literal carries
    * `severity: 'warning'`. `RunHealthFinding` has NO `severity` field and none of the 13 other
@@ -497,11 +497,10 @@ export function classifyRunHealth(
     // run_health on a terminal run, the frozen #279-R3 guard below — see the module doc).
     const terminalDowngrade = findStructuredOutputDowngrades(run);
     if (terminalDowngrade !== undefined) pendingFindings.push(terminalDowngrade);
-    // issue #558 PR-T — minted here as well as on the live path. Branch 1 returns [] for every
-    // other class of terminal record, so without this a terminal run whose workflow copy cannot
-    // be read — exactly the run an operator is trying to dispose of — reports nothing at all.
-    const terminalDefinitionFinding = definitionUnresolvableFinding();
-    if (terminalDefinitionFinding !== undefined) pendingFindings.push(terminalDefinitionFinding);
+    // issue #558 PR-T (review fold C6) — deliberately NOT minted here: a terminal run's copy
+    // matters only to `replay` and `drain`, which name the repair themselves, and the finding's
+    // one remedy (`realm run abandon`) refuses a finished run (executed: an already-abandoned run
+    // kept a --stuck row whose printed remedy was the one already applied — the fresh walk's T5).
     if (pendingFindings.length > 0) return pendingFindings;
     // terminal ∧ no pending ledger entries ∧ not completed-with-failed-steps ∧ no recorded
     // structured-output downgrade ⇒ [] (byte-identical to pre-#279 behavior for every OTHER class
@@ -651,7 +650,12 @@ export function classifyRunHealth(
     });
   }
 
-  // issue #558 PR-T — the live path's half; branch 1 mints the SAME finding from the SAME builder.
+  // issue #558 PR-T — every LIVE run, gate-waiting included (review folds C6 + C13): a
+  // gate-waiting run whose copy cannot be read is stuck in the strongest sense — its gate cannot
+  // be answered — and a sweep must find it (the fresh walk's T13). The CLI's --stuck label forks
+  // for it (`realm run inspect`, whose sentence carries the repair and the answer command, never
+  // `abandon`, which refuses a gate-waiting run). get_run_state alone leaves gate-waiting runs
+  // out: its frozen `awaiting_human` branch never reads the definition (#331).
   const liveDefinitionFinding = definitionUnresolvableFinding();
   if (liveDefinitionFinding !== undefined) findings.push(liveDefinitionFinding);
 

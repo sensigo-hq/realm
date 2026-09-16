@@ -184,6 +184,7 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
   let runsDir: string;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
+  let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'realm-stuck-cap-'));
@@ -194,6 +195,7 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -204,7 +206,12 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
   });
 
   const OLDER = new Date(Date.now() - 4 * 86_400_000).toISOString();
-  const plantRun = (id: string, workflowId: string): void => {
+  const plantRun = (
+    id: string,
+    workflowId: string,
+    updatedAt: string = OLDER,
+    extra: Record<string, unknown> = {},
+  ): void => {
     writeFileSync(
       join(runsDir, `${id}.json`),
       JSON.stringify({
@@ -220,27 +227,95 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
         params: {},
         evidence: [],
         created_at: OLDER,
-        updated_at: OLDER,
+        updated_at: updatedAt,
         terminal_state: false,
+        ...extra,
       }),
       'utf8',
     );
   };
   const out = (): string => logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+  const err = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
 
-  it('CAP1 an entry ONE BYTE over the cap is named by SIZE and never parsed — zero bytes read', async () => {
+  it('CAP1 an entry ONE BYTE over the cap is never parsed — zero bytes read — and is NOT a finding: no row, one stderr footer naming it by SIZE (review fold C4)', async () => {
     const big = join(wfDir, 'wf-big.json');
     const pad = 'x'.repeat(STUCK_DEFINITION_PARSE_CAP_BYTES);
     writeFileSync(big, JSON.stringify({ id: 'wf-big', schema_version: 3, pad }), 'utf8');
     expect(statSync(big).size).toBeGreaterThan(STUCK_DEFINITION_PARSE_CAP_BYTES);
-    plantRun('run-big', 'wf-big');
+    // Touched NOW: the fixture's default `updated_at` is old enough to be idle-selected under
+    // the default 24h gate, which would list the run for a DIFFERENT reason.
+    plantRun('run-big', 'wf-big', new Date().toISOString());
 
     // The instrument: a spy on the module's own reader would not see `readFileSync` through the
     // built core, so the claim is pinned at the OBSERVABLE the cap produces — the size sentence,
     // which only the zero-read branch can mint — plus the class that only it sets.
+    // Under the default 24h idle gate this run is selected by NOTHING — so the copy over the
+    // cap must not put it on the list either.
+    await listCommand.parseAsync(['--stuck'], { from: 'user' });
+
+    expect(out()).not.toContain('run-big');
+    expect(out()).not.toContain('definition_unresolvable');
+    // The stdout verdict says the sweep was partial (review fold C20) — no positional word.
+    expect(out()).toContain(
+      'No stuck runs found (threshold 24h; 1 definition not inspected: wf-big).',
+    );
+    expect(err()).toContain(
+      '⚠ workflow definition wf-big (4.0 MiB, 1 run) was not inspected by --stuck (over the ' +
+        '4 MiB listing cap): this run was not checked for a broken definition; ' +
+        'realm run list --workflow wf-big lists it, ' +
+        'realm workflow validate --registered wf-big reads the copy.',
+    );
+  });
+
+  it('CAP6 TWO definitions over the cap get ONE line EACH, every command carrying its own id — never an `<id>` placeholder (review fold C18)', async () => {
+    const pad = 'x'.repeat(STUCK_DEFINITION_PARSE_CAP_BYTES);
+    for (const id of ['wf-big', 'wf-big2']) {
+      writeFileSync(
+        join(wfDir, `${id}.json`),
+        JSON.stringify({ id, schema_version: 3, pad }),
+        'utf8',
+      );
+    }
+    plantRun('run-a', 'wf-big');
+    plantRun('run-b', 'wf-big');
+    plantRun('run-c', 'wf-big2');
+
     await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
 
-    expect(out()).toContain('definition_unresolvable (too_large) (realm run abandon run-big)');
+    const lines = err().split('\n');
+    expect(lines.filter((l) => l.startsWith('⚠ workflow definition ')).length).toBe(2);
+    expect(err()).toContain(
+      '⚠ workflow definition wf-big (4.0 MiB, 2 runs) was not inspected by --stuck (over the ' +
+        '4 MiB listing cap): these runs were not checked for a broken definition; ' +
+        'realm run list --workflow wf-big lists them, ' +
+        'realm workflow validate --registered wf-big reads the copy.',
+    );
+    expect(err()).toContain('realm run list --workflow wf-big2 lists it');
+    expect(err()).not.toContain('<id>');
+    expect(out()).toContain(
+      'Stuck runs (threshold 0m; 2 definitions not inspected: wf-big, wf-big2):',
+    );
+  });
+
+  it('CAP1b with --older-than 0m the run IS listed (idle) with NO definition label, and the footer still names the copy', async () => {
+    const pad = 'x'.repeat(STUCK_DEFINITION_PARSE_CAP_BYTES);
+    writeFileSync(
+      join(wfDir, 'wf-big.json'),
+      JSON.stringify({ id: 'wf-big', schema_version: 3, pad }),
+      'utf8',
+    );
+    plantRun('run-big', 'wf-big');
+
+    await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
+
+    const bigLine =
+      out()
+        .split('\n')
+        .find((l) => l.startsWith('run-big')) ?? '';
+    expect(bigLine).not.toBe('');
+    expect(bigLine).not.toContain('definition_unresolvable');
+    expect(out()).toContain('Stuck runs (threshold 0m; 1 definition not inspected: wf-big):');
+    expect(err()).toContain('wf-big (4.0 MiB, 1 run)');
   });
 
   it('CAP2 an UNDER-cap corrupt copy is PARSED and SELECTED — invariant (iii) made total', async () => {
@@ -253,7 +328,7 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
     expect(out()).toContain('definition_unresolvable');
   });
 
-  it('CAP3 an over-cap entry and a corrupt one are DISTINGUISHABLE on the listing line', async () => {
+  it('CAP3 an over-cap entry and a corrupt one are DISTINGUISHABLE: the corrupt one is a labelled row, the over-cap one is a footer and never a label', async () => {
     const pad = 'x'.repeat(STUCK_DEFINITION_PARSE_CAP_BYTES);
     writeFileSync(
       join(wfDir, 'wf-big.json'),
@@ -269,8 +344,79 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
     const lines = out().split('\n');
     const bigLine = lines.find((l) => l.startsWith('run-big')) ?? '';
     const corruptLine = lines.find((l) => l.startsWith('run-corrupt')) ?? '';
-    expect(bigLine).toContain('(too_large)');
-    expect(corruptLine).not.toContain('(too_large)');
+    expect(bigLine).not.toContain('definition_unresolvable');
+    expect(corruptLine).toContain('definition_unresolvable (corrupt)');
+    expect(err()).toContain('wf-big (4.0 MiB, 1 run)');
+    expect(err()).not.toContain('wf-corrupt');
+  });
+
+  it('LAW-u a probe result that carries NO class renders `(unknown)` — never its error code (review fold C15)', async () => {
+    const out = await listRuns(
+      undefined,
+      makeStore([makeRun({ updated_at: new Date().toISOString() })]),
+      undefined,
+      true,
+      undefined,
+      undefined,
+      () => ({ code: 'ENGINE_INTERNAL', message: 'boom' }),
+    );
+    expect(out).toContain('definition_unresolvable (unknown) (realm run abandon run-abc123)');
+    expect(out).not.toContain('ENGINE_INTERNAL');
+  });
+
+  it('LAW-g a GATE-WAITING run with an unreadable copy IS selected, and its label points at inspect — never at abandon, which refuses a gate-waiting run (review fold C13)', async () => {
+    const { chmodSync } = await import('node:fs');
+    const copy = join(wfDir, 'wf-gate.json');
+    writeFileSync(copy, JSON.stringify({ id: 'wf-gate', schema_version: 3 }), 'utf8');
+    chmodSync(copy, 0o000);
+    plantRun('run-g', 'wf-gate', OLDER, {
+      run_phase: 'gate_waiting',
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 's1',
+        choices: ['a', 'b'],
+        opened_at: OLDER,
+        preview: {},
+      },
+    });
+    try {
+      await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
+    } finally {
+      chmodSync(copy, 0o644);
+    }
+    const line =
+      out()
+        .split('\n')
+        .find((l) => l.startsWith('run-g')) ?? '';
+    expect(line).toContain('definition_unresolvable (unreadable) (realm run inspect run-g)');
+    expect(line).not.toContain('abandon');
+  });
+
+  it('CAP5 a corrupt copy and a legacy copy render WORDS in the class slot — never an error code', async () => {
+    writeFileSync(join(wfDir, 'wf-corrupt.json'), '{ not json', 'utf8');
+    writeFileSync(join(wfDir, 'wf-legacy.json'), JSON.stringify({ id: 'wf-legacy' }), 'utf8');
+    plantRun('run-corrupt', 'wf-corrupt');
+    plantRun('run-legacy', 'wf-legacy');
+
+    await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
+
+    const lines = out().split('\n');
+    const corruptLine = lines.find((l) => l.startsWith('run-corrupt')) ?? '';
+    const legacyLine = lines.find((l) => l.startsWith('run-legacy')) ?? '';
+    // The review's probe: both rendered their CODE (`RESOURCE_FORMAT_INVALID` /
+    // `STATE_LEGACY_FORMAT`) in a slot every other class fills with a word.
+    expect(corruptLine).toContain('definition_unresolvable (corrupt)');
+    expect(legacyLine).toContain('definition_unresolvable (legacy)');
+    expect(out()).not.toContain('RESOURCE_FORMAT_INVALID');
+    expect(out()).not.toContain('STATE_LEGACY_FORMAT');
+  });
+
+  it('WITNESS the --stuck closure narrows its catch with instanceof — never a duck-typed `err as { code?`', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const src = readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), 'list.ts'), 'utf8');
+    expect(src).not.toMatch(/err as \{\s*code\?:/);
+    expect(src).toContain('err instanceof WorkflowError');
   });
 
   it('CAP4 a HEALTHY copy produces no definition_unresolvable label at all', async () => {
