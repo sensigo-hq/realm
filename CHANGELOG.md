@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
+## [0.44.0] — 2026-09-16
 
 The schema-admission release. Every authored JSON-Schema block — the workflow's `params_schema` and
 a step's `input_schema`, `output_schema` and `trace_schema` — is now compiled at load by the same
