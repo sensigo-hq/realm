@@ -434,54 +434,82 @@ export async function getWorkflowForRun(
         ...(err.warnings !== undefined ? { warnings: err.warnings } : {}),
       });
 
+    const path = String((err.details as Record<string, unknown> | undefined)?.['path'] ?? '');
+
+    /**
+     * The repair clause, minted ONCE per code (a second hand-typed copy is the #444/#508 class).
+     * `withRetry: false` is the terminal branch: nothing to retry, but the COPY is still broken
+     * for every other run of that workflow, so the repair is still worth naming.
+     */
+    const repairClause = (withRetry: boolean): string | undefined => {
+      if (err.code === 'STATE_WORKFLOW_UNREADABLE')
+        return `To repair: fix ${path}${withRetry ? ` and ${opts.retryVerb}` : ''}.`;
+      if (err.code === 'RESOURCE_FORMAT_INVALID')
+        return (
+          `To repair: re-register the workflow from its source ` +
+          `(realm workflow register <path-to-workflow>) or remove the corrupt copy at ${path}` +
+          `${withRetry ? `, then ${opts.retryVerb}` : ''}.`
+        );
+      // `missing` self-remedies (the #456 hedge / the agent-created sentence) and `legacy`
+      // carries its own "Re-register it with: …" — neither gets a second repair clause.
+      return undefined;
+    };
+
     // The terminal conjunct: the six sites without `terminalOk` read the definition BEFORE their
     // own terminal check, so "retry" on a terminal run is a falsity. `terminalOk: true` is passed
     // at the SEVEN sites whose happy path IS terminal (replay, drain ×5, resume — `resume.ts:84`
     // refuses any phase outside RESUMABLE_PHASES = {failed, abandoned}, both terminal, BEFORE the
     // definition is read at `:97`).
     if (run.terminal_state === true && opts.terminalOk !== true) {
+      const repair = repairClause(false);
       throw copy(
-        `${err.message}. The run is terminal (${deriveRunPhase(run)}); there is nothing to ${opts.verb}.`,
+        `${err.message}. The run is terminal (${deriveRunPhase(run)}); there is nothing to ` +
+          `${opts.verb}.${repair !== undefined ? ` ${repair}` : ''}`,
       );
     }
 
-    const disposal =
+    /**
+     * The disposal clause — the LEAD-IN forks with it. "To end the run: this run is waiting on
+     * human gate 'x'" promises a way OUT and then describes a STATE; the gate fork carries its
+     * own sentence instead. PR-V replaces the gate fork's tail with the void (MASTER-PLAN rule
+     * 15); `realm run abandon` has exactly one option today, so nothing else is printable.
+     */
+    const disposalSentence = (leadIn: string): string =>
       run.pending_gate === undefined
-        ? `realm run abandon ${run.id}`
-        : `this run is waiting on human gate '${run.pending_gate.step_name}' — answer it ` +
+        ? `${leadIn} realm run abandon ${run.id}.`
+        : `This run is waiting on human gate '${run.pending_gate.step_name}' — answer it ` +
           `(realm run respond ${run.id} --gate ${run.pending_gate.gate_id} --choice <one of: ` +
-          `${run.pending_gate.choices.join(', ')}>); ending a gate-waiting run is #558 PR-V`;
+          `${run.pending_gate.choices.join(', ')}>); ending a gate-waiting run is #558 PR-V.`;
 
     switch (err.code) {
       case 'STATE_WORKFLOW_NOT_FOUND':
         // A SHAPE heuristic, not provenance: `deriveWorkflowId` mints `dynamic-<16hex>` and
         // `<slug>-<16hex>`, so a human-registered id that happens to carry a 16-hex suffix gets
         // the agent sentence too. Keyed on the id, never on a record field realm does not have.
-        return Promise.reject(
-          /-[0-9a-f]{16}$/.test(run.workflow_id)
-            ? copy(
-                `Workflow '${run.workflow_id}' not found — this run's workflow was created by an ` +
-                  `agent (create_workflow) and its stored copy is gone; there is no source file ` +
-                  `to register. To end the run: ${disposal}.`,
-              )
-            : copy(
-                `${err.message} — most often this run was created from a file without --register. ` +
-                  `Register the workflow (realm workflow register <file>) and ${opts.retryVerb}.`,
-              ),
-        );
+        throw /-[0-9a-f]{16}$/.test(run.workflow_id)
+          ? copy(
+              `Workflow '${run.workflow_id}' not found — this run's workflow was created by an ` +
+                `agent (create_workflow) and its stored copy is gone; there is no source file ` +
+                `to register. ${disposalSentence('To end the run:')}`,
+            )
+          : copy(
+              // The #456 arm, pinned whole-message by `run-attach.test.ts` C12 and 28 substring
+              // pins: its em-dash join ships VERBATIM. The "joins are sentences" rule governs
+              // the clauses this composer ADDS, not the arms quoted from main.
+              `${err.message} — most often this run was created from a file without --register. ` +
+                `Register the workflow (realm workflow register <file>) and ${opts.retryVerb}.`,
+            );
       case 'STATE_WORKFLOW_UNREADABLE':
         throw copy(
-          `${err.message}. This run's workflow cannot be read. To end the run: ${disposal}. ` +
-            `To repair: fix ${String((err.details as Record<string, unknown> | undefined)?.['path'] ?? '')} and ${opts.retryVerb}.`,
+          `${err.message}. This run's workflow cannot be read. ` +
+            `${disposalSentence('To end the run:')} ${repairClause(true) ?? ''}`,
         );
       case 'RESOURCE_FORMAT_INVALID':
         throw copy(
-          `${err.message}. To end the run: ${disposal}. To repair: re-register the workflow from ` +
-            `its source (realm workflow register <path-to-workflow>) or remove the corrupt copy ` +
-            `at ${String((err.details as Record<string, unknown> | undefined)?.['path'] ?? '')}, then ${opts.retryVerb}.`,
+          `${err.message}. ${disposalSentence('To end the run:')} ${repairClause(true) ?? ''}`,
         );
       case 'STATE_LEGACY_FORMAT':
-        throw copy(`${err.message}. To end the run instead: ${disposal}.`);
+        throw copy(`${err.message}. ${disposalSentence('To end the run instead:')}`);
       default:
         throw err;
     }

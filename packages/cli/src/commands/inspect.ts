@@ -8,6 +8,7 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import {
   SEAL_ARMS,
+  WorkflowError,
   classifyRunHealth,
   deriveDefaultedSteps,
   deriveRunPhase,
@@ -248,16 +249,16 @@ export async function inspectRun(
   } catch (err) {
     workflowLabel = run.workflow_id;
     definitionMissing = true;
-    // Duck-typed on the error's own fields rather than `instanceof WorkflowError`: this module
-    // deliberately takes core through ONE static import list, and the two fields read here are
-    // the store's own contract.
-    const we = err as { code?: string; message?: string; details?: Record<string, unknown> };
-    const cls = we.details?.['class'];
-    definitionError = {
-      code: typeof we.code === 'string' ? we.code : 'ENGINE_INTERNAL',
-      message: typeof we.message === 'string' ? we.message : String(err),
-      ...(typeof cls === 'string' ? { class: cls } : {}),
-    };
+    // Narrowed with `instanceof WorkflowError` — never duck-typed on `err.code` (house rule:
+    // an error's shape is not its identity). A non-WorkflowError escape keeps the old behaviour.
+    if (err instanceof WorkflowError) {
+      const cls = (err.details as Record<string, unknown> | undefined)?.['class'];
+      definitionError = {
+        code: err.code,
+        message: err.message,
+        ...(typeof cls === 'string' ? { class: cls } : {}),
+      };
+    }
   }
 
   // Color the phase label \u2014 derived, never the persisted run_phase (issue #279, increment 2,
