@@ -8,6 +8,12 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+// Resolved from THIS MODULE, never from `process.cwd()`: the suite runs with the repo root as cwd
+// under `vitest --root`, and with the package dir as cwd under turbo — a cwd-relative path to the
+// compiler is green in one and silently wrong in the other (the known `--root` artifact class).
+const TSC = createRequire(import.meta.url).resolve('typescript/bin/tsc');
 
 describe('probeClassToError is exhaustive by CONSTRUCTION (issue #558 PR-T)', () => {
   it('X1 the switch has no `default:` arm — the missing return IS the diagnostic', () => {
@@ -79,18 +85,10 @@ describe('probeClassToError is exhaustive by CONSTRUCTION (issue #558 PR-T)', ()
 
       let output = '';
       try {
-        execFileSync(
-          process.execPath,
-          [
-            resolve(process.cwd(), 'node_modules/typescript/bin/tsc'),
-            '--noEmit',
-            '--strict',
-            '--target',
-            'es2022',
-            file,
-          ],
-          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-        );
+        execFileSync(process.execPath, [TSC, '--noEmit', '--strict', '--target', 'es2022', file], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
       } catch (err) {
         output = String((err as { stdout?: string }).stdout ?? '');
       }

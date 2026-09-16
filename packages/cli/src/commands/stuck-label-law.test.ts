@@ -74,7 +74,7 @@ const FIXTURES: Array<{ kind: Kind; run: RunRecord; probe?: boolean; contains: s
       terminal_state: true,
       run_phase: 'failed',
       failed_steps: ['s1'],
-      finalizer_ledger: { cleanup: { status: 'pending' } },
+      finalizer_ledger: { cleanup: { status: 'pending', rank: 1 } },
     } as Partial<RunRecord>),
     contains: '(realm run drain)',
   },
@@ -84,7 +84,7 @@ const FIXTURES: Array<{ kind: Kind; run: RunRecord; probe?: boolean; contains: s
       pending_gate: {
         gate_id: 'g1',
         step_name: 'confirm',
-        preview: 'p',
+        preview: {},
         choices: ['a'],
         opened_at: OLD,
       },

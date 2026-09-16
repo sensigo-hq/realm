@@ -64,7 +64,7 @@ const GATE_WAITING = makeRun({
   pending_gate: {
     gate_id: 'g1',
     step_name: 'confirm',
-    preview: 'ok?',
+    preview: {},
     choices: ['approve', 'reject'],
     opened_at: '2026-01-01T00:00:00.000Z',
   },
