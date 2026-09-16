@@ -9,6 +9,7 @@ import { Command, InvalidArgumentError } from 'commander';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
+  validateRunParams,
   loadWorkflowFromFile,
   JsonFileStore,
   JsonWorkflowStore,
@@ -307,6 +308,15 @@ export const agentCommand = new Command('agent')
               ? inputPath
               : join(inputPath, 'workflow.yaml');
           const definition = loadWorkflowFromFile(filePath);
+
+          // issue #586: apply a declared `params_schema` BEFORE the run is created (the run is
+          // minted inside `runAgent` below). No local catch: the outer catch already renders a
+          // non-`Invalid workflow:` WorkflowError as `Error: <message>` and exits 1, which is
+          // exactly the voice `realm run` prints one file over — a second render here would be a
+          // duplicated composer.
+          if (definition.params_schema !== undefined) {
+            validateRunParams(params, definition.params_schema, definition.id);
+          }
 
           // Load project extensions + deployment manifest BEFORE the run is created
           // (fail-before-create); the loader registry flows directly into the run.

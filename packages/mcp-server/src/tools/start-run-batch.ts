@@ -6,7 +6,7 @@ import {
   JsonFileStore,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
-  validateInputSchema,
+  validateRunParams,
   hashParams,
   unmetCapabilities,
   capabilityWarning,
@@ -102,10 +102,15 @@ export async function handleStartRunBatch(
     const failures: Array<{ index: number; reason: string }> = [];
     for (let i = 0; i < args.items.length; i++) {
       try {
-        validateInputSchema(args.items[i]!.params, definition.params_schema, `item[${i}]`);
+        // issue #586: `validateRunParams`, not `validateInputSchema` — the old call minted
+        // `Invalid input for step 'item[0]'`, which named a step that does not exist and a check
+        // that was never run. The item index stays on the structured `index` field AND keeps its
+        // old bracketed spelling at the head of the reason, so a flat render still says which
+        // item and nothing that grepped `item[0]` in a log loses it.
+        validateRunParams(args.items[i]!.params, definition.params_schema, definition.id);
       } catch (err) {
         if (err instanceof WorkflowError) {
-          failures.push({ index: i, reason: err.message });
+          failures.push({ index: i, reason: `item[${i}]: ${err.message}` });
         }
       }
     }

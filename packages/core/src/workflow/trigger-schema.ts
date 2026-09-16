@@ -1,7 +1,11 @@
 // Declarative trigger-block validation (minimal, Gorgias-anchored).
 //
-// The webhook `trigger:` block is validated against a single small JSON Schema (draft-07) using the
-// same Ajv pattern the loader already uses for params_schema and adapter config_schema. The surface
+// The webhook `trigger:` block is validated against a single small JSON Schema (draft-07) with its
+// own bare `new Ajv` below — a CODE-DECLARED schema, unlike an AUTHORED block. Issue #586 routed
+// every authored block (`params_schema`, a step's `input_schema`/`output_schema`/`trace_schema`)
+// through `compileSchema` in `validation/input-schema.ts`, the one construction the run time also
+// validates with; this site and the adapter `config_schema` site are deliberately NOT that. The
+// surface
 // is intentionally small: `auth` carries a verification *mode* (shared_secret | github | stripe |
 // hmac | none), an optional `filter`, optional `dedup`, and `params_map`.
 //

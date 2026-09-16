@@ -36,16 +36,23 @@ export type WarningCode =
   // had; new codes are the precedent — #140 UNKNOWN_RETRY_KEY / #220 UNKNOWN_VALIDATION_
   // EXHAUSTION_KEY, not a noun-override reuse):
   | 'UNKNOWN_GATE_KEY'
-  | 'DEAD_GATE_CONFIG';
+  | 'DEAD_GATE_CONFIG'
+  // issue #586 (an authored JSON-Schema block that COMPILES but trips Ajv's strict mode — the
+  // block is legal and the run time honours it, so this is advice, never a refusal: refusing
+  // would put the loader BELOW the run time's own verdict):
+  | 'SCHEMA_STRICT_ADVISORY';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text, minted once at the
  * source (`findUnknownKeys` below, for the unknown-key family) — `renderLoaderWarning` never
  * reconstructs it from the structured fields; it only ECHOES `message` verbatim, prefixed with
- * `⚠ `. `scope`/`id`/`step`/`key`/`did_you_mean` are populated only by the unknown-key family and
- * exist for consumers that want the PARTS (a machine reader, a different renderer), not for
- * `renderLoaderWarning` to recompose from — that would risk a second, drifting copy of the same
- * prose. Other codes carry just `code`/`severity`/`message`.
+ * `⚠ `. `scope` is always present. `id`/`step`/`key`/`did_you_mean` are populated by the
+ * unknown-key family and by the codes that name a specific key — `DEAD_GATE_CONFIG` carries
+ * `key: 'gate'` (`yaml-loader.ts`), and `SCHEMA_STRICT_ADVISORY` carries the schema key plus a
+ * position (issue #586). They exist for consumers that want the PARTS (a machine reader, a
+ * different renderer), not for `renderLoaderWarning` to recompose from — that would risk a second,
+ * drifting copy of the same prose. Codes that name nothing narrower than their scope carry just
+ * `code`/`severity`/`message`.
  */
 export interface LoaderWarning {
   code: WarningCode;
@@ -91,6 +98,8 @@ export interface LoaderWarning {
  * agents forever (a distinct, permanent design decision, not an oversight).
  */
 export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
+  // issue #586 — advice about a block Ajv accepts, never escalated by the boundary policy.
+  SCHEMA_STRICT_ADVISORY: 'warn',
   UNKNOWN_WORKFLOW_KEY: 'error',
   UNKNOWN_STEP_KEY: 'error',
   UNKNOWN_CREATE_WORKFLOW_KEY: 'warn',

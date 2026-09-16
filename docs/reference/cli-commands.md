@@ -228,7 +228,10 @@ except two sentences that ship whole because the prefix IS the composed message 
 extensions module, and a warning escalated to an error by policy). `extension_keys` is the accepted top-level `x-` keys, in authored order (issue #559). Not
 represented at all: the `structured_output` adoption nudge, `--explain`'s per-step detail (inert
 under `--json`), and `--registered`'s audit headers — human-informational, not part of the
-contract.
+contract. For a `SCHEMA_STRICT_ADVISORY` entry (issue #586) `key` names the schema BLOCK (`params_schema`,
+`input_schema`, …) while `line`/`column`/`endLine`/`endColumn` span the KEYWORD the advisory is
+about inside it — two granularities in one object, by design; a jump-to goes to the position, a
+"which block" filter reads `key`.
 
 ```bash
 $ realm workflow validate ./my-workflow
@@ -377,6 +380,12 @@ realm workflow run ./my-workflow
 realm workflow run ./my-workflow --params '{"company_name":"Acme"}'
 ```
 
+`--params` is validated against the workflow's `params_schema` (issue #586); a violation refuses
+the run before any run record is created — the same check `start_run`, `start_run_batch`,
+`realm agent` and `listen` apply. It runs AFTER the terminal check below, so a piped invocation
+with bad params is told about the terminal first: that refusal holds for the whole wiring, while
+the params one depends on the values.
+
 **It needs a real terminal** (issue #426). Because it prompts for every step and every gate, a
 piped or scripted invocation has nothing to answer with — so one is refused up front, before any
 run record is created. For scripted flows use `realm workflow test` (fixture-driven) or
@@ -476,7 +485,7 @@ realm agent \
 | Option                     | Default          | Description                                                                                                                                                                                                                                                                                                                                                                          |
 | -------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `--workflow <path>`        | (required)       | Path to `workflow.yaml` or its containing directory                                                                                                                                                                                                                                                                                                                                  |
-| `--params <json>`          | `{}`             | Run params as a JSON string                                                                                                                                                                                                                                                                                                                                                          |
+| `--params <json>`          | `{}`             | Run params as a JSON string — validated against the workflow's `params_schema`; a violation refuses the run                                                                                                                                                                                                                                                                          |
 | `--provider <name>`        | auto             | LLM provider. Values: `openai`, `anthropic`. Auto-detected from whichever API key is set.                                                                                                                                                                                                                                                                                            |
 | `--model <name>`           | provider default | Model name override. Default: `gpt-4o` for OpenAI, `claude-sonnet-4-5` for Anthropic.                                                                                                                                                                                                                                                                                                |
 | `--base-url <url>`         | —                | Base URL for OpenAI-compatible endpoints (DeepSeek, Qwen, Groq, etc.). Only valid with `--provider openai` or when `OPENAI_API_KEY` is set.                                                                                                                                                                                                                                          |

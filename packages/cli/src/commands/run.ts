@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { createInterface } from 'node:readline/promises';
 import { join } from 'node:path';
 import {
+  validateRunParams,
   loadWorkflowFromFile,
   JsonFileStore,
   findEligibleSteps,
@@ -219,10 +220,14 @@ export const runCommand = new Command('run')
       // printed, leaving a wedged `running` record behind on every scripted invocation.
       //
       // Refused BEFORE any store work, joining the "1b … BEFORE run creation" doctrine one
-      // member up. The placement is load → extensions → params → HERE, and each boundary is
-      // pinned: earlier than the load and the loader-voice cells lose their messages; earlier
-      // than extensions and the spawned orphan-manifest case loses its refusal; earlier than
-      // params and `--params '{'` reports the wrong problem.
+      // member up. The placement is load → extensions → params → HERE → params-schema (#586) →
+      // create, and each boundary is pinned: earlier than the load and the loader-voice cells
+      // lose their messages; earlier than extensions and the spawned orphan-manifest case loses
+      // its refusal; earlier than params and `--params '{'` reports the wrong problem; LATER than
+      // the params_schema check and a piped invocation is told to fix its params, then told on
+      // the next try that the command can never run there at all — two round trips with the
+      // fatal fact last (#586 walk J3-a). This refusal is UNCONDITIONAL for this wiring; the
+      // params one is conditional on the values, so this one goes first.
       //
       // `!== true` rather than a truthiness test: isTTY is `undefined` on a pipe, never false.
       if (process.stdin.isTTY !== true) {
@@ -234,6 +239,18 @@ export const runCommand = new Command('run')
             'To run this workflow by hand, use a real terminal.',
         );
         process.exit(1);
+      }
+
+      // issue #586: a declared `params_schema` is applied AFTER the #426 guard above and before
+      // any store work, so a violating invocation creates no run. The voice is `:212`'s
+      // (`Error: --params is not valid JSON`) — the same command, the same channel, one grammar.
+      if (definition.params_schema !== undefined) {
+        try {
+          validateRunParams(params, definition.params_schema, definition.id);
+        } catch (err) {
+          console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+          process.exit(1);
+        }
       }
 
       // 3. Create store and initial run record

@@ -4,6 +4,88 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **BREAKING —** every authored JSON-Schema block is now compiled at load, by the same validator
+  realm runs with: the workflow's `params_schema` and a step's `input_schema`, `output_schema` and
+  `trace_schema`. A block that does not compile is refused on its own line by `validate`,
+  `register`, `validate --registered`, `watch`, `workflow test`, `realm workflow run`,
+  `realm agent`,
+  `realm listen` and both public string loaders (`loadWorkflowFromString`,
+  `loadWorkflowFromStringWithDiagnostics`), in realm's own sentence (the keyword, what it must be or
+  that it is not a JSON-Schema keyword, the value as written, the path, a remedy that names what to
+  type), with a clause naming what would have died
+  at run time. BOTH halves of the class are refused: the
+  meta-schema half (`type: banana`, a scalar where a schema belongs, a dangling `$ref`, and **`enum: []` inside a
+  schema block — which issue #433 deliberately left loading as "a schema-validity question,
+  different class"; that question is answered here**) and the strict-mode half (an unknown keyword,
+  including an `x-…` keyword INSIDE a schema block — the `x-` namespace of issue #559 is the top of
+  a workflow file only — an unknown `format`). Every one of these was already
+  fatal at run time, where it surfaced as a bare validator error with no line and no remedy.
+  Measured population: 0 refusals over 83 real schema blocks (10 repo workflows + 34 registered
+  copies), 1 advisory. (Issue #586.)
+- **BREAKING —** `start_run`, `realm workflow run` and `realm agent` now apply a declared `params_schema`
+  before the run is created: a call that used to start a run with violating params is refused and
+  **no run is created**. `start_run_batch` and `listen` already applied it. Coupled with the item
+  above — the refusal's "every run start would be refused at run time" clause is true only because
+  both ship together. (Issue #586.)
+
+### Changed
+
+- The params-refusal message on `start_run_batch` and `listen` now names the workflow instead of a
+  step that was never validated: `Invalid input for step 'item[0]'` → `Invalid params for workflow
+'<id>': /field must be string` (the batch keeps the bracketed item index at the head of each
+  `failures[].reason`, and `listen`'s 400 body keeps `error: 'params_invalid'`). (Issue #586.)
+- The validator's strict-mode lines no longer print to the console at run time. They were emitted
+  unattributed on every compile, on every run, to an audience that could not act on them; they are
+  now a `SCHEMA_STRICT_ADVISORY` loader warning carrying the key's own line, shown once by
+  `validate`, `register` and `validate --registered`. (Issue #586.)
+
+### Added
+
+- `SCHEMA_STRICT_ADVISORY` — a `warn`-severity loader warning for a block that compiles but trips
+  the validator's strict mode (a union `type: [string, number]` is the common one). Escalated to a
+  failure by `--strict`; carried on `validate --json` under `diagnostics`. (Issue #586.)
+- `compileSchema(schema, { onStrictLog? })` and `validateRunParams(params, schema, workflowId)`,
+  both exported from `@sensigo/realm` — the one validator construction for authored blocks, and the
+  params refusal every run-creation surface shares. (Issue #586.)
+- `SCHEMA_TYPED_STEP_KEYS` and `SCHEMA_TYPED_WORKFLOW_KEYS` — the authored schema-bearing keys, each
+  `satisfies` its known-key list so a schema-typed key that is not a known key fails the build.
+  (Issue #586.)
+
+#### Upgrading
+
+Run `realm workflow validate --registered` (and `realm workflow validate` over your workflow files)
+BEFORE upgrading: it reports every block that this release will refuse, on the block's own line.
+Fix the schema in the cited block — the cite is the block's own key line, and the message names the
+offending keyword and its path inside the block, and names what to type in its place.
+
+Two members are worth naming because they used to load:
+
+- `enum: []` inside a schema block. Issue #433 refused a declared-and-empty **gate choice source**
+  and deliberately left the plain schema case loading; the validator refuses an empty `enum` at
+  compile time, so it is refused now too. Declare the real values, or drop the keyword.
+- An `x-…` key INSIDE a JSON-Schema block. The `x-` extension namespace (issue #559) is the TOP of
+  a workflow file only; inside a schema block realm's validator refuses every unknown keyword.
+  Remove it, or move it to the top of the file — the remedy names the spelling that the top of the
+  file will accept (a lowercase name; a name outside the reserved `x-realm-` prefix).
+
+A registered copy that carries a malformed block is NOT re-validated by the upgrade —
+`validate --registered` reports it (naming the block; the `(line N)` comes from validating the
+source file), and `workflow list` still shows it as healthy. Until a fixed file is re-registered the
+two members behave differently, and both were executed: a malformed `params_schema` refuses every
+`start_run` with `VALIDATION_WORKFLOW_SCHEMA` — `Workflow '<id>' declares a params_schema that is
+not a valid JSON Schema — <validator text>. No run was created. Re-register a fixed file — 'realm
+workflow validate <file>' shows the line; 'realm workflow validate --registered <id>' names the
+block.` — and no run is created; a malformed STEP block does NOT stop the run from starting —
+`start_run` succeeds and hands the malformed block to the driving agent verbatim in
+`next_actions[].input_schema`, and the first `execute_step` of that step fails with an `ENGINE_INTERNAL`
+envelope whose text is a V8 `TypeError` (`Cannot convert undefined or null to object`), not the
+validator's message — the bare-error envelope issue #556 owns. `validate --registered` is the
+detector for both.
+
 ## [0.43.0] — 2026-09-16
 
 The extension-namespace release. A workflow file can now keep a YAML anchor host — or any tooling

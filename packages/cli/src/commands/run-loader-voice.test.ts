@@ -198,4 +198,122 @@ steps:
     expect(errored).toContain('Error: --params is not valid JSON');
     expect(errored).not.toContain('dev-mode run is interactive');
   });
+
+  // ───────────────────────────────────────────────────────────────────────────────────────────
+  // issue #586 — a declared `params_schema` is applied here too, BELOW the #426 guard, and the
+  // boundary is pinned in BOTH directions (the guard's own placement doctrine: load → extensions
+  // → params → the non-TTY guard → params_schema → create, each boundary a cell). The guard goes
+  // first because its refusal is UNCONDITIONAL for a piped wiring while the params one is
+  // conditional on the values: the walk (J3-a) watched an operator fix their params and be told
+  // on the next try that the command can never run there at all.
+  // ───────────────────────────────────────────────────────────────────────────────────────────
+  const VALID_WITH_SCHEMA = `id: run-tty
+name: Run TTY
+version: 1
+params_schema:
+  type: object
+  properties:
+    ticket_id:
+      type: string
+  required: [ticket_id]
+steps:
+  a:
+    description: a
+    execution: agent
+`;
+
+  it('#586 ORDERING: piped + violating params reads the UNCONDITIONAL non-TTY refusal first', async () => {
+    // stdin is not a terminal in the runner, so both refusals are live. The guard's is the one
+    // that cannot be fixed by editing the command line, so it is the one the operator reads.
+    const file = join(dir, 'workflow.yaml');
+    writeFileSync(file, VALID_WITH_SCHEMA, 'utf8');
+
+    await expect(
+      runCommand.parseAsync([file, '--params', '{"ticket_id":true}'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain('dev-mode run is interactive');
+    expect(errored).not.toContain('Invalid params for workflow');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(runRecords()).toEqual([]);
+  });
+
+  it('#586 on a TERMINAL stdin the params refusal fires, in the run voice, with NO run created', async () => {
+    // The guard passes here, so the check below it is what answers — the only wiring in which an
+    // operator sees this message at all.
+    const file = join(dir, 'workflow.yaml');
+    writeFileSync(file, VALID_WITH_SCHEMA, 'utf8');
+    const original = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    try {
+      await expect(
+        runCommand.parseAsync([file, '--params', '{"ticket_id":true}'], { from: 'user' }),
+      ).rejects.toThrow('process.exit');
+    } finally {
+      if (original === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
+      else Object.defineProperty(process.stdin, 'isTTY', original);
+    }
+
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain(
+      "Error: Invalid params for workflow 'run-tty': /ticket_id must be string",
+    );
+    // Never the step voice: what was validated is the workflow's params.
+    expect(errored).not.toContain('Invalid input for step');
+    expect(errored).not.toContain('dev-mode run is interactive');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(runRecords()).toEqual([]);
+  });
+
+  it('#586 BOUNDARY the other way: malformed --params JSON still wins over the schema check', async () => {
+    const file = join(dir, 'workflow.yaml');
+    writeFileSync(file, VALID_WITH_SCHEMA, 'utf8');
+
+    await expect(runCommand.parseAsync([file, '--params', '{'], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain('Error: --params is not valid JSON');
+    expect(errored).not.toContain('Invalid params for workflow');
+  });
+
+  it('#586 control: conforming params pass the check and reach the #426 guard', async () => {
+    const file = join(dir, 'workflow.yaml');
+    writeFileSync(file, VALID_WITH_SCHEMA, 'utf8');
+
+    await expect(
+      runCommand.parseAsync([file, '--params', '{"ticket_id":"t-1"}'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).not.toContain('Invalid params for workflow');
+    expect(errored).toContain('dev-mode run is interactive');
+    expect(runRecords()).toEqual([]);
+  });
+
+  it('#586 a MALFORMED params_schema in a FILE is refused by the loader, never by the params check', async () => {
+    // `realm workflow run` loads from a file, so the admission door fires first and the typed
+    // stored-copy wrap in `validateRunParams` is never reached here. That ordering is what makes
+    // the file surfaces immune to the grandfathered class (walk D2).
+    const file = join(dir, 'workflow.yaml');
+    writeFileSync(
+      file,
+      `id: run-bad\nname: Run Bad\nversion: 1\nparams_schema:\n  type: banana\nsteps:\n  a:\n    description: a\n    execution: agent\n`,
+      'utf8',
+    );
+
+    await expect(
+      runCommand.parseAsync([file, '--params', '{"ticket_id":"t-1"}'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+
+    const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(errored).toContain("'params_schema' is not a valid JSON Schema —");
+    expect(errored).toContain(
+      "'type' must be one of array, boolean, integer, null, number, object, string ('type: banana' here)",
+    );
+    expect(errored).not.toContain('declares a params_schema that is not a valid JSON Schema');
+    expect(runRecords()).toEqual([]);
+  });
 });
