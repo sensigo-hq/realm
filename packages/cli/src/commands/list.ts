@@ -142,6 +142,11 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
     // issue #401: the drive died and nothing has happened since. The step prefix appears only
     // when there IS a step — a pre-step-selection failure rendering as a bare leading `=` is a
     // rendering bug, not a convention.
+    case 'drive_failing': {
+      const errorClass = f.evidence?.['error_class'];
+      const label = `drive_failing(${typeof errorClass === 'string' ? errorClass : 'unknown'})`;
+      return f.step !== undefined && f.step !== '' ? `${f.step}=${label}` : label;
+    }
     // issue #558 PR-T — the class, then the way out. `evidence.class` is the probe's own class
     // when there was one; the code otherwise (a parse failure has no probe class).
     case 'definition_unresolvable': {
@@ -149,11 +154,6 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
       const code = f.evidence?.['code'];
       const which = typeof cls === 'string' ? cls : typeof code === 'string' ? code : 'unknown';
       return `definition_unresolvable (${which})`;
-    }
-    case 'drive_failing': {
-      const errorClass = f.evidence?.['error_class'];
-      const label = `drive_failing(${typeof errorClass === 'string' ? errorClass : 'unknown'})`;
-      return f.step !== undefined && f.step !== '' ? `${f.step}=${label}` : label;
     }
     default: {
       // Ride-along (boy-scout, not the reported problem): an exhaustiveness guard. A future
@@ -472,9 +472,16 @@ export const listCommand = new Command('list')
             result = { code: err.code, message: err.message, class: probed.class };
           } else if (probed.bytes > STUCK_DEFINITION_PARSE_CAP_BYTES) {
             // Zero bytes read. A #557 bomb is NAMED by its size, never parsed.
+            //
+            // `class: 'too_large'` is the closure's OWN word, beside the message it also authors
+            // here. Without it this result and a corrupt copy both render
+            // `definition_unresolvable (RESOURCE_FORMAT_INVALID)` on the --stuck line and an
+            // operator cannot tell "too big to parse" from "broken" on the one surface this
+            // deliverable exists for (executed — both rows were byte-identical).
             const mb = (probed.bytes / (1024 * 1024)).toFixed(1);
             result = {
               code: 'RESOURCE_FORMAT_INVALID',
+              class: 'too_large',
               message: `too large: ${mb} MB — not parsed; realm workflow validate --registered ${workflowId} parses it`,
             };
           } else {
