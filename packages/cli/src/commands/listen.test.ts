@@ -344,7 +344,14 @@ describe('makeListenHandler — request pipeline', () => {
         properties: { ticket_id: { type: 'string' } },
       },
     });
-    const handler = makeListenHandler(routesFor(def), makeDeps());
+    // issue #586 (walk J6-a) — the refusal must also be visible SERVER-side: the 400 body lives
+    // in the caller's process, and an operator whose upstream posts the wrong shape had nothing to
+    // look at at any log level. `info`, the same level as `webhook: dispatched`.
+    const info = vi.fn();
+    const handler = makeListenHandler(
+      routesFor(def),
+      makeDeps({ logger: { ...silentLogger, info } }),
+    );
     const { status, body } = await invoke(handler, {
       url: '/wf',
       headers: { ...JSON_CT, authorization: SECRET },
@@ -352,6 +359,19 @@ describe('makeListenHandler — request pipeline', () => {
     });
     expect(status).toBe(400);
     expect(body['error']).toBe('params_invalid');
+    expect(info).toHaveBeenCalledWith(
+      "webhook: rejected params_invalid — Invalid params for workflow 'gorgias-wf': (root) must " +
+        "have required property 'ticket_id'",
+      { path: '/wf', workflow: 'gorgias-wf' },
+    );
+    // issue #586 — the 400 body's `message` is the params voice, not the step voice. Before #586
+    // `listen` called `validateInputSchema`, which minted `Invalid input for step '<workflow id>'`
+    // — it named a step that was never validated and a workflow id in the step slot.
+    expect(body['message']).toBe(
+      "Invalid params for workflow 'gorgias-wf': (root) must have required property 'ticket_id'",
+    );
+    expect(String(body['message'])).not.toContain('Invalid input for step');
+    expect(body['status']).toBe('rejected');
   });
 
   it('success → 202, run created, agent spawned, pid recorded', async () => {

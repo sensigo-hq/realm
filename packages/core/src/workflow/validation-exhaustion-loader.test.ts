@@ -324,7 +324,14 @@ steps:
       });
     });
 
-    it('a structurally malformed output_schema on a mode: default step REFUSES at load (the new refusal population — a raw Ajv compile error, not a WorkflowError)', () => {
+    it('(#586) B10 ORDER: a structurally malformed output_schema is refused as a SCHEMA, before the B10 default_output proof ever runs', () => {
+      // Before #586 this fixture reached the B10 site and died inside it, as a raw Ajv compile
+      // Error the catch had to discriminate from a VALIDATION_OUTPUT_SCHEMA WorkflowError; the
+      // author was told their `default_output` did not validate, which was never the problem.
+      // Now `admitSchemaBlock` compiles `output_schema` at the top of the step's walk, so the
+      // refusal is the compile message on `output_schema`'s OWN line and the B10 proof is skipped
+      // for this step (one refusal, never a cascade). This cell IS the order proof: moving the
+      // admission below the B10 site restores the old, wrong message.
       expectThrows(
         `
 id: vx-malformed-schema-wf
@@ -342,8 +349,32 @@ steps:
       mode: default
       default_output: { category: 'billing' }
 `,
-        "'validation_exhaustion.default_output' does not validate against the step's own 'output_schema'",
+        "Step 'draft': 'output_schema' is not a valid JSON Schema — 'type' must be one of array, boolean, integer, null, number, object, string ('type: 12345' here), at \"output_schema/properties/category\"",
       );
+      // and the B10 message is NOT minted — exactly one error, the schema one.
+      try {
+        loadWorkflowFromString(`
+id: vx-malformed-schema-wf
+name: VX Malformed Schema
+version: 1
+steps:
+  draft:
+    description: Draft
+    execution: agent
+    output_schema:
+      type: object
+      properties:
+        category: { type: 12345 }
+    validation_exhaustion:
+      mode: default
+      default_output: { category: 'billing' }
+`);
+        throw new Error('expected loadWorkflowFromString to throw');
+      } catch (err) {
+        const errors = (err as WorkflowError).errors ?? [];
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).not.toContain("'validation_exhaustion.default_output' does not validate");
+      }
     });
 
     it('dead-config WARN: default_output present without mode: default (mode absent) is ignored, never rejected', () => {

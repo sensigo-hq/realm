@@ -13,6 +13,8 @@ import type {
 import {
   KNOWN_STEP_KEYS,
   KNOWN_WORKFLOW_KEYS,
+  SCHEMA_TYPED_STEP_KEYS,
+  SCHEMA_TYPED_WORKFLOW_KEYS,
   KNOWN_RETRY_KEYS,
   KNOWN_GATE_KEYS,
   SERVICE_TRUST_LEVELS,
@@ -38,7 +40,15 @@ import type { ExtensionRegistry } from '../extensions/registry.js';
 import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
 import { splitComparison, isPathShaped } from '../engine/comparison-expr.js';
 import { DEFAULT_EXECUTION_TIMEOUT_SECONDS } from '../engine/claim-liveness.js';
-import { validateOutputSchema } from '../validation/input-schema.js';
+import {
+  compileSchema,
+  validateOutputSchema,
+  isStrictModeRefusal,
+  describeSchemaFailure,
+  composeSchemaFailure,
+  renderAuthoredValue,
+  knownSchemaKeywords,
+} from '../validation/input-schema.js';
 import {
   assessStructuredOutputEligibility,
   renderIneligibleMessage,
@@ -735,6 +745,133 @@ function detectDependencyCycles(edges: Map<string, string[]>): string[][] {
  * (the `...WithDiagnostics` variants).
  * @throws WorkflowError on parse failure or structural validation errors.
  */
+/**
+ * Issue #586 — the per-key CONSEQUENCE clause of a schema-admission refusal: the surface that
+ * would have died at run time, named exactly. One string per key, no boilerplate re-admission
+ * clause (the remedy IS the re-admission). Scoped to the block's own reader — an `input_schema`
+ * refusal rejects THIS step's submissions, not every step's (walk #17: "in every run" restated
+ * the universality "every submission" already carries — a reader stopped to check whether it
+ * added a condition; it did not).
+ *
+ * The VERBS are the engine's, not a paraphrase: a run start is REFUSED (no run created); an
+ * execute_step / agent submission is REJECTED (`execution-loop.ts:1601-1614` counts the rejection
+ * and, under an armed `validation_exhaustion`, falls through toward terminalization rather than
+ * returning — either way the submission does not stand). Dropped entirely when the key is ALSO
+ * prohibited on this step's kind: see `admitSchemaBlock`.
+ *
+ * Exported because `create_workflow` (mcp-server) mints the same `input_schema` refusal at its own
+ * door: ONE home for the sentence, so the two doors cannot drift (a hand-typed second copy did —
+ * walk #17's fold landed in the loader and not in the tool until the mcp cell caught it).
+ */
+export const SCHEMA_KEY_CONSEQUENCE = {
+  params_schema: 'Every run start would be refused with that error at run time',
+  input_schema:
+    'Every execute_step submission to this step would be rejected with that error at run time',
+  output_schema:
+    'Every agent submission to this step would be rejected with that error at run time',
+  trace_schema: 'Every trace submission for this step would fail with that error at run time',
+} as const satisfies Record<
+  (typeof SCHEMA_TYPED_WORKFLOW_KEYS)[number] | (typeof SCHEMA_TYPED_STEP_KEYS)[number],
+  string
+>;
+
+/**
+ * Ajv prefixes every strict-mode sentence with this. Issue #586 drops it from the head of a
+ * REFUSAL's validity clause and re-attributes it at the tail (` (Ajv strict mode)`), because
+ * `realm workflow validate` has its own `--strict` flag with a different meaning and an author
+ * reading an unattributed "strict mode:" on a command they ran WITHOUT `--strict` has to work out
+ * whose strictness it is (the walk read it as realm's). The advisory attributes it in prose
+ * ("Ajv warns") and therefore keeps the line verbatim.
+ */
+const AJV_STRICT_PREFIX = 'strict mode: ';
+
+/**
+ * Walks an authored block to the JSON pointer Ajv quotes in a strict-mode line (`… at
+ * "#/properties/ticket_id" (strictTypes)`) and returns the union `type` list declared there.
+ * Absent (never guessed) when the line carries no pointer, the pointer does not resolve, or the
+ * node's `type` is not a list of strings — the remedy then names the shape without the members.
+ */
+/**
+ * First occurrence of `keyword` as an object key anywhere inside `block` (depth-first, declared
+ * order), as a `/`-joined path relative to the block — `''` when the keyword sits at the block's
+ * root, `undefined` when absent. Used only to LOCATE Ajv's strict-mode `unknown keyword` refusal
+ * inside a nested schema (issue #586, walk #3); the refusal itself is the compile's, never this.
+ */
+function keywordPathOf(block: unknown, keyword: string, prefix = ''): string | undefined {
+  if (block === null || typeof block !== 'object') return undefined;
+  if (Array.isArray(block)) {
+    for (let i = 0; i < block.length; i++) {
+      const found = keywordPathOf(block[i], keyword, `${prefix}${prefix === '' ? '' : '/'}${i}`);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  const record = block as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(record, keyword)) return prefix;
+  for (const [k, v] of Object.entries(record)) {
+    const found = keywordPathOf(v, keyword, `${prefix}${prefix === '' ? '' : '/'}${k}`);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/** A `keywordPathOf` path (`a/b/c`) as segments; `''` (the block root) is `[]`. */
+function pathSegments(path: string): string[] {
+  return path === '' ? [] : path.split('/');
+}
+
+/** A JSON-pointer body Ajv quotes (`/properties/a~1b`) as segments, un-escaped per RFC 6901. */
+function pointerSegments(pointer: string): string[] {
+  return pointer
+    .split('/')
+    .filter((s) => s !== '')
+    .map((s) => s.replace(/~1/g, '/').replace(/~0/g, '~'));
+}
+
+/** The object at a JSON-pointer body inside `block`; `undefined` when the pointer does not resolve to one. */
+function nodeAtPointer(block: unknown, pointer: string): Record<string, unknown> | undefined {
+  let node: unknown = block;
+  for (const seg of pointerSegments(pointer)) {
+    if (typeof node !== 'object' || node === null || Array.isArray(node)) return undefined;
+    node = (node as Record<string, unknown>)[seg];
+  }
+  if (typeof node !== 'object' || node === null || Array.isArray(node)) return undefined;
+  return node as Record<string, unknown>;
+}
+
+function unionTypesAt(block: unknown, line: string): readonly string[] | undefined {
+  const at = /at "#(\/[^"]*)"/.exec(line);
+  if (at === null) return undefined;
+  const node = nodeAtPointer(block, at[1]!);
+  if (node === undefined) return undefined;
+  const declared = node['type'];
+  if (!Array.isArray(declared) || declared.length === 0) return undefined;
+  return declared.every((t): t is string => typeof t === 'string') ? declared : undefined;
+}
+
+/**
+ * Issue #586 — realm's OWN remedy for a strict-mode advisory, per member of the class.
+ *
+ * Ajv's sentence is quoted as evidence, but its advice is written for whoever CONSTRUCTS the
+ * validator, not for whoever wrote the schema: the union class says "use allowUnionTypes", a
+ * constructor option that exists nowhere an author can reach (not a keyword, not a `realm.yaml`
+ * setting, not a flag) and nowhere in realm's docs. The walk had to guess `anyOf` and test it.
+ * Each arm below names a fix the author can type into the file in front of them.
+ */
+function strictAdvisoryRemedy(line: string, block: unknown): string {
+  if (line.includes('allowUnionTypes')) {
+    const types = unionTypesAt(block, line);
+    const members =
+      types === undefined ? '{type: …}, {type: …}' : types.map((t) => `{type: ${t}}`).join(', ');
+    return `realm does not enable union types — write anyOf: [${members}] instead`;
+  }
+  const missing = /missing type "([^"]+)" for keyword "([^"]+)"/.exec(line);
+  if (missing !== null) {
+    return `add type: ${missing[1]!} beside ${missing[2]!}, or remove ${missing[2]!}`;
+  }
+  return 'see the Ajv strict-mode message above';
+}
+
 function parseWorkflowString(
   content: string,
   registry: ExtensionRegistry | undefined,
@@ -816,6 +953,17 @@ function parseWorkflowString(
      * claim to be a key-exact cite. The two lookups are separate rather than one `??` chain for
      * exactly that reason: a single chain cannot report WHICH rung answered.
      */
+    /**
+     * Issue #586 — the workflow-level sibling of `withKeyLine`. There is NO second rung here: a
+     * top-level key has no enclosing step whose line could stand in for it, so the message goes
+     * out UNCITED when the position cannot be resolved (the same all-or-nothing posture the
+     * structured channel already takes — an absent cite and a wrong cite are different facts).
+     */
+    const withWorkflowKeyLine = (key: string, message: string): string => {
+      const keyLine = sourceMap.posOf([key])?.line;
+      return keyLine === undefined ? message : `${message} (line ${keyLine})`;
+    };
+
     const withKeyLine = (stepName: string, key: string, message: string): string => {
       const keyLine = sourceMap.posOf(['steps', stepName, key])?.line;
       if (keyLine !== undefined) return `${message} (line ${keyLine})`;
@@ -983,6 +1131,351 @@ function parseWorkflowString(
         (s as Record<string, unknown>)['execution'] === 'finalizer',
     );
 
+    /**
+     * Issue #586 — SCHEMA ADMISSION. Every AUTHORED JSON-Schema block is compiled here, by the
+     * same `compileSchema` the run time validates through, so a block that cannot compile is
+     * refused on its own line instead of killing the surface that first touches it at run time
+     * with a bare Ajv error (#556's envelope). The key set is `SCHEMA_TYPED_WORKFLOW_KEYS` /
+     * `SCHEMA_TYPED_STEP_KEYS`, each `satisfies` its known-key list, so a schema-typed key that is
+     * not a known key fails `tsc`.
+     *
+     * Returns TRUE when the block was refused — the caller skips every later check that reads the
+     * block STRUCTURALLY (the structured-output eligibility walk, the B10 default_output proof),
+     * so one malformed block mints ONE error, never a cascade.
+     */
+    const admitSchemaBlock = (
+      block: unknown,
+      key: string,
+      stepName: string | undefined,
+      consequence: string | undefined,
+    ): boolean => {
+      const where = stepName === undefined ? '' : `Step '${stepName}': `;
+      const blockPath = stepName === undefined ? [key] : ['steps', stepName, key];
+      // The cite is the OFFENDING KEYWORD's own line wherever the validator points at one (walk
+      // #5, T1): this loader's `(line N)` convention is "the key's own line", and a refusal that
+      // NAMES a keyword six levels down while citing the block head — 11 lines away in the walk —
+      // taught the author to distrust the number. Rung 1 = the keyword's line (each class's own
+      // locator, below); rung 2 = the block's key line (a null or non-object block, a dangling
+      // $ref with no `$ref` key, or a position the source map cannot place — an alias's expansion
+      // has no positions of its own); then withKeyLine's own step-line rung.
+      const cite = (message: string, inner?: readonly string[]): string => {
+        if (inner !== undefined) {
+          const line = sourceMap.posOf([...blockPath, ...inner])?.line;
+          if (line !== undefined) return `${message} (line ${line})`;
+          // A keyword was named but the source map cannot place it inside the block, while the
+          // block's own key resolves: the value is not written here — an anchor alias (`*name`)
+          // or a merge — so the cite says so instead of sending the author to a line that does
+          // not carry the keyword the message names (walk #6, YELLOW-1).
+          const blockLine = sourceMap.posOf(blockPath)?.line;
+          if (blockLine !== undefined) {
+            return (
+              `${message} (line ${blockLine}; the keyword is not written on this line — it ` +
+              `sits in a list entry, or in a value declared elsewhere, e.g. at an anchor)`
+            );
+          }
+        }
+        return stepName === undefined
+          ? withWorkflowKeyLine(key, message)
+          : withKeyLine(stepName, key, message);
+      };
+      // PRESENCE = `!== undefined`, the five runtime guards' own predicate (execution-loop's
+      // input/output/trace guards and the params guards on listen/start_run_batch). Never
+      // truthiness, never `!= null`: a null block IS present at run time, where it dies with a
+      // bare V8 TypeError reading '$id' off null — so it is refused here, with its own clause
+      // instead of that text. `true`, `false` and `{}` are LEGAL schemas (Ajv compiles all three;
+      // `false` rejects every value, which is a choice, not a defect).
+      // The null arm carries NO consequence clause, on every kind: the other clauses say "would
+      // be rejected with THAT error", and when nothing compiled there is no "that error" to refer
+      // to — a dangling referent is the #524 class. The remedy carries the whole instruction.
+      if (block === null) {
+        errors.push(
+          cite(
+            `${where}'${key}' is null, not a schema (a JSON-Schema block is an object, or the ` +
+              `boolean true/false); fix the schema.`,
+          ),
+        );
+        return true;
+      }
+      const strictLines: string[] = [];
+      try {
+        compileSchema(block as JsonSchema, { onStrictLog: (line) => strictLines.push(line) });
+      } catch (err) {
+        // Ajv's own sentence, UNTOUCHED, is the input to three deterministic LOAD-ONLY transforms
+        // below. Every arm keyed on it reads THIS raw string, never a transformed one — the
+        // transforms rewrite exactly the tokens the arms match on.
+        const raw = err instanceof Error ? err.message : String(err);
+        // The `x-` arm (#559's namespace is the TOP of the workflow file only — it does not
+        // extend into a JSON-Schema block, where realm's validator refuses every unknown
+        // keyword). Same construction decides the refusal; only the remedy clause is tailored,
+        // the #582 step-level-tail pattern.
+        // The probe INTERPOLATES the prefix const — it never quotes an `x-` literal (the #559 D5
+        // never-read witness scans every engine/loader source file for exactly that literal, and
+        // the loader's own unknown-key arms already follow this rule).
+        // CASE-INSENSITIVE on the prefix — the #582 rule one level up: `X-Note` is the same
+        // author confusion as `x-note`, and Ajv echoes the keyword's own spelling.
+        const extensionKeywordPrefix = `${AJV_STRICT_PREFIX}unknown keyword: ${JSON.stringify(
+          EXTENSION_KEY_PREFIX,
+        ).slice(0, -1)}`;
+        const isUnknownKeyword = raw.toLowerCase().startsWith(extensionKeywordPrefix.toLowerCase());
+        // The "move it to the top" branch FORKS on the keyword's own spelling (#586 walk #2, F1):
+        // followed literally, `X-Note` and `x-realm-note` were refused AGAIN at the top of the file
+        // by the #559/#582 arms — a remedy that fails when followed. Same three arms as the
+        // top-level namespace itself, reserved first (case-insensitive), then the lowercase rule.
+        const keywordMatch = /unknown keyword: ("(?:[^"\\]|\\.)*")/.exec(raw);
+        const keyword =
+          keywordMatch === null ? '' : (JSON.parse(keywordMatch[1] ?? '""') as string);
+        // A key that is reserved AND capitalized (`X-Realm-Note`) has two problems; naming one
+        // sent the author to the top of the file spelled `X-Note`, refused there by the case arm
+        // (walk #3). Both constraints in one clause, reserved first.
+        // ONE clause carries the act AND the reason (walk #16: a rule clause "lives at the top of
+        // the workflow file only" followed by "move it to the top of the file" was the same fact
+        // in two spellings eleven words apart): the move names the destination and why it is the
+        // destination. When the key must ALSO change its name, the rename comes FIRST and acts on
+        // "it", then the move (walk #17: a trailing ", under a lowercase <prefix> name" attached to
+        // the destination on first read — the reader re-read to find its subject).
+        const moveTo =
+          `move it to the top of the workflow file, where the '${EXTENSION_KEY_PREFIX}' ` +
+          `extension namespace lives`;
+        const moveClause = keyword.toLowerCase().startsWith(RESERVED_EXTENSION_PREFIX)
+          ? keyword.startsWith(EXTENSION_KEY_PREFIX)
+            ? `rename it to an '${EXTENSION_KEY_PREFIX}' name outside the reserved ` +
+              `'${RESERVED_EXTENSION_PREFIX}' prefix and ${moveTo}`
+            : `rename it to a lowercase '${EXTENSION_KEY_PREFIX}' name outside the reserved ` +
+              `'${RESERVED_EXTENSION_PREFIX}' prefix and ${moveTo}`
+          : isExtensionKey(keyword)
+            ? moveTo
+            : `rename it to a lowercase '${EXTENSION_KEY_PREFIX}' name (the extension ` +
+              `namespace is lowercase) and ${moveTo}`;
+        // The `format` class carries its own executable remedy in the consequence clause (below);
+        // a trailing generic "fix the schema" after it read as weaker advice than the advice just
+        // given (walk #2) — so that arm mints no separate remedy.
+        const isUnknownFormat = raw.startsWith('unknown format "');
+        // The `format` remedy is composed below once the property's type is known; the slot is
+        // filled after the locators run.
+        // The D8 clause states the rule ONCE (walk #14: the opener already says "refused by
+        // realm's validator"; "realm's validator refuses every unknown keyword" 25 words later
+        // read as a second rule) and carries no tracker reference (three walkers stopped on
+        // `(issue #559)` — the docs page is where provenance lives). An ORDINARY unknown keyword
+        // gets its own act, never the generic "fix the schema".
+        // The D8 clause states the rule ONCE and from one side (walk #15: "lives at the top only,
+        // and inside a schema block … is refused" was the same fact stated twice; the validity
+        // clause already says the key is not a JSON-Schema keyword) and carries no tracker cite
+        // (three walkers stopped on `(issue #559)` — the docs page is where provenance lives). An
+        // ORDINARY unknown keyword is handed its near-miss when the validator knows one
+        // (`minlength` → `minLength`, walk #15), else told to correct its spelling — never the
+        // generic "fix the schema".
+        // A wrong suggestion is worse than none (the #169 helper's own doctrine) and its
+        // threshold — two edits on a three-letter key — turned `foo` into "write 'not'" on the
+        // built CLI. The near-miss is the MODAL typo only: a case-only mismatch (`minlength`,
+        // `additionalproperties`), or a candidate sharing the first letter within two characters
+        // of length (`tpye` → `type`, `enun` → `enum`); anything else is told to correct its
+        // spelling, never handed a guess.
+        const nearMiss = (() => {
+          if (keywordMatch === null || keyword === '' || isUnknownKeyword) return undefined;
+          const known = knownSchemaKeywords();
+          const lower = keyword.toLowerCase();
+          const caseOnly = known.find((k) => k.toLowerCase() === lower);
+          if (caseOnly !== undefined) return caseOnly;
+          const plausible = known.filter(
+            (k) => k[0]?.toLowerCase() === lower[0] && Math.abs(k.length - keyword.length) <= 2,
+          );
+          return closestKey(keyword, plausible);
+        })();
+        let remedy: string | undefined = isUnknownKeyword
+          ? `remove it, or ${moveClause}`
+          : keywordMatch !== null && keyword !== ''
+            ? nearMiss === undefined
+              ? `remove '${keyword}', or correct its spelling`
+              : `remove '${keyword}', or write '${nearMiss}' if that is what you meant`
+            : isUnknownFormat
+              ? undefined
+              : 'fix the schema';
+        // TRANSFORM 1 (#586 walk J1-b/J8-c; since walk #13 the FALLBACK only — the meta-schema
+        // class composes its own sentence below) — Ajv's pointers are rooted at `data`, which is the
+        // SCHEMA DOCUMENT here, not the author's key: `data/type` meant `params_schema.type` and
+        // the reader had to learn the translation. Every other cite in this loader speaks the
+        // author's own path, so this one does too.
+        // TRANSFORM 2 (walk J8-b) — `strict mode: ` printed unattributed by a command that has
+        // its OWN `--strict` with a different meaning (escalate warnings). Dropped from the head
+        // and re-attributed at the tail of the validity clause, the way the advisory already
+        // attributes it. Applies to the `x-` arm's validity clause too — same sentence.
+        let detail = raw.replace(/\bdata\//g, `${key}/`);
+        if (detail.startsWith(AJV_STRICT_PREFIX)) {
+          detail = `${detail.slice(AJV_STRICT_PREFIX.length)} (Ajv strict mode)`;
+        }
+        // The strict-mode unknown-keyword class is the ONE class Ajv reports with no location
+        // (the meta-schema class carries `data/…`, the format class `at path "#/…"`): in a big
+        // block the author greps for the keyword (walk #3). Realm walks the block for the
+        // keyword's own path, names it, and cites its line.
+        let citeInner: string[] | undefined;
+        if (keywordMatch !== null && keyword !== '') {
+          // The unknown-keyword class speaks realm's OWN sentence too (walk #14 — the vendor's
+          // `unknown keyword: "…" (Ajv strict mode)` was the one refusal left in the
+          // validator's voice: a double-quoted token, no value echoed, a library name and its mode
+          // with no act attached): the keyword, the value as written, the containing path.
+          const path = keywordPathOf(block, keyword);
+          const container =
+            path === undefined ? undefined : nodeAtPointer(block, path === '' ? '' : `/${path}`);
+          const written = container === undefined ? undefined : container[keyword];
+          const here =
+            written === undefined ? '' : ` ('${keyword}: ${renderAuthoredValue(written)}' here)`;
+          // No path at the block root (walk #16: `at "input_schema"` eight words after
+          // `'input_schema' is refused` located nothing).
+          const at = path === undefined || path === '' ? '' : `, at "${key}/${path}"`;
+          detail = `'${keyword}' is not a JSON-Schema keyword${here}${at}`;
+          if (path !== undefined) citeInner = [...pathSegments(path), keyword];
+        }
+        // TRANSFORM 4 (walk #5, T4) — the `format` class's validity clause said `ignored` (Ajv's
+        // verb, for a validator that would carry on) one word after realm said `Invalid`. The verb
+        // goes and the pointer speaks the author's path, as TRANSFORM 1 does for the meta-schema
+        // class; the cite is the `format` key's own line.
+        const formatAt = isUnknownFormat ? /at path "#(\/[^"]*)?"/.exec(raw) : null;
+        let formatOnString = false;
+        if (formatAt !== null) {
+          // The whole validity clause is realm's for this class, and its ORDER is the point:
+          // Ajv's `unknown format "email"` (walk #6) and realm's own `'format' is not accepted
+          // ("email" here, …)` (walk #8) both read as a value-specific refusal, and both walkers
+          // executed a second format value and were refused identically. The universal fact
+          // comes FIRST — the keyword itself is unsupported, every value — and the value after it,
+          // framed as one of many, so the invitation is never issued; then the path; no colon.
+          // …and the keyword TRAVELS WITH its value (`'format: email'`): a bare `"email"` beside a
+          // property named `email` read as the property (walks #10, #11).
+          const formatValue = /unknown format "([^"]*)"/.exec(raw)?.[1] ?? '';
+          const formatPointer = formatAt[1] ?? '';
+          detail =
+            `the 'format' keyword is unsupported, whatever its value ('format: ${formatValue}' ` +
+            `here)${formatPointer === '' ? '' : `, at "${key}${formatPointer}"`}`;
+          citeInner = [...pointerSegments(formatAt[1] ?? ''), 'format'];
+          // The `pattern` hint is offered only where it can fire — and as an ACTION, not a fact
+          // (walk #9: "a 'pattern' expresses the shape you need" inside an imperative sentence
+          // read as something to infer, not to do): a property declared
+          // `type: string`. On any other type a `pattern` is inert and mints the strictTypes
+          // advisory on the next validate (walk #8 executed `type: integer`).
+          formatOnString = nodeAtPointer(block, formatAt[1] ?? '')?.['type'] === 'string';
+        } else if (citeInner === undefined) {
+          {
+            // A dangling `$ref` (`can't resolve reference …`) takes this path too: the structured
+            // check re-compiles on the failure path and names the `$ref` SITE where Ajv names
+            // only the target — the meta class's last member left in the validator's voice with a
+            // non-act remedy (`fix the schema`), caught by the second fidelity read.
+            // The meta-schema class: realm's OWN sentence from the validator's structured first
+            // error (walk #13 — the cascade `must be equal to one of the allowed values, must be
+            // array, must match a schema in anyOf` was three demands for one typo, the second
+            // obeyed literally at the cost of a round trip, and `fix the schema` was not an act):
+            // the keyword, what it must be (the allowed values / the expected shape), the value
+            // as written, the path, and a remedy that names what to type. The validator's words
+            // stay only where the structured check does not reproduce the failure.
+            const failure = describeSchemaFailure(block);
+            if (failure !== undefined) {
+              const composed = composeSchemaFailure(failure, key, block);
+              detail = composed.detail;
+              remedy = composed.remedy;
+              citeInner = composed.segments;
+            } else {
+              const ptr = /\bdata\/(\S+)/.exec(raw);
+              if (ptr !== null) citeInner = pointerSegments(ptr[1]!.replace(/,$/, ''));
+            }
+          }
+        }
+        // TRANSFORM 3 (walk J8-a) — the `format` class's remedy is its OWN, never the generic
+        // "fix the schema" after it (walk #2: weaker advice after specific advice read as a
+        // contradiction); the validity clause carries the fact about the validator (no format
+        // value is accepted) on every kind.
+        // The `format` arm keeps the FAMILY shape — validity, then the per-key run-time
+        // consequence (dropped on a non-consuming kind like every class), then the remedy (walk
+        // #12: with the remedy in the consequence slot, A read as a style objection beside B and C
+        // while all three are identical hard refusals; the clause is TRUE for `format` — the
+        // compile throws at run time exactly as for the other classes). Each remedy alternative is
+        // a WHOLE act (walk #11: "add a 'pattern'" obeyed at its narrowest — `format` left in place
+        // — returned the identical line): remove, or replace.
+        if (isUnknownFormat) {
+          remedy =
+            `remove the 'format' keyword` +
+            (formatOnString
+              ? ", or replace it with a 'pattern' that expresses the string shape you need"
+              : '');
+        }
+        const consequenceText = consequence;
+        // The OPENER is true per class (walk #11): an unknown keyword or a `format` is valid JSON
+        // Schema by the spec — realm's strict validator declines it — so only the meta-schema
+        // class may say "not a valid JSON Schema".
+        const opener = isStrictModeRefusal(raw)
+          ? "is refused by realm's validator"
+          : 'is not a valid JSON Schema';
+        // When the key is ALSO prohibited on this step's kind the registry has ALREADY minted its
+        // own refusal saying the key is never read here (#517) — a consequence clause claiming
+        // this step's submissions would be rejected by it would CONTRADICT that refusal in the
+        // same render (the #524 walk's boarded advisory-beside-a-refusal class). Drop the clause;
+        // the validity half and the remedy are true on every kind.
+        errors.push(
+          cite(
+            consequenceText === undefined
+              ? `${where}'${key}' ${opener} — ${detail}; ${remedy ?? 'fix the schema'}.`
+              : `${where}'${key}' ${opener} — ${detail}. ${consequenceText}` +
+                  `${remedy === undefined ? '' : `; ${remedy}`}.`,
+            citeInner,
+          ),
+        );
+        return true;
+      }
+      for (const line of strictLines) {
+        // The advisory cites the keyword it is about, too (walk #5, T1): the union arm's `type`,
+        // the missing-type arm's keyword, otherwise the node Ajv's pointer names — and the block's
+        // key line when the line carries no pointer the source map can place.
+        const at = /at "#(\/[^"]*)?"/.exec(line);
+        const node = at === null ? undefined : pointerSegments(at[1] ?? '');
+        const missingFor = /for keyword "([^"]+)"/.exec(line);
+        const inner =
+          node === undefined
+            ? undefined
+            : line.includes('allowUnionTypes')
+              ? [...node, 'type']
+              : missingFor !== null
+                ? [...node, missingFor[1]!]
+                : node;
+        const pos =
+          (inner === undefined ? undefined : sourceMap.posOf([...blockPath, ...inner])) ??
+          sourceMap.posOf(blockPath);
+        warnings.push({
+          code: 'SCHEMA_STRICT_ADVISORY',
+          severity: resolveSeverity('SCHEMA_STRICT_ADVISORY'),
+          scope: stepName === undefined ? 'workflow' : 'step',
+          ...(stepName === undefined ? {} : { step: stepName }),
+          key,
+          ...(pos !== undefined
+            ? { line: pos.line, column: pos.column, endLine: pos.endLine, endColumn: pos.endColumn }
+            : {}),
+          // `key` names the BLOCK (which schema); `line`/`column` point at the KEYWORD the line is
+          // about (walk #6, YELLOW-3) — two granularities in one object, by design: a consumer that
+          // wants the block reads `key`, one that wants to jump reads the position.
+          // The `(line N)` tail lives in `message`, the unknown-key family's own shape:
+          // `renderLoaderWarning` ECHOES `message` verbatim and never recomposes from the
+          // structured fields (diagnostics.ts), so a warning whose line lives only on the
+          // structured channel prints uncited on every CLI surface.
+          // The remedy is REALM's, not Ajv's (#586 walk J2-a): Ajv's own advice for the union
+          // class is "use allowUnionTypes", a CONSTRUCTOR option no author can set from a
+          // workflow file, a `realm.yaml` or a flag, with zero occurrences in realm's docs. The
+          // quoted line stays as evidence; the executable fix goes beside it.
+          // The quoted line speaks the author's key in place of Ajv's `#` root (walk #9: the
+          // refusal said `at "input_schema/…"` and the advisory `at "#/…"` for the same kind of
+          // place a minute apart, and nothing said `#` IS the block). The remedy and the union
+          // walk still read the ORIGINAL line — only the rendered text changes.
+          message:
+            `${where}'${key}' compiles, but Ajv warns: ${line.replace(/ at "#/, ` at "${key}`)}. Remedy: ` +
+            `${strictAdvisoryRemedy(line, block)}. This advisory clears when the schema is ` +
+            `fixed; nothing is printed at run time.` +
+            (pos === undefined ? '' : ` (line ${pos.line})`),
+        });
+      }
+      return false;
+    };
+
+    for (const key of SCHEMA_TYPED_WORKFLOW_KEYS) {
+      if (doc[key] !== undefined) {
+        admitSchemaBlock(doc[key], key, undefined, SCHEMA_KEY_CONSEQUENCE[key]);
+      }
+    }
+
     // Step 3: Per-step validation
     for (const [stepName, stepRaw] of Object.entries(stepsRaw)) {
       if (typeof stepRaw !== 'object' || stepRaw === null || Array.isArray(stepRaw)) {
@@ -1006,6 +1499,30 @@ function parseWorkflowString(
       const dependsOn = Array.isArray(step['depends_on'])
         ? (step['depends_on'] as unknown[]).filter((d): d is string => typeof d === 'string')
         : [];
+
+      // issue #586 — SCHEMA ADMISSION for this step's authored blocks, BEFORE any check that
+      // reads one structurally (the structured-output eligibility walk and the B10 default_output
+      // proof, both below): a refused block is never handed to them, so one malformed schema
+      // mints exactly one error.
+      const refusedSchemaKeys = new Set<string>();
+      for (const key of SCHEMA_TYPED_STEP_KEYS) {
+        if (step[key] !== undefined) {
+          // `undefined` consequence = the key is prohibited on THIS step's kind, so the registry
+          // walk above already refused it and the clause would contradict that refusal.
+          const kindProhibited =
+            stepKind !== undefined && !consumedKindsFor(key).includes(stepKind);
+          if (
+            admitSchemaBlock(
+              step[key],
+              key,
+              stepName,
+              kindProhibited ? undefined : SCHEMA_KEY_CONSEQUENCE[key],
+            )
+          ) {
+            refusedSchemaKeys.add(key);
+          }
+        }
+      }
 
       // WARN (do not reject) on an unknown step key — runs after template resolution above, so a
       // template-expanded step's keys are checked too. Same non-breaking posture as the
@@ -1095,8 +1612,9 @@ function parseWorkflowString(
       // Except-bearing cells are SKIPPED — their value-conditional checks stay hand-written
       // (today exactly trust×finalizer, below). Companion/value/sub-key rules are not minted at
       // all (the clang line): toolsMissing, the tools agent+handler clause, the gate block,
-      // retry E1-E3, structured_output literal+eligibility, trace_schema compile, pos-int
-      // checks all stay hand-written further down.
+      // retry E1-E3, structured_output literal+eligibility, pos-int checks all stay hand-written
+      // further down. (The schema-typed keys' own COMPILE is no longer hand-written per key
+      // either: `admitSchemaBlock` above walks SCHEMA_TYPED_STEP_KEYS — issue #586.)
       //
       // The kind gate is deliberate: on a step whose `execution` is missing or not one of the
       // four kinds, the registry has no row to consult, so NO per-key kind refusal is minted —
@@ -1310,7 +1828,13 @@ function parseWorkflowString(
       // #517 re-gate: the kind half is minted by the registry walk above; the value checks
       // below keep their old else-branch semantics via an explicit valid-kind conjunct — a
       // wrong-kind step gets ONLY the minted refusal, never the value noise.
-      if (step['structured_output'] !== undefined && step['execution'] === 'agent') {
+      if (
+        step['structured_output'] !== undefined &&
+        step['execution'] === 'agent' &&
+        // #586: a refused block never reaches a structural reader — one refusal, no cascade.
+        !refusedSchemaKeys.has('input_schema') &&
+        !refusedSchemaKeys.has('output_schema')
+      ) {
         if (step['structured_output'] !== 'strict') {
           errors.push(
             withStepLine(
@@ -1412,6 +1936,9 @@ function parseWorkflowString(
                     `'default_output' (nothing to substitute on exhaustion)`,
                 ),
               );
+            } else if (refusedSchemaKeys.has('output_schema')) {
+              // #586: the output_schema was already refused as a schema on its own line — the
+              // B10 proof below would only restate the same compile failure in a worse voice.
             } else if (step['output_schema'] === undefined) {
               errors.push(
                 withStepLine(
@@ -1423,14 +1950,16 @@ function parseWorkflowString(
             } else {
               // B10 — load-time AJV proof: REUSE the runtime validator so the load-time verdict can
               // never diverge from the runtime verdict for the exact same (default_output,
-              // output_schema) pair. This is the loader's first load-time Ajv compile of an
-              // output_schema (today output_schema is only compiled at runtime), so the catch below
-              // legitimately sees TWO different populations: a VALIDATION_OUTPUT_SCHEMA
-              // WorkflowError (default_output fails the schema) and a raw Ajv schema-compilation
-              // Error (a structurally malformed output_schema) — both fail-closed to a load refusal,
-              // but they carry their detail DIFFERENTLY: a WorkflowError has `.details.errors`; a raw
-              // Error has NO `.details` at all (reading `.details.errors` on it throws a TypeError
-              // that would escape the loader mid-walk — verified empirically). Discriminate.
+              // output_schema) pair. Issue #586 moved the COMPILE half upstream: `admitSchemaBlock`
+              // compiles every authored `output_schema` at the top of this step's walk, and a block
+              // that fails to compile is refused there and never reaches here (the `else if`
+              // above). So the raw-Ajv-`Error` arm of the catch below is no longer REACHABLE for a
+              // structurally malformed output_schema — it is kept as the fail-closed branch for any
+              // other bare throw the compile+validate pair can still produce. The two populations
+              // it discriminates: a VALIDATION_OUTPUT_SCHEMA WorkflowError (default_output fails the
+              // schema — the live case) and a raw Error with NO `.details` at all (reading
+              // `.details.errors` on it throws a TypeError that would escape the loader mid-walk —
+              // verified empirically). Discriminate.
               try {
                 validateOutputSchema(
                   exhaustionBlock['default_output'] as Record<string, unknown>,

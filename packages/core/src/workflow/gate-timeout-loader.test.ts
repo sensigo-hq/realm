@@ -341,7 +341,12 @@ steps:
       expect(def.steps['approve']!.gate?.choices).toEqual(['approve', 'reject']);
     });
 
-    it("C9 precedence control: choices: [approve] + enum: [] — loads (choices wins the chain, as the mint's ?? does)", () => {
+    it("C9 (#586) precedence control: choices: [approve] + enum: [reject] — loads (choices wins the chain, as the mint's ?? does)", () => {
+      // #586 re-home: this control used to carry `enum: []`, which #586 now REFUSES as a schema
+      // (it is the #433 deferral's own class, answered). The precedence question it exists to
+      // answer is unchanged and is tested more sharply here: the enum is VALID and DIFFERENT from
+      // `choices`, so `choices` winning is a real observation rather than a fallback to the only
+      // non-empty source.
       const def = loadWorkflowFromString(
         gateWorkflow(
           '      choices: [approve]',
@@ -350,7 +355,7 @@ steps:
       properties:
         choice:
           type: string
-          enum: []
+          enum: [reject]
       required: [choice]`,
         ),
       );
@@ -381,8 +386,14 @@ steps:
     }
   });
 
-  it('C6 the scope boundary: UNGATED step, no gate block, enum: [] — still loads (a schema-validity question, different class)', () => {
-    const def = loadWorkflowFromString(`
+  it('C6 (#586): UNGATED step, enum: [] inside input_schema — REFUSED at load (the schema-validity class #433 deferred)', () => {
+    // #433 decided this member was "a schema-validity question, different class" and left it
+    // loading; the cell's own NAME recorded that policy. #586 answers the question: Ajv refuses an
+    // empty `enum` at compile time, at load and at run time alike, so the loader refuses it too.
+    // The #433 SCOPE boundary this cell guards is unchanged and still observable: the refusal is a
+    // SCHEMA refusal citing the `enum: []` key's own line (15), NOT a gate-choices refusal — `gate.choices` is
+    // not involved and its message does not appear.
+    const yaml = `
 id: g433e-wf
 name: G433e
 version: 1
@@ -398,8 +409,17 @@ steps:
           type: string
           enum: []
       required: [choice]
-`);
-    expect(def.steps['step1']!.trust).toBeUndefined();
+`;
+    try {
+      loadWorkflowFromString(yaml);
+      throw new Error('expected loadWorkflowFromString to throw');
+    } catch (err) {
+      const errors = (err as WorkflowError).errors ?? [(err as WorkflowError).message];
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("Step 'step1': 'input_schema' is not a valid JSON Schema —");
+      expect(errors[0]).toContain('(line 15)');
+      expect(errors[0]).not.toContain('gate.choices');
+    }
   });
 
   it('C7 member (a) on an UNGATED step (gate: {choices: []}, no trust) — refused, SAME message (population-invariant)', () => {

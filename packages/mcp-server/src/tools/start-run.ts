@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  validateRunParams,
   JsonWorkflowStore,
   JsonFileStore,
   executeChain,
@@ -81,6 +82,13 @@ export async function handleStartRun(
   const runStore = stores?.runStore ?? new JsonFileStore();
   const definition = await workflowStore.get(args.workflow_id);
   const params = args.params ?? {};
+
+  // issue #586: a declared `params_schema` is applied on EVERY run-creation surface. This throw is
+  // the tool's ordinary WorkflowError envelope and it lands BEFORE `runStore.create` below, so a
+  // violating call creates no run and never reaches the idempotency re-encounter branch.
+  if (definition.params_schema !== undefined) {
+    validateRunParams(params, definition.params_schema, definition.id);
+  }
 
   // Resolve the effective registry BEFORE run creation — a throwing registryProvider must
   // fail this tool call with NO run created. Provider wins over construction-time registry.

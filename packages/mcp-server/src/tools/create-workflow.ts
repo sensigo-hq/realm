@@ -3,6 +3,11 @@ import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  compileSchema,
+  isStrictModeRefusal,
+  describeSchemaFailure,
+  SCHEMA_KEY_CONSEQUENCE,
+  composeSchemaFailure,
   JsonWorkflowStore,
   WorkflowError,
   resolvePreExecutionAgentAction,
@@ -153,6 +158,32 @@ function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: st
   // handleCreateWorkflow's own `errors.length > 0` early-return, well before register()/
   // start_run() fire) — an ineligible step never reaches a live registered workflow or run.
   for (const step of args.steps) {
+    // issue #586 — create_workflow's OWN admission door. FIRST in the loop body, ABOVE the
+    // `structured_output !== 'strict'` early-`continue` below: a malformed `input_schema` is fatal
+    // for every step kind, not only for strict ones, and `continue` here is what keeps the
+    // eligibility walk from reading a block the compile already refused.
+    // (#554 — making this tool call the loader for everything else — stays #554's.)
+    if (step.input_schema !== undefined) {
+      try {
+        compileSchema(step.input_schema);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const strict = isStrictModeRefusal(msg);
+        // The meta-schema class gets realm's own sentence and remedy (walk #13), as the loader
+        // mints; the strict class keeps the validator's words here (this door is #554's).
+        const failure = strict ? undefined : describeSchemaFailure(step.input_schema);
+        const composed =
+          failure === undefined
+            ? undefined
+            : composeSchemaFailure(failure, 'input_schema', step.input_schema);
+        errors.push(
+          `Step '${step.id}': 'input_schema' ${strict ? "is refused by realm's validator" : 'is not a valid JSON Schema'} — ` +
+            `${composed?.detail ?? msg}. ${SCHEMA_KEY_CONSEQUENCE.input_schema}; ` +
+            `${composed?.remedy ?? 'fix the schema'}.`,
+        );
+        continue;
+      }
+    }
     if (step.structured_output !== 'strict') continue;
     const verdict = assessStructuredOutputEligibility({
       schema: step.input_schema,

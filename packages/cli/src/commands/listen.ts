@@ -22,7 +22,7 @@ import {
   loadWorkflowFromFile,
   JsonFileStore,
   JsonWorkflowStore,
-  validateInputSchema,
+  validateRunParams,
   WorkflowError,
   sealRunLevel,
 } from '@sensigo/realm';
@@ -365,9 +365,21 @@ export function makeListenHandler(
         : {};
       if (entry.definition.params_schema !== undefined) {
         try {
-          validateInputSchema(params, entry.definition.params_schema, entry.definition.id);
+          // issue #586: `validateRunParams` — the old call said `Invalid input for step '<id>'`,
+          // naming a step where the thing validated was the workflow's params.
+          validateRunParams(params, entry.definition.params_schema, entry.definition.id);
         } catch (err) {
           const message = err instanceof WorkflowError ? err.message : 'invalid params';
+          // issue #586 (walk J6-a): the 400 is the ONLY witness to this refusal, and it lives in
+          // the caller's process — a third-party webhook sender that may discard it. An operator
+          // whose upstream is posting the wrong shape saw "no runs are being created" and had
+          // nothing server-side to look at, at any `--log-level` including debug. Logged at the
+          // same level as `webhook: dispatched`, so the accepted and the refused POST are on the
+          // same line of the same log.
+          deps.logger.info(`webhook: rejected params_invalid — ${message}`, {
+            path,
+            workflow: entry.definition.id,
+          });
           respond(res, 400, { error: 'params_invalid', message, status: 'rejected' });
           return;
         }

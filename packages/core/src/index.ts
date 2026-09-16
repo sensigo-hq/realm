@@ -231,10 +231,21 @@ export type { TracePolicyDescriptor, TracePolicyVersion } from './engine/trace-p
 // Validation
 export {
   validateInputSchema,
+  validateRunParams,
+  isStrictModeRefusal,
+  describeSchemaFailure,
+  composeSchemaFailure,
+  renderAuthoredValue,
+  knownSchemaKeywords,
+  compileSchema,
   validateOutputSchema,
   validateAgentSubmission,
 } from './validation/input-schema.js';
-export type { RawValidationError, AgentSubmissionValidation } from './validation/input-schema.js';
+export type {
+  RawValidationError,
+  AgentSubmissionValidation,
+  SchemaFailure,
+} from './validation/input-schema.js';
 
 // Workflow
 export {
@@ -245,6 +256,7 @@ export {
   resolveAgentProfiles,
   findTrustRoot,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  SCHEMA_KEY_CONSEQUENCE,
 } from './workflow/yaml-loader.js';
 export { JsonWorkflowStore } from './workflow/registrar.js';
 export type { WorkflowRegistrar } from './workflow/registrar.js';

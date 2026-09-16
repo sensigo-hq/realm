@@ -902,6 +902,21 @@ export const KNOWN_STEP_KEYS = [
   'llm_timeout_seconds',
 ] as const;
 
+/**
+ * Issue #586 — the step keys whose VALUE is an authored JSON-Schema block. The loader compiles
+ * each of these at admission through `compileSchema`, so a block that cannot compile is refused on
+ * its own line instead of killing every run at run time.
+ *
+ * `satisfies` the KNOWN_STEP_KEYS member union: a schema-typed key that is not a known step key
+ * fails `tsc`. (Alternative B — a branded `JsonSchemaBlock` type so a new schema-bearing field
+ * inherits the check by the compiler — is DEFERRED with its trigger: a fifth schema-typed key.)
+ */
+export const SCHEMA_TYPED_STEP_KEYS = [
+  'input_schema',
+  'output_schema',
+  'trace_schema',
+] as const satisfies readonly (typeof KNOWN_STEP_KEYS)[number][];
+
 // Compile-time drift guard: KNOWN_STEP_KEYS must be an exact partition of StepDefinition's keys.
 // Types are erased at runtime, so this is the only mechanism that can catch drift — if someone
 // adds/removes a StepDefinition field without updating KNOWN_STEP_KEYS, tsc fails the build
@@ -1056,6 +1071,11 @@ export const RUNTIME_ONLY_WORKFLOW_KEYS = [
   'model',
   'agent',
 ] as const;
+
+/** Issue #586 — the workflow-level keys whose VALUE is an authored JSON-Schema block. */
+export const SCHEMA_TYPED_WORKFLOW_KEYS = [
+  'params_schema',
+] as const satisfies readonly (typeof KNOWN_WORKFLOW_KEYS)[number][];
 
 // Compile-time drift guard: KNOWN_WORKFLOW_KEYS + RUNTIME_ONLY_WORKFLOW_KEYS together must be an
 // exact, non-overlapping partition of WorkflowDefinition's keys. See the StepDefinition guard
