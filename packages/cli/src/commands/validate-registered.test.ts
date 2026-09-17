@@ -290,7 +290,10 @@ describe('validate --registered (issue #427)', () => {
     const text = out();
     expect(text).toContain("Error: the registered copy of 'broken' is not parseable JSON:");
     expect(text).toContain(
-      'This copy IS registered — realm workflow list counts it under "could not be read" instead of listing it.',
+      'The registry holds an entry for \'broken\' — realm workflow list counts it under "could not be read" instead of listing it.',
+    );
+    expect(text).toContain(
+      `To repair: re-register the workflow from its source (realm workflow register <path-to-workflow>); if it was never registered from a source, remove the file (rm ${join(wfDir, 'broken.json')}) instead.`,
     );
     expect(text).not.toContain('Registered workflows:'); // the not-found pointer, C21
     expect(text).not.toContain('    at ');
@@ -311,11 +314,34 @@ describe('validate --registered (issue #427)', () => {
     const text = out();
     expect(text).toContain("Error: the registered copy of 'locked' could not be read (EACCES:");
     expect(text).toContain(
-      'This copy IS registered — realm workflow list counts it under "could not be read" instead of listing it.',
+      'The registry holds an entry for \'locked\' — realm workflow list counts it under "could not be read" instead of listing it.',
+    );
+    expect(text).toContain(
+      `To repair: make ${join(wfDir, 'locked.json')} readable (chmod u+r ${join(wfDir, 'locked.json')}).`,
     );
     expect(text).not.toContain('Registered workflows:'); // the not-found pointer, C21
     expect(text).not.toContain('    at ');
     chmodSync(join(wfDir, 'locked.json'), 0o644);
+  });
+
+  it('T-U2 (review fold R2) an unreadable registry DIRECTORY gets the reason and the act, and NO "IS registered" claim — nothing was read', async () => {
+    plant('inreg', stored({ id: 'inreg' }));
+    chmodSync(wfDir, 0o000);
+    try {
+      await expect(
+        validateCommand.parseAsync(['--registered', 'inreg'], { from: 'user' }),
+      ).rejects.toThrow('process.exit');
+    } finally {
+      chmodSync(wfDir, 0o755);
+    }
+    const text = out();
+    expect(text).toContain(`Error: the workflow registry at ${wfDir} cannot be read (EACCES)`);
+    expect(text).toContain(
+      `To repair: make the registry directory ${wfDir} readable and searchable (chmod u+rx ${wfDir}).`,
+    );
+    expect(text).not.toContain('holds an entry');
+    expect(text).not.toContain('Registered workflows:');
+    expect(text).not.toContain('    at ');
   });
 
   it('T-U2 an EMPTY stored copy, and a DIRECTORY where a file belongs', async () => {

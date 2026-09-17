@@ -255,7 +255,9 @@ export async function inspectRun(
     trustRoot = def.trust_root;
     definition = def;
   } catch (err) {
-    workflowLabel = run.workflow_id;
+    // Review fold R8: the record carries the version — `run list` prints it for the same run; a
+    // label that drops it here degrades a field the unreadable copy was never needed for.
+    workflowLabel = `${run.workflow_id} v${run.workflow_version}`;
     definitionMissing = true;
     // Narrowed with `instanceof WorkflowError` — never duck-typed on `err.code` (house rule:
     // an error's shape is not its identity). A non-WorkflowError escape keeps the old behaviour.
@@ -476,10 +478,19 @@ export async function inspectRun(
     // read (EACCES: …)", "is not parseable JSON", "was registered with an older version"), the
     // way out and the repair — a class prefix here said "could not be read" twice (executed on
     // the pre-fold build). The bare "not found" line survives only for a non-WorkflowError escape.
+    // R4 (the review walk): on a LIVE run the `definition_unresolvable` finding above already
+    // carries the composed sentence — printed twice, the screen read as two different failures.
+    // The parenthetical carries it only when no finding does (a terminal run: the finding is
+    // minted for live runs only, review fold C6).
+    const carriedByFinding = runHealth.some((f) => f.kind === 'definition_unresolvable');
     lines.push(
-      definitionError !== undefined
-        ? `(showing run record only \u2014 ${definitionError.message})`
-        : '(workflow definition not found \u2014 showing run record only)',
+      carriedByFinding
+        ? // R13 (walk 2): the bare form was subjectless — say where the reason is (Run Health
+          // prints before this line, always).
+          '(showing run record only \u2014 the reason is in Run Health above)'
+        : definitionError !== undefined
+          ? `(showing run record only \u2014 ${definitionError.message})`
+          : '(workflow definition not found \u2014 showing run record only)',
     );
   }
 

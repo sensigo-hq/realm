@@ -432,7 +432,10 @@ export function classifyRunHealth(
     if (de === undefined) return undefined;
     return {
       kind: 'definition_unresolvable',
-      reason: `this run's workflow '${run.workflow_id}' cannot be read (${de.code}): ${de.message}`,
+      // Review fold R6: the composed sentence IS the reason — the kind names the class and
+      // `evidence.code` carries the code; a "cannot be read (<code>): " prefix restated the
+      // sentence's own first clause (three "cannot be read" in one line on the walk).
+      reason: de.message,
       evidence: {
         workflow_id: run.workflow_id,
         code: de.code,

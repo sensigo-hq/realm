@@ -930,7 +930,9 @@ describe('run_health rendering (issue #221)', () => {
     expect(result).toContain(
       "(showing run record only — the registered copy of 'wf' could not be read (EACCES: /x/wf.json).",
     );
-    expect(result).toContain('To repair: fix /x/wf.json and inspect again.)');
+    expect(result).toContain(
+      'To repair: make /x/wf.json readable (chmod u+r /x/wf.json), then inspect again.)',
+    );
     expect(result).not.toContain('workflow definition not found');
     expect(result).not.toContain('could not be read: the registered'); // no doubled class prefix
   });
@@ -953,9 +955,14 @@ describe('run_health rendering (issue #221)', () => {
       ),
       throwingStore(unreadable),
     );
+    // R4 (the review walk): on a LIVE run the finding carries the sentence ONCE; the parenthetical
+    // beneath the record is bare, so the screen never shows one failure as two.
     expect(live).toContain(
-      'To end the run: realm run abandon run_test1. To repair: fix /x/wf.json and inspect again.)',
+      'To end the run: realm run abandon run_test1. To repair: make /x/wf.json readable (chmod u+r /x/wf.json), then inspect again.',
     );
+    expect(live).toContain('(showing run record only — the reason is in Run Health above)');
+    expect(live).not.toContain('(showing run record only — the registered copy');
+    expect(live.split('could not be read (EACCES: /x/wf.json)').length - 1).toBe(1);
     const terminal = await inspectRun(
       'run_test1',
       makeRunStore(
@@ -969,7 +976,9 @@ describe('run_health rendering (issue #221)', () => {
       throwingStore(unreadable),
     );
     expect(terminal).not.toContain('To end the run');
-    expect(terminal).toContain('To repair: fix /x/wf.json and inspect again.)');
+    expect(terminal).toContain(
+      'To repair: make /x/wf.json readable (chmod u+r /x/wf.json), then inspect again.)',
+    );
   });
 
   it('D5-2 a CORRUPT copy says corrupt', async () => {
@@ -992,7 +1001,8 @@ describe('run_health rendering (issue #221)', () => {
     );
     expect(result).toContain(
       'To repair: re-register the workflow from its source (realm workflow register ' +
-        '<path-to-workflow>), then inspect again.)',
+        '<path-to-workflow>), then inspect again; if it was never registered from a source, ' +
+        'remove the file (rm /x/wf.json) instead.)',
     );
   });
 
@@ -1057,7 +1067,12 @@ describe('run_health rendering (issue #221)', () => {
     );
     expect(live).toContain('Run Health');
     expect(live).toContain('definition_unresolvable');
-    expect(live).toContain('cannot be read (STATE_WORKFLOW_UNREADABLE)');
+    expect(live).toContain(": the registered copy of 'wf' could not be read (EACCES");
+    expect(live).not.toContain('cannot be read (STATE_WORKFLOW_UNREADABLE)'); // R6: no prefix
+    expect(live).toContain('Workflow: test-workflow v1'); // R8: the record's version survives an unreadable copy
+    expect(live).toContain('(showing run record only — the reason is in Run Health above)');
+    expect(live).not.toContain('(showing run record only — the registered copy');
+    expect(live.split('could not be read (EACCES: /x/wf.json)').length - 1).toBe(1);
     // The control: the default fixture is terminal (completed) — the finding is not minted for
     // it, but the definition line below the record still carries the sentence and the repair.
     const terminal = await inspectRun(
@@ -1067,6 +1082,7 @@ describe('run_health rendering (issue #221)', () => {
     );
     expect(terminal).not.toContain('definition_unresolvable');
     expect(terminal).toContain('(showing run record only — the registered copy of');
+    expect(terminal.split('could not be read (EACCES: /x/wf.json)').length - 1).toBe(1);
   });
 
   it('tolerates a missing workflow definition when rendering run_health', async () => {

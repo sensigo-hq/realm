@@ -106,6 +106,119 @@ export function parseFailureError(workflowId: string, path: string, cause: unkno
 }
 
 /**
+ * issue #558 PR-T (review fold R1) — every probe failure class as a VALUE, so a consumer can narrow
+ * an error's `details.class` without a cast. Both directions are checked at compile time: `satisfies`
+ * keeps the list inside the union; `_ClassesExhaustive` keeps the union inside the list (a sixth
+ * class fails `tsc` on BOTH lines — the #508 guard shape, never a widening `readonly T[]`).
+ */
+export const PROBE_FAILURE_CLASSES = [
+  'missing',
+  'unreadable',
+  'not_a_file',
+  'empty',
+  'registry_broken',
+] as const satisfies readonly ProbeFailureClass[];
+type _ClassesExhaustive = ProbeFailureClass extends (typeof PROBE_FAILURE_CLASSES)[number]
+  ? true
+  : never;
+const _classesExhaustive: _ClassesExhaustive = true;
+void _classesExhaustive;
+
+function isProbeFailureClass(value: unknown): value is ProbeFailureClass {
+  return typeof value === 'string' && (PROBE_FAILURE_CLASSES as readonly string[]).includes(value);
+}
+
+/** The probe class a read failure carries — `undefined` for the parse, legacy and foreign classes. */
+export function probeClassOf(err: WorkflowError): ProbeFailureClass | undefined {
+  const cls = err.details['class'];
+  return isProbeFailureClass(cls) ? cls : undefined;
+}
+
+const REREGISTER_ACT =
+  're-register the workflow from its source (realm workflow register <path-to-workflow>)';
+
+/**
+ * issue #558 PR-T (review fold R1) — the repair ACT for a read failure, keyed on the CLASS, minted
+ * ONCE here and read by the composer (`getWorkflowForRun`) and by `validate --registered`. It was
+ * keyed on the CODE, and `STATE_WORKFLOW_UNREADABLE` covers three classes whose acts differ: a
+ * file that cannot be read is made readable; a directory where the file belongs is removed and the
+ * workflow re-registered; an unreadable registry DIRECTORY is made readable — `fix <path>` on all
+ * three named no act (the review walk). The switch is EXHAUSTIVE over `ProbeFailureClass` (a sixth
+ * class fails the `never` assignment after it — not TS2366: the return type admits `undefined`); the parse classes carry no probe class and share ONE act
+ * (re-register is the only repair for a copy whose bytes are wrong — review fold C11). `missing`
+ * self-remedies in its own sentence (the #456 hedge) and `legacy` carries its own "Re-register it
+ * with: …", so neither gets a second clause. For the two permission errnos the act NAMES the
+ * command (`chmod u+r` / `chmod u+rx`); for any other errno it names the requirement and the errno.
+ *
+ * A `STATE_WORKFLOW_UNREADABLE` minted anywhere else — an external `WorkflowRegistrar` behind the
+ * #188 injection seam — carries no probe class and gets NO act, never a guess (LAW-r); such a store
+ * omitting `path` would also render an empty subject. Both are that store's contract to keep.
+ */
+const PERMISSION_ERRNOS: ReadonlySet<string> = new Set(['EACCES', 'EPERM']);
+
+/** The `reason` + `repair` pair a listing entry carries — one place, so the two listings agree. */
+function reasonAndRepair(err: WorkflowError): { reason: string; repair?: string } {
+  const r = repairActFor(err);
+  return {
+    reason: err.message,
+    ...(r !== undefined
+      ? { repair: r.alternative !== undefined ? `${r.act}; ${r.alternative}` : r.act }
+      : {}),
+  };
+}
+
+export interface RepairAct {
+  /** The act; the composer appends the retry after it. */
+  act: string;
+  /** A conditioned alternative for the SAME bytes under a different history (the parse classes:
+   *  a file nothing ever registered has no source to re-register from — `rm` is the only act,
+   *  and it was named nowhere; the review walk looped on it). Rendered after the retry. */
+  alternative?: string;
+}
+
+export function repairActFor(err: WorkflowError): RepairAct | undefined {
+  const path = String(err.details['path'] ?? '');
+  if (err.code === 'RESOURCE_FORMAT_INVALID')
+    return {
+      act: REREGISTER_ACT,
+      alternative: `if it was never registered from a source, remove the file (rm ${path}) instead`,
+    };
+  if (err.code !== 'STATE_WORKFLOW_UNREADABLE') return undefined;
+  const cls = probeClassOf(err);
+  if (cls === undefined) return undefined;
+  const errno = String(err.details['errno'] ?? 'unknown');
+  switch (cls) {
+    case 'missing': // not this code — kept for exhaustiveness
+      return undefined;
+    case 'unreadable':
+      return {
+        act: PERMISSION_ERRNOS.has(errno)
+          ? `make ${path} readable (chmod u+r ${path})`
+          : `make ${path} readable (${errno})`,
+      };
+    case 'not_a_file':
+      // The command is named: "remove the directory" as prose sent a walker to `rm <path>`
+      // ("Is a directory", twice).
+      return { act: `remove the directory at ${path} (rm -r ${path}), then ${REREGISTER_ACT}` };
+    case 'empty': // not this code — kept for exhaustiveness
+      return { act: REREGISTER_ACT };
+    case 'registry_broken':
+      // "readable" alone is a LOOP for a directory: `chmod u+r` leaves it unsearchable and the
+      // identical screen comes back (the review walk did exactly that, twice). A directory needs
+      // the search bit too — the act says so and names the command.
+      return {
+        act: PERMISSION_ERRNOS.has(errno)
+          ? `make the registry directory ${path} readable and searchable (chmod u+rx ${path})`
+          : `make the registry directory ${path} readable and searchable (${errno})`,
+      };
+  }
+  // The return type admits `undefined`, so a missing arm would NOT be TS2366 here (executed: a
+  // sixth class fell through silently) — this assignment is what fails `tsc` for it.
+  const unhandled: never = cls;
+  return unhandled;
+}
+
+/**
  * issue #558 PR-T — the cap on what `run list --stuck` will PARSE while classifying a run's
  * workflow copy. Measured (design §2.4): the largest real registry entry on the owner's store is
  * 65 KB; the smallest #557 expansion bomb is 136 MB. A listing must never be the surface that
@@ -294,6 +407,10 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
        *  OS error — fabricating an errno is a false statement about the operating system). */
       errno?: string;
       reason: string;
+      /** issue #558 PR-T (review fold R5) — the repair ACT for this entry's class (`repairActFor`),
+       *  so both listings — `workflow list --json` and the MCP `list_workflows` — name it. Absent
+       *  only for a class with no act. */
+      repair?: string;
     }>;
     mismatched: Array<{ file: string; id: string }>;
   }> {
@@ -325,7 +442,7 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
             file: this.dir,
             class: 'registry_broken',
             ...(errno !== undefined ? { errno } : {}),
-            reason: probeClassToError(failure, this.dir).message,
+            ...reasonAndRepair(probeClassToError(failure, this.dir)),
           },
         ],
         mismatched: [],
@@ -340,7 +457,7 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
           file: entry,
           class: probed.class,
           ...(probed.errno !== undefined ? { errno: probed.errno } : {}),
-          reason: probeClassToError(probed, id).message,
+          ...reasonAndRepair(probeClassToError(probed, id)),
         });
         continue;
       }
@@ -351,7 +468,7 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
         unreadable.push({
           file: entry,
           class: 'parse',
-          reason: parseFailureError(id, join(this.dir, entry), err).message,
+          ...reasonAndRepair(parseFailureError(id, join(this.dir, entry), err)),
         });
         continue;
       }
@@ -434,8 +551,6 @@ export async function getWorkflowForRun(
         ...(err.warnings !== undefined ? { warnings: err.warnings } : {}),
       });
 
-    const path = String((err.details as Record<string, unknown> | undefined)?.['path'] ?? '');
-
     /**
      * The repair clause, minted ONCE per code (a second hand-typed copy is the #444/#508 class).
      * `withRetry: false` is the terminal branch: nothing to retry, but the COPY is still broken
@@ -451,20 +566,16 @@ export async function getWorkflowForRun(
     // The repair's closing act: the retry verb for a gate-less run; for a gate-waiting run the
     // gate itself, since that is what the operator was trying to do (review fold C12).
     const then = answer === undefined ? opts.retryVerb : `answer the gate (${answer})`;
+    // Review fold R1: the act is keyed on the CLASS (`repairActFor`), never the code — three
+    // classes share STATE_WORKFLOW_UNREADABLE and their acts differ. One joiner: the act, then
+    // the retry. (`missing`/`legacy` yield no act — see `repairActFor`.)
     const repairClause = (withRetry: boolean): string | undefined => {
-      if (err.code === 'STATE_WORKFLOW_UNREADABLE')
-        return `To repair: fix ${path}${withRetry ? ` and ${then}` : ''}.`;
-      if (err.code === 'RESOURCE_FORMAT_INVALID')
-        // Re-register is the ONE repair. "or remove the corrupt copy" was offered here and repairs
-        // nothing — after `rm` the next attempt says "Workflow not found" and asks for the register
-        // the operator may have no source for (executed; the fresh walk's T5). Review fold C11.
-        return (
-          `To repair: re-register the workflow from its source ` +
-          `(realm workflow register <path-to-workflow>)${withRetry ? `, then ${then}` : ''}.`
-        );
-      // `missing` self-remedies (the #456 hedge / the agent-created sentence) and `legacy`
-      // carries its own "Re-register it with: …" — neither gets a second repair clause.
-      return undefined;
+      const r = repairActFor(err);
+      if (r === undefined) return undefined;
+      return (
+        `To repair: ${r.act}${withRetry ? `, then ${then}` : ''}` +
+        `${r.alternative !== undefined ? `; ${r.alternative}` : ''}.`
+      );
     };
 
     // The terminal conjunct: the six sites without `terminalOk` read the definition BEFORE their
@@ -532,7 +643,9 @@ export async function getWorkflowForRun(
             terminal
               ? undefined
               : gate === undefined
-                ? `This run's workflow cannot be read. ${disposalSentence('To end the run:')}`
+                ? // Review fold R7: the consequence, not a restatement — "This run's workflow cannot
+                  // be read." repeated the store sentence beside it and read as a second fault.
+                  `This run cannot continue until the copy is repaired. ${disposalSentence('To end the run:')}`
                 : disposalSentence(''),
             repairClause(true),
           ),

@@ -85,6 +85,10 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
       `⚠ 1 entry in the registry is a directory, not a workflow file: e.json${TAIL}`,
     );
     expect(out).not.toMatch(/directory, not a workflow file.*\((E[A-Z]+)\)/);
+    // R3 (the review walk): the stdout count sums an empty FILE and a DIRECTORY — "entries".
+    expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain(
+      '0 workflows registered; 2 entries in the registry could not be read.',
+    );
   });
 
   it('K3 the parse sentence is byte-identical to the #427 original (the control that must not move)', async () => {

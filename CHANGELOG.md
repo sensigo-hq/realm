@@ -46,9 +46,10 @@ await getWorkflowForRun(store, run, { retryVerb: 'retry', verb: 'retry' });
   whose copy is corrupt) mint it for every LIVE run — a terminal run's copy matters only to
   `replay`/`drain`, which name the repair themselves; `get_run_state` alone leaves gate-waiting
   runs out (its frozen `awaiting_human` branch never reads the definition, #331). On `--stuck` it
-  renders as `definition_unresolvable (<class>) (realm run abandon <run-id>)` — or
-  `(realm run inspect <run-id>)` on a gate-waiting run, whose copy must be repaired before its
-  gate can be answered (`abandon` refuses a gate-waiting run) — where `<class>` is always a word
+  renders as `definition_unresolvable (<class>) (realm run inspect <run-id>)` — the pointer is
+  the surface that names the repair, the consequence and the way out, never the destructive act
+  alone (a gate-waiting run's copy must be repaired before its gate can be answered, and `abandon`
+  refuses it) — where `<class>` is always a word
   (`missing`, `unreadable`, `not_a_file`, `empty`, `registry_broken`, `corrupt`, `legacy`, or
   `unknown` for a failure realm could not classify — never an error code). A registry entry
   larger than 4 MiB is never parsed by the listing — a listing must not be the
@@ -76,12 +77,13 @@ await getWorkflowForRun(store, run, { retryVerb: 'retry', verb: 'retry' });
   "could not be parsed" sentence for every failure — which was false for four of the five classes
   (a `chmod 000` file was reported as unparseable). The parse sentence itself is byte-identical to
   what it was. Its count line names what it could not count —
-  `0 workflows registered; 1 file in the registry could not be read.` — so the surface
+  `0 workflows registered; 1 entry in the registry could not be read.` — so the surface
   `validate --registered` points at never contradicts its own ⚠ line. (Issue #558.)
 - `realm workflow validate --registered` refuses a corrupt, empty or unreadable stored copy with a
   clean line and exit 1, with `--json` parity, where it crashed with a stack trace — and no longer
   follows it with the not-found pointer (`Registered workflows: realm workflow list`, whose table
-  omits such a copy): it says the copy IS registered and that `workflow list` counts it under "could not be read". (Issue #558.)
+  omits such a copy): it says the registry holds an entry for that id and that `workflow list` counts it under "could not be read", then names the repair act. When the registry directory itself cannot be read it names the act alone — realm read nothing, so it claims nothing about the copy. Every repair clause on every surface names the act for its class — make the file readable (`chmod u+r`), remove the directory (`rm -r`) then re-register, make the registry directory readable and searchable (`chmod u+rx` — "readable" alone left a directory unsearchable and the same screen came back), re-register from source, or — for a file nothing ever registered from a source — remove it (`rm`; a walker looped on a junk file whose only offered act needed a source that never existed) — where three classes said `fix <path>`. `realm run inspect` shows the sentence once — in the run-health finding on a live run, in the definition line on a terminal one — not twice, and keeps the run's recorded workflow version in its `Workflow:` line when the copy cannot be read; the finding's reason is the composed sentence itself, no longer prefixed by a restatement of it; a live gate-less run's sentence states the consequence (`This run cannot continue until the copy is repaired.`) instead of repeating that the workflow cannot be read. (Issue #558.)
+- The MCP `list_workflows` tool names every registered copy it could not read (`unreadable[]` with the file, class, errno where the OS gave one, the reason and the repair act, plus `warnings` carrying the count) and withdraws its "use create_workflow" hint while any is unreadable — it returned an empty, healthy-looking list with that hint over a `chmod 000` copy, steering an agent into creating a duplicate of a workflow that still existed; an unreadable registry directory is now a typed refusal (`status: error`, `STATE_WORKFLOW_UNREADABLE`, `error_details {class, errno, path}`). `workflow list --json`'s `unreadable[]` entries carry the same `repair` field. (Issue #558.)
 
 ### Fixed
 

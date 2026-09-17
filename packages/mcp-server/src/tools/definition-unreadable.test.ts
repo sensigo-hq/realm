@@ -70,11 +70,16 @@ describe('the MCP tools’ (retryVerb, verb) pair (issue #558 PR-T)', () => {
     );
   });
 
-  it('M3 the three MCP call sites pass ("retry", "retry") and NONE passes terminalOk', () => {
+  it('M3 the four MCP call sites pass ("retry", "retry") and NONE passes terminalOk', () => {
     // A source-text census: the six sites WITHOUT `terminalOk` are the population the terminal
     // conjunct exists for, and three of them are these tools. A future edit adding `terminalOk`
     // here would re-open the falsity this PR closes.
-    const files = ['execute-step.ts', 'append-trace.ts', 'submit-human-response.ts'];
+    const files = [
+      'execute-step.ts',
+      'append-trace.ts',
+      'submit-human-response.ts',
+      'get-run-state.ts',
+    ];
     for (const f of files) {
       const src = readFileSync(new URL(`./${f}`, import.meta.url), 'utf8');
       const at = src.indexOf('getWorkflowForRun(');

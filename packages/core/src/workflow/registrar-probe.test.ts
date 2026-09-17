@@ -17,6 +17,10 @@ import {
   probeClassToError,
   parseFailureError,
   STUCK_DEFINITION_PARSE_CAP_BYTES,
+  PROBE_FAILURE_CLASSES,
+  type RepairAct,
+  repairActFor,
+  probeClassOf,
 } from './registrar.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -294,6 +298,7 @@ describe('listWithDiagnostics — one class per entry, never a throw', () => {
         class: 'unreadable',
         errno: 'EACCES',
         reason: `the registered copy of '${ID}' could not be read (EACCES: ${file})`,
+        repair: `make ${file} readable (chmod u+r ${file})`,
       },
     ]);
   });
@@ -329,6 +334,7 @@ describe('listWithDiagnostics — one class per entry, never a throw', () => {
         class: 'registry_broken',
         errno: 'EACCES',
         reason: `the workflow registry at ${dir} cannot be read (EACCES)`,
+        repair: `make the registry directory ${dir} readable and searchable (chmod u+rx ${dir})`,
       },
     ]);
   });
@@ -350,8 +356,8 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     expect(err.code).toBe('STATE_WORKFLOW_UNREADABLE');
     expect(err.message).toBe(
       `the registered copy of 'gate-558' could not be read (EACCES: ${file}). ` +
-        `This run's workflow cannot be read. To end the run: realm run abandon run-1. ` +
-        `To repair: fix ${file} and respond again.`,
+        `This run cannot continue until the copy is repaired. To end the run: realm run abandon run-1. ` +
+        `To repair: make ${file} readable (chmod u+r ${file}), then respond again.`,
     );
   });
 
@@ -362,7 +368,7 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     )) as WorkflowError;
     expect(err.message).toBe(
       `the registered copy of 'gate-558' could not be read (EACCES: ${file}). ` +
-        `The run is terminal (failed); there is nothing to respond. To repair: fix ${file}.`,
+        `The run is terminal (failed); there is nothing to respond. To repair: make ${file} readable (chmod u+r ${file}).`,
     );
   });
 
@@ -400,7 +406,7 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
       terminalOk: true,
     }).catch((e: unknown) => e)) as WorkflowError;
     expect(err.message).toBe(
-      "the registered copy of 'gate-558' could not be read (EACCES: /x). To repair: fix /x and drain again.",
+      "the registered copy of 'gate-558' could not be read (EACCES: /x). To repair: make /x readable (chmod u+r /x), then drain again.",
     );
     expect(err.message).not.toContain('To end the run');
     // The LIVE control for the same store: the way out is back.
@@ -424,7 +430,8 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     expect(err.message).toBe(
       "the registered copy of 'gate-558' is empty (0 bytes) — not a workflow. " +
         'To end the run: realm run abandon run-1. To repair: re-register the workflow from its ' +
-        'source (realm workflow register <path-to-workflow>), then respond again.',
+        'source (realm workflow register <path-to-workflow>), then respond again; if it was ' +
+        `never registered from a source, remove the file (rm ${file}) instead.`,
     );
   });
 
@@ -439,14 +446,15 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
         'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
         'To repair: re-register the workflow from its source (realm workflow register ' +
         '<path-to-workflow>), then answer the gate (realm run respond run-1 --gate g1 ' +
-        '--choice <one of: approve, reject>).',
+        '--choice <one of: approve, reject>); if it was never registered from a source, ' +
+        `remove the file (rm ${file}) instead.`,
     );
     expect(err.message).not.toContain('To end the run');
     expect(err.message).not.toContain('PR-V');
     expect(err.message).not.toContain('answer it (');
   });
 
-  it('C-e2 the gate fork on an UNREADABLE copy: "fix <path> and answer the gate (…)" — the per-member twin of C-e', async () => {
+  it('C-e2 the gate fork on an UNREADABLE copy: "make <path> readable (…), then answer the gate (…)" — the per-member twin of C-e', async () => {
     await shape.chmod000();
     const err = (await getWorkflowForRun(store, GATE_WAITING, RESPOND).catch(
       (e: unknown) => e,
@@ -455,10 +463,10 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
       `the registered copy of 'gate-558' could not be read (EACCES: ${file}). ` +
         "This run is waiting on human gate 'confirm', which cannot be answered until its " +
         'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
-        `To repair: fix ${file} and answer the gate (realm run respond run-1 --gate g1 ` +
+        `To repair: make ${file} readable (chmod u+r ${file}), then answer the gate (realm run respond run-1 --gate g1 ` +
         '--choice <one of: approve, reject>).',
     );
-    expect(err.message).not.toContain("This run's workflow cannot be read.");
+    expect(err.message).not.toContain('This run cannot continue until the copy is repaired.');
   });
 
   it('C-e3 the gate fork on a LEGACY copy: the store\'s own re-register remedy once, then "Once re-registered, answer the gate (…)"', async () => {
@@ -540,8 +548,9 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
       (e: unknown) => e,
     )) as WorkflowError;
     expect(err.message).toBe(
-      `${file} is a directory, not a workflow file. This run's workflow cannot be read. ` +
-        `To end the run: realm run abandon run-1. To repair: fix ${file} and respond again.`,
+      `${file} is a directory, not a workflow file. This run cannot continue until the copy is repaired. ` +
+        `To end the run: realm run abandon run-1. To repair: remove the directory at ${file} (rm -r ${file}), then ` +
+        're-register the workflow from its source (realm workflow register <path-to-workflow>), then respond again.',
     );
   });
 
@@ -551,8 +560,79 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
       (e: unknown) => e,
     )) as WorkflowError;
     expect(err.message).toBe(
-      `the workflow registry at ${dir} cannot be read (EACCES). This run's workflow cannot be ` +
-        `read. To end the run: realm run abandon run-1. To repair: fix ${dir} and respond again.`,
+      `the workflow registry at ${dir} cannot be read (EACCES). This run cannot continue until the copy is ` +
+        `repaired. To end the run: realm run abandon run-1. To repair: make the registry directory ` +
+        `${dir} readable and searchable (chmod u+rx ${dir}), then respond again.`,
     );
   });
 });
+
+describe('repairActFor — the act is keyed on the CLASS, minted once (review fold R1)', () => {
+  it('LAW-r every probe class yields its own act, none is the "fix <path>" non-act, the parse classes carry the conditioned rm alternative, and a foreign error gets none', () => {
+    const acts = Object.fromEntries(
+      PROBE_FAILURE_CLASSES.map((cls) => [
+        cls,
+        repairActFor(
+          probeClassToError({ ok: false, class: cls, errno: 'EACCES', path: '/p/w.json' }, 'w'),
+        ),
+      ]),
+    ) as Record<(typeof PROBE_FAILURE_CLASSES)[number], RepairAct | undefined>;
+    const RM_ALT =
+      'if it was never registered from a source, remove the file (rm /p/w.json) instead';
+    expect(acts.missing).toBeUndefined(); // self-remedied in its own sentence
+    expect(acts.unreadable).toEqual({ act: 'make /p/w.json readable (chmod u+r /p/w.json)' });
+    expect(acts.not_a_file).toEqual({
+      act: 'remove the directory at /p/w.json (rm -r /p/w.json), then ' + RR_ACT,
+    });
+    expect(acts.empty).toEqual({ act: RR_ACT, alternative: RM_ALT });
+    expect(acts.registry_broken).toEqual({
+      act: 'make the registry directory /p/w.json readable and searchable (chmod u+rx /p/w.json)',
+    });
+    // A non-permission errno names the requirement and the errno, never a chmod that cannot help.
+    expect(
+      repairActFor(
+        probeClassToError({ ok: false, class: 'unreadable', errno: 'EIO', path: '/p' }, 'w'),
+      ),
+    ).toEqual({ act: 'make /p readable (EIO)' });
+    expect(
+      repairActFor(
+        probeClassToError({ ok: false, class: 'registry_broken', errno: 'ELOOP', path: '/p' }, 'w'),
+      ),
+    ).toEqual({ act: 'make the registry directory /p readable and searchable (ELOOP)' });
+    for (const r of Object.values(acts)) {
+      if (r !== undefined) expect(r.act.startsWith('fix ')).toBe(false);
+    }
+    // The parse classes carry no probe class and share the one act + the conditioned alternative
+    // (review folds C11 + R10: re-register for a registered copy; rm for a file nothing registered).
+    expect(repairActFor(parseFailureError('w', '/p/w.json', new SyntaxError('boom')))).toEqual({
+      act: RR_ACT,
+      alternative: RM_ALT,
+    });
+    expect(repairActFor(parseFailureError('w', '/p/w.json', null))).toEqual({
+      act: RR_ACT,
+      alternative: RM_ALT,
+    });
+    expect(probeClassOf(parseFailureError('w', '/p/w.json', null))).toBeUndefined();
+    expect(
+      probeClassOf(
+        probeClassToError(
+          { ok: false, class: 'registry_broken', errno: 'EACCES', path: '/p' },
+          'w',
+        ),
+      ),
+    ).toBe('registry_broken');
+    // A STATE_WORKFLOW_UNREADABLE minted anywhere else carries no class ⇒ no act, never a guess.
+    expect(
+      repairActFor(
+        new WorkflowError('x', {
+          code: 'STATE_WORKFLOW_UNREADABLE',
+          category: 'STATE',
+          agentAction: 'stop',
+          retryable: false,
+        }),
+      ),
+    ).toBeUndefined();
+  });
+});
+const RR_ACT =
+  're-register the workflow from its source (realm workflow register <path-to-workflow>)';

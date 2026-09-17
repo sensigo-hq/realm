@@ -23,6 +23,8 @@ import {
   JsonWorkflowStore,
   RUNTIME_ONLY_WORKFLOW_KEYS,
   VERSION,
+  probeClassOf,
+  repairActFor,
   type LoaderWarning,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
@@ -582,9 +584,22 @@ async function validateRegistered(
       // TABLE omits an unreadable copy — a correct id was made to look like a typo. This copy IS
       // registered; the census ⚠ line is where it appears.
       // (C23, walk 6: "marks it ⚠" sent readers looking for a ⚠ inside the table.)
-      console.error(
-        'This copy IS registered — realm workflow list counts it under "could not be read" instead of listing it.',
-      );
+      // (R2, the review walk: NOT when the registry DIRECTORY is unreadable — realm never read the
+      // copy, so "IS registered" is a claim it cannot make, and `workflow list` then counts
+      // nothing: "the registry itself could not be read". That class gets the repair act alone.)
+      // (R10, walk 2: "This copy IS registered" was a claim about history that the bytes cannot
+      // carry — a half-written file nobody registered gets the same sentence; the registry HOLDS
+      // an entry under that id is what realm knows.)
+      if (probeClassOf(err) !== 'registry_broken') {
+        console.error(
+          `The registry holds an entry for '${id}' — realm workflow list counts it under "could not be read" instead of listing it.`,
+        );
+      }
+      const r = repairActFor(err);
+      if (r !== undefined)
+        console.error(
+          `To repair: ${r.act}${r.alternative !== undefined ? `; ${r.alternative}` : ''}.`,
+        );
       process.exit(1);
     }
     if (!(err instanceof WorkflowError)) {

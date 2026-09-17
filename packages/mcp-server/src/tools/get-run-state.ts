@@ -7,6 +7,7 @@ import {
   JsonFileStore,
   JsonWorkflowStore,
   WorkflowError,
+  getWorkflowForRun,
   resolvePreExecutionAgentAction,
   buildNextActions,
   findEligibleSteps,
@@ -301,7 +302,12 @@ export async function handleGetRunState(
   } else {
     definition =
       stores?.workflowStore !== undefined
-        ? await stores.workflowStore.get(run.workflow_id).catch((err: unknown) => {
+        ? await getWorkflowForRun(stores.workflowStore, run, {
+            // R12 (walk 2): through the ONE composer, as every other surface — the raw store
+            // sentence left this finding, the one an agent polls, with no way out and no repair.
+            retryVerb: 'retry',
+            verb: 'retry',
+          }).catch((err: unknown) => {
             // issue #558 PR-T — KEEP the failure: it feeds the `definition_unresolvable` finding
             // below instead of being discarded. Live runs only: the terminal guard at the
             // classify call is the pre-existing frozen R3 guard (#331), untouched here.

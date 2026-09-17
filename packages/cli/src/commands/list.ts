@@ -7,6 +7,7 @@ import {
   DEFAULT_IDLE_THRESHOLD_MS,
   FailedAttemptStore,
   computeGateDueState,
+  probeClassOf,
 } from '@sensigo/realm';
 import type { RunStore, RunPhase, RunHealthFinding, FailedAttemptReadResult } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
@@ -437,7 +438,11 @@ export async function listRuns(
             ? // A gate-waiting run cannot be abandoned (abandon-run.ts refuses it) — its copy
               // must be repaired before the gate can be answered, and `inspect` carries that
               // sentence with the path and the answer command (review fold C13).
-              `${renderFindingLabel(f) ?? ''} (realm run ${derivedPhase === 'gate_waiting' ? 'inspect' : 'abandon'} ${run.id})`
+              // R9 (walk 2): EVERY live run points at `inspect` — the surface that names the repair,
+              // the consequence AND the way out. `abandon` as the selection line's only act sent a
+              // walker to destroy a run whose copy was one chmod away (and `abandon`'s own text then
+              // named a command that does not exist). A gate-waiting run pointed here already (C13).
+              `${renderFindingLabel(f) ?? ''} (realm run inspect ${run.id})`
             : renderFindingLabel(f),
         )
         .filter((l): l is string => l !== undefined && l !== '');
@@ -541,18 +546,18 @@ export const listCommand = new Command('list')
               // Narrowed with `instanceof` — never duck-typed on `err.code` (house rule). A
               // non-WorkflowError escape (a TOCTOU remnant) is reported, never a crash.
               if (err instanceof WorkflowError) {
-                const cls = (err.details as Record<string, unknown> | undefined)?.['class'];
                 // The class slot on the --stuck line holds a WORD for every class (executed: a
                 // corrupt copy rendered `(RESOURCE_FORMAT_INVALID)` beside `(missing)`) — the
                 // parse and legacy classes carry no probe class, so the closure names them.
+                // The probe class is read through core's `probeClassOf` (review fold R1) — one
+                // reader of that slot, never a second hand-narrowing.
                 const word =
-                  typeof cls === 'string'
-                    ? cls
-                    : err.code === 'RESOURCE_FORMAT_INVALID'
-                      ? 'corrupt'
-                      : err.code === 'STATE_LEGACY_FORMAT'
-                        ? 'legacy'
-                        : undefined;
+                  probeClassOf(err) ??
+                  (err.code === 'RESOURCE_FORMAT_INVALID'
+                    ? 'corrupt'
+                    : err.code === 'STATE_LEGACY_FORMAT'
+                      ? 'legacy'
+                      : undefined);
                 result = {
                   code: err.code,
                   message: err.message,

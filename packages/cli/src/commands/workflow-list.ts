@@ -107,7 +107,9 @@ export const workflowListCommand = new Command('list')
     const unreadableSuffix = registryBroken
       ? '; the registry itself could not be read'
       : unreadable.length > 0
-        ? `; ${unreadable.length} ${unreadable.length === 1 ? 'file' : 'files'} in the registry could not be read`
+        ? // R3 (the review walk): the count sums every per-file class, one of which is a DIRECTORY —
+          // "entry" is true of all of them; the per-class ⚠ lines beneath keep their own nouns.
+          `; ${unreadable.length} ${unreadable.length === 1 ? 'entry' : 'entries'} in the registry could not be read`
         : '';
     console.log(
       `\n${rows.length} ${rows.length === 1 ? 'workflow' : 'workflows'} registered${unreadableSuffix}.`,

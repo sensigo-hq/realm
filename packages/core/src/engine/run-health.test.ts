@@ -1409,8 +1409,7 @@ describe('definition_unresolvable (issue #558 PR-T)', () => {
     const f = findings.find((x) => x.kind === 'definition_unresolvable');
     expect(f).toBeDefined();
     expect(f?.reason).toBe(
-      "this run's workflow 'wf' cannot be read (STATE_WORKFLOW_UNREADABLE): " +
-        "the registered copy of 'wf' could not be read (EACCES: /x/wf.json)",
+      '' + "the registered copy of 'wf' could not be read (EACCES: /x/wf.json)",
     );
     expect(f?.evidence).toEqual({
       workflow_id: 'wf',

@@ -267,6 +267,9 @@ export { getWorkflowForRun } from './workflow/registrar.js';
 export {
   probeClassToError,
   parseFailureError,
+  probeClassOf,
+  repairActFor,
+  PROBE_FAILURE_CLASSES,
   STUCK_DEFINITION_PARSE_CAP_BYTES,
 } from './workflow/registrar.js';
 export type { ProbeResult, ProbeFailureClass } from './workflow/registrar.js';

@@ -96,7 +96,7 @@ const FIXTURES: Array<{ kind: Kind; run: RunRecord; probe?: boolean; contains: s
     kind: 'definition_unresolvable',
     run: makeRun(),
     probe: true,
-    contains: 'definition_unresolvable (unreadable) (realm run abandon run-abc123)',
+    contains: 'definition_unresolvable (unreadable) (realm run inspect run-abc123)',
   },
 ];
 
@@ -162,7 +162,7 @@ describe('the --stuck label law (issue #558 PR-T)', () => {
       }),
     );
     expect(out).toContain('run-abc123');
-    expect(out).toContain('definition_unresolvable (parse) (realm run abandon run-abc123)');
+    expect(out).toContain('definition_unresolvable (parse) (realm run inspect run-abc123)');
   });
 
   it('LAW-d no probe ⇒ no finding, and every OTHER kind’s selection is unchanged', async () => {
@@ -360,11 +360,11 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
       undefined,
       () => ({ code: 'ENGINE_INTERNAL', message: 'boom' }),
     );
-    expect(out).toContain('definition_unresolvable (unknown) (realm run abandon run-abc123)');
+    expect(out).toContain('definition_unresolvable (unknown) (realm run inspect run-abc123)');
     expect(out).not.toContain('ENGINE_INTERNAL');
   });
 
-  it('LAW-g a GATE-WAITING run with an unreadable copy IS selected, and its label points at inspect — never at abandon, which refuses a gate-waiting run (review fold C13)', async () => {
+  it('LAW-g a GATE-WAITING run with an unreadable copy IS selected, and its label points at inspect (review fold C13; since R9 every live run does — the walk found abandon as the only offered act destroyed a repairable run)', async () => {
     const { chmodSync } = await import('node:fs');
     const copy = join(wfDir, 'wf-gate.json');
     writeFileSync(copy, JSON.stringify({ id: 'wf-gate', schema_version: 3 }), 'utf8');
