@@ -777,6 +777,7 @@ shows a `Message:` line under `Choice:` with the exact text the human saw at dec
 | Field                          | What it tells you                                                                                                                                                                                                                                 |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Phase**                      | Current run phase (`run_phase`). Terminal runs show `✓` (completed) or no suffix (failed/abandoned).                                                                                                                                              |
+| **Rerun of**                   | Present only when this run SUPERSEDED a terminal run under the same idempotency key (`on_terminal_match: 'rerun'`/`'rerun_if_failed'`) — the id of the run it replaced. Absent on a first run and on a `reuse`.                                   |
 | **Evidence (N steps)**         | Number of distinct steps that produced evidence. Steps with multiple attempts are counted once. Human gate steps are counted once regardless of whether the gate has been responded to.                                                           |
 | **Step number**                | Execution order, 1-based.                                                                                                                                                                                                                         |
 | **Step name**                  | The `id` of the step in your workflow YAML.                                                                                                                                                                                                       |
@@ -837,12 +838,19 @@ realm run abandon abc123 --reason "stale runner, no longer processing"
 ```
 
 Idempotent (abandoning an already-abandoned run succeeds). Refuses an already-terminal run, and
-refuses a `gate_waiting` run (resolve the gate via `realm run respond` first). To re-run the same
-work afterward, use `start_run` with `on_terminal_match: 'rerun'` or a fresh idempotency key — the
-default returns the abandoned run. See [Operating & recovering runs](operating-runs.md).
+refuses a run with an OPEN gate (`pending_gate`; resolve it via `realm run respond` first) — the refusal prints
+the exact command, with this run's id, gate id and the gate's own choices. The refusal keys on the gate
+itself, never the persisted `run_phase` label: a record whose label says `gate_waiting` but carries no gate
+has nothing to answer and abandons like the `running` run it derives to. It **releases every
+claim** in the same write, so a just-abandoned run is purgeable as soon as it passes
+`--older-than`. To run the same work again: `realm workflow run <source_dir>` — the directory the registered copy records it was registered from, printed when the copy reads, with this run's own params (`--params '<json>'`) when it had any; a blank to fill (`<the workflow.yaml you registered '<workflow_id>' from>`) when it does not (a fresh
+run; this run's evidence stays at `realm run inspect <run-id>`). Over MCP, `start_run` with
+`on_terminal_match: 'rerun'` supersedes it instead, and the fresh run is stamped `rerun_of`. See
+[Operating & recovering runs](operating-runs.md).
 
-`abort` is the graceful path and runs finalizers; `abandon` is a kill and runs nothing — use it
-only when the run cannot be aborted normally. Every successful `abandon` prints this reminder.
+There is no operator `abort` verb: a workflow's own guard abort (`abort_unless`) is the graceful
+path that runs finalizers; `abandon` is a kill and runs nothing. Every successful `abandon` prints
+this reminder.
 
 ---
 
@@ -901,6 +909,31 @@ A `settle_default` disposition may or may not terminalize the run (depends on th
 remaining steps); an `abort` disposition always does, and its finalizer terminalization flows
 into the SAME `drain` pass. A finding-only gate (`timeout_seconds` with no `on_expiry`) is listed
 as `expired — finding-only` and is **never** enacted, even under `--force`.
+
+**When a finalizer cannot be run here (issue #558):** a `--force` pass halts at the first finalizer
+it cannot run — one the workflow does not declare (`left pending — not declared by the workflow
+definition`) or one whose handler is not available on this surface (`left pending — handler not
+available on this surface`) — so that one and every finalizer behind it stay pending. `drain` says
+so (`nothing drained; N finalizer(s) left pending: …` when the pass ran none, `Drained run '<id>'
+(M ran) — N finalizer(s) left pending: …` when it ran some), names `--void <finalizer> --force`
+**once per pending finalizer** (each line carrying this run's id), and **exits 1** — it does not
+report `Drained run` and exit 0, which made `realm run list --stuck` re-offer the same `drain`
+command forever. A pass that had nothing to run at all (an abandoned run mints no finalizer ledger)
+prints `has no pending finalizers. Nothing to drain.` and exits 0 — `Drained run` means a drain
+happened. The dry run predicts the same per finalizer from the registered copy: a pending finalizer
+the workflow does not declare is listed as `NOT declared by the workflow definition — --force would
+leave it pending; to void it: …`; a declared one as `would lease and run on --force, if its handler
+resolves on this surface`; and when the copy cannot be read, the dry run says so (`⚠ could not read
+this run's workflow copy …`), marks every entry `unknown — the workflow copy could not be read, so
+--force will refuse until it is repaired …` with its void command, and never invites a `--force`
+that would refuse.
+
+A non-terminal run is not drainable; the message says so with the run's DERIVED phase and names the
+way out from the record — `To end the run: realm run abandon <run-id>.` for a running run, and for a
+run waiting on a human gate the answer command first (`Answer its gate first: realm run respond
+<run-id> --gate <gate-id> --choice <one of: …>; then realm run abandon <run-id>.` — `abandon`
+refuses a gate-waiting run, so naming it alone named a command that would fail) — dry-run exits 0,
+`--force` exits 1.
 
 ---
 

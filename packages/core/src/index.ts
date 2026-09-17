@@ -30,7 +30,7 @@ export { hashParams, canonicalJson } from './store/params-hash.js';
 export { decideIdempotencyPolicy } from './store/idempotency-policy.js';
 export type { IdempotencyDecision } from './store/idempotency-policy.js';
 export { executeStep } from './engine/execution-loop.js';
-export { abandonRun } from './engine/abandon-run.js';
+export { abandonRun, ABANDON_KILL_ADVISORY } from './engine/abandon-run.js';
 export {
   buildFailedAttemptRecord,
   serializeFailedAttemptLine,

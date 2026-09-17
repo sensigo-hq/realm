@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  ABANDON_KILL_ADVISORY,
   JsonFileStore,
   WorkflowError,
   abandonRun,
@@ -32,9 +33,10 @@ export interface AbandonRunSummary {
   note: string;
 }
 
-const ABANDON_ADVISORY =
-  'abandon is a kill — declared finalizers (if any) did NOT run; ' +
-  "'abort' is the graceful path.";
+/** issue #558 PR-C: ONE mint, homed in core (`ABANDON_KILL_ADVISORY`) and shared byte-identically
+ *  with `realm run abandon`'s third line — both packages depend on `@sensigo/realm`, so the two
+ *  surfaces cannot drift (the #444/#508 one-mint rule). This alias keeps the local name. */
+const ABANDON_ADVISORY = ABANDON_KILL_ADVISORY;
 
 /** issue #367: prefixed to the note when this call found the run ALREADY abandoned. */
 const ABANDON_NO_OP_NOTE = 'already abandoned (no change this call).';
@@ -56,7 +58,8 @@ export async function handleAbandonRun(
   // WHOSE write it was, never of the run's state.
   const before = await runStore.get(args.run_id);
   const alreadyAbandoned = before.abandoned_at !== undefined;
-  const run = await abandonRun(runStore, args.run_id, args.reason);
+  // issue #558 PR-C: the reason names THIS surface's verb; core's default is the neutral fallback.
+  const run = await abandonRun(runStore, args.run_id, args.reason ?? 'Abandoned via abandon_run');
   /* eslint-disable-next-line no-restricted-syntax --
    * issue #367 (part 2), AUTHORIZED: an envelope ECHO of the stored record, not a writer. The
    * write itself happened inside `abandonRun`, through the `sealRunLevel` chokepoint.
@@ -89,13 +92,32 @@ export function registerAbandonRun(server: McpServer, opts?: HandleAbandonRunSto
           err instanceof WorkflowError ? resolvePreExecutionAgentAction(err) : 'report_to_user';
         const message = err instanceof Error ? err.message : String(err);
         const code = err instanceof WorkflowError ? err.code : undefined;
+        // issue #558 PR-C: core's gate refusal is surface-neutral and carries the gate in
+        // `details`; THIS surface appends the MCP call an agent can actually make. `instanceof`
+        // narrowing, never a duck-typed cast. The gate arm is lifted OUT of the code-keyed ternary
+        // chain below so `errors[0]` and `context_hint` read the same narrowed details.
+        const gateDetails =
+          err instanceof WorkflowError &&
+          err.code === 'STATE_TRANSITION_DENIED' &&
+          typeof err.details['gate_id'] === 'string'
+            ? {
+                gateId: err.details['gate_id'],
+                choices: Array.isArray(err.details['choices'])
+                  ? err.details['choices'].filter((c): c is string => typeof c === 'string')
+                  : [],
+              }
+            : undefined;
+        const errorText =
+          gateDetails !== undefined
+            ? `${message} Answer it: submit_human_response {run_id: '${args.run_id}', gate_id: '${gateDetails.gateId}', choice: <one of: ${gateDetails.choices.join(', ')}>}.`
+            : message;
         const contextHint =
           code === 'STATE_RUN_NOT_FOUND'
             ? `Run '${args.run_id}' not found.`
             : code === 'STATE_RUN_TERMINAL'
               ? `Run '${args.run_id}' is already terminal; nothing to abandon.`
               : code === 'STATE_TRANSITION_DENIED'
-                ? `Run '${args.run_id}' is waiting on a human gate; resolve it before abandoning.`
+                ? `The run is waiting on a human gate; submit_human_response answers it, then abandon_run is possible.`
                 : `An error occurred while abandoning the run.`;
         return {
           content: [
@@ -108,7 +130,7 @@ export function registerAbandonRun(server: McpServer, opts?: HandleAbandonRunSto
                 data: {},
                 evidence: [],
                 warnings: [],
-                errors: [message],
+                errors: [errorText],
                 ...(code !== undefined ? { error_code: code } : {}),
                 agent_action: agentAction,
                 context_hint: contextHint,

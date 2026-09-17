@@ -26,6 +26,19 @@ const gatedWf: WorkflowDefinition = {
   schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
   steps: { approve: { description: 'a', execution: 'auto', depends_on: [], handler: 'h' } },
 };
+// issue #558 PR-C: a gate with a DEPENDENT step behind it — enacting the gate's expiry completes
+// `approve` and leaves the run non-terminal, which is the only way to reach drain's mid-drain
+// "nothing further to drain" render (drain.ts, the `workingRun` site).
+const gatedTwoStepWf: WorkflowDefinition = {
+  id: 'drain-expired-two-step-wf',
+  name: 'Drain Expired Two-Step WF',
+  version: 1,
+  schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+  steps: {
+    approve: { description: 'a', execution: 'auto', depends_on: [], handler: 'h' },
+    after: { description: 'b', execution: 'auto', depends_on: ['approve'], handler: 'h' },
+  },
+};
 
 describe('classifyGateExpiry (issue #291)', () => {
   const NOW = new Date('2026-07-08T12:00:00.000Z');
@@ -52,6 +65,7 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
     store = new JsonFileStore(dir);
     workflowStore = new JsonWorkflowStore(join(dir, 'workflows'));
     await workflowStore.register(gatedWf);
+    await workflowStore.register(gatedTwoStepWf);
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
@@ -163,6 +177,22 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
       expect(reloaded.pending_gate).toBeUndefined();
       expect(reloaded.completed_steps).toContain('approve');
       expect(reloaded.settled?.['approve']).toMatchObject({ resolved_by: 'timeout' });
+    });
+
+    it('settle_default with a dependent step behind the gate: enacts, stays non-terminal, and the mid-drain line renders the DERIVED phase (issue #558 PR-C)', async () => {
+      const run = await seedExpiredGateRun('settle_default', 'approve', gatedTwoStepWf.id);
+      await runDrainAction(run.id, { expired: true, force: true }, store, workflowStore, DEPS);
+      const reloaded = await store.get(run.id);
+      expect(reloaded.terminal_state).toBe(false);
+      expect(reloaded.completed_steps).toContain('approve');
+      const logged = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(logged).toContain(
+        `Run '${run.id}' is not terminal (phase: 'running') — nothing further to drain.`,
+      );
+      // Restoring `workingRun.run_phase` at that site is an EQUIVALENT mutant by construction:
+      // `workingRun` is the product of a store write tail, which re-derives `run_phase`
+      // (PHASE_IS_GENERATED), so persisted ≡ derived there. The derive stays for the
+      // render-never-reads-the-persisted-label rule; this cell pins the SENTENCE.
     });
 
     it('abort: enacts, terminalizes, and the SAME invocation runs the native finalizer pass', async () => {

@@ -1209,3 +1209,26 @@ describe('defaulted-steps rendering (issue #232)', () => {
     expect(result).not.toContain('Defaulted');
   });
 });
+
+// issue #558 PR-C (C-6): the supersede link, beside the phase it explains.
+describe('inspect — Rerun of (issue #558 PR-C)', () => {
+  it('renders `Rerun of: <id>` directly after Phase when the run superseded another', async () => {
+    const run = makeRun([], {
+      run_phase: 'running',
+      terminal_state: false,
+      idempotency_key: 'k4',
+      rerun_of: '11111111-2222-3333-4444-555555555555',
+    });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    const lines = result.split('\n');
+    const phaseIdx = lines.findIndex((l) => l.startsWith('Phase:'));
+    expect(phaseIdx).toBeGreaterThan(-1);
+    expect(lines[phaseIdx + 1]).toBe('Rerun of: 11111111-2222-3333-4444-555555555555');
+  });
+
+  it('a run that superseded nothing prints no such line at all', async () => {
+    const run = makeRun([], { run_phase: 'running', terminal_state: false, idempotency_key: 'k4' });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    expect(result).not.toContain('Rerun of:');
+  });
+});

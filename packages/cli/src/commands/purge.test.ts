@@ -132,16 +132,21 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
   );
 
   describe('healthy (future-deadline) claim — the one hard refuse; no override in EITHER mode', () => {
+    // issue #558 PR-C: the fixture's STORY changed — abandoning now releases every claim, so a
+    // terminal run carrying a healthy claim can no longer be an abandoned one. It comes from a
+    // seal that is not an abandon: a `failed` run whose runner died mid-claim. What the cell PINS
+    // is unchanged (a provably-live claim is never purged, in either mode).
     const run = makeRun({
-      run_phase: 'abandoned',
+      run_phase: 'failed',
       terminal_state: true,
-      sealed_by: { arm: 'abandon_requested' },
+      sealed_by: { arm: 'step_failure' },
+      failed_steps: ['charge'],
       in_progress_steps: ['charge'],
       claims: { charge: { deadline: FAR_FUTURE } },
     });
 
     it.each([true, false])(
-      'refuses when explicit=%s — abandon does not clear claims, and there is no override for a provably-live claim',
+      'refuses when explicit=%s — a runner died mid-claim, and there is no override for a provably-live claim',
       (explicit) => {
         const v = isPurgeEligible(run, { explicit });
         expect(v.eligible).toBe(false);
@@ -1222,5 +1227,100 @@ describe('purge report wording and partial-free disclosure (issue #189)', () => 
     const { err } = render(result, false);
     expect(err).toContain('✗ r-boom: simulated disk failure');
     expect(err).toContain('already freed before the refusal');
+  });
+
+  it('the resumable line at ZERO does not warn about destroying a path that does not exist (issue #558 PR-C)', async () => {
+    // C-2 made the NUMBER true (an abandoned run with no failed step is not resumable) and the
+    // sentence around it still said "purging would destroy that path permanently" — executed on
+    // the built CLI: `0 of 1 selected run(s) are resumable … would destroy that path`. The
+    // destroy clause exists only when there is a path to destroy.
+    const run = makeRun({ id: 'r-none', terminal_state: true, sealed_by: { arm: 'complete' } });
+    const zero = { ...emptyResult(), selected: [{ run, bytes: 1024, resumable: false }] };
+    const dry = render(zero, true).out;
+    expect(dry).toContain("None of the 1 selected run(s) are resumable via 'realm run resume'.");
+    expect(dry).not.toContain('would destroy');
+    const forced = { ...zero, purged: ['r-none'], freed_bytes: { 'r-none': 1024 } };
+    const out = render(forced, false).out;
+    expect(out).toContain("None of the 1 selected run(s) were resumable via 'realm run resume'.");
+    expect(out).not.toContain('has destroyed');
+  });
+
+  it('CONTROL — the resumable line above zero keeps the destroy clause (issue #558 PR-C)', async () => {
+    const run = makeRun({ id: 'r-one', terminal_state: true, sealed_by: { arm: 'complete' } });
+    const one = { ...emptyResult(), selected: [{ run, bytes: 1024, resumable: true }] };
+    expect(render(one, true).out).toContain(
+      "1 of 1 selected run(s) are resumable via 'realm run resume' — purging would destroy that path permanently.",
+    );
+    const forced = { ...one, purged: ['r-one'], freed_bytes: { 'r-one': 1024 } };
+    expect(render(forced, false).out).toContain(
+      "1 of 1 selected run(s) were resumable via 'realm run resume' — purging has destroyed that path for them.",
+    );
+  });
+});
+
+// issue #558 PR-C (C-2 + C-3): purge's two sentences stop lying.
+// C-2 — "resumable" means `resume` will actually take the run: a RESUMABLE_PHASES phase is not
+//       enough, because `resume --from <step>` refuses unless the step is in `failed_steps`
+//       (`resume.ts:131`). An abandoned run with no failed step has no resume path to destroy.
+// C-3 — the non-terminal refusal renders the DERIVED phase; the DECISION already derived.
+describe('purge — disposal coherence (issue #558 PR-C)', () => {
+  it('C-2: an abandoned run with NO failed step is NOT resumable', async () => {
+    const { dir, runStore, artifactStores } = await makeStores();
+    try {
+      // The G1 fixture: exactly what `realm run abandon` writes on a run that never failed a step.
+      const run = makeRun({
+        id: 'r-abandoned-clean',
+        run_phase: 'abandoned',
+        terminal_state: true,
+        abandoned_at: new Date().toISOString(),
+        sealed_by: { arm: 'abandon_requested' },
+        terminal_reason: 'Abandoned via realm run abandon',
+        failed_steps: [],
+      });
+      await injectRun(dir, run);
+
+      const result = await purgeRuns({ runId: run.id }, runStore, artifactStores);
+
+      expect(result.selected[0]?.resumable).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('C-2: an abandoned run WITH a failed step still is (the path is real)', async () => {
+    const { dir, runStore, artifactStores } = await makeStores();
+    try {
+      const run = makeRun({
+        id: 'r-abandoned-failed',
+        run_phase: 'abandoned',
+        terminal_state: true,
+        abandoned_at: new Date().toISOString(),
+        sealed_by: { arm: 'abandon_requested' },
+        terminal_reason: 'Abandoned via realm run abandon',
+        failed_steps: ['analyze'],
+      });
+      await injectRun(dir, run);
+
+      const result = await purgeRuns({ runId: run.id }, runStore, artifactStores);
+
+      expect(result.selected[0]?.resumable).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('C-3: the not-terminal refusal renders the DERIVED phase, not the persisted label', () => {
+    // The G2 fixture: PERSISTED `completed`, `terminal_state: false` ⇒ derives `running`. The
+    // decision at `isPurgeEligible` already derived; only the rendered reason did not.
+    const run = makeRun({ id: 'r-divergent', run_phase: 'completed', terminal_state: false });
+
+    expect(isPurgeEligible(run, { explicit: true })).toEqual({
+      eligible: false,
+      reason: "not terminal (phase: 'running')",
+    });
+    expect(isPurgeEligible(run, { explicit: false })).toEqual({
+      eligible: false,
+      reason: "not terminal (phase: 'running')",
+    });
   });
 });

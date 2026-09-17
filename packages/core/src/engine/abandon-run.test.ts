@@ -1,9 +1,9 @@
 // Tests for abandonRun — the shared run-abandonment primitive (#92 follow-up / 0.10.0).
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { abandonRun } from './abandon-run.js';
+import { ABANDON_KILL_ADVISORY, abandonRun } from './abandon-run.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunStore } from '../store/store-interface.js';
@@ -85,7 +85,112 @@ describe('abandonRun (JsonFileStore)', () => {
   it('default reason when none supplied', async () => {
     const run = await freshRunning();
     const result = await abandonRun(store, run.id);
-    expect(result.terminal_reason).toBe('Abandoned via abandon_run');
+    // issue #558 PR-C: core's default is the NEUTRAL fallback — each surface supplies its own
+    // reason naming the verb the operator used (`Abandoned via realm run abandon` /
+    // `Abandoned via abandon_run`). A CLI kill must never be attributed to the MCP tool.
+    expect(result.terminal_reason).toBe('Abandoned');
+  });
+
+  // ── issue #558 PR-C ─────────────────────────────────────────────────────────────────────────
+  it('releases every claim in the seal write (in_progress_steps + claims both emptied)', async () => {
+    const run = await freshRunning();
+    const claimed = await store.update({
+      ...run,
+      in_progress_steps: ['analyze'],
+      claims: {
+        analyze: {
+          deadline: new Date(Date.now() + 3_600_000).toISOString(),
+        },
+      },
+    });
+    expect(claimed.in_progress_steps).toEqual(['analyze']);
+
+    const abandoned = await abandonRun(store, run.id, 'kill it');
+
+    expect(abandoned.in_progress_steps).toEqual([]);
+    expect(abandoned.claims).toEqual({});
+    expect(abandoned.sealed_by?.arm).toBe('abandon_requested');
+    // …and it is PERSISTED, not just returned.
+    const reloaded = await store.get(run.id);
+    expect(reloaded.in_progress_steps).toEqual([]);
+    expect(reloaded.claims).toEqual({});
+  });
+
+  it('the LIVE gate refusal names the gate, carries it in details, and names no surface verb', async () => {
+    const run = await freshRunning();
+    await store.update({
+      ...run,
+      pending_gate: {
+        gate_id: 'g-approve-1',
+        step_name: 'review_changes',
+        preview: {},
+        choices: ['approve', 'reject'],
+        opened_at: new Date().toISOString(),
+      },
+    });
+    await expect(abandonRun(store, run.id)).rejects.toThrow(
+      `Run '${run.id}' is waiting on human gate 'review_changes' (gate 'g-approve-1'); answer it before abandoning.`,
+    );
+    try {
+      await abandonRun(store, run.id);
+      expect.unreachable('abandonRun must refuse a gate-waiting run');
+    } catch (err) {
+      const e = err as WorkflowError;
+      expect(e.code).toBe('STATE_TRANSITION_DENIED');
+      expect(e.details).toEqual({
+        runId: run.id,
+        run_phase: 'gate_waiting',
+        // Disclosed on BOTH arms (the terminal arm's own unconditional precedent). Here the two
+        // agree; on a record whose persisted label is stale they do not, and a reader must be able
+        // to tell which number the refusal was computed from.
+        persisted_run_phase: 'gate_waiting',
+        gate_id: 'g-approve-1',
+        step_name: 'review_changes',
+        choices: ['approve', 'reject'],
+      });
+      // Core names NEITHER surface's verb — the three-walk finding.
+      expect(e.message).not.toContain('submit_human_response');
+      expect(e.message).not.toContain('realm run respond');
+    }
+  });
+
+  it('the DIVERGENT (#432-class) record — persisted gate_waiting with no pending_gate — ABANDONS (nothing to answer)', async () => {
+    const run = await freshRunning();
+    // The divergent record CANNOT be produced through `store.update()` — every write tail
+    // re-derives `run_phase` (PHASE_IS_GENERATED), so a planted 'gate_waiting' is erased on the
+    // way in. It exists only as raw bytes from a legacy/foreign writer, so that is how it is
+    // planted here (file-level, bypassing the store's own derivation).
+    await writeFile(
+      join(dir, `${run.id}.json`),
+      JSON.stringify(
+        {
+          ...run,
+          run_phase: 'gate_waiting',
+          in_progress_steps: ['analyze'],
+          claims: { analyze: { deadline: null } },
+        },
+        null,
+        2,
+      ),
+    );
+    // walk 3: refusing this record stranded the operator — `inspect` shows no gate, `respond`
+    // has nothing to answer, and the refusal's own "answer it" could never be obeyed. The gate
+    // refusal keys on `pending_gate`; the label alone is not a gate.
+    const after = await abandonRun(store, run.id);
+    expect(after.run_phase).toBe('abandoned');
+    expect(after.abandoned_at).toBeDefined();
+    expect(after.in_progress_steps).toEqual([]);
+    expect(after.claims).toEqual({});
+  });
+
+  it('ABANDON_KILL_ADVISORY is minted exactly once and says what it says', async () => {
+    expect(ABANDON_KILL_ADVISORY).toBe(
+      'abandon is a kill — declared finalizers (if any) did NOT run and will not for this run. ' +
+        "The graceful path is the workflow's own guard step (abort_unless), which runs them; " +
+        'there is no operator abort command.',
+    );
+    // There is no operator `abort` verb — the retired sentence must not come back anywhere.
+    expect(ABANDON_KILL_ADVISORY).not.toContain("'abort' is the graceful path");
   });
 
   it('already abandoned → idempotent no-op (same record, version unchanged)', async () => {

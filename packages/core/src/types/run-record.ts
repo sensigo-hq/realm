@@ -798,6 +798,14 @@ export interface RunRecord {
    * already exists instead of creating a new one.
    */
   idempotency_key?: string;
+  /**
+   * Run ID of the terminal run this run SUPERSEDED under the same idempotency key
+   * (`on_terminal_match: 'rerun' | 'rerun_if_failed'`). Stamped by the store's supersede path at
+   * creation — the one place both ids are in hand — never caller-settable (`CreateRunOptions` does
+   * not carry it; a caller forging lineage is the hazard), never rewritten. Absent for a first run
+   * and for a `reuse`. The reverse (which run replaced me) is a query, not a field.
+   */
+  rerun_of?: string;
 
   // DAG execution state — replaces the single `state: string` field.
   completed_steps: string[];

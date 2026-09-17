@@ -288,6 +288,8 @@ export async function inspectRun(
   lines.push(`Run: ${run.id}`);
   lines.push(`Workflow: ${workflowLabel}`);
   lines.push(`Phase: ${phaseLabel}`);
+  // issue #558 PR-C: the supersede link, beside the phase. Absent for a first run and a `reuse`.
+  if (run.rerun_of !== undefined) lines.push(`Rerun of: ${run.rerun_of}`);
   // issue #367: the recorded seal fact, beside the phase it derives. An unrecognised arm is shown
   // rather than hidden — an operator reading a record written by a newer binary should see that
   // there IS a seal, even if this binary cannot name it.

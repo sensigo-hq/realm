@@ -874,3 +874,32 @@ describe('resolveExportPath', () => {
     }
   });
 });
+
+// issue #558 PR-C (C-6): the export bundle carries the supersede link verbatim — the record rides
+// whole, so this is a round-trip assertion, not a new export-side code path.
+describe('export — rerun_of rides the record (issue #558 PR-C)', () => {
+  it('a superseding run exports with rerun_of intact', async () => {
+    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    try {
+      const run = makeRun({
+        run_phase: 'abandoned',
+        terminal_state: true,
+        sealed_by: { arm: 'abandon_requested' },
+        idempotency_key: 'k4',
+        rerun_of: '11111111-2222-3333-4444-555555555555',
+      });
+      await injectRun(dir, run);
+
+      const { bundle } = await buildExportBundle(
+        run.id,
+        { runStore, failedAttemptStore, traceBufferStore },
+        new Date('2026-07-13T00:00:00.000Z'),
+      );
+
+      expect(bundle.run.rerun_of).toBe('11111111-2222-3333-4444-555555555555');
+      expect(bundle.run).toEqual(run);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

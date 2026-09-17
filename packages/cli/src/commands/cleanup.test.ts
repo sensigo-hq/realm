@@ -1,9 +1,9 @@
 // Tests for the cleanupRuns function — CLI cleanup command logic.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cleanupRuns } from './cleanup.js';
+import { cleanupRuns, cleanupCommand } from './cleanup.js';
 import { JsonFileStore } from '@sensigo/realm';
 import type { RunRecord } from '@sensigo/realm';
 import { v4 as uuidv4 } from 'uuid';
@@ -229,5 +229,54 @@ describe('cleanupRuns', () => {
     expect(updated.abandoned_at).toBeDefined();
     expect(updated.run_phase).toBe('abandoned'); // authoritative marker beats failed_steps
     expect(updated.terminal_state).toBe(true);
+  });
+
+  it('issue #558 PR-C: the sweep releases every claim in the same write it seals with', async () => {
+    const now = new Date('2024-06-01T12:00:00Z');
+    vi.setSystemTime(now);
+    const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
+    // An idle run that died mid-claim: a claimed step with an open-ended claim. Before PR-C the
+    // sweep sealed it and left the claim, so `purge` refused the dead run on a claim nobody held.
+    const run = makeRun({
+      updated_at: oldTime,
+      in_progress_steps: ['analyze'],
+      claims: { analyze: { deadline: null } },
+    });
+    await injectRun(dir, run);
+
+    const store = new JsonFileStore(dir);
+    const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
+    expect(affected).toHaveLength(1);
+
+    const updated = await store.get(run.id);
+    expect(updated.run_phase).toBe('abandoned');
+    expect(updated.in_progress_steps).toEqual([]);
+    expect(updated.claims).toEqual({});
+  });
+
+  it('issue #558 PR-C: `realm run cleanup` prints the kill advisory — the THIRD surface of the one mint', async () => {
+    // The per-member sweep found the mint pinned at two surfaces and this render pinned nowhere:
+    // deleting the line left this file green. The command, not the function, prints it.
+    const { ABANDON_KILL_ADVISORY } = await import('@sensigo/realm');
+    const now = new Date('2024-06-01T12:00:00Z');
+    vi.setSystemTime(now);
+    const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
+    const home = await mkdtemp(join(tmpdir(), 'realm-cleanup-home-'));
+    const runsDir = join(home, '.realm', 'runs');
+    await mkdir(runsDir, { recursive: true });
+    await injectRun(runsDir, makeRun({ updated_at: oldTime }));
+    const originalHome = process.env['HOME'];
+    process.env['HOME'] = home;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await cleanupCommand.parseAsync(['--older-than', '1d'], { from: 'user' });
+      const logged = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(logged).toContain(ABANDON_KILL_ADVISORY);
+    } finally {
+      logSpy.mockRestore();
+      if (originalHome === undefined) delete process.env['HOME'];
+      else process.env['HOME'] = originalHome;
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });

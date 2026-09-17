@@ -44,6 +44,10 @@ export class InMemoryStore implements RunStore {
 
   async create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
     // Idempotency: a key match applies the re-encounter policy, like JsonFileStore.
+    // issue #558 PR-C: the id of the run this create SUPERSEDES, when it supersedes one — the
+    // in-memory twin of JsonFileStore's `supersede()` parameter. Stays undefined when the mapped
+    // run VANISHED (nothing was superseded) and on every fresh-key create.
+    let supersededId: string | undefined;
     if (options.idempotencyKey !== undefined) {
       const gk = `${options.workflowId}\0${options.idempotencyKey}`;
       const existingId = this.keyIndex.get(gk);
@@ -62,6 +66,8 @@ export class InMemoryStore implements RunStore {
           ) {
             return { run: existing, created: false };
           }
+          // Not `reuse` → this fresh create supersedes `existing`; stamp the link.
+          supersededId = existing.id;
         }
         // mapped run vanished (or superseded) → fall through to a fresh create.
       }
@@ -74,6 +80,7 @@ export class InMemoryStore implements RunStore {
       workflow_version: options.workflowVersion,
       ...(options.parentRunId !== undefined ? { parent_run_id: options.parentRunId } : {}),
       ...(options.idempotencyKey !== undefined ? { idempotency_key: options.idempotencyKey } : {}),
+      ...(supersededId !== undefined ? { rerun_of: supersededId } : {}),
       completed_steps: [],
       in_progress_steps: [],
       failed_steps: [],

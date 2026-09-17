@@ -183,3 +183,52 @@ describe('FieldDroppingFakeStore — the TCK catches a dishonest store (issue #1
     await expect(target!.run()).rejects.toThrow(/DISHONEST/);
   });
 });
+
+// issue #558 PR-C (C-6): the in-memory twin of JsonFileStore's supersede link. The same journey,
+// so an external implementer reading the testing store sees the same contract.
+describe('InMemoryStore — rerun_of, the supersede link (issue #558 PR-C)', () => {
+  const opts = { workflowId: 'wf-1', workflowVersion: 1, params: {}, idempotencyKey: 'k4' };
+
+  it('a `rerun` over a terminal run stamps rerun_of; `reuse` and a fresh key do not', async () => {
+    const store = new InMemoryStore();
+    const first = await store.create({ ...opts });
+    expect(first.created).toBe(true);
+    expect(first.run.rerun_of).toBeUndefined();
+    await store.update({
+      ...first.run,
+      run_phase: 'abandoned',
+      terminal_state: true,
+      abandoned_at: new Date().toISOString(),
+      sealed_by: { arm: 'abandon_requested' },
+      terminal_reason: 'Abandoned via realm run abandon',
+    });
+
+    const reused = await store.create({ ...opts, onTerminalMatch: 'reuse' });
+    expect(reused.created).toBe(false);
+    expect(reused.run.rerun_of).toBeUndefined();
+
+    const rerun = await store.create({ ...opts, onTerminalMatch: 'rerun' });
+    expect(rerun.created).toBe(true);
+    expect(rerun.run.id).not.toBe(first.run.id);
+    expect(rerun.run.rerun_of).toBe(first.run.id);
+
+    const fresh = await store.create({ ...opts, idempotencyKey: 'never-seen' });
+    expect(fresh.run.rerun_of).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(fresh.run, 'rerun_of')).toBe(false);
+  });
+
+  it('a VANISHED mapped run supersedes nothing, so the fresh run carries no link', async () => {
+    // The `existing === undefined` fall-through: the key index points at a run that is gone.
+    // Nothing was superseded, so claiming a lineage would be a fabricated fact.
+    const store = new InMemoryStore();
+    const first = await store.create({ ...opts });
+    // Element access is TypeScript's deliberate escape hatch for a private member — the ONLY way
+    // to make a mapped run vanish underneath the key index (no public verb deletes a run here).
+    store['runs'].delete(first.run.id);
+
+    const second = await store.create({ ...opts, onTerminalMatch: 'rerun' });
+
+    expect(second.created).toBe(true);
+    expect(second.run.rerun_of).toBeUndefined();
+  });
+});
