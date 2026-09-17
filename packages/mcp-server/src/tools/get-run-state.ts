@@ -105,6 +105,12 @@ export interface RunStateSummary {
    */
   terminal_reason?: string;
   /**
+   * Issue #558 PR-C: the id of the terminal run this run SUPERSEDED under the same idempotency key
+   * (`on_terminal_match: 'rerun' | 'rerun_if_failed'`). Absent for a first run and for a `reuse`.
+   * Stamped by the store at creation; never caller-settable.
+   */
+  rerun_of?: string;
+  /**
    * Issue #367: WHICH arm of the engine sealed this run — the recorded fact, not a re-reading of
    * the prose. Present on any terminal run written since #367, and absent on the legacy population
    * (where `run_phase` is recovered by the read-path classifier instead). Normally absent on a
@@ -412,6 +418,9 @@ export async function handleGetRunState(
     updated_at: run.updated_at,
     params: run.params,
     ...(run.terminal_reason !== undefined ? { terminal_reason: run.terminal_reason } : {}),
+    // issue #558 PR-C: the supersede link — the ONE explicit route onto this surface (there is no
+    // `keyof RunRecord` disclosure registry to join, so the cell below is the parity guard).
+    ...(run.rerun_of !== undefined ? { rerun_of: run.rerun_of } : {}),
     // issue #367: an unrecognised arm is DISCLOSED, never dropped — omitting it would report a
     // sealed run as unsealed, which is the false attestation this whole change exists to end.
     ...(run.sealed_by !== undefined

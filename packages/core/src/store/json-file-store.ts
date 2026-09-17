@@ -240,8 +240,10 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     await atomicWriteFile(keyPath, JSON.stringify(pointer, null, 2));
   }
 
-  /** Build and persist a brand-new run record (today's path, factored out). */
-  private async writeFreshRun(options: CreateRunOptions): Promise<RunRecord> {
+  /** Build and persist a brand-new run record (today's path, factored out). `rerunOf` is the id of
+   *  the terminal run this one supersedes under the same idempotency key — supplied ONLY by
+   *  `supersede()` below, never by a caller (issue #558 PR-C). */
+  private async writeFreshRun(options: CreateRunOptions, rerunOf?: string): Promise<RunRecord> {
     const now = new Date().toISOString();
     const record: RunRecord = {
       id: uuidv4(),
@@ -249,6 +251,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       workflow_version: options.workflowVersion,
       ...(options.parentRunId !== undefined ? { parent_run_id: options.parentRunId } : {}),
       ...(options.idempotencyKey !== undefined ? { idempotency_key: options.idempotencyKey } : {}),
+      ...(rerunOf !== undefined ? { rerun_of: rerunOf } : {}),
       completed_steps: [],
       in_progress_steps: [],
       failed_steps: [],
@@ -316,7 +319,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
           ) {
             return { run: target, created: false };
           }
-          return await this.supersede(options, keyPath, key);
+          return await this.supersede(options, keyPath, key, target.id);
         }
         // target missing → crash-orphan pointer; fall through to reclaim (d).
       } else {
@@ -336,7 +339,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
             await this.writePointer(keyPath, canonical, key);
             return { run: canonical, created: false };
           }
-          return await this.supersede(options, keyPath, key);
+          return await this.supersede(options, keyPath, key, canonical.id);
         }
       }
 
@@ -354,13 +357,18 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
    * run file FIRST, then an atomic pointer overwrite to the successor (PR 1 ordering). The
    * superseded run stays on disk by id (auditable); `pickCanonical` prefers the newer successor,
    * so a lost pointer self-heals to the new run.
+   *
+   * issue #558 PR-C: `supersededId` is the id of the run being replaced — this is the ONE place
+   * both ids are in hand, so this is where `rerun_of` is stamped. Both call sites have it (the
+   * pointer target and the legacy canonical run).
    */
   private async supersede(
     options: CreateRunOptions,
     keyPath: string,
     key: string,
+    supersededId: string,
   ): Promise<{ run: RunRecord; created: boolean }> {
-    const run = await this.writeFreshRun(options);
+    const run = await this.writeFreshRun(options, supersededId);
     await this.writePointer(keyPath, run, key);
     return { run, created: true };
   }

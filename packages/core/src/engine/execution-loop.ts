@@ -5310,7 +5310,7 @@ export async function drainFinalizers(
   definition: WorkflowDefinition,
   registry: ExtensionRegistry | undefined,
   runId: string,
-): Promise<{ run: RunRecord; warnings: string[] }> {
+): Promise<{ run: RunRecord; warnings: string[]; leftPending: string[]; attempted: string[] }> {
   // .bind(store): a bare `store.settleStep` reference loses its `this` binding — the store's own
   // method body (e.g. JsonFileStore's `this.ensureDir()`/`this.filePath()`) would throw on
   // `this === undefined` once called through the detached reference below.
@@ -5318,9 +5318,17 @@ export async function drainFinalizers(
   if (settleStep === undefined) {
     // Defensive — every caller only invokes this once it has already confirmed the store
     // declares settleStep. A fresh read is still the correct degenerate response.
-    return { run: await store.get(runId), warnings: [] };
+    return { run: await store.get(runId), warnings: [], leftPending: [], attempted: [] };
   }
   const warnings: string[] = [];
+  // issue #558 PR-C: the NAMES behind the "left pending — handler not available" warning, so a
+  // surface can name the per-finalizer escape (`--void <name>`) instead of re-offering itself.
+  // ONE source — the warning text below is derived from the same push.
+  const leftPending: string[] = [];
+  // issue #558 PR-C: every finalizer this pass LEASED (whatever its outcome). A pass with an empty
+  // `attempted` AND an empty `leftPending` ran nothing and had nothing to run — the abandoned-run
+  // case, where a surface must not claim a drain happened.
+  const attempted: string[] = [];
   let run = await store.get(runId);
 
   for (;;) {
@@ -5333,9 +5341,25 @@ export async function drainFinalizers(
 
     // Registry pre-check — never burn an absent handler; rank-monotonic HALT (R11).
     if (stepDef === undefined || handlerName === undefined || handler === undefined) {
+      // issue #558 PR-C: the pass HALTS here (rank-monotonic, R11) — so the finalizers behind this
+      // one are ALSO left pending, and a surface that named only `pending[0]` would send the
+      // operator round the loop once per finalizer. Carry the WHOLE remaining set.
+      leftPending.push(...pending);
       warnings.push(
-        `finalizer '${finalizerName}' left pending — handler not available on this surface`,
+        stepDef === undefined
+          ? `finalizer '${finalizerName}' left pending — not declared by the workflow definition (nothing can run it; void it)`
+          : `finalizer '${finalizerName}' left pending — handler not available on this surface`,
       );
+      // walk 2: ONE warning for the halted-on finalizer read as "the others were handled" — every
+      // finalizer behind it gets its own line, with the reason it was never reached.
+      for (const behind of pending.slice(1)) {
+        warnings.push(
+          definition.steps[behind] === undefined
+            ? // walk 3: "behind in rank order" understated a finalizer that can never run anyway.
+              `finalizer '${behind}' left pending — not declared by the workflow definition (nothing can run it; void it); it also sits behind '${finalizerName}' in rank order`
+            : `finalizer '${behind}' left pending — behind '${finalizerName}' in rank order (the pass halts there)`,
+        );
+      }
       break;
     }
 
@@ -5362,6 +5386,9 @@ export async function drainFinalizers(
       );
     }
     run = leaseResult.run;
+    // issue #558 PR-C: the lease APPLIED — this finalizer is attempted from here on, whatever the
+    // handler returns (completed / failed / executed-but-unrecorded).
+    attempted.push(finalizerName);
 
     // callHandler under withTimeout, OUTSIDE any critical section (the store's CS ends the
     // instant the lease-apply write above returned).
@@ -5473,7 +5500,7 @@ export async function drainFinalizers(
     // continues to the next rank regardless of markResult.
   }
 
-  return { run, warnings };
+  return { run, warnings, leftPending, attempted };
 }
 
 async function executeChainInternal(

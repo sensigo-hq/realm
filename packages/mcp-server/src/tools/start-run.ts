@@ -77,7 +77,7 @@ export async function handleStartRun(
     on_live_match?: 'use_existing' | 'fail' | undefined;
   },
   stores?: HandleRunStores,
-): Promise<ResponseEnvelope & { deduped: boolean }> {
+): Promise<ResponseEnvelope & { deduped: boolean; rerun_of?: string }> {
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
   const definition = await workflowStore.get(args.workflow_id);
@@ -171,6 +171,16 @@ export async function handleStartRun(
       evidence: [],
       run_phase: finalRun.run_phase,
       warnings: [...result.warnings, ...warnings],
+      // issue #558 PR-C (walk): a superseding run says so in the response that created it — the
+      // agent should not need a second call to learn that `on_terminal_match: 'rerun'` replaced a run.
+      ...(finalRun.rerun_of !== undefined
+        ? {
+            rerun_of: finalRun.rerun_of,
+            // walk 2: the hint is what an agent reads first; a supersede must be said there, not
+            // only carried as a key below the next_actions block.
+            context_hint: `${result.context_hint} This run supersedes run '${finalRun.rerun_of}' under the same idempotency key (on_terminal_match).`,
+          }
+        : {}),
       deduped,
     };
   }
@@ -187,8 +197,11 @@ export async function handleStartRun(
     errors: [],
     context_hint: deduped
       ? `Matched existing run '${run.id}' (idempotent) in phase '${derivedPhase}'; no new run created.`
-      : `Run '${run.id}' created for workflow '${definition.id}'.`,
+      : run.rerun_of !== undefined
+        ? `Run '${run.id}' created for workflow '${definition.id}'; it supersedes run '${run.rerun_of}' under the same idempotency key (on_terminal_match).`
+        : `Run '${run.id}' created for workflow '${definition.id}'.`,
     run_phase: derivedPhase,
+    ...(run.rerun_of !== undefined ? { rerun_of: run.rerun_of } : {}),
     deduped,
     next_actions: nextActions,
   };

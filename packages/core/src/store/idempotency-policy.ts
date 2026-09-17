@@ -13,6 +13,14 @@ export type IdempotencyDecision = 'reuse' | 'supersede';
  * `created:true`); throws a `WorkflowError` for the `fail` / `reject` policies. Pure — no I/O.
  *
  * Defaults (`reuse` / `use_existing`) reproduce PR 1 behavior exactly.
+ *
+ * CONTRACT (issue #558 PR-C): this function TRUSTS the `run_phase` it is given — it is pure and
+ * has no record to derive from beyond the `Pick<>` it receives, whose shape is public API and stays
+ * untouched (#279 D-3 leg v). Every caller MUST pass `run_phase: deriveRunPhase(record)` (the
+ * `PHASE_IS_GENERATED` doctrine); a caller that forwards a stale persisted label gets a decision
+ * computed against that label — e.g. a record persisted `completed` that DERIVES `failed` yields
+ * `reuse` under `rerun_if_failed`, silently reusing a failed run. `idempotency-policy.test.ts`'s
+ * witness fails any in-tree call site that does not derive.
  */
 export function decideIdempotencyPolicy(
   matched: Pick<RunRecord, 'id' | 'workflow_id' | 'run_phase' | 'terminal_state'>,

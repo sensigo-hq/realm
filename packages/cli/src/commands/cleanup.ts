@@ -45,9 +45,13 @@ export async function cleanupRuns(
       // issue #367: run-level seal through the ONE bypass-writer chokepoint — it stamps
       // sealed_by {arm: 'cleanup_sweep'} alongside abandoned_at, and the fossil hand-written
       // run_phase is retired (the store write tail derives it — the #282 class).
-      await runStore.update(
-        sealRunLevel(run, 'cleanup_sweep', 'Marked abandoned by realm cleanup'),
-      );
+      // issue #558 PR-C: the sweep releases every claim in the same write, exactly as
+      // `abandonRun` does — a swept run is abandoned, and an abandoned run holds no claim.
+      await runStore.update({
+        ...sealRunLevel(run, 'cleanup_sweep', 'Marked abandoned by realm cleanup'),
+        in_progress_steps: [],
+        claims: {},
+      });
     }
   }
 
@@ -62,7 +66,7 @@ export const cleanupCommand = new Command('cleanup')
   )
   .option('--dry-run', 'Preview which runs would be abandoned without modifying them')
   .action(async (opts: { olderThan: string; dryRun?: boolean }) => {
-    const { JsonFileStore } = await import('@sensigo/realm');
+    const { ABANDON_KILL_ADVISORY, JsonFileStore } = await import('@sensigo/realm');
     const runStore = new JsonFileStore();
     try {
       const { affected } = await cleanupRuns(opts, runStore);
@@ -78,9 +82,9 @@ export const cleanupCommand = new Command('cleanup')
       for (const run of affected) {
         console.log(`  • ${run.id}`);
       }
-      console.log(
-        `abandon is a kill — declared finalizers (if any) did NOT run; 'abort' is the graceful path.`,
-      );
+      // issue #558 PR-C: the THIRD surface carrying this advisory — the same ONE core mint
+      // (`ABANDON_KILL_ADVISORY`) as `realm run abandon` and the `abandon_run` tool.
+      console.log(ABANDON_KILL_ADVISORY);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);

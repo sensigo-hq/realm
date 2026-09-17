@@ -12,12 +12,18 @@
 // terminal rather than permanently refused as "still gate_waiting"). Claim posture (issue #107
 // correction) is mode-aware: a `healthy` (future-deadline) claim is
 // NEVER purged, in either mode — there is no override, because a live runner is provably still
-// working it. A `claim_unknown_age` (null-deadline) claim — load-bearing for `abandoned` runs, which
-// do not clear `claims` (see cleanup.ts) — is skipped+warned in BATCH mode (a cron sweep cannot prove
+// working it. A `claim_unknown_age` (null-deadline) claim is skipped+warned in BATCH mode (a cron sweep cannot prove
 // the runner is dead and must not guess), but IS purgeable via an explicit single-id
 // `realm run purge <id> --force` — the operator named this exact run, a deliberate judgment call
 // `reclaim`'s own batch mode also refuses to make automatically. A `claim_stale` (past-deadline)
 // claim, or no in-progress claim at all, is purgeable in both modes.
+//
+// issue #558 PR-C: abandoning releases every claim — BOTH verbs (`realm run abandon` /
+// `abandon_run` via core's `abandonRun`, and `realm run cleanup`'s sweep) now write
+// `in_progress_steps: []` + `claims: {}` with the seal. So a healthy/`claim_unknown_age` claim on a
+// TERMINAL run can now come only from a seal that is NOT an abandon (a `failed`/`completed` run
+// whose runner died mid-claim); the mode-aware rule above stands for exactly those. The brake on
+// purging a just-abandoned run is `--older-than`, never a fossil claim.
 import { readdir } from 'node:fs/promises';
 import { Command } from 'commander';
 import type { RunRecord, RunStore, PerRunArtifactStore } from '@sensigo/realm';
@@ -62,7 +68,9 @@ export function isPurgeEligible(
   // grandfathered terminal-with-stale-gate record (the #282 class) must be recognized as terminal
   // (and therefore purge-eligible, subject to the claim checks below) on its TRUE phase.
   if (!TERMINAL_PHASES.has(deriveRunPhase(run))) {
-    return { eligible: false, reason: `not terminal (phase: '${run.run_phase}')` };
+    // issue #558 PR-C: RENDER the derived phase too — the decision above already derives, so
+    // printing the persisted label made the refusal name a phase the run is not in.
+    return { eligible: false, reason: `not terminal (phase: '${deriveRunPhase(run)}')` };
   }
 
   const now = opts.now ?? new Date();
@@ -236,8 +244,11 @@ export async function purgeRuns(
     selected.push({
       run,
       bytes,
-      // Derives (issue #279, increment 2, PR-C — D-3 leg iii).
-      resumable: RESUMABLE_PHASES.has(deriveRunPhase(run)),
+      // Derives (issue #279, increment 2, PR-C — D-3 leg iii). issue #558 PR-C: a resumable PHASE
+      // is not enough — `resume --from <step>` requires the step to be in `failed_steps`
+      // (`resume.ts:131`), so an abandoned run with none has no resume path to destroy and the
+      // line must not claim one.
+      resumable: RESUMABLE_PHASES.has(deriveRunPhase(run)) && run.failed_steps.length > 0,
       overriddenClaimStep,
     });
   }
@@ -433,10 +444,16 @@ export function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void
   }
 
   const resumableCount = result.selected.filter((c) => c.resumable).length;
+  // issue #558 PR-C: at ZERO the line must not warn about destroying a resume path that does not
+  // exist — the number was made true (a `failed_steps` conjunct) and the sentence around it was
+  // still promising a destroyed path for zero runs (executed on the built CLI). The destroy
+  // clause is rendered only when there is a path to destroy.
   const resumableLine =
-    `${resumableCount} of ${result.selected.length} selected run(s) ` +
-    `${dryRun ? 'are' : 'were'} resumable via 'realm run resume' — ` +
-    `purging ${dryRun ? 'would destroy' : 'has destroyed'} that path ${dryRun ? 'permanently' : 'for them'}.`;
+    resumableCount === 0
+      ? `None of the ${result.selected.length} selected run(s) ${dryRun ? 'are' : 'were'} resumable via 'realm run resume'.`
+      : `${resumableCount} of ${result.selected.length} selected run(s) ` +
+        `${dryRun ? 'are' : 'were'} resumable via 'realm run resume' — ` +
+        `purging ${dryRun ? 'would destroy' : 'has destroyed'} that path ${dryRun ? 'permanently' : 'for them'}.`;
 
   if (dryRun) {
     // Dry-run's "to free" total is a PROJECTION over every selected candidate — nothing has been

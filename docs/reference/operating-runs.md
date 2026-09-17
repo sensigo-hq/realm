@@ -43,7 +43,8 @@ makes the run derive to phase `abandoned` regardless of any `failed_steps` it ca
 
 - is **idempotent** — abandoning an already-abandoned run is a no-op success;
 - **refuses a terminal run** (`completed`/`failed`/`aborted`) with `STATE_RUN_TERMINAL` — checked FIRST, keyed on `terminal_state`/the derived phase, never the persisted `run_phase` label (a grandfathered record whose persisted phase still reads `gate_waiting` but is actually terminal is refused HERE, not below) — it never clobbers a finished run;
-- **refuses a run with an OPEN gate** (a genuinely non-terminal run still carrying a live `pending_gate`) with `STATE_TRANSITION_DENIED` — resolve the gate first (gate abandonment is intentionally not supported in this version);
+- **refuses a run with an OPEN gate** (a genuinely non-terminal run still carrying a live `pending_gate`) with `STATE_TRANSITION_DENIED` — resolve the gate first; the refusal names the answer command for the surface you are on (`realm run respond <id> --gate <gate-id> --choice <choice>` on the CLI, `submit_human_response` over MCP) and carries `gate_id`/`step_name`/`choices` in `details` (gate abandonment is intentionally not supported in this version);
+- **releases every claim** in the same write (`in_progress_steps: []`, `claims: {}`) — a terminal run cannot progress, so a kept claim only ever blocked `purge`; the brake on purging a just-abandoned run is `--older-than`;
 - is **concurrency-safe** — if a live writer advances the run while abandon is in flight, abandon loses (propagates `STATE_SNAPSHOT_MISMATCH`) rather than corrupting the record.
 
 ### Honesty note
@@ -63,7 +64,13 @@ abandoned run instead of starting fresh. To actually re-run, either:
 
 - call `start_run(..., on_terminal_match: 'rerun')` (or `'rerun_if_failed'`) to **supersede** the
   abandoned run with a fresh one, or
-- start with a **new idempotency key**.
+- start with a **new idempotency key**, or
+- from the CLI, run the workflow again: `realm workflow run <the workflow.yaml you registered the workflow from>` (a fresh run;
+  the abandoned run's evidence stays at `realm run inspect <id>`).
+
+The fresh run is **linked back** to the one it superseded: `rerun_of` on the record, `Rerun of: <id>`
+on `realm run inspect`, and `rerun_of` on `get_run_state` and on the `start_run` response that created it. It is stamped by the store at creation and
+is never caller-settable; it is absent on a first run and on a `reuse`.
 
 See the idempotency re-encounter policy in [mcp-protocol.md](mcp-protocol.md#idempotency-re-encounter-policy).
 
@@ -86,12 +93,12 @@ realm run purge --older-than 30d --force                    # actually deletes t
 
 ### Abandon vs. purge — they are not the same axis
 
-|                    | `cleanup` / `abandon`                          | `purge`                                                    |
-| ------------------ | ---------------------------------------------- | ---------------------------------------------------------- |
-| What it does       | Marks a run terminal (`abandoned`)             | Deletes the run and all its artifacts from disk            |
-| Reversible?        | Yes — the record still exists; resume/rerun it | **No** — this is the first irreversible primitive in Realm |
-| Targets            | Non-terminal, non-`gate_waiting` runs          | **Terminal-only** runs, claim-state permitting (see below) |
-| Exposed to agents? | Yes (`abandon_run` MCP tool)                   | **No** — CLI-only, deliberately never an MCP tool          |
+|                    | `cleanup` / `abandon`                                                                                     | `purge`                                                    |
+| ------------------ | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| What it does       | Marks a run terminal (`abandoned`)                                                                        | Deletes the run and all its artifacts from disk            |
+| Reversible?        | Yes — the record stays; `resume` it if a step failed (`--from <step>`), or rerun it (the rerun is linked) | **No** — this is the first irreversible primitive in Realm |
+| Targets            | Non-terminal runs without an OPEN gate (`pending_gate`; the label alone is not a gate)                    | **Terminal-only** runs, claim-state permitting (see below) |
+| Exposed to agents? | Yes (`abandon_run` MCP tool)                                                                              | **No** — CLI-only, deliberately never an MCP tool          |
 
 Purge will **never** touch a run that is not terminal — derived (never the persisted `run_phase`
 label), so a genuinely non-terminal `gate_waiting` run is excluded, while a grandfathered record
@@ -100,8 +107,10 @@ claim-state check is **mode-aware** — the same run can be refused in a batch s
 you name it directly:
 
 - A run carrying a **future-deadline (`healthy`)** claim on a step is **never purged, in either mode** —
-  a runner is provably still working it, and there is no override. This matters specifically for
-  `abandoned` runs, since abandoning does **not** clear `in_progress_steps`/`claims`.
+  a runner is provably still working it, and there is no override. Abandoning releases every claim
+  (`realm run abandon`, `abandon_run`, `realm run cleanup`), so the brake on purging a just-abandoned
+  run is `--older-than`, never a fossil claim; a healthy claim on a terminal run can now come only
+  from a seal that is not an abandon (a `failed`/`completed` run whose runner died mid-claim).
 - A run carrying an **indeterminate-age (`claim_unknown_age` — no deadline recorded)** claim is
   **skipped with a warning in batch mode** — a cron sweep cannot prove the runner is dead, so it
   refuses to guess — but **is** purgeable via an explicit single-run `realm run purge <id> --force`.
@@ -112,7 +121,7 @@ you name it directly:
 
 Like `reclaim --all`, purge is **dry-run by default** — even naming a single `<run-id>` only reports
 what would happen until you add `--force`. The report always includes an explicit count of how many
-of the selected runs are **resumable** (phase ∈ `failed`/`abandoned`) via `realm run resume` — because
+of the selected runs are **resumable** (a `failed`/`abandoned` phase WITH at least one failed step — `realm run resume --from <step>` needs the step in `failed_steps`, so an abandoned run with none has no resume path) via `realm run resume` — because
 purging one destroys that path permanently. Batch mode's continue-on-error report distinguishes a
 run that a concurrent purge already removed (`already_purged` — benign) from a genuine deletion
 failure (`failed`).

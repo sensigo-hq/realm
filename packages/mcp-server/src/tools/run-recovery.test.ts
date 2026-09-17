@@ -1,7 +1,7 @@
 // Tests for the 0.10.0 run-recovery surface: abandon_run MCP tool + get_run_state's
 // next_actions / next_actions_status.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
@@ -10,6 +10,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client';
 import { handleAbandonRun, registerAbandonRun } from './abandon-run.js';
+import { handleStartRun } from './start-run.js';
 import { handleGetRunState } from './get-run-state.js';
 
 const agentFirst: WorkflowDefinition = {
@@ -108,9 +109,15 @@ describe('abandon_run MCP tool', () => {
       params: {},
     });
     const summary = await handleAbandonRun({ run_id: run.id }, { runStore });
+    // issue #558 PR-C: the ONE core mint (`ABANDON_KILL_ADVISORY`), asserted here BY VALUE — this
+    // is the MCP half of the cross-surface pin (the CLI half is `abandon.test.ts`'s ADVISORY).
     expect(summary.note).toBe(
-      "abandon is a kill — declared finalizers (if any) did NOT run; 'abort' is the graceful path.",
+      'abandon is a kill — declared finalizers (if any) did NOT run and will not for this run. ' +
+        "The graceful path is the workflow's own guard step (abort_unless), which runs them; " +
+        'there is no operator abort command.',
     );
+    expect(summary.note).not.toContain("'abort' is the graceful path");
+    expect(summary.terminal_reason).toBe('Abandoned via abandon_run');
     // core abandonRun has no handler-dispatch code path at all — structurally impossible for
     // 'cleanup' to have run; this re-confirms it at the record level, alongside the new note.
     const finalRun = await runStore.get(run.id);
@@ -161,6 +168,38 @@ describe('abandon_run MCP tool', () => {
     const env = await callRegisteredAbandon(runStore, { run_id: run.id });
     expect(env['status']).toBe('error');
     expect(env['error_code']).toBe('STATE_TRANSITION_DENIED');
+    // issue #558 PR-C: the envelope is pinned WHOLE — core's surface-neutral sentence, then THIS
+    // surface's own answer call with the real gate id and choices (an MCP call, never a CLI verb).
+    // Executed: with only the code pinned, restoring core's old `submit_human_response` sentence
+    // left this file green while the core and CLI cells reddened.
+    expect(env['errors']).toEqual([
+      `Run '${run.id}' is waiting on human gate 'review' (gate 'g1'); answer it before abandoning. ` +
+        `Answer it: submit_human_response {run_id: '${run.id}', gate_id: 'g1', choice: <one of: approve>}.`,
+    ]);
+    expect(env['context_hint']).toBe(
+      'The run is waiting on a human gate; submit_human_response answers it, then abandon_run is possible.',
+    );
+  });
+
+  it('the #432-class divergent record (persisted gate_waiting, NO pending_gate) is abandoned, not refused', async () => {
+    const { run } = await runStore.create({
+      workflowId: 'agentflow',
+      workflowVersion: 1,
+      params: {},
+    });
+    // Planted as raw bytes: the store re-derives `run_phase` on every write, so this record can
+    // only exist as a foreign writer's file (issue #432's class). Nothing on it can be answered —
+    // the gate refusal keys on `pending_gate`, so it abandons (walk 3: refusing it stranded the
+    // operator behind commands that all failed).
+    await writeFile(
+      join(runStore.runsDirPath, `${run.id}.json`),
+      JSON.stringify({ ...run, run_phase: 'gate_waiting' }, null, 2),
+      'utf8',
+    );
+    const summary = await callRegisteredAbandon(runStore, { run_id: run.id });
+    expect(summary['error_code']).toBeUndefined();
+    expect(summary['run_phase']).toBe('abandoned');
+    expect(summary['terminal_state']).toBe(true);
   });
 });
 
@@ -428,5 +467,98 @@ describe('get_run_state — skip_details surfacing (issue #111)', () => {
     await runStore.update({ ...run, skipped_steps: ['review'] });
     const state = await handleGetRunState({ run_id: run.id }, { runStore, workflowStore });
     expect(state.skip_details).toBeUndefined();
+  });
+});
+
+// issue #558 PR-C (C-6): the G7 journey, as a permanent cell over the REAL handlers.
+// start_run → abandon_run → start_run(rerun) → get_run_state: the supersede was always real; the
+// LINK did not exist, so an agent that reran a run could not tell which run it replaced.
+describe('the rerun is linked — start_run → abandon_run → start_run(rerun) → get_run_state', () => {
+  let runStore: JsonFileStore;
+  let workflowStore: JsonWorkflowStore;
+
+  beforeEach(async () => {
+    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'rec-rerun-run-')));
+    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'rec-rerun-wf-')));
+    await workflowStore.register(agentFirst);
+  });
+
+  it('the fresh run carries rerun_of on the record AND on get_run_state; the old one is untouched', async () => {
+    const stores = { runStore, workflowStore };
+    const first = await handleStartRun(
+      { workflow_id: 'agentflow', params: {}, idempotency_key: 'k4' },
+      stores,
+    );
+    const oldId = first.run_id!;
+
+    const abandoned = await handleAbandonRun({ run_id: oldId }, { runStore });
+    expect(abandoned.run_phase).toBe('abandoned');
+    expect(abandoned.terminal_reason).toBe('Abandoned via abandon_run');
+
+    const second = await handleStartRun(
+      {
+        workflow_id: 'agentflow',
+        params: {},
+        idempotency_key: 'k4',
+        on_terminal_match: 'rerun',
+      },
+      stores,
+    );
+    const newId = second.run_id!;
+    expect(newId).not.toBe(oldId);
+
+    const state = await handleGetRunState({ run_id: newId }, { runStore });
+    expect(state.rerun_of).toBe(oldId);
+    // issue #558 PR-C (walk): the START_RUN response that superseded the old run says so itself —
+    // no second call needed; the first run's response carried no link.
+    expect(second.rerun_of).toBe(oldId);
+    expect(first.rerun_of).toBeUndefined();
+    // walk 2: the supersede is SAID in the hint, not only carried as a key.
+    expect(second.context_hint).toContain(
+      `supersedes run '${oldId}' under the same idempotency key`,
+    );
+    expect(first.context_hint).not.toContain('supersedes');
+
+    // The superseded run is not rewritten by the link — the arrow points one way.
+    const oldState = await handleGetRunState({ run_id: oldId }, { runStore });
+    expect(oldState.run_phase).toBe('abandoned');
+    expect(oldState.rerun_of).toBeUndefined();
+  });
+
+  it('the AUTO-first-step branch (start_run ran the first step) echoes rerun_of too — two return sites, two pins', async () => {
+    // `start_run` returns through a different block when the first step is auto (it drives it
+    // before returning). `autoFirst`'s sole step runs to a terminal run on the first call; the
+    // rerun supersedes it, and the response that drove the fresh run must carry the link exactly
+    // as the other branch does (issue #558 PR-C, walk fold W3 — executed: dropping this branch's
+    // spread left the agent-first cell green).
+    await workflowStore.register(autoFirst);
+    const stores = { runStore, workflowStore };
+    const first = await handleStartRun(
+      { workflow_id: 'autoflow', params: {}, idempotency_key: 'k5' },
+      stores,
+    );
+    const oldId = first.run_id!;
+    expect((await runStore.get(oldId)).terminal_state).toBe(true);
+    expect(first.rerun_of).toBeUndefined();
+
+    const second = await handleStartRun(
+      { workflow_id: 'autoflow', params: {}, idempotency_key: 'k5', on_terminal_match: 'rerun' },
+      stores,
+    );
+    expect(second.run_id).not.toBe(oldId);
+    expect(second.rerun_of).toBe(oldId);
+    expect((await runStore.get(second.run_id!)).rerun_of).toBe(oldId);
+    expect(second.context_hint).toContain(
+      `supersedes run '${oldId}' under the same idempotency key`,
+    );
+  });
+
+  it('a first run under a key carries no link (the control)', async () => {
+    const first = await handleStartRun(
+      { workflow_id: 'agentflow', params: {}, idempotency_key: 'k-fresh' },
+      { runStore, workflowStore },
+    );
+    const state = await handleGetRunState({ run_id: first.run_id! }, { runStore });
+    expect(state.rerun_of).toBeUndefined();
   });
 });

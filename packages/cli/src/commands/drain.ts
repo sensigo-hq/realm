@@ -15,8 +15,36 @@ import type {
   CaptureEvidenceParams,
   SettlementResult,
 } from '@sensigo/realm';
-import { applySettlement, getWorkflowForRun } from '@sensigo/realm';
+import { WorkflowError, applySettlement, deriveRunPhase, getWorkflowForRun } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+
+/**
+ * issue #558 PR-C: ONE mint, rendered by BOTH surfaces that can find nothing to drain — the
+ * dry-run's empty-ledger arm and `--force`'s arm (b) (a pass that leased nothing and left nothing
+ * pending). `Drained run` must mean a drain happened; an abandoned run mints no ledger at all, so
+ * saying it after abandon has just told the operator no finalizer will ever run is a second lie in
+ * two lines.
+ */
+const nothingToDrain = (runId: string): string =>
+  `Run '${runId}' has no pending finalizers. Nothing to drain.`;
+
+/**
+ * issue #558 PR-C (walk 2): the way out of a NON-terminal run, named from the record. `abandon`
+ * refuses a run carrying a LIVE gate (`pending_gate` — the same predicate, never the persisted
+ * label), so pointing such a run at `abandon` named a command that would fail on the next line —
+ * answer the gate first (its id and choices are on the record), then abandon. ONE mint, rendered
+ * by both non-terminal refusals.
+ */
+const wayOutOf = (runId: string, run: RunRecord): string => {
+  const gate = run.pending_gate;
+  if (gate !== undefined) {
+    return (
+      `Answer its gate first: realm run respond ${runId} --gate ${gate.gate_id} ` +
+      `--choice <one of: ${gate.choices.join(', ')}>; then realm run abandon ${runId}.`
+    );
+  }
+  return `To end the run: realm run abandon ${runId}.`;
+};
 
 /**
  * Issue #291 ([F5] `drain --expired` opt-in flag): classifies a run's `pending_gate` against the
@@ -207,31 +235,59 @@ function renderGateExpiryDryRun(
   return false;
 }
 
-function renderDryRun(runId: string, run: RunRecord, now: Date, expiredFlag = false): void {
+function renderDryRun(
+  runId: string,
+  run: RunRecord,
+  now: Date,
+  expiredFlag = false,
+  declared?: ReadonlySet<string>,
+): void {
   const gateReported = renderGateExpiryDryRun(runId, run, now, expiredFlag);
   if (!run.terminal_state) {
     if (!gateReported) {
-      console.log(`Run '${runId}' is not terminal (phase: '${run.run_phase}') — nothing to drain.`);
+      console.log(
+        `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ` +
+          wayOutOf(runId, run),
+      );
     }
     return;
   }
   const entries = classifyDrainRankPass(run.finalizer_ledger, now);
   if (entries.length === 0) {
-    console.log(`Run '${runId}' has no pending finalizers. Nothing to drain.`);
+    console.log(nothingToDrain(runId));
     return;
   }
   console.log(`Run '${runId}' (${run.run_phase}) — pending finalizers, rank order:`);
   for (const e of entries) {
+    // issue #558 PR-C (walk): never predict "would lease, execute, and mark" for a finalizer the
+    // workflow does not declare — --force halts on it and leaves it (and everything behind it)
+    // pending. `declared` is undefined when the copy could not be read (said above).
     const label =
       e.class === 'actionable'
-        ? 'actionable — would lease, execute, and mark on --force'
+        ? declared === undefined
+          ? // walk 2: after "could not read the copy", predicting "would lease and run" sent the
+            // operator into a --force that REFUSED (Workflow not found). Say what --force will do.
+            `unknown — the workflow copy could not be read, so --force will refuse until it is repaired; to void it instead: realm run drain ${runId} --void ${e.name} --force`
+          : !declared.has(e.name)
+            ? `NOT declared by the workflow definition — --force would leave it pending; to void it: realm run drain ${runId} --void ${e.name} --force`
+            : 'actionable — would lease and run on --force, if its handler resolves on this surface'
         : e.class === 'lease_held'
           ? `lease held (expires ${e.lease_deadline}) — a drainer is executing NOW`
           : 'rank-blocked — a lower rank holds an active lease, withholding this one';
     console.log(`  • [${e.rank}] ${e.name}: ${label}`);
   }
+  // walk 3: when the copy reads and NO listed finalizer is declared, `--force` drains nothing —
+  // say so instead of inviting it (the per-entry lines already carry each void command).
+  const nothingRunnable =
+    declared !== undefined &&
+    entries.some((e) => e.class === 'actionable') &&
+    !entries.some((e) => e.class === 'actionable' && declared.has(e.name));
   console.log(
-    `\nRe-run with --force to actually drain. Use --void <finalizer> to void one instead.`,
+    declared === undefined
+      ? `\n--force will refuse until the workflow copy reads (realm run inspect ${runId}). Use --void <finalizer> --force to void one instead.`
+      : nothingRunnable
+        ? `\n--force would drain nothing here: no listed finalizer is declared by the workflow. Use --void <finalizer> --force to void each one.`
+        : `\nRe-run with --force to actually drain. Use --void <finalizer> to void one instead.`,
   );
 }
 
@@ -274,7 +330,16 @@ export interface DrainRuntimeDeps {
     definition: WorkflowDefinition,
     registry: ExtensionRegistry,
     runId: string,
-  ) => Promise<{ run: RunRecord; warnings: string[] }>;
+    // issue #558 PR-C: `leftPending` names the finalizers the pass could not run (ONE source with
+    // the warning text), so this surface can print the per-finalizer void command; `attempted`
+    // names every finalizer it leased, so this surface can tell "drained nothing because there was
+    // nothing" from "drained something".
+  ) => Promise<{
+    run: RunRecord;
+    warnings: string[];
+    leftPending: string[];
+    attempted: string[];
+  }>;
   captureEvidence: (params: CaptureEvidenceParams) => EvidenceSnapshot;
   drainLeaseMax: number;
   /** Test-only injection point — when absent (the real CLI path), `resolveRegistry` below (the
@@ -503,13 +568,34 @@ export async function runDrainAction(
     const hasEnactableGate = opts.expired === true && gateClass.kind === 'enactable';
 
     if (opts.force !== true) {
-      renderDryRun(runId, run, now, opts.expired === true);
+      // issue #558 PR-C (walk): the dry run is the screen an operator uses to decide on --force,
+      // so it reads the registered copy (a JSON read — no extension code runs here) to say which
+      // pending finalizers the workflow actually declares. When the copy cannot be read, say so
+      // rather than predict blind; `inspect` composes the reason (PR-T).
+      let declared: ReadonlySet<string> | undefined;
+      if (run.terminal_state) {
+        try {
+          const workflow = await getWorkflowForRun(workflowStore, run, {
+            retryVerb: 'drain again',
+            verb: 'drain',
+            terminalOk: true,
+          });
+          declared = new Set(Object.keys(workflow.steps));
+        } catch (err) {
+          if (!(err instanceof WorkflowError)) throw err;
+          console.log(
+            `⚠ could not read this run's workflow copy, so which finalizers it declares is unknown — realm run inspect ${runId} shows the reason.`,
+          );
+        }
+      }
+      renderDryRun(runId, run, now, opts.expired === true, declared);
       return;
     }
 
     if (!run.terminal_state && !hasEnactableGate) {
       console.error(
-        `Run '${runId}' is not terminal (phase: '${run.run_phase}') — nothing to drain.`,
+        `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ` +
+          wayOutOf(runId, run),
       );
       process.exit(1);
     }
@@ -544,8 +630,11 @@ export async function runDrainAction(
 
     if (!workingRun.terminal_state) {
       // The enactment (settle_default) did not terminalize this run — nothing further to drain.
+      // issue #558 PR-C: the derived phase, and NO disposal clause — a run that went non-terminal
+      // mid-drain is a race (a live writer advanced it), not a disposal case; pointing the
+      // operator at `abandon` here would recommend killing a run somebody just advanced.
       console.log(
-        `Run '${runId}' is not terminal (phase: '${workingRun.run_phase}') — nothing further to drain.`,
+        `Run '${runId}' is not terminal (phase: '${deriveRunPhase(workingRun)}') — nothing further to drain.`,
       );
       return;
     }
@@ -572,6 +661,34 @@ export async function runDrainAction(
     }
     const outcome = await deps.drainFinalizers(runStore, workflow, registry, runId);
     for (const w of outcome.warnings) console.log(`  ⚠ ${w}`);
+    // issue #558 PR-C: a pass that left a finalizer pending is not a completed drain. Saying
+    // `Drained run` and exiting 0 made `realm run list --stuck` re-offer this very command
+    // forever — a closed loop with no printed exit. Name the escape per finalizer (each command
+    // carries its own ids, never a placeholder) and exit 1. The `--all` batch summary is #478's
+    // and is untouched.
+    if (outcome.leftPending.length > 0) {
+      // issue #558 PR-C (walk): `Drained run` must mean a drain happened — a pass that leased
+      // nothing says `nothing drained`; the per-finalizer reason is the ⚠ line printed above.
+      const names = outcome.leftPending.join(', ');
+      console.log(
+        outcome.attempted.length === 0
+          ? `Run '${runId}' — nothing drained; ${outcome.leftPending.length} finalizer(s) left pending: ${names}. To void:`
+          : `Drained run '${runId}' (${outcome.attempted.length} ran) — ${outcome.leftPending.length} finalizer(s) left pending: ${names}. To void:`,
+      );
+      for (const name of outcome.leftPending)
+        console.log(`  realm run drain ${runId} --void ${name} --force`);
+      process.exit(1);
+      return;
+    }
+    if (outcome.attempted.length === 0) {
+      // issue #558 PR-C, arm (b): the pass leased nothing and left nothing pending — the ledger
+      // held nothing to run (an abandoned run mints no `finalizer_ledger` at all; `sealRunLevel`
+      // does not create one). `Drained run` would assert a drain that did not happen, one line
+      // after `realm run abandon` told the operator no finalizer would run for this run. Same
+      // sentence the dry-run prints, from the same mint.
+      console.log(nothingToDrain(runId));
+      return;
+    }
     console.log(`Drained run '${runId}'.`);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));

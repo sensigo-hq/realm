@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import lockfile from 'proper-lockfile';
 import retry from 'retry';
 import { JsonFileStore, LOCK_RETRIES } from './json-file-store.js';
+import { abandonRun } from '../engine/abandon-run.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -1798,5 +1799,74 @@ describe('JsonFileStore — exhausted ELOCKED reclassified as STATE_RUN_BUSY (is
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// issue #558 PR-C (C-6): the rerun is LINKED. `supersede()` is the ONE place both ids are in hand,
+// so it is the one place `rerun_of` is stamped — never caller-settable (`CreateRunOptions` does not
+// carry it), never rewritten. Absent for a first run and for a `reuse`.
+describe('JsonFileStore — rerun_of, the supersede link (issue #558 PR-C)', () => {
+  let dir: string;
+  let store: JsonFileStore;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-rerunof-'));
+    store = new JsonFileStore(dir);
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const opts = { workflowId: 'wf-1', workflowVersion: 1, params: {}, idempotencyKey: 'k4' };
+
+  it('the pointer-target path: abandon then `rerun` stamps rerun_of and leaves the old record untouched', async () => {
+    const first = await store.create({ ...opts });
+    expect(first.created).toBe(true);
+    expect(first.run.rerun_of).toBeUndefined();
+    const abandoned = await abandonRun(store, first.run.id, 'Abandoned via realm run abandon');
+    const versionAfterAbandon = abandoned.version;
+
+    const second = await store.create({ ...opts, onTerminalMatch: 'rerun' });
+
+    expect(second.created).toBe(true);
+    expect(second.run.id).not.toBe(first.run.id);
+    expect(second.run.rerun_of).toBe(first.run.id);
+    // The superseded run stays on disk, byte-for-byte as the abandon left it.
+    const old = await store.get(first.run.id);
+    expect(old.version).toBe(versionAfterAbandon);
+    expect(old.run_phase).toBe('abandoned');
+    expect(old.rerun_of).toBeUndefined();
+  });
+
+  it('a `reuse` re-encounter returns the SAME run and stamps nothing', async () => {
+    const first = await store.create({ ...opts });
+    await abandonRun(store, first.run.id, 'Abandoned via realm run abandon');
+
+    const second = await store.create({ ...opts, onTerminalMatch: 'reuse' });
+
+    expect(second.created).toBe(false);
+    expect(second.run.id).toBe(first.run.id);
+    expect(second.run.rerun_of).toBeUndefined();
+  });
+
+  it('a fresh key carries no link at all (the field is absent, not null)', async () => {
+    const { run } = await store.create({ ...opts, idempotencyKey: 'never-seen' });
+
+    expect(run.rerun_of).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(run, 'rerun_of')).toBe(false);
+  });
+
+  it('the LEGACY-CANONICAL path (pointer gone, run adopted by scan) stamps it too', async () => {
+    const first = await store.create({ ...opts });
+    await abandonRun(store, first.run.id, 'Abandoned via realm run abandon');
+    // Delete the pointer: the next create falls through to the canonical scan (`:339`), the second
+    // supersede call site. Without its own `supersededId` argument this path stamped nothing.
+    await unlink(keyPointerPath(dir, 'wf-1', 'k4'));
+
+    const second = await store.create({ ...opts, onTerminalMatch: 'rerun' });
+
+    expect(second.created).toBe(true);
+    expect(second.run.rerun_of).toBe(first.run.id);
   });
 });
