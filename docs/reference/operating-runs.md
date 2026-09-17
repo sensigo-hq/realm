@@ -121,7 +121,7 @@ you name it directly:
 
 Like `reclaim --all`, purge is **dry-run by default** — even naming a single `<run-id>` only reports
 what would happen until you add `--force`. The report always includes an explicit count of how many
-of the selected runs are **resumable** (phase ∈ `failed`/`abandoned`) via `realm run resume` — because
+of the selected runs are **resumable** (a `failed`/`abandoned` phase WITH at least one failed step — `realm run resume --from <step>` needs the step in `failed_steps`, so an abandoned run with none has no resume path) via `realm run resume` — because
 purging one destroys that path permanently. Batch mode's continue-on-error report distinguishes a
 run that a concurrent purge already removed (`already_purged` — benign) from a genuine deletion
 failure (`failed`).
