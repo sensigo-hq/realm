@@ -200,7 +200,10 @@ export async function handleExecuteStep(
   const run = await runStore.get(args.run_id);
   // issue #456: code-keyed one-time-register remedy. Verb "retry" — deliberately neutral: the
   // register command in the sentence is for the human this agent's report_to_user relays to.
-  const definition = await getWorkflowForRun(workflowStore, run, { retryVerb: 'retry' });
+  const definition = await getWorkflowForRun(workflowStore, run, {
+    retryVerb: 'retry',
+    verb: 'retry',
+  });
   const params = args.params ?? {};
   const stepDef = definition.steps[args.command];
 

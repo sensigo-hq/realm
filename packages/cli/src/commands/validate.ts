@@ -23,6 +23,8 @@ import {
   JsonWorkflowStore,
   RUNTIME_ONLY_WORKFLOW_KEYS,
   VERSION,
+  probeClassOf,
+  repairActFor,
   type LoaderWarning,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
@@ -552,12 +554,15 @@ async function validateRegistered(
       console.error(renderLoadFailure(err));
       process.exit(1);
     }
-    if (!(err instanceof WorkflowError)) {
-      // get()'s try wraps ONLY the read — JSON.parse sits outside it, so a corrupt stored file
-      // arrives here as a bare SyntaxError with no code (executed).
-      const notParseableMsg = `the registered copy of '${id}' is not parseable JSON: ${
-        err instanceof Error ? err.message : String(err)
-      }`;
+    // issue #558 PR-T — the store now CLASSIFIES every read failure and mints the sentence
+    // itself (`registrar.ts` `probeClassToError` / `parseFailureError`), so these arrive as
+    // typed `WorkflowError`s and must be keyed on their CODE. Without these two arms they fall
+    // past the `!(err instanceof WorkflowError)` guard below into the `:581` rethrow and crash
+    // with a stack trace where main printed a clean line.
+    if (
+      err instanceof WorkflowError &&
+      (err.code === 'RESOURCE_FORMAT_INVALID' || err.code === 'STATE_WORKFLOW_UNREADABLE')
+    ) {
       if (json) {
         emitValidateJson({
           valid: false,
@@ -568,13 +573,57 @@ async function validateRegistered(
           strictRequested: strict,
           strictFailed: false,
           diagnostics: [],
-          errors: [notParseableMsg],
+          errors: [err.message],
           checksNotRun: [],
           extensionKeys: [],
         });
         process.exit(1);
       }
-      console.error(`Error: ${notParseableMsg}`);
+      console.error(`Error: ${err.message}`);
+      // Review fold C21 (walk 5): the not-found pointer was printed here too, and `workflow list`'s
+      // TABLE omits an unreadable copy — a correct id was made to look like a typo. This copy IS
+      // registered; the census ⚠ line is where it appears.
+      // (C23, walk 6: "marks it ⚠" sent readers looking for a ⚠ inside the table.)
+      // (R2, the review walk: NOT when the registry DIRECTORY is unreadable — realm never read the
+      // copy, so "IS registered" is a claim it cannot make, and `workflow list` then counts
+      // nothing: "the registry itself could not be read". That class gets the repair act alone.)
+      // (R10, walk 2: "This copy IS registered" was a claim about history that the bytes cannot
+      // carry — a half-written file nobody registered gets the same sentence; the registry HOLDS
+      // an entry under that id is what realm knows.)
+      if (probeClassOf(err) !== 'registry_broken') {
+        console.error(
+          `The registry holds an entry for '${id}' — realm workflow list counts it under "could not be read" instead of listing it.`,
+        );
+      }
+      const r = repairActFor(err);
+      if (r !== undefined)
+        console.error(
+          `To repair: ${r.act}${r.alternative !== undefined ? `; ${r.alternative}` : ''}.`,
+        );
+      process.exit(1);
+    }
+    if (!(err instanceof WorkflowError)) {
+      // A raw throw out of `get()` is a TOCTOU remnant only — `probe()` classifies every read
+      // failure it can see, and both parse classes now arrive as `RESOURCE_FORMAT_INVALID`
+      // above. Kept as armor; its own sentence is whatever the runtime said.
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      if (json) {
+        emitValidateJson({
+          valid: false,
+          mode: 'registered',
+          path: null,
+          workflowId: id,
+          schemaVersion: null,
+          strictRequested: strict,
+          strictFailed: false,
+          diagnostics: [],
+          errors: [rawMsg],
+          checksNotRun: [],
+          extensionKeys: [],
+        });
+        process.exit(1);
+      }
+      console.error(`Error: ${rawMsg}`);
       console.error('Registered workflows: realm workflow list');
       process.exit(1);
     }

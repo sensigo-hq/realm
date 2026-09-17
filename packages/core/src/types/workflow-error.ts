@@ -31,6 +31,9 @@ export type ErrorCode =
   | 'STATE_PRECONDITION_FAILED'
   | 'STATE_RUN_NOT_FOUND'
   | 'STATE_WORKFLOW_NOT_FOUND'
+  // issue #558 PR-T: the registered copy EXISTS (or its registry does) but cannot be read —
+  // permission, a directory where a file belongs, or an unreadable registry directory.
+  | 'STATE_WORKFLOW_UNREADABLE'
   | 'STATE_RUN_TERMINAL'
   | 'STATE_SNAPSHOT_MISMATCH'
   | 'STATE_RUN_LOCKED'

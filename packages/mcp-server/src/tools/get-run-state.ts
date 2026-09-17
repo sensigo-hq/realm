@@ -7,6 +7,7 @@ import {
   JsonFileStore,
   JsonWorkflowStore,
   WorkflowError,
+  getWorkflowForRun,
   resolvePreExecutionAgentAction,
   buildNextActions,
   findEligibleSteps,
@@ -25,6 +26,26 @@ import {
   type RunHealthFinding,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
+
+/** issue #558 PR-T — the store's own classification, passed through to classifyRunHealth. */
+function toDefinitionError(err: unknown): { code: string; message: string; class?: string } {
+  // Narrowed with `instanceof` — never duck-typed on `err.code` (house rule).
+  if (err instanceof WorkflowError) {
+    const cls = (err.details as Record<string, unknown> | undefined)?.['class'];
+    return {
+      code: err.code,
+      message: err.message,
+      ...(typeof cls === 'string' ? { class: cls } : {}),
+    };
+  }
+  // The class slot is a word on every surface (review fold C15 — the CLI's closure says
+  // `unknown` for the same escape).
+  return {
+    code: 'ENGINE_INTERNAL',
+    message: err instanceof Error ? err.message : String(err),
+    class: 'unknown',
+  };
+}
 
 export interface HandleRunStateStores {
   /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
@@ -272,6 +293,8 @@ export async function handleGetRunState(
   let nextActions: NextAction[] = [];
   let nextActionsStatus: NextActionsStatus;
   let definition: WorkflowDefinition | undefined;
+  // issue #558 PR-T — the failure the definition read produced, when it produced one.
+  let definitionError: { code: string; message: string; class?: string } | undefined;
   if (run.terminal_state) {
     nextActionsStatus = 'skipped_terminal';
   } else if (run.pending_gate !== undefined) {
@@ -279,7 +302,18 @@ export async function handleGetRunState(
   } else {
     definition =
       stores?.workflowStore !== undefined
-        ? await stores.workflowStore.get(run.workflow_id).catch(() => undefined)
+        ? await getWorkflowForRun(stores.workflowStore, run, {
+            // R12 (walk 2): through the ONE composer, as every other surface — the raw store
+            // sentence left this finding, the one an agent polls, with no way out and no repair.
+            retryVerb: 'retry',
+            verb: 'retry',
+          }).catch((err: unknown) => {
+            // issue #558 PR-T — KEEP the failure: it feeds the `definition_unresolvable` finding
+            // below instead of being discarded. Live runs only: the terminal guard at the
+            // classify call is the pre-existing frozen R3 guard (#331), untouched here.
+            definitionError = toDefinitionError(err);
+            return undefined;
+          })
         : undefined;
     if (definition === undefined) {
       nextActionsStatus = 'workflow_unresolved';
@@ -338,7 +372,10 @@ export async function handleGetRunState(
   // finalized BEFORE this line runs — nothing below this point may write back to it.
   const runHealth: RunHealthFinding[] = run.terminal_state
     ? []
-    : classifyRunHealth(run, definition !== undefined ? { definition } : {});
+    : classifyRunHealth(run, {
+        ...(definition !== undefined ? { definition } : {}),
+        ...(definitionError !== undefined ? { definitionError } : {}),
+      });
   if (runHealth.length > 0) {
     warnings.push(
       `this run has ${runHealth.length} active run-health finding(s) — see 'run_health' for detail.`,

@@ -377,11 +377,15 @@ describe('resolveRunAttach — a not-found workflow says what to do about it', (
     expect(message).toContain('realm workflow register');
   });
 
-  it('the SAME MESSAGE with a different code passes through — the key is the CODE', async () => {
+  it('the SAME MESSAGE with a different code gets the LEGACY composition — the key is the CODE', async () => {
     // The keying rule, pinned. Probing the implementation over to
-    // `err.message.includes('Workflow')` left the legacy-format control green (its own message
-    // never contains the word in that casing), so that cell alone does not discriminate. This one
-    // does: a message-matching implementation appends remediation here and reds.
+    // `err.message.includes('Workflow')` would give this impostor the #456 remedy; the code says
+    // STATE_LEGACY_FORMAT, so it gets the legacy composition instead.
+    //
+    // issue #558 PR-T: this cell used to assert IDENTITY (`expect(err).toBe(impostor)`), because
+    // every non-#456 WorkflowError passed through untouched. `getWorkflowForRun` is now TOTAL on
+    // WorkflowErrors — the discrimination lives in the COMPOSED MESSAGE, which a message-keyed
+    // implementation cannot produce: it would append "most often …" instead.
     const store = new InMemoryStore();
     const runId = await createRun(store);
     const impostor = new WorkflowError('Workflow not found: attach-wf', {
@@ -400,7 +404,10 @@ describe('resolveRunAttach — a not-found workflow says what to do about it', (
       loadExtensions: okLoader(),
     }).catch((e: unknown) => e);
 
-    expect(err).toBe(impostor);
+    expect((err as WorkflowError).code).toBe('STATE_LEGACY_FORMAT');
+    expect((err as Error).message).toBe(
+      `Workflow not found: attach-wf. To end the run instead: realm run abandon ${runId}.`,
+    );
     expect((err as Error).message).not.toContain('most often');
   });
 
@@ -421,10 +428,14 @@ describe('resolveRunAttach — a not-found workflow says what to do about it', (
     );
   });
 
-  it('a DIFFERENT WorkflowError passes through untouched', async () => {
-    // Keyed on the stable code, never on the message text. The legacy-format error is the
-    // registrar's own adjacent throw and carries its own remediation already — appending
-    // registration advice to it would be wrong twice over.
+  it('a DIFFERENT WorkflowError keeps its own remedy and GAINS a way out', async () => {
+    // Keyed on the stable code, never on the message text. The legacy-format error carries its
+    // own repair already — appending registration advice to it would be wrong twice over.
+    //
+    // issue #558 PR-T: identity was the old assertion here. The legacy error carried a repair and
+    // NO way out, so a run whose copy is legacy had no disposal sentence at all; the composition
+    // adds exactly that one clause and leaves the store's own bytes intact. The identity pin that
+    // still matters — a NON-WorkflowError throw — lives at `registrar.test.ts` C13b.
     const store = new InMemoryStore();
     const runId = await createRun(store);
     const legacy = new WorkflowError('This workflow was registered with an older version', {
@@ -443,7 +454,11 @@ describe('resolveRunAttach — a not-found workflow says what to do about it', (
       loadExtensions: okLoader(),
     }).catch((e: unknown) => e);
 
-    expect(err).toBe(legacy);
+    expect((err as WorkflowError).code).toBe('STATE_LEGACY_FORMAT');
+    expect((err as Error).message).toBe(
+      'This workflow was registered with an older version. To end the run instead: ' +
+        `realm run abandon ${runId}.`,
+    );
     expect((err as Error).message).not.toContain('most often');
   });
 });

@@ -276,7 +276,10 @@ export async function handleAppendTrace(
   // 2. Load the workflow definition.
   // issue #456: code-keyed one-time-register remedy. Verb "retry" — deliberately neutral: the
   // register command in the sentence is for the human this agent's report_to_user relays to.
-  const definition = await getWorkflowForRun(workflowStore, run, { retryVerb: 'retry' });
+  const definition = await getWorkflowForRun(workflowStore, run, {
+    retryVerb: 'retry',
+    verb: 'retry',
+  });
 
   // 3. Find the step in the definition.
   const stepDef = definition.steps[args.step_id];

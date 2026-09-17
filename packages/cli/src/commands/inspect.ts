@@ -8,10 +8,12 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import {
   SEAL_ARMS,
+  WorkflowError,
   classifyRunHealth,
   deriveDefaultedSteps,
   deriveRunPhase,
   computeGateDueState,
+  getWorkflowForRun,
 } from '@sensigo/realm';
 // issue #221 correction: the CLI's first command→command import (sanctioned — harmless
 // module-level Command construction; `listCommand` is a standalone Commander object never
@@ -236,14 +238,37 @@ export async function inspectRun(
   let definitionMissing = false;
   let trustRoot: string | undefined;
   let definition: WorkflowDefinition | undefined;
+  // issue #558 PR-T — the failure is KEPT (the bare `catch {` threw it away, so every class
+  // printed "not found", false for a copy that exists). It names the line below and feeds
+  // classifyRunHealth's `definition_unresolvable` finding.
+  let definitionError: { code: string; message: string; class?: string } | undefined;
   try {
-    const def = await workflowStore.get(run.workflow_id);
+    // issue #558 PR-T (review fold C8) — through the ONE helper every other surface uses, so the
+    // line below carries the composed sentence: the class, the way out and the repair. It was
+    // the one surface with no remedy at all (the fresh walk). `terminalOk`: inspect reads any run.
+    const def = await getWorkflowForRun(workflowStore, run, {
+      retryVerb: 'inspect again',
+      verb: 'inspect',
+      terminalOk: true,
+    });
     workflowLabel = `${def.id} v${def.version}`;
     trustRoot = def.trust_root;
     definition = def;
-  } catch {
-    workflowLabel = run.workflow_id;
+  } catch (err) {
+    // Review fold R8: the record carries the version — `run list` prints it for the same run; a
+    // label that drops it here degrades a field the unreadable copy was never needed for.
+    workflowLabel = `${run.workflow_id} v${run.workflow_version}`;
     definitionMissing = true;
+    // Narrowed with `instanceof WorkflowError` — never duck-typed on `err.code` (house rule:
+    // an error's shape is not its identity). A non-WorkflowError escape keeps the old behaviour.
+    if (err instanceof WorkflowError) {
+      const cls = (err.details as Record<string, unknown> | undefined)?.['class'];
+      definitionError = {
+        code: err.code,
+        message: err.message,
+        ...(typeof cls === 'string' ? { class: cls } : {}),
+      };
+    }
   }
 
   // Color the phase label \u2014 derived, never the persisted run_phase (issue #279, increment 2,
@@ -426,7 +451,10 @@ export async function inspectRun(
   // Note: `realm run reclaim` is a separate, independent consumer of the underlying record facts
   // (settle sets, capability_blocks, reclaim-audit evidence) — it does NOT call this function; see
   // its own classifyNoActiveClaim discriminator in reclaim-step.ts.
-  const runHealth = classifyRunHealth(run, definition !== undefined ? { definition } : {});
+  const runHealth = classifyRunHealth(run, {
+    ...(definition !== undefined ? { definition } : {}),
+    ...(definitionError !== undefined ? { definitionError } : {}),
+  });
   if (runHealth.length > 0) {
     lines.push('');
     lines.push(`Run Health (${runHealth.length} finding(s)):`);
@@ -446,7 +474,24 @@ export async function inspectRun(
 
   if (definitionMissing) {
     lines.push('');
-    lines.push('(workflow definition not found \u2014 showing run record only)');
+    // issue #558 PR-T — the helper's composed sentence already names the class ("could not be
+    // read (EACCES: …)", "is not parseable JSON", "was registered with an older version"), the
+    // way out and the repair — a class prefix here said "could not be read" twice (executed on
+    // the pre-fold build). The bare "not found" line survives only for a non-WorkflowError escape.
+    // R4 (the review walk): on a LIVE run the `definition_unresolvable` finding above already
+    // carries the composed sentence — printed twice, the screen read as two different failures.
+    // The parenthetical carries it only when no finding does (a terminal run: the finding is
+    // minted for live runs only, review fold C6).
+    const carriedByFinding = runHealth.some((f) => f.kind === 'definition_unresolvable');
+    lines.push(
+      carriedByFinding
+        ? // R13 (walk 2): the bare form was subjectless — say where the reason is (Run Health
+          // prints before this line, always).
+          '(showing run record only \u2014 the reason is in Run Health above)'
+        : definitionError !== undefined
+          ? `(showing run record only \u2014 ${definitionError.message})`
+          : '(workflow definition not found \u2014 showing run record only)',
+    );
   }
 
   // Group evidence snapshots by step_id, preserving first-appearance order.

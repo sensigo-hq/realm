@@ -390,7 +390,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
   });
 
   it('C6 (issue #456) single --force, workflow absent: the banner composition carries the remedy as ONE line', async () => {
-    // NOT registered — the workflow_id resolves to nothing. resolveRegistry's OWN throw is what
+    // NOT registered — the workflow_id resolves to nothing. the definition fetch's OWN throw (outside the extensions try — review fold C5) is what
     // must now carry the remedy — DEPS (below) carries no resolveRegistry override, so the real
     // one (drain.ts's default) runs.
     const { run } = await store.create({ workflowId: 'dev456', workflowVersion: 1, params: {} });
@@ -413,9 +413,8 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     expect(
       calls.some(
         (line: string) =>
-          line.includes(
-            `Error loading extensions: Workflow not found: ${run.workflow_id} — most often`,
-          ) &&
+          line.startsWith(`Workflow not found: ${run.workflow_id} — most often`) &&
+          !line.includes('Error loading extensions') && // review fold C5: the heading was false
           line.includes('most often') &&
           line.includes('drain again.'),
       ),
@@ -462,7 +461,8 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
       expect(
         calls.some(
           (line: string) =>
-            line.includes(`  ✗ ${run.id}: Error loading extensions: Workflow not found`) &&
+            line.includes(`  ✗ ${run.id}: Workflow not found`) &&
+            !line.includes('Error loading extensions') && // review fold C5
             line.includes('most often') &&
             line.includes('drain again.'),
         ),

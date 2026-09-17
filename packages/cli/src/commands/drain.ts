@@ -236,16 +236,15 @@ function renderDryRun(runId: string, run: RunRecord, now: Date, expiredFlag = fa
 }
 
 async function resolveRegistry(
-  workflowStore: WorkflowRegistrar,
-  run: RunRecord,
+  workflow: WorkflowDefinition,
   opts: { project?: string; extensionsModule?: string },
 ): Promise<ExtensionRegistry> {
-  // Fetching the definition IS part of resolving the registry (loadProjectExtensions needs it) —
-  // so a deleted-workflow record thrown from THIS call also renders under the extensions sentence
-  // at every call site below (issue #466's adjudicated call: deliberate, not an oversight).
-  // issue #456: the remedy sentence now self-describes (it names the file/register/verb itself),
-  // so the banner split stays exactly as #466 adjudicated it — no reopening.
-  const workflow = await getWorkflowForRun(workflowStore, run, { retryVerb: 'drain again' });
+  // issue #558 PR-T (review fold C5) — the definition is fetched by the CALLER, outside the
+  // `Error loading extensions:` try. #466 had adjudicated the fetch INTO it ("fetching the
+  // definition IS part of resolving the registry"); the fresh walk refuted that from the
+  // operator's chair: with no realm.yaml anywhere, a deleted copy printed under a heading naming
+  // a failure that never happened, and the walker went looking for an extensions problem they
+  // did not have. The heading's claim now matches its guard: only `loadProjectExtensions` wears it.
   const { registry } = await loadProjectExtensions(workflow, {
     ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
     projectDir: opts.project ?? process.cwd(),
@@ -282,8 +281,7 @@ export interface DrainRuntimeDeps {
    *  project-extensions loader) is used. Lets tests supply a hand-built `ExtensionRegistry` with a
    *  real handler registered, without needing an on-disk extensions-module fixture. */
   resolveRegistry?: (
-    workflowStore: WorkflowRegistrar,
-    run: RunRecord,
+    workflow: WorkflowDefinition,
     opts: { project?: string; extensionsModule?: string },
   ) => Promise<ExtensionRegistry>;
 }
@@ -422,22 +420,26 @@ export async function runDrainAction(
     let drained = 0;
     for (const r of finalizerActionable) {
       try {
+        // issue #456 / #558 PR-T (review fold C5): the definition FIRST — its failure renders as
+        // its own composed sentence through the outer catch below (`✗ <id>: <sentence>`), never
+        // under the extensions heading.
+        const workflow = await getWorkflowForRun(workflowStore, r, {
+          retryVerb: 'drain again',
+          verb: 'drain',
+          terminalOk: true,
+        });
         // issue #466 — the resolve call alone, in place. It must NOT swallow drainFinalizers — a
         // drain failure wearing the extensions sentence is the same misattribution class #477
         // exists for respond's naked catch.
         let registry: ExtensionRegistry;
         try {
-          registry = await (deps.resolveRegistry ?? resolveRegistry)(workflowStore, r, opts);
+          registry = await (deps.resolveRegistry ?? resolveRegistry)(workflow, opts);
         } catch (err) {
           console.error(
             `  ✗ ${r.id}: Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
           );
           continue;
         }
-        // issue #456: race-dead in practice (resolveRegistry's own get above just succeeded
-        // μs earlier) — adopted for uniformity, so drift can never creep in if that ever
-        // changes; the shared helper makes it structurally impossible either way.
-        const workflow = await getWorkflowForRun(workflowStore, r, { retryVerb: 'drain again' });
         const outcome = await deps.drainFinalizers(runStore, workflow, registry, r.id);
         drained += 1;
         for (const w of outcome.warnings) console.log(`  ⚠ ${r.id}: ${w}`);
@@ -453,7 +455,11 @@ export async function runDrainAction(
       try {
         // issue #456: LIVE first fetch on this path — no resolveRegistry precedes it here, so
         // this adoption's remedy is genuinely reachable (unlike the finalizer arm above).
-        const workflow = await getWorkflowForRun(workflowStore, r, { retryVerb: 'drain again' });
+        const workflow = await getWorkflowForRun(workflowStore, r, {
+          retryVerb: 'drain again',
+          verb: 'drain',
+          terminalOk: true,
+        });
         const { run: enactedRun, applied } = await enactGateExpiry(runStore, workflow, r, now);
         if (!applied) {
           console.log(`  • ${r.id}: gate expiry already resolved (race) — skipped`);
@@ -467,11 +473,7 @@ export async function runDrainAction(
           // broken module here means the finalizer pass didn't run, not that the gate didn't.
           let registry: ExtensionRegistry;
           try {
-            registry = await (deps.resolveRegistry ?? resolveRegistry)(
-              workflowStore,
-              enactedRun,
-              opts,
-            );
+            registry = await (deps.resolveRegistry ?? resolveRegistry)(workflow, opts);
           } catch (err) {
             console.error(
               `  ✗ ${r.id}: Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
@@ -520,6 +522,8 @@ export async function runDrainAction(
       // + exit 1), never the extensions sentence.
       const workflowForGate = await getWorkflowForRun(workflowStore, run, {
         retryVerb: 'drain again',
+        verb: 'drain',
+        terminalOk: true,
       });
       const { run: enactedRun, applied } = await enactGateExpiry(
         runStore,
@@ -546,12 +550,19 @@ export async function runDrainAction(
       return;
     }
 
+    // issue #456 / #558 PR-T (review fold C5): the definition FIRST — its failure renders as its
+    // own composed sentence through the outer catch below, never under the extensions heading.
+    const workflow = await getWorkflowForRun(workflowStore, workingRun, {
+      retryVerb: 'drain again',
+      verb: 'drain',
+      terminalOk: true,
+    });
     // issue #466 — the existing resolve call, wrapped IN PLACE: dry-run's early return, the
     // non-terminal refusal and gate enactment above are all persisted/read-only work that must
     // keep succeeding on a broken module; only resolution itself gets the sentence.
     let registry: ExtensionRegistry;
     try {
-      registry = await (deps.resolveRegistry ?? resolveRegistry)(workflowStore, workingRun, opts);
+      registry = await (deps.resolveRegistry ?? resolveRegistry)(workflow, opts);
     } catch (err) {
       console.error(
         `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
@@ -559,11 +570,6 @@ export async function runDrainAction(
       process.exit(1);
       return;
     }
-    // issue #456: race-dead in practice (resolveRegistry's own get above just succeeded μs
-    // earlier) — adopted for uniformity, same reasoning as the batch finalizer arm.
-    const workflow = await getWorkflowForRun(workflowStore, workingRun, {
-      retryVerb: 'drain again',
-    });
     const outcome = await deps.drainFinalizers(runStore, workflow, registry, runId);
     for (const w of outcome.warnings) console.log(`  ⚠ ${w}`);
     console.log(`Drained run '${runId}'.`);

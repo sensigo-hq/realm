@@ -94,7 +94,14 @@ export async function resumeRun(
   }
 
   // issue #456: code-keyed one-time-register remedy, shared with every other run-context site.
-  const workflow = await getWorkflowForRun(workflowStore, run, { retryVerb: 'resume again' });
+  const workflow = await getWorkflowForRun(workflowStore, run, {
+    retryVerb: 'resume again',
+    verb: 'resume',
+    // issue #558 PR-T — the happy path here IS terminal: `:84` above refuses any phase outside
+    // RESUMABLE_PHASES ({failed, abandoned}, both terminal), so every run that reaches this line
+    // is terminal and "register it, then resume again" is TRUE and executable.
+    terminalOk: true,
+  });
 
   const targetStep = workflow.steps[stepName];
   if (targetStep === undefined) {

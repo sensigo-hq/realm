@@ -68,13 +68,20 @@ export const workflowListCommand = new Command('list')
       return;
     }
 
-    const rows = sorted.map((w) => ({
-      id: w.id,
-      name: w.name,
-      version: String(w.version),
-      origin: w.origin ?? '-',
-      schema: schemaCell(w.schema_version),
-    }));
+    const rows = sorted.map((w) => {
+      // A legacy record (`{ id }` alone — #427 lists it; its SCHEMA column is the disclosure) has
+      // no name and no version: the type says string, the file does not. Read through a Partial
+      // view so the table renders `-` instead of dying at `.length` (executed on main with
+      // `{"id":"w1"}`: a raw TypeError — the fresh walk's T4; review fold C10).
+      const partial: Partial<Pick<typeof w, 'name' | 'version'>> = w;
+      return {
+        id: w.id,
+        name: partial.name ?? '-',
+        version: partial.version === undefined ? '-' : String(partial.version),
+        origin: w.origin ?? '-',
+        schema: schemaCell(w.schema_version),
+      };
+    });
 
     const widths = {
       id: Math.max(2, ...rows.map((r) => r.id.length)),
@@ -91,17 +98,91 @@ export const workflowListCommand = new Command('list')
         `${pad(r.id, widths.id)}  ${pad(r.name, widths.name)}  ${pad(r.version, widths.version)}  ${pad(r.origin, widths.origin)}  ${r.schema}`,
       );
     }
-    console.log(`\n${rows.length} ${rows.length === 1 ? 'workflow' : 'workflows'} registered.`);
+    // issue #558 PR-T (review fold C7) — the count names what it could NOT count: `validate
+    // --registered` sends an operator here for a copy that exists but cannot be read, and a bare
+    // "0 workflows registered." then contradicts the ⚠ line beneath it (the fresh walk's minor).
+    // No "(below)": the ⚠ detail is stderr, and a stdout-only reader would be pointed at nothing
+    // (walk 4; review fold C19).
+    const registryBroken = unreadable.some((u) => u.class === 'registry_broken');
+    const unreadableSuffix = registryBroken
+      ? '; the registry itself could not be read'
+      : unreadable.length > 0
+        ? // R3 (the review walk): the count sums every per-file class, one of which is a DIRECTORY —
+          // "entry" is true of all of them; the per-class ⚠ lines beneath keep their own nouns.
+          `; ${unreadable.length} ${unreadable.length === 1 ? 'entry' : 'entries'} in the registry could not be read`
+        : '';
+    console.log(
+      `\n${rows.length} ${rows.length === 1 ? 'workflow' : 'workflows'} registered${unreadableSuffix}.`,
+    );
 
     // The census lines go to stderr: they are not part of the listing a script would consume,
     // and an operator piping stdout should still see them.
     if (unreadable.length > 0) {
-      const names = unreadable.map((u) => u.file).join(', ');
-      console.warn(
-        unreadable.length === 1
-          ? `⚠ 1 file in the registry could not be parsed: ${names} — realm cannot audit what it cannot read.`
-          : `⚠ ${unreadable.length} files in the registry could not be parsed: ${names} — realm cannot audit what it cannot read.`,
-      );
+      // issue #558 PR-T — ONE sentence per CLASS, every one ending in the pinned tail. A single
+      // "could not be parsed" sentence for every failure was false for four of the five classes
+      // (a chmod-000 file was reported as unparseable — executed on main).
+      const broken = unreadable.find((u) => u.class === 'registry_broken');
+      if (broken !== undefined) {
+        // The whole registry, not an entry: one line, no table, exit 0 (main crashed here).
+        console.warn(`⚠ ${broken.reason} — realm cannot audit what it cannot read.`);
+      } else {
+        const TAIL = ' — realm cannot audit what it cannot read.';
+        const groups: Array<{
+          cls: string;
+          one: (names: string, errno: string) => string;
+          many: (n: number, names: string, errno: string) => string;
+        }> = [
+          {
+            cls: 'unreadable',
+            one: (names, errno) =>
+              `⚠ 1 file in the registry could not be read (${errno}): ${names}`,
+            many: (n, names, errno) =>
+              `⚠ ${String(n)} files in the registry could not be read (${errno}): ${names}`,
+          },
+          {
+            cls: 'parse',
+            one: (names) => `⚠ 1 file in the registry could not be parsed: ${names}`,
+            many: (n, names) =>
+              `⚠ ${String(n)} files in the registry could not be parsed: ${names}`,
+          },
+          {
+            cls: 'empty',
+            one: (names) => `⚠ 1 file in the registry is empty (0 bytes): ${names}`,
+            many: (n, names) =>
+              `⚠ ${String(n)} files in the registry are empty (0 bytes): ${names}`,
+          },
+          {
+            cls: 'not_a_file',
+            one: (names) =>
+              `⚠ 1 entry in the registry is a directory, not a workflow file: ${names}`,
+            many: (n, names) =>
+              `⚠ ${String(n)} entries in the registry are directories, not workflow files: ${names}`,
+          },
+          {
+            // A directory entry that vanished between readdir and probe — a race, not a state an
+            // operator can act on, but it must never print as a parse failure.
+            cls: 'missing',
+            one: (names) => `⚠ 1 file in the registry is gone: ${names}`,
+            many: (n, names) => `⚠ ${String(n)} files in the registry are gone: ${names}`,
+          },
+        ];
+        for (const g of groups) {
+          const inClass = unreadable.filter((u) => u.class === g.cls);
+          if (inClass.length === 0) continue;
+          // One sentence per (class, errno): two files failing for DIFFERENT reasons never share
+          // a sentence that names only one of them (executed: an EACCES file was reported under
+          // a sibling's ELOOP).
+          const errnos = [...new Set(inClass.map((u) => u.errno ?? 'unknown'))];
+          for (const errno of errnos) {
+            const members = inClass.filter((u) => (u.errno ?? 'unknown') === errno);
+            const names = members.map((u) => u.file).join(', ');
+            console.warn(
+              (members.length === 1 ? g.one(names, errno) : g.many(members.length, names, errno)) +
+                TAIL,
+            );
+          }
+        }
+      }
     }
     if (mismatched.length > 0) {
       const detail = mismatched.map((m) => `${m.file} (id '${m.id}')`).join(', ');

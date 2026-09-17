@@ -1391,3 +1391,82 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
     });
   });
 });
+
+// -----------------------------------------------------------------------------------------------
+// issue #558 PR-T — `definition_unresolvable`. Minted from `opts.definitionError` on the LIVE
+// path for non-gate-waiting runs only (review fold C6): a terminal run's copy matters only to
+// replay/drain, and a gate-waiting run's way out is its gate — `abandon`, the finding's one
+// remedy, refuses both.
+describe('definition_unresolvable (issue #558 PR-T)', () => {
+  const ERR = {
+    code: 'STATE_WORKFLOW_UNREADABLE',
+    message: "the registered copy of 'wf' could not be read (EACCES: /x/wf.json)",
+    class: 'unreadable',
+  };
+
+  it('DU1 a LIVE run gets the finding, with the workflow id, the code and the class in evidence', () => {
+    const findings = classifyRunHealth(makeRun({ run_phase: 'running' }), { definitionError: ERR });
+    const f = findings.find((x) => x.kind === 'definition_unresolvable');
+    expect(f).toBeDefined();
+    expect(f?.reason).toBe(
+      '' + "the registered copy of 'wf' could not be read (EACCES: /x/wf.json)",
+    );
+    expect(f?.evidence).toEqual({
+      workflow_id: 'wf',
+      code: 'STATE_WORKFLOW_UNREADABLE',
+      class: 'unreadable',
+    });
+  });
+
+  it('DU2 a TERMINAL run gets NO finding — its copy matters only to replay/drain, and the one remedy (abandon) refuses a finished run (review fold C6)', () => {
+    const findings = classifyRunHealth(
+      makeRun({ terminal_state: true, run_phase: 'failed', failed_steps: ['s1'] }),
+      { definitionError: ERR },
+    );
+    expect(findings.map((f) => f.kind)).not.toContain('definition_unresolvable');
+  });
+
+  it('DU6 a GATE-WAITING run gets the finding too — its gate cannot be answered until the copy reads, so a sweep must find it (review fold C13; the --stuck label forks to inspect)', () => {
+    const findings = classifyRunHealth(
+      makeRun({
+        run_phase: 'gate_waiting',
+        pending_gate: {
+          gate_id: 'g1',
+          step_name: 'gated',
+          choices: ['approve'],
+          opened_at: NOW.toISOString(),
+          preview: {},
+        },
+      }),
+      { definitionError: ERR },
+    );
+    expect(findings.map((f) => f.kind)).toContain('definition_unresolvable');
+  });
+
+  it('DU3 no definitionError ⇒ no such finding, on either path (the option is additive)', () => {
+    expect(
+      classifyRunHealth(makeRun({ run_phase: 'running' })).some(
+        (f) => f.kind === 'definition_unresolvable',
+      ),
+    ).toBe(false);
+    expect(
+      classifyRunHealth(makeRun({ terminal_state: true, run_phase: 'completed' })).some(
+        (f) => f.kind === 'definition_unresolvable',
+      ),
+    ).toBe(false);
+  });
+
+  it('DU4 the finding carries NO `severity` key — no kind in this module has one (round-2 N-B1)', () => {
+    const f = classifyRunHealth(makeRun({ run_phase: 'running' }), { definitionError: ERR }).find(
+      (x) => x.kind === 'definition_unresolvable',
+    );
+    expect(Object.keys(f!)).toEqual(['kind', 'reason', 'evidence']);
+  });
+
+  it('DU5 a class-less failure (a parse error carries only a path) still mints, with code alone', () => {
+    const f = classifyRunHealth(makeRun({ run_phase: 'running' }), {
+      definitionError: { code: 'RESOURCE_FORMAT_INVALID', message: 'not parseable JSON: boom' },
+    }).find((x) => x.kind === 'definition_unresolvable');
+    expect(f?.evidence).toEqual({ workflow_id: 'wf', code: 'RESOURCE_FORMAT_INVALID' });
+  });
+});

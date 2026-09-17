@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WorkflowError } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
 import { classBError } from '../agent/providers/agent-utils.js';
 import { computeExtensionIdentity, sha256HexOf } from '../extensions/extension-identity.js';
@@ -895,6 +896,193 @@ describe('run_health rendering (issue #221)', () => {
     expect(runHealthIdx).toBeGreaterThan(updatedIdx); // renders AFTER the Updated line
     expect(result).toContain('stale_claim');
     expect(result).toContain('[step_a]');
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // issue #558 PR-T — the definition line, forked by CLASS. One sentence ("not found") was
+  // printed for every failure, including a copy that EXISTS but cannot be read, a corrupt copy
+  // and a legacy record (executed). The fork reads the store's own code, never the message text.
+  function throwingStore(err: unknown): WorkflowRegistrar {
+    return {
+      register: async () => {},
+      get: async () => {
+        throw err;
+      },
+      list: async () => [],
+    };
+  }
+
+  it('D5-1 an UNREADABLE copy says "could not be read" and carries the store sentence', async () => {
+    const run = makeRun([makeSnapshot('step_one')]);
+    const result = await inspectRun(
+      'run_test1',
+      makeRunStore(run),
+      throwingStore(
+        new WorkflowError("the registered copy of 'wf' could not be read (EACCES: /x/wf.json)", {
+          code: 'STATE_WORKFLOW_UNREADABLE',
+          category: 'STATE',
+          agentAction: 'stop',
+          retryable: false,
+          details: { class: 'unreadable', errno: 'EACCES', path: '/x/wf.json' },
+        }),
+      ),
+    );
+    expect(result).toContain(
+      "(showing run record only — the registered copy of 'wf' could not be read (EACCES: /x/wf.json).",
+    );
+    expect(result).toContain(
+      'To repair: make /x/wf.json readable (chmod u+r /x/wf.json), then inspect again.)',
+    );
+    expect(result).not.toContain('workflow definition not found');
+    expect(result).not.toContain('could not be read: the registered'); // no doubled class prefix
+  });
+
+  it('D5-6 (review folds C8+C9) the way out is printed for a LIVE run and omitted for a TERMINAL one — abandon refuses a finished run', async () => {
+    const unreadable = new WorkflowError(
+      "the registered copy of 'wf' could not be read (EACCES: /x/wf.json)",
+      {
+        code: 'STATE_WORKFLOW_UNREADABLE',
+        category: 'STATE',
+        agentAction: 'stop',
+        retryable: false,
+        details: { class: 'unreadable', errno: 'EACCES', path: '/x/wf.json' },
+      },
+    );
+    const live = await inspectRun(
+      'run_test1',
+      makeRunStore(
+        makeRun([makeSnapshot('step_one')], { run_phase: 'running', terminal_state: false }),
+      ),
+      throwingStore(unreadable),
+    );
+    // R4 (the review walk): on a LIVE run the finding carries the sentence ONCE; the parenthetical
+    // beneath the record is bare, so the screen never shows one failure as two.
+    expect(live).toContain(
+      'To end the run: realm run abandon run_test1. To repair: make /x/wf.json readable (chmod u+r /x/wf.json), then inspect again.',
+    );
+    expect(live).toContain('(showing run record only — the reason is in Run Health above)');
+    expect(live).not.toContain('(showing run record only — the registered copy');
+    expect(live.split('could not be read (EACCES: /x/wf.json)').length - 1).toBe(1);
+    const terminal = await inspectRun(
+      'run_test1',
+      makeRunStore(
+        makeRun([makeSnapshot('step_one')], {
+          run_phase: 'failed',
+          terminal_state: true,
+          failed_steps: ['step_one'],
+          terminal_reason: 'boom',
+        }),
+      ),
+      throwingStore(unreadable),
+    );
+    expect(terminal).not.toContain('To end the run');
+    expect(terminal).toContain(
+      'To repair: make /x/wf.json readable (chmod u+r /x/wf.json), then inspect again.)',
+    );
+  });
+
+  it('D5-2 a CORRUPT copy says corrupt', async () => {
+    const run = makeRun([makeSnapshot('step_one')]);
+    const result = await inspectRun(
+      'run_test1',
+      makeRunStore(run),
+      throwingStore(
+        new WorkflowError("the registered copy of 'wf' is not parseable JSON: boom", {
+          code: 'RESOURCE_FORMAT_INVALID',
+          category: 'RESOURCE',
+          agentAction: 'stop',
+          retryable: false,
+          details: { path: '/x/wf.json' },
+        }),
+      ),
+    );
+    expect(result).toContain(
+      "(showing run record only — the registered copy of 'wf' is not parseable JSON: boom.",
+    );
+    expect(result).toContain(
+      'To repair: re-register the workflow from its source (realm workflow register ' +
+        '<path-to-workflow>), then inspect again; if it was never registered from a source, ' +
+        'remove the file (rm /x/wf.json) instead.)',
+    );
+  });
+
+  it('D5-3 a LEGACY record says legacy and keeps the store\u2019s own re-register remedy', async () => {
+    const run = makeRun([makeSnapshot('step_one')]);
+    const result = await inspectRun(
+      'run_test1',
+      makeRunStore(run),
+      throwingStore(
+        new WorkflowError('This workflow was registered with an older version of Realm.', {
+          code: 'STATE_LEGACY_FORMAT',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: false,
+        }),
+      ),
+    );
+    expect(result).toContain(
+      '(showing run record only — This workflow was registered with an older version of Realm.',
+    );
+  });
+
+  it("D5-4 a MISSING copy carries the #456 register remedy with inspect's own verb (review fold C8)", async () => {
+    const run = makeRun([makeSnapshot('step_one')]);
+    const result = await inspectRun(
+      'run_test1',
+      makeRunStore(run),
+      throwingStore(
+        new WorkflowError('Workflow not found: wf', {
+          code: 'STATE_WORKFLOW_NOT_FOUND',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: false,
+        }),
+      ),
+    );
+    expect(result).toContain(
+      '(showing run record only — Workflow not found: wf — most often this run was created from a ' +
+        'file without --register. Register the workflow (realm workflow register <file>) and ' +
+        'inspect again.)',
+    );
+    expect(result).not.toContain('workflow definition not found');
+  });
+
+  it('D5-5 the run-health finding rides the same failure on a LIVE run — inspect names the class and the code; a TERMINAL run keeps the definition line but no finding (review fold C6)', async () => {
+    const unreadable = new WorkflowError(
+      "the registered copy of 'wf' could not be read (EACCES: /x/wf.json)",
+      {
+        code: 'STATE_WORKFLOW_UNREADABLE',
+        category: 'STATE',
+        agentAction: 'stop',
+        retryable: false,
+        details: { class: 'unreadable', errno: 'EACCES', path: '/x/wf.json' },
+      },
+    );
+    const live = await inspectRun(
+      'run_test1',
+      makeRunStore(
+        makeRun([makeSnapshot('step_one')], { run_phase: 'running', terminal_state: false }),
+      ),
+      throwingStore(unreadable),
+    );
+    expect(live).toContain('Run Health');
+    expect(live).toContain('definition_unresolvable');
+    expect(live).toContain(": the registered copy of 'wf' could not be read (EACCES");
+    expect(live).not.toContain('cannot be read (STATE_WORKFLOW_UNREADABLE)'); // R6: no prefix
+    expect(live).toContain('Workflow: test-workflow v1'); // R8: the record's version survives an unreadable copy
+    expect(live).toContain('(showing run record only — the reason is in Run Health above)');
+    expect(live).not.toContain('(showing run record only — the registered copy');
+    expect(live.split('could not be read (EACCES: /x/wf.json)').length - 1).toBe(1);
+    // The control: the default fixture is terminal (completed) — the finding is not minted for
+    // it, but the definition line below the record still carries the sentence and the repair.
+    const terminal = await inspectRun(
+      'run_test1',
+      makeRunStore(makeRun([makeSnapshot('step_one')])),
+      throwingStore(unreadable),
+    );
+    expect(terminal).not.toContain('definition_unresolvable');
+    expect(terminal).toContain('(showing run record only — the registered copy of');
+    expect(terminal.split('could not be read (EACCES: /x/wf.json)').length - 1).toBe(1);
   });
 
   it('tolerates a missing workflow definition when rendering run_health', async () => {

@@ -4,7 +4,7 @@
 // double only needs to implement that faithfully; every other method throws if reached, proving
 // it never is (mirrors get-run-state-fidelity-gate.test.ts's own double).
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -247,5 +247,30 @@ describe('get_run_state — run_health (issue #221)', () => {
     const store = makeFullFidelityStore(run);
     const summary = await handleGetRunState({ run_id: 'r1' }, { runStore: store });
     expect(summary.warnings).toBeUndefined();
+  });
+});
+
+describe('get_run_state — definition_unresolvable carries the composed sentence (issue #558 PR-T, R12)', () => {
+  it('M4 an unreadable copy: the finding reason names the consequence, the way out and the repair — through the one composer, as every other surface (it carried the bare store sentence)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'get-run-state-r12-'));
+    const ws = new JsonWorkflowStore(dir);
+    await ws.register(basicDef);
+    const file = join(dir, `${basicDef.id}.json`);
+    await chmod(file, 0o000);
+    try {
+      const summary = await handleGetRunState(
+        { run_id: 'r1' },
+        { runStore: makeFullFidelityStore(makeRun()), workflowStore: ws },
+      );
+      expect(summary.next_actions_status).toBe('workflow_unresolved');
+      const f = summary.run_health?.find((x) => x.kind === 'definition_unresolvable');
+      expect(f).toBeDefined();
+      expect(f?.reason).toBe(
+        `the registered copy of 'wf' could not be read (EACCES: ${file}). This run cannot continue until the copy is repaired. To end the run: realm run abandon r1. To repair: make ${file} readable (chmod u+r ${file}), then retry.`,
+      );
+      expect(f?.reason).not.toContain('cannot be read (STATE_');
+    } finally {
+      await chmod(file, 0o644);
+    }
   });
 });

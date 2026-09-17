@@ -7,6 +7,7 @@ import {
   DEFAULT_IDLE_THRESHOLD_MS,
   FailedAttemptStore,
   computeGateDueState,
+  probeClassOf,
 } from '@sensigo/realm';
 import type { RunStore, RunPhase, RunHealthFinding, FailedAttemptReadResult } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
@@ -147,6 +148,16 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
       const label = `drive_failing(${typeof errorClass === 'string' ? errorClass : 'unknown'})`;
       return f.step !== undefined && f.step !== '' ? `${f.step}=${label}` : label;
     }
+    // issue #558 PR-T — the class, then the way out. `evidence.class` is the probe's own class
+    // when there was one, the closure's word for the parse/legacy classes otherwise.
+    case 'definition_unresolvable': {
+      const cls = f.evidence?.['class'];
+      // Review fold C15: a WORD or `unknown`, never the error CODE — the slot C2 exists to keep
+      // human (the audit's contradiction question: the closure's non-WorkflowError escape carried
+      // no class and this fallback printed `(ENGINE_INTERNAL)` one arm over).
+      const which = typeof cls === 'string' ? cls : 'unknown';
+      return `definition_unresolvable (${which})`;
+    }
     default: {
       // Ride-along (boy-scout, not the reported problem): an exhaustiveness guard. A future
       // finding kind now fails to COMPILE here instead of silently rendering nothing — which is
@@ -195,6 +206,16 @@ export function renderCauseSegment(result: FailedAttemptReadResult): string {
 }
 
 /**
+ * issue #558 PR-T — what the `--stuck` definition probe reports per workflow id: a typed failure
+ * (which becomes a `definition_unresolvable` finding) or `uninspected` for a copy over the listing
+ * cap (which becomes the stderr footer and NEVER a finding — an unread copy is a check that did not
+ * run, not a broken copy; review fold C4).
+ */
+export type StuckDefinitionProbe =
+  | { code: string; message: string; class?: string }
+  | { uninspected: { bytes: number; capBytes: number } };
+
+/**
  * Lists runs from the store, sorted by updated_at descending.
  * @param workflowId        Optional filter — only show runs from this workflow.
  * @param store             Store holding run records.
@@ -210,6 +231,9 @@ export function renderCauseSegment(result: FailedAttemptReadResult): string {
  *                          `JsonFileStore` and its real `runsDirPath` getter) constructs this and
  *                          passes it in; `undefined` means best-effort skip — no cause attribution
  *                          — never a crash. `listRuns` never constructs one itself.
+ * @param workflowProbe     issue #558 PR-T: the `--stuck` definition probe (memoised per workflow
+ *                          id by the caller, which holds the registrar); see
+ *                          {@link StuckDefinitionProbe}. `undefined` ⇒ zero findings, no footer.
  * @returns                 Formatted output string.
  */
 export async function listRuns(
@@ -219,12 +243,15 @@ export async function listRuns(
   stuck?: boolean,
   idleThresholdMs?: number,
   failedAttemptStore?: FailedAttemptStore,
+  workflowProbe?: (workflowId: string) => StuckDefinitionProbe | undefined,
 ): Promise<string> {
   const runs = await store.list(workflowId);
   const effectiveIdleThresholdMs = idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
 
   let filtered = runs;
   const findingsByRun = new Map<string, RunHealthFinding[]>();
+  // issue #558 PR-T (review fold C4): copies over the listing cap, by workflow id — the footer.
+  const uninspected = new Map<string, { bytes: number; capBytes: number; runs: number }>();
   if (stuck === true) {
     filtered = runs.filter((r) => {
       // issue #221: classifyRunHealth is the SAME shared predicate get_run_state/inspect (the
@@ -234,7 +261,20 @@ export async function listRuns(
       // Note: `realm run reclaim` is a separate, independent consumer of the underlying record
       // facts (settle sets, capability_blocks, reclaim-audit evidence) — it does NOT call this
       // function; see its own classifyNoActiveClaim discriminator in reclaim-step.ts.
-      const findings = classifyRunHealth(r, { idleThresholdMs: effectiveIdleThresholdMs });
+      // issue #558 PR-T: the 7th parameter (the #219 injection precedent) — `listRuns` holds no
+      // registrar, so the --stuck action constructs the probe and passes it; `undefined` ⇒ zero
+      // `definition_unresolvable` findings, never a crash.
+      const probed = workflowProbe?.(r.workflow_id);
+      if (probed !== undefined && 'uninspected' in probed) {
+        const entry = uninspected.get(r.workflow_id) ?? { ...probed.uninspected, runs: 0 };
+        entry.runs += 1;
+        uninspected.set(r.workflow_id, entry);
+      }
+      const definitionError = probed !== undefined && 'code' in probed ? probed : undefined;
+      const findings = classifyRunHealth(r, {
+        idleThresholdMs: effectiveIdleThresholdMs,
+        ...(definitionError !== undefined ? { definitionError } : {}),
+      });
       if (findings.length > 0) findingsByRun.set(r.id, findings);
       // issue #302: a completed run is not stuck — deliberately INVERTS the
       // terminal_pending_finalizer precedent (which selects AND labels). A run whose entire
@@ -261,10 +301,43 @@ export async function listRuns(
     filtered = runs.filter((r) => deriveRunPhase(r) === statusFilter);
   }
 
+  // issue #558 PR-T (review fold C4) — the listing cap's disclosure. A copy over the cap was
+  // never read, so nothing is KNOWN about it: it is not a finding (a finding claims the run needs
+  // action — the fresh walk executed a VALID 5 MB copy rendered as `definition_unresolvable`
+  // with `realm run abandon` as its remedy), it is a check that did not run, stated (the #553
+  // `checks not run` shape) — on stderr, so the row shape CS1's reapers parse stays untouched,
+  // and BEFORE the empty-list early return: a run listed for nothing else still has its copy named.
+  // Review fold C18 (walk 4): ONE line per definition, only facts and pasteable commands — the
+  // earlier "its runs are listed here only for some other finding" sat beside a list with none of
+  // them in it, and two definitions on one line degraded the commands to an `<id>` placeholder.
+  if (uninspected.size > 0) {
+    for (const [id, u] of uninspected) {
+      const capMb = Math.round(u.capBytes / (1024 * 1024));
+      const one = u.runs === 1;
+      console.error(
+        `⚠ workflow definition ${id} (${(u.bytes / (1024 * 1024)).toFixed(1)} MiB, ${u.runs} run${one ? '' : 's'}) ` +
+          `was not inspected by --stuck (over the ${capMb} MiB listing cap): ` +
+          `${one ? 'this run was' : 'these runs were'} not checked for a broken definition; ` +
+          `realm run list --workflow ${id} lists ${one ? 'it' : 'them'}, ` +
+          `realm workflow validate --registered ${id} reads the copy.`,
+      );
+    }
+  }
+
+  // Review fold C20 (walk 5): the stdout verdict says when the sweep was partial — the ⚠ lines
+  // are stderr, and a reader of stdout alone was handed an unqualified clean bill of health for
+  // a store whose over-cap copies were never inspected. No positional word: stderr may be gone.
+  // Review fold C22 (walk 6): the ids ride the stdout verdict too — a stdout-only reader had a
+  // count and no way to learn WHICH definitions (the ⚠ lines are stderr).
+  const skipped =
+    uninspected.size > 0
+      ? `; ${uninspected.size} definition${uninspected.size === 1 ? '' : 's'} not inspected: ${[...uninspected.keys()].join(', ')}`
+      : '';
+
   if (filtered.length === 0) {
     const scope = workflowId !== undefined ? ` for workflow '${workflowId}'` : '';
     return stuck === true
-      ? `No stuck runs found${scope} (threshold ${formatThreshold(effectiveIdleThresholdMs)}).`
+      ? `No stuck runs found${scope} (threshold ${formatThreshold(effectiveIdleThresholdMs)}${skipped}).`
       : `No runs found${scope}.`;
   }
 
@@ -272,7 +345,7 @@ export async function listRuns(
 
   const lines: string[] = [];
   if (stuck === true) {
-    lines.push(`Stuck runs (threshold ${formatThreshold(effectiveIdleThresholdMs)}):`);
+    lines.push(`Stuck runs (threshold ${formatThreshold(effectiveIdleThresholdMs)}${skipped}):`);
   }
   for (const run of filtered) {
     // issue #279 (increment 2, PR-C — D-3 leg vi): derive ONCE per run, used for both the
@@ -343,6 +416,39 @@ export async function listRuns(
       if (gateCauseLabels.length > 0) {
         line += `  ${gateCauseLabels.join(', ')}`;
       }
+      // issue #558 PR-T — the RESIDUAL group, and the reason it exists: `renderFindingLabel` is
+      // `never`-exhaustive, but the five hard-coded groups above are NOT — a kind in none of them
+      // renders NO label at all (selected and silent, executed on main). This group takes every
+      // kind the groups above did not, so a new kind is visible the day it is labelled. The run id
+      // is in scope HERE, which is what lets the label carry an executable remedy.
+      const groupedKinds = new Set<RunHealthFinding['kind']>([
+        'stale_claim',
+        'wedged_gate_sibling',
+        'capability_block',
+        'drive_failing',
+        'terminal_pending_finalizer',
+        'gate_expired_awaiting_drive',
+        'gate_corruption',
+        'terminal_with_stale_gate',
+      ]);
+      const residualLabels = findings
+        .filter((f) => !groupedKinds.has(f.kind))
+        .map((f) =>
+          f.kind === 'definition_unresolvable'
+            ? // A gate-waiting run cannot be abandoned (abandon-run.ts refuses it) — its copy
+              // must be repaired before the gate can be answered, and `inspect` carries that
+              // sentence with the path and the answer command (review fold C13).
+              // R9 (walk 2): EVERY live run points at `inspect` — the surface that names the repair,
+              // the consequence AND the way out. `abandon` as the selection line's only act sent a
+              // walker to destroy a run whose copy was one chmod away (and `abandon`'s own text then
+              // named a command that does not exist). A gate-waiting run pointed here already (C13).
+              `${renderFindingLabel(f) ?? ''} (realm run inspect ${run.id})`
+            : renderFindingLabel(f),
+        )
+        .filter((l): l is string => l !== undefined && l !== '');
+      if (residualLabels.length > 0) {
+        line += `  ${residualLabels.join(', ')}`;
+      }
       // issue #219: cause attribution, appended LAST — best-effort, per-run (one run's sidecar
       // I/O failure never aborts the rest of the list). `records.length === 0` (no throw) means
       // absence — the CLI-driven / no-sidecar / parked-between-drives case — renders nothing
@@ -405,6 +511,72 @@ export const listCommand = new Command('list')
       const failedAttemptStore =
         opts.stuck === true ? new FailedAttemptStore(store.runsDirPath) : undefined;
 
+      // issue #558 PR-T — the --stuck probe closure. The 4 MB parse cap lives HERE and NOWHERE
+      // else: `get()` stays uncapped (#552's door B, its Resolution). Memoised per workflow id
+      // per invocation — a hundred runs of one workflow cost one probe.
+      let workflowProbe: ((workflowId: string) => StuckDefinitionProbe | undefined) | undefined;
+      if (opts.stuck === true) {
+        const {
+          JsonWorkflowStore,
+          WorkflowError,
+          probeClassToError,
+          STUCK_DEFINITION_PARSE_CAP_BYTES,
+        } = await import('@sensigo/realm');
+        const wfStore = new JsonWorkflowStore();
+        const memo = new Map<string, StuckDefinitionProbe | undefined>();
+        workflowProbe = (workflowId: string) => {
+          if (memo.has(workflowId)) return memo.get(workflowId);
+          let result: StuckDefinitionProbe | undefined;
+          const probed = wfStore.probe(workflowId);
+          if (!probed.ok) {
+            const err = probeClassToError(probed, workflowId);
+            result = { code: err.code, message: err.message, class: probed.class };
+          } else if (probed.bytes > STUCK_DEFINITION_PARSE_CAP_BYTES) {
+            // Zero bytes read. A #557 bomb is NAMED by its size, never parsed — and never JUDGED:
+            // an unread copy is a check that did not run, not a broken copy (the fresh walk
+            // executed a VALID 5 MB copy listed as `definition_unresolvable` with `realm run
+            // abandon` as its remedy). `listRuns` turns this into the stderr footer, not a row.
+            result = {
+              uninspected: { bytes: probed.bytes, capBytes: STUCK_DEFINITION_PARSE_CAP_BYTES },
+            };
+          } else {
+            try {
+              wfStore.getSync(workflowId);
+            } catch (err) {
+              // Narrowed with `instanceof` — never duck-typed on `err.code` (house rule). A
+              // non-WorkflowError escape (a TOCTOU remnant) is reported, never a crash.
+              if (err instanceof WorkflowError) {
+                // The class slot on the --stuck line holds a WORD for every class (executed: a
+                // corrupt copy rendered `(RESOURCE_FORMAT_INVALID)` beside `(missing)`) — the
+                // parse and legacy classes carry no probe class, so the closure names them.
+                // The probe class is read through core's `probeClassOf` (review fold R1) — one
+                // reader of that slot, never a second hand-narrowing.
+                const word =
+                  probeClassOf(err) ??
+                  (err.code === 'RESOURCE_FORMAT_INVALID'
+                    ? 'corrupt'
+                    : err.code === 'STATE_LEGACY_FORMAT'
+                      ? 'legacy'
+                      : undefined);
+                result = {
+                  code: err.code,
+                  message: err.message,
+                  ...(word !== undefined ? { class: word } : {}),
+                };
+              } else {
+                result = {
+                  code: 'ENGINE_INTERNAL',
+                  message: err instanceof Error ? err.message : String(err),
+                  class: 'unknown',
+                };
+              }
+            }
+          }
+          memo.set(workflowId, result);
+          return result;
+        };
+      }
+
       if (opts.stuck === true && opts.status !== undefined) {
         console.error('--stuck cannot be combined with --status.');
         process.exit(1);
@@ -443,6 +615,7 @@ export const listCommand = new Command('list')
           opts.stuck,
           idleThresholdMs,
           failedAttemptStore,
+          workflowProbe,
         );
         console.log(output);
       } catch (err) {

@@ -157,7 +157,12 @@ export interface RunHealthFinding {
     // issue #508: an ELIGIBLE step (auto/agent, on a definition that was supplied) whose `trust`
     // value the engine will refuse at dispatch (VALIDATION_TRUST_VALUE) — see item 5b in the
     // branch-conditioning table above. Definition-gated, like `resolved_gate_with_eligible_guard`.
-    | 'trust_value_invalid';
+    | 'trust_value_invalid'
+    // issue #558 PR-T: this run's registered workflow copy cannot be read — missing, permission-
+    // denied, a directory, empty, corrupt JSON, a legacy record, or a registry directory that
+    // itself cannot be read. Fires on ANY run, live or terminal: the class is about the COPY, not
+    // the phase. Supplied by the caller (`definitionError`) — this function never touches a store.
+    | 'definition_unresolvable';
   /** The affected step, when the finding is step-scoped. Absent for `never_claimed_idle` — a
    *  run-level observation (no step is claimed at all). */
   step?: string;
@@ -387,7 +392,15 @@ function formatAgo(ms: number): string {
  */
 export function classifyRunHealth(
   run: RunRecord,
-  opts?: { now?: Date; idleThresholdMs?: number; definition?: WorkflowDefinition },
+  opts?: {
+    now?: Date;
+    idleThresholdMs?: number;
+    definition?: WorkflowDefinition;
+    /** issue #558 PR-T — the failure the CALLER got when it tried to resolve this run's
+     *  workflow copy. Additive to the existing bag; absent ⇒ zero `definition_unresolvable`
+     *  findings, never a crash. */
+    definitionError?: { code: string; message: string; class?: string };
+  },
 ): RunHealthFinding[] {
   const now = opts?.now ?? new Date();
   // issue #432: computed ONCE per classify call, ahead of every branch — the module's own D-3
@@ -400,6 +413,36 @@ export function classifyRunHealth(
   // check, the claim-kind fork, and never_claimed_idle) share one value that can never disagree
   // with itself.
   const derivedPhase = deriveRunPhase(run);
+
+  /**
+   * issue #558 PR-T — this run's registered workflow copy could not be resolved by the CALLER
+   * (`opts.definitionError`). ONE builder, called on the LIVE path only (review fold C6): a
+   * terminal run's copy matters only to `replay`/`drain`, which name the repair themselves, and
+   * the finding's one remedy (`realm run abandon`) refuses a finished run — branch 1 therefore
+   * returns without it, deliberately. Gate-waiting runs DO get it (review fold C13); the CLI's
+   * `--stuck` label forks to `realm run inspect` for them.
+   *
+   * NOTE (audit divergence, round-2 N-B1): the design record's literal carries
+   * `severity: 'warning'`. `RunHealthFinding` has NO `severity` field and none of the 13 other
+   * kinds sets one (TS2353, executed) — adding it is a decision about all 14 kinds, not a line in
+   * this PR. The label and the `--stuck` selection ARE the signal.
+   */
+  const definitionUnresolvableFinding = (): RunHealthFinding | undefined => {
+    const de = opts?.definitionError;
+    if (de === undefined) return undefined;
+    return {
+      kind: 'definition_unresolvable',
+      // Review fold R6: the composed sentence IS the reason — the kind names the class and
+      // `evidence.code` carries the code; a "cannot be read (<code>): " prefix restated the
+      // sentence's own first clause (three "cannot be read" in one line on the walk).
+      reason: de.message,
+      evidence: {
+        workflow_id: run.workflow_id,
+        code: de.code,
+        ...(de.class !== undefined ? { class: de.class } : {}),
+      },
+    };
+  };
 
   // Branch 1 — NARROWED first guard (issue #279, increment 1, PR-B, design record §6, explicitly
   // authorized): checked BEFORE the terminal short-circuit. A terminal run with a still-'pending'
@@ -457,6 +500,10 @@ export function classifyRunHealth(
     // run_health on a terminal run, the frozen #279-R3 guard below — see the module doc).
     const terminalDowngrade = findStructuredOutputDowngrades(run);
     if (terminalDowngrade !== undefined) pendingFindings.push(terminalDowngrade);
+    // issue #558 PR-T (review fold C6) — deliberately NOT minted here: a terminal run's copy
+    // matters only to `replay` and `drain`, which name the repair themselves, and the finding's
+    // one remedy (`realm run abandon`) refuses a finished run (executed: an already-abandoned run
+    // kept a --stuck row whose printed remedy was the one already applied — the fresh walk's T5).
     if (pendingFindings.length > 0) return pendingFindings;
     // terminal ∧ no pending ledger entries ∧ not completed-with-failed-steps ∧ no recorded
     // structured-output downgrade ⇒ [] (byte-identical to pre-#279 behavior for every OTHER class
@@ -605,6 +652,15 @@ export function classifyRunHealth(
       },
     });
   }
+
+  // issue #558 PR-T — every LIVE run, gate-waiting included (review folds C6 + C13): a
+  // gate-waiting run whose copy cannot be read is stuck in the strongest sense — its gate cannot
+  // be answered — and a sweep must find it (the fresh walk's T13). The CLI's --stuck label forks
+  // for it (`realm run inspect`, whose sentence carries the repair and the answer command, never
+  // `abandon`, which refuses a gate-waiting run). get_run_state alone leaves gate-waiting runs
+  // out: its frozen `awaiting_human` branch never reads the definition (#331).
+  const liveDefinitionFinding = definitionUnresolvableFinding();
+  if (liveDefinitionFinding !== undefined) findings.push(liveDefinitionFinding);
 
   return findings;
 }
