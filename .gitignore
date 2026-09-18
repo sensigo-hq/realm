@@ -5,6 +5,7 @@
 prompts/
 reports/
 plans/
+marketing/
 
 # Local agent customisation files — all private by default; only the shared Realm agent is committed
 .github/agents/*.agent.md
