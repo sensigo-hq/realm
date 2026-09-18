@@ -6,25 +6,36 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
-One BREAKING change, for TypeScript consumers of one public function only — no workflow, run
-record or CLI invocation changes shape. Realm is pre-1.0, so a breaking change ships in a minor;
-read **Upgrading** before you take this version.
+Five BREAKING changes — one compile-time, four at runtime. Realm is pre-1.0, so breaking changes
+ship in a minor; read **Upgrading** before you take this version. The runtime four matter most if
+you script realm or drive it from an agent: `realm run drain --force` now exits 1 where it exited
+0; abandoning a run releases its claims, and abandons a phantom-gate run it used to refuse;
+`handleListWorkflows` resolves an error object where it used to reject; and the `list_workflows`
+MCP envelope changed shape.
 
-The release's subject is a class of refusals that were telling operators the wrong thing. A run
-whose registered workflow copy could not be read got one sentence — "register it again from its
-path" — whether the copy was missing, permission-denied, a directory, empty, corrupt, or a legacy
-record, and whether or not there was any file left to register. Two of those shapes did not print
-a sentence at all: `realm workflow list` crashed with a stack trace on a `null`-root entry and on
-an unreadable registry directory, and a `chmod 000` copy escaped as a bare `EACCES: permission
-denied` with no code and no remedy.
+The release closes a disposal dead end, in two halves. The first is a class of refusals that were
+telling operators the wrong thing: a run whose registered workflow copy could not be read got one
+sentence — "register it again from its path" — whether the copy was missing, permission-denied, a
+directory, empty, corrupt, or a legacy record, and whether or not there was any file left to
+register. Two of those shapes printed no sentence at all: `realm workflow list` crashed with a
+stack trace on a `null`-root entry and on an unreadable registry directory, and a `chmod 000` copy
+escaped as a bare `EACCES: permission denied` with no code and no remedy.
+
+The second half is the disposal path those refusals dead-ended into. Abandoning a run now releases
+every claim it held, so a dead run stops blocking `realm run purge`. `realm run drain` exits 1 and
+names a per-finalizer escape instead of reporting a drain that did not happen, and its dry run
+predicts what `--force` will do to each pending finalizer. Six sentences on `purge`, `drain` and
+`abandon` that named a command, a phase or a tool that did not apply were executed against the
+shipped CLI and corrected. And a run created by `on_terminal_match: 'rerun'` records which run it
+superseded.
 
 #### Upgrading
 
-**`getWorkflowForRun`'s `run` parameter is now a full `RunRecord`.** It was
-`Pick<RunRecord, 'workflow_id'>`; the function now reads `terminal_state` and `pending_gate` to
-compose its remedy (a terminal run is told there is nothing to retry; a gate-waiting run is told
-which gate to answer). Every in-repo caller already passed a full record from `store.get()`, so
-this is a compile-time change for external TypeScript consumers only:
+**1. `getWorkflowForRun`'s `run` parameter is now a full `RunRecord`, and `opts.verb` is required.**
+`run` was `Pick<RunRecord, 'workflow_id'>`; the function now reads `terminal_state` and
+`pending_gate` to compose its remedy (a terminal run is told there is nothing to retry; a
+gate-waiting run is told which gate to answer). Every in-repo caller already passed a full run
+record, so this is compile-time only:
 
 ```ts
 // before
@@ -36,13 +47,61 @@ await getWorkflowForRun(store, run, { retryVerb: 'retry', verb: 'retry' });
 `verb` (the bare imperative for the terminal sentence) is required beside `retryVerb`;
 `terminalOk: true` is optional and belongs at the call sites whose happy path IS a terminal run.
 
+**2. `handleListWorkflows` resolves where it used to reject, and its return type is a union.**
+A registry directory realm cannot read used to throw out of the call; it now resolves
+`{ status: 'error', workflows: [], … }`. **A caller's `try`/`catch` no longer fires, and it reads
+an empty, healthy-looking list for a registry that could not be read.** Branch on `status` before
+trusting `workflows`. The return type also widened from `Promise<{ workflows; hint }>` to
+`Promise<ListWorkflowsResult>`, but note that the compiler will not find this for you: both arms
+carry `workflows` and `hint`, so existing reads still typecheck. Reachable through the published
+`@sensigo/realm-mcp/dist/tools/*.js` subpath, for anyone importing the tool handler directly rather
+than going through the MCP server.
+
+**3. `realm run drain --force` exits 1 when anything is left pending.** It previously printed
+`Drained run '<id>'.` and exited 0 even when no finalizer actually ran. It now prints what remains
+and the `--void` command for each, and exits 1. A dry run still exits 0, and a drain that runs
+everything still exits 0. **If you call `realm run drain --force` from CI or a script, a
+left-pending run will now fail the step.** That is the intended signal — the previous exit 0 was
+reporting a drain that had not happened — but it will change the colour of an existing job.
+
+**4. Abandoning a run releases every claim it held, and its recorded reason changed.** `abandonRun`
+now writes `in_progress_steps: []` and `claims: {}` in the seal. A dead run therefore stops
+blocking `realm run purge`, which means **purge may delete an abandoned run's artifacts sooner than
+before** — if you relied on a stuck claim to keep artifacts around, it will not any more. The
+default reason also changed from `Abandoned via abandon_run` to `Abandoned`: the CLI now records
+`Abandoned via realm run abandon` and the MCP tool still records `Abandoned via abandon_run`, so a
+matcher on the literal `terminal_reason` string needs updating. Finally, the gate refusal is keyed
+on `pending_gate` alone rather than the persisted phase label, so **a run whose record says
+`gate_waiting` but carries no gate is now abandonable where it previously threw
+`STATE_TRANSITION_DENIED`** — a refusal became an action.
+
+**5. The `list_workflows` MCP envelope changed shape.** It gained `status`, `unreadable[]` and
+`warnings[]`, and the create-a-workflow `hint` is now withdrawn when the registry holds entries it
+could not read. An agent keying on `result.workflows` being present unconditionally, or on `hint`
+always carrying the create steer, sees different data.
+
+Not breaking, but worth knowing: `RunRecord` gains an optional `rerun_of`; `drainFinalizers`
+returns two additional fields; `listWithDiagnostics().unreadable[]` carries more classes;
+`classifyRunHealth` takes an optional `definitionError`; `realm run list --stuck` selects more runs
+than before (with no change to its exit codes); and `realm workflow list` now exits 0 with a
+warning line on entries that previously crashed it.
+
 ### Added
+
+- **`drainFinalizers` returns `leftPending` and `attempted`** (additive) — the finalizers the pass
+  could not run (the whole remaining set: the pass halts rank-monotonically) and every finalizer it
+  leased, so a caller can name the per-finalizer escape and tell "drained nothing because there was
+  nothing" from "drained something". A TypeScript consumer that types a value AS the function's
+  return shape (rather than calling it) must widen. (Issue #558.)
 
 - **`rerun_of` on the run record** — when `start_run` supersedes a terminal run under the same
   idempotency key (`on_terminal_match: 'rerun'` / `'rerun_if_failed'`), the fresh run now carries
   the superseded run's id. Stamped by the store's supersede path at creation — the one place both
   ids are in hand — and never caller-settable (`CreateRunOptions` does not gain it). Read it on
-  `get_run_state`, on `realm run inspect` (`Rerun of: <id>`) and in `realm run export`'s bundle.
+  `start_run`'s own response, which carries it on both return sites and says so in `context_hint`,
+  so an agent learns of the supersede from the call that caused it — and
+  afterwards on `get_run_state`, on `realm run inspect` (`Rerun of: <id>`) and in
+  `realm run export`'s bundle.
   Absent on a first run and on a `reuse`. (Issue #558.)
 
 - **`STATE_WORKFLOW_UNREADABLE`** — a new `ErrorCode` for the class realm previously reported as
@@ -68,7 +127,7 @@ await getWorkflowForRun(store, run, { retryVerb: 'retry', verb: 'retry' });
   stdout verdict carries the count and the ids (`… (threshold 24h; 1 definition not inspected: <id>)`). That cap
   applies ONLY to the listing: `get()` stays uncapped, per #552's Resolution. (Issue #558.)
 - **`JsonWorkflowStore.probe()` and `getSync()`** — concrete methods (off the `WorkflowRegistrar`
-  interface, the `listWithDiagnostics` precedent), plus the `probeClassToError`,
+  interface, the `listWithDiagnostics` precedent), plus the `probeClassToError`, `probeClassOf`, `repairActFor`, `PROBE_FAILURE_CLASSES`,
   `parseFailureError` and `STUCK_DEFINITION_PARSE_CAP_BYTES` exports and the `ProbeResult` /
   `ProbeFailureClass` types. The CLI's `--stuck` closure mints the SAME errors `get()` does, so a
   broken copy speaks with one voice on every surface. (Issue #558.)
@@ -79,18 +138,27 @@ await getWorkflowForRun(store, run, { retryVerb: 'retry', verb: 'retry' });
 
 ### Changed
 
-- **Abandoning a run releases every claim.** `realm run abandon`, `abandon_run` and
+- **BREAKING —** **Abandoning a run releases every claim, and its recorded reason changed.**
+  See **Upgrading**. `realm run abandon`, `abandon_run` and
   `realm run cleanup`'s sweep now write `in_progress_steps: []` and `claims: {}` with the seal. A
   terminal run cannot progress, so a kept claim only ever blocked `realm run purge`: a dead run was
   unpurgeable until its claim aged out. The brake on purging a just-abandoned run is now
   `--older-than` alone — purge may delete its artifacts sooner than before, and purge is still
   dry-run by default. The mode-aware claim rule is unchanged for every other seal. (Issue #558.)
-- **`realm run drain` exits 1 and names the escape when a finalizer was left pending.** It printed
+- **BREAKING —** **`realm run drain --force` exits 1 and names the escape when a finalizer was left
+  pending.** See **Upgrading**. It printed
   `Drained run '<id>'.` and exited 0, so `realm run list --stuck` re-offered the very same `drain`
   command forever with no way out named. It now reports how many finalizers stayed pending, names
   them, prints `realm run drain <id> --void <name> --force` once per finalizer, and exits 1. A pass
   that had nothing to run says `has no pending finalizers. Nothing to drain.` and exits 0 —
-  `Drained run` now means a drain happened. `--all`'s batch summary is unchanged. (Issue #558.)
+  `Drained run` now means a drain happened. `--all`'s batch summary is unchanged. The dry run (the
+  default) now reads the registered copy and predicts, per pending finalizer, what `--force` will
+  do: it is `actionable`, or `NOT declared by the workflow definition`, or `unknown` because the
+  copy could not be read, or held under a live lease, or rank-blocked behind one. Only the first is
+  something `--force` will run. The two it can never run — one the definition does not declare, one
+  whose copy could not be read — carry their own `--void` command inline; a held lease and a
+  rank-block are transient and do not. The closing line forks three ways so it never invites a
+  `--force` that would refuse or drain nothing. (Issue #558.)
 
 - **BREAKING —** `getWorkflowForRun` takes a full `RunRecord`. See **Upgrading**. (Issue #558.)
 - `realm workflow list`'s ⚠ census prints ONE sentence per CLASS instead of one
@@ -103,7 +171,13 @@ await getWorkflowForRun(store, run, { retryVerb: 'retry', verb: 'retry' });
   clean line and exit 1, with `--json` parity, where it crashed with a stack trace — and no longer
   follows it with the not-found pointer (`Registered workflows: realm workflow list`, whose table
   omits such a copy): it says the registry holds an entry for that id and that `workflow list` counts it under "could not be read", then names the repair act. When the registry directory itself cannot be read it names the act alone — realm read nothing, so it claims nothing about the copy. Every repair clause on every surface names the act for its class — make the file readable (`chmod u+r`), remove the directory (`rm -r`) then re-register, make the registry directory readable and searchable (`chmod u+rx` — "readable" alone left a directory unsearchable and the same screen came back), re-register from source, or — for a file nothing ever registered from a source — remove it (`rm`; a walker looped on a junk file whose only offered act needed a source that never existed) — where three classes said `fix <path>`. `realm run inspect` shows the sentence once — in the run-health finding on a live run, in the definition line on a terminal one — not twice, and keeps the run's recorded workflow version in its `Workflow:` line when the copy cannot be read; the finding's reason is the composed sentence itself, no longer prefixed by a restatement of it; a live gate-less run's sentence states the consequence (`This run cannot continue until the copy is repaired.`) instead of repeating that the workflow cannot be read. (Issue #558.)
-- The MCP `list_workflows` tool names every registered copy it could not read (`unreadable[]` with the file, class, errno where the OS gave one, the reason and the repair act, plus `warnings` carrying the count) and withdraws its "use create_workflow" hint while any is unreadable — it returned an empty, healthy-looking list with that hint over a `chmod 000` copy, steering an agent into creating a duplicate of a workflow that still existed; an unreadable registry directory is now a typed refusal (`status: error`, `STATE_WORKFLOW_UNREADABLE`, `error_details {class, errno, path}`). `workflow list --json`'s `unreadable[]` entries carry the same `repair` field. (Issue #558.)
+- **BREAKING —** `handleListWorkflows` resolves `{ status: 'error', workflows: [] }` where an
+  unreadable registry directory used to make it reject, so a `try`/`catch` no longer fires; branch
+  on `status` before trusting `workflows`. Its return type is now the `ListWorkflowsResult` union.
+  Reachable through the published
+  `@sensigo/realm-mcp/dist/tools/*.js` subpath. See **Upgrading**. (Issue #558.)
+
+- **BREAKING —** The MCP `list_workflows` tool envelope changed shape (see **Upgrading**). It names every registered copy it could not read (`unreadable[]` with the file, class, errno where the OS gave one, the reason and the repair act, plus `warnings` carrying the count) and withdraws its "use create_workflow" hint while any is unreadable — it returned an empty, healthy-looking list with that hint over a `chmod 000` copy, steering an agent into creating a duplicate of a workflow that still existed; an unreadable registry directory is now a typed refusal (`status: error`, `STATE_WORKFLOW_UNREADABLE`, `error_details {class, errno, path}`). `workflow list --json`'s `unreadable[]` entries carry the same `repair` field. (Issue #558.)
 
 ### Fixed
 
@@ -117,12 +191,19 @@ await getWorkflowForRun(store, run, { retryVerb: 'retry', verb: 'retry' });
     deriving the real one: a run persisted `completed` but not terminal was refused as
     `not terminal (phase: 'completed')`. Both now render the derived phase.
   - `realm run drain`'s non-terminal sentences named no way out; they now end
-    `To end the run: realm run abandon <run-id>.` (dry-run exits 0, `--force` exits 1 as before).
+    `To end the run: realm run abandon <run-id>.` — or, for a run holding a live gate (which
+    `abandon` refuses), a sentence naming `realm run respond` with the gate id and the eligible
+    choices first, then `realm run abandon`. A run that goes non-terminal mid-drain gets no
+    disposal clause: that is a live writer advancing it, not a disposal case. (dry-run exits 0,
+    `--force` exits 1 as before).
   - `realm run abandon` printed `'abort' is the graceful path` — there is no `realm run abort`
     verb (`error: unknown command 'abort'`). The sentence now names the graceful path that exists:
     a workflow's own guard abort (`abort_unless`), which runs finalizers.
   - `realm run abandon` told a CLI operator to `use start_run` — an MCP tool. It now names
-    `realm workflow run <path-to-workflow.yaml>` and says where the abandoned run's evidence stays.
+    `realm workflow run <the directory it was registered from>` — read from the registered copy's
+    `source_dir`, with this run's params appended verbatim and shell-quoted, so the printed command
+    starts an equivalent run as printed — and says where the abandoned run's evidence stays. When
+    `source_dir` is absent it prints a placeholder naming the workflow.yaml instead.
   - `realm run abandon` recorded `Reason: Abandoned via abandon_run` for a CLI kill — the MCP
     tool's name on a run the MCP tool never touched. Each surface now supplies its own reason
     (`Abandoned via realm run abandon` / `Abandoned via abandon_run`); core's neutral default for
@@ -158,7 +239,9 @@ await getWorkflowForRun(store, run, { retryVerb: 'retry', verb: 'retry' });
 - `realm run inspect`'s `(workflow definition not found — showing run record only)` no longer
   claims "not found" for a copy that exists: the line composes through the same helper as every
   other surface and carries the class, the way out and the repair —
-  `(showing run record only — <the composed sentence>)`. (Issue #558.)
+  `(showing run record only — <the composed sentence>)` on a terminal run, or
+  `(showing run record only — the reason is in Run Health above)` on a live one, where the
+  run-health finding already carries it. (Issue #558.)
 - `realm run drain` no longer prints a missing or unreadable workflow copy under
   `Error loading extensions:` — nothing about extensions had failed; the copy's own composed
   sentence prints on its own line (`✗ <run-id>: …` in batch mode), and only a project-extensions
