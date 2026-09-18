@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
+## [0.45.0] — 2026-09-19
 
 Five BREAKING changes — one compile-time, four at runtime. Realm is pre-1.0, so breaking changes
 ship in a minor; read **Upgrading** before you take this version. The runtime four matter most if
