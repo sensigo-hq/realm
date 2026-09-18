@@ -9,8 +9,9 @@ All notable changes to this project are documented here.
 Five BREAKING changes — one compile-time, four at runtime. Realm is pre-1.0, so breaking changes
 ship in a minor; read **Upgrading** before you take this version. The runtime four matter most if
 you script realm or drive it from an agent: `realm run drain --force` now exits 1 where it exited
-0, abandoning a run now releases its claims, one call that used to be refused now succeeds, and
-another that used to reject now resolves.
+0; abandoning a run releases its claims, and abandons a phantom-gate run it used to refuse;
+`handleListWorkflows` resolves an error object where it used to reject; and the `list_workflows`
+MCP envelope changed shape.
 
 The release closes a disposal dead end, in two halves. The first is a class of refusals that were
 telling operators the wrong thing: a run whose registered workflow copy could not be read got one
@@ -172,7 +173,8 @@ warning line on entries that previously crashed it.
   omits such a copy): it says the registry holds an entry for that id and that `workflow list` counts it under "could not be read", then names the repair act. When the registry directory itself cannot be read it names the act alone — realm read nothing, so it claims nothing about the copy. Every repair clause on every surface names the act for its class — make the file readable (`chmod u+r`), remove the directory (`rm -r`) then re-register, make the registry directory readable and searchable (`chmod u+rx` — "readable" alone left a directory unsearchable and the same screen came back), re-register from source, or — for a file nothing ever registered from a source — remove it (`rm`; a walker looped on a junk file whose only offered act needed a source that never existed) — where three classes said `fix <path>`. `realm run inspect` shows the sentence once — in the run-health finding on a live run, in the definition line on a terminal one — not twice, and keeps the run's recorded workflow version in its `Workflow:` line when the copy cannot be read; the finding's reason is the composed sentence itself, no longer prefixed by a restatement of it; a live gate-less run's sentence states the consequence (`This run cannot continue until the copy is repaired.`) instead of repeating that the workflow cannot be read. (Issue #558.)
 - **BREAKING —** `handleListWorkflows` resolves `{ status: 'error', workflows: [] }` where an
   unreadable registry directory used to make it reject, so a `try`/`catch` no longer fires; branch
-  on `status` before trusting `workflows`. Reachable through the published
+  on `status` before trusting `workflows`. Its return type is now the `ListWorkflowsResult` union.
+  Reachable through the published
   `@sensigo/realm-mcp/dist/tools/*.js` subpath. See **Upgrading**. (Issue #558.)
 
 - **BREAKING —** The MCP `list_workflows` tool envelope changed shape (see **Upgrading**). It names every registered copy it could not read (`unreadable[]` with the file, class, errno where the OS gave one, the reason and the repair act, plus `warnings` carrying the count) and withdraws its "use create_workflow" hint while any is unreadable — it returned an empty, healthy-looking list with that hint over a `chmod 000` copy, steering an agent into creating a duplicate of a workflow that still existed; an unreadable registry directory is now a typed refusal (`status: error`, `STATE_WORKFLOW_UNREADABLE`, `error_details {class, errno, path}`). `workflow list --json`'s `unreadable[]` entries carry the same `repair` field. (Issue #558.)
