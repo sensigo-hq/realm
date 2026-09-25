@@ -195,18 +195,44 @@ function formatSummary(value: unknown, maxLength = 120): string {
   return raw.slice(0, maxLength) + chalk.dim('…');
 }
 
+/**
+ * Issue #600 PR 1a — the cache segment. One branch per state, and NO segment at all when `cache` is
+ * absent, because absent means no model call happened: a different fact from "a call happened and the
+ * provider reported nothing". An absent number is never printed as `0`; an OBSERVED zero is, because
+ * an observed zero is a real fact.
+ */
+function formatCache(cache: NonNullable<StepDiagnostics['cache']>): string {
+  const n = cache.requests.length;
+  const reqs = `${n} request${n === 1 ? '' : 's'}`;
+  if (cache.state === 'unobservable') {
+    return `cache: not reported by the provider (${reqs})`;
+  }
+  const sum = (pick: (r: (typeof cache.requests)[number]) => number | undefined): number =>
+    cache.requests.reduce((acc, r) => acc + (pick(r) ?? 0), 0);
+  const wrote = sum((r) => r.cache_creation_input_tokens) + sum((r) => r.cache_write_tokens);
+  const read = sum((r) => r.cache_read_input_tokens);
+  if (cache.state === 'engaged') {
+    return `cache: read ${read} tokens, wrote ${wrote} (${reqs})`;
+  }
+  if (cache.state === 'write_only') {
+    return `cache: wrote ${wrote} tokens, read none (${reqs})`;
+  }
+  return `cache: not engaged, provider reported 0 (${reqs})`;
+}
+
 /** Formats a diagnostics object into a readable string for the inspect output. */
 function formatDiagnostics(diag: StepDiagnostics): string {
   const tokens = `~${diag.input_token_estimate} tokens`;
+  const cache = diag.cache !== undefined ? ` | ${formatCache(diag.cache)}` : '';
   if (diag.precondition_trace.length === 0) {
-    return `${tokens} | no preconditions`;
+    return `${tokens} | no preconditions${cache}`;
   }
   const traceStr = diag.precondition_trace
     .map(
       (t) => `${t.expression} \u2192 ${t.passed ? 'true' : 'false'} (${String(t.resolved_value)})`,
     )
     .join(', ');
-  return `${tokens} | preconditions: ${traceStr}`;
+  return `${tokens} | preconditions: ${traceStr}${cache}`;
 }
 
 /** Applies chalk color to a step status string. */
