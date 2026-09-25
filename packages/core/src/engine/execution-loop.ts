@@ -11,6 +11,7 @@ import type {
   TraceNormalizationSummary,
   PendingGate,
   StructuredOutputMeta,
+  StepDiagnostics,
 } from '../types/run-record.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import { extensionIdentityDiffers } from '../types/extension-identity.js';
@@ -1307,6 +1308,72 @@ async function enactExpiredGateIfDue(
  * and timeout support, captures evidence, persists the updated run record, and returns
  * a ResponseEnvelope containing the outcome and the next eligible actions.
  */
+/**
+ * Issue #600 PR 1a — the ONE mint for every `StepDiagnostics` literal `executeStep` writes.
+ *
+ * DISCRIMINATED ON PURPOSE. The three settle sites differ BY DESIGN, not by accident, and a
+ * flattening mint would change behaviour:
+ *   - `attempt`        — the per-attempt dispatch capture. `validation_rejections` is
+ *                        CONDITIONAL: only on a SUCCESS settle, and only when a positive count
+ *                        accrued in PRIOR invocations (issue #220).
+ *   - `default_settle` — the declared fail-open bypass. `settled_by_default: true` AND
+ *                        `validation_rejections` UNCONDITIONALLY, from the exhaustion details —
+ *                        a DIFFERENT source from the attempt arm's.
+ *   - `exhausted`      — the terminalization bypass. `validation_rejections` unconditionally, and
+ *                        NO `settled_by_default` (issue #220 PR-2: absent, never `false`).
+ *
+ * The `structured_output` conjunct — including its external-agent stamp [Rv6 + R2-3] — was
+ * copy-pasted verbatim at all three sites and now appears ONCE.
+ */
+type StepDiagnosticsArm =
+  | { kind: 'attempt'; attemptFailed: boolean; accruedRejections: number | undefined }
+  | { kind: 'default_settle'; rejections: number }
+  | { kind: 'exhausted'; rejections: number };
+
+function buildStepDiagnostics(
+  arm: StepDiagnosticsArm,
+  facts: {
+    inputTokenEstimate: number;
+    preconditionTrace: StepDiagnostics['precondition_trace'];
+    /** The step's own definition — the ONE place `structured_output` is read on this path. */
+    stepDef: StepDefinition | undefined;
+    /** `options.stepMeta?.structuredOutput` — what the driver reported, if anything. */
+    structuredOutputMeta: StructuredOutputMeta | undefined;
+  },
+): StepDiagnostics {
+  const diag: StepDiagnostics = {
+    input_token_estimate: facts.inputTokenEstimate,
+    precondition_trace: facts.preconditionTrace,
+  };
+  if (arm.kind === 'attempt') {
+    // issue #220: success-settle stamp — a free diagnostic proving this step needed N prior
+    // rejections before finally succeeding ("succeeded after N rejections"). Only stamped on a
+    // SUCCESS settle. The count is the Step-1 read, so it reflects rejections accrued in PRIOR
+    // invocations only — a rejection in THIS invocation never reaches this call site
+    // (countRejection only runs from the Step 2b/2c catch, which always either returns or falls
+    // through toward terminalization, never toward dispatch).
+    if (!arm.attemptFailed && arm.accruedRejections !== undefined && arm.accruedRejections > 0) {
+      diag.validation_rejections = arm.accruedRejections;
+    }
+  } else {
+    if (arm.kind === 'default_settle') diag.settled_by_default = true;
+    diag.validation_rejections = arm.rejections;
+  }
+  // issue #236: the attempt's structured_output disclosure. External-agent stamp [Rv6 + R2-3]: a
+  // step that DECLARED structured_output but arrives with no options.stepMeta.structuredOutput at
+  // all was driven by something other than run-agent (e.g. an external agent calling execute_step
+  // over MCP directly) — realm cannot know whether strict was honored, so it says so rather than
+  // staying silent.
+  if (facts.stepDef?.structured_output !== undefined) {
+    diag.structured_output = facts.structuredOutputMeta ?? {
+      requested: true,
+      sent: false,
+      downgrade_reason: 'external_agent',
+    };
+  }
+  return diag;
+}
+
 export async function executeStep(
   store: RunStore,
   definition: WorkflowDefinition,
@@ -2537,33 +2604,19 @@ export async function executeStep(
         input: effectiveInput,
         output: attemptOutput,
         ...(attemptError !== null ? { error: attemptError.message } : {}),
-        diagnostics: {
-          input_token_estimate: inputTokenEstimate,
-          precondition_trace: preconditionTrace,
-          // issue #220: success-settle stamp — a free diagnostic proving this step needed N prior
-          // rejections before finally succeeding ("succeeded after N rejections"). Only stamped on
-          // a SUCCESS settle. `run` here is the Step-1 read, so this reflects rejections accrued
-          // in PRIOR invocations only — a rejection in THIS invocation never reaches this call site
-          // (countRejection only runs from the Step 2b/2c catch, which always either returns or
-          // falls through toward terminalization, never toward dispatch).
-          ...(attemptError === null && (run.validation_rejections?.[options.command] ?? 0) > 0
-            ? { validation_rejections: run.validation_rejections![options.command] }
-            : {}),
-          // issue #236: the attempt's structured_output disclosure. External-agent stamp [Rv6 +
-          // R2-3]: a step that DECLARED structured_output but arrives with no
-          // options.stepMeta.structuredOutput at all was driven by something other than
-          // run-agent (e.g. an external agent calling execute_step over MCP directly) — realm
-          // cannot know whether strict was honored, so it says so rather than staying silent.
-          ...(stepDef?.structured_output !== undefined
-            ? {
-                structured_output: options.stepMeta?.structuredOutput ?? {
-                  requested: true,
-                  sent: false,
-                  downgrade_reason: 'external_agent',
-                },
-              }
-            : {}),
-        },
+        diagnostics: buildStepDiagnostics(
+          {
+            kind: 'attempt',
+            attemptFailed: attemptError !== null,
+            accruedRejections: run.validation_rejections?.[options.command],
+          },
+          {
+            inputTokenEstimate,
+            preconditionTrace,
+            stepDef,
+            structuredOutputMeta: options.stepMeta?.structuredOutput,
+          },
+        ),
         ...(profileData !== undefined
           ? { agentProfile: profile!, agentProfileHash: profileData.content_hash }
           : {}),
@@ -2681,23 +2734,15 @@ export async function executeStep(
       completedAt: settledAt,
       input: effectiveInput,
       output: defaultOutput,
-      diagnostics: {
-        input_token_estimate: inputTokenEstimate,
-        precondition_trace: preconditionTrace,
-        settled_by_default: true,
-        validation_rejections: exhaustion!.details['rejections'] as number,
-        // issue #236: same disclosure/external-agent-stamp rule as the real dispatch-loop
-        // capture above.
-        ...(stepDef?.structured_output !== undefined
-          ? {
-              structured_output: options.stepMeta?.structuredOutput ?? {
-                requested: true,
-                sent: false,
-                downgrade_reason: 'external_agent',
-              },
-            }
-          : {}),
-      },
+      diagnostics: buildStepDiagnostics(
+        { kind: 'default_settle', rejections: exhaustion!.details['rejections'] as number },
+        {
+          inputTokenEstimate,
+          preconditionTrace,
+          stepDef,
+          structuredOutputMeta: options.stepMeta?.structuredOutput,
+        },
+      ),
       ...(defaultProfileData !== undefined
         ? { agentProfile: defaultProfile!, agentProfileHash: defaultProfileData.content_hash }
         : {}),
@@ -2752,22 +2797,15 @@ export async function executeStep(
       input: effectiveInput,
       output: {},
       error: exhaustion!.message,
-      diagnostics: {
-        input_token_estimate: inputTokenEstimate,
-        precondition_trace: preconditionTrace,
-        validation_rejections: exhaustion!.details['rejections'] as number,
-        // issue #236: same disclosure/external-agent-stamp rule as the real dispatch-loop
-        // capture above.
-        ...(stepDef?.structured_output !== undefined
-          ? {
-              structured_output: options.stepMeta?.structuredOutput ?? {
-                requested: true,
-                sent: false,
-                downgrade_reason: 'external_agent',
-              },
-            }
-          : {}),
-      },
+      diagnostics: buildStepDiagnostics(
+        { kind: 'exhausted', rejections: exhaustion!.details['rejections'] as number },
+        {
+          inputTokenEstimate,
+          preconditionTrace,
+          stepDef,
+          structuredOutputMeta: options.stepMeta?.structuredOutput,
+        },
+      ),
       ...(exhaustedProfileData !== undefined
         ? { agentProfile: exhaustedProfile!, agentProfileHash: exhaustedProfileData.content_hash }
         : {}),

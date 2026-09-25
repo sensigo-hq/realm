@@ -357,8 +357,9 @@ const W_VALIDATION_EXHAUSTION_READ: StepKeyWitness = {
 };
 const W_STRUCTURED_OUTPUT_READ: StepKeyWitness = {
   file: EL,
-  pattern: '...(stepDef?.structured_output !== undefined',
-  count: 3, // the attempt disclosure is minted at all three seal shapes (census lane 2)
+  pattern: "if (facts.stepDef?.structured_output !== undefined) {",
+  // issue #600 PR 1a: the attempt disclosure is minted for all three seal shapes, but the key is
+  // now read ONCE — inside `buildStepDiagnostics`, the single mint the three shapes share.
 };
 const W_TIMEOUT_ENFORCE: StepKeyWitness = {
   file: EL,
