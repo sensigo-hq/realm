@@ -19,6 +19,7 @@ import {
 } from './execution-loop.js';
 import { deriveDefaultedSteps } from './defaulted-steps.js';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { WorkflowError } from '../types/workflow-error.js';
 import type { StepDispatcher } from './execution-loop.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import {
@@ -82,25 +83,58 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
 
   describe('D3(b) — the two discriminating cells', () => {
     it('an ATTEMPT snapshot for a FAILED attempt with accrued rejections carries NEITHER validation_rejections NOR settled_by_default', async () => {
-      const def = makeVxDef();
+      // Three prior shapes were tried and each passed for the WRONG reason before this one was
+      // verified genuinely discriminating (owned in the report): a throwing dispatcher with no
+      // retry config persists no evidence at all (no retry ⇒ terminal, buildStepDiagnostics never
+      // called — confirmed by a temporary trace); a non-exhausting output-schema rejection (the
+      // `validation-exhaustion.test.ts` shape) ALSO persists no evidence, only a bump-and-report
+      // counter; a throw configured with `retry` but NOT wrapped as a RETRYABLE `WorkflowError`
+      // still terminalizes on attempt 1 (a plain `Error` is caught and reclassified
+      // `retryable: false`, per execution-loop.ts's own catch). The genuinely reachable case,
+      // matching `reliability.test.ts`'s own proven "retry succeeds on 2nd attempt" shape: an
+      // `execution: 'auto'` step, `retry.max_attempts >= 2`, attempt 1 throws a RETRYABLE
+      // WorkflowError, attempt 2 succeeds — `envelope.evidence[0]` is attempt 1's FAILED snapshot.
+      const def: WorkflowDefinition = {
+        id: 'sd-cache-retry-wf',
+        name: 'SD Cache Retry WF',
+        version: 1,
+        steps: {
+          draft: {
+            description: 'Draft',
+            execution: 'auto',
+            depends_on: [],
+            retry: { max_attempts: 2, backoff: 'fixed', base_delay_ms: 1 },
+          } as unknown as StepDefinition,
+        },
+      };
       const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
       await store.update({ ...run, validation_rejections: { draft: 3 } });
-      // A dispatcher that THROWS — the attempt fails, so the conditional's other half
-      // (`attemptError === null`) must gate `validation_rejections` off, and `settled_by_default`
-      // must never appear on any `attempt`-kind snapshot at all.
-      const throwingDispatcher: StepDispatcher = async () => {
-        throw new Error('handler threw');
+      let calls = 0;
+      const flakyDispatcher: StepDispatcher = async () => {
+        calls++;
+        if (calls === 1) {
+          throw new WorkflowError('transient failure', {
+            code: 'ENGINE_HANDLER_FAILED',
+            category: 'ENGINE',
+            agentAction: 'stop',
+            retryable: true,
+          });
+        }
+        return { ok: true };
       };
       const envelope = await executeStep(store, def, {
         runId: run.id,
         command: 'draft',
-        input: INVALID_OUTPUT,
-        dispatcher: throwingDispatcher,
+        input: {},
+        dispatcher: flakyDispatcher,
       });
-      expect(envelope.status).toBe('error');
-      const snap = envelope.evidence[0];
-      expect(snap?.diagnostics?.validation_rejections).toBeUndefined();
-      expect(snap?.diagnostics?.settled_by_default).toBeUndefined();
+      expect(envelope.status).toBe('ok');
+      expect(envelope.evidence).toHaveLength(2);
+      const failedAttempt = envelope.evidence[0];
+      expect(failedAttempt?.attempt).toBe(1);
+      expect(failedAttempt?.status).toBe('error');
+      expect(failedAttempt?.diagnostics?.validation_rejections).toBeUndefined();
+      expect(failedAttempt?.diagnostics?.settled_by_default).toBeUndefined();
     });
 
     it('an EXHAUSTED snapshot carries validation_rejections but NOT settled_by_default, and defaulted_steps never names the step', async () => {
