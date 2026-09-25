@@ -196,14 +196,39 @@ function formatSummary(value: unknown, maxLength = 120): string {
 }
 
 /**
- * Issue #600 PR 1a — the MEASURED prompt size, when the provider reported one.
+ * Issue #600 PR 1a — the MEASURED prompt size: the provider's own three-term sum, not one term of it.
  *
- * Taken from the FIRST request only, never summed: requests after the first re-send the same shared
- * prefix, so a sum answers no question anyone asks and overstates the prompt several-fold. `undefined`
- * when no request reported `input_tokens` — realm then says nothing rather than guessing.
+ * `input_tokens` alone is NOT the prompt. Anthropic's own documentation, vendored in this repo at
+ * `plans/issue-558/axes/sources/framework-decisions/anthropic-prompt-caching.md:3219`:
+ *   "`input_tokens` does NOT represent all input tokens - only the portion after your last cache
+ *    breakpoint. If you have cached content, `input_tokens` will typically be much smaller than your
+ *    total input."
+ * and the formula it gives twice (`:686`, `:3212`):
+ *   total_input_tokens = cache_read_input_tokens + cache_creation_input_tokens + input_tokens
+ *
+ * Rendering the first term alone is correct only while nothing places a breakpoint, and it SHRINKS as
+ * caching starts working — on a fully warm call it would report a prompt of 0 next to a cache read of
+ * 1150. The number an author needs is the one that stays put whether the cache hit or missed.
+ *
+ * FIRST REQUEST only, never summed across requests: later requests in one step re-send the same prefix,
+ * so a cross-request sum overstates the prompt several-fold and answers no question anyone asks.
+ * `undefined` when the first request reported none of the three — realm then says nothing.
  */
 function measuredPromptTokens(cache: NonNullable<StepDiagnostics['cache']>): number | undefined {
-  return cache.requests[0]?.input_tokens;
+  const first = cache.requests[0];
+  if (first === undefined) return undefined;
+  const terms = [
+    first.input_tokens,
+    first.cache_read_input_tokens,
+    first.cache_creation_input_tokens,
+  ];
+  if (terms.every((t) => t === undefined)) return undefined;
+  return terms.reduce<number>((acc, t) => acc + (t ?? 0), 0);
+}
+
+/** Issue #600 PR 1a — the provenance word, READ from the field rather than hardcoded beside it. */
+function basisWord(basis: NonNullable<StepDiagnostics['cache']>['basis']): string {
+  return basis === 'provider_reported' ? 'provider-reported' : String(basis);
 }
 
 /**
@@ -212,35 +237,36 @@ function measuredPromptTokens(cache: NonNullable<StepDiagnostics['cache']>): num
  * provider reported nothing". An absent number is never printed as `0`; an OBSERVED zero is, because
  * an observed zero is a real fact.
  *
- * Every branch names its provenance. The numbers here are the only MEASURED quantities on this line —
- * `input_token_estimate` beside them is realm's own chars/4 guess about a DIFFERENT quantity (the
- * step's resolved input payload, not the prompt the provider counted), so leaving either unlabelled
- * invites the reader to compare them. A single-request step is never phrased as a loss: one call
- * cannot read what it writes, so "wrote, read none" there is the normal first call, not waste.
+ * Every branch names its provenance, and the word comes from `basis` so a future member cannot be
+ * misreported as the provider's. Multi-request totals SAY they are totals: the counters are summed
+ * across the step's requests while the prompt size beside them is the first request's, and two numbers
+ * of different scope on one line must each declare which.
+ *
+ * This segment states facts and never interprets them. It carries no excuse for a step that wrote and
+ * did not read: whether that is a first call or wasted money depends on what the rest of the RUN did,
+ * which this function cannot see — a step's own request count says nothing about prefixes the run
+ * already paid for. Judging it is PR 2's finding, on the run's evidence.
  */
 function formatCache(cache: NonNullable<StepDiagnostics['cache']>): string {
   const n = cache.requests.length;
-  const reqs = `${n} request${n === 1 ? '' : 's'}`;
+  const scope = n === 1 ? '1 request' : `totals across ${n} requests`;
   if (cache.state === 'unobservable') {
     // No per-request detail either: realm does not know HOW MANY requests were billed, and printing
     // "(0 requests)" for a call that demonstrably happened would fabricate the very kind of number
     // this field exists to stop fabricating.
     return n === 0
-      ? 'cache: not reported by the provider'
-      : `cache: not reported by the provider (${reqs})`;
+      ? `cache: not reported by the provider`
+      : `cache: not reported by the provider (${scope})`;
   }
   const sum = (pick: (r: (typeof cache.requests)[number]) => number | undefined): number =>
     cache.requests.reduce((acc, r) => acc + (pick(r) ?? 0), 0);
   const wrote = sum((r) => r.cache_creation_input_tokens) + sum((r) => r.cache_write_tokens);
   const read = sum((r) => r.cache_read_input_tokens);
-  if (cache.state === 'engaged') {
-    return `cache: read ${read}, wrote ${wrote} (provider-reported, ${reqs})`;
+  const prov = basisWord(cache.basis);
+  if (cache.state === 'never_engaged') {
+    return `cache: not engaged, ${prov} 0 (${scope})`;
   }
-  if (cache.state === 'write_only') {
-    const tail = n === 1 ? 'nothing to read yet on a first request' : 'read none';
-    return `cache: wrote ${wrote}, ${tail} (provider-reported, ${reqs})`;
-  }
-  return `cache: not engaged, provider reported 0 (${reqs})`;
+  return `cache: read ${read}, wrote ${wrote} (${prov}, ${scope})`;
 }
 
 /** Formats a diagnostics object into a readable string for the inspect output. */
@@ -251,7 +277,8 @@ function formatDiagnostics(diag: StepDiagnostics): string {
   // real run they differ by ~100x, which is not an estimation error: they do not measure the same thing.
   const tokens = `~${diag.input_token_estimate} tokens (estimate)`;
   const measured = diag.cache !== undefined ? measuredPromptTokens(diag.cache) : undefined;
-  const prompt = measured !== undefined ? ` | ${measured} prompt tokens (measured)` : '';
+  const prompt =
+    measured !== undefined ? ` | ${measured} prompt tokens (measured, first request)` : '';
   const cache = diag.cache !== undefined ? ` | ${formatCache(diag.cache)}` : '';
   if (diag.precondition_trace.length === 0) {
     return `${tokens}${prompt} | no preconditions${cache}`;
