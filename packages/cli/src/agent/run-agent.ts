@@ -26,7 +26,7 @@ import {
   type TraceBufferStore,
   type StructuredOutputMeta,
 } from '@sensigo/realm';
-import type { RunRecord, WorkflowRegistrar } from '@sensigo/realm';
+import type { RunRecord, WorkflowRegistrar, UsageRecord } from '@sensigo/realm';
 import type { LlmProvider } from './providers/llm-provider.js';
 import {
   sanitizeError,
@@ -527,6 +527,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // issue #236: the resolved structuredOutput meta for THIS attempt's callStep call — reset
         // every iteration alongside toolCallsForMeta, threaded into stepMeta below.
         let structuredOutputMetaForStep: StructuredOutputMeta | undefined;
+        // issue #600 PR 1a — what the provider said this step's wire requests cost.
+        let usageForStep: UsageRecord[] | undefined;
         let result: Awaited<ReturnType<typeof executeChain>>;
         let repairsUsed = 0;
         let lastRejection: { kind: 'output' | 'input'; summary: string } | undefined;
@@ -1047,13 +1049,14 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // synthesis rule (design §5 [R2-3]) can distinguish a genuinely-absent meta
                   // (third-party provider ⇒ provider_unsupported) from a gate/sticky decision
                   // that never even attempted a call.
-                  const { output, meta } = await deps.provider.callStepWithMeta(
+                  const { output, meta, usage } = await deps.provider.callStepWithMeta(
                     promptForAttempt,
                     inputSchema,
                     agentProfileInstructions,
                     { structuredOutputStrict: structuredOutputPlan.send, llmClock },
                   );
                   stepInput = output;
+                  if (usage !== undefined) usageForStep = usage;
                   if (structuredOutputPlan.ineligibleMeta !== undefined) {
                     // Gate-ineligible or sticky — strict was never attempted this call at all.
                     structuredOutputMetaForStep = structuredOutputPlan.ineligibleMeta;
@@ -1089,12 +1092,20 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     };
                   }
                 } else {
-                  stepInput = await deps.provider.callStep(
+                  // issue #600 PR 1a (A3): the bare arm is re-routed through callStepWithMeta so a
+                  // step that declares NO structured_output still reports what its wire requests
+                  // cost. The request is byte-identical — this method's only extra input is
+                  // `structuredOutputStrict`, which is not passed here. `meta` is DELIBERATELY not
+                  // destructured: a third-party provider that overrides callStepWithMeta must not
+                  // be able to stamp a structured_output disclosure on a step that declared none.
+                  const { output, usage } = await deps.provider.callStepWithMeta(
                     promptForAttempt,
                     inputSchema,
                     agentProfileInstructions,
                     { llmClock },
                   );
+                  stepInput = output;
+                  if (usage !== undefined) usageForStep = usage;
                 }
               } catch (err) {
                 // The catch-side sticky-arming block that used to live here is DELETED as dead
@@ -1140,13 +1151,19 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               : {}),
             // issue #236: stepMeta now ALSO passes when structuredOutput exists (previously only
             // passed when toolCalls existed) — the two are independent, either alone must thread.
-            ...(toolCallsForMeta !== undefined || structuredOutputMetaForStep !== undefined
+            // issue #600 PR 1a: `usage` is the THIRD independent member. A cs1-shaped step (no
+            // tools, no structured output) passed NO stepMeta at all before this, so its usage was
+            // computed and dropped right here at the boundary.
+            ...(toolCallsForMeta !== undefined ||
+            structuredOutputMetaForStep !== undefined ||
+            usageForStep !== undefined
               ? {
                   stepMeta: {
                     ...(toolCallsForMeta !== undefined ? { toolCalls: toolCallsForMeta } : {}),
                     ...(structuredOutputMetaForStep !== undefined
                       ? { structuredOutput: structuredOutputMetaForStep }
                       : {}),
+                    ...(usageForStep !== undefined ? { usage: usageForStep } : {}),
                   },
                 }
               : {}),

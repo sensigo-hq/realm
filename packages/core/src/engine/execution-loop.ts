@@ -12,6 +12,8 @@ import type {
   PendingGate,
   StructuredOutputMeta,
   StepDiagnostics,
+  UsageRecord,
+  StepCacheDetail,
 } from '../types/run-record.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import { extensionIdentityDiffers } from '../types/extension-identity.js';
@@ -101,6 +103,26 @@ export type StepDispatcher = (
   signal?: AbortSignal,
 ) => Promise<Record<string, unknown>>;
 
+/**
+ * What the DRIVER observed about this step's attempt, threaded into every evidence-capture site.
+ *
+ * `toolCalls` — produced by callStepWithTools. Absent on the callStep path (no tools configured).
+ * Present (possibly []) when tools were declared.
+ *
+ * `structuredOutput` (issue #236) — the caller's own `structured_output: 'strict'` attempt
+ * disclosure for THIS attempt.
+ *
+ * `usage` (issue #600) — what the provider said each WIRE REQUEST cost, in wire order.
+ *
+ * The three are INDEPENDENT: any one alone must still cause `stepMeta` to be passed. Named (not
+ * inlined twice) so `ExecuteStepOptions` and `ExecuteChainOptions` cannot drift apart.
+ */
+export interface StepMeta {
+  toolCalls?: ToolCallRecord[];
+  structuredOutput?: StructuredOutputMeta;
+  usage?: UsageRecord[];
+}
+
 export interface ExecuteStepOptions {
   runId: string;
   command: string;
@@ -111,16 +133,8 @@ export interface ExecuteStepOptions {
    * When omitted, the engine uses the built-in default registry (includes `FileSystemAdapter`).
    */
   registry?: ExtensionRegistry;
-  /**
-   * Tool calls produced by callStepWithTools for this step.
-   * Absent on the callStep path (no tools configured).
-   * Present (possibly []) when tools were declared — threads through to captureEvidence.
-   *
-   * `structuredOutput` (issue #236): the caller's own `structured_output: 'strict'` attempt
-   * disclosure for THIS attempt — threads into the diagnostics literal at every evidence-capture
-   * site. Independent of `toolCalls` (either alone must still cause `stepMeta` to be passed).
-   */
-  stepMeta?: { toolCalls?: ToolCallRecord[]; structuredOutput?: StructuredOutputMeta };
+  /** @see StepMeta */
+  stepMeta?: StepMeta;
   /**
    * Optional agent-submitted trace entries for this step.
    * Silently dropped for non-agent steps. When present on agent steps, the
@@ -186,16 +200,8 @@ export interface ExecuteChainOptions {
   dispatcher: StepDispatcher;
   /** @see ExecuteStepOptions.registry */
   registry?: ExtensionRegistry;
-  /**
-   * Tool calls produced by callStepWithTools for this step.
-   * Absent on the callStep path (no tools configured).
-   * Present (possibly []) when tools were declared — threads through to captureEvidence.
-   *
-   * `structuredOutput` (issue #236): the caller's own `structured_output: 'strict'` attempt
-   * disclosure for THIS attempt — threads into the diagnostics literal at every evidence-capture
-   * site. Independent of `toolCalls` (either alone must still cause `stepMeta` to be passed).
-   */
-  stepMeta?: { toolCalls?: ToolCallRecord[]; structuredOutput?: StructuredOutputMeta };
+  /** @see StepMeta */
+  stepMeta?: StepMeta;
   /** @see ExecuteStepOptions.trace */
   trace?: AgentTraceEntry[];
   /** @see ExecuteStepOptions.traceBufferStore */
@@ -1339,6 +1345,8 @@ function buildStepDiagnostics(
     stepDef: StepDefinition | undefined;
     /** `options.stepMeta?.structuredOutput` — what the driver reported, if anything. */
     structuredOutputMeta: StructuredOutputMeta | undefined;
+    /** `options.stepMeta?.usage` — one entry per wire request. Absent ⇒ NO model call happened. */
+    usage: UsageRecord[] | undefined;
   },
 ): StepDiagnostics {
   const diag: StepDiagnostics = {
@@ -1371,7 +1379,44 @@ function buildStepDiagnostics(
       downgrade_reason: 'external_agent',
     };
   }
+  // issue #600 PR 1a: PRESENT with `state: 'unobservable'` when a model call happened and nothing
+  // was observed; ABSENT when no model call happened at all. Different facts, never collapsed.
+  if (facts.usage !== undefined) {
+    diag.cache = deriveCacheDetail(facts.usage);
+  }
   return diag;
+}
+
+/**
+ * Issue #600 PR 1a — the per-step roll-up over one step's wire requests. The counters fork THREE
+ * ways, not two (Anthropic types both `number | null`):
+ *   - either counter **> 0** on any request ⇒ observed engagement;
+ *   - both **0** on every request ⇒ `never_engaged` — an observed zero is a real fact;
+ *   - **absent** everywhere ⇒ `unobservable`, `basis: 'unobservable'`. NEVER a zero.
+ * `write_only` is the step-level roll-up: some request wrote, none read.
+ */
+export function deriveCacheDetail(requests: UsageRecord[]): StepCacheDetail {
+  let sawCounter = false;
+  let wrote = false;
+  let read = false;
+  for (const r of requests) {
+    if (r.cache_creation_input_tokens !== undefined) {
+      sawCounter = true;
+      if (r.cache_creation_input_tokens > 0) wrote = true;
+    }
+    if (r.cache_write_tokens !== undefined) {
+      sawCounter = true;
+      if (r.cache_write_tokens > 0) wrote = true;
+    }
+    if (r.cache_read_input_tokens !== undefined) {
+      sawCounter = true;
+      if (r.cache_read_input_tokens > 0) read = true;
+    }
+  }
+  if (!sawCounter) return { state: 'unobservable', basis: 'unobservable', requests };
+  if (read) return { state: 'engaged', basis: 'provider_reported', requests };
+  if (wrote) return { state: 'write_only', basis: 'provider_reported', requests };
+  return { state: 'never_engaged', basis: 'provider_reported', requests };
 }
 
 export async function executeStep(
@@ -2615,6 +2660,7 @@ export async function executeStep(
             preconditionTrace,
             stepDef,
             structuredOutputMeta: options.stepMeta?.structuredOutput,
+            usage: options.stepMeta?.usage,
           },
         ),
         ...(profileData !== undefined
@@ -2741,6 +2787,7 @@ export async function executeStep(
           preconditionTrace,
           stepDef,
           structuredOutputMeta: options.stepMeta?.structuredOutput,
+          usage: options.stepMeta?.usage,
         },
       ),
       ...(defaultProfileData !== undefined
@@ -2804,6 +2851,7 @@ export async function executeStep(
           preconditionTrace,
           stepDef,
           structuredOutputMeta: options.stepMeta?.structuredOutput,
+          usage: options.stepMeta?.usage,
         },
       ),
       ...(exhaustedProfileData !== undefined
