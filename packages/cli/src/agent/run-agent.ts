@@ -1056,7 +1056,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     { structuredOutputStrict: structuredOutputPlan.send, llmClock },
                   );
                   stepInput = output;
-                  if (usage !== undefined) usageForStep = usage;
+                  // issue #600 PR 1a: `?? []` is load-bearing. A model call HAPPENED, so the
+                  // record must say `unobservable`, not stay silent — absent `cache` means no
+                  // call at all (a handler step), which is a different fact and the type says so.
+                  // A provider that reports nothing (the base default, any third-party module)
+                  // would otherwise be indistinguishable from a step that never called a model.
+                  usageForStep = usage ?? [];
                   if (structuredOutputPlan.ineligibleMeta !== undefined) {
                     // Gate-ineligible or sticky — strict was never attempted this call at all.
                     structuredOutputMetaForStep = structuredOutputPlan.ineligibleMeta;
@@ -1105,7 +1110,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     { llmClock },
                   );
                   stepInput = output;
-                  if (usage !== undefined) usageForStep = usage;
+                  // issue #600 PR 1a: `?? []` is load-bearing. A model call HAPPENED, so the
+                  // record must say `unobservable`, not stay silent — absent `cache` means no
+                  // call at all (a handler step), which is a different fact and the type says so.
+                  // A provider that reports nothing (the base default, any third-party module)
+                  // would otherwise be indistinguishable from a step that never called a model.
+                  usageForStep = usage ?? [];
                 }
               } catch (err) {
                 // The catch-side sticky-arming block that used to live here is DELETED as dead

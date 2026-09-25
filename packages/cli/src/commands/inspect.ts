@@ -196,43 +196,72 @@ function formatSummary(value: unknown, maxLength = 120): string {
 }
 
 /**
+ * Issue #600 PR 1a — the MEASURED prompt size, when the provider reported one.
+ *
+ * Taken from the FIRST request only, never summed: requests after the first re-send the same shared
+ * prefix, so a sum answers no question anyone asks and overstates the prompt several-fold. `undefined`
+ * when no request reported `input_tokens` — realm then says nothing rather than guessing.
+ */
+function measuredPromptTokens(cache: NonNullable<StepDiagnostics['cache']>): number | undefined {
+  return cache.requests[0]?.input_tokens;
+}
+
+/**
  * Issue #600 PR 1a — the cache segment. One branch per state, and NO segment at all when `cache` is
  * absent, because absent means no model call happened: a different fact from "a call happened and the
  * provider reported nothing". An absent number is never printed as `0`; an OBSERVED zero is, because
  * an observed zero is a real fact.
+ *
+ * Every branch names its provenance. The numbers here are the only MEASURED quantities on this line —
+ * `input_token_estimate` beside them is realm's own chars/4 guess about a DIFFERENT quantity (the
+ * step's resolved input payload, not the prompt the provider counted), so leaving either unlabelled
+ * invites the reader to compare them. A single-request step is never phrased as a loss: one call
+ * cannot read what it writes, so "wrote, read none" there is the normal first call, not waste.
  */
 function formatCache(cache: NonNullable<StepDiagnostics['cache']>): string {
   const n = cache.requests.length;
   const reqs = `${n} request${n === 1 ? '' : 's'}`;
   if (cache.state === 'unobservable') {
-    return `cache: not reported by the provider (${reqs})`;
+    // No per-request detail either: realm does not know HOW MANY requests were billed, and printing
+    // "(0 requests)" for a call that demonstrably happened would fabricate the very kind of number
+    // this field exists to stop fabricating.
+    return n === 0
+      ? 'cache: not reported by the provider'
+      : `cache: not reported by the provider (${reqs})`;
   }
   const sum = (pick: (r: (typeof cache.requests)[number]) => number | undefined): number =>
     cache.requests.reduce((acc, r) => acc + (pick(r) ?? 0), 0);
   const wrote = sum((r) => r.cache_creation_input_tokens) + sum((r) => r.cache_write_tokens);
   const read = sum((r) => r.cache_read_input_tokens);
   if (cache.state === 'engaged') {
-    return `cache: read ${read} tokens, wrote ${wrote} (${reqs})`;
+    return `cache: read ${read}, wrote ${wrote} (provider-reported, ${reqs})`;
   }
   if (cache.state === 'write_only') {
-    return `cache: wrote ${wrote} tokens, read none (${reqs})`;
+    const tail = n === 1 ? 'nothing to read yet on a first request' : 'read none';
+    return `cache: wrote ${wrote}, ${tail} (provider-reported, ${reqs})`;
   }
   return `cache: not engaged, provider reported 0 (${reqs})`;
 }
 
 /** Formats a diagnostics object into a readable string for the inspect output. */
 function formatDiagnostics(diag: StepDiagnostics): string {
-  const tokens = `~${diag.input_token_estimate} tokens`;
+  // issue #600 PR 1a: the estimate is LABELLED, because a measured prompt count may now sit one pipe
+  // away and the two are different quantities — `~N` is chars/4 of the step's resolved input, the
+  // measured one is the whole prompt the provider billed (system + profile + schema + message). On a
+  // real run they differ by ~100x, which is not an estimation error: they do not measure the same thing.
+  const tokens = `~${diag.input_token_estimate} tokens (estimate)`;
+  const measured = diag.cache !== undefined ? measuredPromptTokens(diag.cache) : undefined;
+  const prompt = measured !== undefined ? ` | ${measured} prompt tokens (measured)` : '';
   const cache = diag.cache !== undefined ? ` | ${formatCache(diag.cache)}` : '';
   if (diag.precondition_trace.length === 0) {
-    return `${tokens} | no preconditions${cache}`;
+    return `${tokens}${prompt} | no preconditions${cache}`;
   }
   const traceStr = diag.precondition_trace
     .map(
       (t) => `${t.expression} \u2192 ${t.passed ? 'true' : 'false'} (${String(t.resolved_value)})`,
     )
     .join(', ');
-  return `${tokens} | preconditions: ${traceStr}${cache}`;
+  return `${tokens}${prompt} | preconditions: ${traceStr}${cache}`;
 }
 
 /** Applies chalk color to a step status string. */
