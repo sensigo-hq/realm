@@ -4,7 +4,6 @@
 // D1b's own text: "Without this, the PR measures nothing on the workload that motivates it." cs1
 // declares `structured_output` in ZERO files, so every one of its steps takes the arm this section
 // pins — a step declaring nothing must still report what its wire requests cost.
-import { execSync } from 'node:child_process';
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '@sensigo/realm';
@@ -49,28 +48,6 @@ async function onlyRun(store: InMemoryStore): Promise<RunRecord> {
   const runs = await store.list();
   return store.get(runs[0]!.id);
 }
-
-describe('issue #600 PR 1a (D1b) — RED-FIRST: on origin/main, the undeclared arm bypasses callStepWithMeta entirely', () => {
-  it('main dispatches the bare arm through .callStep( directly — structurally, no usage channel exists on that path', () => {
-    // Structural, not a live run: main's own code is the fact, read from the ref itself rather
-    // than reproduced from memory (the standing rule this whole PR is built under — every anchor
-    // re-opened, never inherited from a record).
-    const mainSource = execSync('git show origin/main:packages/cli/src/agent/run-agent.ts', {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-    });
-    // The undeclared-output ("bare") arm's ONLY call in the else-branch that mirrors this
-    // branch's structuredOutputPlan fork.
-    const elseArmMatch = mainSource.match(
-      /\} else \{\s*\n\s*stepInput = await deps\.provider\.(callStep|callStepWithMeta)\(/,
-    );
-    expect(elseArmMatch).not.toBeNull();
-    expect(elseArmMatch![1]).toBe('callStep');
-    // callStep's PUBLIC return type is Record<string, unknown> — there is no `usage` field to
-    // even discard on this path; a step reaching only this method structurally cannot report cost.
-    expect(mainSource).not.toMatch(/stepInput = await deps\.provider\.callStepWithMeta/);
-  });
-});
 
 describe('issue #600 PR 1a (D1b) — GREEN: on this branch, the same arm is re-routed, and usage reaches the persisted record', () => {
   class UsageReportingProvider extends LlmProvider {

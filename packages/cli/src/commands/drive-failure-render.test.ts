@@ -115,6 +115,31 @@ describe('issue #600 PR 1a (D9) inspect — what a failed drive already cost', (
     );
   });
 
+  it('usage reported WITHOUT a prompt size: says the prompt was not reported, never a 0', async () => {
+    // The honesty branch of this line, and the one an operator is most likely to be misled by: the
+    // provider returned a usage object but no prompt figure. A `0` here would assert a measurement
+    // nobody took. This is also where a third-party provider's malformed `driveCall.usage` lands —
+    // `pickPayload` accepts any array without checking its elements, by design (`buildEntry` is
+    // TOTAL and degrades rather than throwing), so this branch is the graceful-degradation path too.
+    const out = await render(
+      runWith({
+        ...BASE,
+        usage: [
+          {
+            request_index: 0,
+            request_start: '2026-01-01T00:00:00.000Z',
+            output_tokens: 40,
+          },
+        ],
+      }),
+    );
+    expect(out).toContain('usage: 1 request billed before the throw');
+    expect(out).toContain('prompt not reported (first request)');
+    expect(out).toContain('40 output tokens');
+    // The absent number is never rendered as a zero.
+    expect(out).not.toContain('0 prompt tokens');
+  });
+
   it('ONE request: singular wording, its own prompt and output tokens', async () => {
     const out = await render(
       runWith({
