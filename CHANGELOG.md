@@ -4,6 +4,46 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`StepDiagnostics.cache`** — what a provider reported about prompt caching for an agent step's
+  model calls, one entry per WIRE REQUEST, never per step: `UsageRecord[]` with the measured
+  prompt size, the cache tokens read and written, and output tokens, each field present only when
+  the provider actually reported it (never coerced to `0`). Rendered on `realm run inspect`
+  alongside the existing token estimate — a real measurement beside the character-based one, both
+  labelled so neither is mistaken for the other. Present with `state: 'unobservable'` when a model
+  call happened and the provider reported nothing observable; ABSENT when no model call happened
+  at all (a handler step) — those are different facts, and `usage ?? []` at the call site is what
+  keeps a silent third-party provider from being indistinguishable from a step that never called a
+  model. This measures; it places nothing on the wire and requests nothing new from a provider.
+  (Issue #600.)
+- **`DriveFailureRecord.usage`** — the same per-request `UsageRecord[]`, on a failed drive: what
+  the provider had already billed before the drive's retries exhausted. Rendered on `realm run
+inspect`'s "Drive failures:" block and passed verbatim through `get_run_state` — an operator (or
+  agent) staring at a failed run can now see that money was spent, not only that the drive failed.
+  (Issue #600.)
+- **`UsageRecord`, `CACHE_STATES`, `CACHE_BASES`, `CacheState`, `CacheBasis`,
+  `StepCacheDetail`** — exported from `@sensigo/realm` (`packages/core/src/types/run-record.ts`).
+  (Issue #600.)
+
+### Changed
+
+- **`LlmProvider.callStepWithMeta`'s return type widens to `{ output, meta?, usage? }`** — `usage`
+  a sibling of `meta`, never nested inside it. `LlmProvider` is a published type
+  (`agent/index.ts`); a third-party override returning the narrower `{ output, meta? }` still
+  type-checks (additive), but this is a public-surface change. The base default implementation is
+  unchanged: a provider that does not override `callStepWithMeta` keeps inheriting `{ output }`,
+  `usage: undefined`, by construction. (Issue #600.)
+- **A step declaring no `structured_output` now reports what its model calls cost.** Previously
+  such a step's model call went through `callStep` directly, discarding the response; it now goes
+  through `callStepWithMeta` (the same request, byte-for-byte), so `StepDiagnostics.cache` is
+  populated on every agent step that made a model call, not only ones declaring
+  `structured_output`. (Issue #600.)
+
+---
+
 ## [0.45.0] — 2026-09-19
 
 Five BREAKING changes — one compile-time, four at runtime. Realm is pre-1.0, so breaking changes

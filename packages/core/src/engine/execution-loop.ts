@@ -1394,6 +1394,17 @@ function buildStepDiagnostics(
  *   - both **0** on every request ⇒ `never_engaged` — an observed zero is a real fact;
  *   - **absent** everywhere ⇒ `unobservable`, `basis: 'unobservable'`. NEVER a zero.
  * `write_only` is the step-level roll-up: some request wrote, none read.
+ *
+ * Consults every persisted counter that can independently signal engagement —
+ * `cache_creation_input_tokens`, `cache_write_tokens`, `cache_read_input_tokens` — but
+ * deliberately does NOT consult `UsageRecord.cache_creation` (the per-TTL ephemeral split). That
+ * is not an omission: the provider's own documented invariant, vendored in this repo at
+ * `plans/issue-558/axes/sources/framework-decisions/anthropic-prompt-caching.md:841`, states
+ * *"the current `cache_creation_input_tokens` field equals the sum of the values in the
+ * `cache_creation` object"* — so the aggregate this function already reads is DEFINED as the sum
+ * of the split, and re-reading the split here could only ever agree with (never override) what
+ * `cache_creation_input_tokens` already says. A future reader tempted to "fix" this omission
+ * should read that citation first.
  */
 export function deriveCacheDetail(requests: UsageRecord[]): StepCacheDetail {
   let sawCounter = false;

@@ -5,6 +5,7 @@ import {
   validateAgentSubmission,
   type JsonSchema,
   type StructuredOutputMeta,
+  type UsageRecord,
 } from '@sensigo/realm';
 import { ToolCapableLlmProvider, type ProviderCapabilities } from './llm-provider.js';
 import type {
@@ -45,6 +46,63 @@ type Rec = Record<string, unknown>;
  * `[a-zA-Z0-9_-]{1,64}`; it is an identifier for the schema, never shown to the model as content.
  */
 const JSON_SCHEMA_NAME = 'realm_step_output';
+
+/**
+ * issue #600 PR 1a — the response's `usage` block, typed LOCALLY (the same reachable-but-untyped
+ * discipline as the Anthropic sibling — `bounded` is `Promise<any>` at every create site here too).
+ * Mirrors the installed SDK's `CompletionUsage` (`openai/resources/completions.d.ts:91-110/:140-154`):
+ * `prompt_tokens`/`completion_tokens`/`total_tokens` are required numbers, never nullable;
+ * `prompt_tokens_details` is where the cache counters live.
+ */
+export interface OpenAiUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_tokens_details?: {
+    /** "Cached tokens present in the prompt" — a SUBSET already included in `prompt_tokens`. */
+    cached_tokens?: number;
+    /** "The unadjusted number of prompt tokens written to cache." */
+    cache_write_tokens?: number;
+  };
+}
+
+/**
+ * issue #600 PR 1a — one wire request's usage, mapped onto the record's ENGINE fields. OpenAI's
+ * `prompt_tokens` IS the total (never Anthropic's "after the last breakpoint" remainder) — this
+ * mapper reads it VERBATIM as `prompt_tokens` and never adds `cached_tokens` back onto it, which
+ * would double-count the cache (D2's warning; mutant (ix) reds exactly this cell if violated).
+ * `uncached_input_tokens` is the one DERIVED field here (`prompt_tokens - cached_tokens`), computed
+ * only when both are known.
+ */
+function toUsageRecord(
+  index: number,
+  requestStart: string,
+  u: OpenAiUsage | undefined,
+): UsageRecord {
+  const num = (v: number | undefined): number | undefined =>
+    typeof v === 'number' ? v : undefined;
+  const promptTokens = num(u?.prompt_tokens);
+  const cachedTokens = num(u?.prompt_tokens_details?.cached_tokens);
+  const cacheWriteTokens = num(u?.prompt_tokens_details?.cache_write_tokens);
+  return {
+    request_index: index,
+    request_start: requestStart,
+    ...(promptTokens !== undefined ? { prompt_tokens: promptTokens } : {}),
+    ...(promptTokens !== undefined && cachedTokens !== undefined
+      ? { uncached_input_tokens: promptTokens - cachedTokens }
+      : {}),
+    ...(cachedTokens !== undefined ? { cache_read_input_tokens: cachedTokens } : {}),
+    ...(cacheWriteTokens !== undefined ? { cache_write_tokens: cacheWriteTokens } : {}),
+    ...(num(u?.completion_tokens) !== undefined ? { output_tokens: u!.completion_tokens! } : {}),
+  };
+}
+
+/** Reads the usage block off a response of unknown shape. Absent stays absent. */
+function readOpenAiUsage(response: unknown): OpenAiUsage | undefined {
+  if (typeof response !== 'object' || response === null) return undefined;
+  const u = (response as { usage?: unknown }).usage;
+  if (typeof u !== 'object' || u === null) return undefined;
+  return u as OpenAiUsage;
+}
 
 /**
  * Issue #313 — the OpenAI analog of the Anthropic ladder's error: thrown when the drop-strict
@@ -110,12 +168,18 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     };
   }
 
-  async callStep(
+  /**
+   * issue #600 PR 1a (D1a) — the shared body for `callStep`/`callStepWithMeta`'s non-strict arm.
+   * The Anthropic sibling names its own version `callStepInternal`
+   * (`anthropic-provider.ts:302`); this is the same shape. `callStep`'s PUBLIC signature stays
+   * untouched (constraint 2) — it calls this and discards `usage` by construction.
+   */
+  private async callStepInternal(
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
     callOpts?: { llmClock?: LlmClock },
-  ): Promise<Record<string, unknown>> {
+  ): Promise<{ output: Record<string, unknown>; usage?: UsageRecord[] }> {
     const clock = callOpts?.llmClock;
     // issue #401: per-invocation counters, minted beside the client they count for.
     const counters: WireCounters = { attempts: 0 };
@@ -160,6 +224,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       { role: 'user', content: prompt },
     ];
 
+    // issue #600 PR 1a: ONE entry per WIRE REQUEST, in wire order — the provider owns the loop
+    // (the non-JSON retry is a second wire request), so a single usage object here would be a
+    // false number by construction the moment the retry fires.
+    const requests: UsageRecord[] = [];
     const makeRequest = async (msgs: Message[]): Promise<string> => {
       const opts: Record<string, unknown> = {
         model: this.model,
@@ -168,13 +236,15 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       if (this.capabilities().jsonMode) {
         opts['response_format'] = { type: 'json_object' };
       }
+      const requestStart = new Date().toISOString();
       const response = await bounded(opts);
+      requests.push(toUsageRecord(requests.length, requestStart, readOpenAiUsage(response)));
       return (response.choices[0]?.message?.content as string | undefined) ?? '';
     };
 
     const content = await makeRequest(messages);
     const parsed = extractJsonObject(content);
-    if (parsed !== null) return parsed;
+    if (parsed !== null) return { output: parsed, usage: requests };
     // Retry once with an explicit reminder to return JSON.
     const retryMessages: Message[] = [
       ...messages,
@@ -186,10 +256,31 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     ];
     const retry = await makeRequest(retryMessages);
     const retryParsed = extractJsonObject(retry);
-    if (retryParsed !== null) return retryParsed;
-    throw new Error(
+    if (retryParsed !== null) return { output: retryParsed, usage: requests };
+    // issue #600 PR 1a (D9): two billed, completed requests (the first generation and this
+    // retry) preceded this throw — attaching them here is the only way that money is ever
+    // recorded; without it a drive that throws is indistinguishable from one that spent nothing.
+    const err = new Error(
       sanitizeError(`OpenAI returned non-JSON content after retry: ${retry.slice(0, 200)}`),
     );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (err as any).driveCall = { usage: requests };
+    throw err;
+  }
+
+  async callStep(
+    prompt: string,
+    inputSchema?: Record<string, unknown>,
+    agentProfileInstructions?: string,
+    callOpts?: { llmClock?: LlmClock },
+  ): Promise<Record<string, unknown>> {
+    const { output } = await this.callStepInternal(
+      prompt,
+      inputSchema,
+      agentProfileInstructions,
+      callOpts,
+    );
+    return output;
   }
 
   /**
@@ -199,8 +290,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
    * Two paths, deliberately disjoint:
    *
    * - Strict NOT requested (a gate-ineligible, sticky, or compat-gated attempt, where run-agent
-   *   already holds the meta it will record): delegate to `callStep` VERBATIM. The json_object
-   *   path is therefore byte-identical to pre-#313 by construction, not by careful copying.
+   *   already holds the meta it will record): delegate to `callStepInternal` VERBATIM (issue
+   *   #600 PR 1a, D1a — through the PRIVATE shared body, not the public `callStep`, so `usage`
+   *   travels here even though it never did through the old `callStep` delegation). The request
+   *   built is byte-identical to pre-#313 by construction, not by careful copying.
    * - Strict requested: Chat Completions `response_format: json_schema` with `strict: true`
    *   ALWAYS explicit. Omitting `strict` is NOT a neutral default — probe P1 executed it: an
    *   omitted flag yields 200 with the schema unenforced, i.e. a silent non-enforcement mode.
@@ -216,18 +309,20 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
     opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
-  ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
+  ): Promise<{
+    output: Record<string, unknown>;
+    meta?: StructuredOutputMeta;
+    usage?: UsageRecord[];
+  }> {
     const clock = opts?.llmClock;
     // issue #401: the clock MUST travel across this delegation. Every step that DECLARED strict
     // but resolved to not sending it lands here — and a step that never declared anything at all
-    // does not reach this method, it goes straight to `callStep`. A clock dropped here unbounds
-    // that first class entirely.
+    // does not reach this method, it goes straight to `callStepInternal` (via `callStep`). A
+    // clock dropped here unbounds that first class entirely.
     if (opts?.structuredOutputStrict !== true || inputSchema === undefined) {
-      return {
-        output: await this.callStep(prompt, inputSchema, agentProfileInstructions, {
-          ...(clock !== undefined ? { llmClock: clock } : {}),
-        }),
-      };
+      return this.callStepInternal(prompt, inputSchema, agentProfileInstructions, {
+        ...(clock !== undefined ? { llmClock: clock } : {}),
+      });
     }
     // Per-invocation counters, minted beside the client below.
     const counters: WireCounters = { attempts: 0 };
@@ -286,9 +381,28 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     const create = (o: Rec): Promise<any> =>
       clock !== undefined ? driveCreate(rawCreate, o, clock, counters) : rawCreate(o, {});
 
-    /** Reads the answer, honouring the refusal field as an L1-class escape. */
+    // issue #600 PR 1a (D2/D9): ONE entry per WIRE REQUEST, recorded the instant the response
+    // comes back — a billed-but-unparseable response (readContent below can still throw on it)
+    // must not lose the money that was already spent (D9: "money burned on a call that threw").
+    const requests: UsageRecord[] = [];
+    const timedCreate = async (o: Rec): Promise<Record<string, unknown>> => {
+      const requestStart = new Date().toISOString();
+      const response = await create(o);
+      requests.push(toUsageRecord(requests.length, requestStart, readOpenAiUsage(response)));
+      return response as Record<string, unknown>;
+    };
+
+    /**
+     * Reads the answer, honouring the refusal field as an L1-class escape.
+     *
+     * issue #600 PR 1a: the parameter type used to declare ONLY
+     * `choices[].message.{content,refusal}` — usage was erased HERE, by the parameter, even
+     * though `create` already returns `any`. Widened to document the real shape (type safety,
+     * not new reach — `usage` is read by the caller via `readOpenAiUsage`, not here).
+     */
     const readContent = (response: {
       choices?: Array<{ message?: { content?: string; refusal?: string | null } }>;
+      usage?: OpenAiUsage;
     }): Record<string, unknown> => {
       const message = response.choices?.[0]?.message;
       const refusal = message?.refusal;
@@ -307,8 +421,12 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     };
 
     try {
-      const response = await create(buildOpts(true));
-      return { output: readContent(response), meta: { requested: true, sent: true } };
+      const response = await timedCreate(buildOpts(true));
+      return {
+        output: readContent(response),
+        meta: { requested: true, sent: true },
+        usage: requests,
+      };
     } catch (err) {
       const status = extractHttpStatus(err);
       // 5xx / transport / timeout: NEVER a downgrade and never sticky — the schema is not what
@@ -323,8 +441,8 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         ...extractApiErrorFields(err),
       };
       try {
-        const retry = await create(buildOpts(false));
-        return { output: readContent(retry), meta };
+        const retry = await timedCreate(buildOpts(false));
+        return { output: readContent(retry), meta, usage: requests };
       } catch (retryErr) {
         throw new OpenAIStructuredOutputLadderError(
           retryErr instanceof Error ? retryErr.message : String(retryErr),

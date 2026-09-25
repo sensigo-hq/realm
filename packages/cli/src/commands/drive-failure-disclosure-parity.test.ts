@@ -8,11 +8,20 @@
 //
 // v1 waives NOTHING. Every field renders.
 import { describe, it, expect } from 'vitest';
-import type { DriveFailureRecord, RunRecord } from '@sensigo/realm';
+import type { DriveFailureRecord, RunRecord, UsageRecord } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
 
 type DisclosureRoute =
   { surface: 'rendered'; probe: (out: string) => void } | { surface: 'waived'; reason: string };
+
+const USAGE: UsageRecord[] = [
+  {
+    request_index: 0,
+    request_start: '2026-01-01T00:03:59.000Z',
+    prompt_tokens: 1200,
+    output_tokens: 40,
+  },
+];
 
 const ENTRY: DriveFailureRecord = {
   at: '2026-01-01T00:04:00.000Z',
@@ -26,6 +35,7 @@ const ENTRY: DriveFailureRecord = {
   derived_ceiling_ms: 1860000,
   last_observed_status: 429,
   retry_after_observed_ms: 30000,
+  usage: USAGE,
 };
 
 const DRIVE_FAILURE_DISCLOSURE = {
@@ -54,6 +64,15 @@ const DRIVE_FAILURE_DISCLOSURE = {
   retry_after_observed_ms: {
     surface: 'rendered',
     probe: (out) => expect(out).toContain('(Retry-After 30000ms observed)'),
+  },
+  // issue #600 PR 1a (D9): a failed drive already cost money — an operator staring at "Drive
+  // failures:" must see that on the same screen, not only the machine surface.
+  usage: {
+    surface: 'rendered',
+    probe: (out) => {
+      expect(out).toContain('1200 prompt tokens (first request)');
+      expect(out).toContain('40 output tokens');
+    },
   },
 } satisfies Record<keyof DriveFailureRecord, DisclosureRoute>;
 
@@ -116,6 +135,7 @@ describe('#401 — every DriveFailureRecord field reaches an inspect reader', ()
         'provider',
         'retry_after_observed_ms',
         'step',
+        'usage',
       ].sort(),
     );
     expect(

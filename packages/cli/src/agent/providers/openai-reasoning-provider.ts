@@ -1,6 +1,11 @@
 // openai-reasoning-provider.ts — OpenAI reasoning model provider (o1-series) for realm agent.
 // Extends LlmProvider (not ToolCapableLlmProvider) — o1-series models do not support the tools parameter.
-import { LlmProvider, type ProviderCapabilities } from './llm-provider.js';
+import type { UsageRecord } from '@sensigo/realm';
+import {
+  LlmProvider,
+  type ProviderCapabilities,
+  type CallStepWithMetaResult,
+} from './llm-provider.js';
 import {
   buildSystemPrompt,
   extractJsonObject,
@@ -11,6 +16,47 @@ import {
   type LlmClock,
   type WireCounters,
 } from './agent-utils.js';
+
+/**
+ * issue #600 PR 1a — the response's `usage` block, typed LOCALLY (same discipline as the other two
+ * providers; `bounded` is `Promise<any>` here too since `rawCreate` was already `Promise<unknown>`
+ * — the third erasure D1 names for this provider was the RETURN type, not this shape).
+ */
+export interface OpenAiReasoningUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+}
+
+function toUsageRecord(
+  index: number,
+  requestStart: string,
+  u: OpenAiReasoningUsage | undefined,
+): UsageRecord {
+  const num = (v: number | undefined): number | undefined =>
+    typeof v === 'number' ? v : undefined;
+  const promptTokens = num(u?.prompt_tokens);
+  const cachedTokens = num(u?.prompt_tokens_details?.cached_tokens);
+  const cacheWriteTokens = num(u?.prompt_tokens_details?.cache_write_tokens);
+  return {
+    request_index: index,
+    request_start: requestStart,
+    ...(promptTokens !== undefined ? { prompt_tokens: promptTokens } : {}),
+    ...(promptTokens !== undefined && cachedTokens !== undefined
+      ? { uncached_input_tokens: promptTokens - cachedTokens }
+      : {}),
+    ...(cachedTokens !== undefined ? { cache_read_input_tokens: cachedTokens } : {}),
+    ...(cacheWriteTokens !== undefined ? { cache_write_tokens: cacheWriteTokens } : {}),
+    ...(num(u?.completion_tokens) !== undefined ? { output_tokens: u!.completion_tokens! } : {}),
+  };
+}
+
+function readOpenAiReasoningUsage(response: unknown): OpenAiReasoningUsage | undefined {
+  if (typeof response !== 'object' || response === null) return undefined;
+  const u = (response as { usage?: unknown }).usage;
+  if (typeof u !== 'object' || u === null) return undefined;
+  return u as OpenAiReasoningUsage;
+}
 
 /**
  * Short alias so `rawCreate` fits on ONE line — the issue-#401 source rail greps providers for
@@ -61,12 +107,17 @@ export class OpenAIReasoningProvider extends LlmProvider {
     return { jsonMode: false, providerId: 'openai-reasoning' };
   }
 
-  async callStep(
+  /**
+   * issue #600 PR 1a (D1a) — the shared body, matching the other two providers'
+   * `callStepInternal`. `callStep`'s public signature stays untouched (constraint 2) — it calls
+   * this and discards `usage` by construction.
+   */
+  private async callStepInternal(
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
     callOpts?: { llmClock?: LlmClock },
-  ): Promise<Record<string, unknown>> {
+  ): Promise<{ output: Record<string, unknown>; usage?: UsageRecord[] }> {
     const clock = callOpts?.llmClock;
     // issue #401: per-invocation counters, minted beside the client they count for.
     const counters: WireCounters = { attempts: 0 };
@@ -110,18 +161,24 @@ export class OpenAIReasoningProvider extends LlmProvider {
     type Message = { role: 'user' | 'assistant'; content: string };
     const messages: Message[] = [{ role: 'user', content: userContent }];
 
+    // issue #600 PR 1a: ONE entry per WIRE REQUEST, in wire order.
+    const requests: UsageRecord[] = [];
     const makeRequest = async (msgs: Message[]): Promise<string> => {
+      const requestStart = new Date().toISOString();
       const response = await bounded({
         model: this.model,
         max_completion_tokens: resolveMaxCompletionTokens(this.model),
         messages: msgs,
       });
+      requests.push(
+        toUsageRecord(requests.length, requestStart, readOpenAiReasoningUsage(response)),
+      );
       return (response.choices[0]?.message?.content as string | undefined) ?? '';
     };
 
     const content = await makeRequest(messages);
     const parsed = extractJsonObject(content);
-    if (parsed !== null) return parsed;
+    if (parsed !== null) return { output: parsed, usage: requests };
     // Retry once with an explicit reminder to return JSON.
     const retryMessages: Message[] = [
       ...messages,
@@ -133,9 +190,46 @@ export class OpenAIReasoningProvider extends LlmProvider {
     ];
     const retry = await makeRequest(retryMessages);
     const retryParsed = extractJsonObject(retry);
-    if (retryParsed !== null) return retryParsed;
-    throw new Error(
+    if (retryParsed !== null) return { output: retryParsed, usage: requests };
+    // issue #600 PR 1a (D9): two billed, completed requests preceded this throw.
+    const err = new Error(
       sanitizeError(`OpenAI returned non-JSON content after retry: ${retry.slice(0, 200)}`),
     );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (err as any).driveCall = { usage: requests };
+    throw err;
+  }
+
+  async callStep(
+    prompt: string,
+    inputSchema?: Record<string, unknown>,
+    agentProfileInstructions?: string,
+    callOpts?: { llmClock?: LlmClock },
+  ): Promise<Record<string, unknown>> {
+    const { output } = await this.callStepInternal(
+      prompt,
+      inputSchema,
+      agentProfileInstructions,
+      callOpts,
+    );
+    return output;
+  }
+
+  /**
+   * issue #600 PR 1a (D1a/D1b) — this provider previously had NO override at all, so it inherited
+   * the base default, which routes through the PUBLIC `callStep` and returns `{ output }` — usage
+   * was computed and dropped at that boundary for every step, structured_output-declared or not
+   * (the o1 family never supports structured_output — #351 — so this override always takes the
+   * bare shape). Now it calls its own private internal directly.
+   */
+  override async callStepWithMeta(
+    prompt: string,
+    inputSchema?: Record<string, unknown>,
+    agentProfileInstructions?: string,
+    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
+  ): Promise<CallStepWithMetaResult> {
+    return this.callStepInternal(prompt, inputSchema, agentProfileInstructions, {
+      ...(opts?.llmClock !== undefined ? { llmClock: opts.llmClock } : {}),
+    });
   }
 }

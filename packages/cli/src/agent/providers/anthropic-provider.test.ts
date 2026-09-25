@@ -1201,3 +1201,134 @@ describe('AnthropicProvider.callStepWithTools — Class-B tool failures (issue #
     expect(record.error).not.toContain('sk-live-abcdef123456');
   });
 });
+
+// =================================================================================================
+// issue #600 PR 1a — D1 (Anthropic's mapper): input_tokens is the REMAINDER, not the total
+// =================================================================================================
+function makeTextResponseWithUsage(
+  text: string,
+  usage: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number | null;
+    cache_creation_input_tokens?: number | null;
+    cache_creation?: {
+      ephemeral_5m_input_tokens?: number;
+      ephemeral_1h_input_tokens?: number;
+    } | null;
+  },
+) {
+  return { content: [{ type: 'text' as const, text }], usage };
+}
+
+describe('AnthropicProvider — issue #600 PR 1a D1: the disjoint three-term sum, never the raw remainder alone', () => {
+  beforeEach(() => mockCreate.mockReset());
+
+  it('prompt_tokens is input_tokens + cache_read + cache_creation — the DISJOINT sum, not input_tokens alone', async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeTextResponseWithUsage('{"result":"ok"}', {
+        input_tokens: 50,
+        output_tokens: 40,
+        cache_read_input_tokens: 1150,
+        cache_creation_input_tokens: 0,
+      }),
+    );
+    const provider = new AnthropicProvider('claude-x');
+    const result = await provider.callStepWithMeta('prompt');
+    const [entry] = result.usage!;
+    // The falsity this cell exists to reject: reading input_tokens alone would report 50 as "the
+    // prompt", which SHRINKS to near-zero on a fully warm call — the exact defect D6's render
+    // guards against, pinned here at its SOURCE.
+    expect(entry!.prompt_tokens).toBe(1200); // 50 + 1150 + 0
+    expect(entry!.uncached_input_tokens).toBe(50); // the raw remainder, kept under its OWN name
+    expect(entry!.cache_read_input_tokens).toBe(1150);
+    expect(entry!.output_tokens).toBe(40);
+  });
+
+  it('a NULL cache counter is an ABSENCE — contributes 0 to the sum, but is never STORED as a 0', async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeTextResponseWithUsage('{"result":"ok"}', {
+        input_tokens: 1200,
+        cache_read_input_tokens: null,
+        cache_creation_input_tokens: null,
+      }),
+    );
+    const result = await new AnthropicProvider('claude-x').callStepWithMeta('prompt');
+    const [entry] = result.usage!;
+    expect(entry!.prompt_tokens).toBe(1200); // null contributes 0, never NaN or a fabricated number
+    expect(entry).not.toHaveProperty('cache_read_input_tokens'); // absent, not stored as 0
+    expect(entry).not.toHaveProperty('cache_creation_input_tokens');
+  });
+
+  it('the ephemeral 5m/1h split rides beside the aggregate — BOTH counters, never a discriminator', async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeTextResponseWithUsage('{"result":"ok"}', {
+        input_tokens: 10,
+        cache_creation_input_tokens: 300,
+        cache_creation: { ephemeral_5m_input_tokens: 200, ephemeral_1h_input_tokens: 100 },
+      }),
+    );
+    const result = await new AnthropicProvider('claude-x').callStepWithMeta('prompt');
+    const [entry] = result.usage!;
+    expect(entry!.cache_creation_input_tokens).toBe(300);
+    // The documented invariant (vendored at anthropic-prompt-caching.md:841): the aggregate IS the
+    // sum of the split.
+    expect(
+      entry!.cache_creation!.ephemeral_5m_input_tokens! +
+        entry!.cache_creation!.ephemeral_1h_input_tokens!,
+    ).toBe(entry!.cache_creation_input_tokens);
+  });
+});
+
+describe('AnthropicProvider — issue #600 PR 1a D1a/D2: usage travels through callStepWithMeta, count-agnostic', () => {
+  beforeEach(() => mockCreate.mockReset());
+
+  it('callStep (public, untouched signature) DISCARDS usage by construction', async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeTextResponseWithUsage('{"result":"ok"}', { input_tokens: 10, output_tokens: 4 }),
+    );
+    const result = await new AnthropicProvider('claude-x').callStep('prompt');
+    expect(result).toEqual({ result: 'ok' });
+    expect(Object.keys(result)).not.toContain('usage');
+  });
+
+  it('BYTE-IDENTITY — the request body callStep sends is IDENTICAL to what callStepWithMeta sends for the same bare arm (constraint 1)', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"a":1}'));
+    await new AnthropicProvider('claude-x').callStep('same prompt', undefined, 'profile text');
+    const viaCallStep = JSON.stringify(mockCreate.mock.calls[0]![0]);
+
+    mockCreate.mockReset();
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"a":1}'));
+    await new AnthropicProvider('claude-x').callStepWithMeta(
+      'same prompt',
+      undefined,
+      'profile text',
+    );
+    const viaCallStepWithMeta = JSON.stringify(mockCreate.mock.calls[0]![0]);
+
+    expect(viaCallStepWithMeta).toBe(viaCallStep);
+  });
+
+  it('two billed requests (the non-JSON retry) yield TWO usage entries, in wire order — count-agnostic', async () => {
+    mockCreate
+      .mockResolvedValueOnce(
+        makeTextResponseWithUsage('not JSON', { input_tokens: 900, output_tokens: 12 }),
+      )
+      .mockResolvedValueOnce(
+        makeTextResponseWithUsage('{"result":"ok"}', { input_tokens: 950, output_tokens: 8 }),
+      );
+    const result = await new AnthropicProvider('claude-x').callStepWithMeta('prompt');
+    expect(result.usage).toHaveLength(2);
+    expect(result.usage![0]!.request_index).toBe(0);
+    expect(result.usage![0]!.prompt_tokens).toBe(900);
+    expect(result.usage![1]!.request_index).toBe(1);
+    expect(result.usage![1]!.prompt_tokens).toBe(950);
+  });
+
+  it('a response with no usage block at all yields no measured fields — never a fabricated 0', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"result":"ok"}'));
+    const result = await new AnthropicProvider('claude-x').callStepWithMeta('prompt');
+    expect(result.usage).toHaveLength(1);
+    expect(result.usage![0]!.prompt_tokens).toBeUndefined();
+  });
+});

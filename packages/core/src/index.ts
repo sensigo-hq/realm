@@ -152,6 +152,9 @@ export {
 } from './engine/precondition.js';
 export type { PreconditionResult } from './engine/precondition.js';
 export type { StepDiagnostics } from './types/run-record.js';
+// issue #600 PR 1a (D4): CACHE_STATES/CACHE_BASES/CacheState/CacheBasis/UsageRecord/StepCacheDetail
+// are already re-exported here via the top-of-file `export * from './types/run-record.js'` — the
+// wildcard is the export; this comment exists so a reader checking D4's requirement finds it.
 export const VERSION = '0.45.0';
 export type { ToolCallRecord, McpServerConfig } from './types/mcp-types.js';
 

@@ -102,6 +102,87 @@ describe('#401 inspect — one entry, one line', () => {
   });
 });
 
+describe('issue #600 PR 1a (D9) inspect — what a failed drive already cost', () => {
+  it('absent usage: no line at all — nothing was ever billed', async () => {
+    const out = await render(runWith(BASE));
+    expect(out).not.toContain('usage:');
+  });
+
+  it('an EMPTY array: says so — a request happened, the provider reported nothing observable', async () => {
+    const out = await render(runWith({ ...BASE, usage: [] }));
+    expect(out).toContain(
+      'usage: at least one request was billed; the provider reported nothing observable',
+    );
+  });
+
+  it('ONE request: singular wording, its own prompt and output tokens', async () => {
+    const out = await render(
+      runWith({
+        ...BASE,
+        usage: [
+          {
+            request_index: 0,
+            request_start: '2026-01-01T00:00:00.000Z',
+            prompt_tokens: 1200,
+            output_tokens: 40,
+          },
+        ],
+      }),
+    );
+    expect(out).toContain('usage: 1 request billed before the throw');
+    expect(out).toContain('1200 prompt tokens (first request)');
+    expect(out).toContain('40 output tokens');
+  });
+
+  it('MULTIPLE requests: plural wording, first-request prompt size, output tokens SUMMED', async () => {
+    const out = await render(
+      runWith({
+        ...BASE,
+        usage: [
+          {
+            request_index: 0,
+            request_start: '2026-01-01T00:00:00.000Z',
+            prompt_tokens: 1200,
+            output_tokens: 30,
+          },
+          {
+            request_index: 1,
+            request_start: '2026-01-01T00:00:02.000Z',
+            prompt_tokens: 1210,
+            output_tokens: 25,
+          },
+        ],
+      }),
+    );
+    expect(out).toContain('usage: 2 requests billed before the throw');
+    // First request's 1200, never the second request's 1210 and never a sum of both — a later
+    // request re-sends the same prefix, so summing overstates it (the same rule as D6's cache
+    // render).
+    expect(out).toContain('1200 prompt tokens (first request)');
+    expect(out).not.toContain('1210 prompt tokens');
+    expect(out).toContain('55 output tokens');
+  });
+
+  it('a request that reported no output tokens contributes 0 to the sum, not a dropped entry', async () => {
+    const out = await render(
+      runWith({
+        ...BASE,
+        usage: [
+          { request_index: 0, request_start: '2026-01-01T00:00:00.000Z', prompt_tokens: 1200 },
+          {
+            request_index: 1,
+            request_start: '2026-01-01T00:00:02.000Z',
+            prompt_tokens: 1210,
+            output_tokens: 25,
+          },
+        ],
+      }),
+    );
+    expect(out).toContain('usage: 2 requests billed before the throw');
+    expect(out).toContain('25 output tokens');
+  });
+});
+
 describe('#401 inspect — the total line appears only when the ring has rolled', () => {
   it('total > entries.length ⇒ the total line is printed', async () => {
     const out = await render(runWith(BASE, 9));

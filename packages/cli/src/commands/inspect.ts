@@ -30,6 +30,7 @@ import type {
   StepDiagnostics,
   ExtensionIdentityEntry,
   SkipDetail,
+  UsageRecord,
 } from '@sensigo/realm';
 import { recomputeIdentity } from '../extensions/extension-identity.js';
 
@@ -196,34 +197,25 @@ function formatSummary(value: unknown, maxLength = 120): string {
 }
 
 /**
- * Issue #600 PR 1a — the MEASURED prompt size: the provider's own three-term sum, not one term of it.
+ * Issue #600 PR 1a — the MEASURED prompt size, READ from `UsageRecord.prompt_tokens` — never
+ * re-derived here (D6 rule 2). `prompt_tokens` is ENGINE semantics: each adapter has already
+ * computed it using its own provider's arithmetic (Anthropic's disjoint three-term sum;
+ * OpenAI's reported total, verbatim). A formula written at THIS render site would be correct
+ * for at most one provider and silently wrong for the other — D2 exists precisely so this
+ * function contains no arithmetic at all.
  *
- * `input_tokens` alone is NOT the prompt. Anthropic's own documentation, vendored in this repo at
- * `plans/issue-558/axes/sources/framework-decisions/anthropic-prompt-caching.md:3219`:
- *   "`input_tokens` does NOT represent all input tokens - only the portion after your last cache
- *    breakpoint. If you have cached content, `input_tokens` will typically be much smaller than your
- *    total input."
- * and the formula it gives twice (`:686`, `:3212`):
- *   total_input_tokens = cache_read_input_tokens + cache_creation_input_tokens + input_tokens
+ * Rendering a provider's raw remainder term alone (Anthropic's `input_tokens`) is correct only
+ * while nothing places a breakpoint, and it SHRINKS as caching starts working — on a fully warm
+ * call it would report a prompt of 0 next to a cache read of 1150. `prompt_tokens` is the number
+ * that stays put whether the cache hit or missed (a warm and a cold call of the SAME prompt both
+ * report 1200 — proven live on the branch, and pinned in `inspect-cache-render.test.ts`).
  *
- * Rendering the first term alone is correct only while nothing places a breakpoint, and it SHRINKS as
- * caching starts working — on a fully warm call it would report a prompt of 0 next to a cache read of
- * 1150. The number an author needs is the one that stays put whether the cache hit or missed.
- *
- * FIRST REQUEST only, never summed across requests: later requests in one step re-send the same prefix,
- * so a cross-request sum overstates the prompt several-fold and answers no question anyone asks.
- * `undefined` when the first request reported none of the three — realm then says nothing.
+ * FIRST REQUEST only, never summed across requests: later requests in one step re-send the same
+ * prefix, so a cross-request sum overstates the prompt several-fold and answers no question
+ * anyone asks. `undefined` when the first request reported none — realm then says nothing.
  */
 function measuredPromptTokens(cache: NonNullable<StepDiagnostics['cache']>): number | undefined {
-  const first = cache.requests[0];
-  if (first === undefined) return undefined;
-  const terms = [
-    first.input_tokens,
-    first.cache_read_input_tokens,
-    first.cache_creation_input_tokens,
-  ];
-  if (terms.every((t) => t === undefined)) return undefined;
-  return terms.reduce<number>((acc, t) => acc + (t ?? 0), 0);
+  return cache.requests[0]?.prompt_tokens;
 }
 
 /** Issue #600 PR 1a — the provenance word, READ from the field rather than hardcoded beside it. */
@@ -267,6 +259,38 @@ function formatCache(cache: NonNullable<StepDiagnostics['cache']>): string {
     return `cache: not engaged, ${prov} 0 (${scope})`;
   }
   return `cache: read ${read}, wrote ${wrote} (${prov}, ${scope})`;
+}
+
+/**
+ * Issue #600 PR 1a (D9) — what a failed drive already cost, on the one surface an operator reads
+ * first for a stuck or errored run. `get_run_state` already passes `drive_failures` (and its
+ * `usage`) verbatim to an agent; a number that reaches only the machine surface and renders
+ * nowhere for the operator does not discharge the disclosure this field exists for.
+ *
+ * `undefined` means no wire request was ever made before the throw (a pre-dispatch failure, e.g.
+ * `sdk_missing`) — realm says nothing, because there is nothing to disclose. An array — even an
+ * empty one — means a driveCall payload carried a `usage` key: today every throw site attaches it
+ * only after at least one billed request, so `[]` does not occur in practice, but the render must
+ * still say the honest thing if a future call site ever produces it (a request was made and the
+ * provider reported nothing observable), rather than silently printing no line at all for money
+ * that was demonstrably spent.
+ *
+ * Prompt size is the FIRST request only (same rule as `measuredPromptTokens` — later requests
+ * re-send the same prefix, so summing overstates it); output tokens are summed across every
+ * request, since each one is a genuinely distinct answer the drive paid for.
+ */
+function formatDriveFailureUsage(usage: UsageRecord[] | undefined): string | undefined {
+  if (usage === undefined) return undefined;
+  if (usage.length === 0) {
+    return '  usage: at least one request was billed; the provider reported nothing observable';
+  }
+  const n = usage.length;
+  const scope = n === 1 ? '1 request' : `${String(n)} requests`;
+  const outputTokens = usage.reduce((acc, r) => acc + (r.output_tokens ?? 0), 0);
+  const prompt = usage[0]?.prompt_tokens;
+  const promptStr =
+    prompt !== undefined ? `${String(prompt)} prompt tokens` : 'prompt not reported';
+  return `  usage: ${scope} billed before the throw — ${promptStr} (first request), ${String(outputTokens)} output tokens`;
 }
 
 /** Formats a diagnostics object into a readable string for the inspect output. */
@@ -464,6 +488,12 @@ export async function inspectRun(
     // themselves already show.
     if (driveFailures.total > driveFailures.entries.length) {
       lines.push(`  ${String(driveFailures.total)} total since ${driveFailures.first_failed_at}`);
+    }
+    // issue #600 PR 1a (D9): what the LAST failed attempt already cost, so a stuck run's screen
+    // discloses spent money, not only the error.
+    const usageLine = formatDriveFailureUsage(lastFailure.usage);
+    if (usageLine !== undefined) {
+      lines.push(usageLine);
     }
     lines.push('');
   }

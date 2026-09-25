@@ -197,6 +197,8 @@ type Rec = Record<string, unknown>;
  * `number | null`, and `null` means NOTHING WAS OBSERVED — never a zero.
  */
 export interface AnthropicUsage {
+  /** The SDK's real `Usage.input_tokens` is `number` (never optional/nullable) — typed optional
+   *  here only because this path is reached through an untyped `any` response. */
   input_tokens?: number;
   output_tokens?: number;
   cache_creation_input_tokens?: number | null;
@@ -209,9 +211,19 @@ export interface AnthropicUsage {
 }
 
 /**
- * issue #600 PR 1a — one wire request's usage, mapped onto the record's shape. EVERY field is
- * omitted when the provider did not report it; a `null` counter (Anthropic's "nothing observed")
+ * issue #600 PR 1a — one wire request's usage, mapped onto the record's ENGINE fields. EVERY field
+ * is omitted when the provider did not report it; a `null` counter (Anthropic's "nothing observed")
  * is an ABSENCE, never a `0`.
+ *
+ * Anthropic's `input_tokens` is "tokens after the last cache breakpoint that aren't cached" — it
+ * maps onto `uncached_input_tokens`, NEVER onto `prompt_tokens` (D2). The provider's own docs state
+ * the sum twice (vendored at
+ * `plans/issue-558/axes/sources/framework-decisions/anthropic-prompt-caching.md:686` and `:3212`):
+ * `total_input_tokens = cache_read_input_tokens + cache_creation_input_tokens + input_tokens` — the
+ * three terms are disjoint. `input_tokens` is a required `number` on the real response type
+ * (`messages.d.ts:2881`); the cache counters can be `null` when nothing was observed in that
+ * dimension, which contributes `0` to the sum (the FAQ's own worked example reports `0`, never
+ * `null`, for an unused counter — `:3218`) without being STORED as a `0` on this record.
  */
 function toUsageRecord(
   index: number,
@@ -229,16 +241,27 @@ function toUsageRecord(
       ? { ephemeral_1h_input_tokens: creation!.ephemeral_1h_input_tokens! }
       : {}),
   };
+  const uncachedInputTokens = num(u?.input_tokens);
+  const cacheReadInputTokens = num(u?.cache_read_input_tokens);
+  const cacheCreationInputTokens = num(u?.cache_creation_input_tokens);
+  // prompt_tokens is the disjoint three-term sum — computable whenever the (always-reported)
+  // uncached remainder is present, treating an unreported cache counter as a 0 contribution to
+  // the TOTAL without storing that counter itself as a 0 (D2's absence rule stays intact below).
+  const promptTokens =
+    uncachedInputTokens !== undefined
+      ? uncachedInputTokens + (cacheReadInputTokens ?? 0) + (cacheCreationInputTokens ?? 0)
+      : undefined;
   return {
     request_index: index,
     request_start: requestStart,
-    ...(num(u?.input_tokens) !== undefined ? { input_tokens: u!.input_tokens! } : {}),
+    ...(promptTokens !== undefined ? { prompt_tokens: promptTokens } : {}),
+    ...(uncachedInputTokens !== undefined ? { uncached_input_tokens: uncachedInputTokens } : {}),
     ...(num(u?.output_tokens) !== undefined ? { output_tokens: u!.output_tokens! } : {}),
-    ...(num(u?.cache_creation_input_tokens) !== undefined
-      ? { cache_creation_input_tokens: u!.cache_creation_input_tokens as number }
+    ...(cacheCreationInputTokens !== undefined
+      ? { cache_creation_input_tokens: cacheCreationInputTokens }
       : {}),
-    ...(num(u?.cache_read_input_tokens) !== undefined
-      ? { cache_read_input_tokens: u!.cache_read_input_tokens as number }
+    ...(cacheReadInputTokens !== undefined
+      ? { cache_read_input_tokens: cacheReadInputTokens }
       : {}),
     ...(Object.keys(split).length > 0 ? { cache_creation: split } : {}),
   };
@@ -476,20 +499,34 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     const retryParsed = extract(retry);
     if (retryParsed !== null) return withChannel(retryParsed, retry.toolInput !== undefined);
 
+    // issue #600 PR 1a (D9) — both throws below happen AFTER two billed, completed requests (the
+    // first generation and this retry); attaching the accumulated `requests[]` here is the only
+    // way that money is ever recorded — a drive that throws was, until this PR, indistinguishable
+    // from a drive that spent nothing at all.
     // Guard: a response cut short by the token budget must never silently return a partial object —
     // give a clear, distinct error rather than the generic "non-JSON content" message.
     if (retry.stopReason === 'max_tokens') {
-      throw new WorkflowError(
+      const err = new WorkflowError(
         sanitizeError(
           'Anthropic response was truncated (max_tokens) before a usable JSON object was produced.',
         ),
         { code: 'ENGINE_STEP_FAILED', category: 'ENGINE', agentAction: 'stop', retryable: false },
       );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (err as any).driveCall = { usage: requests };
+      throw err;
     }
-    throw new WorkflowError(
-      sanitizeError(`Anthropic returned non-JSON content after retry: ${retry.text.slice(0, 200)}`),
-      { code: 'ENGINE_STEP_FAILED', category: 'ENGINE', agentAction: 'stop', retryable: false },
-    );
+    {
+      const err = new WorkflowError(
+        sanitizeError(
+          `Anthropic returned non-JSON content after retry: ${retry.text.slice(0, 200)}`,
+        ),
+        { code: 'ENGINE_STEP_FAILED', category: 'ENGINE', agentAction: 'stop', retryable: false },
+      );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (err as any).driveCall = { usage: requests };
+      throw err;
+    }
   }
 
   async callStep(

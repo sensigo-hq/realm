@@ -39,14 +39,30 @@ export interface StubToolCall {
 }
 
 export interface StubOptions {
-  firstToolCall: StubToolCall;
   /**
-   * The assistant's final answer, returned on every turn after the tool result comes back.
-   * MUST validate against the driven step's `input_schema` — a mismatch engages the #217 schema
-   * repair loop, and the journey's own assertions then fail for a reason unrelated to the chain
-   * under test.
+   * Issue #600 PR 1a (D10) — OPTIONAL. Absent means single-shot content mode: the very first
+   * request gets `finalContent` directly, with no tool call ever offered. That is the shape a
+   * cs1-shaped step actually drives (D1b) and no existing journey exercised it — every one
+   * declared `tools`, so every request took the tool-call turn.
+   */
+  firstToolCall?: StubToolCall;
+  /**
+   * The assistant's final answer, returned on every turn after the tool result comes back (or on
+   * the first and only turn in single-shot mode). MUST validate against the driven step's
+   * `input_schema` — a mismatch engages the #217 schema repair loop, and the journey's own
+   * assertions then fail for a reason unrelated to the chain under test.
    */
   finalContent: Record<string, unknown>;
+  /**
+   * Issue #600 PR 1a (D10) — echoed as the response's top-level `usage` on every turn, so a cell
+   * can assert the numbers land on the record with the right basis. Defaults to a fixed shape
+   * (never `0` by omission — the default IS an observed value, not a stand-in for silence).
+   */
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    prompt_tokens_details?: { cached_tokens?: number };
+  };
 }
 
 export interface OpenAiStub {
@@ -90,34 +106,50 @@ export async function startOpenAiStub(options: StubOptions): Promise<OpenAiStub>
       // rather than a call counter, so a retry or a repair iteration cannot desynchronise the
       // script from what the provider actually asked for.
       const alreadyToolAnswered = (body.messages ?? []).some((m) => m.role === 'tool');
+      // Single-shot mode (D10): no tool was ever scripted, so there is no tool turn to wait for —
+      // the very first (and only) request gets the final content directly.
+      const singleShot = options.firstToolCall === undefined;
 
-      const payload = alreadyToolAnswered
-        ? {
-            choices: [
-              { message: { role: 'assistant', content: JSON.stringify(options.finalContent) } },
-            ],
-          }
-        : {
-            choices: [
-              {
-                message: {
-                  role: 'assistant',
-                  content: null,
-                  tool_calls: [
-                    {
-                      id: 'call_1',
-                      type: 'function',
-                      function: {
-                        name: pickToolName(body, options.firstToolCall.match),
-                        // JSON-encoded STRING, not an object — see the header.
-                        arguments: JSON.stringify(options.firstToolCall.arguments),
+      const usage = options.usage ?? { prompt_tokens: 12, completion_tokens: 4 };
+      const usagePayload = {
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        total_tokens: usage.prompt_tokens + usage.completion_tokens,
+        ...(usage.prompt_tokens_details !== undefined
+          ? { prompt_tokens_details: usage.prompt_tokens_details }
+          : {}),
+      };
+
+      const payload =
+        singleShot || alreadyToolAnswered
+          ? {
+              choices: [
+                { message: { role: 'assistant', content: JSON.stringify(options.finalContent) } },
+              ],
+              usage: usagePayload,
+            }
+          : {
+              choices: [
+                {
+                  message: {
+                    role: 'assistant',
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: 'call_1',
+                        type: 'function',
+                        function: {
+                          name: pickToolName(body, options.firstToolCall!.match),
+                          // JSON-encoded STRING, not an object — see the header.
+                          arguments: JSON.stringify(options.firstToolCall!.arguments),
+                        },
                       },
-                    },
-                  ],
+                    ],
+                  },
                 },
-              },
-            ],
-          };
+              ],
+              usage: usagePayload,
+            };
 
       const text = JSON.stringify(payload);
       res.writeHead(200, {
