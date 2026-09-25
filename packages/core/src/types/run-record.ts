@@ -305,6 +305,42 @@ export interface StepDiagnostics {
   /** Issue #236 — disclosure for a `structured_output: 'strict'`-declared step's attempt. See
    *  {@link StructuredOutputMeta}. Absent on a step that never declared `structured_output`. */
   structured_output?: StructuredOutputMeta;
+  /**
+   * Issue #600 PR 1a — what the provider said this step's model calls cost, per WIRE REQUEST.
+   * PRESENT with `state: 'unobservable'` when a model call happened and nothing was observed;
+   * ABSENT when no model call happened at all (a handler step). Those are different facts.
+   */
+  cache?: StepCacheDetail;
+}
+
+/** Issue #600 — the closed set of per-step cache states. */
+export const CACHE_STATES = ['engaged', 'never_engaged', 'write_only', 'unobservable'] as const;
+export type CacheState = (typeof CACHE_STATES)[number];
+
+/** Issue #600 — how a cache number is known. Never a zero standing in for an absence. */
+export const CACHE_BASES = ['provider_reported', 'derived', 'unobservable'] as const;
+export type CacheBasis = (typeof CACHE_BASES)[number];
+
+/**
+ * Issue #600 — one entry per wire request a step made, in wire order. Every optional field means
+ * THE PROVIDER DID NOT REPORT IT; none is ever defaulted to `0`.
+ */
+export interface UsageRecord {
+  request_index: number;
+  request_start: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_write_tokens?: number;
+  cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number };
+}
+
+/** Issue #600 — the per-step roll-up plus the per-request detail. */
+export interface StepCacheDetail {
+  state: CacheState;
+  basis: CacheBasis;
+  requests: UsageRecord[];
 }
 
 export interface EvidenceSnapshot {
