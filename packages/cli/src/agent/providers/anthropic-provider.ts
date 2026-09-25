@@ -5,8 +5,13 @@ import {
   validateAgentSubmission,
   type JsonSchema,
   type StructuredOutputMeta,
+  type UsageRecord,
 } from '@sensigo/realm';
-import { ToolCapableLlmProvider, type ProviderCapabilities } from './llm-provider.js';
+import {
+  ToolCapableLlmProvider,
+  type ProviderCapabilities,
+  type CallStepWithMetaResult,
+} from './llm-provider.js';
 import type {
   ToolCallRecord,
   ToolDefinition,
@@ -184,6 +189,69 @@ interface LadderState {
  */
 type Rec = Record<string, unknown>;
 
+/**
+ * issue #600 PR 1a — the response's usage block, typed LOCALLY. The Anthropic client is `any` on
+ * this path (`client: any` below), so `.usage` is reachable but untyped; this narrows it without
+ * loosening anything that is currently typed. Mirrors the SDK's own `Usage`
+ * (`@anthropic-ai/sdk/resources/messages/messages.d.ts:2861`): both cache counters are
+ * `number | null`, and `null` means NOTHING WAS OBSERVED — never a zero.
+ */
+export interface AnthropicUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+  /** The per-TTL write split (`CacheCreation`, `:954-963`) — BOTH counters, not a discriminator. */
+  cache_creation?: {
+    ephemeral_5m_input_tokens?: number;
+    ephemeral_1h_input_tokens?: number;
+  } | null;
+}
+
+/**
+ * issue #600 PR 1a — one wire request's usage, mapped onto the record's shape. EVERY field is
+ * omitted when the provider did not report it; a `null` counter (Anthropic's "nothing observed")
+ * is an ABSENCE, never a `0`.
+ */
+function toUsageRecord(
+  index: number,
+  requestStart: string,
+  u: AnthropicUsage | undefined,
+): UsageRecord {
+  const num = (v: number | null | undefined): number | undefined =>
+    typeof v === 'number' ? v : undefined;
+  const creation = u?.cache_creation;
+  const split = {
+    ...(num(creation?.ephemeral_5m_input_tokens) !== undefined
+      ? { ephemeral_5m_input_tokens: creation!.ephemeral_5m_input_tokens! }
+      : {}),
+    ...(num(creation?.ephemeral_1h_input_tokens) !== undefined
+      ? { ephemeral_1h_input_tokens: creation!.ephemeral_1h_input_tokens! }
+      : {}),
+  };
+  return {
+    request_index: index,
+    request_start: requestStart,
+    ...(num(u?.input_tokens) !== undefined ? { input_tokens: u!.input_tokens! } : {}),
+    ...(num(u?.output_tokens) !== undefined ? { output_tokens: u!.output_tokens! } : {}),
+    ...(num(u?.cache_creation_input_tokens) !== undefined
+      ? { cache_creation_input_tokens: u!.cache_creation_input_tokens as number }
+      : {}),
+    ...(num(u?.cache_read_input_tokens) !== undefined
+      ? { cache_read_input_tokens: u!.cache_read_input_tokens as number }
+      : {}),
+    ...(Object.keys(split).length > 0 ? { cache_creation: split } : {}),
+  };
+}
+
+/** Reads the usage block off a response of unknown shape. Absent stays absent. */
+export function readAnthropicUsage(response: unknown): AnthropicUsage | undefined {
+  if (typeof response !== 'object' || response === null) return undefined;
+  const u = (response as { usage?: unknown }).usage;
+  if (typeof u !== 'object' || u === null) return undefined;
+  return u as AnthropicUsage;
+}
+
 async function createMessageWithLadder(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any,
@@ -305,7 +373,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     agentProfileInstructions: string | undefined,
     strictRequested: boolean | undefined,
     clock?: LlmClock,
-  ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
+  ): Promise<CallStepWithMetaResult> {
     // issue #401: counters are PER-INVOCATION, minted beside the client they count for. A
     // module-global would attribute one step's wire attempts to another's failure.
     const counters: WireCounters = { attempts: 0 };
@@ -331,9 +399,16 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       toolInput?: Record<string, unknown>;
       text: string;
       stopReason?: string;
+      /** issue #600 PR 1a — what THIS wire request cost, as the provider reported it. */
+      usage?: AnthropicUsage;
     }
 
+    // issue #600 PR 1a: ONE entry per WIRE REQUEST, in wire order. The provider owns the loop, so
+    // the provider accumulates — a single usage object for a step that bills 1-21 requests is a
+    // false number by construction.
+    const requests: UsageRecord[] = [];
     const makeRequest = async (userContent: string): Promise<CallResult> => {
+      const requestStart = new Date().toISOString();
       const buildOpts = (strict: boolean): Record<string, unknown> => {
         const submitTool = hasSchema
           ? buildSubmitTool(inputSchema!, strict ? { strict: true } : undefined)
@@ -359,10 +434,13 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       }>;
       const toolUse = blocks.find((b) => b.type === 'tool_use' && b.name === SUBMIT_TOOL_NAME);
       const textBlock = blocks.find((b) => b.type === 'text');
+      const usage = readAnthropicUsage(response);
+      requests.push(toUsageRecord(requests.length, requestStart, usage));
       return {
         ...(toolUse !== undefined ? { toolInput: toolUse.input as Record<string, unknown> } : {}),
         text: textBlock?.text ?? '',
         ...(typeof response.stop_reason === 'string' ? { stopReason: response.stop_reason } : {}),
+        ...(usage !== undefined ? { usage } : {}),
       };
     };
 
@@ -376,11 +454,15 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     const withChannel = (
       output: Record<string, unknown>,
       viaTool: boolean,
-    ): { output: Record<string, unknown>; meta?: StructuredOutputMeta } => {
-      if (state.meta === undefined) return { output };
+    ): CallStepWithMetaResult => {
+      // issue #600 PR 1a: `usage` rides beside `meta`, never inside it — a step that reports usage
+      // and no structured-output meta is expressible.
+      const usage = requests.length > 0 ? { usage: requests } : {};
+      if (state.meta === undefined) return { output, ...usage };
       return {
         output,
         meta: { ...state.meta, submission_channel: viaTool ? 'tool' : 'text' },
+        ...usage,
       };
     };
 
@@ -433,7 +515,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
     opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
-  ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
+  ): Promise<CallStepWithMetaResult> {
     return this.callStepInternal(
       prompt,
       inputSchema,
