@@ -51,7 +51,13 @@ export interface StubToolCall {
 }
 
 export interface AnthropicStubOptions {
-  firstToolCall: StubToolCall;
+  /**
+   * Issue #600 PR 1a (D10) — OPTIONAL. Absent means single-shot content mode: the very first
+   * request gets `finalContent` directly as a text block, `stop_reason: 'end_turn'`, and no
+   * `tool_use` is ever offered. Both stubs have this blocker, not just OpenAI's — this one also
+   * unconditionally emitted `tool_use` on every first request.
+   */
+  firstToolCall?: StubToolCall;
   /**
    * When set, EVERY request answers with this status and these headers instead of a scripted
    * turn — the stub becomes a rate limiter rather than a model.
@@ -63,11 +69,26 @@ export interface AnthropicStubOptions {
    */
   failure?: { status: number; headers: Record<string, string> };
   /**
-   * The assistant's final answer, returned once the tool has replied. MUST validate against the
-   * driven step's `input_schema` — a mismatch engages the #217 repair loop and the journey's own
-   * assertions then fail for a reason unrelated to the chain under test.
+   * The assistant's final answer, returned once the tool has replied (or on the first and only
+   * turn in single-shot mode). MUST validate against the driven step's `input_schema` — a mismatch
+   * engages the #217 repair loop and the journey's own assertions then fail for a reason unrelated
+   * to the chain under test.
    */
   finalContent: Record<string, unknown>;
+  /**
+   * Issue #600 PR 1a (D10) — echoed as the response's `usage` on every turn. Defaults to the
+   * pre-existing `{ input_tokens: 1, output_tokens: 1 }` shape so no caller of this stub is
+   * affected unless it opts in. The two cache counters are OPTIONAL and omitted from the payload
+   * when absent here — never sent as `0` — so a caller that wants `unobservable` (no cache fields
+   * reported at all) gets it by simply not passing them, and a caller proving `engaged`/`write_only`
+   * passes exactly the counter(s) it needs.
+   */
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
 }
 
 export interface AnthropicStub {
@@ -138,19 +159,36 @@ export async function startAnthropicStub(options: AnthropicStubOptions): Promise
           Array.isArray(m.content) &&
           (m.content as ContentBlock[]).some((b) => b?.type === 'tool_result'),
       );
+      // Single-shot mode (D10): no tool was ever scripted, so there is no tool turn to wait for.
+      const singleShot = options.firstToolCall === undefined;
 
-      const content = toolAlreadyAnswered
-        ? [{ type: 'text', text: JSON.stringify(options.finalContent) }]
-        : [
-            {
-              type: 'tool_use',
-              id: 'toolu_01',
-              name: pickToolName(body, options.firstToolCall.match),
-              // An OBJECT here — the Messages dialect differs from OpenAI's JSON-encoded string,
-              // and the provider reads `block.input` directly.
-              input: options.firstToolCall.arguments,
-            },
-          ];
+      const content =
+        singleShot || toolAlreadyAnswered
+          ? [{ type: 'text', text: JSON.stringify(options.finalContent) }]
+          : [
+              {
+                type: 'tool_use',
+                id: 'toolu_01',
+                name: pickToolName(body, options.firstToolCall!.match),
+                // An OBJECT here — the Messages dialect differs from OpenAI's JSON-encoded string,
+                // and the provider reads `block.input` directly.
+                input: options.firstToolCall!.arguments,
+              },
+            ];
+
+      const usage = options.usage ?? { input_tokens: 1, output_tokens: 1 };
+      const usagePayload = {
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        // Omitted, never `null` or `0`, when the caller did not pass one — a real absent-vs-zero
+        // distinction the mapper (toUsageRecord) and D5's absence rule both depend on.
+        ...(usage.cache_read_input_tokens !== undefined
+          ? { cache_read_input_tokens: usage.cache_read_input_tokens }
+          : {}),
+        ...(usage.cache_creation_input_tokens !== undefined
+          ? { cache_creation_input_tokens: usage.cache_creation_input_tokens }
+          : {}),
+      };
 
       const payload = {
         id: 'msg_1',
@@ -158,9 +196,9 @@ export async function startAnthropicStub(options: AnthropicStubOptions): Promise
         role: 'assistant',
         model: body['model'],
         content,
-        stop_reason: toolAlreadyAnswered ? 'end_turn' : 'tool_use',
+        stop_reason: singleShot || toolAlreadyAnswered ? 'end_turn' : 'tool_use',
         stop_sequence: null,
-        usage: { input_tokens: 1, output_tokens: 1 },
+        usage: usagePayload,
       };
 
       const text = JSON.stringify(payload);

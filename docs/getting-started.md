@@ -195,8 +195,12 @@ Each evidence entry records:
 - **Input / Output** — what the step received and what it returned, truncated to 120 characters.
 - **Hash** — first 8 characters of the SHA-256 chain hash. The hash changes if any prior step's
   output changes, making the chain tamper-evident.
-- **Diagnostics** — token estimate (context window size) and the precondition trace (each
-  precondition expression, pass/fail, and the resolved value).
+- **Diagnostics** — the token estimate (a character-based approximation of the step's own resolved
+  input, NOT the context window), the precondition trace (each precondition expression, pass/fail,
+  and the resolved value), and — when `realm agent` made the step's model call and recorded it — the
+  measured prompt size and cache usage the provider reported. A tool-calling step does not record
+  them yet, and a step an external agent drove over MCP cannot: the model calls were the agent's
+  own.
 
 **Debugging with inspect:**
 

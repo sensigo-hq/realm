@@ -55,7 +55,9 @@ function wireTools(callIndex: number): Array<{ name: string; strict?: boolean }>
 }
 
 describe('AnthropicProvider.callStepWithTools — strict tool arguments (issue #311)', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   // -------------------------------------------------------------------------------------------
   // Wire shape: per-tool, opt-in, and absent by default

@@ -1,5 +1,5 @@
 // llm-provider.ts — LLM provider interface and factory function for realm agent.
-import type { StructuredOutputMeta } from '@sensigo/realm';
+import type { StructuredOutputMeta, UsageRecord } from '@sensigo/realm';
 import type { ToolDefinition, ToolExecutor, StepWithToolsResult } from '../mcp/mcp-extensions.js';
 import type { LlmClock } from './agent-utils.js';
 
@@ -57,6 +57,22 @@ export interface ProviderCapabilities {
  * Abstract base class for LLM providers used by realm agent.
  * Extend this class to implement a custom provider.
  */
+/**
+ * issue #600 PR 1a — what `callStepWithMeta` returns. `usage` is a SIBLING of `meta`, never nested
+ * inside it: a provider that reports usage without structured-output meta is expressible, and the
+ * no-plan arm can destructure `{ output, usage }` without ever reading `meta`.
+ *
+ * The base default implementation below returns `{ output }` only, so a third-party
+ * `--provider-module` inherits `usage: undefined` BY CONSTRUCTION — a type-level fact, not a
+ * runtime check.
+ */
+export interface CallStepWithMetaResult {
+  output: Record<string, unknown>;
+  meta?: StructuredOutputMeta;
+  /** One entry per WIRE REQUEST this step made, in wire order. Absent ⇒ nothing was observed. */
+  usage?: UsageRecord[];
+}
+
 export abstract class LlmProvider {
   /** Call the LLM with a step prompt and return a JSON object. */
   abstract callStep(
@@ -92,7 +108,7 @@ export abstract class LlmProvider {
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
     opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
-  ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
+  ): Promise<CallStepWithMetaResult> {
     // issue #401: the clock is PASSED THROUGH here. This base delegation is the route every
     // provider that does NOT override this method takes for a step declaring `structured_output:
     // strict` — both in-repo providers override it, so in practice this serves third-party ones.

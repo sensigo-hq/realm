@@ -1,5 +1,5 @@
 // agent-utils.ts — Shared utility functions for LLM provider agentic loops.
-import type { ValidationErrorSummaryEntry, RawValidationError } from '@sensigo/realm';
+import type { ValidationErrorSummaryEntry, RawValidationError, UsageRecord } from '@sensigo/realm';
 
 const SYSTEM_PROMPT_BASE =
   'You are an AI agent executing a step in a structured workflow.\n' +
@@ -813,5 +813,55 @@ export async function driveCreate<T>(
     throw err;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Issue #600 PR 1a (D9) — money already billed survives ANY throw, not only the two the provider
+ * mints itself.
+ *
+ * Each provider accumulates one `UsageRecord` per wire request as the responses come back. Until
+ * this helper, the accumulator was attached to the error at the provider's OWN typed throws (a
+ * truncated response, non-JSON content after retry) and nowhere else — so the failure an operator
+ * actually meets, a wire error from the model (500, rate limit, timeout, reset), discarded every
+ * number and a drive that had already paid for a cache write was indistinguishable on screen from
+ * one that spent nothing. The accumulator is owned by the entry point and handed down, so one
+ * `catch` at the top covers every throw below it, whatever its origin.
+ *
+ * MERGE, never skip. A wire error does not arrive here bare: `driveCreate`, which wraps every
+ * create whenever a clock is present — that is, on every real drive — has already attached the
+ * failure's CLASSIFICATION (class, attempts, status) and nothing about what earlier requests
+ * billed, because it wraps one request and cannot see its siblings. That payload is a different
+ * fact, not a richer copy of this one, so the usage is merged into it. Skipping it, as this helper
+ * once did, dropped the billed usage on exactly the failure it exists for, and every cell ran
+ * without a clock so none could see it (executed: a 900-token cache write, then a 500 — clockless
+ * the record kept the write, clocked it held only `{"error_class":"other",…}`). Only a payload
+ * that already carries `usage` is left alone: a provider's typed throw attaches its own.
+ *
+ * Absence is preserved deliberately, and it is narrower than it looks. Nothing is attached until a
+ * request RETURNS, so `usage: undefined` covers a failure before any request left the process (a
+ * pre-dispatch `sdk_missing`) AND a first request that failed on the wire (a 5xx, a timeout, a
+ * dropped connection): it never proves no request was made. And the tool-calling path attaches
+ * nothing at all yet — `callStepWithTools` builds no `UsageRecord` and calls this helper nowhere —
+ * so a tools step's `usage` is absent whatever it billed (issue #610).
+ *
+ * TOTAL, like `attachDriveCall`: a frozen error, or a proxy whose traps throw, propagates intact
+ * and unenriched — the recording machinery never replaces the failure it is recording.
+ */
+export function attachBilledUsage(err: unknown, billed: UsageRecord[]): void {
+  if (billed.length === 0) return;
+  if (typeof err !== 'object' || err === null) return;
+  try {
+    const e = err as { driveCall?: unknown };
+    const existing = e.driveCall;
+    if (existing === undefined) {
+      e.driveCall = { usage: billed };
+      return;
+    }
+    if (typeof existing === 'object' && existing !== null && !('usage' in existing)) {
+      (existing as { usage?: UsageRecord[] }).usage = billed;
+    }
+  } catch {
+    /* enrichment never out-throws the error being attributed */
   }
 }

@@ -341,6 +341,29 @@ describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
     expect(built.elapsed_ms).toBeGreaterThanOrEqual(1234);
   });
 
+  it('issue #600 PR 1a (D9): usage is an ARRAY-typed field — a real array survives, a non-array is dropped', () => {
+    const withArray = Object.assign(new Error('rate limited'), {
+      status: 429,
+      driveCall: {
+        usage: [
+          { request_index: 0, request_start: '2026-01-01T00:00:00.000Z', prompt_tokens: 1200 },
+        ],
+      },
+    });
+    expect(buildEntry(withArray, 's', 'anthropic', Date.now()).usage).toEqual(
+      withArray.driveCall.usage,
+    );
+
+    // A provider that attached something under the same key that is NOT an array (a bug in a
+    // future call site, or a hostile third-party module) must not silently coerce into one — the
+    // filter is `Array.isArray`, not "truthy".
+    const withGarbage = Object.assign(new Error('rate limited'), {
+      status: 429,
+      driveCall: { usage: 'not-an-array' },
+    });
+    expect(buildEntry(withGarbage, 's', 'anthropic', Date.now()).usage).toBeUndefined();
+  });
+
   it('aborted_by_budget IS a recognized class and survives the pick', () => {
     const err = Object.assign(new Error('ceiling'), {
       driveCall: {

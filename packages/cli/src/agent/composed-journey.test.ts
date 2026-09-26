@@ -109,4 +109,65 @@ describe('composed journey — a politely-failed tool call, all the way to the o
       rmSync(tempHome, { recursive: true, force: true });
     }
   }, 25_000); // The global 5s default would kill the MCP spawn; heavy cells self-protect exactly this way — a surgical per-it() budget at birth (issue #371's class rule), never a moved global.
+
+  // =================================================================================================
+  // issue #600 PR 1a (D10) — the single-shot journey: no tools, no structured output, the EXACT
+  // shape D1b's re-route exists for. No MCP child is spawned (`tools: []`), so this journey needs
+  // no 25s budget — the real HTTP stub over loopback is the only I/O.
+  // =================================================================================================
+  it('a single-shot step (no tools) reports what its ONE wire request cost, with the right basis', async () => {
+    const tempHome = makeJourneyHome('composed-journey-usage-');
+    const originalKey = process.env['OPENAI_API_KEY'];
+    process.env['OPENAI_API_KEY'] = 'sk-test-composed-journey-usage-0000';
+
+    const stub = await startOpenAiStub({
+      finalContent: { summary: 'single-shot answer' },
+      usage: {
+        prompt_tokens: 640,
+        completion_tokens: 18,
+        prompt_tokens_details: { cached_tokens: 512 },
+      },
+    });
+
+    try {
+      const journey = await runComposedJourney(tempHome, {
+        provider: new OpenAIProvider('gpt-4o', stub.baseUrl),
+        probeWorkflowId: PROBE_WORKFLOW_ID,
+        finalSummary: 'single-shot answer',
+        tools: [],
+      });
+
+      expect(journey.result).toBe('completed');
+      expect(journey.runCount).toBe(1);
+      // The re-route's whole point: no tools declared, yet the record still knows what the call
+      // cost — this is dead on `main` (D1b's red-first cell proves the structural reason why).
+      expect(stub.requests).toHaveLength(1);
+      const snap = journey.run.evidence.find((e) => e.step_id === 'ask');
+      const cache = snap?.diagnostics?.cache;
+      expect(cache).toBeDefined();
+      expect(cache!.state).toBe('engaged');
+      expect(cache!.basis).toBe('provider_reported');
+      const [entry] = cache!.requests;
+      // The exact echoed numbers, read back off the PERSISTED record — never the response object.
+      expect(entry!.prompt_tokens).toBe(640);
+      expect(entry!.cache_read_input_tokens).toBe(512);
+      expect(entry!.uncached_input_tokens).toBe(128);
+      expect(entry!.output_tokens).toBe(18);
+      // And the operator screen agrees with the record. The write direction is UNREPORTED here —
+      // OpenAI's Chat Completions `cache_write_tokens` is optional and this response omits it — so
+      // the screen must say so. Rendering `wrote 0` there would be the whole-chain form of the
+      // defect this arc exists to kill: a number nobody measured, asserting that the call wrote
+      // nothing to the cache, on the one path that has no mocks in it.
+      expect(journey.inspectOutput).toContain('640 prompt tokens (measured, first request)');
+      expect(journey.inspectOutput).toContain(
+        'cache: read 512, wrote not reported (provider-reported, 1 request)',
+      );
+      expect(journey.inspectOutput).not.toContain('wrote 0');
+    } finally {
+      await stub.close();
+      if (originalKey === undefined) delete process.env['OPENAI_API_KEY'];
+      else process.env['OPENAI_API_KEY'] = originalKey;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
 });

@@ -77,7 +77,9 @@ function makeDeps(): AgentDeps {
 }
 
 describe('runAgent + AnthropicProvider — P0 output_schema-only agent step (GREEN)', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   it('model calls __realm_submit__ (tool_use.input arrives pre-parsed) → step completes', async () => {
     mockCreate.mockResolvedValueOnce(makeToolUseResponse({ category: 'billing' }));
