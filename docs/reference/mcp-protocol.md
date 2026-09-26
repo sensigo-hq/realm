@@ -140,7 +140,10 @@ SDK, an engine throw, a schema-rejection wedge — is now RECORDED on the run ra
 printed to the console. `get_run_state` carries `drive_failures` verbatim
 (`{ first_failed_at, total, entries }`, at most five entries, most-recent-last; `total` and
 `first_failed_at` do not reset when the ring rolls), and `run_health` gains a `drive_failing`
-finding whose reason names when the last attempt failed, its class, and what the provider said.
+finding whose reason names when the last attempt failed, its class, and what the provider said. Each
+entry may also carry `usage` (issue #600): one record per wire request that returned before the
+throw. It is absent until a request returns, so absence never proves no request was made, and a
+tool-calling step records none yet (issue #610).
 
 The finding fires only while the failure is still the LATEST thing that happened to the run: if a
 sibling step settled since, or a gate opened, or the failing step itself has since settled, the run

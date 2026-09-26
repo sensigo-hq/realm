@@ -167,7 +167,7 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
   });
 
   describe('D4 — the absence rule, both ways, and presence on every mint kind', () => {
-    it('cache is ABSENT when no stepMeta.usage was ever supplied (no model call happened)', async () => {
+    it('cache is ABSENT when no stepMeta.usage was ever supplied (nothing was recorded)', async () => {
       const def = makePlainDef();
       const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
       const envelope = await executeStep(store, def, {

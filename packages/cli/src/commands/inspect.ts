@@ -308,9 +308,11 @@ function basisWord(basis: NonNullable<StepDiagnostics['cache']>['basis']): strin
 
 /**
  * Issue #600 PR 1a — the cache segment. One branch per state, and NO segment at all when `cache` is
- * absent, because absent means no model call happened: a different fact from "a call happened and the
- * provider reported nothing". An absent number is never printed as `0`; an OBSERVED zero is, because
- * an observed zero is a real fact.
+ * absent, because absent means nothing was recorded for the step: a different fact from "a call was
+ * recorded and the provider reported nothing". It is NOT "no model call happened" — a tool-calling
+ * step (issue #610) and a step an external agent drove over MCP both call models and record
+ * nothing, so they render no segment either; see `StepDiagnostics.cache`. An absent number is never
+ * printed as `0`; an OBSERVED zero is, because an observed zero is a real fact.
  *
  * Every branch names its provenance, and the word comes from `basis` so a future member cannot be
  * misreported as the provider's. Multi-request totals SAY they are totals: the counters are summed
@@ -395,10 +397,10 @@ function formatCache(cache: NonNullable<StepDiagnostics['cache']>): string {
  * `usage`) verbatim to an agent; a number that reaches only the machine surface and renders
  * nowhere for the operator does not discharge the disclosure this field exists for.
  *
- * `undefined` means no usage was accumulated before the throw — on the accumulating paths (the
- * single-shot and structured-output calls) that means no wire request was ever made, e.g. a
- * pre-dispatch `sdk_missing`. It does NOT mean that on the tool-calling path, which accumulates
- * nothing at all yet, so a tools step's `usage` is absent whatever it billed.
+ * `undefined` means no request RETURNED before the throw: a pre-dispatch `sdk_missing` and a first
+ * request that failed on the wire (a 5xx, a timeout, a dropped connection) look the same here, so
+ * absence never proves no request was made. The tool-calling path records nothing at all yet, so a
+ * tools step's `usage` is absent whatever it billed (issue #610).
  *
  * An array — even an empty one — means a driveCall payload carried a `usage` key. `[]` says one
  * thing only: the key was present and carried no requests. It does NOT say a request was billed —

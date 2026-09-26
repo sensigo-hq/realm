@@ -379,6 +379,19 @@ describe('OpenAIReasoningProvider — issue #600 PR 1a (D9): both entry points c
     expect((usage as Array<{ prompt_tokens?: number }>)[0]).toMatchObject({ prompt_tokens: 700 });
   });
 
+  it('callStepWithMeta, CLOCKED — the shape of every real drive keeps the usage', async () => {
+    // The other cells run clockless, which skips driveCreate — the wrapper every real drive goes
+    // through, and which attaches its own payload before this entry point's catch ever runs.
+    billThenThrow();
+    const usage = await billedOn(() =>
+      new OpenAIReasoningProvider('o1-mini').callStepWithMeta('prompt', undefined, undefined, {
+        llmClock: { ceilingMs: 60_000 },
+      }),
+    );
+    expect(usage).toHaveLength(1);
+    expect((usage as Array<{ prompt_tokens?: number }>)[0]).toMatchObject({ prompt_tokens: 700 });
+  });
+
   it('callStepWithMeta — the override this PR added, which previously inherited the base default', async () => {
     billThenThrow();
     const usage = await billedOn(() =>

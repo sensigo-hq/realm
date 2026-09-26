@@ -1169,6 +1169,19 @@ describe('OpenAIProvider — issue #600 PR 1a (D9): every entry point carries wh
     expect((usage as Array<{ prompt_tokens?: number }>)[0]).toMatchObject({ prompt_tokens: 900 });
   });
 
+  it('callStepWithMeta, NON-strict, CLOCKED — the shape of every real drive keeps the usage', async () => {
+    // The cells here run clockless, which skips driveCreate — the wrapper every real drive goes
+    // through, and which attaches its own payload before this entry point's catch ever runs.
+    billThenThrow();
+    const usage = await billedOn(() =>
+      new OpenAIProvider('gpt-4o').callStepWithMeta('prompt', undefined, undefined, {
+        llmClock: { ceilingMs: 60_000 },
+      }),
+    );
+    expect(usage).toHaveLength(1);
+    expect((usage as Array<{ prompt_tokens?: number }>)[0]).toMatchObject({ prompt_tokens: 900 });
+  });
+
   it('callStepWithMeta, STRICT — the ladder catch, the seventh site and the one a name-based sweep misses', async () => {
     // This site passes a differently-named accumulator, which is how a grep for the other six
     // missed it entirely.

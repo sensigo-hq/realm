@@ -1057,10 +1057,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   );
                   stepInput = output;
                   // issue #600 PR 1a: `?? []` is load-bearing. A model call HAPPENED, so the
-                  // record must say `unobservable`, not stay silent — absent `cache` means no
-                  // call at all (a handler step), which is a different fact and the type says so.
-                  // A provider that reports nothing (the base default, any third-party module)
-                  // would otherwise be indistinguishable from a step that never called a model.
+                  // record must say `unobservable`, not stay silent. A provider that reports
+                  // nothing (the base default, any third-party module) would otherwise leave
+                  // `cache` absent — and absent means nothing was recorded, which a handler step
+                  // and a tool-calling step (issue #610) also produce; see StepDiagnostics.cache.
                   usageForStep = usage ?? [];
                   if (structuredOutputPlan.ineligibleMeta !== undefined) {
                     // Gate-ineligible or sticky — strict was never attempted this call at all.
@@ -1111,10 +1111,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   );
                   stepInput = output;
                   // issue #600 PR 1a: `?? []` is load-bearing. A model call HAPPENED, so the
-                  // record must say `unobservable`, not stay silent — absent `cache` means no
-                  // call at all (a handler step), which is a different fact and the type says so.
-                  // A provider that reports nothing (the base default, any third-party module)
-                  // would otherwise be indistinguishable from a step that never called a model.
+                  // record must say `unobservable`, not stay silent. A provider that reports
+                  // nothing (the base default, any third-party module) would otherwise leave
+                  // `cache` absent — and absent means nothing was recorded, which a handler step
+                  // and a tool-calling step (issue #610) also produce; see StepDiagnostics.cache.
                   usageForStep = usage ?? [];
                 }
               } catch (err) {

@@ -1478,6 +1478,38 @@ describe('AnthropicProvider — issue #600 PR 1a (D9): money already billed surv
     }
   });
 
+  it('THE PRODUCTION SHAPE — with the clock every real drive passes, the 500 keeps the usage too', async () => {
+    // The cell above runs clockless, which skips driveCreate — the wrapper every real drive goes
+    // through, and which attaches its own payload before this entry point's catch ever runs.
+    mockCreate
+      .mockResolvedValueOnce(
+        makeTextResponseWithUsage('not JSON', {
+          input_tokens: 40,
+          output_tokens: 12,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 900,
+        }),
+      )
+      .mockImplementation(async () => {
+        throw new Error('500 upstream exploded');
+      });
+    const provider = new AnthropicProvider('claude-x');
+    try {
+      await provider.callStepWithMeta('prompt', undefined, undefined, {
+        llmClock: { ceilingMs: 60_000 },
+      });
+      expect.unreachable('the call must throw');
+    } catch (err) {
+      const payload = (err as { driveCall?: { error_class?: string; usage?: unknown[] } })
+        .driveCall;
+      expect(payload?.error_class).toBeDefined();
+      expect(payload?.usage).toHaveLength(1);
+      expect((payload!.usage as Array<{ cache_creation_input_tokens?: number }>)[0]).toMatchObject({
+        cache_creation_input_tokens: 900,
+      });
+    }
+  });
+
   it('the same on the PUBLIC single-shot path — `callStep`, whose own attach site was unpinned', async () => {
     mockCreate
       .mockResolvedValueOnce(
@@ -1504,7 +1536,7 @@ describe('AnthropicProvider — issue #600 PR 1a (D9): money already billed surv
     }
   });
 
-  it('a wire failure with NOTHING billed attaches nothing — `usage: undefined` keeps meaning "no wire request was ever made"', async () => {
+  it('a wire failure before any request RETURNED attaches nothing — so `usage: undefined` never proves no request was made', async () => {
     // The discriminating control: without it, attaching an empty array on every failure would make
     // a pre-dispatch failure (`sdk_missing`) indistinguishable from a billed one, which is the same
     // collapse in the other direction.

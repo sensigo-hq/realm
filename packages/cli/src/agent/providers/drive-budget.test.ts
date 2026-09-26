@@ -11,6 +11,7 @@ import {
   makeCountingFetch,
   driveCreate,
   attachDriveCall,
+  attachBilledUsage,
   safeErrorText,
   MAX_RETRIES,
   type WireCounters,
@@ -465,6 +466,91 @@ describe('attachDriveCall — the last untotal link in the attribution chain', (
     expect((err as unknown as { driveCall: { error_class: string } }).driveCall.error_class).toBe(
       'sdk_missing',
     );
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// attachBilledUsage — the billed usage MERGES into the classification the wrapper attached
+// -------------------------------------------------------------------------------------------
+describe('attachBilledUsage — merges into the wire classification, never skips it', () => {
+  const BILLED = [
+    {
+      request_index: 0,
+      request_start: '2026-09-26T00:00:00.000Z',
+      prompt_tokens: 940,
+      cache_creation_input_tokens: 900,
+    },
+  ];
+  const usageOf = (err: unknown): unknown[] | undefined =>
+    (err as { driveCall?: { usage?: unknown[] } } | null)?.driveCall?.usage;
+
+  it('THE COMPOSITION — through the real wrapper, a clocked wire failure keeps its class AND the usage', async () => {
+    // Every real drive passes a clock, so every wire error reaches the entry point's catch already
+    // carrying driveCreate's classification — the production order, not a hand-built payload.
+    const counters: WireCounters = { attempts: 0 };
+    const thrown = await driveCreate(
+      async () => {
+        throw Object.assign(new Error('500 upstream exploded'), { status: 500 });
+      },
+      {},
+      { ceilingMs: 5_000 },
+      counters,
+    ).catch((e: unknown) => e);
+    expect(payloadOf(thrown)?.error_class).toBeDefined();
+    attachBilledUsage(thrown, BILLED);
+    expect(payloadOf(thrown)?.error_class).toBeDefined();
+    expect(usageOf(thrown)).toEqual(BILLED);
+  });
+
+  it('no payload yet: attaches one carrying the usage', () => {
+    const err = new Error('x');
+    attachBilledUsage(err, BILLED);
+    expect(usageOf(err)).toEqual(BILLED);
+  });
+
+  it('a payload that already carries usage is left alone — a typed throw attaches its own', () => {
+    const own = [{ request_index: 0, request_start: '2026-09-26T00:00:00.000Z', prompt_tokens: 1 }];
+    const err = Object.assign(new Error('x'), { driveCall: { usage: own } });
+    attachBilledUsage(err, BILLED);
+    expect(usageOf(err)).toBe(own);
+  });
+
+  it('nothing billed: nothing attached, and an existing classification stays exactly as it was', () => {
+    const bare = new Error('x');
+    attachBilledUsage(bare, []);
+    expect((bare as { driveCall?: unknown }).driveCall).toBeUndefined();
+    const classified = Object.assign(new Error('y'), { driveCall: { error_class: 'other' } });
+    attachBilledUsage(classified, []);
+    expect(classified.driveCall).toEqual({ error_class: 'other' });
+  });
+
+  it('TOTAL — a frozen error propagates intact: the recorder never replaces the failure', () => {
+    const frozen = Object.freeze(new Error('frozen failure'));
+    expect(() => {
+      attachBilledUsage(frozen, BILLED);
+    }).not.toThrow();
+    expect((frozen as { driveCall?: unknown }).driveCall).toBeUndefined();
+  });
+
+  it('TOTAL — a frozen classification payload is not an escape route either', () => {
+    const err = Object.assign(new Error('x'), {
+      driveCall: Object.freeze({ error_class: 'other' }),
+    });
+    expect(() => {
+      attachBilledUsage(err, BILLED);
+    }).not.toThrow();
+    expect(usageOf(err)).toBeUndefined();
+  });
+
+  it('TOTAL — a proxy whose traps throw survives the same way', () => {
+    const hostile = new Proxy(new Error('trapped'), {
+      get(): unknown {
+        throw new Error('get trap');
+      },
+    });
+    expect(() => {
+      attachBilledUsage(hostile, BILLED);
+    }).not.toThrow();
   });
 });
 

@@ -102,7 +102,7 @@ const req = (overrides: Partial<UsageRecord> = {}, index = 0): UsageRecord => ({
 });
 
 describe('issue #600 PR 1a (D6) inspect — StepDiagnostics.cache, five branches', () => {
-  it('cache ABSENT — no cache segment at all (no model call happened)', async () => {
+  it('cache ABSENT — no cache segment at all (nothing was recorded for the step)', async () => {
     const out = await render({ input_token_estimate: 10, precondition_trace: [] });
     expect(out).not.toContain('cache:');
     expect(out).not.toContain('prompt tokens (measured');

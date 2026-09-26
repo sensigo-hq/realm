@@ -1345,7 +1345,10 @@ function buildStepDiagnostics(
     stepDef: StepDefinition | undefined;
     /** `options.stepMeta?.structuredOutput` — what the driver reported, if anything. */
     structuredOutputMeta: StructuredOutputMeta | undefined;
-    /** `options.stepMeta?.usage` — one entry per wire request. Absent ⇒ NO model call happened. */
+    /**
+     * `options.stepMeta?.usage` — one entry per wire request. Absent ⇒ nothing was RECORDED for
+     * the step, which is not "no model call happened"; see `StepDiagnostics.cache`.
+     */
     usage: UsageRecord[] | undefined;
   },
 ): StepDiagnostics {
@@ -1379,8 +1382,10 @@ function buildStepDiagnostics(
       downgrade_reason: 'external_agent',
     };
   }
-  // issue #600 PR 1a: PRESENT with `state: 'unobservable'` when a model call happened and nothing
-  // was observed; ABSENT when no model call happened at all. Different facts, never collapsed.
+  // issue #600 PR 1a: PRESENT whenever the driver supplied usage — as `state: 'unobservable'` when
+  // nothing was observed; ABSENT when nothing was recorded. Recorded-and-silent and not-recorded
+  // are different facts, never collapsed — and not-recorded is NOT "no model call happened" (a
+  // tool-calling step and an externally driven step both call models; see `StepDiagnostics.cache`).
   if (facts.usage !== undefined) {
     diag.cache = deriveCacheDetail(facts.usage);
   }

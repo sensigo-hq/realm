@@ -103,7 +103,7 @@ describe('#401 inspect — one entry, one line', () => {
 });
 
 describe('issue #600 PR 1a (D9) inspect — what a failed drive already cost', () => {
-  it('absent usage: no line at all — nothing was ever billed', async () => {
+  it('absent usage: no line at all — no request returned before the throw', async () => {
     const out = await render(runWith(BASE));
     expect(out).not.toContain('usage:');
   });
