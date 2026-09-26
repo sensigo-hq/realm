@@ -195,7 +195,9 @@ Each evidence entry records:
 - **Input / Output** — what the step received and what it returned, truncated to 120 characters.
 - **Hash** — first 8 characters of the SHA-256 chain hash. The hash changes if any prior step's
   output changes, making the chain tamper-evident.
-- **Diagnostics** — token estimate (context window size), the precondition trace (each
+- **Diagnostics** — the token estimate (a character-based approximation of the step's own resolved
+  input, NOT the context window), the measured prompt size and cache figures when the step called a
+  model, the precondition trace (each
   precondition expression, pass/fail, and the resolved value), and — for an agent step that made a
   model call — the measured prompt size and cache usage the provider reported.
 
