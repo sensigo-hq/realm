@@ -7,12 +7,21 @@
 //
 // v1 waives NOTHING.
 import { describe, it, expect } from 'vitest';
-import type { DriveFailureRecord, RunRecord, RunStore } from '@sensigo/realm';
+import type { DriveFailureRecord, RunRecord, RunStore, UsageRecord } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
 
 type DisclosureRoute =
   | { surface: 'rendered'; probe: (entry: DriveFailureRecord) => void }
   | { surface: 'waived'; reason: string };
+
+const USAGE: UsageRecord[] = [
+  {
+    request_index: 0,
+    request_start: '2026-01-01T00:03:59.000Z',
+    prompt_tokens: 1200,
+    output_tokens: 40,
+  },
+];
 
 const ENTRY: DriveFailureRecord = {
   at: '2026-01-01T00:04:00.000Z',
@@ -26,6 +35,7 @@ const ENTRY: DriveFailureRecord = {
   derived_ceiling_ms: 1860000,
   last_observed_status: 429,
   retry_after_observed_ms: 30000,
+  usage: USAGE,
 };
 
 const DRIVE_FAILURE_DISCLOSURE = {
@@ -52,6 +62,10 @@ const DRIVE_FAILURE_DISCLOSURE = {
     surface: 'rendered',
     probe: (e) => expect(e.retry_after_observed_ms).toBe(30000),
   },
+  // issue #600 PR 1a (D9): this surface passes `drive_failures` VERBATIM (the doc comment on
+  // `DriveFailureRecord.usage` says so), so `usage` needs no new plumbing here — only the row
+  // that proves it, same as every field above.
+  usage: { surface: 'rendered', probe: (e) => expect(e.usage).toEqual(USAGE) },
 } satisfies Record<keyof DriveFailureRecord, DisclosureRoute>;
 
 function makeStore(run: RunRecord): RunStore {
@@ -109,7 +123,7 @@ describe('#401 — every DriveFailureRecord field reaches a get_run_state consum
   });
 
   it('the registry covers every field, and v1 waives none', () => {
-    expect(Object.keys(DRIVE_FAILURE_DISCLOSURE)).toHaveLength(11);
+    expect(Object.keys(DRIVE_FAILURE_DISCLOSURE)).toHaveLength(12);
     expect(
       Object.values(DRIVE_FAILURE_DISCLOSURE as Record<string, DisclosureRoute>).filter(
         (r) => r.surface === 'waived',

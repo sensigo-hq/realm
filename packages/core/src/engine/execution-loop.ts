@@ -11,6 +11,9 @@ import type {
   TraceNormalizationSummary,
   PendingGate,
   StructuredOutputMeta,
+  StepDiagnostics,
+  UsageRecord,
+  StepCacheDetail,
 } from '../types/run-record.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import { extensionIdentityDiffers } from '../types/extension-identity.js';
@@ -100,6 +103,26 @@ export type StepDispatcher = (
   signal?: AbortSignal,
 ) => Promise<Record<string, unknown>>;
 
+/**
+ * What the DRIVER observed about this step's attempt, threaded into every evidence-capture site.
+ *
+ * `toolCalls` — produced by callStepWithTools. Absent on the callStep path (no tools configured).
+ * Present (possibly []) when tools were declared.
+ *
+ * `structuredOutput` (issue #236) — the caller's own `structured_output: 'strict'` attempt
+ * disclosure for THIS attempt.
+ *
+ * `usage` (issue #600) — what the provider said each WIRE REQUEST cost, in wire order.
+ *
+ * The three are INDEPENDENT: any one alone must still cause `stepMeta` to be passed. Named (not
+ * inlined twice) so `ExecuteStepOptions` and `ExecuteChainOptions` cannot drift apart.
+ */
+export interface StepMeta {
+  toolCalls?: ToolCallRecord[];
+  structuredOutput?: StructuredOutputMeta;
+  usage?: UsageRecord[];
+}
+
 export interface ExecuteStepOptions {
   runId: string;
   command: string;
@@ -110,16 +133,8 @@ export interface ExecuteStepOptions {
    * When omitted, the engine uses the built-in default registry (includes `FileSystemAdapter`).
    */
   registry?: ExtensionRegistry;
-  /**
-   * Tool calls produced by callStepWithTools for this step.
-   * Absent on the callStep path (no tools configured).
-   * Present (possibly []) when tools were declared — threads through to captureEvidence.
-   *
-   * `structuredOutput` (issue #236): the caller's own `structured_output: 'strict'` attempt
-   * disclosure for THIS attempt — threads into the diagnostics literal at every evidence-capture
-   * site. Independent of `toolCalls` (either alone must still cause `stepMeta` to be passed).
-   */
-  stepMeta?: { toolCalls?: ToolCallRecord[]; structuredOutput?: StructuredOutputMeta };
+  /** @see StepMeta */
+  stepMeta?: StepMeta;
   /**
    * Optional agent-submitted trace entries for this step.
    * Silently dropped for non-agent steps. When present on agent steps, the
@@ -185,16 +200,8 @@ export interface ExecuteChainOptions {
   dispatcher: StepDispatcher;
   /** @see ExecuteStepOptions.registry */
   registry?: ExtensionRegistry;
-  /**
-   * Tool calls produced by callStepWithTools for this step.
-   * Absent on the callStep path (no tools configured).
-   * Present (possibly []) when tools were declared — threads through to captureEvidence.
-   *
-   * `structuredOutput` (issue #236): the caller's own `structured_output: 'strict'` attempt
-   * disclosure for THIS attempt — threads into the diagnostics literal at every evidence-capture
-   * site. Independent of `toolCalls` (either alone must still cause `stepMeta` to be passed).
-   */
-  stepMeta?: { toolCalls?: ToolCallRecord[]; structuredOutput?: StructuredOutputMeta };
+  /** @see StepMeta */
+  stepMeta?: StepMeta;
   /** @see ExecuteStepOptions.trace */
   trace?: AgentTraceEntry[];
   /** @see ExecuteStepOptions.traceBufferStore */
@@ -1307,6 +1314,152 @@ async function enactExpiredGateIfDue(
  * and timeout support, captures evidence, persists the updated run record, and returns
  * a ResponseEnvelope containing the outcome and the next eligible actions.
  */
+/**
+ * Issue #600 PR 1a — the ONE mint for every `StepDiagnostics` literal `executeStep` writes.
+ *
+ * DISCRIMINATED ON PURPOSE. The three settle sites differ BY DESIGN, not by accident, and a
+ * flattening mint would change behaviour:
+ *   - `attempt`        — the per-attempt dispatch capture. `validation_rejections` is
+ *                        CONDITIONAL: only on a SUCCESS settle, and only when a positive count
+ *                        accrued in PRIOR invocations (issue #220).
+ *   - `default_settle` — the declared fail-open bypass. `settled_by_default: true` AND
+ *                        `validation_rejections` UNCONDITIONALLY, from the exhaustion details —
+ *                        a DIFFERENT source from the attempt arm's.
+ *   - `exhausted`      — the terminalization bypass. `validation_rejections` unconditionally, and
+ *                        NO `settled_by_default` (issue #220 PR-2: absent, never `false`).
+ *
+ * The `structured_output` conjunct — including its external-agent stamp [Rv6 + R2-3] — was
+ * copy-pasted verbatim at all three sites and now appears ONCE.
+ */
+type StepDiagnosticsArm =
+  | { kind: 'attempt'; attemptFailed: boolean; accruedRejections: number | undefined }
+  | { kind: 'default_settle'; rejections: number }
+  | { kind: 'exhausted'; rejections: number };
+
+function buildStepDiagnostics(
+  arm: StepDiagnosticsArm,
+  facts: {
+    inputTokenEstimate: number;
+    preconditionTrace: StepDiagnostics['precondition_trace'];
+    /** The step's own definition — the ONE place `structured_output` is read on this path. */
+    stepDef: StepDefinition | undefined;
+    /** `options.stepMeta?.structuredOutput` — what the driver reported, if anything. */
+    structuredOutputMeta: StructuredOutputMeta | undefined;
+    /** `options.stepMeta?.usage` — one entry per wire request. Absent ⇒ NO model call happened. */
+    usage: UsageRecord[] | undefined;
+  },
+): StepDiagnostics {
+  const diag: StepDiagnostics = {
+    input_token_estimate: facts.inputTokenEstimate,
+    precondition_trace: facts.preconditionTrace,
+  };
+  if (arm.kind === 'attempt') {
+    // issue #220: success-settle stamp — a free diagnostic proving this step needed N prior
+    // rejections before finally succeeding ("succeeded after N rejections"). Only stamped on a
+    // SUCCESS settle. The count is the Step-1 read, so it reflects rejections accrued in PRIOR
+    // invocations only — a rejection in THIS invocation never reaches this call site
+    // (countRejection only runs from the Step 2b/2c catch, which always either returns or falls
+    // through toward terminalization, never toward dispatch).
+    if (!arm.attemptFailed && arm.accruedRejections !== undefined && arm.accruedRejections > 0) {
+      diag.validation_rejections = arm.accruedRejections;
+    }
+  } else {
+    if (arm.kind === 'default_settle') diag.settled_by_default = true;
+    diag.validation_rejections = arm.rejections;
+  }
+  // issue #236: the attempt's structured_output disclosure. External-agent stamp [Rv6 + R2-3]: a
+  // step that DECLARED structured_output but arrives with no options.stepMeta.structuredOutput at
+  // all was driven by something other than run-agent (e.g. an external agent calling execute_step
+  // over MCP directly) — realm cannot know whether strict was honored, so it says so rather than
+  // staying silent.
+  if (facts.stepDef?.structured_output !== undefined) {
+    diag.structured_output = facts.structuredOutputMeta ?? {
+      requested: true,
+      sent: false,
+      downgrade_reason: 'external_agent',
+    };
+  }
+  // issue #600 PR 1a: PRESENT with `state: 'unobservable'` when a model call happened and nothing
+  // was observed; ABSENT when no model call happened at all. Different facts, never collapsed.
+  if (facts.usage !== undefined) {
+    diag.cache = deriveCacheDetail(facts.usage);
+  }
+  return diag;
+}
+
+/**
+ * Issue #600 PR 1a — the per-step roll-up over one step's wire requests. Observation is tracked per
+ * DIRECTION (read, write), never per object, because a provider can report one and withhold the
+ * other (`cache_write_tokens` is optional on OpenAI's `prompt_tokens_details`; Anthropic types both
+ * its counters `number | null`). Each state word may only claim a direction that was reported:
+ *   - a read **> 0** ⇒ `engaged`. A read PROVES engagement whatever the write counter said;
+ *   - read reported **0** and a write **> 0** ⇒ `write_only` — "only" claims both directions, so
+ *     both must have been reported;
+ *   - both directions reported, both **0** ⇒ `never_engaged` — an observed zero is a real fact;
+ *   - one direction reported and the other not ⇒ `partially_observed`. There is no true four-word
+ *     answer for that data: calling it `never_engaged` would assert a zero for a counter nobody
+ *     reported, which is exactly the coercion this record's own doc forbids;
+ *   - **no** direction reported anywhere ⇒ `unobservable`, `basis: 'unobservable'`. NEVER a zero.
+ *
+ * The two write counters are ALTERNATIVE SPELLINGS of one quantity across providers, never two
+ * additive components — either one being present means the write direction was reported.
+ *
+ * Consults every persisted counter that can independently signal engagement —
+ * `cache_creation_input_tokens`, `cache_write_tokens`, `cache_read_input_tokens` — but
+ * deliberately does NOT consult `UsageRecord.cache_creation` (the per-TTL ephemeral split). That
+ * is not an omission: the provider's own documented invariant, vendored in this repo at
+ * `plans/issue-558/axes/sources/framework-decisions/anthropic-prompt-caching.md:841`, states
+ * *"the current `cache_creation_input_tokens` field equals the sum of the values in the
+ * `cache_creation` object"* — so the aggregate this function already reads is DEFINED as the sum
+ * of the split, and re-reading the split here could only ever agree with (never override) what
+ * `cache_creation_input_tokens` already says. A future reader tempted to "fix" this omission
+ * should read that citation first.
+ */
+export function deriveCacheDetail(requests: UsageRecord[]): StepCacheDetail {
+  let readObserved = false;
+  let writeObserved = false;
+  let read = false;
+  let wrote = false;
+  // Whether EVERY request reported BOTH directions. The two words that claim something about both
+  // — `write_only` ("read nothing, wrote something") and `never_engaged` ("did neither") — may only
+  // be minted when that is true of every request, not merely somewhere in the step: with request 0
+  // reporting a read of 0 and request 1 reporting a write, the global flags are both set while
+  // request 1's read is UNKNOWN, and `write_only` then asserts a read nobody reported.
+  let allBoth = true;
+  for (const r of requests) {
+    // `typeof === 'number'`, never `!== undefined`: `null` is one of the two absence spellings a
+    // provider's own type allows (`UsageRecord`'s doc says so), and `null !== undefined` is TRUE —
+    // so an `!== undefined` test counts a null as REPORTED and the comparison below then reads it as
+    // a zero. That is the coercion this whole field exists to prevent, one altitude down.
+    const readVal = r.cache_read_input_tokens;
+    let readHere = false;
+    if (typeof readVal === 'number') {
+      readHere = true;
+      readObserved = true;
+      if (readVal > 0) read = true;
+    }
+    let writeHere = false;
+    for (const w of [r.cache_creation_input_tokens, r.cache_write_tokens]) {
+      if (typeof w === 'number') {
+        writeHere = true;
+        writeObserved = true;
+        if (w > 0) wrote = true;
+      }
+    }
+    if (!(readHere && writeHere)) allBoth = false;
+  }
+  if (!readObserved && !writeObserved)
+    return { state: 'unobservable', basis: 'unobservable', requests };
+  // A read above zero PROVES the cache was engaged whatever any write counter said or withheld, so
+  // this arm needs no both-directions conjunct — the word claims only what the read establishes.
+  if (read) return { state: 'engaged', basis: 'provider_reported', requests };
+  if (allBoth) {
+    if (wrote) return { state: 'write_only', basis: 'provider_reported', requests };
+    return { state: 'never_engaged', basis: 'provider_reported', requests };
+  }
+  return { state: 'partially_observed', basis: 'provider_reported', requests };
+}
+
 export async function executeStep(
   store: RunStore,
   definition: WorkflowDefinition,
@@ -2537,33 +2690,20 @@ export async function executeStep(
         input: effectiveInput,
         output: attemptOutput,
         ...(attemptError !== null ? { error: attemptError.message } : {}),
-        diagnostics: {
-          input_token_estimate: inputTokenEstimate,
-          precondition_trace: preconditionTrace,
-          // issue #220: success-settle stamp — a free diagnostic proving this step needed N prior
-          // rejections before finally succeeding ("succeeded after N rejections"). Only stamped on
-          // a SUCCESS settle. `run` here is the Step-1 read, so this reflects rejections accrued
-          // in PRIOR invocations only — a rejection in THIS invocation never reaches this call site
-          // (countRejection only runs from the Step 2b/2c catch, which always either returns or
-          // falls through toward terminalization, never toward dispatch).
-          ...(attemptError === null && (run.validation_rejections?.[options.command] ?? 0) > 0
-            ? { validation_rejections: run.validation_rejections![options.command] }
-            : {}),
-          // issue #236: the attempt's structured_output disclosure. External-agent stamp [Rv6 +
-          // R2-3]: a step that DECLARED structured_output but arrives with no
-          // options.stepMeta.structuredOutput at all was driven by something other than
-          // run-agent (e.g. an external agent calling execute_step over MCP directly) — realm
-          // cannot know whether strict was honored, so it says so rather than staying silent.
-          ...(stepDef?.structured_output !== undefined
-            ? {
-                structured_output: options.stepMeta?.structuredOutput ?? {
-                  requested: true,
-                  sent: false,
-                  downgrade_reason: 'external_agent',
-                },
-              }
-            : {}),
-        },
+        diagnostics: buildStepDiagnostics(
+          {
+            kind: 'attempt',
+            attemptFailed: attemptError !== null,
+            accruedRejections: run.validation_rejections?.[options.command],
+          },
+          {
+            inputTokenEstimate,
+            preconditionTrace,
+            stepDef,
+            structuredOutputMeta: options.stepMeta?.structuredOutput,
+            usage: options.stepMeta?.usage,
+          },
+        ),
         ...(profileData !== undefined
           ? { agentProfile: profile!, agentProfileHash: profileData.content_hash }
           : {}),
@@ -2681,23 +2821,16 @@ export async function executeStep(
       completedAt: settledAt,
       input: effectiveInput,
       output: defaultOutput,
-      diagnostics: {
-        input_token_estimate: inputTokenEstimate,
-        precondition_trace: preconditionTrace,
-        settled_by_default: true,
-        validation_rejections: exhaustion!.details['rejections'] as number,
-        // issue #236: same disclosure/external-agent-stamp rule as the real dispatch-loop
-        // capture above.
-        ...(stepDef?.structured_output !== undefined
-          ? {
-              structured_output: options.stepMeta?.structuredOutput ?? {
-                requested: true,
-                sent: false,
-                downgrade_reason: 'external_agent',
-              },
-            }
-          : {}),
-      },
+      diagnostics: buildStepDiagnostics(
+        { kind: 'default_settle', rejections: exhaustion!.details['rejections'] as number },
+        {
+          inputTokenEstimate,
+          preconditionTrace,
+          stepDef,
+          structuredOutputMeta: options.stepMeta?.structuredOutput,
+          usage: options.stepMeta?.usage,
+        },
+      ),
       ...(defaultProfileData !== undefined
         ? { agentProfile: defaultProfile!, agentProfileHash: defaultProfileData.content_hash }
         : {}),
@@ -2752,22 +2885,16 @@ export async function executeStep(
       input: effectiveInput,
       output: {},
       error: exhaustion!.message,
-      diagnostics: {
-        input_token_estimate: inputTokenEstimate,
-        precondition_trace: preconditionTrace,
-        validation_rejections: exhaustion!.details['rejections'] as number,
-        // issue #236: same disclosure/external-agent-stamp rule as the real dispatch-loop
-        // capture above.
-        ...(stepDef?.structured_output !== undefined
-          ? {
-              structured_output: options.stepMeta?.structuredOutput ?? {
-                requested: true,
-                sent: false,
-                downgrade_reason: 'external_agent',
-              },
-            }
-          : {}),
-      },
+      diagnostics: buildStepDiagnostics(
+        { kind: 'exhausted', rejections: exhaustion!.details['rejections'] as number },
+        {
+          inputTokenEstimate,
+          preconditionTrace,
+          stepDef,
+          structuredOutputMeta: options.stepMeta?.structuredOutput,
+          usage: options.stepMeta?.usage,
+        },
+      ),
       ...(exhaustedProfileData !== undefined
         ? { agentProfile: exhaustedProfile!, agentProfileHash: exhaustedProfileData.content_hash }
         : {}),

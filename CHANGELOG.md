@@ -4,6 +4,96 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`StepDiagnostics.cache`** — what a provider reported about prompt caching for an agent step's
+  model calls, one entry per WIRE REQUEST, never per step: `UsageRecord[]` with the measured
+  prompt size, the cache tokens read and written, and output tokens, each field present only when
+  the provider actually reported it (never coerced to `0`). The rendered line keeps that property
+  per DIRECTION and per REQUEST: an unreported read prints `read not reported`, never `read 0`; a
+  counter some requests reported and others did not prints its sum as a floor that says so and
+  names what it counted (`read at least 512 (1 of 3 requests reported a read)`); and a step whose
+  provider reported one direction only, with nothing above zero to prove engagement, is
+  `partially_observed`, not `never_engaged` — "nobody wrote to the cache" and "nobody said whether
+  anything wrote to the cache" are different facts and the screen distinguishes them. (A read
+  ABOVE zero is `engaged` whatever the write counter withheld: a read proves engagement, so that
+  arm needs no second direction.) Where the
+  whole prompt cannot be derived (Anthropic reports a three-term disjoint sum, so one absent term
+  leaves no total) the line prints the uncached figure it does have, labelled. A prompt figure
+  comes from the request that reported one and the label names WHICH (`555 prompt tokens (measured,
+request 2 of 2)`); when several requests reported one it is their TOTAL, labelled with how many
+  of how many (`1665 prompt tokens (measured, totals across 2 of 2 requests)`), because showing one
+  request's figure while a larger sibling went unshown understated what the step billed. On a step
+  that made at least one wire request and reported no prompt for any of them, the line says
+  `prompt not reported` rather than omitting the figure; with no per-request detail at all there is
+  no prompt segment, and the cache segment carries the whole fact. The character estimate beside it
+  now says what it estimates (`~N tokens (estimate, step input)`): it is
+  `JSON.stringify(input).length / 4` of the step's own resolved input, NOT the context window, and
+  in a real run the two differ by ~100x. `never_engaged` prints both reported zeros (`not engaged —
+read 0, wrote 0`) rather than one `0` standing for two counters. Wherever a counter reaches the
+  line, a `state` or `basis` word this build does not know is named as unrecognised rather than
+  printed as an ordinary fact, and an ABSENT `basis` reads `basis not recorded`, because missing and
+  corrupt are different facts; where NO counter reaches it, every one of those records gets the same
+  sentence — `cache: not reported by the provider`, with the request count when there is one — since
+  there is no figure for any provenance word to vouch for. A state word claiming nothing was
+  observed no longer outranks counters the record carries. The `cache_creation` split
+  (`ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens`) records which TTL bucket a write
+  landed in; it is carried for the TTL work and is not rendered, because
+  `cache_creation_input_tokens` already equals its sum. Rendered on `realm
+run inspect` alongside the existing token estimate — a real measurement beside the character-based
+  one, both labelled so neither is mistaken for the other. Present with `state: 'unobservable'` when a model
+  call happened and the provider reported nothing observable; ABSENT when no model call happened
+  at all (a handler step) — those are different facts, and `usage ?? []` at the call site is what
+  keeps a silent third-party provider from being indistinguishable from a step that never called a
+  model. This measures; it places nothing on the wire and requests nothing new from a provider.
+  (Issue #600.)
+- **`DriveFailureRecord.usage`** — the same per-request `UsageRecord[]`, on a failed drive: what
+  the provider had already billed before the drive's retries exhausted. The accumulator is owned by
+  the provider's entry point, so it survives ANY throw below it — the wire failure an operator
+  actually meets (a 500 or a timeout after one billed request) carries the numbers, not only
+  realm's own typed refusals. That line answers a COST question — its own words are "billed before
+  the throw" — so the prompt is SUMMED over the requests that reported one, like the output tokens
+  beside it, and labelled with its scope when more than one request was billed
+  (`2500 prompt tokens (totals across 2 requests)`). A figure only some of them reported prints as
+  a floor that names what it counted (`at least 1300 prompt tokens (1 of 2 requests reported a
+prompt)`, `at least 25 output tokens (1 of 2 requests reported output)`), and one none of them
+  reported says so (`output not reported`). An empty `usage` array says only that no per-request
+  usage was recorded, never that a request was billed. Nothing is attached when nothing was billed,
+  so on those paths an
+  absent `usage` keeps meaning "no wire request was ever made" — a TOOL-CALLING step accumulates
+  nothing at all yet, so its `usage` is absent whatever it billed (issue #610). Rendered on `realm run inspect`'s "Drive
+  failures:" block and passed verbatim through `get_run_state` — an operator (or agent) staring at
+  a failed run can now see that money was spent, not only that the drive failed. (Issue #600.)
+- **`UsageRecord`, `CACHE_STATES`, `CACHE_BASES`, `CacheState`, `CacheBasis`, `StepCacheDetail`,
+  `deriveCacheDetail`** — exported from `@sensigo/realm` (the types from
+  `packages/core/src/types/run-record.ts`, the function from `engine/execution-loop.ts`, so a
+  renderer can pin the sentence it prints against the classifier that produces the state).
+  `CACHE_STATES` has five members: `engaged`, `never_engaged`, `write_only`, `partially_observed`
+  and `unobservable`. (Issue #600.)
+
+### Changed
+
+- **`LlmProvider.callStepWithMeta`'s return type widens to `{ output, meta?, usage? }`** — `usage`
+  a sibling of `meta`, never nested inside it. `LlmProvider` is a published type
+  (`agent/index.ts`); a third-party override returning the narrower `{ output, meta? }` still
+  type-checks (additive), but this is a public-surface change. The base default implementation is
+  unchanged: a provider that does not override `callStepWithMeta` keeps inheriting `{ output }`,
+  `usage: undefined`, by construction. `UsageRecord`'s fields carry ENGINE semantics, not either
+  provider's field names: `prompt_tokens` is the WHOLE prompt and `uncached_input_tokens` the part
+  of it not served from cache. The two providers' own "input tokens" mean opposite things — an
+  author of a third-party provider module who maps by field name rather than by meaning will report
+  a wrong number about money, so map onto the documented meaning (`run-record.ts`'s `UsageRecord`
+  doc states it, with the provider citations). (Issue #600.)
+- **A step declaring no `structured_output` now reports what its model calls cost.** Previously
+  such a step's model call went through `callStep` directly, discarding the response; it now goes
+  through `callStepWithMeta` (the same request, byte-for-byte), so `StepDiagnostics.cache` is
+  populated on every agent step that made a model call, not only ones declaring
+  `structured_output`. (Issue #600.)
+
+---
+
 ## [0.45.0] — 2026-09-19
 
 Five BREAKING changes — one compile-time, four at runtime. Realm is pre-1.0, so breaking changes

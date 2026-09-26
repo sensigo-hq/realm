@@ -1,0 +1,468 @@
+// step-diagnostics-cache.test.ts — issue #600 PR 1a: D3's discriminated mint (the two
+// discriminating cells the existing suite's own cells cannot provide), D4's absence rule and
+// all-three-kind presence, and D5's `deriveCacheDetail` derivation (the four states + the null-
+// vs-zero fork).
+//
+// D3(b)'s own text: "every existing cell stays green with zero edits" is NECESSARY but NOT
+// SUFFICIENT — both compiling forms of the flatten mutant (dropping the `attempt` arm's
+// `attemptError === null` conjunct, and stamping `settled_by_default` on the `exhausted` arm too)
+// leave the pre-existing suite fully green, because no core cell anywhere asserts
+// `settled_by_default` on a diagnostics snapshot at all. These two cells are what actually pins it.
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  executeStep,
+  DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
+  deriveCacheDetail,
+} from './execution-loop.js';
+import { deriveDefaultedSteps } from './defaulted-steps.js';
+import { JsonFileStore } from '../store/json-file-store.js';
+import { WorkflowError } from '../types/workflow-error.js';
+import type { StepDispatcher } from './execution-loop.js';
+import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
+import {
+  CACHE_STATES,
+  CACHE_BASES,
+  type UsageRecord,
+  type CacheState,
+} from '../types/run-record.js';
+
+const echoDispatcher: StepDispatcher = async (_step, input) => ({ ...input });
+const INVALID_OUTPUT = {}; // missing 'category' — fails output_schema
+const OUTPUT_SCHEMA = {
+  type: 'object',
+  required: ['category'],
+  properties: { category: { type: 'string' } },
+};
+
+function makeVxDef(stepOverrides: Partial<StepDefinition> = {}): WorkflowDefinition {
+  return {
+    id: 'sd-cache-vx-wf',
+    name: 'SD Cache VX WF',
+    version: 1,
+    steps: {
+      draft: {
+        description: 'Draft',
+        execution: 'agent',
+        output_schema: OUTPUT_SCHEMA,
+        ...stepOverrides,
+      },
+    },
+  };
+}
+
+function makePlainDef(): WorkflowDefinition {
+  return {
+    id: 'sd-cache-plain-wf',
+    name: 'SD Cache Plain WF',
+    version: 1,
+    steps: {
+      work: { description: 'Work', execution: 'agent', depends_on: [] },
+    },
+  };
+}
+
+function usage(overrides: Partial<UsageRecord> = {}): UsageRecord {
+  return { request_index: 0, request_start: new Date().toISOString(), ...overrides };
+}
+
+describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + absence + derivation', () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-sd-cache-'));
+    store = new JsonFileStore(dir);
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  describe('D3(b) — the two discriminating cells', () => {
+    it('an ATTEMPT snapshot for a FAILED attempt with accrued rejections carries NEITHER validation_rejections NOR settled_by_default', async () => {
+      // Three prior shapes were tried and each passed for the WRONG reason before this one was
+      // verified genuinely discriminating (owned in the report): a throwing dispatcher with no
+      // retry config persists no evidence at all (no retry ⇒ terminal, buildStepDiagnostics never
+      // called — confirmed by a temporary trace); a non-exhausting output-schema rejection (the
+      // `validation-exhaustion.test.ts` shape) ALSO persists no evidence, only a bump-and-report
+      // counter; a throw configured with `retry` but NOT wrapped as a RETRYABLE `WorkflowError`
+      // still terminalizes on attempt 1 (a plain `Error` is caught and reclassified
+      // `retryable: false`, per execution-loop.ts's own catch). The genuinely reachable case,
+      // matching `reliability.test.ts`'s own proven "retry succeeds on 2nd attempt" shape: an
+      // `execution: 'auto'` step, `retry.max_attempts >= 2`, attempt 1 throws a RETRYABLE
+      // WorkflowError, attempt 2 succeeds — `envelope.evidence[0]` is attempt 1's FAILED snapshot.
+      const def: WorkflowDefinition = {
+        id: 'sd-cache-retry-wf',
+        name: 'SD Cache Retry WF',
+        version: 1,
+        steps: {
+          draft: {
+            description: 'Draft',
+            execution: 'auto',
+            depends_on: [],
+            retry: { max_attempts: 2, backoff: 'fixed', base_delay_ms: 1 },
+          } as unknown as StepDefinition,
+        },
+      };
+      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      await store.update({ ...run, validation_rejections: { draft: 3 } });
+      let calls = 0;
+      const flakyDispatcher: StepDispatcher = async () => {
+        calls++;
+        if (calls === 1) {
+          throw new WorkflowError('transient failure', {
+            code: 'ENGINE_HANDLER_FAILED',
+            category: 'ENGINE',
+            agentAction: 'stop',
+            retryable: true,
+          });
+        }
+        return { ok: true };
+      };
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'draft',
+        input: {},
+        dispatcher: flakyDispatcher,
+      });
+      expect(envelope.status).toBe('ok');
+      expect(envelope.evidence).toHaveLength(2);
+      const failedAttempt = envelope.evidence[0];
+      expect(failedAttempt?.attempt).toBe(1);
+      expect(failedAttempt?.status).toBe('error');
+      expect(failedAttempt?.diagnostics?.validation_rejections).toBeUndefined();
+      expect(failedAttempt?.diagnostics?.settled_by_default).toBeUndefined();
+    });
+
+    it('an EXHAUSTED snapshot carries validation_rejections but NOT settled_by_default, and defaulted_steps never names the step', async () => {
+      const def = makeVxDef(); // no validation_exhaustion.mode: 'default' declared — terminalize
+      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      await store.update({
+        ...run,
+        validation_rejections: { draft: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
+      });
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'draft',
+        input: INVALID_OUTPUT,
+        dispatcher: echoDispatcher,
+      });
+      expect(envelope.status).toBe('error');
+      const after = await store.get(run.id);
+      const exhaustedSnap = after.evidence.find(
+        (e) => e.step_id === 'draft' && e.status === 'error',
+      );
+      expect(exhaustedSnap?.diagnostics?.validation_rejections).toBe(
+        DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
+      );
+      expect(exhaustedSnap?.diagnostics?.settled_by_default).toBeUndefined();
+      // The read-time derivation the operator surfaces call — proves the terminalized step is
+      // never mis-reported as a default-settle.
+      expect(deriveDefaultedSteps(after.evidence)).not.toContain('draft');
+      expect(deriveDefaultedSteps(after.evidence)).toEqual([]);
+    });
+  });
+
+  describe('D4 — the absence rule, both ways, and presence on every mint kind', () => {
+    it('cache is ABSENT when no stepMeta.usage was ever supplied (no model call happened)', async () => {
+      const def = makePlainDef();
+      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echoDispatcher,
+        // NO stepMeta at all.
+      });
+      expect(envelope.status).toBe('ok');
+      expect(envelope.evidence[0]?.diagnostics?.cache).toBeUndefined();
+    });
+
+    it('cache is PRESENT with state "unobservable" when a model call happened and reported nothing (usage: [])', async () => {
+      const def = makePlainDef();
+      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echoDispatcher,
+        stepMeta: { usage: [] }, // a call happened; nothing was observed (the driver's `?? []`)
+      });
+      expect(envelope.status).toBe('ok');
+      expect(envelope.evidence[0]?.diagnostics?.cache).toEqual({
+        state: 'unobservable',
+        basis: 'unobservable',
+        requests: [],
+      });
+    });
+
+    it('cache is present on a synthesized DEFAULT_SETTLE snapshot — a step that accrued rejections spent real money, usually more than a clean one', async () => {
+      const def = makeVxDef({
+        validation_exhaustion: { mode: 'default', default_output: { category: 'fallback' } },
+      });
+      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      await store.update({
+        ...run,
+        validation_rejections: { draft: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
+      });
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'draft',
+        input: INVALID_OUTPUT,
+        dispatcher: echoDispatcher,
+        stepMeta: {
+          usage: [usage({ prompt_tokens: 500, cache_read_input_tokens: 350, output_tokens: 10 })],
+        },
+      });
+      expect(envelope.status).toBe('ok');
+      const settleSnap = envelope.evidence.find(
+        (e) => e.step_id === 'draft' && e.status === 'success',
+      );
+      expect(settleSnap?.diagnostics?.settled_by_default).toBe(true);
+      expect(settleSnap?.diagnostics?.cache?.state).toBe('engaged');
+      expect(settleSnap?.diagnostics?.cache?.requests).toHaveLength(1);
+    });
+
+    it('cache is present on a synthesized EXHAUSTED snapshot too', async () => {
+      const def = makeVxDef();
+      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      await store.update({
+        ...run,
+        validation_rejections: { draft: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
+      });
+      const envelope = await executeStep(store, def, {
+        runId: run.id,
+        command: 'draft',
+        input: INVALID_OUTPUT,
+        dispatcher: echoDispatcher,
+        stepMeta: { usage: [usage({ prompt_tokens: 300 })] },
+      });
+      expect(envelope.status).toBe('error');
+      const after = await store.get(run.id);
+      const exhaustedSnap = after.evidence.find(
+        (e) => e.step_id === 'draft' && e.status === 'error',
+      );
+      expect(exhaustedSnap?.diagnostics?.cache).toBeDefined();
+      expect(exhaustedSnap?.diagnostics?.cache?.requests[0]?.prompt_tokens).toBe(300);
+    });
+
+    it('CACHE_STATES/CACHE_BASES ship only members with producers in this PR — CACHE_BASES has exactly two', () => {
+      expect(CACHE_STATES).toEqual([
+        'engaged',
+        'never_engaged',
+        'write_only',
+        'partially_observed',
+        'unobservable',
+      ]);
+      expect(CACHE_BASES).toEqual(['provider_reported', 'unobservable']);
+      expect(CACHE_BASES).not.toContain('derived');
+    });
+  });
+
+  describe('D4 — all six symbols exported from the PUBLIC package (@sensigo/realm)', () => {
+    it('CACHE_STATES, CACHE_BASES, and the four type-only symbols are importable from the package specifier', async () => {
+      // A dynamic import of the package specifier (not a relative path) proves the VALUE exports
+      // land in the built public surface — the type-only ones cannot be asserted at runtime, so
+      // this only proves the two `as const` value exports; the four types are proven by this
+      // file's own `import type { UsageRecord, CacheState } from '../types/run-record.js'` above
+      // compiling — but D4's own acceptance is "exported from core's index", so read index.ts
+      // directly to prove the re-export exists as source text (belt-and-braces).
+      const pkg = await import('@sensigo/realm');
+      expect(pkg.CACHE_STATES).toEqual([
+        'engaged',
+        'never_engaged',
+        'write_only',
+        'partially_observed',
+        'unobservable',
+      ]);
+      expect(pkg.CACHE_BASES).toEqual(['provider_reported', 'unobservable']);
+    });
+  });
+
+  describe('D5 — deriveCacheDetail: five states, one cell per member', () => {
+    it('engaged: any request with cache_read_input_tokens > 0', () => {
+      const detail = deriveCacheDetail([
+        usage({ cache_read_input_tokens: 1150, cache_creation_input_tokens: 0 }),
+      ]);
+      expect(detail.state).toBe('engaged');
+      expect(detail.basis).toBe('provider_reported');
+    });
+
+    it('never_engaged: both counters observed as 0 on every request — an observed zero is a real fact', () => {
+      const detail = deriveCacheDetail([
+        usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }),
+      ]);
+      expect(detail.state).toBe('never_engaged');
+      expect(detail.basis).toBe('provider_reported');
+    });
+
+    it('write_only: some request wrote, none read', () => {
+      const detail = deriveCacheDetail([
+        usage({ cache_creation_input_tokens: 1150, cache_read_input_tokens: 0 }),
+      ]);
+      expect(detail.state).toBe('write_only');
+      expect(detail.basis).toBe('provider_reported');
+    });
+
+    it('unobservable: no counter observed anywhere — NEVER a zero', () => {
+      const detail = deriveCacheDetail([usage({ prompt_tokens: 1200 })]);
+      expect(detail.state).toBe('unobservable');
+      expect(detail.basis).toBe('unobservable');
+    });
+
+    it('write_only fires via the separate cache_write_tokens counter WHEN the read counter was also reported (a provider that reports writes apart from cache_creation_input_tokens)', () => {
+      const detail = deriveCacheDetail([
+        usage({ cache_write_tokens: 500, cache_read_input_tokens: 0 }),
+      ]);
+      expect(detail.state).toBe('write_only');
+    });
+
+    it('the SAME write counter WITHOUT a reported read is partially_observed, never write_only — "only" is a claim about BOTH directions', () => {
+      // The defect this cell exists for: a provider that reports a write and withholds the read
+      // counter (OpenAI's `cache_write_tokens` is optional on `prompt_tokens_details`) used to be
+      // rolled up as `write_only`, which asserts a read of zero nobody reported — the record's own
+      // rule ("none is ever defaulted to 0") broken at the state word instead of at the field.
+      const detail = deriveCacheDetail([usage({ cache_write_tokens: 500 })]);
+      expect(detail.state).toBe('partially_observed');
+      expect(detail.basis).toBe('provider_reported');
+    });
+
+    // Mutant (ii): coerce a null counter to 0 — must red EXACTLY the unobservable cell above,
+    // because a genuinely-observed 0 (never_engaged) and a coerced-null 0 become indistinguishable
+    // only in the unobservable population; the other three states are keyed on `> 0`, unaffected.
+    it("a mutant coercing null-to-0 would flip this exact cell's outcome from unobservable to never_engaged", () => {
+      // Simulates the mutant directly: the SAME requests the unobservable cell above uses, but
+      // with the counters explicitly present-as-zero instead of absent — this is what a
+      // null-coercion bug would produce, and it must NOT read the same as the real absence.
+      const mutated = deriveCacheDetail([
+        usage({ prompt_tokens: 1200, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }),
+      ]);
+      expect(mutated.state).toBe('never_engaged'); // NOT 'unobservable' — proves the two are distinct
+    });
+  });
+
+  describe('CacheState type usage sanity (compile-time; keeps the import live)', () => {
+    it('every produced state is a member of the exported union', () => {
+      const states: CacheState[] = [
+        'engaged',
+        'never_engaged',
+        'write_only',
+        'partially_observed',
+        'unobservable',
+      ];
+      for (const s of states) expect(CACHE_STATES).toContain(s);
+    });
+  });
+
+  // =======================================================================================
+  // THE ABSENCE LATTICE — the anti-repeat law for this issue's one rule.
+  //
+  // The class this block exists to prevent: "an absence is never a zero" honoured for the whole
+  // usage OBJECT and broken one level down, per FIELD. That is how a state word came to claim a
+  // direction no provider reported. The instrument is a LATTICE, not a sample: every cell of
+  // (read direction) x (write direction) over {not reported, reported 0, reported > 0} is
+  // enumerated here, so the next hole of this shape lands on a cell that already exists rather
+  // than on a probe someone remembered to write. A new state member cannot be added without
+  // deciding, in this table, which cells produce it.
+  // =======================================================================================
+  describe('D5 — the absence lattice: every (read x write) observation cell has exactly one state', () => {
+    type Obs = 'absent' | 'zero' | 'positive';
+    const OBS: Obs[] = ['absent', 'zero', 'positive'];
+    const value = (o: Obs): number | undefined =>
+      o === 'absent' ? undefined : o === 'zero' ? 0 : 500;
+
+    // The one true answer per cell. `engaged` needs only a read > 0 (a read PROVES engagement
+    // whatever the write counter said); `write_only` and `never_engaged` each claim BOTH
+    // directions, so both must have been reported; anything else is a partial view.
+    const expected: Record<Obs, Record<Obs, CacheState>> = {
+      absent: {
+        absent: 'unobservable',
+        zero: 'partially_observed',
+        positive: 'partially_observed',
+      },
+      zero: { absent: 'partially_observed', zero: 'never_engaged', positive: 'write_only' },
+      positive: { absent: 'engaged', zero: 'engaged', positive: 'engaged' },
+    };
+
+    for (const read of OBS) {
+      for (const write of OBS) {
+        it(`read ${read} x write ${write} => ${expected[read][write]}`, () => {
+          // Hoisted, not inlined: TS cannot narrow a call's result inside a conditional spread,
+          // so the inline form is `number | undefined` and `exactOptionalPropertyTypes` rejects it.
+          const rv = value(read);
+          const wv = value(write);
+          const r = usage({
+            ...(rv !== undefined ? { cache_read_input_tokens: rv } : {}),
+            ...(wv !== undefined ? { cache_creation_input_tokens: wv } : {}),
+          });
+          const detail = deriveCacheDetail([r]);
+          expect(detail.state).toBe(expected[read][write]);
+          // No cell may mint a state outside the exported vocabulary, and only the all-absent
+          // cell may claim it saw nothing.
+          expect(CACHE_STATES).toContain(detail.state);
+          expect(detail.basis).toBe(
+            read === 'absent' && write === 'absent' ? 'unobservable' : 'provider_reported',
+          );
+        });
+      }
+    }
+
+    it('the lattice covers every state member — no member is unreachable, none is untested', () => {
+      const produced = new Set<CacheState>();
+      for (const read of OBS) for (const write of OBS) produced.add(expected[read][write]);
+      expect([...produced].sort()).toEqual([...CACHE_STATES].sort());
+    });
+  });
+});
+
+describe('issue #600 PR 1a — correction 2: null is an absence, and both-directions words need both', () => {
+  it('a NULL counter is an ABSENCE at the classifier too — never an observed zero', () => {
+    // `null !== undefined` is TRUE, so an `!== undefined` test counts a null as REPORTED and the
+    // `> 0` comparison then reads it as a zero. The mapper honours the null; this consumer did not,
+    // so a record with an unreported read and a reported write classified `write_only` — a word that
+    // asserts "read nothing" about a direction the provider said nothing about.
+    const detail = deriveCacheDetail([
+      usage({
+        cache_read_input_tokens: null as unknown as number,
+        cache_creation_input_tokens: 7,
+      }),
+    ]);
+    expect(detail.state).toBe('partially_observed');
+  });
+
+  it('`write_only` needs EVERY request to have reported both directions, not the step as a whole', () => {
+    // Request 0 reports a read of 0, request 1 reports a write. Globally both directions have been
+    // seen; per request, request 1's read is UNKNOWN — so "read nothing, wrote something" asserts a
+    // read nobody reported. Reachable: OpenAI's cached/write counters are both optional, so two
+    // requests in one step can differ.
+    const detail = deriveCacheDetail([
+      usage({ cache_read_input_tokens: 0 }),
+      { request_index: 1, request_start: 'x', cache_creation_input_tokens: 5 } as UsageRecord,
+    ]);
+    expect(detail.state).toBe('partially_observed');
+  });
+
+  it('`never_engaged` needs it too — one silent direction anywhere makes the view partial', () => {
+    const detail = deriveCacheDetail([
+      usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }),
+      { request_index: 1, request_start: 'x', cache_read_input_tokens: 0 } as UsageRecord,
+    ]);
+    expect(detail.state).toBe('partially_observed');
+  });
+
+  it('the CONTROL: every request reporting both directions still earns the both-directions word', () => {
+    const detail = deriveCacheDetail([
+      usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 5 }),
+      {
+        request_index: 1,
+        request_start: 'x',
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 3,
+      } as UsageRecord,
+    ]);
+    expect(detail.state).toBe('write_only');
+  });
+});

@@ -62,7 +62,9 @@ function oneTool(id = 'srv:op'): ToolDefinition {
 // callStep tests
 // =========================================================================
 describe('OpenAIProvider.callStep', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   it('returns parsed JSON from the model response', async () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"result":"ok"}'));
@@ -120,7 +122,9 @@ describe('OpenAIProvider.callStep', () => {
 // callStepWithTools tests
 // =========================================================================
 describe('OpenAIProvider.callStepWithTools', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   // -----------------------------------------------------------------------
   // 1. Basic tool call loop
@@ -513,7 +517,9 @@ describe('OpenAIProvider.callStepWithTools', () => {
 // issue #224 — in-conversation full-AJV correction (OpenAI-chat is IN SCOPE)
 // =========================================================================
 describe('OpenAIProvider.callStepWithTools — issue #224 in-conversation AJV correction', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   const strictSchema = {
     type: 'object',
@@ -729,7 +735,9 @@ describe('OpenAIProvider.callStepWithTools — issue #224 in-conversation AJV co
 // on the SAME `tool_call_count`, incremented per tool call AND per correction, no reset/decrement)
 // =========================================================================
 describe('OpenAIProvider.callStepWithTools — issue #224 shared-budget characterization', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   const budgetSchema = {
     type: 'object',
@@ -810,7 +818,9 @@ describe('OpenAIProvider.callStepWithTools — issue #224 shared-budget characte
 // capabilities() tests
 // =========================================================================
 describe('OpenAIProvider.capabilities', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   // -----------------------------------------------------------------------
   // 15. jsonMode: true for native OpenAI (no baseUrl)
@@ -902,7 +912,9 @@ const CLASS_B_CAPTURED = {
 const CLASS_B_TEXT = 'Error: Workflow not found: no-such-workflow-345';
 
 describe('OpenAIProvider.callStepWithTools — Class-B tool failures (issue #345)', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   /** Runs one tool call whose executor resolves `value`, and returns its ToolCallRecord. */
   async function recordFor(value: unknown) {
@@ -998,5 +1010,178 @@ describe('OpenAIProvider.callStepWithTools — Class-B tool failures (issue #345
     });
     expect(record.error).toBe('auth failed for Bearer [REDACTED]');
     expect(record.error).not.toContain('sk-live-abcdef123456');
+  });
+});
+
+// =================================================================================================
+// issue #600 PR 1a — D1 (OpenAI's mapper) + D1a (the shared private body) + D1b (the re-route)
+// =================================================================================================
+function makeTextResponseWithUsage(
+  content: string,
+  usage: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+  },
+) {
+  return {
+    choices: [{ message: { role: 'assistant', content, tool_calls: undefined } }],
+    usage,
+  };
+}
+
+describe('OpenAIProvider — issue #600 PR 1a D1: prompt_tokens IS the total, never re-added', () => {
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  it('reads prompt_tokens VERBATIM as the whole prompt, and cached_tokens as a SUBSET — never summed onto it', async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeTextResponseWithUsage('{"result":"ok"}', {
+        prompt_tokens: 1200,
+        completion_tokens: 40,
+        prompt_tokens_details: { cached_tokens: 1150 },
+      }),
+    );
+    const provider = new OpenAIProvider('gpt-4o');
+    const result = await provider.callStepWithMeta('prompt');
+    expect(result.usage).toHaveLength(1);
+    const [entry] = result.usage!;
+    // The mutant this cell exists to kill: `prompt_tokens + cached_tokens` would report 2350 —
+    // double-counting the cache. OpenAI's own docs say `cached_tokens` is "present IN the prompt".
+    expect(entry!.prompt_tokens).toBe(1200);
+    expect(entry!.cache_read_input_tokens).toBe(1150);
+    expect(entry!.uncached_input_tokens).toBe(50); // 1200 - 1150, the one derived field
+    expect(entry!.output_tokens).toBe(40);
+  });
+
+  it('cache_write_tokens is read separately, never folded into prompt_tokens either', async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeTextResponseWithUsage('{"result":"ok"}', {
+        prompt_tokens: 500,
+        completion_tokens: 10,
+        prompt_tokens_details: { cache_write_tokens: 500 },
+      }),
+    );
+    const result = await new OpenAIProvider('gpt-4o').callStepWithMeta('prompt');
+    const [entry] = result.usage!;
+    expect(entry!.prompt_tokens).toBe(500);
+    expect(entry!.cache_write_tokens).toBe(500);
+    expect(entry!.cache_read_input_tokens).toBeUndefined();
+  });
+
+  it('a response with NO usage block at all yields no usage entry field values — never a fabricated 0', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"result":"ok"}'));
+    const result = await new OpenAIProvider('gpt-4o').callStepWithMeta('prompt');
+    expect(result.usage).toHaveLength(1);
+    expect(result.usage![0]!.prompt_tokens).toBeUndefined();
+  });
+});
+
+describe('OpenAIProvider — issue #600 PR 1a D1a: usage travels through callStepWithMeta, never through callStep', () => {
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  it('callStep (public, untouched signature) DISCARDS usage by construction', async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeTextResponseWithUsage('{"result":"ok"}', { prompt_tokens: 1200, completion_tokens: 40 }),
+    );
+    const result = await new OpenAIProvider('gpt-4o').callStep('prompt');
+    // callStep's return type is Record<string, unknown> — the parsed object only, no usage field
+    // to even discard from; this is the type-level guarantee constraint 2 requires.
+    expect(result).toEqual({ result: 'ok' });
+    expect(Object.keys(result)).not.toContain('usage');
+  });
+
+  it('BYTE-IDENTITY — the request body callStep sends is IDENTICAL to what callStepWithMeta sends for the same bare arm (constraint 1)', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"a":1}'));
+    await new OpenAIProvider('gpt-4o').callStep('same prompt', undefined, 'profile text');
+    const viaCallStep = JSON.stringify(mockCreate.mock.calls[0]![0]);
+
+    mockCreate.mockReset();
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"a":1}'));
+    await new OpenAIProvider('gpt-4o').callStepWithMeta('same prompt', undefined, 'profile text');
+    const viaCallStepWithMeta = JSON.stringify(mockCreate.mock.calls[0]![0]);
+
+    expect(viaCallStepWithMeta).toBe(viaCallStep);
+  });
+
+  it('two billed requests (the non-JSON retry) yield TWO usage entries, in wire order — count-agnostic', async () => {
+    mockCreate
+      .mockResolvedValueOnce(
+        makeTextResponseWithUsage('not JSON', { prompt_tokens: 900, completion_tokens: 12 }),
+      )
+      .mockResolvedValueOnce(
+        makeTextResponseWithUsage('{"result":"ok"}', { prompt_tokens: 950, completion_tokens: 8 }),
+      );
+    const result = await new OpenAIProvider('gpt-4o').callStepWithMeta('prompt');
+    expect(result.usage).toHaveLength(2);
+    expect(result.usage![0]!.request_index).toBe(0);
+    expect(result.usage![0]!.prompt_tokens).toBe(900);
+    expect(result.usage![1]!.request_index).toBe(1);
+    expect(result.usage![1]!.prompt_tokens).toBe(950);
+  });
+});
+
+describe('OpenAIProvider — issue #600 PR 1a (D9): every entry point carries what was billed', () => {
+  // A per-member sweep found SIX of the seven `attachBilledUsage` call sites unpinned: commenting
+  // any one of them out left the whole cli suite green. This is the patch's headline deliverable —
+  // "one catch at the entry point sees everything billed, whatever threw below" — so each entry
+  // point needs its own cell, on each provider.
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  const billThenThrow = (): void => {
+    mockCreate
+      .mockResolvedValueOnce(
+        makeTextResponseWithUsage('not JSON', {
+          prompt_tokens: 900,
+          completion_tokens: 11,
+          prompt_tokens_details: { cached_tokens: 400 },
+        }),
+      )
+      .mockImplementation(async () => {
+        throw new Error('500 upstream exploded');
+      });
+  };
+  const billedOn = async (call: () => Promise<unknown>): Promise<unknown> => {
+    try {
+      await call();
+      expect.unreachable('the call must throw');
+    } catch (err) {
+      return (err as { driveCall?: { usage?: unknown[] } }).driveCall?.usage;
+    }
+  };
+
+  it('callStep — the public single-shot path', async () => {
+    billThenThrow();
+    const usage = await billedOn(() => new OpenAIProvider('gpt-4o').callStep('prompt'));
+    expect(usage).toHaveLength(1);
+    expect((usage as Array<{ prompt_tokens?: number }>)[0]).toMatchObject({ prompt_tokens: 900 });
+  });
+
+  it('callStepWithMeta, NON-strict — the re-routed path every step now takes', async () => {
+    billThenThrow();
+    const usage = await billedOn(() => new OpenAIProvider('gpt-4o').callStepWithMeta('prompt'));
+    expect(usage).toHaveLength(1);
+    expect((usage as Array<{ prompt_tokens?: number }>)[0]).toMatchObject({ prompt_tokens: 900 });
+  });
+
+  it('callStepWithMeta, STRICT — the ladder catch, the seventh site and the one a name-based sweep misses', async () => {
+    // This site passes a differently-named accumulator, which is how a grep for the other six
+    // missed it entirely.
+    billThenThrow();
+    const usage = await billedOn(() =>
+      new OpenAIProvider('gpt-4o').callStepWithMeta(
+        'prompt',
+        { type: 'object', properties: {}, additionalProperties: false },
+        undefined,
+        { structuredOutputStrict: true },
+      ),
+    );
+    expect(usage).toBeDefined();
+    expect((usage as unknown[]).length).toBeGreaterThanOrEqual(1);
   });
 });

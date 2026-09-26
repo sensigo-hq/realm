@@ -16,6 +16,7 @@ import {
   type DriveFailureRecord,
   type DriveFailuresField,
   type RunStore,
+  type UsageRecord,
 } from '@sensigo/realm';
 import { sanitizeError, extractHttpStatus } from './providers/agent-utils.js';
 
@@ -43,6 +44,8 @@ export interface DriveCallPayload {
   retry_after_observed_ms?: number;
   declared_per_attempt_ms?: number;
   derived_ceiling_ms?: number;
+  /** Issue #600 PR 1a (D9) — what the provider billed before the drive ultimately threw. */
+  usage?: UsageRecord[];
 }
 
 /**
@@ -110,6 +113,11 @@ function pickPayload(payload: DriveCallPayload): {
   }
   const cls = (payload as Record<string, unknown>)['error_class'];
   if (typeof cls === 'string' && ERROR_CLASSES.has(cls)) out['error_class'] = cls;
+  // issue #600 PR 1a (D9): an ARRAY, not a number — picked separately from the numeric loop above.
+  // Length-0 is kept (an empty array is a real fact: a call happened and reported nothing — see
+  // the providers' own `usage ?? []` discipline) but `undefined`/non-array is dropped.
+  const usage = (payload as Record<string, unknown>)['usage'];
+  if (Array.isArray(usage)) out['usage'] = usage;
   return out as { error_class?: DriveFailureRecord['error_class'] };
 }
 

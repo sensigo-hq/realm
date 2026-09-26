@@ -276,7 +276,12 @@ export interface StructuredOutputMeta {
 
 /** Diagnostic metadata captured during step execution. Written once; read by inspect. */
 export interface StepDiagnostics {
-  /** Rough token count estimate: Math.ceil(JSON.stringify(input).length / 4) */
+  /**
+   * Rough token count estimate: Math.ceil(JSON.stringify(input).length / 4). A CHARACTER-based
+   * approximation of this step's resolved input, computed whether or not a model call happens —
+   * distinct from `cache`'s measured prompt size below, which is a real provider-reported count
+   * of the whole wire request and exists only for a step that actually called a model.
+   */
   input_token_estimate: number;
   /** Ordered list of precondition evaluations for this step. Empty array if no preconditions. */
   precondition_trace: Array<{
@@ -305,6 +310,94 @@ export interface StepDiagnostics {
   /** Issue #236 — disclosure for a `structured_output: 'strict'`-declared step's attempt. See
    *  {@link StructuredOutputMeta}. Absent on a step that never declared `structured_output`. */
   structured_output?: StructuredOutputMeta;
+  /**
+   * Issue #600 PR 1a — what the provider said this step's model calls cost, per WIRE REQUEST.
+   * PRESENT with `state: 'unobservable'` when a model call happened and nothing was observed;
+   * ABSENT when no model call happened at all (a handler step). Those are different facts.
+   */
+  cache?: StepCacheDetail;
+}
+
+/**
+ * Issue #600 — the closed set of per-step cache states.
+ *
+ * Observation is per DIRECTION (read, write), never per object. `'never_engaged'` and
+ * `'write_only'` each make a claim about BOTH directions, so each is mintable only when both were
+ * reported; a provider that reports one counter and withholds the other yields
+ * `'partially_observed'`, because there is no true four-word answer for that data and forcing one
+ * would be the very coercion `CACHE_BASES` forbids one level up.
+ */
+export const CACHE_STATES = [
+  'engaged',
+  'never_engaged',
+  'write_only',
+  'partially_observed',
+  'unobservable',
+] as const;
+export type CacheState = (typeof CACHE_STATES)[number];
+
+/**
+ * Issue #600 — how a cache number is known. Never a zero standing in for an absence.
+ *
+ * PR 1a ships exactly TWO members: `'provider_reported'` and `'unobservable'`. Nothing in this PR
+ * DERIVES a cache number (it reads what the provider reported, or records that it could not see) —
+ * so a `'derived'` member would be a declared member with no producer, and a type consumer would
+ * reasonably believe realm derives these numbers today. `'derived'` arrives in the PR that derives
+ * something (a vocabulary ships its producers with it — the same rule every const in this PR obeys).
+ */
+export const CACHE_BASES = ['provider_reported', 'unobservable'] as const;
+export type CacheBasis = (typeof CACHE_BASES)[number];
+
+/**
+ * Issue #600 — one entry per wire request a step made, in wire order. Every optional field means
+ * THE PROVIDER DID NOT REPORT IT; none is ever defaulted to `0`.
+ *
+ * ENGINE semantics, not either provider's own field names — no consumer of this record may need to
+ * know which provider produced it (R21). The two providers' "input tokens" mean OPPOSITE things:
+ * Anthropic's `input_tokens` is the portion of the prompt AFTER the last cache breakpoint that
+ * isn't cached (so the prompt total is the disjoint three-term sum `uncached_input_tokens +
+ * cache_read_input_tokens + cache_creation_input_tokens`); OpenAI's `prompt_tokens` IS the total,
+ * and its `cached_tokens` is a SUBSET already included in it (summing would double-count). Each
+ * adapter maps its own provider's fields onto `prompt_tokens` and `uncached_input_tokens` using its
+ * own provider's semantics — this record's own arithmetic must never be re-derived at a render site.
+ */
+export interface UsageRecord {
+  /** 0-based, in wire order. A step is 1 to 21+ wire requests, never assume 2 or 3. */
+  request_index: number;
+  /** ISO, when this request left. */
+  request_start: string;
+  /** The WHOLE prompt this request billed (engine semantics — see the interface doc above). */
+  prompt_tokens?: number;
+  /** Of that prompt, the part not served from cache. */
+  uncached_input_tokens?: number;
+  /** Of that prompt, the part served from cache. */
+  cache_read_input_tokens?: number;
+  /** Of that prompt, the part written to cache. */
+  cache_creation_input_tokens?: number;
+  /**
+   * Where a provider reports cache writes as a separate counter from
+   * `cache_creation_input_tokens`. The two are ALTERNATIVE SPELLINGS of one quantity (Anthropic
+   * reports the first, OpenAI the second), never two additive components — a reader takes
+   * whichever is present and never sums them.
+   */
+  cache_write_tokens?: number;
+  output_tokens?: number;
+  /**
+   * The TTL split of `cache_creation_input_tokens`. Anthropic's response reports BOTH ephemeral
+   * counters as required numbers on every response (its own `CacheCreation` type) — a `'5m'|'1h'`
+   * enum is the REQUEST-side `cache_control.ttl` and cannot express a response that reports both.
+   * `cache_creation_input_tokens` equals the sum of this split when both are present (the
+   * provider's own documented invariant — see `deriveCacheDetail`'s doc comment for the citation);
+   * this record never needs to re-derive that sum from the split.
+   */
+  cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number };
+}
+
+/** Issue #600 — the per-step roll-up plus the per-request detail. */
+export interface StepCacheDetail {
+  state: CacheState;
+  basis: CacheBasis;
+  requests: UsageRecord[];
 }
 
 export interface EvidenceSnapshot {
@@ -767,6 +860,14 @@ export interface DriveFailureRecord {
    * Populated when the throwing error carries a driveCall payload.
    */
   retry_after_observed_ms?: number;
+  /**
+   * Issue #600 PR 1a (D9) — what the provider said each billed wire request cost, before the
+   * drive ultimately threw. Populated when the throwing error carries a driveCall payload with
+   * one. An operator must be able to see, on the screen, that money was spent on a failed drive —
+   * a number on the record that renders nowhere does not discharge that (get_run_state already
+   * passes `drive_failures` verbatim; the CLI render is this same field, per D9).
+   */
+  usage?: UsageRecord[];
 }
 
 /**

@@ -30,6 +30,14 @@ export { hashParams, canonicalJson } from './store/params-hash.js';
 export { decideIdempotencyPolicy } from './store/idempotency-policy.js';
 export type { IdempotencyDecision } from './store/idempotency-policy.js';
 export { executeStep } from './engine/execution-loop.js';
+/**
+ * Issue #600 PR 1a — exported so a RENDERER can pin the sentence it prints against the classifier
+ * that produces the state, instead of hard-coding a state word beside a sentence. Without it the
+ * cli's render table and this function can drift apart and the render cells then describe
+ * (read x write x state) triples production can never mint — a mutation of this function left the
+ * whole cli suite green.
+ */
+export { deriveCacheDetail } from './engine/execution-loop.js';
 export { abandonRun, ABANDON_KILL_ADVISORY } from './engine/abandon-run.js';
 export {
   buildFailedAttemptRecord,
@@ -152,6 +160,9 @@ export {
 } from './engine/precondition.js';
 export type { PreconditionResult } from './engine/precondition.js';
 export type { StepDiagnostics } from './types/run-record.js';
+// issue #600 PR 1a (D4): CACHE_STATES/CACHE_BASES/CacheState/CacheBasis/UsageRecord/StepCacheDetail
+// are already re-exported here via the top-of-file `export * from './types/run-record.js'` — the
+// wildcard is the export; this comment exists so a reader checking D4's requirement finds it.
 export const VERSION = '0.45.0';
 export type { ToolCallRecord, McpServerConfig } from './types/mcp-types.js';
 

@@ -98,7 +98,9 @@ function lastEvidenceMeta(run: {
 }
 
 describe('runAgent — structured_output orchestration (issue #236)', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   it('eligible + opted-in: strict is sent, evidence discloses sent:true', async () => {
     mockCreate.mockResolvedValueOnce(makeToolUseResponse({ category: 'billing' }));

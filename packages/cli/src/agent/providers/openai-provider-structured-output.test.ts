@@ -40,7 +40,9 @@ function wire(n = 0): Record<string, unknown> {
 }
 
 describe('OpenAIProvider.callStepWithMeta — structured output (issue #313)', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   // -------------------------------------------------------------------------------------------
   // The strict wire body

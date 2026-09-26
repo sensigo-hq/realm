@@ -114,4 +114,73 @@ describe('composed journey (Anthropic) — a politely-failed tool call, all the 
       rmSync(tempHome, { recursive: true, force: true });
     }
   }, 25_000);
+
+  // =================================================================================================
+  // issue #600 PR 1a (D10) — the single-shot journey's Anthropic twin. No MCP child, no 25s budget.
+  // =================================================================================================
+  it('a single-shot step (no tools) reports what its ONE wire request cost, with the right basis', async () => {
+    const tempHome = makeJourneyHome('composed-journey-anthropic-usage-');
+    const originalKey = process.env['ANTHROPIC_API_KEY'];
+    const originalBaseUrl = process.env['ANTHROPIC_BASE_URL'];
+    const USAGE_STUB_API_KEY = 'sk-ant-test-composed-journey-usage-0000';
+    process.env['ANTHROPIC_API_KEY'] = USAGE_STUB_API_KEY;
+
+    const stub = await startAnthropicStub({
+      finalContent: { summary: 'single-shot answer' },
+      // Faithful to the documented response shape: `cache_creation_input_tokens` and
+      // `cache_read_input_tokens` are REQUIRED keys on Anthropic's usage block (`number | null` in
+      // the installed SDK type), and an uncached direction reports 0 — the docs' own test for
+      // "was this prompt cached?" is that BOTH read 0. Omitting the write key here made the stub
+      // describe a response the API never sends, and the derived total then cannot be computed:
+      // a three-term disjoint sum with one term unknown has no value, only a guess.
+      usage: {
+        input_tokens: 50,
+        output_tokens: 15,
+        cache_read_input_tokens: 1150,
+        cache_creation_input_tokens: 0,
+      },
+    });
+    process.env['ANTHROPIC_BASE_URL'] = stub.baseUrl;
+
+    try {
+      const journey = await runComposedJourney(tempHome, {
+        provider: new AnthropicProvider('claude-x'),
+        probeWorkflowId: PROBE_WORKFLOW_ID,
+        finalSummary: 'single-shot answer',
+        tools: [],
+      });
+
+      expect(journey.result).toBe('completed');
+      expect(journey.runCount).toBe(1);
+      expect(stub.requests).toHaveLength(1);
+      const snap = journey.run.evidence.find((e) => e.step_id === 'ask');
+      const cache = snap?.diagnostics?.cache;
+      expect(cache).toBeDefined();
+      expect(cache!.state).toBe('engaged');
+      expect(cache!.basis).toBe('provider_reported');
+      const [entry] = cache!.requests;
+      // The disjoint sum, read back off the PERSISTED record: 50 (uncached remainder) + 1150
+      // (cache read) = 1200 — never the raw `input_tokens` alone.
+      expect(entry!.prompt_tokens).toBe(1200);
+      expect(entry!.uncached_input_tokens).toBe(50);
+      expect(entry!.cache_read_input_tokens).toBe(1150);
+      expect(entry!.output_tokens).toBe(15);
+      expect(journey.inspectOutput).toContain('1200 prompt tokens (measured, first request)');
+      // Both directions ARE reported here, so both print a measured number — `wrote 0` is a fact
+      // the provider stated, not the fabricated zero the OpenAI twin's unreported write exposed.
+      expect(journey.inspectOutput).toContain(
+        'cache: read 1150, wrote 0 (provider-reported, 1 request)',
+      );
+      // THE REAL SDK made this call — same header proof as the tool-bearing journey above.
+      expect(stub.headers[0]?.['x-api-key']).toBe(USAGE_STUB_API_KEY);
+      expect(stub.headers[0]?.['anthropic-version']).toBe('2023-06-01');
+    } finally {
+      await stub.close();
+      if (originalKey === undefined) delete process.env['ANTHROPIC_API_KEY'];
+      else process.env['ANTHROPIC_API_KEY'] = originalKey;
+      if (originalBaseUrl === undefined) delete process.env['ANTHROPIC_BASE_URL'];
+      else process.env['ANTHROPIC_BASE_URL'] = originalBaseUrl;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
 });

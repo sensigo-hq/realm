@@ -167,6 +167,132 @@ describe('#401 chokepoint (2) — the LLM call', () => {
 });
 
 // =================================================================================================
+// issue #600 PR 1a (D9) — money already spent survives a drive that threw
+//
+// A drive can burn two billed requests and still end up recorded as though nothing had ever been
+// sent: chokepoint (2) mints a DriveFailureRecord from whatever the provider attached to the
+// thrown error, and before this PR nothing in that path carried `usage` at all. This drives the
+// REAL production path (run-agent's chokepoint, buildEntry, pickPayload, the persisted RunRecord,
+// and inspect's render) with a provider double that attaches `driveCall.usage` the exact way every
+// in-repo provider now does — proving the plumbing, not a hand-built fixture.
+// =================================================================================================
+describe('#401 chokepoint (2) — issue #600 PR 1a (D9): usage on a thrown drive survives to inspect', () => {
+  it('two billed requests, then a throw — the usage the provider reported reaches the persisted record and the operator screen', async () => {
+    const billedThenThrown = Object.assign(
+      new Error('Anthropic returned non-JSON content after retry'),
+      {
+        driveCall: {
+          usage: [
+            {
+              request_index: 0,
+              request_start: '2026-01-01T00:00:00.000Z',
+              prompt_tokens: 1200,
+              output_tokens: 30,
+            },
+            {
+              request_index: 1,
+              request_start: '2026-01-01T00:00:02.000Z',
+              prompt_tokens: 1210,
+              output_tokens: 25,
+            },
+          ],
+        },
+      },
+    );
+    const store = new InMemoryStore();
+    const provider = new TestProvider(billedThenThrown);
+    const deps = makeDeps({ store, provider });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const wf = {
+      id: 'usage-wf',
+      name: 'Usage',
+      version: 1,
+      schema_version: 1,
+      steps: {
+        classify: {
+          description: 'Classify',
+          execution: 'agent',
+          depends_on: [],
+          input_schema: { type: 'object', properties: { summary: { type: 'string' } } },
+        },
+      },
+    } as unknown as WorkflowDefinition;
+
+    const result = await runAgent(deps, { definition: wf, params: {} });
+    expect(result).toBe('failed');
+
+    const run = await onlyRun(store);
+    const entry = run.drive_failures!.entries[0]!;
+    // Persisted exactly as the provider reported it — buildEntry's array-typed pick, not a
+    // reshaping.
+    expect(entry.usage).toEqual(billedThenThrown.driveCall.usage);
+
+    const out = await inspectRun(
+      run.id,
+      { get: async () => run, list: async () => [run] } as never,
+      {
+        get: async () => {
+          throw new Error('not registered');
+        },
+        register: async () => {},
+        list: async () => [],
+      } as never,
+    );
+    // First request's prompt size, output tokens SUMMED across both billed requests — the money
+    // an operator staring at a failed run needs, on the same screen as the error.
+    expect(out).toContain('2 requests billed before the throw');
+    // SUMMED, not sampled: this line answers a cost question ("billed before the throw") and a retry
+    // re-sends the prompt, so 1200 + 1210 is what was charged.
+    expect(out).toContain('2410 prompt tokens');
+    expect(out).toContain('55 output tokens');
+    vi.restoreAllMocks();
+  });
+
+  it('a throw with NO driveCall at all discloses nothing about usage — absent, not a fabricated zero', async () => {
+    const store = new InMemoryStore();
+    const provider = new TestProvider(new Error('connection reset'));
+    const deps = makeDeps({ store, provider });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const wf = {
+      id: 'no-usage-wf',
+      name: 'NoUsage',
+      version: 1,
+      schema_version: 1,
+      steps: {
+        classify: {
+          description: 'Classify',
+          execution: 'agent',
+          depends_on: [],
+          input_schema: { type: 'object', properties: { summary: { type: 'string' } } },
+        },
+      },
+    } as unknown as WorkflowDefinition;
+
+    await runAgent(deps, { definition: wf, params: {} });
+    const run = await onlyRun(store);
+    expect(run.drive_failures!.entries[0]!.usage).toBeUndefined();
+
+    const out = await inspectRun(
+      run.id,
+      { get: async () => run, list: async () => [run] } as never,
+      {
+        get: async () => {
+          throw new Error('not registered');
+        },
+        register: async () => {},
+        list: async () => [],
+      } as never,
+    );
+    expect(out).not.toContain('usage:');
+    vi.restoreAllMocks();
+  });
+});
+
+// =================================================================================================
 // issue #401 — cell 3c: chokepoint (3)'s DOWNSTREAM extent
 //
 // 3a proves the try opens early enough to catch an MCP-init throw. This proves it stays open

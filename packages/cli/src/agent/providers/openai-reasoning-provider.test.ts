@@ -24,7 +24,9 @@ function makeTextResponse(content: string) {
 // callStep tests
 // =========================================================================
 describe('OpenAIReasoningProvider.callStep', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   // -----------------------------------------------------------------------
   // 1. Basic happy path
@@ -227,5 +229,162 @@ describe('resolveProvider routing for reasoning models', () => {
     const provider = await resolveProvider('openai', 'gpt-4o');
     expect(provider).toBeInstanceOf(OpenAIProvider);
     expect(provider).not.toBeInstanceOf(OpenAIReasoningProvider);
+  });
+});
+
+// =================================================================================================
+// issue #600 PR 1a — D1 (openai-reasoning's mapper, same OpenAI semantics) + D1a (the NEW
+// callStepWithMeta override this provider had NONE of before this PR — #351 means it never honors
+// strict, so this override is ALWAYS the bare-delegation shape) + D2 (count-agnostic)
+// =================================================================================================
+function makeTextResponseWithUsage(
+  content: string,
+  usage: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+  },
+) {
+  return {
+    choices: [{ message: { role: 'assistant', content, tool_calls: undefined } }],
+    usage,
+  };
+}
+
+describe('OpenAIReasoningProvider — issue #600 PR 1a D1: same OpenAI mapper semantics (prompt_tokens is the total)', () => {
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  it('prompt_tokens read VERBATIM, cached_tokens a SUBSET never re-added', async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeTextResponseWithUsage('{"result":"ok"}', {
+        prompt_tokens: 800,
+        completion_tokens: 60,
+        prompt_tokens_details: { cached_tokens: 700 },
+      }),
+    );
+    const provider = new OpenAIReasoningProvider('o1-mini');
+    const result = await provider.callStepWithMeta('prompt');
+    const [entry] = result.usage!;
+    expect(entry!.prompt_tokens).toBe(800);
+    expect(entry!.cache_read_input_tokens).toBe(700);
+    expect(entry!.uncached_input_tokens).toBe(100);
+    expect(entry!.output_tokens).toBe(60);
+  });
+});
+
+describe('OpenAIReasoningProvider — issue #600 PR 1a D1a: this provider had NO callStepWithMeta override before this PR', () => {
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  it('BEFORE this PR (the base default): callStepWithMeta returned only { output } — the class this PR fixes. Verified by pinning the NEW override instead: usage is present.', async () => {
+    // Red-first, structurally: `OpenAIReasoningProvider extends ToolCapableLlmProvider`, which did
+    // not override callStepWithMeta at all, so it inherited `LlmProvider`'s base default —
+    // `{ output }`, no usage field, by construction (constraint 2). This cell pins the GREEN side
+    // (the new override exists and reports usage); the base class's own contract test already pins
+    // the RED side generically (constraint 2 note above — "the base default keeps returning
+    // { output }" is itself a pinned fact of the base class, not of this provider).
+    mockCreate.mockResolvedValueOnce(
+      makeTextResponseWithUsage('{"result":"ok"}', { prompt_tokens: 10, completion_tokens: 2 }),
+    );
+    const result = await new OpenAIReasoningProvider('o1-mini').callStepWithMeta('prompt');
+    expect(result.usage).toBeDefined();
+    expect(result.usage).toHaveLength(1);
+  });
+
+  it('callStep (public, untouched signature) DISCARDS usage by construction', async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeTextResponseWithUsage('{"result":"ok"}', { prompt_tokens: 10, completion_tokens: 2 }),
+    );
+    const result = await new OpenAIReasoningProvider('o1-mini').callStep('prompt');
+    expect(result).toEqual({ result: 'ok' });
+    expect(Object.keys(result)).not.toContain('usage');
+  });
+
+  it('BYTE-IDENTITY — callStep and callStepWithMeta send the identical request body (constraint 1)', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"a":1}'));
+    await new OpenAIReasoningProvider('o1-mini').callStep('same prompt');
+    const viaCallStep = JSON.stringify(mockCreate.mock.calls[0]![0]);
+
+    mockCreate.mockReset();
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"a":1}'));
+    await new OpenAIReasoningProvider('o1-mini').callStepWithMeta('same prompt');
+    const viaCallStepWithMeta = JSON.stringify(mockCreate.mock.calls[0]![0]);
+
+    expect(viaCallStepWithMeta).toBe(viaCallStep);
+  });
+
+  it('this provider NEVER honors strict (#351) — callStepWithMeta never returns a structured_output meta, even when strict is requested', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"result":"ok"}'));
+    const result = await new OpenAIReasoningProvider('o1-mini').callStepWithMeta(
+      'prompt',
+      { type: 'object' },
+      undefined,
+      { structuredOutputStrict: true },
+    );
+    expect(result.meta).toBeUndefined();
+  });
+
+  it('two billed requests (the non-JSON retry) yield TWO usage entries, in wire order — count-agnostic', async () => {
+    mockCreate
+      .mockResolvedValueOnce(
+        makeTextResponseWithUsage('not JSON', { prompt_tokens: 300, completion_tokens: 5 }),
+      )
+      .mockResolvedValueOnce(
+        makeTextResponseWithUsage('{"result":"ok"}', { prompt_tokens: 310, completion_tokens: 6 }),
+      );
+    const result = await new OpenAIReasoningProvider('o1-mini').callStepWithMeta('prompt');
+    expect(result.usage).toHaveLength(2);
+    expect(result.usage![0]!.request_index).toBe(0);
+    expect(result.usage![1]!.request_index).toBe(1);
+  });
+});
+
+describe('OpenAIReasoningProvider — issue #600 PR 1a (D9): both entry points carry what was billed', () => {
+  // Both of this provider's `attachBilledUsage` sites were unpinned: a per-member sweep commented
+  // each out and the whole cli suite stayed green.
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  const billThenThrow = (): void => {
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [{ message: { role: 'assistant', content: 'not JSON' } }],
+        usage: {
+          prompt_tokens: 700,
+          completion_tokens: 9,
+          prompt_tokens_details: { cached_tokens: 100 },
+        },
+      })
+      .mockImplementation(async () => {
+        throw new Error('500 upstream exploded');
+      });
+  };
+  const billedOn = async (call: () => Promise<unknown>): Promise<unknown> => {
+    try {
+      await call();
+      expect.unreachable('the call must throw');
+    } catch (err) {
+      return (err as { driveCall?: { usage?: unknown[] } }).driveCall?.usage;
+    }
+  };
+
+  it('callStep — the public single-shot path', async () => {
+    billThenThrow();
+    const usage = await billedOn(() => new OpenAIReasoningProvider('o1-mini').callStep('prompt'));
+    expect(usage).toHaveLength(1);
+    expect((usage as Array<{ prompt_tokens?: number }>)[0]).toMatchObject({ prompt_tokens: 700 });
+  });
+
+  it('callStepWithMeta — the override this PR added, which previously inherited the base default', async () => {
+    billThenThrow();
+    const usage = await billedOn(() =>
+      new OpenAIReasoningProvider('o1-mini').callStepWithMeta('prompt'),
+    );
+    expect(usage).toHaveLength(1);
+    expect((usage as Array<{ prompt_tokens?: number }>)[0]).toMatchObject({ prompt_tokens: 700 });
   });
 });

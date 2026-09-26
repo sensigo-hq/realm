@@ -38,6 +38,14 @@ export interface ComposedJourneyOptions {
   probeWorkflowId: string;
   /** The `summary` the scripted final answer carries; must satisfy the step's input_schema. */
   finalSummary: string;
+  /**
+   * Issue #600 PR 1a (D10) — OMIT to run a single-shot journey: the step declares no `tools`, the
+   * workflow definition carries no `mcp_servers` at all (so no MCP child is spawned), and the
+   * driver takes the bare re-routed arm (D1b) instead of `callStepWithTools`. No existing journey
+   * exercised this — `composed-journey-wf`'s step has always declared `tools`, so every request
+   * took the tool-call turn. Defaults to the original tool-bearing shape.
+   */
+  tools?: string[];
 }
 
 export interface ComposedJourneyArtifacts {
@@ -77,28 +85,38 @@ export async function runComposedJourney(
   tempHome: string,
   options: ComposedJourneyOptions,
 ): Promise<ComposedJourneyArtifacts> {
+  // D10: `tools` omitted (or empty) ⇒ single-shot — no `mcp_servers` at all, so no MCP child is
+  // ever spawned for this journey, and the step's dispatch fork (`stepDef.tools && length > 0 &&
+  // mcpClient`) takes the bare re-routed arm.
+  const tools = options.tools ?? ['realm:get_workflow_protocol'];
+  const singleShot = tools.length === 0;
   const definition = {
     id: 'composed-journey-wf',
     name: 'Composed Journey',
     version: 1,
     schema_version: 1,
-    mcp_servers: [
-      {
-        id: 'realm',
-        transport: 'stdio' as const,
-        command: process.execPath,
-        args: [resolveMcpServerEntry()],
-        // MERGED over the inherited environment by the SDK, so PATH survives and `node` still
-        // resolves — this redirects HOME without isolating the child from everything else.
-        env: { HOME: tempHome },
-      },
-    ],
+    ...(singleShot
+      ? {}
+      : {
+          mcp_servers: [
+            {
+              id: 'realm',
+              transport: 'stdio' as const,
+              command: process.execPath,
+              args: [resolveMcpServerEntry()],
+              // MERGED over the inherited environment by the SDK, so PATH survives and `node`
+              // still resolves — this redirects HOME without isolating the child from everything
+              // else.
+              env: { HOME: tempHome },
+            },
+          ],
+        }),
     steps: {
       ask: {
         description: 'Ask realm about a workflow that does not exist',
         execution: 'agent' as const,
         depends_on: [],
-        tools: ['realm:get_workflow_protocol'],
+        ...(singleShot ? {} : { tools }),
         // Present so the scripted final answer has something to validate against: a mismatch
         // engages the #217 repair loop and the journey's first assertion then fails for a reason
         // unrelated to the chain under test.

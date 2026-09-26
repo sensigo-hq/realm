@@ -5,6 +5,9 @@ import { AnthropicProvider } from './anthropic-provider.js';
 import { WorkflowError } from '@sensigo/realm';
 import { CLASS_B_NO_TEXT_MARKER } from './agent-utils.js';
 import type { ToolDefinition } from '../mcp/mcp-extensions.js';
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // ---------- shared mock for the @anthropic-ai/sdk package -----------------
 const mockCreate = vi.fn();
@@ -58,7 +61,16 @@ function oneTool(id = 'srv:op'): ToolDefinition {
 // callStep tests
 // =========================================================================
 describe('AnthropicProvider.callStep', () => {
-  beforeEach(() => mockCreate.mockReset());
+  // The braces are load-bearing. `mockReset()` RETURNS the mock for chaining, so an arrow with
+  // an implicit return (`() => mockCreate.mockReset()`) hands vitest a function — and vitest
+  // treats a function returned from `beforeEach` as the TEARDOWN callback, so it CALLS the mock
+  // after every test in the block. That is inert while the last implementation installed merely
+  // resolves, and it is not inert the moment one throws or records: the throw is reported as the
+  // test's own failure, and a recording implementation logs one invocation nobody made. The
+  // tree-wide source-text witness at the bottom of this file keeps the braces here.
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   it('returns parsed JSON from the first text block', async () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"result":"ok"}'));
@@ -229,7 +241,9 @@ describe('AnthropicProvider.callStep', () => {
 // callStepWithTools tests
 // =========================================================================
 describe('AnthropicProvider.callStepWithTools', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   // -----------------------------------------------------------------------
   // 0. max_tokens is model-aware in the main loop call
@@ -725,7 +739,9 @@ describe('AnthropicProvider.callStepWithTools', () => {
 // issue #224 — in-conversation full-AJV correction
 // =========================================================================
 describe('AnthropicProvider.callStepWithTools — issue #224 in-conversation AJV correction', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   const strictSchema = {
     type: 'object',
@@ -973,7 +989,9 @@ describe('AnthropicProvider.callStepWithTools — issue #224 in-conversation AJV
 // on the SAME `tool_call_count`, incremented per tool call AND per correction, no reset/decrement)
 // =========================================================================
 describe('AnthropicProvider.callStepWithTools — issue #224 shared-budget characterization', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   const budgetSchema = {
     type: 'object',
@@ -1103,7 +1121,9 @@ const CLASS_B_CAPTURED = {
 const CLASS_B_TEXT = 'Error: Workflow not found: no-such-workflow-345';
 
 describe('AnthropicProvider.callStepWithTools — Class-B tool failures (issue #345)', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   /** Runs one tool call whose executor resolves `value`, and returns its ToolCallRecord. */
   async function recordFor(value: unknown) {
@@ -1199,5 +1219,346 @@ describe('AnthropicProvider.callStepWithTools — Class-B tool failures (issue #
     });
     expect(record.error).toBe('auth failed for Bearer [REDACTED]');
     expect(record.error).not.toContain('sk-live-abcdef123456');
+  });
+});
+
+// =================================================================================================
+// issue #600 PR 1a — D1 (Anthropic's mapper): input_tokens is the REMAINDER, not the total
+// =================================================================================================
+function makeTextResponseWithUsage(
+  text: string,
+  usage: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number | null;
+    cache_creation_input_tokens?: number | null;
+    cache_creation?: {
+      ephemeral_5m_input_tokens?: number;
+      ephemeral_1h_input_tokens?: number;
+    } | null;
+  },
+) {
+  return { content: [{ type: 'text' as const, text }], usage };
+}
+
+describe('AnthropicProvider — issue #600 PR 1a D1: the disjoint three-term sum, never the raw remainder alone', () => {
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  it('prompt_tokens is input_tokens + cache_read + cache_creation — the DISJOINT sum, not input_tokens alone', async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeTextResponseWithUsage('{"result":"ok"}', {
+        input_tokens: 50,
+        output_tokens: 40,
+        cache_read_input_tokens: 1150,
+        cache_creation_input_tokens: 0,
+      }),
+    );
+    const provider = new AnthropicProvider('claude-x');
+    const result = await provider.callStepWithMeta('prompt');
+    const [entry] = result.usage!;
+    // The falsity this cell exists to reject: reading input_tokens alone would report 50 as "the
+    // prompt", which SHRINKS to near-zero on a fully warm call — the exact defect D6's render
+    // guards against, pinned here at its SOURCE.
+    expect(entry!.prompt_tokens).toBe(1200); // 50 + 1150 + 0
+    expect(entry!.uncached_input_tokens).toBe(50); // the raw remainder, kept under its OWN name
+    expect(entry!.cache_read_input_tokens).toBe(1150);
+    expect(entry!.output_tokens).toBe(40);
+  });
+
+  it('a NULL cache counter is an ABSENCE — it is neither STORED as a 0 nor summed as one, so the three-term total is withheld', async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeTextResponseWithUsage('{"result":"ok"}', {
+        input_tokens: 1200,
+        cache_read_input_tokens: null,
+        cache_creation_input_tokens: null,
+      }),
+    );
+    const result = await new AnthropicProvider('claude-x').callStepWithMeta('prompt');
+    const [entry] = result.usage!;
+    // This cell used to assert `prompt_tokens === 1200` — "null contributes 0 to the sum" — which is
+    // the rule broken one level down from where it was honoured: the counters were correctly not
+    // STORED as zeros, and then summed as zeros anyway, and every surface labelled the result
+    // `measured`. With two of the three terms unreported the whole prompt is not knowable, so it is
+    // withheld; the uncached remainder the provider DID report is still here.
+    expect(entry!.prompt_tokens).toBeUndefined();
+    expect(entry!.uncached_input_tokens).toBe(1200);
+    expect(entry).not.toHaveProperty('cache_read_input_tokens'); // absent, not stored as 0
+    expect(entry).not.toHaveProperty('cache_creation_input_tokens');
+  });
+
+  it('the ephemeral 5m/1h split rides beside the aggregate — BOTH counters, never a discriminator', async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeTextResponseWithUsage('{"result":"ok"}', {
+        input_tokens: 10,
+        cache_creation_input_tokens: 300,
+        cache_creation: { ephemeral_5m_input_tokens: 200, ephemeral_1h_input_tokens: 100 },
+      }),
+    );
+    const result = await new AnthropicProvider('claude-x').callStepWithMeta('prompt');
+    const [entry] = result.usage!;
+    expect(entry!.cache_creation_input_tokens).toBe(300);
+    // The documented invariant (vendored at anthropic-prompt-caching.md:841): the aggregate IS the
+    // sum of the split.
+    expect(
+      entry!.cache_creation!.ephemeral_5m_input_tokens! +
+        entry!.cache_creation!.ephemeral_1h_input_tokens!,
+    ).toBe(entry!.cache_creation_input_tokens);
+  });
+});
+
+describe('AnthropicProvider — issue #600 PR 1a D1a/D2: usage travels through callStepWithMeta, count-agnostic', () => {
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  it('callStep (public, untouched signature) DISCARDS usage by construction', async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeTextResponseWithUsage('{"result":"ok"}', { input_tokens: 10, output_tokens: 4 }),
+    );
+    const result = await new AnthropicProvider('claude-x').callStep('prompt');
+    expect(result).toEqual({ result: 'ok' });
+    expect(Object.keys(result)).not.toContain('usage');
+  });
+
+  it('BYTE-IDENTITY — the request body callStep sends is IDENTICAL to what callStepWithMeta sends for the same bare arm (constraint 1)', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"a":1}'));
+    await new AnthropicProvider('claude-x').callStep('same prompt', undefined, 'profile text');
+    const viaCallStep = JSON.stringify(mockCreate.mock.calls[0]![0]);
+
+    mockCreate.mockReset();
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"a":1}'));
+    await new AnthropicProvider('claude-x').callStepWithMeta(
+      'same prompt',
+      undefined,
+      'profile text',
+    );
+    const viaCallStepWithMeta = JSON.stringify(mockCreate.mock.calls[0]![0]);
+
+    expect(viaCallStepWithMeta).toBe(viaCallStep);
+  });
+
+  it('two billed requests (the non-JSON retry) yield TWO usage entries, in wire order — count-agnostic', async () => {
+    mockCreate
+      .mockResolvedValueOnce(
+        makeTextResponseWithUsage('not JSON', {
+          input_tokens: 900,
+          output_tokens: 12,
+          // Both cache counters reported (as 0) — the realistic Anthropic shape, and what makes the
+          // three-term total knowable. The partial-report shapes have their own lattice below.
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeTextResponseWithUsage('{"result":"ok"}', {
+          input_tokens: 950,
+          output_tokens: 8,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        }),
+      );
+    const result = await new AnthropicProvider('claude-x').callStepWithMeta('prompt');
+    expect(result.usage).toHaveLength(2);
+    expect(result.usage![0]!.request_index).toBe(0);
+    expect(result.usage![0]!.prompt_tokens).toBe(900);
+    expect(result.usage![1]!.request_index).toBe(1);
+    expect(result.usage![1]!.prompt_tokens).toBe(950);
+  });
+
+  it('a response with no usage block at all yields no measured fields — never a fabricated 0', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"result":"ok"}'));
+    const result = await new AnthropicProvider('claude-x').callStepWithMeta('prompt');
+    expect(result.usage).toHaveLength(1);
+    expect(result.usage![0]!.prompt_tokens).toBeUndefined();
+  });
+});
+
+// =================================================================================================
+// issue #600 PR 1a — THE ABSENCE LATTICE AT THE MAPPER, and the billed-usage attach.
+//
+// The class these blocks exist to prevent: "an absence is never a zero" honoured for the stored
+// field and broken for the number DERIVED from it. `prompt_tokens` is the disjoint three-term sum
+// the provider's own SDK documents, so it is knowable only when all three terms were reported;
+// summing an unreported counter as a 0 contribution made the total a LOWER BOUND that every surface
+// still labelled `measured`. The instrument is a lattice over all 2^3 presence combinations, under
+// BOTH spellings of absence the vendor's types allow (omitted, and explicit `null`).
+// =================================================================================================
+describe('AnthropicProvider — issue #600 PR 1a: the mapper absence lattice (prompt_tokens iff all three terms)', () => {
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  for (const absent of [undefined, null] as const) {
+    const spelling = absent === undefined ? 'omitted' : 'null';
+    for (const inp of [false, true]) {
+      for (const read of [false, true]) {
+        for (const creation of [false, true]) {
+          const all = inp && read && creation;
+          it(`${spelling}: input=${String(inp)} read=${String(read)} creation=${String(creation)} => prompt_tokens ${all ? 'present (the sum)' : 'ABSENT'}`, async () => {
+            mockCreate.mockResolvedValueOnce(
+              makeTextResponseWithUsage('{"result":"ok"}', {
+                // `input_tokens` is REQUIRED and non-nullable in the vendor type, so its only
+                // lawful absence is OMISSION — a `null` there would be a shape the API cannot
+                // send, and casting one to `undefined` to satisfy the builder would make the cell
+                // assert against a fiction. The two cache fields ARE `number | null`, so both
+                // spellings of absence are exercised for them.
+                ...(inp ? { input_tokens: 40 } : {}),
+                output_tokens: 12,
+                ...(read
+                  ? { cache_read_input_tokens: 1000 }
+                  : absent === null
+                    ? { cache_read_input_tokens: null }
+                    : {}),
+                ...(creation
+                  ? { cache_creation_input_tokens: 100 }
+                  : absent === null
+                    ? { cache_creation_input_tokens: null }
+                    : {}),
+              }),
+            );
+            const provider = new AnthropicProvider('claude-x');
+            const result = await provider.callStepWithMeta('prompt');
+            const [entry] = result.usage!;
+            if (all) {
+              expect(entry!.prompt_tokens).toBe(1140);
+            } else {
+              expect(entry!.prompt_tokens).toBeUndefined();
+            }
+            // Whatever the provider DID report is still stored, unchanged — withholding the derived
+            // total never costs a measured fact.
+            expect(entry!.uncached_input_tokens).toBe(inp ? 40 : undefined);
+            expect(entry!.cache_read_input_tokens).toBe(read ? 1000 : undefined);
+            expect(entry!.cache_creation_input_tokens).toBe(creation ? 100 : undefined);
+          });
+        }
+      }
+    }
+  }
+});
+
+describe('AnthropicProvider — issue #600 PR 1a (D9): money already billed survives ANY throw', () => {
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  it('a wire failure AFTER a billed request carries the usage on the error — a 500 no longer discards the money', async () => {
+    // The defect this cell exists for: the accumulator was attached only at the provider's own two
+    // typed throws (truncation, non-JSON after retry), so the failure an operator actually meets —
+    // a wire error from the model — threw the numbers away, and a drive that had already paid for a
+    // cache write was indistinguishable on screen from one that spent nothing.
+    mockCreate
+      .mockResolvedValueOnce(
+        makeTextResponseWithUsage('not JSON', {
+          input_tokens: 40,
+          output_tokens: 12,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 900,
+        }),
+      )
+      // Thrown lazily, per call — a pre-built rejected promise would be flagged unhandled the
+      // moment the call path stops consuming it.
+      .mockImplementation(async () => {
+        throw new Error('500 upstream exploded');
+      });
+    const provider = new AnthropicProvider('claude-x');
+    try {
+      await provider.callStepWithMeta('prompt');
+      expect.unreachable('the call must throw');
+    } catch (err) {
+      expect((err as Error).message).toContain('500 upstream exploded');
+      const payload = (err as { driveCall?: { usage?: unknown[] } }).driveCall;
+      expect(payload?.usage).toBeDefined();
+      expect(payload!.usage).toHaveLength(1);
+      expect((payload!.usage as Array<{ cache_creation_input_tokens?: number }>)[0]).toMatchObject({
+        cache_creation_input_tokens: 900,
+        prompt_tokens: 940,
+      });
+    }
+  });
+
+  it('the same on the PUBLIC single-shot path — `callStep`, whose own attach site was unpinned', async () => {
+    mockCreate
+      .mockResolvedValueOnce(
+        makeTextResponseWithUsage('not JSON', {
+          input_tokens: 40,
+          output_tokens: 12,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 900,
+        }),
+      )
+      .mockImplementation(async () => {
+        throw new Error('500 upstream exploded');
+      });
+    const provider = new AnthropicProvider('claude-x');
+    try {
+      await provider.callStep('prompt');
+      expect.unreachable('the call must throw');
+    } catch (err) {
+      const payload = (err as { driveCall?: { usage?: unknown[] } }).driveCall;
+      expect(payload?.usage).toHaveLength(1);
+      expect((payload!.usage as Array<{ cache_creation_input_tokens?: number }>)[0]).toMatchObject({
+        cache_creation_input_tokens: 900,
+      });
+    }
+  });
+
+  it('a wire failure with NOTHING billed attaches nothing — `usage: undefined` keeps meaning "no wire request was ever made"', async () => {
+    // The discriminating control: without it, attaching an empty array on every failure would make
+    // a pre-dispatch failure (`sdk_missing`) indistinguishable from a billed one, which is the same
+    // collapse in the other direction.
+    mockCreate.mockImplementation(async () => {
+      throw new Error('500 upstream exploded');
+    });
+    const provider = new AnthropicProvider('claude-x');
+    try {
+      await provider.callStepWithMeta('prompt');
+      expect.unreachable('must throw');
+    } catch (err) {
+      expect((err as { driveCall?: unknown }).driveCall).toBeUndefined();
+    }
+  });
+});
+
+describe('the agent test tree: no hook may hand vitest a mock as its teardown callback', () => {
+  it('every mock-resetting hook is braced, and the braced form is findable in the tree', () => {
+    // Scoped to the whole `src/agent` test tree, not this file: the idiom was copied across nine
+    // provider test files, and a guard that polices only the file it lives in leaves the other
+    // eight free to reintroduce what it exists to prevent.
+    const tree = join(dirname(fileURLToPath(import.meta.url)), '..');
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (e.name.endsWith('.test.ts')) files.push(full);
+      }
+    };
+    walk(tree);
+    // Non-vacuity, leg 1 of 2: the walk must actually find files. A guard that stops matching does
+    // not fail, it stops guarding (#189).
+    expect(files.length).toBeGreaterThan(8);
+
+    // THE DEFECT. `mockReset()` and its siblings RETURN the mock for chaining, so an arrow with an
+    // implicit return hands vitest a function — and vitest treats a function returned from a hook
+    // as the TEARDOWN callback, so it CALLS the mock after every test in the block. That is inert
+    // while the last implementation installed merely resolves, and it is not inert the moment one
+    // throws or records: the throw is reported as the test's own failure (which is how the D9
+    // cells above first read), and a recording implementation logs one invocation nobody made.
+    const offenders: string[] = [];
+    let bracedFound = 0;
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8');
+      for (const m of src.matchAll(
+        /(?:before|after)(?:Each|All)\(\(\) => [A-Za-z_$][\w.$]*\.mock[A-Za-z]+\(/g,
+      )) {
+        offenders.push(`${f.slice(tree.length + 1)}: ${m[0]}`);
+      }
+      bracedFound += src.match(/(?:before|after)(?:Each|All)\(\(\) => \{/g)?.length ?? 0;
+    }
+    expect(offenders).toEqual([]);
+    // Non-vacuity, leg 2 of 2: the shape this guard polices is present in the tree it read.
+    expect(bracedFound).toBeGreaterThan(0);
   });
 });

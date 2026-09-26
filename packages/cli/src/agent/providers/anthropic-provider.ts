@@ -5,8 +5,13 @@ import {
   validateAgentSubmission,
   type JsonSchema,
   type StructuredOutputMeta,
+  type UsageRecord,
 } from '@sensigo/realm';
-import { ToolCapableLlmProvider, type ProviderCapabilities } from './llm-provider.js';
+import {
+  ToolCapableLlmProvider,
+  type ProviderCapabilities,
+  type CallStepWithMetaResult,
+} from './llm-provider.js';
 import type {
   ToolCallRecord,
   ToolDefinition,
@@ -29,6 +34,7 @@ import {
   MAX_RETRIES,
   type LlmClock,
   type WireCounters,
+  attachBilledUsage,
 } from './agent-utils.js';
 
 /** The tool offered at `tool_choice:'auto'` so the model can return structured output directly —
@@ -184,6 +190,103 @@ interface LadderState {
  */
 type Rec = Record<string, unknown>;
 
+/**
+ * issue #600 PR 1a — the response's usage block, typed LOCALLY. The Anthropic client is `any` on
+ * this path (`client: any` below), so `.usage` is reachable but untyped; this narrows it without
+ * loosening anything that is currently typed. Mirrors the SDK's own `Usage`
+ * (`@anthropic-ai/sdk/resources/messages/messages.d.ts:2861`): both cache counters are
+ * `number | null`, and `null` means NOTHING WAS OBSERVED — never a zero.
+ */
+export interface AnthropicUsage {
+  /** The SDK's real `Usage.input_tokens` is `number` (never optional/nullable) — typed optional
+   *  here only because this path is reached through an untyped `any` response. */
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+  /** The per-TTL write split (`CacheCreation`, `:954-963`) — BOTH counters, not a discriminator. */
+  cache_creation?: {
+    ephemeral_5m_input_tokens?: number;
+    ephemeral_1h_input_tokens?: number;
+  } | null;
+}
+
+/**
+ * issue #600 PR 1a — one wire request's usage, mapped onto the record's ENGINE fields. EVERY field
+ * is omitted when the provider did not report it; a `null` counter (Anthropic's "nothing observed")
+ * is an ABSENCE, never a `0`.
+ *
+ * Anthropic's `input_tokens` is "tokens after the last cache breakpoint that aren't cached" — it
+ * maps onto `uncached_input_tokens`, NEVER onto `prompt_tokens` (D2). The provider's own docs state
+ * the sum twice (vendored at
+ * `plans/issue-558/axes/sources/framework-decisions/anthropic-prompt-caching.md:686` and `:3212`):
+ * `total_input_tokens = cache_read_input_tokens + cache_creation_input_tokens + input_tokens` — the
+ * three terms are disjoint. `input_tokens` is a required `number` on the real response type
+ * (`messages.d.ts:2881`); the cache counters are REQUIRED KEYS whose value may be `null`. A `null`
+ * is an ABSENCE, not a zero: the total is WITHHELD rather than computed with a `0` substituted for
+ * the missing term — a three-term sum with one term unknown has no value, only a guess. On a
+ * conforming response that branch is unreachable, because an unused counter reports a measured `0`
+ * (the FAQ's own worked example — `:3218`), so the withholding is there for a non-conforming
+ * third-party shape.
+ */
+function toUsageRecord(
+  index: number,
+  requestStart: string,
+  u: AnthropicUsage | undefined,
+): UsageRecord {
+  const num = (v: number | null | undefined): number | undefined =>
+    typeof v === 'number' ? v : undefined;
+  const creation = u?.cache_creation;
+  const split = {
+    ...(num(creation?.ephemeral_5m_input_tokens) !== undefined
+      ? { ephemeral_5m_input_tokens: creation!.ephemeral_5m_input_tokens! }
+      : {}),
+    ...(num(creation?.ephemeral_1h_input_tokens) !== undefined
+      ? { ephemeral_1h_input_tokens: creation!.ephemeral_1h_input_tokens! }
+      : {}),
+  };
+  const uncachedInputTokens = num(u?.input_tokens);
+  const cacheReadInputTokens = num(u?.cache_read_input_tokens);
+  const cacheCreationInputTokens = num(u?.cache_creation_input_tokens);
+  // prompt_tokens is the disjoint three-term sum the provider's own SDK documents ("Total input
+  // tokens in a request is the summation of `input_tokens`, `cache_creation_input_tokens`, and
+  // `cache_read_input_tokens`"). It is therefore computable ONLY when all three terms were
+  // reported. Treating an unreported cache counter as a 0 contribution would make the TOTAL a
+  // lower bound while every surface still labelled it `measured` — the record's own rule ("Every
+  // optional field means THE PROVIDER DID NOT REPORT IT; none is ever defaulted to `0`") applied
+  // at the stored field and broken at the number derived from it. An explicit 0 IS a report, so
+  // this only withholds the total when a counter is genuinely missing; `uncached_input_tokens`
+  // below is still recorded, so nothing the provider did report is lost.
+  const promptTokens =
+    uncachedInputTokens !== undefined &&
+    cacheReadInputTokens !== undefined &&
+    cacheCreationInputTokens !== undefined
+      ? uncachedInputTokens + cacheReadInputTokens + cacheCreationInputTokens
+      : undefined;
+  return {
+    request_index: index,
+    request_start: requestStart,
+    ...(promptTokens !== undefined ? { prompt_tokens: promptTokens } : {}),
+    ...(uncachedInputTokens !== undefined ? { uncached_input_tokens: uncachedInputTokens } : {}),
+    ...(num(u?.output_tokens) !== undefined ? { output_tokens: u!.output_tokens! } : {}),
+    ...(cacheCreationInputTokens !== undefined
+      ? { cache_creation_input_tokens: cacheCreationInputTokens }
+      : {}),
+    ...(cacheReadInputTokens !== undefined
+      ? { cache_read_input_tokens: cacheReadInputTokens }
+      : {}),
+    ...(Object.keys(split).length > 0 ? { cache_creation: split } : {}),
+  };
+}
+
+/** Reads the usage block off a response of unknown shape. Absent stays absent. */
+export function readAnthropicUsage(response: unknown): AnthropicUsage | undefined {
+  if (typeof response !== 'object' || response === null) return undefined;
+  const u = (response as { usage?: unknown }).usage;
+  if (typeof u !== 'object' || u === null) return undefined;
+  return u as AnthropicUsage;
+}
+
 async function createMessageWithLadder(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any,
@@ -305,7 +408,10 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     agentProfileInstructions: string | undefined,
     strictRequested: boolean | undefined,
     clock?: LlmClock,
-  ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
+    // issue #600 PR 1a (D9): the accumulator is owned by the ENTRY POINT so one `catch` there sees
+    // everything billed, whatever throws below. Defaulted, so any other caller still works.
+    billed?: UsageRecord[],
+  ): Promise<CallStepWithMetaResult> {
     // issue #401: counters are PER-INVOCATION, minted beside the client they count for. A
     // module-global would attribute one step's wire attempts to another's failure.
     const counters: WireCounters = { attempts: 0 };
@@ -331,9 +437,16 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       toolInput?: Record<string, unknown>;
       text: string;
       stopReason?: string;
+      /** issue #600 PR 1a — what THIS wire request cost, as the provider reported it. */
+      usage?: AnthropicUsage;
     }
 
+    // issue #600 PR 1a: ONE entry per WIRE REQUEST, in wire order. The provider owns the loop, so
+    // the provider accumulates — a single usage object for a step that bills 1-21 requests is a
+    // false number by construction.
+    const requests: UsageRecord[] = billed ?? [];
     const makeRequest = async (userContent: string): Promise<CallResult> => {
+      const requestStart = new Date().toISOString();
       const buildOpts = (strict: boolean): Record<string, unknown> => {
         const submitTool = hasSchema
           ? buildSubmitTool(inputSchema!, strict ? { strict: true } : undefined)
@@ -359,10 +472,13 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       }>;
       const toolUse = blocks.find((b) => b.type === 'tool_use' && b.name === SUBMIT_TOOL_NAME);
       const textBlock = blocks.find((b) => b.type === 'text');
+      const usage = readAnthropicUsage(response);
+      requests.push(toUsageRecord(requests.length, requestStart, usage));
       return {
         ...(toolUse !== undefined ? { toolInput: toolUse.input as Record<string, unknown> } : {}),
         text: textBlock?.text ?? '',
         ...(typeof response.stop_reason === 'string' ? { stopReason: response.stop_reason } : {}),
+        ...(usage !== undefined ? { usage } : {}),
       };
     };
 
@@ -376,11 +492,15 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     const withChannel = (
       output: Record<string, unknown>,
       viaTool: boolean,
-    ): { output: Record<string, unknown>; meta?: StructuredOutputMeta } => {
-      if (state.meta === undefined) return { output };
+    ): CallStepWithMetaResult => {
+      // issue #600 PR 1a: `usage` rides beside `meta`, never inside it — a step that reports usage
+      // and no structured-output meta is expressible.
+      const usage = requests.length > 0 ? { usage: requests } : {};
+      if (state.meta === undefined) return { output, ...usage };
       return {
         output,
         meta: { ...state.meta, submission_channel: viaTool ? 'tool' : 'text' },
+        ...usage,
       };
     };
 
@@ -394,20 +514,34 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     const retryParsed = extract(retry);
     if (retryParsed !== null) return withChannel(retryParsed, retry.toolInput !== undefined);
 
+    // issue #600 PR 1a (D9) — both throws below happen AFTER two billed, completed requests (the
+    // first generation and this retry); attaching the accumulated `requests[]` here is the only
+    // way that money is ever recorded — a drive that throws was, until this PR, indistinguishable
+    // from a drive that spent nothing at all.
     // Guard: a response cut short by the token budget must never silently return a partial object —
     // give a clear, distinct error rather than the generic "non-JSON content" message.
     if (retry.stopReason === 'max_tokens') {
-      throw new WorkflowError(
+      const err = new WorkflowError(
         sanitizeError(
           'Anthropic response was truncated (max_tokens) before a usable JSON object was produced.',
         ),
         { code: 'ENGINE_STEP_FAILED', category: 'ENGINE', agentAction: 'stop', retryable: false },
       );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (err as any).driveCall = { usage: requests };
+      throw err;
     }
-    throw new WorkflowError(
-      sanitizeError(`Anthropic returned non-JSON content after retry: ${retry.text.slice(0, 200)}`),
-      { code: 'ENGINE_STEP_FAILED', category: 'ENGINE', agentAction: 'stop', retryable: false },
-    );
+    {
+      const err = new WorkflowError(
+        sanitizeError(
+          `Anthropic returned non-JSON content after retry: ${retry.text.slice(0, 200)}`,
+        ),
+        { code: 'ENGINE_STEP_FAILED', category: 'ENGINE', agentAction: 'stop', retryable: false },
+      );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (err as any).driveCall = { usage: requests };
+      throw err;
+    }
   }
 
   async callStep(
@@ -416,14 +550,21 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     agentProfileInstructions?: string,
     opts?: { llmClock?: LlmClock },
   ): Promise<Record<string, unknown>> {
-    const { output } = await this.callStepInternal(
-      prompt,
-      inputSchema,
-      agentProfileInstructions,
-      undefined,
-      opts?.llmClock,
-    );
-    return output;
+    const billed: UsageRecord[] = [];
+    try {
+      const { output } = await this.callStepInternal(
+        prompt,
+        inputSchema,
+        agentProfileInstructions,
+        undefined,
+        opts?.llmClock,
+        billed,
+      );
+      return output;
+    } catch (err) {
+      attachBilledUsage(err, billed);
+      throw err;
+    }
   }
 
   /** issue #236 override — the only provider in this codebase that actually honors
@@ -433,14 +574,21 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
     opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
-  ): Promise<{ output: Record<string, unknown>; meta?: StructuredOutputMeta }> {
-    return this.callStepInternal(
-      prompt,
-      inputSchema,
-      agentProfileInstructions,
-      opts?.structuredOutputStrict === true,
-      opts?.llmClock,
-    );
+  ): Promise<CallStepWithMetaResult> {
+    const billed: UsageRecord[] = [];
+    try {
+      return await this.callStepInternal(
+        prompt,
+        inputSchema,
+        agentProfileInstructions,
+        opts?.structuredOutputStrict === true,
+        opts?.llmClock,
+        billed,
+      );
+    } catch (err) {
+      attachBilledUsage(err, billed);
+      throw err;
+    }
   }
 
   /**
