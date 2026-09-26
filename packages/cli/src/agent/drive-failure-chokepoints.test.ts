@@ -243,7 +243,9 @@ describe('#401 chokepoint (2) — issue #600 PR 1a (D9): usage on a thrown drive
     // First request's prompt size, output tokens SUMMED across both billed requests — the money
     // an operator staring at a failed run needs, on the same screen as the error.
     expect(out).toContain('2 requests billed before the throw');
-    expect(out).toContain('1200 prompt tokens (first request)');
+    // SUMMED, not sampled: this line answers a cost question ("billed before the throw") and a retry
+    // re-sends the prompt, so 1200 + 1210 is what was charged.
+    expect(out).toContain('2410 prompt tokens');
     expect(out).toContain('55 output tokens');
     vi.restoreAllMocks();
   });

@@ -70,7 +70,7 @@ const DRIVE_FAILURE_DISCLOSURE = {
   usage: {
     surface: 'rendered',
     probe: (out) => {
-      expect(out).toContain('1200 prompt tokens (first request)');
+      expect(out).toContain('1200 prompt tokens');
       expect(out).toContain('40 output tokens');
     },
   },

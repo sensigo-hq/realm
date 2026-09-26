@@ -48,7 +48,9 @@ const SCHEMA = {
 };
 
 describe('AnthropicProvider.callStepWithMeta (issue #236)', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   describe('wire-capture (OPTIONS-OBJECT pin — R-N)', () => {
     it('carries strict: true on the submit tool when opted+eligible', async () => {

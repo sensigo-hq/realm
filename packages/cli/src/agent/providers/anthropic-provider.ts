@@ -34,6 +34,7 @@ import {
   MAX_RETRIES,
   type LlmClock,
   type WireCounters,
+  attachBilledUsage,
 } from './agent-utils.js';
 
 /** The tool offered at `tool_choice:'auto'` so the model can return structured output directly —
@@ -221,9 +222,12 @@ export interface AnthropicUsage {
  * `plans/issue-558/axes/sources/framework-decisions/anthropic-prompt-caching.md:686` and `:3212`):
  * `total_input_tokens = cache_read_input_tokens + cache_creation_input_tokens + input_tokens` — the
  * three terms are disjoint. `input_tokens` is a required `number` on the real response type
- * (`messages.d.ts:2881`); the cache counters can be `null` when nothing was observed in that
- * dimension, which contributes `0` to the sum (the FAQ's own worked example reports `0`, never
- * `null`, for an unused counter — `:3218`) without being STORED as a `0` on this record.
+ * (`messages.d.ts:2881`); the cache counters are REQUIRED KEYS whose value may be `null`. A `null`
+ * is an ABSENCE, not a zero: the total is WITHHELD rather than computed with a `0` substituted for
+ * the missing term — a three-term sum with one term unknown has no value, only a guess. On a
+ * conforming response that branch is unreachable, because an unused counter reports a measured `0`
+ * (the FAQ's own worked example — `:3218`), so the withholding is there for a non-conforming
+ * third-party shape.
  */
 function toUsageRecord(
   index: number,
@@ -244,12 +248,20 @@ function toUsageRecord(
   const uncachedInputTokens = num(u?.input_tokens);
   const cacheReadInputTokens = num(u?.cache_read_input_tokens);
   const cacheCreationInputTokens = num(u?.cache_creation_input_tokens);
-  // prompt_tokens is the disjoint three-term sum — computable whenever the (always-reported)
-  // uncached remainder is present, treating an unreported cache counter as a 0 contribution to
-  // the TOTAL without storing that counter itself as a 0 (D2's absence rule stays intact below).
+  // prompt_tokens is the disjoint three-term sum the provider's own SDK documents ("Total input
+  // tokens in a request is the summation of `input_tokens`, `cache_creation_input_tokens`, and
+  // `cache_read_input_tokens`"). It is therefore computable ONLY when all three terms were
+  // reported. Treating an unreported cache counter as a 0 contribution would make the TOTAL a
+  // lower bound while every surface still labelled it `measured` — the record's own rule ("Every
+  // optional field means THE PROVIDER DID NOT REPORT IT; none is ever defaulted to `0`") applied
+  // at the stored field and broken at the number derived from it. An explicit 0 IS a report, so
+  // this only withholds the total when a counter is genuinely missing; `uncached_input_tokens`
+  // below is still recorded, so nothing the provider did report is lost.
   const promptTokens =
-    uncachedInputTokens !== undefined
-      ? uncachedInputTokens + (cacheReadInputTokens ?? 0) + (cacheCreationInputTokens ?? 0)
+    uncachedInputTokens !== undefined &&
+    cacheReadInputTokens !== undefined &&
+    cacheCreationInputTokens !== undefined
+      ? uncachedInputTokens + cacheReadInputTokens + cacheCreationInputTokens
       : undefined;
   return {
     request_index: index,
@@ -396,6 +408,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     agentProfileInstructions: string | undefined,
     strictRequested: boolean | undefined,
     clock?: LlmClock,
+    // issue #600 PR 1a (D9): the accumulator is owned by the ENTRY POINT so one `catch` there sees
+    // everything billed, whatever throws below. Defaulted, so any other caller still works.
+    billed?: UsageRecord[],
   ): Promise<CallStepWithMetaResult> {
     // issue #401: counters are PER-INVOCATION, minted beside the client they count for. A
     // module-global would attribute one step's wire attempts to another's failure.
@@ -429,7 +444,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // issue #600 PR 1a: ONE entry per WIRE REQUEST, in wire order. The provider owns the loop, so
     // the provider accumulates — a single usage object for a step that bills 1-21 requests is a
     // false number by construction.
-    const requests: UsageRecord[] = [];
+    const requests: UsageRecord[] = billed ?? [];
     const makeRequest = async (userContent: string): Promise<CallResult> => {
       const requestStart = new Date().toISOString();
       const buildOpts = (strict: boolean): Record<string, unknown> => {
@@ -535,14 +550,21 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     agentProfileInstructions?: string,
     opts?: { llmClock?: LlmClock },
   ): Promise<Record<string, unknown>> {
-    const { output } = await this.callStepInternal(
-      prompt,
-      inputSchema,
-      agentProfileInstructions,
-      undefined,
-      opts?.llmClock,
-    );
-    return output;
+    const billed: UsageRecord[] = [];
+    try {
+      const { output } = await this.callStepInternal(
+        prompt,
+        inputSchema,
+        agentProfileInstructions,
+        undefined,
+        opts?.llmClock,
+        billed,
+      );
+      return output;
+    } catch (err) {
+      attachBilledUsage(err, billed);
+      throw err;
+    }
   }
 
   /** issue #236 override — the only provider in this codebase that actually honors
@@ -553,13 +575,20 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     agentProfileInstructions?: string,
     opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
   ): Promise<CallStepWithMetaResult> {
-    return this.callStepInternal(
-      prompt,
-      inputSchema,
-      agentProfileInstructions,
-      opts?.structuredOutputStrict === true,
-      opts?.llmClock,
-    );
+    const billed: UsageRecord[] = [];
+    try {
+      return await this.callStepInternal(
+        prompt,
+        inputSchema,
+        agentProfileInstructions,
+        opts?.structuredOutputStrict === true,
+        opts?.llmClock,
+        billed,
+      );
+    } catch (err) {
+      attachBilledUsage(err, billed);
+      throw err;
+    }
   }
 
   /**

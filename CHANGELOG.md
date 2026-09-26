@@ -11,22 +11,34 @@ All notable changes to this project are documented here.
 - **`StepDiagnostics.cache`** — what a provider reported about prompt caching for an agent step's
   model calls, one entry per WIRE REQUEST, never per step: `UsageRecord[]` with the measured
   prompt size, the cache tokens read and written, and output tokens, each field present only when
-  the provider actually reported it (never coerced to `0`). Rendered on `realm run inspect`
-  alongside the existing token estimate — a real measurement beside the character-based one, both
-  labelled so neither is mistaken for the other. Present with `state: 'unobservable'` when a model
+  the provider actually reported it (never coerced to `0`). The rendered line keeps that property
+  per DIRECTION and per REQUEST: an unreported read prints `read not reported`, never `read 0`; a
+  counter some requests reported and others did not prints its sum as a floor (`read 512+ (1 of 3
+requests reported)`); and a step whose provider reported one direction only is
+  `partially_observed`, not `never_engaged` — "nobody wrote to the cache" and "nobody said whether
+  anything wrote to the cache" are different facts and the screen distinguishes them. Where the
+  whole prompt cannot be derived (Anthropic reports a three-term disjoint sum, so one absent term
+  leaves no total) the line prints the uncached figure it does have, labelled. Rendered on `realm
+run inspect` alongside the existing token estimate — a real measurement beside the character-based
+  one, both labelled so neither is mistaken for the other. Present with `state: 'unobservable'` when a model
   call happened and the provider reported nothing observable; ABSENT when no model call happened
   at all (a handler step) — those are different facts, and `usage ?? []` at the call site is what
   keeps a silent third-party provider from being indistinguishable from a step that never called a
   model. This measures; it places nothing on the wire and requests nothing new from a provider.
   (Issue #600.)
 - **`DriveFailureRecord.usage`** — the same per-request `UsageRecord[]`, on a failed drive: what
-  the provider had already billed before the drive's retries exhausted. Rendered on `realm run
-inspect`'s "Drive failures:" block and passed verbatim through `get_run_state` — an operator (or
-  agent) staring at a failed run can now see that money was spent, not only that the drive failed.
-  (Issue #600.)
+  the provider had already billed before the drive's retries exhausted. The accumulator is owned by
+  the provider's entry point, so it survives ANY throw below it — the wire failure an operator
+  actually meets (a 500 or a timeout after one billed request) carries the numbers, not only
+  realm's own typed refusals. Nothing is attached when nothing was billed, so on those paths an
+  absent `usage` keeps meaning "no wire request was ever made" — a TOOL-CALLING step accumulates
+  nothing at all yet, so its `usage` is absent whatever it billed (issue #610). Rendered on `realm run inspect`'s "Drive
+  failures:" block and passed verbatim through `get_run_state` — an operator (or agent) staring at
+  a failed run can now see that money was spent, not only that the drive failed. (Issue #600.)
 - **`UsageRecord`, `CACHE_STATES`, `CACHE_BASES`, `CacheState`, `CacheBasis`,
   `StepCacheDetail`** — exported from `@sensigo/realm` (`packages/core/src/types/run-record.ts`).
-  (Issue #600.)
+  `CACHE_STATES` has five members: `engaged`, `never_engaged`, `write_only`, `partially_observed`
+  and `unobservable`. (Issue #600.)
 
 ### Changed
 

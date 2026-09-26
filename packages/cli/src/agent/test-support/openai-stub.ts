@@ -61,7 +61,12 @@ export interface StubOptions {
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;
-    prompt_tokens_details?: { cached_tokens?: number };
+    // Both counters OPTIONAL and omitted when absent, never sent as `0` — the same fidelity rule
+    // as the Anthropic stub. `cache_write_tokens` exists on OpenAI's own `PromptTokensDetails` (and
+    // is optional there, which is why a real response can report a read and no write); it is
+    // declared here so a journey that needs the write direction can express the real shape instead
+    // of inventing one.
+    prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
   };
 }
 

@@ -30,6 +30,14 @@ export { hashParams, canonicalJson } from './store/params-hash.js';
 export { decideIdempotencyPolicy } from './store/idempotency-policy.js';
 export type { IdempotencyDecision } from './store/idempotency-policy.js';
 export { executeStep } from './engine/execution-loop.js';
+/**
+ * Issue #600 PR 1a — exported so a RENDERER can pin the sentence it prints against the classifier
+ * that produces the state, instead of hard-coding a state word beside a sentence. Without it the
+ * cli's render table and this function can drift apart and the render cells then describe
+ * (read x write x state) triples production can never mint — a mutation of this function left the
+ * whole cli suite green.
+ */
+export { deriveCacheDetail } from './engine/execution-loop.js';
 export { abandonRun, ABANDON_KILL_ADVISORY } from './engine/abandon-run.js';
 export {
   buildFailedAttemptRecord,

@@ -21,7 +21,16 @@ import type { RunRecord, StepDiagnostics, UsageRecord } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
 
 type DisclosureRoute =
-  { surface: 'rendered'; probe: (out: string) => void } | { surface: 'waived'; reason: string };
+  | {
+      surface: 'rendered';
+      // Two rendered outputs, because one fixture cannot discriminate every field. `out` is the
+      // CONFORMING shape (a real Anthropic response: every cache key present). `partial` is the
+      // non-conforming one a third-party `--provider-module` can produce — no total, one write
+      // spelling. A field whose only render arm needs the second shape asserts against `partial`,
+      // so its probe cannot be satisfied by a clause another field produced.
+      probe: (out: string, partial: string) => void;
+    }
+  | { surface: 'waived'; reason: string };
 
 const DIAG: StepDiagnostics = {
   input_token_estimate: 32,
@@ -39,6 +48,11 @@ const DIAG: StepDiagnostics = {
         prompt_tokens: 1200,
         uncached_input_tokens: 50,
         cache_read_input_tokens: 1150,
+        // Both cache keys are REQUIRED on Anthropic's usage block (`number | null` in the installed
+        // SDK type) and an uncached direction reports 0 — the docs' own test for "was this cached?"
+        // is that BOTH read 0. Omitting the write key made this fixture describe a response the API
+        // never sends, and the render then had to invent `wrote 0` to satisfy the probe below.
+        cache_creation_input_tokens: 0,
       },
     ],
   },
@@ -47,7 +61,7 @@ const DIAG: StepDiagnostics = {
 const STEP_DIAGNOSTICS_DISCLOSURE = {
   input_token_estimate: {
     surface: 'rendered',
-    probe: (out) => expect(out).toContain('~32 tokens (estimate)'),
+    probe: (out) => expect(out).toContain('~32 tokens (estimate, step input)'),
   },
   precondition_trace: {
     surface: 'rendered',
@@ -115,6 +129,40 @@ const run = {
 } as unknown as RunRecord;
 
 const store = { get: async () => run, list: async () => [run] } as never;
+
+// The NON-CONFORMING shape, and the only fixture that can discriminate three of the rows below: a
+// record with no total at all (so the uncached fallback arm is the one that fires) whose single
+// write figure is spelled `cache_write_tokens` (OpenAI's name, optional on that provider), and with
+// the read direction unreported (so the classifier lands on `partially_observed`). Nothing invents
+// a zero anywhere in it — that is the point.
+const partialRun = {
+  ...(run as unknown as RunRecord),
+  id: 'run_diag2',
+  evidence: [
+    {
+      ...(run as unknown as RunRecord).evidence[0]!,
+      diagnostics: {
+        ...DIAG,
+        cache: {
+          state: 'partially_observed',
+          basis: 'provider_reported',
+          requests: [
+            {
+              request_index: 0,
+              request_start: '2026-01-01T00:00:00.000Z',
+              uncached_input_tokens: 90,
+              cache_write_tokens: 77,
+            },
+          ],
+        },
+      },
+    },
+  ],
+} as unknown as RunRecord;
+const partialStore = {
+  get: async () => partialRun,
+  list: async () => [partialRun],
+} as never;
 const workflowStore = {
   get: async () => {
     throw new Error('not registered');
@@ -126,10 +174,11 @@ const workflowStore = {
 describe('#600 PR 1a (D7) — every StepDiagnostics field reaches an inspect reader, or says why not', () => {
   it('runs each field OWN probe against the real rendered output', async () => {
     const out = await inspectRun('run_diag1', store, workflowStore, { verbose: true });
+    const partial = await inspectRun('run_diag2', partialStore, workflowStore, { verbose: true });
     for (const [field, route] of Object.entries(STEP_DIAGNOSTICS_DISCLOSURE) as Array<
       [string, DisclosureRoute]
     >) {
-      if (route.surface === 'rendered') route.probe(out);
+      if (route.surface === 'rendered') route.probe(out, partial);
       else
         expect(
           route.reason.trim().length,
@@ -174,12 +223,20 @@ const USAGE_DISCLOSURE = {
   },
   cache_creation_input_tokens: {
     surface: 'rendered',
-    // Summed with `cache_write_tokens` into the rendered `wrote N`.
-    probe: (out) => expect(out).toMatch(/wrote \d+/),
+    // Discriminating: this fixture's ONLY write figure. Drop the field and the clause reads
+    // `wrote not reported`, so a fabricated zero cannot satisfy this probe either.
+    probe: (out) => expect(out).toContain('wrote 0'),
   },
   cache_write_tokens: {
     surface: 'rendered',
-    probe: (out) => expect(out).toMatch(/wrote \d+/),
+    // The alternative SPELLING of the same fact (OpenAI's name), so it can only be discriminated on
+    // a fixture where it is the only write figure present. `/wrote \d+/` against the conforming
+    // output was VACUOUS — the sibling field's clause satisfied it while this field was absent from
+    // the fixture entirely, which is the shape of defect this whole guard exists to catch.
+    probe: (_out, partial) => {
+      expect(partial).toContain('wrote 77');
+      expect(_out).not.toContain('77');
+    },
   },
   output_tokens: {
     surface: 'waived',
@@ -212,22 +269,26 @@ const USAGE_DISCLOSURE = {
       "because PR 4's TTL choice is decided from it.",
   },
   uncached_input_tokens: {
-    surface: 'waived',
-    reason:
-      'Derivable from the three rendered terms (prompt minus read minus creation). It is carried ' +
-      "because on Anthropic it is the provider's OWN reported number (`input_tokens`) and this " +
-      'record never re-derives a figure a provider stated — but printing a fourth token count an ' +
-      'operator can compute would cost line width for no question.',
+    surface: 'rendered',
+    // Was waived as "derivable from the three rendered terms" — true only while all three ARE
+    // rendered. When the total cannot be derived (a term the provider never reported), this is the
+    // one measured input figure left, and withholding it would leave the line with no number at
+    // all. So it has its own arm, and the arm names its own limit.
+    probe: (_out, partial) =>
+      expect(partial).toContain(
+        '90 uncached input tokens (measured, first request; whole prompt not reported)',
+      ),
   },
 } satisfies Record<keyof UsageRecord, DisclosureRoute>;
 
 describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader, or says why not', () => {
   it('runs each field OWN probe against the real rendered output', async () => {
     const out = await inspectRun('run_diag1', store, workflowStore, { verbose: true });
+    const partial = await inspectRun('run_diag2', partialStore, workflowStore, { verbose: true });
     for (const [field, route] of Object.entries(USAGE_DISCLOSURE) as Array<
       [string, DisclosureRoute]
     >) {
-      if (route.surface === 'rendered') route.probe(out);
+      if (route.surface === 'rendered') route.probe(out, partial);
       else
         expect(
           route.reason.trim().length,
@@ -236,7 +297,7 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     }
   });
 
-  it('the registry covers every UsageRecord field', () => {
+  it('the registry covers every UsageRecord field, and the waiver set is exactly the four named above', () => {
     expect(Object.keys(USAGE_DISCLOSURE).sort()).toEqual([
       'cache_creation',
       'cache_creation_input_tokens',
@@ -248,5 +309,14 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
       'request_start',
       'uncached_input_tokens',
     ]);
+    const waived = Object.entries(USAGE_DISCLOSURE)
+      .filter(([, r]) => (r as DisclosureRoute).surface === 'waived')
+      .map(([f]) => f)
+      .sort();
+    // The sibling registry above pins its waiver set; without the same assertion HERE a rendered
+    // money field could be re-routed to `waived` with a plausible reason and nothing would notice —
+    // the probe loop only runs probes for `rendered` entries, so the guard would fall silent about
+    // exactly the numbers it exists to guard. A sixth waiver is a decision someone makes in this file.
+    expect(waived).toEqual(['cache_creation', 'output_tokens', 'request_index', 'request_start']);
   });
 });

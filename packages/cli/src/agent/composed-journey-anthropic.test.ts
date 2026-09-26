@@ -127,7 +127,18 @@ describe('composed journey (Anthropic) — a politely-failed tool call, all the 
 
     const stub = await startAnthropicStub({
       finalContent: { summary: 'single-shot answer' },
-      usage: { input_tokens: 50, output_tokens: 15, cache_read_input_tokens: 1150 },
+      // Faithful to the documented response shape: `cache_creation_input_tokens` and
+      // `cache_read_input_tokens` are REQUIRED keys on Anthropic's usage block (`number | null` in
+      // the installed SDK type), and an uncached direction reports 0 — the docs' own test for
+      // "was this prompt cached?" is that BOTH read 0. Omitting the write key here made the stub
+      // describe a response the API never sends, and the derived total then cannot be computed:
+      // a three-term disjoint sum with one term unknown has no value, only a guess.
+      usage: {
+        input_tokens: 50,
+        output_tokens: 15,
+        cache_read_input_tokens: 1150,
+        cache_creation_input_tokens: 0,
+      },
     });
     process.env['ANTHROPIC_BASE_URL'] = stub.baseUrl;
 
@@ -155,6 +166,8 @@ describe('composed journey (Anthropic) — a politely-failed tool call, all the 
       expect(entry!.cache_read_input_tokens).toBe(1150);
       expect(entry!.output_tokens).toBe(15);
       expect(journey.inspectOutput).toContain('1200 prompt tokens (measured, first request)');
+      // Both directions ARE reported here, so both print a measured number — `wrote 0` is a fact
+      // the provider stated, not the fabricated zero the OpenAI twin's unreported write exposed.
       expect(journey.inspectOutput).toContain(
         'cache: read 1150, wrote 0 (provider-reported, 1 request)',
       );

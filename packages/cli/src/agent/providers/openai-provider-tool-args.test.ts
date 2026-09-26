@@ -60,7 +60,9 @@ function wireTools(n = 0): Array<{ function: { name: string; strict?: boolean } 
 const NOOP_EXECUTOR = async () => ({});
 
 describe('OpenAIProvider.callStepWithTools — strict tool arguments (issue #313)', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   // (h) the wire spread + the mixing cell (executed: mixed strict/non-strict is legal)
   it('(h) strict goes INSIDE `function`, on the marked tool only — mixing with an unmarked sibling is legal', async () => {

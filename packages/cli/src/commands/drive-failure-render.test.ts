@@ -108,11 +108,13 @@ describe('issue #600 PR 1a (D9) inspect — what a failed drive already cost', (
     expect(out).not.toContain('usage:');
   });
 
-  it('an EMPTY array: says so — a request happened, the provider reported nothing observable', async () => {
+  it('an EMPTY array claims no billing — only that nothing per-request was recorded', async () => {
     const out = await render(runWith({ ...BASE, usage: [] }));
-    expect(out).toContain(
-      'usage: at least one request was billed; the provider reported nothing observable',
-    );
+    // This cell's own name used to assert the defect: an empty array does NOT say a request
+    // happened. It says the field was present and carried nothing — and a walk read the old
+    // sentence directly beneath an `sdk_missing` line stating no request ever left the process.
+    expect(out).toContain('usage: no per-request usage was recorded');
+    expect(out).not.toContain('billed');
   });
 
   it('usage reported WITHOUT a prompt size: says the prompt was not reported, never a 0', async () => {
@@ -134,7 +136,7 @@ describe('issue #600 PR 1a (D9) inspect — what a failed drive already cost', (
       }),
     );
     expect(out).toContain('usage: 1 request billed before the throw');
-    expect(out).toContain('prompt not reported (first request)');
+    expect(out).toContain('prompt not reported');
     expect(out).toContain('40 output tokens');
     // The absent number is never rendered as a zero.
     expect(out).not.toContain('0 prompt tokens');
@@ -155,11 +157,11 @@ describe('issue #600 PR 1a (D9) inspect — what a failed drive already cost', (
       }),
     );
     expect(out).toContain('usage: 1 request billed before the throw');
-    expect(out).toContain('1200 prompt tokens (first request)');
+    expect(out).toContain('1200 prompt tokens');
     expect(out).toContain('40 output tokens');
   });
 
-  it('MULTIPLE requests: plural wording, first-request prompt size, output tokens SUMMED', async () => {
+  it('MULTIPLE requests: plural wording, prompt AND output tokens both SUMMED', async () => {
     const out = await render(
       runWith({
         ...BASE,
@@ -183,12 +185,22 @@ describe('issue #600 PR 1a (D9) inspect — what a failed drive already cost', (
     // First request's 1200, never the second request's 1210 and never a sum of both — a later
     // request re-sends the same prefix, so summing overstates it (the same rule as D6's cache
     // render).
-    expect(out).toContain('1200 prompt tokens (first request)');
-    expect(out).not.toContain('1210 prompt tokens');
+    // REVERSED deliberately: this cell used to pin "the prompt is the FIRST request's, never
+    // summed", which understated every multi-request failure. This line's own words are "billed
+    // before the throw" — a retry re-sends the prompt and is charged for it again — so the prompt is
+    // summed here exactly like the output tokens beside it. The negative keeps that discriminating:
+    // printing only the first request's figure now fails.
+    expect(out).toContain('2410 prompt tokens');
+    expect(out).not.toContain('1200 prompt tokens,');
     expect(out).toContain('55 output tokens');
   });
 
-  it('a request that reported no output tokens contributes 0 to the sum, not a dropped entry', async () => {
+  it('a request that reported no output tokens is still COUNTED as billed — the entry is never dropped, and the sum says it covered a subset', async () => {
+    // This cell used to assert that an unreported counter "contributes 0 to the sum". It does not:
+    // the request is still counted as billed (the scope line), and the output total declares that it
+    // covered 1 of the 2 requests rather than passing a subset off as a total. The guard the cell was
+    // written for — an unreported counter must not make the entry disappear — is what the scope
+    // assertion below still pins.
     const out = await render(
       runWith({
         ...BASE,
@@ -204,7 +216,7 @@ describe('issue #600 PR 1a (D9) inspect — what a failed drive already cost', (
       }),
     );
     expect(out).toContain('usage: 2 requests billed before the throw');
-    expect(out).toContain('25 output tokens');
+    expect(out).toContain('at least 25 output tokens (1 of 2 requests reported output)');
   });
 });
 
@@ -217,5 +229,88 @@ describe('#401 inspect — the total line appears only when the ring has rolled'
   it('total === entries.length ⇒ NO total line (it would restate the entries)', async () => {
     const out = await render(runWith(BASE, 1));
     expect(out).not.toContain('total since');
+  });
+
+  // The same field-level absence rule as the cache line, on this surface: the output total is
+  // summed only over the requests that REPORTED it. Before the fix, `?? 0` made an unreported
+  // counter a silent zero contribution and the sum passed as a total.
+  it('output tokens reported by NO request: says so, never a 0', async () => {
+    const out = await render(
+      runWith({
+        ...BASE,
+        usage: [
+          { request_index: 0, request_start: '2026-01-01T00:00:00.000Z', prompt_tokens: 940 },
+        ],
+      }),
+    );
+    expect(out).toContain('940 prompt tokens');
+    expect(out).toContain('output not reported');
+    expect(out).not.toContain('0 output tokens');
+  });
+
+  it('output tokens reported by SOME requests: a lower bound with its count, never a bare total', async () => {
+    const out = await render(
+      runWith({
+        ...BASE,
+        usage: [
+          {
+            request_index: 0,
+            request_start: '2026-01-01T00:00:00.000Z',
+            prompt_tokens: 940,
+            output_tokens: 12,
+          },
+          { request_index: 1, request_start: '2026-01-01T00:00:01.000Z', prompt_tokens: 940 },
+        ],
+      }),
+    );
+    expect(out).toContain('at least 12 output tokens (1 of 2 requests reported output)');
+  });
+});
+
+describe('issue #600 PR 1a — correction 2: the failed-drive line is a COST line', () => {
+  const T = '2026-01-01T00:00:00.000Z';
+
+  it('an EMPTY usage array claims no billing — it says only that nothing per-request was recorded', async () => {
+    // The defect: `[]` printed "at least one request was billed", and a walk saw it directly beneath
+    // an `sdk_missing` line stating no request ever left the process. An empty array supports
+    // neither claim; it says the field was present and carried nothing.
+    const out = await render(runWith({ ...BASE, usage: [] }));
+    expect(out).toContain('usage: no per-request usage was recorded');
+    expect(out).not.toContain('billed');
+  });
+
+  it('the prompt is SUMMED across requests, because a retry re-sends it and is charged again', async () => {
+    const out = await render(
+      runWith({
+        ...BASE,
+        usage: [
+          { request_index: 0, request_start: T, prompt_tokens: 1200, output_tokens: 300 },
+          { request_index: 1, request_start: T, prompt_tokens: 1300, output_tokens: 310 },
+        ],
+      }),
+    );
+    // This line's own words are "billed before the throw": it answers a COST question about the
+    // whole drive, unlike the step's diagnostics line, which answers a SIZE question about one
+    // request. Sampling request 0 understated every multi-request failure.
+    expect(out).toContain(
+      '2 requests billed before the throw — 2500 prompt tokens (totals across 2 requests), 610 output tokens',
+    );
+    expect(out).not.toContain('(first request)');
+  });
+
+  it('a prompt only SOME requests reported is a floor that names what it counted', async () => {
+    // And when request 0 was the silent one, the old form printed `prompt not reported` with 1300
+    // sitting in the very record being inspected.
+    const out = await render(
+      runWith({
+        ...BASE,
+        usage: [
+          { request_index: 0, request_start: T, output_tokens: 300 },
+          { request_index: 1, request_start: T, prompt_tokens: 1300, output_tokens: 310 },
+        ],
+      }),
+    );
+    expect(out).toContain('at least 1300 prompt tokens (1 of 2 requests reported a prompt)');
+    expect(out).not.toContain('prompt not reported');
   });
 });

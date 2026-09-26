@@ -31,6 +31,7 @@ import {
   MAX_RETRIES,
   type LlmClock,
   type WireCounters,
+  attachBilledUsage,
 } from './agent-utils.js';
 
 /**
@@ -179,6 +180,8 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
     callOpts?: { llmClock?: LlmClock },
+    // issue #600 PR 1a (D9): owned by the entry point so one `catch` there sees everything billed.
+    billed?: UsageRecord[],
   ): Promise<{ output: Record<string, unknown>; usage?: UsageRecord[] }> {
     const clock = callOpts?.llmClock;
     // issue #401: per-invocation counters, minted beside the client they count for.
@@ -227,7 +230,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // issue #600 PR 1a: ONE entry per WIRE REQUEST, in wire order — the provider owns the loop
     // (the non-JSON retry is a second wire request), so a single usage object here would be a
     // false number by construction the moment the retry fires.
-    const requests: UsageRecord[] = [];
+    const requests: UsageRecord[] = billed ?? [];
     const makeRequest = async (msgs: Message[]): Promise<string> => {
       const opts: Record<string, unknown> = {
         model: this.model,
@@ -274,13 +277,20 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     agentProfileInstructions?: string,
     callOpts?: { llmClock?: LlmClock },
   ): Promise<Record<string, unknown>> {
-    const { output } = await this.callStepInternal(
-      prompt,
-      inputSchema,
-      agentProfileInstructions,
-      callOpts,
-    );
-    return output;
+    const billed: UsageRecord[] = [];
+    try {
+      const { output } = await this.callStepInternal(
+        prompt,
+        inputSchema,
+        agentProfileInstructions,
+        callOpts,
+        billed,
+      );
+      return output;
+    } catch (err) {
+      attachBilledUsage(err, billed);
+      throw err;
+    }
   }
 
   /**
@@ -320,9 +330,19 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // does not reach this method, it goes straight to `callStepInternal` (via `callStep`). A
     // clock dropped here unbounds that first class entirely.
     if (opts?.structuredOutputStrict !== true || inputSchema === undefined) {
-      return this.callStepInternal(prompt, inputSchema, agentProfileInstructions, {
-        ...(clock !== undefined ? { llmClock: clock } : {}),
-      });
+      const billed: UsageRecord[] = [];
+      try {
+        return await this.callStepInternal(
+          prompt,
+          inputSchema,
+          agentProfileInstructions,
+          { ...(clock !== undefined ? { llmClock: clock } : {}) },
+          billed,
+        );
+      } catch (err) {
+        attachBilledUsage(err, billed);
+        throw err;
+      }
     }
     // Per-invocation counters, minted beside the client below.
     const counters: WireCounters = { attempts: 0 };
@@ -385,71 +405,76 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // comes back — a billed-but-unparseable response (readContent below can still throw on it)
     // must not lose the money that was already spent (D9: "money burned on a call that threw").
     const requests: UsageRecord[] = [];
-    const timedCreate = async (o: Rec): Promise<Record<string, unknown>> => {
-      const requestStart = new Date().toISOString();
-      const response = await create(o);
-      requests.push(toUsageRecord(requests.length, requestStart, readOpenAiUsage(response)));
-      return response as Record<string, unknown>;
-    };
-
-    /**
-     * Reads the answer, honouring the refusal field as an L1-class escape.
-     *
-     * issue #600 PR 1a: the parameter type used to declare ONLY
-     * `choices[].message.{content,refusal}` — usage was erased HERE, by the parameter, even
-     * though `create` already returns `any`. Widened to document the real shape (type safety,
-     * not new reach — `usage` is read by the caller via `readOpenAiUsage`, not here).
-     */
-    const readContent = (response: {
-      choices?: Array<{ message?: { content?: string; refusal?: string | null } }>;
-      usage?: OpenAiUsage;
-    }): Record<string, unknown> => {
-      const message = response.choices?.[0]?.message;
-      const refusal = message?.refusal;
-      if (typeof refusal === 'string' && refusal.length > 0) {
-        // A refusal is a well-formed API response, not a transport failure: surface it the same
-        // way a non-JSON answer surfaces, so the existing validation/reask layer handles it.
-        throw new Error(sanitizeError(`OpenAI refused the request: ${refusal.slice(0, 200)}`));
-      }
-      const parsed = extractJsonObject(message?.content ?? '');
-      if (parsed !== null) return parsed;
-      throw new Error(
-        sanitizeError(
-          `OpenAI returned non-JSON content under strict decoding: ${(message?.content ?? '').slice(0, 200)}`,
-        ),
-      );
-    };
-
     try {
-      const response = await timedCreate(buildOpts(true));
-      return {
-        output: readContent(response),
-        meta: { requested: true, sent: true },
-        usage: requests,
+      const timedCreate = async (o: Rec): Promise<Record<string, unknown>> => {
+        const requestStart = new Date().toISOString();
+        const response = await create(o);
+        requests.push(toUsageRecord(requests.length, requestStart, readOpenAiUsage(response)));
+        return response as Record<string, unknown>;
       };
-    } catch (err) {
-      const status = extractHttpStatus(err);
-      // 5xx / transport / timeout: NEVER a downgrade and never sticky — the schema is not what
-      // failed. Propagates so the caller's own retry treats it as the transport error it is.
-      if (status !== 400) throw err;
-      const api_message = err instanceof Error ? err.message : String(err);
-      const meta: StructuredOutputMeta = {
-        requested: true,
-        sent: false,
-        downgrade_reason: 'api_rejected_schema',
-        api_message,
-        ...extractApiErrorFields(err),
-      };
-      try {
-        const retry = await timedCreate(buildOpts(false));
-        return { output: readContent(retry), meta, usage: requests };
-      } catch (retryErr) {
-        throw new OpenAIStructuredOutputLadderError(
-          retryErr instanceof Error ? retryErr.message : String(retryErr),
-          meta,
-          { cause: retryErr },
+
+      /**
+       * Reads the answer, honouring the refusal field as an L1-class escape.
+       *
+       * issue #600 PR 1a: the parameter type used to declare ONLY
+       * `choices[].message.{content,refusal}` — usage was erased HERE, by the parameter, even
+       * though `create` already returns `any`. Widened to document the real shape (type safety,
+       * not new reach — `usage` is read by the caller via `readOpenAiUsage`, not here).
+       */
+      const readContent = (response: {
+        choices?: Array<{ message?: { content?: string; refusal?: string | null } }>;
+        usage?: OpenAiUsage;
+      }): Record<string, unknown> => {
+        const message = response.choices?.[0]?.message;
+        const refusal = message?.refusal;
+        if (typeof refusal === 'string' && refusal.length > 0) {
+          // A refusal is a well-formed API response, not a transport failure: surface it the same
+          // way a non-JSON answer surfaces, so the existing validation/reask layer handles it.
+          throw new Error(sanitizeError(`OpenAI refused the request: ${refusal.slice(0, 200)}`));
+        }
+        const parsed = extractJsonObject(message?.content ?? '');
+        if (parsed !== null) return parsed;
+        throw new Error(
+          sanitizeError(
+            `OpenAI returned non-JSON content under strict decoding: ${(message?.content ?? '').slice(0, 200)}`,
+          ),
         );
+      };
+
+      try {
+        const response = await timedCreate(buildOpts(true));
+        return {
+          output: readContent(response),
+          meta: { requested: true, sent: true },
+          usage: requests,
+        };
+      } catch (err) {
+        const status = extractHttpStatus(err);
+        // 5xx / transport / timeout: NEVER a downgrade and never sticky — the schema is not what
+        // failed. Propagates so the caller's own retry treats it as the transport error it is.
+        if (status !== 400) throw err;
+        const api_message = err instanceof Error ? err.message : String(err);
+        const meta: StructuredOutputMeta = {
+          requested: true,
+          sent: false,
+          downgrade_reason: 'api_rejected_schema',
+          api_message,
+          ...extractApiErrorFields(err),
+        };
+        try {
+          const retry = await timedCreate(buildOpts(false));
+          return { output: readContent(retry), meta, usage: requests };
+        } catch (retryErr) {
+          throw new OpenAIStructuredOutputLadderError(
+            retryErr instanceof Error ? retryErr.message : String(retryErr),
+            meta,
+            { cause: retryErr },
+          );
+        }
       }
+    } catch (err) {
+      attachBilledUsage(err, requests);
+      throw err;
     }
   }
 

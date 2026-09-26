@@ -250,7 +250,13 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
     });
 
     it('CACHE_STATES/CACHE_BASES ship only members with producers in this PR — CACHE_BASES has exactly two', () => {
-      expect(CACHE_STATES).toEqual(['engaged', 'never_engaged', 'write_only', 'unobservable']);
+      expect(CACHE_STATES).toEqual([
+        'engaged',
+        'never_engaged',
+        'write_only',
+        'partially_observed',
+        'unobservable',
+      ]);
       expect(CACHE_BASES).toEqual(['provider_reported', 'unobservable']);
       expect(CACHE_BASES).not.toContain('derived');
     });
@@ -265,12 +271,18 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
       // compiling — but D4's own acceptance is "exported from core's index", so read index.ts
       // directly to prove the re-export exists as source text (belt-and-braces).
       const pkg = await import('@sensigo/realm');
-      expect(pkg.CACHE_STATES).toEqual(['engaged', 'never_engaged', 'write_only', 'unobservable']);
+      expect(pkg.CACHE_STATES).toEqual([
+        'engaged',
+        'never_engaged',
+        'write_only',
+        'partially_observed',
+        'unobservable',
+      ]);
       expect(pkg.CACHE_BASES).toEqual(['provider_reported', 'unobservable']);
     });
   });
 
-  describe('D5 — deriveCacheDetail: four states, one cell per member', () => {
+  describe('D5 — deriveCacheDetail: five states, one cell per member', () => {
     it('engaged: any request with cache_read_input_tokens > 0', () => {
       const detail = deriveCacheDetail([
         usage({ cache_read_input_tokens: 1150, cache_creation_input_tokens: 0 }),
@@ -301,9 +313,21 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
       expect(detail.basis).toBe('unobservable');
     });
 
-    it('write_only also fires via the separate cache_write_tokens counter (a provider that reports writes apart from cache_creation_input_tokens)', () => {
-      const detail = deriveCacheDetail([usage({ cache_write_tokens: 500 })]);
+    it('write_only fires via the separate cache_write_tokens counter WHEN the read counter was also reported (a provider that reports writes apart from cache_creation_input_tokens)', () => {
+      const detail = deriveCacheDetail([
+        usage({ cache_write_tokens: 500, cache_read_input_tokens: 0 }),
+      ]);
       expect(detail.state).toBe('write_only');
+    });
+
+    it('the SAME write counter WITHOUT a reported read is partially_observed, never write_only — "only" is a claim about BOTH directions', () => {
+      // The defect this cell exists for: a provider that reports a write and withholds the read
+      // counter (OpenAI's `cache_write_tokens` is optional on `prompt_tokens_details`) used to be
+      // rolled up as `write_only`, which asserts a read of zero nobody reported — the record's own
+      // rule ("none is ever defaulted to 0") broken at the state word instead of at the field.
+      const detail = deriveCacheDetail([usage({ cache_write_tokens: 500 })]);
+      expect(detail.state).toBe('partially_observed');
+      expect(detail.basis).toBe('provider_reported');
     });
 
     // Mutant (ii): coerce a null counter to 0 — must red EXACTLY the unobservable cell above,
@@ -322,8 +346,123 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
 
   describe('CacheState type usage sanity (compile-time; keeps the import live)', () => {
     it('every produced state is a member of the exported union', () => {
-      const states: CacheState[] = ['engaged', 'never_engaged', 'write_only', 'unobservable'];
+      const states: CacheState[] = [
+        'engaged',
+        'never_engaged',
+        'write_only',
+        'partially_observed',
+        'unobservable',
+      ];
       for (const s of states) expect(CACHE_STATES).toContain(s);
     });
+  });
+
+  // =======================================================================================
+  // THE ABSENCE LATTICE — the anti-repeat law for this issue's one rule.
+  //
+  // The class this block exists to prevent: "an absence is never a zero" honoured for the whole
+  // usage OBJECT and broken one level down, per FIELD. That is how a state word came to claim a
+  // direction no provider reported. The instrument is a LATTICE, not a sample: every cell of
+  // (read direction) x (write direction) over {not reported, reported 0, reported > 0} is
+  // enumerated here, so the next hole of this shape lands on a cell that already exists rather
+  // than on a probe someone remembered to write. A new state member cannot be added without
+  // deciding, in this table, which cells produce it.
+  // =======================================================================================
+  describe('D5 — the absence lattice: every (read x write) observation cell has exactly one state', () => {
+    type Obs = 'absent' | 'zero' | 'positive';
+    const OBS: Obs[] = ['absent', 'zero', 'positive'];
+    const value = (o: Obs): number | undefined =>
+      o === 'absent' ? undefined : o === 'zero' ? 0 : 500;
+
+    // The one true answer per cell. `engaged` needs only a read > 0 (a read PROVES engagement
+    // whatever the write counter said); `write_only` and `never_engaged` each claim BOTH
+    // directions, so both must have been reported; anything else is a partial view.
+    const expected: Record<Obs, Record<Obs, CacheState>> = {
+      absent: {
+        absent: 'unobservable',
+        zero: 'partially_observed',
+        positive: 'partially_observed',
+      },
+      zero: { absent: 'partially_observed', zero: 'never_engaged', positive: 'write_only' },
+      positive: { absent: 'engaged', zero: 'engaged', positive: 'engaged' },
+    };
+
+    for (const read of OBS) {
+      for (const write of OBS) {
+        it(`read ${read} x write ${write} => ${expected[read][write]}`, () => {
+          // Hoisted, not inlined: TS cannot narrow a call's result inside a conditional spread,
+          // so the inline form is `number | undefined` and `exactOptionalPropertyTypes` rejects it.
+          const rv = value(read);
+          const wv = value(write);
+          const r = usage({
+            ...(rv !== undefined ? { cache_read_input_tokens: rv } : {}),
+            ...(wv !== undefined ? { cache_creation_input_tokens: wv } : {}),
+          });
+          const detail = deriveCacheDetail([r]);
+          expect(detail.state).toBe(expected[read][write]);
+          // No cell may mint a state outside the exported vocabulary, and only the all-absent
+          // cell may claim it saw nothing.
+          expect(CACHE_STATES).toContain(detail.state);
+          expect(detail.basis).toBe(
+            read === 'absent' && write === 'absent' ? 'unobservable' : 'provider_reported',
+          );
+        });
+      }
+    }
+
+    it('the lattice covers every state member — no member is unreachable, none is untested', () => {
+      const produced = new Set<CacheState>();
+      for (const read of OBS) for (const write of OBS) produced.add(expected[read][write]);
+      expect([...produced].sort()).toEqual([...CACHE_STATES].sort());
+    });
+  });
+});
+
+describe('issue #600 PR 1a — correction 2: null is an absence, and both-directions words need both', () => {
+  it('a NULL counter is an ABSENCE at the classifier too — never an observed zero', () => {
+    // `null !== undefined` is TRUE, so an `!== undefined` test counts a null as REPORTED and the
+    // `> 0` comparison then reads it as a zero. The mapper honours the null; this consumer did not,
+    // so a record with an unreported read and a reported write classified `write_only` — a word that
+    // asserts "read nothing" about a direction the provider said nothing about.
+    const detail = deriveCacheDetail([
+      usage({
+        cache_read_input_tokens: null as unknown as number,
+        cache_creation_input_tokens: 7,
+      }),
+    ]);
+    expect(detail.state).toBe('partially_observed');
+  });
+
+  it('`write_only` needs EVERY request to have reported both directions, not the step as a whole', () => {
+    // Request 0 reports a read of 0, request 1 reports a write. Globally both directions have been
+    // seen; per request, request 1's read is UNKNOWN — so "read nothing, wrote something" asserts a
+    // read nobody reported. Reachable: OpenAI's cached/write counters are both optional, so two
+    // requests in one step can differ.
+    const detail = deriveCacheDetail([
+      usage({ cache_read_input_tokens: 0 }),
+      { request_index: 1, request_start: 'x', cache_creation_input_tokens: 5 } as UsageRecord,
+    ]);
+    expect(detail.state).toBe('partially_observed');
+  });
+
+  it('`never_engaged` needs it too — one silent direction anywhere makes the view partial', () => {
+    const detail = deriveCacheDetail([
+      usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }),
+      { request_index: 1, request_start: 'x', cache_read_input_tokens: 0 } as UsageRecord,
+    ]);
+    expect(detail.state).toBe('partially_observed');
+  });
+
+  it('the CONTROL: every request reporting both directions still earns the both-directions word', () => {
+    const detail = deriveCacheDetail([
+      usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 5 }),
+      {
+        request_index: 1,
+        request_start: 'x',
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 3,
+      } as UsageRecord,
+    ]);
+    expect(detail.state).toBe('write_only');
   });
 });

@@ -153,11 +153,16 @@ describe('composed journey — a politely-failed tool call, all the way to the o
       expect(entry!.cache_read_input_tokens).toBe(512);
       expect(entry!.uncached_input_tokens).toBe(128);
       expect(entry!.output_tokens).toBe(18);
-      // And the operator screen agrees with the record.
+      // And the operator screen agrees with the record. The write direction is UNREPORTED here —
+      // OpenAI's Chat Completions `cache_write_tokens` is optional and this response omits it — so
+      // the screen must say so. Rendering `wrote 0` there would be the whole-chain form of the
+      // defect this arc exists to kill: a number nobody measured, asserting that the call wrote
+      // nothing to the cache, on the one path that has no mocks in it.
       expect(journey.inspectOutput).toContain('640 prompt tokens (measured, first request)');
       expect(journey.inspectOutput).toContain(
-        'cache: read 512, wrote 0 (provider-reported, 1 request)',
+        'cache: read 512, wrote not reported (provider-reported, 1 request)',
       );
+      expect(journey.inspectOutput).not.toContain('wrote 0');
     } finally {
       await stub.close();
       if (originalKey === undefined) delete process.env['OPENAI_API_KEY'];

@@ -318,8 +318,22 @@ export interface StepDiagnostics {
   cache?: StepCacheDetail;
 }
 
-/** Issue #600 — the closed set of per-step cache states. */
-export const CACHE_STATES = ['engaged', 'never_engaged', 'write_only', 'unobservable'] as const;
+/**
+ * Issue #600 — the closed set of per-step cache states.
+ *
+ * Observation is per DIRECTION (read, write), never per object. `'never_engaged'` and
+ * `'write_only'` each make a claim about BOTH directions, so each is mintable only when both were
+ * reported; a provider that reports one counter and withholds the other yields
+ * `'partially_observed'`, because there is no true four-word answer for that data and forcing one
+ * would be the very coercion `CACHE_BASES` forbids one level up.
+ */
+export const CACHE_STATES = [
+  'engaged',
+  'never_engaged',
+  'write_only',
+  'partially_observed',
+  'unobservable',
+] as const;
 export type CacheState = (typeof CACHE_STATES)[number];
 
 /**
@@ -360,7 +374,12 @@ export interface UsageRecord {
   cache_read_input_tokens?: number;
   /** Of that prompt, the part written to cache. */
   cache_creation_input_tokens?: number;
-  /** Where a provider reports cache writes as a separate counter from `cache_creation_input_tokens`. */
+  /**
+   * Where a provider reports cache writes as a separate counter from
+   * `cache_creation_input_tokens`. The two are ALTERNATIVE SPELLINGS of one quantity (Anthropic
+   * reports the first, OpenAI the second), never two additive components — a reader takes
+   * whichever is present and never sums them.
+   */
   cache_write_tokens?: number;
   output_tokens?: number;
   /**

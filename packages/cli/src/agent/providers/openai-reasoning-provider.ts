@@ -15,6 +15,7 @@ import {
   MAX_RETRIES,
   type LlmClock,
   type WireCounters,
+  attachBilledUsage,
 } from './agent-utils.js';
 
 /**
@@ -117,6 +118,8 @@ export class OpenAIReasoningProvider extends LlmProvider {
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
     callOpts?: { llmClock?: LlmClock },
+    // issue #600 PR 1a (D9): owned by the entry point so one `catch` there sees everything billed.
+    billed?: UsageRecord[],
   ): Promise<{ output: Record<string, unknown>; usage?: UsageRecord[] }> {
     const clock = callOpts?.llmClock;
     // issue #401: per-invocation counters, minted beside the client they count for.
@@ -162,7 +165,7 @@ export class OpenAIReasoningProvider extends LlmProvider {
     const messages: Message[] = [{ role: 'user', content: userContent }];
 
     // issue #600 PR 1a: ONE entry per WIRE REQUEST, in wire order.
-    const requests: UsageRecord[] = [];
+    const requests: UsageRecord[] = billed ?? [];
     const makeRequest = async (msgs: Message[]): Promise<string> => {
       const requestStart = new Date().toISOString();
       const response = await bounded({
@@ -206,13 +209,20 @@ export class OpenAIReasoningProvider extends LlmProvider {
     agentProfileInstructions?: string,
     callOpts?: { llmClock?: LlmClock },
   ): Promise<Record<string, unknown>> {
-    const { output } = await this.callStepInternal(
-      prompt,
-      inputSchema,
-      agentProfileInstructions,
-      callOpts,
-    );
-    return output;
+    const billed: UsageRecord[] = [];
+    try {
+      const { output } = await this.callStepInternal(
+        prompt,
+        inputSchema,
+        agentProfileInstructions,
+        callOpts,
+        billed,
+      );
+      return output;
+    } catch (err) {
+      attachBilledUsage(err, billed);
+      throw err;
+    }
   }
 
   /**
@@ -228,8 +238,18 @@ export class OpenAIReasoningProvider extends LlmProvider {
     agentProfileInstructions?: string,
     opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
   ): Promise<CallStepWithMetaResult> {
-    return this.callStepInternal(prompt, inputSchema, agentProfileInstructions, {
-      ...(opts?.llmClock !== undefined ? { llmClock: opts.llmClock } : {}),
-    });
+    const billed: UsageRecord[] = [];
+    try {
+      return await this.callStepInternal(
+        prompt,
+        inputSchema,
+        agentProfileInstructions,
+        { ...(opts?.llmClock !== undefined ? { llmClock: opts.llmClock } : {}) },
+        billed,
+      );
+    } catch (err) {
+      attachBilledUsage(err, billed);
+      throw err;
+    }
   }
 }

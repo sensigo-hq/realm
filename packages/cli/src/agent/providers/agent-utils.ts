@@ -1,5 +1,5 @@
 // agent-utils.ts — Shared utility functions for LLM provider agentic loops.
-import type { ValidationErrorSummaryEntry, RawValidationError } from '@sensigo/realm';
+import type { ValidationErrorSummaryEntry, RawValidationError, UsageRecord } from '@sensigo/realm';
 
 const SYSTEM_PROMPT_BASE =
   'You are an AI agent executing a step in a structured workflow.\n' +
@@ -814,4 +814,33 @@ export async function driveCreate<T>(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+/**
+ * Issue #600 PR 1a (D9) — money already billed survives ANY throw, not only the two the provider
+ * mints itself.
+ *
+ * Each provider accumulates one `UsageRecord` per wire request as the responses come back. Until
+ * this helper, the accumulator was attached to the error at the provider's OWN typed throws (a
+ * truncated response, non-JSON content after retry) and nowhere else — so the failure an operator
+ * actually meets, a wire error from the model (500, rate limit, timeout, reset), discarded every
+ * number and a drive that had already paid for a cache write was indistinguishable on screen from
+ * one that spent nothing. The accumulator is owned by the entry point and handed down, so one
+ * `catch` at the top covers every throw below it, whatever its origin.
+ *
+ * Two absences are preserved deliberately, because `formatDriveFailureUsage` documents both:
+ *   - nothing billed ⇒ nothing attached, so on the paths that accumulate — the single-shot and
+ *     structured-output calls — `usage: undefined` means no wire request was ever made (a
+ *     pre-dispatch failure such as `sdk_missing`). It does NOT mean that on the tool-calling path:
+ *     `callStepWithTools` builds no `UsageRecord` and calls this helper nowhere, so a tools step's
+ *     `usage` is absent whatever it billed (issue #610). A caller reading this absence as "no model
+ *     call happened" is right only for the accumulating paths;
+ *   - a payload already attached (a typed `driveCall`) wins — this never overwrites a richer one.
+ */
+export function attachBilledUsage(err: unknown, billed: UsageRecord[]): void {
+  if (billed.length === 0) return;
+  if (typeof err !== 'object' || err === null) return;
+  const e = err as { driveCall?: unknown };
+  if (e.driveCall !== undefined) return;
+  e.driveCall = { usage: billed };
 }

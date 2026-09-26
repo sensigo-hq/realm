@@ -24,7 +24,9 @@ function makeTextResponse(content: string) {
 // callStep tests
 // =========================================================================
 describe('OpenAIReasoningProvider.callStep', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   // -----------------------------------------------------------------------
   // 1. Basic happy path
@@ -250,7 +252,9 @@ function makeTextResponseWithUsage(
 }
 
 describe('OpenAIReasoningProvider — issue #600 PR 1a D1: same OpenAI mapper semantics (prompt_tokens is the total)', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   it('prompt_tokens read VERBATIM, cached_tokens a SUBSET never re-added', async () => {
     mockCreate.mockResolvedValueOnce(
@@ -271,7 +275,9 @@ describe('OpenAIReasoningProvider — issue #600 PR 1a D1: same OpenAI mapper se
 });
 
 describe('OpenAIReasoningProvider — issue #600 PR 1a D1a: this provider had NO callStepWithMeta override before this PR', () => {
-  beforeEach(() => mockCreate.mockReset());
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
 
   it('BEFORE this PR (the base default): callStepWithMeta returned only { output } — the class this PR fixes. Verified by pinning the NEW override instead: usage is present.', async () => {
     // Red-first, structurally: `OpenAIReasoningProvider extends ToolCapableLlmProvider`, which did
@@ -333,5 +339,52 @@ describe('OpenAIReasoningProvider — issue #600 PR 1a D1a: this provider had NO
     expect(result.usage).toHaveLength(2);
     expect(result.usage![0]!.request_index).toBe(0);
     expect(result.usage![1]!.request_index).toBe(1);
+  });
+});
+
+describe('OpenAIReasoningProvider — issue #600 PR 1a (D9): both entry points carry what was billed', () => {
+  // Both of this provider's `attachBilledUsage` sites were unpinned: a per-member sweep commented
+  // each out and the whole cli suite stayed green.
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  const billThenThrow = (): void => {
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [{ message: { role: 'assistant', content: 'not JSON' } }],
+        usage: {
+          prompt_tokens: 700,
+          completion_tokens: 9,
+          prompt_tokens_details: { cached_tokens: 100 },
+        },
+      })
+      .mockImplementation(async () => {
+        throw new Error('500 upstream exploded');
+      });
+  };
+  const billedOn = async (call: () => Promise<unknown>): Promise<unknown> => {
+    try {
+      await call();
+      expect.unreachable('the call must throw');
+    } catch (err) {
+      return (err as { driveCall?: { usage?: unknown[] } }).driveCall?.usage;
+    }
+  };
+
+  it('callStep — the public single-shot path', async () => {
+    billThenThrow();
+    const usage = await billedOn(() => new OpenAIReasoningProvider('o1-mini').callStep('prompt'));
+    expect(usage).toHaveLength(1);
+    expect((usage as Array<{ prompt_tokens?: number }>)[0]).toMatchObject({ prompt_tokens: 700 });
+  });
+
+  it('callStepWithMeta — the override this PR added, which previously inherited the base default', async () => {
+    billThenThrow();
+    const usage = await billedOn(() =>
+      new OpenAIReasoningProvider('o1-mini').callStepWithMeta('prompt'),
+    );
+    expect(usage).toHaveLength(1);
+    expect((usage as Array<{ prompt_tokens?: number }>)[0]).toMatchObject({ prompt_tokens: 700 });
   });
 });

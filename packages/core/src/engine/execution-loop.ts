@@ -1388,12 +1388,21 @@ function buildStepDiagnostics(
 }
 
 /**
- * Issue #600 PR 1a — the per-step roll-up over one step's wire requests. The counters fork THREE
- * ways, not two (Anthropic types both `number | null`):
- *   - either counter **> 0** on any request ⇒ observed engagement;
- *   - both **0** on every request ⇒ `never_engaged` — an observed zero is a real fact;
- *   - **absent** everywhere ⇒ `unobservable`, `basis: 'unobservable'`. NEVER a zero.
- * `write_only` is the step-level roll-up: some request wrote, none read.
+ * Issue #600 PR 1a — the per-step roll-up over one step's wire requests. Observation is tracked per
+ * DIRECTION (read, write), never per object, because a provider can report one and withhold the
+ * other (`cache_write_tokens` is optional on OpenAI's `prompt_tokens_details`; Anthropic types both
+ * its counters `number | null`). Each state word may only claim a direction that was reported:
+ *   - a read **> 0** ⇒ `engaged`. A read PROVES engagement whatever the write counter said;
+ *   - read reported **0** and a write **> 0** ⇒ `write_only` — "only" claims both directions, so
+ *     both must have been reported;
+ *   - both directions reported, both **0** ⇒ `never_engaged` — an observed zero is a real fact;
+ *   - one direction reported and the other not ⇒ `partially_observed`. There is no true four-word
+ *     answer for that data: calling it `never_engaged` would assert a zero for a counter nobody
+ *     reported, which is exactly the coercion this record's own doc forbids;
+ *   - **no** direction reported anywhere ⇒ `unobservable`, `basis: 'unobservable'`. NEVER a zero.
+ *
+ * The two write counters are ALTERNATIVE SPELLINGS of one quantity across providers, never two
+ * additive components — either one being present means the write direction was reported.
  *
  * Consults every persisted counter that can independently signal engagement —
  * `cache_creation_input_tokens`, `cache_write_tokens`, `cache_read_input_tokens` — but
@@ -1407,27 +1416,48 @@ function buildStepDiagnostics(
  * should read that citation first.
  */
 export function deriveCacheDetail(requests: UsageRecord[]): StepCacheDetail {
-  let sawCounter = false;
-  let wrote = false;
+  let readObserved = false;
+  let writeObserved = false;
   let read = false;
+  let wrote = false;
+  // Whether EVERY request reported BOTH directions. The two words that claim something about both
+  // — `write_only` ("read nothing, wrote something") and `never_engaged` ("did neither") — may only
+  // be minted when that is true of every request, not merely somewhere in the step: with request 0
+  // reporting a read of 0 and request 1 reporting a write, the global flags are both set while
+  // request 1's read is UNKNOWN, and `write_only` then asserts a read nobody reported.
+  let allBoth = true;
   for (const r of requests) {
-    if (r.cache_creation_input_tokens !== undefined) {
-      sawCounter = true;
-      if (r.cache_creation_input_tokens > 0) wrote = true;
+    // `typeof === 'number'`, never `!== undefined`: `null` is one of the two absence spellings a
+    // provider's own type allows (`UsageRecord`'s doc says so), and `null !== undefined` is TRUE —
+    // so an `!== undefined` test counts a null as REPORTED and the comparison below then reads it as
+    // a zero. That is the coercion this whole field exists to prevent, one altitude down.
+    const readVal = r.cache_read_input_tokens;
+    let readHere = false;
+    if (typeof readVal === 'number') {
+      readHere = true;
+      readObserved = true;
+      if (readVal > 0) read = true;
     }
-    if (r.cache_write_tokens !== undefined) {
-      sawCounter = true;
-      if (r.cache_write_tokens > 0) wrote = true;
+    let writeHere = false;
+    for (const w of [r.cache_creation_input_tokens, r.cache_write_tokens]) {
+      if (typeof w === 'number') {
+        writeHere = true;
+        writeObserved = true;
+        if (w > 0) wrote = true;
+      }
     }
-    if (r.cache_read_input_tokens !== undefined) {
-      sawCounter = true;
-      if (r.cache_read_input_tokens > 0) read = true;
-    }
+    if (!(readHere && writeHere)) allBoth = false;
   }
-  if (!sawCounter) return { state: 'unobservable', basis: 'unobservable', requests };
+  if (!readObserved && !writeObserved)
+    return { state: 'unobservable', basis: 'unobservable', requests };
+  // A read above zero PROVES the cache was engaged whatever any write counter said or withheld, so
+  // this arm needs no both-directions conjunct — the word claims only what the read establishes.
   if (read) return { state: 'engaged', basis: 'provider_reported', requests };
-  if (wrote) return { state: 'write_only', basis: 'provider_reported', requests };
-  return { state: 'never_engaged', basis: 'provider_reported', requests };
+  if (allBoth) {
+    if (wrote) return { state: 'write_only', basis: 'provider_reported', requests };
+    return { state: 'never_engaged', basis: 'provider_reported', requests };
+  }
+  return { state: 'partially_observed', basis: 'provider_reported', requests };
 }
 
 export async function executeStep(
