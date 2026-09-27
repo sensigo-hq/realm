@@ -14,9 +14,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   executeStep,
+  executeChain,
   DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
   deriveCacheDetail,
 } from './execution-loop.js';
+import { ExtensionRegistry } from '../extensions/registry.js';
 import { deriveDefaultedSteps } from './defaulted-steps.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { WorkflowError } from '../types/workflow-error.js';
@@ -464,5 +466,91 @@ describe('issue #600 PR 1a — correction 2: null is an absence, and both-direct
       } as UsageRecord,
     ]);
     expect(detail.state).toBe('write_only');
+  });
+});
+
+// #600 (found by the #612 code lane): `executeChainInternal` recursed with `{ ...options, … }`,
+// carrying the DRIVEN step's `stepMeta` into every auto step chained after it. The save site writes
+// `usage` for whatever step it settles, so one model call was recorded on the agent step AND on each
+// chained auto step, and the #614 cost view counted it on every one. A bare auto step copying the
+// agent's OUTPUT is documented (`docs/reference/yaml-schema.md`, "The bare `auto` step"); copying
+// its usage or tool calls is not — they describe the calls THIS step made, and it made none.
+describe("#600 — a chained step never inherits the driven step's usage or tool calls", () => {
+  let store: JsonFileStore;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-sd-chain-'));
+    store = new JsonFileStore(dir);
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  // agent `draft` → auto `finish` (a handler) → bare auto `wrap` (no handler, service or gate).
+  const chainDef: WorkflowDefinition = {
+    id: 'sd-chain-wf',
+    name: 'SD Chain WF',
+    version: 1,
+    steps: {
+      draft: { description: 'Draft', execution: 'agent', depends_on: [] },
+      finish: {
+        description: 'Finish',
+        execution: 'auto',
+        handler: 'finish_handler',
+        depends_on: ['draft'],
+      },
+      wrap: { description: 'Wrap', execution: 'auto', depends_on: ['finish'] },
+    },
+  };
+
+  async function driveChain() {
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'finish_handler', {
+      id: 'finish_handler',
+      execute: async () => ({ data: { finished: true } }),
+    });
+    const { run } = await store.create({ workflowId: chainDef.id, workflowVersion: 1, params: {} });
+    const envelope = await executeChain(store, chainDef, {
+      runId: run.id,
+      command: 'draft',
+      input: { answer: 42 },
+      // The shape of `realm agent`'s dispatcher: it returns the output the model submitted,
+      // whatever input it is handed. That is what makes a chained BARE step record a copy of it
+      // (the chain passes `input: {}`); an echo dispatcher would record `{}` instead.
+      dispatcher: async () => ({ answer: 42 }),
+      registry,
+      stepMeta: {
+        usage: [usage({ prompt_tokens: 1234, output_tokens: 56 })],
+        toolCalls: [{ server_id: 'srv', tool: 'lookup', args: {}, result: 'ok', duration_ms: 5 }],
+      },
+    });
+    expect(envelope.status).toBe('ok');
+    const after = await store.get(run.id);
+    expect(after.completed_steps).toEqual(['draft', 'finish', 'wrap']);
+    const entry = (step: string) => after.evidence.find((e) => e.step_id === step)!;
+    return { draft: entry('draft'), finish: entry('finish'), wrap: entry('wrap') };
+  }
+
+  it('the usage stays on the agent step that paid for it; neither chained step carries any', async () => {
+    const { draft, finish, wrap } = await driveChain();
+    expect(draft.diagnostics?.cache?.requests.map((r) => r.prompt_tokens)).toEqual([1234]);
+    expect(finish.diagnostics?.cache).toBeUndefined();
+    expect(wrap.diagnostics?.cache).toBeUndefined();
+  });
+
+  it('the tool calls stay on the agent step that made them; neither chained step carries any', async () => {
+    const { draft, finish, wrap } = await driveChain();
+    expect(draft.tool_calls?.map((t) => t.tool)).toEqual(['lookup']);
+    expect(finish.tool_calls).toBeUndefined();
+    expect(wrap.tool_calls).toBeUndefined();
+  });
+
+  it("CONTROL: the handler step records its own output, and the bare step still copies the agent's output, as documented", async () => {
+    const { draft, finish, wrap } = await driveChain();
+    expect(finish.output_summary).toEqual({ finished: true });
+    expect(wrap.output_summary).toEqual(draft.output_summary);
+    expect(draft.output_summary).toEqual({ answer: 42 });
   });
 });

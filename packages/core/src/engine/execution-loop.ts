@@ -6140,10 +6140,20 @@ async function executeChainInternal(
     depth0Warnings.push(...result.warnings);
   }
 
+  // #600: `stepMeta` describes the calls the DRIVEN step made (its model usage, its tool calls, its
+  // structured-output mode). A chained auto step made none of them, so it must not inherit them: the
+  // three capture sites write `stepMeta` onto whatever step they settle, and carrying it forward
+  // recorded one model call (and its tool calls) on every chained AUTO step too. Guards never read it.
+  // `dispatcher` stays — a chained BARE step recording a copy of the driven step's output is
+  // documented behaviour. Every consumer of `trace` and `writerNonce` sits behind an agent-kind check,
+  // so they need no stripping here. (An auto step declaring `structured_output` — which the loader
+  // refuses, so only a hand-built or pre-prohibition definition — now gets the `external_agent` stamp
+  // instead of the agent step's mode; both were wrong for it, and no admitted definition reaches it.)
+  const { stepMeta: _drivenStepMeta, ...chainOptions } = options;
   return executeChainInternal(
     store,
     definition,
-    { ...options, command: nextAutoStep, input: {} },
+    { ...chainOptions, command: nextAutoStep, input: {} },
     depth + 1,
     chainedSteps,
     depth0Warnings,
