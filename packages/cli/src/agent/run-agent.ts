@@ -34,6 +34,7 @@ import {
   renderValidationSummaryEntry,
   deriveLlmClock,
   safeErrorText,
+  appendRequests,
   type LlmClock,
 } from './providers/agent-utils.js';
 import { isToolCapable } from './providers/llm-provider.js';
@@ -354,6 +355,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // are exactly the "run created, then died before any step ran" case that read healthy for 24
   // hours.
   let currentStepName: string | undefined;
+  // issue #600: at FUNCTION scope so the last-resort catch below can see what the current step
+  // billed. Both are reset where each step begins (inside the step loop). `stepUsageSaved` turns
+  // true only once the step's repair loop has ended — `executeChain` returned for its final
+  // attempt — so from then on the step's calls live on its record and are never attached twice.
+  let usageForStep: UsageRecord[] | undefined;
+  let stepUsageSaved = false;
   let attemptStartedAt = Date.now();
   try {
     if (currentRun === undefined) {
@@ -528,7 +535,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // every iteration alongside toolCallsForMeta, threaded into stepMeta below.
         let structuredOutputMetaForStep: StructuredOutputMeta | undefined;
         // issue #600 PR 1a — what the provider said this step's wire requests cost.
-        let usageForStep: UsageRecord[] | undefined;
+        usageForStep = undefined;
+        stepUsageSaved = false;
         let result: Awaited<ReturnType<typeof executeChain>>;
         let repairsUsed = 0;
         let lastRejection: { kind: 'output' | 'input'; summary: string } | undefined;
@@ -1061,7 +1069,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // nothing (the base default, any third-party module) would otherwise leave
                   // `cache` absent — and absent means nothing was recorded, which a handler step
                   // and a tool-calling step (issue #610) also produce; see StepDiagnostics.cache.
-                  usageForStep = usage ?? [];
+                  // Repair calls now accumulate: each #217 repair pass appends its requests, so a
+                  // repaired step records every call it paid for, in wire order.
+                  usageForStep = appendRequests(usageForStep, usage ?? []);
                   if (structuredOutputPlan.ineligibleMeta !== undefined) {
                     // Gate-ineligible or sticky — strict was never attempted this call at all.
                     structuredOutputMetaForStep = structuredOutputPlan.ineligibleMeta;
@@ -1115,7 +1125,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // nothing (the base default, any third-party module) would otherwise leave
                   // `cache` absent — and absent means nothing was recorded, which a handler step
                   // and a tool-calling step (issue #610) also produce; see StepDiagnostics.cache.
-                  usageForStep = usage ?? [];
+                  // Repair calls now accumulate: each #217 repair pass appends its requests, so a
+                  // repaired step records every call it paid for, in wire order.
+                  usageForStep = appendRequests(usageForStep, usage ?? []);
                 }
               } catch (err) {
                 // The catch-side sticky-arming block that used to live here is DELETED as dead
@@ -1123,11 +1135,19 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 // per-invocation, and nothing later reads it. The SUCCESS-path arming site
                 // above is the one that serves the #217 repair loop, and it is untouched.
                 console.error(`\n✗ Step '${stepName}' LLM call failed: ${safeErrorText(err)}`);
-                await recordDriveFailure(
-                  deps.store,
-                  runId,
-                  buildEntry(err, stepName, providerForEvidence ?? 'unknown', attemptStartedAt),
+                // issue #600: `buildEntry` sees only the THROWING call's own `driveCall.usage`, so
+                // the calls this step's earlier schema-repair passes already billed are put in
+                // front of it (wire order). `err` itself is never mutated.
+                const entry = buildEntry(
+                  err,
+                  stepName,
+                  providerForEvidence ?? 'unknown',
+                  attemptStartedAt,
                 );
+                if (usageForStep !== undefined && usageForStep.length > 0) {
+                  entry.usage = appendRequests(usageForStep, entry.usage);
+                }
+                await recordDriveFailure(deps.store, runId, entry);
                 return 'failed';
               }
             }
@@ -1252,6 +1272,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
 
           break;
         }
+        // issue #600: set AFTER the repair loop, never inside it. A rejected attempt's
+        // `executeChain` saves nothing, so a flag set there would claim a save that never
+        // happened and a throw on the next attempt would lose every billed call.
+        stepUsageSaved = true;
 
         if (result.status === 'error') {
           // #134: a NOT-REGISTERED handler/adapter settles RECOVERABLY — the run is NOT failed, the step
@@ -1310,6 +1334,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 error_class: 'validation_rejected',
                 message: sanitizeError(result.errors.join(', ')).slice(0, MESSAGE_CAP),
                 elapsed_ms: Date.now() - attemptStartedAt,
+                // issue #600: a wedge carries every call of the exhausted repair budget. Nothing is
+                // attached when no call reported usage — the same rule as `attachBilledUsage`.
+                ...(usageForStep !== undefined && usageForStep.length > 0
+                  ? { usage: usageForStep }
+                  : {}),
               });
             }
           }
@@ -1341,9 +1370,26 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     // carries a payload deserves its real class no matter which catch happens to see it.
     //
     // `step: ''` is EXPECTED for anything thrown before a step was selected.
-    await recordDriveFailure(deps.store, runId, {
-      ...buildEntry(err, currentStepName ?? '', providerForEvidence ?? 'unknown', attemptStartedAt),
-    });
+    const entry = buildEntry(
+      err,
+      currentStepName ?? '',
+      providerForEvidence ?? 'unknown',
+      attemptStartedAt,
+    );
+    // issue #600: a throw that escaped before the current step's evidence was saved takes the
+    // step's billed calls with it. Once the repair loop has ended (`stepUsageSaved`),
+    // `executeChain` has returned — and it never throws after a save (repair-loop-usage.test.ts
+    // cell 7 pins that) — so the calls are already on the step's record and are never attached
+    // twice.
+    if (
+      currentStepName !== undefined &&
+      !stepUsageSaved &&
+      usageForStep !== undefined &&
+      usageForStep.length > 0
+    ) {
+      entry.usage = appendRequests(usageForStep, entry.usage);
+    }
+    await recordDriveFailure(deps.store, runId, entry);
     // RE-THROWS, never returns: `runAgent`'s public contract is that these propagate, and
     // commands/agent.ts stays the console floor for anything that happens before a run exists.
     throw err;

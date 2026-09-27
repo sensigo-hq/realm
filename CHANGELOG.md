@@ -11,13 +11,15 @@ All notable changes to this project are documented here.
 - **`StepDiagnostics.cache`** — what a provider reported about prompt caching for an agent step's
   model calls, one entry per WIRE REQUEST, never per step: `UsageRecord[]` with the measured prompt
   size, the cache tokens read and written, and output tokens, each field present only when the
-  provider actually reported it (never coerced to `0`). The rendered line keeps that property per
-  DIRECTION and per REQUEST: an unreported read prints `read not reported`, never `read 0`; a
-  counter some requests reported and others did not prints its sum as a floor that says so and names
-  what it counted (`read at least 512 (1 of 3 requests reported a read)`); and a step whose provider
-  reported one direction only, with nothing above zero to prove engagement, is `partially_observed`,
-  not `never_engaged` — "nobody wrote to the cache" and "nobody said whether anything wrote to the
-  cache" are different facts and the screen distinguishes them. (A read ABOVE zero is `engaged`
+  provider actually reported it (never coerced to `0`). The requests include every schema-repair
+  call realm's driver made for the step, the rejected ones too, in wire order. The rendered line
+  keeps that property per DIRECTION and per REQUEST: an unreported read prints `read not reported`,
+  never `read 0`; a counter some requests reported and others did not prints its sum as a floor
+  that says so and names what it counted (`read at least 512 (1 of 3 requests reported a read)`);
+  and a step whose provider reported one direction only, with nothing above zero to prove
+  engagement, is `partially_observed`, not `never_engaged` — "nobody wrote to the cache" and "nobody
+  said whether anything wrote to the cache" are different facts and the screen distinguishes them.
+  (A read ABOVE zero is `engaged`
   whatever the write counter withheld: a read proves engagement, so that arm needs no second
   direction.) Where the whole prompt cannot be derived (Anthropic reports a three-term disjoint sum,
   so one absent term leaves no total) the line prints the uncached figure it does have, labelled. A
@@ -57,9 +59,12 @@ All notable changes to this project are documented here.
   provider had already billed before the drive's retries exhausted. On every path that keeps one,
   the accumulator is owned by the provider's entry point, so it survives any throw below it — the
   wire failure an operator actually meets (a 500 or a timeout after one billed request) carries the
-  numbers, not only realm's own typed refusals. That line answers a COST question — its own words
-  are "billed before the throw" — so the prompt is SUMMED over the requests that reported one, like
-  the output tokens beside it, and labelled with its scope when more than one request was billed
+  numbers, not only realm's own typed refusals. The driver also accumulates across a step's
+  schema-repair calls, and a wedge after an exhausted repair budget carries every call, its line
+  reading "billed before the output was rejected". That line answers a COST question — for every
+  class but `validation_rejected` its own words are "billed before the throw" — so the prompt is
+  SUMMED over the requests that reported one, like the output tokens beside it, and labelled with
+  its scope when more than one request was billed
   (`2500 prompt tokens (totals across 2 requests)`). A figure only some of them reported prints as a
   floor that names what it counted
   (`at least 1300 prompt tokens (1 of 2 requests reported a prompt)`,

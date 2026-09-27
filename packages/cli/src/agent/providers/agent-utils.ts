@@ -865,3 +865,35 @@ export function attachBilledUsage(err: unknown, billed: UsageRecord[]): void {
     /* enrichment never out-throws the error being attributed */
   }
 }
+
+/**
+ * Appends one call's requests to what the step already billed, re-basing `request_index` so the
+ * step's requests stay 0-based in wire order across schema-repair calls (UsageRecord's contract).
+ * Pure: returns a new array and never mutates either input. The overloads are load-bearing: the
+ * result is assigned to `DriveFailureRecord.usage`, which under `exactOptionalPropertyTypes` cannot
+ * take `undefined`.
+ */
+export function appendRequests(
+  prior: readonly UsageRecord[],
+  next: readonly UsageRecord[] | undefined,
+): UsageRecord[];
+export function appendRequests(
+  prior: readonly UsageRecord[] | undefined,
+  next: readonly UsageRecord[],
+): UsageRecord[];
+export function appendRequests(
+  prior: readonly UsageRecord[] | undefined,
+  next: readonly UsageRecord[] | undefined,
+): UsageRecord[] | undefined;
+export function appendRequests(
+  prior: readonly UsageRecord[] | undefined,
+  next: readonly UsageRecord[] | undefined,
+): UsageRecord[] | undefined {
+  // Both absent stays absent: no production caller passes two `undefined`s, and the rule keeps the
+  // helper total rather than inventing an empty record.
+  if (prior === undefined && next === undefined) return undefined;
+  return [...(prior ?? []), ...(next ?? [])].map((entry, index) => ({
+    ...entry,
+    request_index: index,
+  }));
+}

@@ -318,7 +318,8 @@ export interface StepDiagnostics {
    * no model call (a handler step, or one answered at a `realm workflow run` prompt); it called a
    * model on the tool-calling path, which records nothing yet (issue #610); or an external agent
    * drove it over MCP `execute_step`, so its model calls were never realm's to see. Absence alone
-   * therefore never proves that no model call happened.
+   * therefore never proves that no model call happened. A step realm's driver repaired (the #217
+   * schema-repair loop) records every call, the rejected ones included.
    */
   cache?: StepCacheDetail;
 }
@@ -367,7 +368,10 @@ export type CacheBasis = (typeof CACHE_BASES)[number];
  * own provider's semantics — this record's own arithmetic must never be re-derived at a render site.
  */
 export interface UsageRecord {
-  /** 0-based, in wire order. A step is 1 to 21+ wire requests, never assume 2 or 3. */
+  /**
+   * 0-based, in wire order — across a step's schema-repair calls too. A step is 1 to 21+ wire
+   * requests, never assume 2 or 3.
+   */
   request_index: number;
   /** ISO, when this request left. */
   request_start: string;
@@ -867,10 +871,12 @@ export interface DriveFailureRecord {
   retry_after_observed_ms?: number;
   /**
    * Issue #600 PR 1a (D9) — what the provider said each billed wire request cost, before the
-   * drive ultimately threw. Populated when the throwing error carries a driveCall payload with
-   * one. An operator must be able to see, on the screen, that money was spent on a failed drive —
-   * a number on the record that renders nowhere does not discharge that (get_run_state already
-   * passes `drive_failures` verbatim; the CLI render is this same field, per D9).
+   * drive ended. Populated from the throwing error's driveCall payload and from the driver's
+   * earlier schema-repair calls for the same step (in wire order); a `validation_rejected` entry
+   * — a wedge after the repair budget ran out, not a throw — carries every call of the exhausted
+   * budget. An operator must be able to see, on the screen, that money was spent on a failed
+   * drive — a number on the record that renders nowhere does not discharge that (get_run_state
+   * already passes `drive_failures` verbatim; the CLI render is this same field, per D9).
    *
    * ABSENT until a request returns: a failure before any request left the process (`sdk_missing`)
    * and a first request that failed on the wire (a 5xx, a timeout, a dropped connection) both
