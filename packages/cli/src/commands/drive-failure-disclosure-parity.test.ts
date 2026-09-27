@@ -20,6 +20,10 @@ const USAGE: UsageRecord[] = [
     request_start: '2026-01-01T00:03:59.000Z',
     prompt_tokens: 1200,
     output_tokens: 40,
+    // issue #600 PR 1b (#611): cache traffic on a failed drive's own line — before this PR the
+    // failure line showed prompt/output only.
+    cache_read_input_tokens: 500,
+    cache_creation_input_tokens: 0,
   },
 ];
 
@@ -65,13 +69,16 @@ const DRIVE_FAILURE_DISCLOSURE = {
     surface: 'rendered',
     probe: (out) => expect(out).toContain('(Retry-After 30000ms observed)'),
   },
-  // issue #600 PR 1a (D9): a failed drive already cost money — an operator staring at "Drive
-  // failures:" must see that on the same screen, not only the machine surface.
+  // issue #600 PR 1a (D9) / PR 1b (#611): a failed drive already cost money — an operator staring
+  // at "Drive failures:" must see that on the same screen, not only the machine surface. The
+  // prompt figure reported===of===1 here, so the cache clause also carries `included in the
+  // prompt` — the D2 truth rule fires on the failure line too, not only the step line.
   usage: {
     surface: 'rendered',
     probe: (out) => {
       expect(out).toContain('1200 prompt tokens');
       expect(out).toContain('40 output tokens');
+      expect(out).toContain('cache read 500, wrote 0 (included in the prompt)');
     },
   },
 } satisfies Record<keyof DriveFailureRecord, DisclosureRoute>;

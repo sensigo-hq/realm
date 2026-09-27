@@ -17,6 +17,8 @@ import {
   persistsField,
   deriveDefaultedSteps,
   deriveRunPhase,
+  composeStepViews,
+  composeDriveFailureCosts,
   type RunPhase,
   type NextAction,
   type ClaimState,
@@ -24,6 +26,8 @@ import {
   type RunStore,
   type WorkflowDefinition,
   type RunHealthFinding,
+  type StepView,
+  type DriveFailureCost,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 
@@ -247,6 +251,18 @@ export interface RunStateSummary {
    *    attention.
    */
   warnings?: string[];
+  /**
+   * Issue #600 PR 1b — one composed cost view per step (`step-view.ts`), present iff
+   * `include_steps` was asked AND non-empty. Carried on terminal runs too — the same rule as
+   * `drive_failures`. See `composeStepViews`'s own doc for the derivation.
+   */
+  steps?: Record<string, StepView>;
+  /**
+   * Issue #600 PR 1b (#611) — one cost per `drive_failures` entry, in the same order, present iff
+   * `include_steps` was asked AND `drive_failures` is present. Lines up 1:1 with
+   * `drive_failures.entries` — see `composeDriveFailureCosts`'s own doc.
+   */
+  drive_failure_costs?: DriveFailureCost[];
 }
 
 /**
@@ -254,7 +270,7 @@ export interface RunStateSummary {
  * Returns a structured summary of the run without the full evidence array.
  */
 export async function handleGetRunState(
-  args: { run_id: string },
+  args: { run_id: string; include_steps?: boolean | undefined },
   stores?: HandleRunStateStores,
 ): Promise<RunStateSummary> {
   const runStore = stores?.runStore ?? new JsonFileStore();
@@ -370,6 +386,29 @@ export async function handleGetRunState(
         .filter((c) => c.state !== 'healthy' && c.step !== run.pending_gate?.step_name)
         .map((c) => ({ step: c.step, state: c.state }));
 
+  // issue #600 PR 1b: the definition for the per-step cost view, resolved INDEPENDENTLY of the
+  // status path above. A `definitionError` there must never suppress the view (the status path's
+  // failure and the view's are different questions), and a view-resolution failure must never
+  // leak into `definitionError`/`run_health`/`next_actions_status` — this block's `.catch` discards
+  // its error unconditionally. Placed BEFORE `classifyRunHealth`: placed after it, a leak into
+  // `definitionError` would change nothing observable, making the isolation untestable (mutant (i)
+  // would be equivalent). Never called unless asked (`include_steps`) — a poll that does not ask
+  // pays no extra registrar call, and a status-path failure already tried (`definitionError` set)
+  // is not retried a second time — the view simply goes on without a definition.
+  let viewDefinition: WorkflowDefinition | undefined = definition;
+  if (
+    args.include_steps === true &&
+    viewDefinition === undefined &&
+    definitionError === undefined &&
+    stores?.workflowStore !== undefined
+  ) {
+    viewDefinition = await getWorkflowForRun(stores.workflowStore, run, {
+      retryVerb: 'retry',
+      verb: 'retry',
+      terminalOk: true,
+    }).catch(() => undefined);
+  }
+
   // issue #221: the SAME shared classifyRunHealth predicate the three READ surfaces (get_run_state,
   // list --stuck, inspect) derive from — computed definition-aware when the workflow resolved
   // above (adds eligible_steps evidence to any never_claimed_idle finding), definition-free
@@ -465,6 +504,23 @@ export async function handleGetRunState(
       : {}),
     ...(runHealth.length > 0 ? { run_health: runHealth } : {}),
     ...(defaultedSteps.length > 0 ? { defaulted_steps: defaultedSteps } : {}),
+    // issue #600 PR 1b: `steps`/`drive_failure_costs`, present iff asked. `steps` is additionally
+    // gated non-empty (composeStepViews returns `{}` for a step-free run); `drive_failure_costs`
+    // is gated on `drive_failures` itself, never on its own emptiness (an empty array is still the
+    // honest answer for a run whose drive_failures.entries carry no usage — the field's PRESENCE
+    // is what "asked and there IS a drive_failures" means).
+    ...(args.include_steps === true
+      ? (() => {
+          const steps = composeStepViews(
+            run,
+            viewDefinition !== undefined ? { definition: viewDefinition } : {},
+          );
+          return Object.keys(steps).length > 0 ? { steps } : {};
+        })()
+      : {}),
+    ...(args.include_steps === true && run.drive_failures !== undefined
+      ? { drive_failure_costs: composeDriveFailureCosts(run) }
+      : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
@@ -473,8 +529,9 @@ export async function handleGetRunState(
 export function registerGetRunState(server: McpServer, opts?: HandleRunStateStores): void {
   server.tool(
     'get_run_state',
-    'Get the current state summary of a workflow run.',
-    { run_id: z.string() },
+    'Get the current state summary of a workflow run. Pass include_steps: true for each ' +
+      "step's model-call cost per attempt.",
+    { run_id: z.string(), include_steps: z.boolean().optional() },
     async (args) => {
       try {
         const result = await handleGetRunState(args, opts);

@@ -163,7 +163,9 @@ describe('issue #600 PR 1a (D6) inspect — StepDiagnostics.cache, five branches
         ],
       },
     });
-    expect(out).toContain('cache: read 0, wrote 1150 (provider-reported, 1 request)');
+    expect(out).toContain(
+      'cache: read 0, wrote 1150 (included in the prompt; provider-reported, 1 request)',
+    );
     // No judgement — a write-only step is a fact, not an accusation (D6 rule 4).
     expect(out).not.toMatch(/wasted|unnecessary|should|inefficient/i);
   });
@@ -184,7 +186,9 @@ describe('issue #600 PR 1a (D6) inspect — StepDiagnostics.cache, five branches
         ],
       },
     });
-    expect(out).toContain('cache: read 1150, wrote 0 (provider-reported, 1 request)');
+    expect(out).toContain(
+      'cache: read 1150, wrote 0 (included in the prompt; provider-reported, 1 request)',
+    );
   });
 
   it('the measured prompt size is LABELLED separately from the ~N-token estimate', async () => {
@@ -247,7 +251,7 @@ describe("issue #600 PR 1a (D2) inspect — the render is COUNT-AGNOSTIC, never 
     });
     // All five reported a prompt, so the figure is their TOTAL and the label says what it summed.
     // Showing the first reporting request's figure alone understated this step's spend five-fold.
-    expect(out).toContain('6040 prompt tokens (measured, totals across 5 of 5 requests)');
+    expect(out).toContain('6040 prompt tokens (measured, totals across 5 requests)');
     // Each request in this fixture reports exactly ONE direction, so each total covers a SUBSET of
     // the five requests and says so: wrote = 1150 (request 0) + 40 (request 3) = 1190 over 2 of 5;
     // read = 1150 + 1150 + 1190 = 3490 over 3 of 5. A total over a subset is a lower bound, and
@@ -275,7 +279,7 @@ describe("issue #600 PR 1a (D2) inspect — the render is COUNT-AGNOSTIC, never 
       cache: { state: 'engaged', basis: 'provider_reported', requests },
     });
     expect(out).toContain(
-      'cache: read 4000, wrote 1150 (provider-reported, totals across 5 requests)',
+      'cache: read 4000, wrote 1150 (included in the prompt; provider-reported, totals across 5 requests)',
     );
     expect(out).not.toContain('+ (');
   });
@@ -290,7 +294,7 @@ describe("issue #600 PR 1a (D2) inspect — the render is COUNT-AGNOSTIC, never 
         requests: [req({ prompt_tokens: 1200, cache_read_input_tokens: 1150 })],
       },
     });
-    expect(out).toContain('(provider-reported, 1 request)');
+    expect(out).toContain('(included in the prompt; provider-reported, 1 request)');
     expect(out).not.toContain('totals across');
   });
 });
@@ -682,7 +686,9 @@ describe('issue #600 PR 1a — correction 2: several requests reported a prompt'
         ],
       },
     });
-    expect(out).toContain('1665 prompt tokens (measured, totals across 2 of 4 requests)');
+    expect(out).toContain(
+      'at least 1665 prompt tokens (measured, 2 of 4 requests reported a prompt)',
+    );
     expect(out).not.toContain('777 prompt tokens');
   });
 

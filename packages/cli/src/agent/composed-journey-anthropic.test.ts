@@ -169,7 +169,7 @@ describe('composed journey (Anthropic) — a politely-failed tool call, all the 
       // Both directions ARE reported here, so both print a measured number — `wrote 0` is a fact
       // the provider stated, not the fabricated zero the OpenAI twin's unreported write exposed.
       expect(journey.inspectOutput).toContain(
-        'cache: read 1150, wrote 0 (provider-reported, 1 request)',
+        'cache: read 1150, wrote 0 (included in the prompt; provider-reported, 1 request)',
       );
       // THE REAL SDK made this call — same header proof as the tool-bearing journey above.
       expect(stub.headers[0]?.['x-api-key']).toBe(USAGE_STUB_API_KEY);

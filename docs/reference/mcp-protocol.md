@@ -67,7 +67,7 @@ notifiers are all absent. It exists for embedding and testing. Interactive opera
 | `start_run_batch`       | Atomically enqueues multiple runs of the same workflow. Accepts a single `workflow_id`, an `items` array (each item has `params` and optional `idempotency_key`), optional `parent_run_id`, and optional `max_items` (default 100). All items are validated before any run is created.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `execute_step`          | Submits agent output for the current step. Accepts `run_id`, `command` (step name), and `params`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `submit_human_response` | Submits a human gate response. Accepts `run_id`, `gate_id`, and `choice`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `get_run_state`         | Returns the current state, evidence chain, and terminal status of a run. When `run_phase` is `aborted`, also returns `abort_context` (guard step ID, evaluated conditions, optional abort message). When this run superseded another under the same idempotency key, also returns `rerun_of` (the superseded run's id). Also returns `next_actions` + `next_actions_status` (see below).                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `get_run_state`         | Returns the current state and terminal status of a run (with `include_steps: true`, each step's model-call cost per attempt — see below). When `run_phase` is `aborted`, also returns `abort_context` (guard step ID, evaluated conditions, optional abort message). When this run superseded another under the same idempotency key, also returns `rerun_of` (the superseded run's id). Also returns `next_actions` + `next_actions_status` (see below).                                                                                                                                                                                                                                                                                                                                |
 | `abandon_run`           | Abandons a non-terminal run — marks it terminal with phase `abandoned`, releasing every claim in the same write. Accepts `run_id` and optional `reason` (default `Abandoned via abandon_run`). Idempotent; refuses already-terminal runs (`STATE_RUN_TERMINAL`) and runs with an open gate (`pending_gate` — the gate itself, never the persisted label; `STATE_TRANSITION_DENIED` — the error names the `submit_human_response` call that answers the gate, with the run's real `gate_id` and choices). The `note` states the kill contract: declared finalizers did NOT run and will not for this run; the graceful path is the workflow's own guard step (`abort_unless`), which runs them; there is no operator abort command. See [Operating & recovering runs](operating-runs.md). |
 | `create_workflow`       | Registers a dynamic workflow from a `steps` array and immediately starts a run. No YAML file or `realm register` required.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `append_trace`          | Submits trace entries incrementally during an agent step, before `execute_step`. Accepts `run_id`, `step_id`, `entries`, and an optional `writer_nonce`. Entries are buffered and merged with any submitted at `execute_step` finalization — durable once this call returns, canonical only once the step completes. Valid only for an agent step that has not yet been claimed; a terminal run is refused (its entries could never be adopted). Advises the caller when the buffer passes 80% of either capacity bound.                                                                                                                                                                                                                                                                 |
@@ -127,10 +127,11 @@ driven via `execute_step` by anything other than `realm agent` (an external agen
 tool directly, for instance) never receives Anthropic grammar-constrained decoding — that
 mechanism is `realm agent`'s own provider layer, not part of the MCP protocol surface. The
 attempt's evidence still discloses this honestly (`downgrade_reason: 'external_agent'`, visible
-via `realm run inspect`) — but `get_run_state` does not carry per-step evidence at all, so an
-MCP-only consumer combines the run's `sealed_by_arm` (issue #367 — the recorded fact, and the
-first thing to read) + `terminal_reason` (multi-failure runs list all failed
-steps) + `failed_steps` + derived `run_phase`
+via `realm run inspect`) — but `get_run_state` does not carry THIS per-step evidence
+(structured output's own downgrade reason isn't one of `include_steps`'s fields — issue #600
+PR 1b reaches model-call COST, not this), so an MCP-only consumer combines the run's
+`sealed_by_arm` (issue #367 — the recorded fact, and the first thing to read) + `terminal_reason`
+(multi-failure runs list all failed steps) + `failed_steps` + derived `run_phase`
 instead of reading a per-attempt field. See
 [`structured_output`](yaml-schema.md#structured_output-anthropic-strict-decoding).
 
@@ -195,9 +196,41 @@ output stays unconstrained. Two consequences for an MCP consumer:
   `tool_args:api_rejected_schema`, and only when the API rejected a tool schema realm had assessed
   as eligible. The full per-tool block (`diagnostics.structured_output.tool_args` — which tools
   carried strict, which were skipped and why, and any mid-attempt drop) is evidence-only and
-  therefore reachable via `realm run inspect`/`realm run export`, not `get_run_state`. This is the
-  same per-step-evidence gap described above, and the narrow finding is the deliberate remedy: the
-  per-tool detail would drown a poller in routine outcomes.
+  therefore reachable via `realm run inspect`/`realm run export`, not `get_run_state` — `include_steps`
+  (issue #600 PR 1b, below) reaches model-call COST, never this per-tool detail. This is the same
+  per-step-evidence gap described above, scoped the same way, and the narrow finding is the
+  deliberate remedy: the per-tool detail would drown a poller in routine outcomes.
+
+**`include_steps` — per-step model-call cost (issue #600 PR 1b):** pass `include_steps: true` and
+`get_run_state` gains two fields, derived from the same composition `realm run inspect` renders
+from — the two surfaces never disagree about a number, because there is exactly one derivation.
+Absent (never `[]`/`{}`) when not asked; `steps` is additionally absent when the run has no
+execution evidence at all.
+
+- **`steps: Record<string, StepView>`** — one entry per step that has at least one EXECUTION
+  evidence entry (a `gate_response` alone mints nothing). `StepView.attempts` is an
+  `AttemptView[]`, one per execution entry, in evidence order (`attempt`, 1-based; `status`,
+  verbatim or `'unknown'`), each carrying exactly one of:
+  - **`cost: CostView`** — present whenever the attempt's `diagnostics.cache` is an object with an
+    array `requests`. `CostView.requests` is the request count; `basis`/`state` are copied verbatim
+    from the record. Each of `prompt`/`uncached_input`/`cache_read`/`cache_write`/`output` is a
+    **`CostFigure`** — `{ value, reported, of, only_request_index? }` — summed ONLY over the
+    requests that reported that counter (`null` is an absence, never a zero); a figure absent
+    means no request reported it at all. `only_request_index` is present iff exactly one request
+    reported the figure, and names which (0-based).
+  - **`cost_unrecorded: 'tool_calling_step' | 'not_driven_by_realm'`** — no `cache` was recorded,
+    and here is why: the step declared tools (the tool-calling path records no usage yet, issue
+    #610), or realm's own driver never made the call (an outside agent over MCP, an answer typed
+    at a `realm workflow run` prompt, or a record written before usage was measured). Neither cause
+    asserts a model call happened.
+  - **`cost_unreadable: true`** — `diagnostics.cache` exists but its `requests` is not an array; the
+    recorded usage cannot be read, distinct from nothing having been recorded.
+  - Nothing at all — a handler step. It made no model call, so there is nothing to classify.
+- **`drive_failure_costs: DriveFailureCost[]`** — one element per `drive_failures.entries[]`, in
+  the same order (`at`/`step`/`error_class` copied when present; `cost`, present iff the entry's
+  `usage` is an array). A `cost` with `requests: 0` means the field was present and empty — distinct
+  from `cost` being absent, which means `usage` itself was never recorded. `cost` here carries no
+  `basis`/`state` — a drive failure's usage carries no classification.
 
 ---
 

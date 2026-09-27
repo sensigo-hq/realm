@@ -24,10 +24,19 @@ All notable changes to this project are documented here.
   direction.) Where the whole prompt cannot be derived (Anthropic reports a three-term disjoint sum,
   so one absent term leaves no total) the line prints the uncached figure it does have, labelled. A
   prompt figure comes from the request that reported one and the label names WHICH
-  (`555 prompt tokens (measured, request 2 of 2)`); when several requests reported one it is their
-  TOTAL, labelled with how many of how many
-  (`1665 prompt tokens (measured, totals across 2 of 2 requests)`), because showing one request's
-  figure while a larger sibling went unshown understated what the step billed. On a step whose
+  (`555 prompt tokens (measured, request 2 of 2)`); when EVERY request reported one it is their
+  TOTAL (`1665 prompt tokens (measured, totals across 2 requests)`) — no ratio, because there is
+  nothing left unaccounted for; when only SOME did it is a FLOOR, never a total, because the silent
+  requests could have billed more (`at least 1665 prompt tokens (measured, 2 of 4 requests reported
+a prompt)`) — showing one request's figure while a larger sibling went unshown understated what
+  the step billed. Output tokens render on the same line now too (issue #611), in the same
+  single/full/floor/none forms but never labelled `measured` and never naming a request (an output
+  is a distinct answer per request, not one prompt's size): `N output tokens`, `N output tokens
+(totals across n requests)`, `at least N output tokens (k of n requests reported output)`, or
+  `output not reported`. The cache line's `read`/`wrote` clauses gain `included in the prompt`
+  (issue #600 PR 1b) — printed only when every cache token counted is provably inside the shown
+  prompt figure (a FULL prompt figure; never the uncached fallback, a floor, or a one-request-of-
+  many prompt figure). On a step whose
   record carries at least one wire request and no prompt for any of them, the line says
   `prompt not reported` rather than omitting the figure; with an empty request list there is no
   prompt segment, and the cache segment carries the whole fact. The character estimate beside it now
@@ -74,16 +83,37 @@ All notable changes to this project are documented here.
   attached until a request returns, so an absent `usage` covers both a failure before any request
   left the process (`sdk_missing`) and a first request that failed on the wire (a 5xx, a timeout, a
   dropped connection) — it never proves no request was made — and a TOOL-CALLING step records
-  nothing at all yet, so its `usage` is absent whatever it billed (issue #610). Rendered on
-  `realm run inspect`'s "Drive failures:" block and passed verbatim through `get_run_state` — an
-  operator (or agent) staring at a failed run can now see that money was spent, not only that the
-  drive failed. (Issue #600.)
+  nothing at all yet, so its `usage` is absent whatever it billed (issue #610). Cache traffic
+  renders on this line too now (issue #611): `cache read R, wrote W`, in the same full/floor/none
+  forms as the step line's `read`/`wrote` clauses, plus `(included in the prompt)` under the same
+  truth rule; neither side present reads `cache not reported`. Rendered on `realm run inspect`'s
+  "Drive failures:" block — EVERY entry the ring holds, oldest first, each with its own indented
+  `usage:` line (four spaces, so N failures scan as N events) — and passed verbatim through
+  `get_run_state` — an operator (or agent) staring at a failed run can now see that money was spent,
+  not only that the drive failed. (Issue #600.)
 - **`UsageRecord`, `CACHE_STATES`, `CACHE_BASES`, `CacheState`, `CacheBasis`, `StepCacheDetail`,
   `deriveCacheDetail`** — exported from `@sensigo/realm` (the types from
   `packages/core/src/types/run-record.ts`, the function from `engine/execution-loop.ts`, so a
   renderer can pin the sentence it prints against the classifier that produces the state).
   `CACHE_STATES` has five members: `engaged`, `never_engaged`, `write_only`, `partially_observed`
   and `unobservable`. (Issue #600.)
+- **`CostView`/`CostFigure`/`AttemptView`/`StepView`/`CostUnrecordedCause`, and
+  `composeCostView`/`composeStepViews`/`composeDriveFailureCosts`** — exported from `@sensigo/realm`
+  (`engine/step-view.ts`). One composed cost view per step, derived ONCE from a run's evidence and
+  its failed-drive record, so `realm run inspect` and `get_run_state` render the identical figures
+  rather than each re-summing `UsageRecord[]` independently. `CostFigure` sums a counter ONLY over
+  the requests that reported it (`value`/`reported`/`of`/`only_request_index?`, the last present iff
+  exactly one request reported the figure). An execution entry's cost comes from `diagnostics.cache`
+  alone; an entry with none is classified `tool_calling_step` or `not_driven_by_realm` (never
+  asserting a model call happened), or gets `cost_unreadable: true` when `cache` exists but its
+  `requests` is not a list. (Issue #600 PR 1b.)
+- **`get_run_state` gains `include_steps: boolean`** — opt-in (default `false`; every existing
+  response stays byte-identical), resolved through the same definition the status path already
+  found, or its own `terminalOk` lookup when the status path never needed one — a lookup failure
+  here is silent and never leaks into `definitionError`/`run_health`/`next_actions_status`. Asked,
+  the response gains `steps: Record<string, StepView>` (absent when there is no execution evidence
+  at all) and `drive_failure_costs: DriveFailureCost[]` (present iff `drive_failures` is). (Issue
+  #600 PR 1b.)
 
 ### Changed
 
@@ -103,6 +133,19 @@ All notable changes to this project are documented here.
   `callStepWithMeta` (the same request, byte-for-byte), so `realm agent` records
   `StepDiagnostics.cache` for every model call it makes that way, not only on steps declaring
   `structured_output`. A tool-calling step still records none (issue #610). (Issue #600.)
+- **`realm run inspect`'s "Drive failures:" block now renders EVERY entry the ring holds**, oldest
+  first — it rendered only the last one before. The rolled `N total since …` line moves to AFTER
+  every entry and its usage line (it sat between the last entry and its own usage line before).
+  (Issue #600 PR 1b.)
+- **A resumed step now shows every attempt.** Multi-attempt rendering is keyed on the number of
+  EXECUTION evidence entries alone — the `attempt` field is no longer consulted. Before this, a
+  resumed agent step (two execution entries, no `attempt` field at all) fell to the single-entry
+  branch and rendered only its FAILED first entry; the success was invisible. Each earlier attempt's
+  cost (or the reason it has none) now gets its own `attempt i/n: …` line, and the last attempt's
+  cost is LABELLED `Diagnostics (attempt n/n): …` rather than a bare, unlabelled `Diagnostics:` —
+  which a fresh operator walk read as the step's WHOLE cost. There is deliberately no total across a
+  step's attempts (a token sum over a cold write, a warm read and a retry answers no question
+  without a price; that is issue #600 PR 2's job). (Issue #600 PR 1b.)
 
 ---
 

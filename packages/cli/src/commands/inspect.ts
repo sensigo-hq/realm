@@ -16,6 +16,8 @@ import {
   deriveRunPhase,
   computeGateDueState,
   getWorkflowForRun,
+  composeStepViews,
+  composeDriveFailureCosts,
 } from '@sensigo/realm';
 // issue #221 correction: the CLI's first command→command import (sanctioned — harmless
 // module-level Command construction; `listCommand` is a standalone Commander object never
@@ -32,7 +34,9 @@ import type {
   StepDiagnostics,
   ExtensionIdentityEntry,
   SkipDetail,
-  UsageRecord,
+  CostView,
+  CostFigure,
+  CostUnrecordedCause,
 } from '@sensigo/realm';
 import { recomputeIdentity } from '../extensions/extension-identity.js';
 
@@ -197,321 +201,239 @@ function formatSummary(value: unknown, maxLength = 120): string {
   if (raw.length <= maxLength) return raw;
   return raw.slice(0, maxLength) + chalk.dim('…');
 }
+/**
+ * Issue #600 PR 1b — the ONE textual form for a summed figure that carries no "which request"
+ * label: single (bare `N noun`), full (`N noun (totals across n requests)`), partial (`at least N
+ * noun (k of n requests reported <phrase>)`). Shared by the failure line's every figure and the
+ * step line's output figure — none of which ever say "measured" or name a specific request.
+ *
+ * `extraClause`, when given, is appended inside the SAME closing parenthesis (`; <extraClause>`),
+ * or opens one of its own on the otherwise-bare single form — this is what lets the uncached
+ * fallback say `(whole prompt not reported)` even when there is nothing else to put in parens.
+ */
+function summedText(fig: CostFigure, noun: string, phrase: string, extraClause?: string): string {
+  const suffix = extraClause !== undefined ? `; ${extraClause}` : '';
+  if (fig.reported === fig.of) {
+    if (fig.of === 1) {
+      return extraClause !== undefined
+        ? `${fig.value} ${noun} (${extraClause})`
+        : `${fig.value} ${noun}`;
+    }
+    return `${fig.value} ${noun} (totals across ${fig.of} requests${suffix})`;
+  }
+  return `at least ${fig.value} ${noun} (${fig.reported} of ${fig.of} requests reported ${phrase}${suffix})`;
+}
 
 /**
- * Issue #600 PR 1a — the MEASURED prompt size, READ from `UsageRecord.prompt_tokens` — never
- * re-derived here (D6 rule 2). `prompt_tokens` is ENGINE semantics: each adapter has already
- * computed it using its own provider's arithmetic (Anthropic's disjoint three-term sum;
- * OpenAI's reported total, verbatim). A formula written at THIS render site would be correct
- * for at most one provider and silently wrong for the other — D2 exists precisely so this
- * function contains no arithmetic at all.
- *
- * Rendering a provider's raw remainder term alone (Anthropic's `input_tokens`) is correct only
- * while nothing places a breakpoint, and it SHRINKS as caching starts working — on a fully warm
- * call it would report a prompt of 0 next to a cache read of 1150. `prompt_tokens` is the number
- * that stays put whether the cache hit or missed (a warm and a cold call of the SAME prompt both
- * report 1200 — proven live on the branch, and pinned in `inspect-cache-render.test.ts`).
- *
- * FIRST REQUEST only, never summed across requests: later requests in one step re-send the same
- * prefix, so a cross-request sum overstates the prompt several-fold and answers no question
- * anyone asks. `undefined` when the first request reported none — realm then says nothing.
+ * Issue #600 PR 1b — the step line's own prompt/uncached form: it names WHICH request when only
+ * one reported (`measured, first request` / `measured, request i of n`), because a prompt is not
+ * additive as a size and showing the first reporting request's figure alone hid a larger sibling
+ * (a fresh operator read `777 prompt tokens (request 2 of 4)` off a record that also held 888).
+ * `reported === 1` wins over `reported < of` deliberately — the "one-of-many" shape gets the
+ * which-request label here, never the bare "at least" a summed context would give it.
  */
-function firstReported(
-  cache: NonNullable<StepDiagnostics['cache']>,
-  pick: (r: (typeof cache.requests)[number]) => number | undefined,
-): { value: number; index: number; of: number } | undefined {
-  const of = cache.requests.length;
-  for (let i = 0; i < of; i += 1) {
-    const v = pick(cache.requests[i]!);
-    // `typeof === 'number'`, for the same reason as `reportedFigure` and the classifier: a `null`
-    // counter is an absence the vendor's own type allows, and `null !== undefined` is TRUE — the
-    // looser test here printed `null prompt tokens (measured, first request)`, a nonsense figure
-    // under a label that claims it was measured. Third site of one predicate; the finding named two.
-    if (typeof v === 'number') return { value: v, index: i, of };
+function stepMeasuredText(
+  fig: CostFigure,
+  noun: string,
+  phrase: string,
+  extraClause?: string,
+): string {
+  const suffix = extraClause !== undefined ? `; ${extraClause}` : '';
+  if (fig.reported === 1) {
+    const idx = fig.only_request_index!;
+    const which = idx === 0 ? 'first request' : `request ${idx + 1} of ${fig.of}`;
+    return `${fig.value} ${noun} (measured, ${which}${suffix})`;
+  }
+  if (fig.reported === fig.of) {
+    return `${fig.value} ${noun} (measured, totals across ${fig.of} requests${suffix})`;
+  }
+  return (
+    `at least ${fig.value} ${noun} ` +
+    `(measured, ${fig.reported} of ${fig.of} requests reported ${phrase}${suffix})`
+  );
+}
+
+/**
+ * Issue #600 PR 1b — a cache direction's clause, label first (`read N` / `wrote N`), unchanged
+ * from PR 1a's `formatCache` other than reading a `CostFigure` instead of re-summing one. The
+ * "full" form never says "totals across" — the segment's own trailing `(scope)` already does.
+ */
+function cacheDirectionText(fig: CostFigure | undefined, label: string, phrase: string): string {
+  if (fig === undefined) return `${label} not reported`;
+  if (fig.reported === fig.of) return `${label} ${fig.value}`;
+  return `${label} at least ${fig.value} (${fig.reported} of ${fig.of} requests reported ${phrase})`;
+}
+
+/**
+ * Issue #600 PR 1b — true only where every cache token counted is provably inside the shown
+ * prompt figure: the line shows the PROMPT figure (never the uncached fallback), and every request
+ * that contributed to `requests` also reported it (`reported === of`). False for a partial prompt
+ * (some cache tokens could belong to the silent requests), a one-of-many prompt (one request's
+ * size beside every request's cache), the uncached fallback (never inside it by construction), or
+ * no prompt figure at all.
+ */
+function includedInPrompt(cost: CostView): boolean {
+  const p = cost.prompt;
+  return p !== undefined && p.reported === p.of;
+}
+
+/**
+ * Issue #600 PR 1b — the provenance word, READ from the field rather than hardcoded beside it. A
+ * word this build does not know is NAMED as unrecognised rather than printed as though it were a
+ * fact — this slot is where an operator learns whether a number was measured.
+ */
+function basisWord(basis: string | undefined): string {
+  if (basis === 'provider_reported') return 'provider-reported';
+  if (basis === undefined) return 'basis not recorded';
+  if ((CACHE_BASES as readonly string[]).includes(basis)) return basis;
+  return `unrecognized basis '${basis}'`;
+}
+
+/**
+ * Issue #600 PR 1b — the cache segment, sourced from the ONE composed `CostView` (`step-view.ts`)
+ * instead of re-summing `StepDiagnostics.cache` at this render site. Every branch, every sentence
+ * and the provenance discipline are unchanged from PR 1a's `formatCache`; the one addition is the
+ * `included in the prompt` clause (D2), printed only where `includedInPrompt` says it is true, and
+ * NEVER on the `never_engaged` branch (two zeros — noise).
+ */
+function formatCache(cost: CostView): string {
+  const n = cost.requests;
+  const scope = n === 1 ? '1 request' : `totals across ${n} requests`;
+  const nothingReported = (): string =>
+    n === 0
+      ? `cache: not reported by the provider`
+      : `cache: not reported by the provider (${scope})`;
+  const read = cacheDirectionText(cost.cache_read, 'read', 'a read');
+  const wrote = cacheDirectionText(cost.cache_write, 'wrote', 'a write');
+  if (read.endsWith('not reported') && wrote.endsWith('not reported')) {
+    return nothingReported();
+  }
+  const prov = basisWord(cost.basis);
+  const includedClause = includedInPrompt(cost) ? 'included in the prompt; ' : '';
+  if (cost.state === undefined || !(CACHE_STATES as readonly string[]).includes(cost.state)) {
+    return `cache: unrecognized state '${String(cost.state)}' — ${read}, ${wrote} (${includedClause}${prov}, ${scope})`;
+  }
+  if (cost.state === 'never_engaged') {
+    return `cache: not engaged — ${read}, ${wrote} (${prov}, ${scope})`;
+  }
+  return `cache: ${read}, ${wrote} (${includedClause}${prov}, ${scope})`;
+}
+
+/**
+ * Issue #600 PR 1b (D9/#611) — what a failed drive already cost, on the one surface an operator
+ * reads first for a stuck or errored run. Sourced from `composeDriveFailureCosts`'s per-entry
+ * `CostView`, which carries no `basis`/`state` (a drive failure's usage carries no classification)
+ * — so this line's provenance is silence, not a word. Cache traffic is NEW here (#611): before this
+ * PR the failure line showed prompt/output only, so an operator staring at "Drive failures:" could
+ * not see that a step had already written or read the cache before the drive died.
+ *
+ * Every figure here is SUMMED (never "which request"), because this line answers a COST question —
+ * for every class but `validation_rejected` its own words are "billed before the throw" — and a
+ * retry re-sends the prompt and is charged for it again.
+ */
+function formatDriveFailureUsage(cost: CostView, errorClass?: string): string {
+  if (cost.requests === 0) {
+    // An empty array says one thing only: the field was present and carried no requests. It does
+    // NOT say a request was billed — asserting that printed a billing claim directly beneath an
+    // `sdk_missing` line stating that no request ever left the process.
+    return '    usage: no per-request usage was recorded';
+  }
+  const n = cost.requests;
+  const scope = n === 1 ? '1 request' : `${n} requests`;
+  const promptStr =
+    cost.prompt !== undefined
+      ? summedText(cost.prompt, 'prompt tokens', 'a prompt')
+      : cost.uncached_input !== undefined
+        ? summedText(
+            cost.uncached_input,
+            'uncached input tokens',
+            'uncached input',
+            'whole prompt not reported',
+          )
+        : 'prompt not reported';
+  const outputStr =
+    cost.output !== undefined
+      ? summedText(cost.output, 'output tokens', 'output')
+      : 'output not reported';
+  const readStr = cacheDirectionText(cost.cache_read, 'read', 'a read');
+  const wroteStr = cacheDirectionText(cost.cache_write, 'wrote', 'a write');
+  const cacheStr =
+    readStr.endsWith('not reported') && wroteStr.endsWith('not reported')
+      ? 'cache not reported'
+      : `cache ${readStr}, ${wroteStr}${includedInPrompt(cost) ? ' (included in the prompt)' : ''}`;
+  const ended =
+    errorClass === 'validation_rejected' ? 'before the output was rejected' : 'before the throw';
+  return `    usage: ${scope} billed ${ended} — ${promptStr}, ${outputStr}, ${cacheStr}`;
+}
+
+/**
+ * Issue #600 PR 1b — the one sentence for a step whose evidence entry carries neither `cost` nor
+ * an unreadable `cache`: WHY there is nothing to show, never asserting a model call happened
+ * (`cost_unrecorded`'s two causes are both silent on that — see `StepDiagnostics.cache`'s own doc).
+ */
+function costAbsenceSentence(
+  costUnrecorded: CostUnrecordedCause | undefined,
+  costUnreadable: true | undefined,
+): string | undefined {
+  if (costUnreadable === true) return 'cost: unreadable — the recorded usage is not a list';
+  if (costUnrecorded === 'tool_calling_step') {
+    return 'cost: not recorded — tool-calling steps do not record usage yet';
+  }
+  if (costUnrecorded === 'not_driven_by_realm') {
+    return (
+      'cost: not recorded — realm did not drive this step (an outside agent over MCP, an answer ' +
+      'typed at a realm workflow run prompt, or a record written before usage was measured)'
+    );
   }
   return undefined;
 }
 
 /**
- * The scope phrase for a per-request figure. `requests[0]` alone was the defect a fresh operator
- * walk found: a provider that reports usage on its second turn and not its first left the line with
- * NO prompt figure at all, while the cache clauses on the same line proved two of three requests had
- * reported — so the only prompt number on screen was the character estimate, two orders of magnitude
- * out. A prompt is not additive across requests (each request has its own), so the honest figure is
- * one request's, and the label must say WHICH.
+ * Issue #600 PR 1b — the prompt/uncached segment of a step's Diagnostics line, sourced from a
+ * composed `CostView` rather than re-summing `StepDiagnostics.cache` here. `cost === undefined`
+ * means nothing was recorded for the step at all — no segment, as PR 1a shipped it.
  */
-function whichRequest(f: { index: number; of: number }): string {
-  return f.index === 0 ? 'first request' : `request ${String(f.index + 1)} of ${String(f.of)}`;
+function formatPromptSegment(cost: CostView | undefined): string {
+  if (cost === undefined) return '';
+  if (cost.prompt !== undefined) {
+    return ` | ${stepMeasuredText(cost.prompt, 'prompt tokens', 'a prompt')}`;
+  }
+  if (cost.uncached_input !== undefined) {
+    return ` | ${stepMeasuredText(cost.uncached_input, 'uncached input tokens', 'uncached input', 'whole prompt not reported')}`;
+  }
+  if (cost.requests > 0) return ' | prompt not reported';
+  return '';
 }
 
 /**
- * Issue #600 PR 1a — the one rule for what a summed figure over per-request counters may claim, used
- * by BOTH surfaces that print one (a step's cache line and a failed drive's usage line). Only the
- * records that REPORTED the counter are counted: an unreported counter is not a zero contribution,
- * and a sum over a subset is a floor, not a total. Returning the facts rather than a sentence is
- * deliberate — the two surfaces word them differently (`read 150+ (2 of 3 …)` vs `150+ output tokens
- * (2 of 3 …)`), and the defect this guards against is the rule being implemented twice and the
- * copies disagreeing.
- *
- * `undefined` means no record reported it — the caller says "not reported", never `0`. An empty
- * `records` array yields `undefined` too, which reads the same way; both callers guard `length === 0`
- * before this point, so that case never reaches a rendered line.
+ * Issue #600 PR 1b (#611) — output tokens on the step line, NEW in this PR: before it, output was
+ * rendered only on a failed drive's line, never on a successful step's. Summed, never "which
+ * request" — an output is not a size measured once per step the way a prompt is.
  */
-function reportedFigure<T>(
-  records: readonly T[],
-  picks: Array<(r: T) => number | undefined>,
-): { total: number; reported: number; of: number } | undefined {
-  // Several picks are ALTERNATIVE SPELLINGS of one quantity across providers, never components of
-  // it: the first present wins and they are never summed together.
-  const value = (r: T): number | undefined => {
-    for (const pick of picks) {
-      const v = pick(r);
-      // `typeof === 'number'`, never `!== undefined`: `null` is one of the two absence spellings a
-      // provider's own type allows, and `null !== undefined` is TRUE — so the looser test counts a
-      // null as REPORTED and the sum below then renders it as a `0`, which is exactly the coercion
-      // this function exists to prevent. There is deliberately no `?? 0` below either: every value
-      // that reaches the sum is a number, so no default can be mistaken for doctrine.
-      if (typeof v === 'number') return v;
-    }
-    return undefined;
-  };
-  const values: number[] = [];
-  for (const r of records) {
-    const v = value(r);
-    if (typeof v === 'number') values.push(v);
-  }
-  if (values.length === 0) return undefined;
-  return {
-    total: values.reduce((acc, v) => acc + v, 0),
-    reported: values.length,
-    of: records.length,
-  };
+function formatOutputSegment(cost: CostView | undefined): string {
+  if (cost === undefined) return '';
+  if (cost.output !== undefined) return ` | ${summedText(cost.output, 'output tokens', 'output')}`;
+  if (cost.requests > 0) return ' | output not reported';
+  return '';
 }
 
-/**
- * Issue #600 PR 1a — the provenance word, READ from the field rather than hardcoded beside it. A word
- * this build does not know is NAMED as unrecognised rather than printed as though it were a fact:
- * this slot is where an operator looks to learn whether a number was measured, and a record written
- * by a newer build or a third-party store can carry a word that means nothing here. `realm run
- * inspect` already does exactly this two lines up the same screen for an unknown seal arm.
- */
-function basisWord(basis: NonNullable<StepDiagnostics['cache']>['basis']): string {
-  if (basis === 'provider_reported') return 'provider-reported';
-  // ABSENT is not UNKNOWN, and the quoted form asserts the record literally holds that token:
-  // `unrecognized basis 'undefined'` sent a fresh operator hunting a stringify-undefined bug in the
-  // writer. The field is required by the type, so absence means a foreign or hand-edited record —
-  // a fact worth stating plainly, not a corrupt value worth quoting.
-  if (basis === undefined || basis === null) return 'basis not recorded';
-  if ((CACHE_BASES as readonly string[]).includes(basis)) return String(basis);
-  return `unrecognized basis '${String(basis)}'`;
-}
-
-/**
- * Issue #600 PR 1a — the cache segment. One branch per state, and NO segment at all when `cache` is
- * absent, because absent means nothing was recorded for the step: a different fact from "a call was
- * recorded and the provider reported nothing". It is NOT "no model call happened" — a tool-calling
- * step (issue #610) and a step an external agent drove over MCP both call models and record
- * nothing, so they render no segment either; see `StepDiagnostics.cache`. An absent number is never
- * printed as `0`; an OBSERVED zero is, because an observed zero is a real fact.
- *
- * Every branch names its provenance, and the word comes from `basis` so a future member cannot be
- * misreported as the provider's. Multi-request totals SAY they are totals: the counters are summed
- * across the step's requests while the prompt size beside them is the first request's, and two numbers
- * of different scope on one line must each declare which.
- *
- * This segment states facts and never interprets them. It carries no excuse for a step that wrote and
- * did not read: whether that is a first call or wasted money depends on what the rest of the RUN did,
- * which this function cannot see — a step's own request count says nothing about prefixes the run
- * already paid for. Judging it is PR 2's finding, on the run's evidence.
- */
-function formatCache(cache: NonNullable<StepDiagnostics['cache']>): string {
-  const n = cache.requests.length;
-  const scope = n === 1 ? '1 request' : `totals across ${n} requests`;
-  // ONE sentence for "the provider told us nothing about caching", reached two ways: the classifier
-  // said so, or every direction's clause below turned out to be `not reported` (a record realm did
-  // not mint — a state word with no counters behind it). Printing `(0 requests)` for a call that
-  // demonstrably happened would fabricate the very kind of number this field exists to stop
-  // fabricating, so the scope is omitted when there is no per-request detail at all.
-  const nothingReported = (): string =>
-    n === 0
-      ? `cache: not reported by the provider`
-      : `cache: not reported by the provider (${scope})`;
-  // Deliberately NOT keyed on `cache.state === 'unobservable'` any more. That early return let the
-  // state word outrank the data: a record carrying a read of 77 and a write of 88 printed "not
-  // reported by the provider", so an operator concluded the provider gives no cache visibility from
-  // a record holding the two numbers they had just been told did not exist. The clauses below decide
-  // instead, and they reach this same sentence whenever NEITHER direction was reported — every case
-  // the state word used to catch, and none of the cases where it was wrong.
-  // Each DIRECTION is rendered from its own reports, never from the object's, under the shared rule
-  // above: a direction no request reported prints `not reported` rather than a 0 — a `0` on this
-  // line always means a provider said zero — and a direction only SOME requests reported prints its
-  // sum as a lower bound with the count. This is why `basis` (one word for the whole object) cannot
-  // vouch for a number nobody reported: an unreported direction has no number here.
-  // `at least N`, never `N+`: a partial sum of zero printed as `wrote 0+` is read as "we wrote
-  // nothing" — the eye lands on the 0 and the `+` is a non-statement ("at least zero"). One form for
-  // every value, so there is no special case and no value at which the marker can be missed. The
-  // ratio names its OWN direction because it is counted per direction: two requests each reporting
-  // one direction print `1 of 2` twice, which reads as "only one call came back with cache data".
-  const clause = (
-    label: string,
-    noun: string,
-    picks: Array<(r: (typeof cache.requests)[number]) => number | undefined>,
-  ): string => {
-    const f = reportedFigure(cache.requests, picks);
-    if (f === undefined) return `${label} not reported`;
-    return f.reported === f.of
-      ? `${label} ${f.total}`
-      : `${label} at least ${f.total} (${f.reported} of ${f.of} requests reported a ${noun})`;
-  };
-  const read = clause('read', 'read', [(r) => r.cache_read_input_tokens]);
-  const wrote = clause('wrote', 'write', [
-    (r) => r.cache_creation_input_tokens,
-    (r) => r.cache_write_tokens,
-  ]);
-  if (read.endsWith('not reported') && wrote.endsWith('not reported')) {
-    // NEITHER direction was reported, so there is no number for `basis` to vouch for — and stamping
-    // `provider-reported` on a line that says "not reported" twice reads as "the provider reported:
-    // not reported". That is the same fact as `unobservable`, whatever state word the record carries,
-    // so it gets the same sentence rather than a second spelling of it.
-    return nothingReported();
-  }
-  const prov = basisWord(cache.basis);
-  if (!(CACHE_STATES as readonly string[]).includes(cache.state)) {
-    // A state word this build does not know: say so, and still print the counters, which are facts
-    // whatever the classifier called them. Rendering it as an ordinary state is how a typo'd
-    // `not_engaged` became indistinguishable from `engaged` in a walk.
-    return `cache: unrecognized state '${String(cache.state)}' — ${read}, ${wrote} (${prov}, ${scope})`;
-  }
-  if (cache.state === 'never_engaged') {
-    // Both directions were reported and both were zero. The state word summarises; the clauses still
-    // print BOTH numbers, because one `0` standing for two reported counters has an ambiguous
-    // referent — and because this way every observable state renders through one composition.
-    return `cache: not engaged — ${read}, ${wrote} (${prov}, ${scope})`;
-  }
-  return `cache: ${read}, ${wrote} (${prov}, ${scope})`;
-}
-
-/**
- * Issue #600 PR 1a (D9) — what a failed drive already cost, on the one surface an operator reads
- * first for a stuck or errored run. `get_run_state` already passes `drive_failures` (and its
- * `usage`) verbatim to an agent; a number that reaches only the machine surface and renders
- * nowhere for the operator does not discharge the disclosure this field exists for.
- *
- * `undefined` means no request RETURNED before the throw: a pre-dispatch `sdk_missing` and a first
- * request that failed on the wire (a 5xx, a timeout, a dropped connection) look the same here, so
- * absence never proves no request was made. The tool-calling path records nothing at all yet, so a
- * tools step's `usage` is absent whatever it billed (issue #610).
- *
- * An array — even an empty one — means a driveCall payload carried a `usage` key. `[]` says one
- * thing only: the key was present and carried no requests. It does NOT say a request was billed —
- * asserting that printed a billing claim directly beneath an `sdk_missing` line stating no request
- * ever left the process.
- *
- * Prompt size is SUMMED over the requests that reported one, like the output tokens beside it: for
- * every class but `validation_rejected` this line's own words are "billed before the throw", and a
- * retry re-sends the prompt and is charged for it again, so the sum is what was spent. (The step's
- * own diagnostics line answers a different question — how big is this prompt — and takes ONE
- * request's figure, labelled with which.) Output tokens are summed across every request, since each
- * one is a genuinely distinct answer the drive paid for.
- *
- * `errorClass` names what ended the drive (issue #600). A `validation_rejected` entry is a WEDGE —
- * the #217 repair budget ran out on rejected outputs — not a throw, so its line reads "billed
- * before the output was rejected"; every other class keeps "billed before the throw".
- */
-function formatDriveFailureUsage(
-  usage: UsageRecord[] | undefined,
-  errorClass?: string,
-): string | undefined {
-  if (usage === undefined) return undefined;
-  if (usage.length === 0) {
-    // An empty array says one thing only: the field was present and carried no requests. It does NOT
-    // say a request was billed — the previous wording claimed exactly that, and printed it directly
-    // beneath an `sdk_missing` line stating that no request ever left the process.
-    return '  usage: no per-request usage was recorded';
-  }
-  const n = usage.length;
-  const scope = n === 1 ? '1 request' : `${String(n)} requests`;
-  // The same shared rule the cache line uses, so the two surfaces cannot drift: output tokens are
-  // summed only over the requests that REPORTED them, and a subset sum says so.
-  const out = reportedFigure(usage, [(r) => r.output_tokens]);
-  const outputStr =
-    out === undefined
-      ? 'output not reported'
-      : out.reported === out.of
-        ? `${String(out.total)} output tokens`
-        : `at least ${String(out.total)} output tokens (${String(out.reported)} of ${String(out.of)} requests reported output)`;
-  // The prompt is SUMMED here, unlike the step's diagnostics line, because this line answers a
-  // different question: for every class but `validation_rejected` its own words are "billed before
-  // the throw", and a retry re-sends the prompt and is charged for it again. Sampling `usage[0]`
-  // understated every multi-request failure and, when request 0 happened to be the silent one,
-  // printed `prompt not reported` with 1300 in the record.
-  const promptFig = reportedFigure(usage, [(r) => r.prompt_tokens]);
-  const promptStr =
-    promptFig === undefined
-      ? 'prompt not reported'
-      : promptFig.reported === promptFig.of
-        ? promptFig.of === 1
-          ? `${String(promptFig.total)} prompt tokens`
-          : `${String(promptFig.total)} prompt tokens (totals across ${String(promptFig.of)} requests)`
-        : `at least ${String(promptFig.total)} prompt tokens (${String(promptFig.reported)} of ${String(promptFig.of)} requests reported a prompt)`;
-  const ended =
-    errorClass === 'validation_rejected' ? 'before the output was rejected' : 'before the throw';
-  return `  usage: ${scope} billed ${ended} — ${promptStr}, ${outputStr}`;
-}
-
-/** Formats a diagnostics object into a readable string for the inspect output. */
-function formatDiagnostics(diag: StepDiagnostics): string {
-  // issue #600 PR 1a: the estimate is LABELLED, because a measured prompt count may now sit one pipe
-  // away and the two are different quantities — `~N` is chars/4 of the step's resolved input, the
-  // measured one is the whole prompt the provider billed (system + profile + schema + message). On a
-  // real run they differ by ~100x, which is not an estimation error: they do not measure the same thing.
-  // `(estimate)` alone never said WHAT it estimates. Beside a measured prompt an operator reads the
-  // two numbers as two takes on one quantity and concludes the estimator is ~100x out; they measure
-  // different things — this one is the step's own input, the other is the whole prompt the provider
-  // received (system block, schema, history and all).
+/** Formats a diagnostics object plus its composed cost into the step line's readable string. */
+function formatDiagnostics(
+  diag: Pick<StepDiagnostics, 'input_token_estimate' | 'precondition_trace'>,
+  cost: CostView | undefined,
+): string {
   const tokens = `~${diag.input_token_estimate} tokens (estimate, step input)`;
-  // One reporting request: that request's figure, labelled with WHICH. Several: the TOTAL, labelled
-  // with how many of how many — because showing the first reporting one hid a larger sibling and
-  // understated what the step billed (777 on screen while the record held 777 AND 888, and the
-  // failed-drive line sums the identical data shape). A prompt is not additive as a SIZE, which is
-  // why the label says what it summed instead of naming one request.
-  const promptFigure = (
-    pick: (r: UsageRecord) => number | undefined,
-  ): { text: string; total: number } | undefined => {
-    if (diag.cache === undefined) return undefined;
-    const one = firstReported(diag.cache, pick);
-    if (one === undefined) return undefined;
-    const all = reportedFigure(diag.cache.requests, [pick]);
-    if (all === undefined || all.reported === 1) {
-      return { text: whichRequest(one), total: one.value };
-    }
-    return {
-      text: `totals across ${String(all.reported)} of ${String(all.of)} requests`,
-      total: all.total,
-    };
-  };
-  const measured = promptFigure((r) => r.prompt_tokens);
-  const uncached = promptFigure((r) => r.uncached_input_tokens);
-  const prompt =
-    measured !== undefined
-      ? ` | ${measured.total} prompt tokens (measured, ${measured.text})`
-      : uncached !== undefined
-        ? ` | ${uncached.total} uncached input tokens (measured, ${uncached.text}; whole prompt not reported)`
-        : diag.cache !== undefined && diag.cache.requests.length > 0
-          ? ' | prompt not reported'
-          : '';
-  const cache = diag.cache !== undefined ? ` | ${formatCache(diag.cache)}` : '';
+  const prompt = formatPromptSegment(cost);
+  const output = formatOutputSegment(cost);
+  const cache = cost !== undefined ? ` | ${formatCache(cost)}` : '';
   if (diag.precondition_trace.length === 0) {
-    return `${tokens}${prompt} | no preconditions${cache}`;
+    return `${tokens}${prompt}${output} | no preconditions${cache}`;
   }
   const traceStr = diag.precondition_trace
-    .map(
-      (t) => `${t.expression} \u2192 ${t.passed ? 'true' : 'false'} (${String(t.resolved_value)})`,
-    )
+    .map((t) => `${t.expression} → ${t.passed ? 'true' : 'false'} (${String(t.resolved_value)})`)
     .join(', ');
-  return `${tokens}${prompt} | preconditions: ${traceStr}${cache}`;
+  return `${tokens}${prompt}${output} | preconditions: ${traceStr}${cache}`;
 }
-
 /** Applies chalk color to a step status string. */
 function colorStatus(status: string): string {
   if (status === 'success') return chalk.green(status);
@@ -573,6 +495,10 @@ export async function inspectRun(
       };
     }
   }
+
+  // issue #600 PR 1b: the one composed cost view, derived ONCE from `run` \u2014 every render below
+  // reads it rather than re-summing `StepDiagnostics.cache` at each call site.
+  const stepViews = composeStepViews(run, definition !== undefined ? { definition } : {});
 
   // Color the phase label \u2014 derived, never the persisted run_phase (issue #279, increment 2,
   // PR-C \u2014 D-3 leg vi: render sweep). A grandfathered terminal-with-stale-gate record (the #282
@@ -641,56 +567,61 @@ export async function inspectRun(
   }
   // issue #401: failed drive attempts. Before this, a run whose drive kept dying showed nothing
   // here at all — the console said so once, at the time, to whoever happened to be watching.
+  //
+  // issue #600 PR 1b: EVERY entry the ring holds renders now, oldest first — before this PR only
+  // `entries[length - 1]` ever reached the screen, so a run with several distinct failures showed
+  // just the most recent one. Each entry's cost line indents FOUR spaces (was two) so N failures
+  // scan as N events and not 2N, and the rolled-total line moves to AFTER every entry+usage pair.
   const driveFailures = run.drive_failures;
-  const lastFailure = driveFailures?.entries[driveFailures.entries.length - 1];
-  if (driveFailures !== undefined && lastFailure !== undefined) {
+  if (driveFailures !== undefined && driveFailures.entries.length > 0) {
     lines.push('');
     lines.push('Drive failures:');
-    // Each discriminator renders only when present: an operator debugging a 429 storm needs the
-    // status and the Retry-After; padding every line with absent fields buries the ones that matter.
-    const status =
-      lastFailure.last_observed_status !== undefined
-        ? ` (status ${String(lastFailure.last_observed_status)})`
-        : '';
-    const retryAfter =
-      lastFailure.retry_after_observed_ms !== undefined
-        ? ` (Retry-After ${String(lastFailure.retry_after_observed_ms)}ms observed)`
-        : '';
-    // Each clock renders INDEPENDENTLY. Pairing them behind one guard meant a ceiling-only entry
-    // printed `declared 0ms` — a fabricated number an operator would read as "the timeout was set
-    // to zero", which is a different bug report than the one they actually have.
-    const declared =
-      lastFailure.declared_per_attempt_ms !== undefined
-        ? ` (declared ${String(lastFailure.declared_per_attempt_ms)}ms)`
-        : '';
-    const ceiling =
-      lastFailure.derived_ceiling_ms !== undefined
-        ? ` (ceiling ${String(lastFailure.derived_ceiling_ms)}ms)`
-        : '';
-    const attempts =
-      lastFailure.attempts_sdk !== undefined
-        ? ` (attempt ${String(lastFailure.attempts_sdk)})`
-        : '';
-    lines.push(
-      `  ${lastFailure.at}  ${lastFailure.step}  ${lastFailure.provider}  ` +
-        `${lastFailure.error_class} after ${String(lastFailure.elapsed_ms)}ms: ` +
-        // Collapsed at RENDER only. `sanitizeError` preserves newlines and provider errors carry
-        // them routinely; rendered raw, one entry sprawls over four lines and the block stops
-        // being scannable. The RECORD keeps the raw sanitized message — it is evidence, and it
-        // must not go lossy because one surface wants a single line.
-        `${lastFailure.message.replace(/\s+/g, ' ')}` +
-        `${status}${retryAfter}${declared}${ceiling}${attempts}`,
-    );
+    const driveFailureCosts = composeDriveFailureCosts(run);
+    driveFailures.entries.forEach((entry, i) => {
+      // Each discriminator renders only when present: an operator debugging a 429 storm needs the
+      // status and the Retry-After; padding every line with absent fields buries what matters.
+      const status =
+        entry.last_observed_status !== undefined
+          ? ` (status ${String(entry.last_observed_status)})`
+          : '';
+      const retryAfter =
+        entry.retry_after_observed_ms !== undefined
+          ? ` (Retry-After ${String(entry.retry_after_observed_ms)}ms observed)`
+          : '';
+      // Each clock renders INDEPENDENTLY. Pairing them behind one guard meant a ceiling-only entry
+      // printed `declared 0ms` — a fabricated number an operator would read as "the timeout was set
+      // to zero", which is a different bug report than the one they actually have.
+      const declared =
+        entry.declared_per_attempt_ms !== undefined
+          ? ` (declared ${String(entry.declared_per_attempt_ms)}ms)`
+          : '';
+      const ceiling =
+        entry.derived_ceiling_ms !== undefined
+          ? ` (ceiling ${String(entry.derived_ceiling_ms)}ms)`
+          : '';
+      const attempts =
+        entry.attempts_sdk !== undefined ? ` (attempt ${String(entry.attempts_sdk)})` : '';
+      lines.push(
+        `  ${entry.at}  ${entry.step}  ${entry.provider}  ` +
+          `${entry.error_class} after ${String(entry.elapsed_ms)}ms: ` +
+          // Collapsed at RENDER only. `sanitizeError` preserves newlines and provider errors carry
+          // them routinely; rendered raw, one entry sprawls over four lines and the block stops
+          // being scannable. The RECORD keeps the raw sanitized message — it is evidence, and it
+          // must not go lossy because one surface wants a single line.
+          `${entry.message.replace(/\s+/g, ' ')}` +
+          `${status}${retryAfter}${declared}${ceiling}${attempts}`,
+      );
+      // issue #600 PR 1a (D9) / #611: what THIS attempt already cost, so a stuck run's screen
+      // discloses spent money, not only the error.
+      const cost = driveFailureCosts[i]?.cost;
+      if (cost !== undefined) {
+        lines.push(formatDriveFailureUsage(cost, entry.error_class));
+      }
+    });
     // Only when the ring has ROLLED — otherwise this line would restate a count the entries
     // themselves already show.
     if (driveFailures.total > driveFailures.entries.length) {
       lines.push(`  ${String(driveFailures.total)} total since ${driveFailures.first_failed_at}`);
-    }
-    // issue #600 PR 1a (D9): what the LAST failed attempt already cost, so a stuck run's screen
-    // discloses spent money, not only the error.
-    const usageLine = formatDriveFailureUsage(lastFailure.usage, lastFailure.error_class);
-    if (usageLine !== undefined) {
-      lines.push(usageLine);
     }
     lines.push('');
   }
@@ -872,23 +803,35 @@ export async function inspectRun(
 
   stepOrder.forEach((stepId, idx) => {
     const snaps = stepSnapshots.get(stepId)!;
-    const hasAttempts = snaps.length > 1 && snaps.some((s) => s.attempt !== undefined);
-    const totalAttempts = snaps.length;
+    // issue #600 PR 1b: multi-attempt is now keyed on EXECUTION-entry count alone — the `attempt`
+    // field is ignored. A resumed agent step has two execution entries and no `attempt` at all;
+    // the old `snaps.length > 1 && snaps.some(s => s.attempt !== undefined)` gate sent it to the
+    // single branch, which renders only `snaps[0]` — the FAILED first entry, hiding the success.
+    const executionSnaps = snaps.filter((s) => s.kind === undefined || s.kind === 'execution');
+    const gateSnaps = snaps.filter((s) => s.kind === 'gate_response');
+    const isMultiAttempt = executionSnaps.length >= 2;
+    const totalAttempts = executionSnaps.length;
+    const view = stepViews[stepId];
+    const attempts = view?.attempts ?? [];
 
     lines.push('');
 
-    if (hasAttempts) {
+    if (isMultiAttempt) {
       // Show step name as header, then each attempt as a sub-item.
-      lines.push(`  ${idx + 1}. ${stepId}`);
-      snaps.forEach((snap, ai) => {
+      const lastSnap = executionSnaps[executionSnaps.length - 1]!;
+      const profileLabel =
+        lastSnap.agent_profile !== undefined
+          ? chalk.cyan(` [profile: ${lastSnap.agent_profile}]`)
+          : '';
+      lines.push(`  ${idx + 1}. ${stepId}${profileLabel}`);
+      executionSnaps.forEach((snap, ai) => {
         const statusColored = colorStatus(snap.status);
         const hashShort = chalk.dim(`hash: ${snap.evidence_hash.slice(0, 8)}`);
         lines.push(
           `     (attempt ${ai + 1}/${totalAttempts})  ${statusColored}   ${snap.duration_ms}ms   ${hashShort}`,
         );
       });
-      // Show Input/Output/Diagnostics for the last attempt.
-      const lastSnap = snaps[snaps.length - 1]!;
+      // Show Input/Output/Trace/Tool calls for the last attempt.
       lines.push(`     Input:  ${formatSummary(lastSnap.input_summary)}`);
       if (lastSnap.resolved_params !== undefined) {
         lines.push(`     Resolved: ${formatSummary(lastSnap.resolved_params)}`);
@@ -905,10 +848,75 @@ export async function inspectRun(
           );
         }
       }
+      if (lastSnap.tool_calls === undefined) {
+        // callStep path — print nothing
+      } else if (lastSnap.tool_calls.length === 0) {
+        lines.push('     Tools declared, none called');
+      } else {
+        lines.push(`     Tool calls (${lastSnap.tool_calls.length}):`);
+        for (const tc of lastSnap.tool_calls) {
+          const errSuffix = tc.error ? `  error: ${tc.error}` : '';
+          lines.push(`       [${tc.server_id}:${tc.tool}]  ${tc.duration_ms}ms${errSuffix}`);
+          if (options?.verbose) {
+            lines.push(`         args:   ${formatSummary(tc.args)}`);
+            const resultStr = typeof tc.result === 'string' ? tc.result : '(null)';
+            lines.push(`         result: ${resultStr}`);
+          }
+        }
+      }
+      // issue #600 PR 1b: every EARLIER attempt's cost, chronological, one line each — only for an
+      // attempt that carries cost/cost_unrecorded/cost_unreadable (a handler-classified earlier
+      // attempt gets no line at all, exactly as it gets no segment on the single-step line).
+      for (let ai = 0; ai < totalAttempts - 1; ai += 1) {
+        const attempt = attempts[ai];
+        if (attempt === undefined) continue;
+        const label = `attempt ${ai + 1}/${totalAttempts}`;
+        if (attempt.cost !== undefined) {
+          const prompt = formatPromptSegment(attempt.cost).replace(/^ \| /, '');
+          const output = formatOutputSegment(attempt.cost).replace(/^ \| /, '');
+          const cache = formatCache(attempt.cost);
+          const segs = [prompt, output, cache].filter((s) => s !== '');
+          lines.push(chalk.dim(`     ${label}: ${segs.join(' | ')}`));
+        } else {
+          const sentence = costAbsenceSentence(attempt.cost_unrecorded, attempt.cost_unreadable);
+          if (sentence !== undefined) lines.push(chalk.dim(`     ${label}: ${sentence}`));
+        }
+      }
+      const lastAttempt = attempts[totalAttempts - 1];
       if (lastSnap.diagnostics !== undefined) {
-        lines.push(chalk.dim(`     Diagnostics: ${formatDiagnostics(lastSnap.diagnostics)}`));
+        // issue #600 PR 1b: LABELLED `Diagnostics (attempt n/n):` — an unlabelled line here read,
+        // in a fresh walk, as the step's WHOLE cost rather than its last attempt's alone.
+        lines.push(
+          chalk.dim(
+            `     Diagnostics (attempt ${totalAttempts}/${totalAttempts}): ` +
+              `${formatDiagnostics(lastSnap.diagnostics, lastAttempt?.cost)}`,
+          ),
+        );
+      }
+      const lastSentence = costAbsenceSentence(
+        lastAttempt?.cost_unrecorded,
+        lastAttempt?.cost_unreadable,
+      );
+      if (lastSentence !== undefined) {
+        lines.push(chalk.dim(`     ${lastSentence}`));
+      }
+      // issue #600 PR 1b: a multi-attempt step's gate_response entries render AFTER, each as
+      // today's gate block, with no header line of their own.
+      for (const gate of gateSnaps) {
+        const choice = gate.input_summary['choice'] ?? gate.output_summary['choice'];
+        if (choice !== undefined) {
+          lines.push(`     Choice:   ${String(choice)}`);
+        }
+        if (gate.gate_message !== undefined) {
+          lines.push(`     Message:  "${gate.gate_message}"`);
+        }
+        lines.push(`     Output:   ${formatSummary(gate.output_summary)}`);
       }
     } else {
+      // The single-entry branch is otherwise UNCHANGED: it still renders `snaps[0]` alone,
+      // whatever its kind. A step with one execution entry and a gate_response renders exactly as
+      // today — a known, separately homed issue (the gate answer hidden when the gate step ran
+      // first → P4).
       const snap = snaps[0]!;
       const statusColored = colorStatus(snap.status);
       const hashShort = chalk.dim(`hash: ${snap.evidence_hash.slice(0, 8)}`);
@@ -960,8 +968,22 @@ export async function inspectRun(
             }
           }
         }
+        const singleAttempt = view?.attempts[0];
         if (snap.diagnostics !== undefined) {
-          lines.push(chalk.dim(`     Diagnostics: ${formatDiagnostics(snap.diagnostics)}`));
+          lines.push(
+            chalk.dim(
+              `     Diagnostics: ${formatDiagnostics(snap.diagnostics, singleAttempt?.cost)}`,
+            ),
+          );
+        }
+        // issue #600 PR 1b: the absence sentence — beneath Diagnostics when there is one, beneath
+        // the entry line otherwise (a step whose evidence carries no `diagnostics` at all).
+        const sentence = costAbsenceSentence(
+          singleAttempt?.cost_unrecorded,
+          singleAttempt?.cost_unreadable,
+        );
+        if (sentence !== undefined) {
+          lines.push(chalk.dim(`     ${sentence}`));
         }
       }
     }

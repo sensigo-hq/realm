@@ -146,7 +146,7 @@ describe('issue #600 — a repaired step records every call it paid for', () => 
     expect(requests.map((r) => r.prompt_tokens)).toEqual([1000, 2000, 3000]);
     expect(requests.map((r) => r.output_tokens)).toEqual([100, 200, 300]);
     const out = await inspectRun(run.id, store, workflowStore(oneStep));
-    expect(out).toContain('6000 prompt tokens (measured, totals across 3 of 3 requests)');
+    expect(out).toContain('6000 prompt tokens (measured, totals across 3 requests)');
     expect(out).toContain('cache: not reported by the provider (totals across 3 requests)');
   });
 

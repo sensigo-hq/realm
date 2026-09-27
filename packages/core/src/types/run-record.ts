@@ -320,6 +320,10 @@ export interface StepDiagnostics {
    * drove it over MCP `execute_step`, so its model calls were never realm's to see. Absence alone
    * therefore never proves that no model call happened. A step realm's driver repaired (the #217
    * schema-repair loop) records every call, the rejected ones included.
+   *
+   * Issue #600 PR 1b — never re-summed at a render site. `composeStepViews`
+   * (`engine/step-view.ts`) is the ONE derivation of a step's cost from this field, shared by
+   * `realm run inspect` and `get_run_state`'s `include_steps`.
    */
   cache?: StepCacheDetail;
 }

@@ -74,6 +74,13 @@ describe('the MCP tools’ (retryVerb, verb) pair (issue #558 PR-T)', () => {
     // A source-text census: the six sites WITHOUT `terminalOk` are the population the terminal
     // conjunct exists for, and three of them are these tools. A future edit adding `terminalOk`
     // here would re-open the falsity this PR closes.
+    //
+    // issue #600 PR 1b: `get-run-state.ts` gained a SECOND `getWorkflowForRun(` call (the
+    // per-step cost view's own resolution, WITH `terminalOk` — a live gate-waiting run's terminal
+    // state has nothing to do with whether ITS definition can be read for a cost view). The old
+    // `src.indexOf('});', at)` slice ran into that second call and its `terminalOk`, so it ends at
+    // the call's OWN `})` instead — the status-path call's options object closing, never reaching
+    // past it into the `.catch` or anything that follows.
     const files = [
       'execute-step.ts',
       'append-trace.ts',
@@ -84,11 +91,25 @@ describe('the MCP tools’ (retryVerb, verb) pair (issue #558 PR-T)', () => {
       const src = readFileSync(new URL(`./${f}`, import.meta.url), 'utf8');
       const at = src.indexOf('getWorkflowForRun(');
       expect(at, `${f} must call getWorkflowForRun`).toBeGreaterThan(-1);
-      const call = src.slice(at, src.indexOf('});', at) + 3);
+      const call = src.slice(at, src.indexOf('})', at) + 2);
       expect(call, `${f} must ask to RETRY`).toContain("retryVerb: 'retry'");
       expect(call, `${f} must name the bare verb`).toContain("verb: 'retry'");
       expect(call, `${f} must NOT pass terminalOk`).not.toContain('terminalOk');
     }
+  });
+
+  it('M3b get-run-state.ts calls getWorkflowForRun exactly twice, and the SECOND one discards its failure', () => {
+    // The first call (the status path) is M3's own population; the second (the #600 PR 1b view
+    // resolution) is a NEW, independent call whose `.catch` must never assign `definitionError` —
+    // a leak there would make the isolation this PR's own mutant (i) exists to catch untestable.
+    const src = readFileSync(new URL('./get-run-state.ts', import.meta.url), 'utf8');
+    const occurrences = src.split('getWorkflowForRun(').length - 1;
+    expect(occurrences, 'exactly two getWorkflowForRun( calls').toBe(2);
+    const firstAt = src.indexOf('getWorkflowForRun(');
+    const secondAt = src.indexOf('getWorkflowForRun(', firstAt + 1);
+    const secondCallAndAfter = src.slice(secondAt);
+    expect(secondCallAndAfter.slice(0, 200)).toContain('terminalOk: true');
+    expect(secondCallAndAfter).not.toContain('definitionError =');
   });
   it('WITNESS get_run_state narrows the definition failure with instanceof — never a duck-typed `err as { code?`', async () => {
     const { readFileSync } = await import('node:fs');

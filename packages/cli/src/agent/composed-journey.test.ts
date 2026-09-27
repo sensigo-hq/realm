@@ -160,7 +160,7 @@ describe('composed journey — a politely-failed tool call, all the way to the o
       // nothing to the cache, on the one path that has no mocks in it.
       expect(journey.inspectOutput).toContain('640 prompt tokens (measured, first request)');
       expect(journey.inspectOutput).toContain(
-        'cache: read 512, wrote not reported (provider-reported, 1 request)',
+        'cache: read 512, wrote not reported (included in the prompt; provider-reported, 1 request)',
       );
       expect(journey.inspectOutput).not.toContain('wrote 0');
     } finally {
