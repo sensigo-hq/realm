@@ -361,6 +361,34 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // attempt — so from then on the step's calls live on its record and are never attached twice.
   let usageForStep: UsageRecord[] | undefined;
   let stepUsageSaved = false;
+  // #600: whether the driven step's calls are ALREADY on its record. Chokepoints 3 and 4 attach
+  // `usageForStep` to a drive-failure entry; when the failure belongs to a step `executeChain` ran
+  // AFTER the driven step saved, those calls are already on that step's evidence, and attaching them
+  // again would count them twice. Keyed on CONTENT (the step's first billed request appearing on one
+  // of its entries), never on a count or a version: the step's own claim moves the version while its
+  // calls stay unsaved, and other writers add entries for the step that carry none of its calls (a
+  // reclaim's audit line, a compensating un-claim, another driver's save). A failed re-read answers
+  // `false`, so the calls are attached: the store is failing, and the entry likely will not land.
+  const sameRequest = (a: UsageRecord, b: UsageRecord): boolean =>
+    a.request_start === b.request_start &&
+    a.prompt_tokens === b.prompt_tokens &&
+    a.output_tokens === b.output_tokens;
+  const callsAlreadyRecorded = async (
+    step: string,
+    calls: readonly UsageRecord[],
+  ): Promise<boolean> => {
+    const first = calls[0];
+    if (first === undefined) return false;
+    return deps.store.get(runId).then(
+      (r) =>
+        r.evidence.some(
+          (e) =>
+            e.step_id === step &&
+            (e.diagnostics?.cache?.requests ?? []).some((q) => sameRequest(q, first)),
+        ),
+      () => false,
+    );
+  };
   let attemptStartedAt = Date.now();
   try {
     if (currentRun === undefined) {
@@ -1335,8 +1363,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 message: sanitizeError(result.errors.join(', ')).slice(0, MESSAGE_CAP),
                 elapsed_ms: Date.now() - attemptStartedAt,
                 // issue #600: a wedge carries every call of the exhausted repair budget. Nothing is
-                // attached when no call reported usage — the same rule as `attachBilledUsage`.
-                ...(usageForStep !== undefined && usageForStep.length > 0
+                // attached when no call reported usage — the same rule as `attachBilledUsage`. Nor
+                // when the rejection belongs to a step `executeChain` ran AFTER this one: this step
+                // then saved first, with its calls, and attaching them here would count them twice.
+                ...(usageForStep !== undefined &&
+                usageForStep.length > 0 &&
+                !(await callsAlreadyRecorded(stepName, usageForStep))
                   ? { usage: usageForStep }
                   : {}),
               });
@@ -1377,15 +1409,18 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       attemptStartedAt,
     );
     // issue #600: a throw that escaped before the current step's evidence was saved takes the
-    // step's billed calls with it. Once the repair loop has ended (`stepUsageSaved`),
-    // `executeChain` has returned — and it never throws after a save (repair-loop-usage.test.ts
-    // cell 7 pins that) — so the calls are already on the step's record and are never attached
-    // twice.
+    // step's billed calls with it. Once the repair loop has ended (`stepUsageSaved`), `executeChain`
+    // has returned, so nothing it ran can throw here. But while it runs it CAN throw after the
+    // driven step saved: a step it ran afterwards, on a store that does not persist
+    // `workflow_context_snapshots`, re-takes the snapshot, and that write is unguarded. So a throw
+    // inside the loop does not prove "nothing was saved": attach the calls only when they are not
+    // already on the step's record.
     if (
       currentStepName !== undefined &&
       !stepUsageSaved &&
       usageForStep !== undefined &&
-      usageForStep.length > 0
+      usageForStep.length > 0 &&
+      !(await callsAlreadyRecorded(currentStepName, usageForStep))
     ) {
       entry.usage = appendRequests(usageForStep, entry.usage);
     }

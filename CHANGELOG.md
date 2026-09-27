@@ -12,7 +12,11 @@ All notable changes to this project are documented here.
   model calls, one entry per WIRE REQUEST, never per step: `UsageRecord[]` with the measured prompt
   size, the cache tokens read and written, and output tokens, each field present only when the
   provider actually reported it (never coerced to `0`). The requests include every schema-repair
-  call realm's driver made for the step, the rejected ones too, in wire order. The rendered line
+  call realm's driver made for the step, the rejected ones too, in wire order. They are recorded on
+  the agent step that made the calls and on no other step: an auto step realm runs straight after it
+  in the same call carries none of them, nor the agent step's tool calls, and a failed drive's entry
+  carries them only when they are not already on that step's record (or the record cannot be re-read
+  to tell). The rendered line
   keeps that property per DIRECTION and per REQUEST: an unreported read prints `read not reported`,
   never `read 0`; a counter some requests reported and others did not prints its sum as a floor
   that says so and names what it counted (`read at least 512 (1 of 3 requests reported a read)`);
@@ -147,6 +151,17 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   which a fresh operator walk read as the step's WHOLE cost. There is deliberately no total across a
   step's attempts (a token sum over a cold write, a warm read and a retry answers no question
   without a price; that is issue #600 PR 2's job). (Issue #600 PR 1b.)
+
+### Fixed
+
+- **An auto step that `realm agent` runs straight after an agent step no longer records that agent
+  step's tool calls as its own.** `executeChain` handed the driven step's call metadata to every
+  auto step it chained after it, so each one's evidence carried a copy of the agent step's
+  `tool_calls`, and `realm run inspect` listed them under the auto step too. This dates from the
+  first release. Evidence written before this fix keeps the copies, so a tool-call count taken from
+  the evidence of those runs overcounts; the agent step's own entry was always right. The same leak
+  also copied the agent step's model-call usage; that half never shipped (see
+  `StepDiagnostics.cache` above).
 
 ---
 
