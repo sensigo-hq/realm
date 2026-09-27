@@ -284,7 +284,10 @@ function includedInPrompt(cost: CostView): boolean {
  */
 function basisWord(basis: string | undefined): string {
   if (basis === 'provider_reported') return 'provider-reported';
-  if (basis === undefined) return 'basis not recorded';
+  // `composeCostView` keeps `basis` only when it is a string, so a missing, `null` or corrupt
+  // (non-string) basis all arrive here as `undefined`. `no readable basis` is true of all three;
+  // `not recorded` would be false for a corrupt value, and quoting a token the record lacks is worse.
+  if (basis === undefined) return 'no readable basis';
   if ((CACHE_BASES as readonly string[]).includes(basis)) return basis;
   return `unrecognized basis '${basis}'`;
 }
@@ -310,8 +313,14 @@ function formatCache(cost: CostView): string {
   }
   const prov = basisWord(cost.basis);
   const includedClause = includedInPrompt(cost) ? 'included in the prompt; ' : '';
-  if (cost.state === undefined || !(CACHE_STATES as readonly string[]).includes(cost.state)) {
-    return `cache: unrecognized state '${String(cost.state)}' — ${read}, ${wrote} (${includedClause}${prov}, ${scope})`;
+  // The `basisWord` rule, applied to its sibling. `composeCostView` keeps `state` only when it is a
+  // string, so a missing, `null` or corrupt (non-string) state all arrive here as `undefined`.
+  // `no readable state` is true of all three; quoting `'undefined'` asserted a token the record lacks.
+  if (cost.state === undefined) {
+    return `cache: no readable state — ${read}, ${wrote} (${includedClause}${prov}, ${scope})`;
+  }
+  if (!(CACHE_STATES as readonly string[]).includes(cost.state)) {
+    return `cache: unrecognized state '${cost.state}' — ${read}, ${wrote} (${includedClause}${prov}, ${scope})`;
   }
   if (cost.state === 'never_engaged') {
     return `cache: not engaged — ${read}, ${wrote} (${prov}, ${scope})`;

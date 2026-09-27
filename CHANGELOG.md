@@ -45,8 +45,9 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   in a real run the two differ by ~100x. `never_engaged` prints both reported zeros
   (`not engaged — read 0, wrote 0`) rather than one `0` standing for two counters. Wherever a
   counter reaches the line, a `state` or `basis` word this build does not know is named as
-  unrecognised rather than printed as an ordinary fact, and an ABSENT `basis` reads
-  `basis not recorded`, because missing and corrupt are different facts; where NO counter reaches
+  unrecognised rather than printed as an ordinary fact, and a missing, `null` or non-string `basis`
+  or `state` reads `no readable basis` / `no readable state` — never a quoted token the record does
+  not hold; where NO counter reaches
   it, every one of those records gets the same sentence — `cache: not reported by the provider`,
   with the request count when there is one — since there is no figure for any provenance word to
   vouch for. A state word claiming nothing was observed no longer outranks counters the record

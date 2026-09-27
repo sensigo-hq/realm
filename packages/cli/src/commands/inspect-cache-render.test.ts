@@ -694,7 +694,7 @@ describe('issue #600 PR 1a — correction 2: several requests reported a prompt'
 
   it('an ABSENT basis says so plainly — it is not a basis whose value is the token "undefined"', async () => {
     // The quoted form asserts the record literally holds that string, which sent a walker hunting a
-    // stringify-undefined bug in the writer. Missing and corrupt are different facts.
+    // stringify-undefined bug in the writer. `no readable basis` is true whether it is missing or corrupt.
     const out = await render({
       input_token_estimate: 10,
       precondition_trace: [],
@@ -703,8 +703,103 @@ describe('issue #600 PR 1a — correction 2: several requests reported a prompt'
         requests: [req({ cache_read_input_tokens: 10, cache_creation_input_tokens: 20 }, 0)],
       },
     } as unknown as StepDiagnostics);
-    expect(out).toContain('cache: read 10, wrote 20 (basis not recorded, 1 request)');
+    expect(out).toContain('cache: read 10, wrote 20 (no readable basis, 1 request)');
     expect(out).not.toContain("'undefined'");
+  });
+
+  it('an ABSENT state says so plainly — it is not a state whose value is the token "undefined"', async () => {
+    // The `basis` rule above, applied to its sibling: `unrecognized state 'undefined'` quoted a word
+    // the record does not hold. A foreign or hand-edited record is the only way to reach this (realm
+    // always writes `state`).
+    const out = await render({
+      input_token_estimate: 10,
+      precondition_trace: [],
+      cache: {
+        basis: 'provider_reported',
+        requests: [req({ cache_read_input_tokens: 10, cache_creation_input_tokens: 20 }, 0)],
+      },
+    } as unknown as StepDiagnostics);
+    expect(out).toContain(
+      'cache: no readable state — read 10, wrote 20 (provider-reported, 1 request)',
+    );
+    expect(out).not.toContain("'undefined'");
+  });
+
+  it('a NULL state reads the same as an absent one — null is not a word either', async () => {
+    const out = await render({
+      input_token_estimate: 10,
+      precondition_trace: [],
+      cache: {
+        state: null,
+        basis: 'provider_reported',
+        requests: [req({ cache_read_input_tokens: 10, cache_creation_input_tokens: 20 }, 0)],
+      },
+    } as unknown as StepDiagnostics);
+    expect(out).toContain(
+      'cache: no readable state — read 10, wrote 20 (provider-reported, 1 request)',
+    );
+    expect(out).not.toContain("'null'");
+  });
+
+  it('a CORRUPT (non-string) state reads the same — a value was recorded, so it never says "not recorded"', async () => {
+    const out = await render({
+      input_token_estimate: 10,
+      precondition_trace: [],
+      cache: {
+        state: 42,
+        basis: 'provider_reported',
+        requests: [req({ cache_read_input_tokens: 10, cache_creation_input_tokens: 20 }, 0)],
+      },
+    } as unknown as StepDiagnostics);
+    expect(out).toContain(
+      'cache: no readable state — read 10, wrote 20 (provider-reported, 1 request)',
+    );
+    expect(out).not.toContain('not recorded');
+    expect(out).not.toContain("'42'");
+  });
+
+  it('no readable state beside a FULL prompt figure still says the cache is included in the prompt', async () => {
+    // Every branch that prints counters beside a full prompt figure carries the clause, except
+    // `never_engaged` (two zeros). Without this cell, dropping it here alone left every test green.
+    const out = await render({
+      input_token_estimate: 10,
+      precondition_trace: [],
+      cache: {
+        basis: 'provider_reported',
+        requests: [
+          req(
+            { prompt_tokens: 900, cache_read_input_tokens: 500, cache_creation_input_tokens: 0 },
+            0,
+          ),
+        ],
+      },
+    } as unknown as StepDiagnostics);
+    expect(out).toContain(
+      'cache: no readable state — read 500, wrote 0 (included in the prompt; provider-reported, 1 request)',
+    );
+  });
+
+  it('an unrecognised state beside a FULL prompt figure still says the cache is included in the prompt', async () => {
+    // #600 PR 1b review: every branch that prints counters beside a full prompt figure carries the
+    // clause, except `never_engaged` (two zeros) — this one included.
+    // Before this cell, dropping the clause from this branch alone left every test green.
+    const out = await render({
+      input_token_estimate: 10,
+      precondition_trace: [],
+      cache: {
+        state: 'foo_state' as NonNullable<StepDiagnostics['cache']>['state'],
+        basis: 'provider_reported',
+        requests: [
+          req(
+            { prompt_tokens: 900, cache_read_input_tokens: 500, cache_creation_input_tokens: 0 },
+            0,
+          ),
+        ],
+      },
+    });
+    expect(out).toContain(
+      "cache: unrecognized state 'foo_state' — read 500, wrote 0 (included in the prompt; provider-reported, 1 request)",
+    );
   });
 
   it('a state word claiming nothing was observed may NOT discard counters the record carries', async () => {
