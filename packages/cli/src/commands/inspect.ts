@@ -407,13 +407,21 @@ function formatCache(cache: NonNullable<StepDiagnostics['cache']>): string {
  * asserting that printed a billing claim directly beneath an `sdk_missing` line stating no request
  * ever left the process.
  *
- * Prompt size is SUMMED over the requests that reported one, like the output tokens beside it: this
- * line's own words are "billed before the throw", and a retry re-sends the prompt and is charged for
- * it again, so the sum is what was spent. (The step's own diagnostics line answers a different
- * question — how big is this prompt — and takes ONE request's figure, labelled with which.) Output
- * tokens are summed across every request, since each one is a genuinely distinct answer the drive paid for.
+ * Prompt size is SUMMED over the requests that reported one, like the output tokens beside it: for
+ * every class but `validation_rejected` this line's own words are "billed before the throw", and a
+ * retry re-sends the prompt and is charged for it again, so the sum is what was spent. (The step's
+ * own diagnostics line answers a different question — how big is this prompt — and takes ONE
+ * request's figure, labelled with which.) Output tokens are summed across every request, since each
+ * one is a genuinely distinct answer the drive paid for.
+ *
+ * `errorClass` names what ended the drive (issue #600). A `validation_rejected` entry is a WEDGE —
+ * the #217 repair budget ran out on rejected outputs — not a throw, so its line reads "billed
+ * before the output was rejected"; every other class keeps "billed before the throw".
  */
-function formatDriveFailureUsage(usage: UsageRecord[] | undefined): string | undefined {
+function formatDriveFailureUsage(
+  usage: UsageRecord[] | undefined,
+  errorClass?: string,
+): string | undefined {
   if (usage === undefined) return undefined;
   if (usage.length === 0) {
     // An empty array says one thing only: the field was present and carried no requests. It does NOT
@@ -433,9 +441,10 @@ function formatDriveFailureUsage(usage: UsageRecord[] | undefined): string | und
         ? `${String(out.total)} output tokens`
         : `at least ${String(out.total)} output tokens (${String(out.reported)} of ${String(out.of)} requests reported output)`;
   // The prompt is SUMMED here, unlike the step's diagnostics line, because this line answers a
-  // different question: its own words are "billed before the throw", and a retry re-sends the prompt
-  // and is charged for it again. Sampling `usage[0]` understated every multi-request failure and, when
-  // request 0 happened to be the silent one, printed `prompt not reported` with 1300 in the record.
+  // different question: for every class but `validation_rejected` its own words are "billed before
+  // the throw", and a retry re-sends the prompt and is charged for it again. Sampling `usage[0]`
+  // understated every multi-request failure and, when request 0 happened to be the silent one,
+  // printed `prompt not reported` with 1300 in the record.
   const promptFig = reportedFigure(usage, [(r) => r.prompt_tokens]);
   const promptStr =
     promptFig === undefined
@@ -445,7 +454,9 @@ function formatDriveFailureUsage(usage: UsageRecord[] | undefined): string | und
           ? `${String(promptFig.total)} prompt tokens`
           : `${String(promptFig.total)} prompt tokens (totals across ${String(promptFig.of)} requests)`
         : `at least ${String(promptFig.total)} prompt tokens (${String(promptFig.reported)} of ${String(promptFig.of)} requests reported a prompt)`;
-  return `  usage: ${scope} billed before the throw — ${promptStr}, ${outputStr}`;
+  const ended =
+    errorClass === 'validation_rejected' ? 'before the output was rejected' : 'before the throw';
+  return `  usage: ${scope} billed ${ended} — ${promptStr}, ${outputStr}`;
 }
 
 /** Formats a diagnostics object into a readable string for the inspect output. */
@@ -677,7 +688,7 @@ export async function inspectRun(
     }
     // issue #600 PR 1a (D9): what the LAST failed attempt already cost, so a stuck run's screen
     // discloses spent money, not only the error.
-    const usageLine = formatDriveFailureUsage(lastFailure.usage);
+    const usageLine = formatDriveFailureUsage(lastFailure.usage, lastFailure.error_class);
     if (usageLine !== undefined) {
       lines.push(usageLine);
     }
