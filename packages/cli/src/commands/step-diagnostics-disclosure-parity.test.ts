@@ -13,9 +13,10 @@
 // genuinely reach operators by another route, so waiving them is correct and each waiver states
 // where. A waiver with an empty reason fails below, so the set cannot grow silently.
 //
-// ⚠ THE MCP HALF IS DELIBERATELY OUT OF SCOPE. `get_run_state` has no per-step surface at all until
-// PR 1b, so an mcp-side twin would be an all-waived table that guards nothing. It arrives with the
-// surface it is meant to guard.
+// THE MCP HALF now has its own guard: `cost-view-disclosure-parity.test.ts` (this package and
+// mcp-server) covers `CostView`/`CostFigure`/`AttemptView`/`StepView`/`CostUnrecordedCause` on
+// BOTH `realm run inspect` and `get_run_state`'s `include_steps` — this file's `cache` row proves
+// the segment reaches the screen at all; the composed view's own fields are that guard's job.
 import { describe, it, expect } from 'vitest';
 import type { RunRecord, StepDiagnostics, UsageRecord } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
@@ -53,6 +54,9 @@ const DIAG: StepDiagnostics = {
         // is that BOTH read 0. Omitting the write key made this fixture describe a response the API
         // never sends, and the render then had to invent `wrote 0` to satisfy the probe below.
         cache_creation_input_tokens: 0,
+        // issue #600 PR 1b (#611): output tokens now render on the STEP line too — this is the
+        // fixture's only reporting request, so it discriminates the `output_tokens` row below.
+        output_tokens: 15,
       },
     ],
   },
@@ -75,7 +79,12 @@ const STEP_DIAGNOSTICS_DISCLOSURE = {
     // carrying both the measured prompt size and the provenance word.
     probe: (out) => {
       expect(out).toContain('1200 prompt tokens (measured, first request)');
-      expect(out).toContain('cache: read 1150, wrote 0 (provider-reported, 1 request)');
+      // issue #600 PR 1b: every request in this fixture reported the prompt, so the cache clause
+      // carries `included in the prompt` — the D2 truth rule fires here, not just in the render
+      // suite that names it.
+      expect(out).toContain(
+        'cache: read 1150, wrote 0 (included in the prompt; provider-reported, 1 request)',
+      );
     },
   },
   validation_rejections: {
@@ -238,13 +247,11 @@ const USAGE_DISCLOSURE = {
       expect(_out).not.toContain('77');
     },
   },
+  // issue #600 PR 1b (#611): output tokens now render on the STEP line too — this row was waived
+  // only because #611 hadn't shipped yet. Below the FAILED-drive surface's OWN row, unchanged.
   output_tokens: {
-    surface: 'waived',
-    reason:
-      'Rendered on the FAILED-drive surface (`realm run inspect`\'s "Drive failures:" block, ' +
-      "guarded by `drive-failure-disclosure-parity.test.ts`), not on a successful step's line — an " +
-      'operator asking what a step cost is asking about the prompt, and output tokens are not a ' +
-      'caching question. Not unrendered; rendered on the other surface.',
+    surface: 'rendered',
+    probe: (out) => expect(out).toContain('15 output tokens'),
   },
   request_index: {
     surface: 'waived',
@@ -316,7 +323,8 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     // The sibling registry above pins its waiver set; without the same assertion HERE a rendered
     // money field could be re-routed to `waived` with a plausible reason and nothing would notice —
     // the probe loop only runs probes for `rendered` entries, so the guard would fall silent about
-    // exactly the numbers it exists to guard. A sixth waiver is a decision someone makes in this file.
-    expect(waived).toEqual(['cache_creation', 'output_tokens', 'request_index', 'request_start']);
+    // exactly the numbers it exists to guard. A fourth waiver is a decision someone makes in this
+    // file. `output_tokens` moved OUT of this set (issue #600 PR 1b / #611) — it renders now.
+    expect(waived).toEqual(['cache_creation', 'request_index', 'request_start']);
   });
 });

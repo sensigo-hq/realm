@@ -1355,11 +1355,12 @@ arm as the API itself; a **silently-stripping** proxy is exactly why the vocabul
 ### Disclosure
 
 An opted-in step's attempt is disclosed in its evidence entry's `diagnostics.structured_output`
-(`realm run inspect`); `get_run_state` (MCP) does not carry per-step evidence at all by design, so
-an MCP consumer combines the run's own `sealed_by_arm` (issue #367 — the recorded fact, read
-first) + `terminal_reason` (multi-failure runs list all failed
-steps) + `failed_steps` + derived `run_phase`
-instead (the same posture issue #304's `completed_with_failed_steps` finding already established).
+(`realm run inspect`); `get_run_state` (MCP) does not carry THIS per-step evidence — its
+`include_steps` opt-in (issue #600 PR 1b) reaches a step's model-call COST, never its structured-
+output downgrade reason — so an MCP consumer combines the run's own `sealed_by_arm` (issue #367 —
+the recorded fact, read first) + `terminal_reason` (multi-failure runs list all failed steps) +
+`failed_steps` + derived `run_phase` instead (the same posture issue #304's
+`completed_with_failed_steps` finding already established).
 `realm validate` additionally prints an adoption NUDGE on its own informational channel. A
 default run says it in one graded line — how many steps are ready, how many carry caveats, how
 many are one change away — and `realm validate --explain` prints the per-step migration delta

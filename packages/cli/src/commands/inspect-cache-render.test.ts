@@ -163,7 +163,9 @@ describe('issue #600 PR 1a (D6) inspect — StepDiagnostics.cache, five branches
         ],
       },
     });
-    expect(out).toContain('cache: read 0, wrote 1150 (provider-reported, 1 request)');
+    expect(out).toContain(
+      'cache: read 0, wrote 1150 (included in the prompt; provider-reported, 1 request)',
+    );
     // No judgement — a write-only step is a fact, not an accusation (D6 rule 4).
     expect(out).not.toMatch(/wasted|unnecessary|should|inefficient/i);
   });
@@ -184,7 +186,9 @@ describe('issue #600 PR 1a (D6) inspect — StepDiagnostics.cache, five branches
         ],
       },
     });
-    expect(out).toContain('cache: read 1150, wrote 0 (provider-reported, 1 request)');
+    expect(out).toContain(
+      'cache: read 1150, wrote 0 (included in the prompt; provider-reported, 1 request)',
+    );
   });
 
   it('the measured prompt size is LABELLED separately from the ~N-token estimate', async () => {
@@ -247,7 +251,7 @@ describe("issue #600 PR 1a (D2) inspect — the render is COUNT-AGNOSTIC, never 
     });
     // All five reported a prompt, so the figure is their TOTAL and the label says what it summed.
     // Showing the first reporting request's figure alone understated this step's spend five-fold.
-    expect(out).toContain('6040 prompt tokens (measured, totals across 5 of 5 requests)');
+    expect(out).toContain('6040 prompt tokens (measured, totals across 5 requests)');
     // Each request in this fixture reports exactly ONE direction, so each total covers a SUBSET of
     // the five requests and says so: wrote = 1150 (request 0) + 40 (request 3) = 1190 over 2 of 5;
     // read = 1150 + 1150 + 1190 = 3490 over 3 of 5. A total over a subset is a lower bound, and
@@ -275,7 +279,7 @@ describe("issue #600 PR 1a (D2) inspect — the render is COUNT-AGNOSTIC, never 
       cache: { state: 'engaged', basis: 'provider_reported', requests },
     });
     expect(out).toContain(
-      'cache: read 4000, wrote 1150 (provider-reported, totals across 5 requests)',
+      'cache: read 4000, wrote 1150 (included in the prompt; provider-reported, totals across 5 requests)',
     );
     expect(out).not.toContain('+ (');
   });
@@ -290,7 +294,7 @@ describe("issue #600 PR 1a (D2) inspect — the render is COUNT-AGNOSTIC, never 
         requests: [req({ prompt_tokens: 1200, cache_read_input_tokens: 1150 })],
       },
     });
-    expect(out).toContain('(provider-reported, 1 request)');
+    expect(out).toContain('(included in the prompt; provider-reported, 1 request)');
     expect(out).not.toContain('totals across');
   });
 });
@@ -682,13 +686,15 @@ describe('issue #600 PR 1a — correction 2: several requests reported a prompt'
         ],
       },
     });
-    expect(out).toContain('1665 prompt tokens (measured, totals across 2 of 4 requests)');
+    expect(out).toContain(
+      'at least 1665 prompt tokens (measured, 2 of 4 requests reported a prompt)',
+    );
     expect(out).not.toContain('777 prompt tokens');
   });
 
   it('an ABSENT basis says so plainly — it is not a basis whose value is the token "undefined"', async () => {
     // The quoted form asserts the record literally holds that string, which sent a walker hunting a
-    // stringify-undefined bug in the writer. Missing and corrupt are different facts.
+    // stringify-undefined bug in the writer. `no readable basis` is true whether it is missing or corrupt.
     const out = await render({
       input_token_estimate: 10,
       precondition_trace: [],
@@ -697,8 +703,103 @@ describe('issue #600 PR 1a — correction 2: several requests reported a prompt'
         requests: [req({ cache_read_input_tokens: 10, cache_creation_input_tokens: 20 }, 0)],
       },
     } as unknown as StepDiagnostics);
-    expect(out).toContain('cache: read 10, wrote 20 (basis not recorded, 1 request)');
+    expect(out).toContain('cache: read 10, wrote 20 (no readable basis, 1 request)');
     expect(out).not.toContain("'undefined'");
+  });
+
+  it('an ABSENT state says so plainly — it is not a state whose value is the token "undefined"', async () => {
+    // The `basis` rule above, applied to its sibling: `unrecognized state 'undefined'` quoted a word
+    // the record does not hold. A foreign or hand-edited record is the only way to reach this (realm
+    // always writes `state`).
+    const out = await render({
+      input_token_estimate: 10,
+      precondition_trace: [],
+      cache: {
+        basis: 'provider_reported',
+        requests: [req({ cache_read_input_tokens: 10, cache_creation_input_tokens: 20 }, 0)],
+      },
+    } as unknown as StepDiagnostics);
+    expect(out).toContain(
+      'cache: no readable state — read 10, wrote 20 (provider-reported, 1 request)',
+    );
+    expect(out).not.toContain("'undefined'");
+  });
+
+  it('a NULL state reads the same as an absent one — null is not a word either', async () => {
+    const out = await render({
+      input_token_estimate: 10,
+      precondition_trace: [],
+      cache: {
+        state: null,
+        basis: 'provider_reported',
+        requests: [req({ cache_read_input_tokens: 10, cache_creation_input_tokens: 20 }, 0)],
+      },
+    } as unknown as StepDiagnostics);
+    expect(out).toContain(
+      'cache: no readable state — read 10, wrote 20 (provider-reported, 1 request)',
+    );
+    expect(out).not.toContain("'null'");
+  });
+
+  it('a CORRUPT (non-string) state reads the same — a value was recorded, so it never says "not recorded"', async () => {
+    const out = await render({
+      input_token_estimate: 10,
+      precondition_trace: [],
+      cache: {
+        state: 42,
+        basis: 'provider_reported',
+        requests: [req({ cache_read_input_tokens: 10, cache_creation_input_tokens: 20 }, 0)],
+      },
+    } as unknown as StepDiagnostics);
+    expect(out).toContain(
+      'cache: no readable state — read 10, wrote 20 (provider-reported, 1 request)',
+    );
+    expect(out).not.toContain('not recorded');
+    expect(out).not.toContain("'42'");
+  });
+
+  it('no readable state beside a FULL prompt figure still says the cache is included in the prompt', async () => {
+    // Every branch that prints counters beside a full prompt figure carries the clause, except
+    // `never_engaged` (two zeros). Without this cell, dropping it here alone left every test green.
+    const out = await render({
+      input_token_estimate: 10,
+      precondition_trace: [],
+      cache: {
+        basis: 'provider_reported',
+        requests: [
+          req(
+            { prompt_tokens: 900, cache_read_input_tokens: 500, cache_creation_input_tokens: 0 },
+            0,
+          ),
+        ],
+      },
+    } as unknown as StepDiagnostics);
+    expect(out).toContain(
+      'cache: no readable state — read 500, wrote 0 (included in the prompt; provider-reported, 1 request)',
+    );
+  });
+
+  it('an unrecognised state beside a FULL prompt figure still says the cache is included in the prompt', async () => {
+    // #600 PR 1b review: every branch that prints counters beside a full prompt figure carries the
+    // clause, except `never_engaged` (two zeros) — this one included.
+    // Before this cell, dropping the clause from this branch alone left every test green.
+    const out = await render({
+      input_token_estimate: 10,
+      precondition_trace: [],
+      cache: {
+        state: 'foo_state' as NonNullable<StepDiagnostics['cache']>['state'],
+        basis: 'provider_reported',
+        requests: [
+          req(
+            { prompt_tokens: 900, cache_read_input_tokens: 500, cache_creation_input_tokens: 0 },
+            0,
+          ),
+        ],
+      },
+    });
+    expect(out).toContain(
+      "cache: unrecognized state 'foo_state' — read 500, wrote 0 (included in the prompt; provider-reported, 1 request)",
+    );
   });
 
   it('a state word claiming nothing was observed may NOT discard counters the record carries', async () => {

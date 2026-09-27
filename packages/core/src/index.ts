@@ -145,6 +145,21 @@ export type { ReclaimResult, ReclaimOutcome, ReclaimStepOptions } from './engine
 export { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS } from './engine/run-health.js';
 export type { RunHealthFinding } from './engine/run-health.js';
 export { computeGateDueState } from './engine/gate-timing.js';
+// issue #600 PR 1b: one cost view per step, derived once and rendered by inspect + get_run_state.
+export {
+  composeCostView,
+  composeStepViews,
+  composeDriveFailureCosts,
+  COST_UNRECORDED_CAUSES,
+} from './engine/step-view.js';
+export type {
+  CostFigure,
+  CostView,
+  CostUnrecordedCause,
+  AttemptView,
+  StepView,
+  DriveFailureCost,
+} from './engine/step-view.js';
 export type { GateDueState } from './engine/gate-timing.js';
 export {
   requirementForStep,
