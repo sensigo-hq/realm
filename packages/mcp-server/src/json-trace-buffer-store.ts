@@ -34,7 +34,9 @@ import {
   linkNoClobberThenUnlink,
   errnoCode,
   FsIoError,
-  checkFenceWithReader,
+  readRunForFence,
+  evaluateFence,
+  fenceReaderMissingError,
 } from '@sensigo/realm';
 import type { AgentTraceEntry, FencePredicate, FenceRunReader } from '@sensigo/realm';
 import { WorkflowError } from '@sensigo/realm';
@@ -91,7 +93,7 @@ type LockRetries =
 
 /** Lock-acquisition profile shared by every `lockWal` call in this file (issue #207).
  *  Constructor-injectable so a conformance suite can inflate the retry budget (e.g. to make a
- *  deliberately slow/latched guard's lock contention observable instead of exhausting the retry
+ *  deliberately slow/parked fence read's lock contention observable instead of exhausting the retry
  *  budget too quickly and masking the scenario under test). */
 export interface TraceBufferLockProfile {
   retries: LockRetries;
@@ -184,24 +186,38 @@ export class JsonTraceBufferStore
   private readonly runsDir: string;
   private readonly lockProfile: TraceBufferLockProfile;
   /** The run store every fence predicate is evaluated against (issue #616 PR-0) — the read the
-   *  former guards made: one lock-free `get`, inside this store's WAL lock. Absent ⇒ every fenced
-   *  method refuses loudly (`fenceReaderMissingError`), never a silently unfenced write. */
-  private readonly runReader: FenceRunReader | undefined;
+   *  former guards made: one lock-free `get`, inside this store's WAL lock. REQUIRED (issue #616
+   *  PR-0, D2): a store built without one is a construction-time error, never a silently unfenced
+   *  write discovered at the first fenced call. */
+  private readonly runReader: FenceRunReader;
 
+  /**
+   * `runReader` is REQUIRED (issue #616 PR-0, D2) — it must sit before `lockProfile` because a
+   * required parameter cannot follow an optional one. A TypeScript caller that omits it is a
+   * compile error; a plain-JavaScript caller (this package is published and consumed from
+   * JavaScript too) reaches this constructor with `runReader === undefined`, which throws
+   * `fenceReaderMissingError` here — at construction, not at the first fenced call, where the
+   * failure would otherwise surface as a bare `TypeError: Cannot read properties of undefined
+   * (reading 'get')`.
+   */
   constructor(
     runsDir: string,
+    runReader: FenceRunReader,
     lockProfile?: Partial<TraceBufferLockProfile>,
-    runReader?: FenceRunReader,
   ) {
+    if (runReader === undefined) {
+      throw fenceReaderMissingError('JsonTraceBufferStore');
+    }
     this.runsDir = runsDir;
     this.lockProfile = { ...DEFAULT_LOCK_PROFILE, ...lockProfile };
     this.runReader = runReader;
   }
 
   /** Reads the run and evaluates `fence` — called INSIDE the WAL lock, where the guard call used
-   *  to be (issue #616 PR-0). */
+   *  to be (issue #616 PR-0). The reader is REQUIRED (D2), so there is no per-call branch for a
+   *  missing one — that case is refused once, at construction. */
   private async checkFence(runId: string, fence: FencePredicate): Promise<void> {
-    await checkFenceWithReader(this.runReader, 'JsonTraceBufferStore', runId, fence);
+    evaluateFence(fence, await readRunForFence(this.runReader, runId, fence), runId);
   }
 
   private walPath(runId: string, stepId: string): string {

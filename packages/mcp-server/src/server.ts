@@ -148,8 +148,7 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
     // The run reader is the server's run store: every fence predicate is evaluated against it,
     // inside the trace buffer's own critical section (issue #616 PR-0).
     traceBufferStore =
-      options?.traceBufferStore ??
-      new JsonTraceBufferStore(runsDirPath, undefined, effectiveRunStore);
+      options?.traceBufferStore ?? new JsonTraceBufferStore(runsDirPath, effectiveRunStore);
     failedAttemptStore = options?.failedAttemptStore ?? new FailedAttemptStore(runsDirPath);
   } else {
     // The run store cannot supply an artifact directory (e.g. a Postgres-backed RunStore) AND no

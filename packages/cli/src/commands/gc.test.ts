@@ -350,7 +350,7 @@ describe('sweepOrphanArtifacts (issue #163)', () => {
     const dir = await makeTmpRunsDir();
     try {
       const now = new Date();
-      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, new JsonFileStore(dir));
+      const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
       const failedAttemptStore = new FailedAttemptStore(dir);
       const runStore = new JsonFileStore(dir);
 
@@ -405,7 +405,7 @@ describe('sweepOrphanArtifacts (issue #163)', () => {
     const dir = await makeTmpRunsDir();
     try {
       const now = new Date();
-      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, new JsonFileStore(dir));
+      const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
       const failedAttemptStore = new FailedAttemptStore(dir);
       const runStore = new JsonFileStore(dir);
 
@@ -444,7 +444,7 @@ describe('sweepOrphanArtifacts (issue #163)', () => {
     const dir = await makeTmpRunsDir();
     try {
       const now = new Date();
-      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, new JsonFileStore(dir));
+      const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
       const runStore = new JsonFileStore(dir);
 
       const orphanId = '33333333-3333-4333-8333-333333333333';
@@ -471,7 +471,7 @@ describe('sweepOrphanArtifacts (issue #163)', () => {
     const dir = await makeTmpRunsDir();
     try {
       const now = new Date();
-      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, new JsonFileStore(dir));
+      const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
       const runStore = new JsonFileStore(dir);
 
       const corruptId = 'deadbeef-dead-4eef-8eef-deadbeefdead';
@@ -504,7 +504,7 @@ describe('sweepOrphanArtifacts (issue #163)', () => {
     const dir = await makeTmpRunsDir();
     try {
       const now = new Date();
-      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, new JsonFileStore(dir));
+      const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
       const runStore = new JsonFileStore(dir);
 
       // 'step->' -> base64url 'c3RlcC0-' (ends in '-'); 'step-?' -> 'c3RlcC0_' (ends in '_'). Both
@@ -555,7 +555,7 @@ describe('sweepOrphanArtifacts — sealed artifacts (issue #197 PR-2, deliverabl
     const dir = await makeTmpRunsDir();
     try {
       const now = new Date();
-      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, new JsonFileStore(dir));
+      const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
       const runStore = new JsonFileStore(dir);
 
       // No run file is ever created for this id — it is run-less from the start.
@@ -600,7 +600,7 @@ describe('sweepOrphanArtifacts — sealed artifacts (issue #197 PR-2, deliverabl
     const dir = await makeTmpRunsDir();
     try {
       const now = new Date();
-      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, new JsonFileStore(dir));
+      const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
       const runStore = new JsonFileStore(dir);
 
       const { run } = await runStore.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
@@ -636,7 +636,7 @@ describe('sweepOrphanArtifacts — fenced reap path (issue #207 PR-2)', () => {
     const dir = await makeTmpRunsDir();
     try {
       const now = new Date();
-      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, new JsonFileStore(dir));
+      const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
       const runStore = new JsonFileStore(dir);
 
       const orphanId = '11111111-1111-4111-8111-111111111111';
@@ -670,7 +670,7 @@ describe('sweepOrphanArtifacts — fenced reap path (issue #207 PR-2)', () => {
     const dir = await makeTmpRunsDir();
     try {
       const now = new Date();
-      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, new JsonFileStore(dir));
+      const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
       const runStore = new JsonFileStore(dir);
 
       const orphanId = '22222222-3333-4444-8555-666677778888';
@@ -707,7 +707,7 @@ describe('sweepOrphanArtifacts — fenced reap path (issue #207 PR-2)', () => {
     const dir = await makeTmpRunsDir();
     try {
       const now = new Date();
-      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, new JsonFileStore(dir));
+      const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
       const runStore = new JsonFileStore(dir);
 
       // Genuinely run-less at snapshot time (listRunIds below sees it as orphaned)...
@@ -790,7 +790,7 @@ describe('fail-closed wiring: a listRunIds() failure must abort the orphan sweep
     const dir = await makeTmpRunsDir();
     try {
       const now = new Date();
-      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, new JsonFileStore(dir));
+      const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
       const failedAttemptStore = new FailedAttemptStore(dir);
       const runStore = new JsonFileStore(dir);
 

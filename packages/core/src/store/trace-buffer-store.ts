@@ -212,10 +212,11 @@ export interface TraceBufferStore {
    *   `appendFenced`; the delete for `deleteFenced`/`deleteAllForRunFenced`), and at least once per
    *   call.
    * - The run is read ONCE per evaluation, from the store the fenced write must be checked
-   *   against: a reader-backed store (the JSON and in-memory trace buffers) reads it through its
+   *   against — one of two forms (the published fenced contract's `fenceForm`, issue #616 PR-0):
+   *   an `'injected-reader'` store (the JSON and in-memory trace buffers) reads it through its
    *   injected run reader with `readRunForFence` (one lock-free `RunStore.get`, the #132 atomic
-   *   read — never a locked read); a store that shares one transaction with the runs reads the row
-   *   inside that transaction.
+   *   read — never a locked read); an `'in-transaction'` store shares one transaction with the runs
+   *   and reads the row inside that same transaction.
    * - No update that would flip the predicate can land between the evaluation and the write: the
    *   evaluation and the write share one critical section (the published fenced contract's racer
    *   law). Global lock-ordering rule for a reader-backed store: a trace-buffer critical-section

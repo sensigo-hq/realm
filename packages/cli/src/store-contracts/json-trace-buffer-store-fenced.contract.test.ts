@@ -119,7 +119,7 @@ async function bytesOracle(
  * concurrent caller's lock acquisition giving up (ELOCKED) before the law's own observation
  * window completes on a loaded CI runner. Passed via the constructor-injectable lock-profile
  * parameter (issue #207); this is the "injectable generous lock profile" the adapter's own doc
- * requires for `reader-in-cs` stores.
+ * requires for `'injected-reader'` stores.
  */
 const GENEROUS_LOCK_PROFILE = {
   retries: { retries: 20, minTimeout: 20, maxTimeout: 200 },
@@ -132,15 +132,17 @@ async function makeAdapter(): Promise<{
   cleanup: () => Promise<void>;
 }> {
   const dir = await mkdtemp(join(tmpdir(), 'json-trace-buffer-store-fenced-tck-'));
-  // issue #616 PR-0: the store evaluates every fence against the TCK's run source.
+  // issue #616 PR-0, D3: the store evaluates every fence against the TCK's run source; `control`
+  // is what every adapter supplies, `park` is what only an injected-reader adapter supplies.
   const fenceRuns = createFenceRunSource();
-  const store = new JsonTraceBufferStore(dir, GENEROUS_LOCK_PROFILE, fenceRuns.reader);
+  const store = new JsonTraceBufferStore(dir, fenceRuns.reader, GENEROUS_LOCK_PROFILE);
   return {
     adapter: {
       store,
-      fenceRuns,
+      fenceRuns: fenceRuns.control,
       makeKey: () => ({ runId: randomUUID(), stepId: 'fenced-tck-step' }),
-      fenceForm: 'reader-in-cs',
+      fenceForm: 'injected-reader',
+      fenceRunPark: fenceRuns.park,
       lockProfile: GENEROUS_LOCK_PROFILE,
       // issue #197 PR-1: a physical file's on-disk bytes are an independent ground truth (unlike
       // the in-memory store's own accounting) — see each helper's own doc above.
@@ -187,4 +189,19 @@ describe('JsonTraceBufferStore — fenced-trio TCK conformance (issue #207)', ()
       await cleanup();
     }
   }, 3000);
+
+  // issue #616 PR-0, D3: a skipped case renders `✓` for its law in a runner (both realm adapters
+  // have a park, so every park-dependent law above runs for real) — this adapter supplies EVERY
+  // optional hook (`bytesOracle`, `rawWalAccess`), so it registers NO skip at all. This assertion
+  // is what would fail loudly (naming what it lost) if this adapter ever lost its park.
+  it('registers no skipped cases at all — every optional hook is supplied', async () => {
+    const { adapter, cleanup } = await makeAdapter();
+    try {
+      const cases = fencedTraceBufferContract(adapter);
+      const skipped = cases.filter((c) => c.name.startsWith('SKIPPED — ')).map((c) => c.name);
+      expect(skipped).toEqual([]);
+    } finally {
+      await cleanup();
+    }
+  });
 });

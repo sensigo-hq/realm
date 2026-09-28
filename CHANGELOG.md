@@ -122,6 +122,36 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
 
 ### Changed
 
+- **BREAKING —** **Every fenced trace-buffer operation takes its check as DATA, not a callback.**
+  `TraceBufferStore.appendFenced` / `deleteFenced` / `deleteAllForRunFenced` / `sealFenced` take a
+  `FencePredicate` — evaluated by the store itself, with the new `evaluateFence`, against the run it
+  reads inside its own critical section — where they took `guard: () => Promise<void>` before.
+  `JsonTraceBufferStore`'s constructor is now `(runsDir, runReader, lockProfile?)`: the run reader
+  moved to the second, REQUIRED argument (was third and optional). The published
+  `@sensigo/realm-testing` fenced-trace-buffer contract's adapter changed to match: `fenceRuns` is
+  now `FenceRunControl` (`put`/`remove`/`readCount`), and an adapter whose store reads the run
+  through an injected reader additionally supplies `fenceRunPark: FenceRunPark`
+  (`parkNextRead`/`failNextRead`) under `fenceForm: 'injected-reader'` — renamed from
+  `'reader-in-cs'`; a store that reads the run inside its own database transaction (e.g. a future
+  SQLite store) declares `fenceForm: 'in-transaction'` (renamed from `'native-predicate'`) and
+  supplies no park. Behaviour on realm's own stores is UNCHANGED for a store built with its run
+  reader: every refusal keeps the exact code, message, details, `retryable` and `agentAction` its
+  old guard threw. Two constructions change on purpose: an `InMemoryTraceBufferStore` (a published
+  export of `@sensigo/realm`) built WITHOUT a reader now refuses every fenced call with
+  `ENGINE_INTERNAL` — on the previous release its caller's guard ran and the write landed; and a
+  `JsonTraceBufferStore` built without a reader now throws `ENGINE_INTERNAL` at construction rather
+  than reaching its first fenced call. New `@sensigo/realm` exports: `FencePredicate`,
+  `FencePredicateKind`, `FenceRunReader`, `StepEligibilityState`, `StepMembershipState`,
+  `FENCE_PREDICATE_KINDS`, `FENCE_REQUIRES_RUN`, `evaluateFence`, `readRunForFence`,
+  `checkFenceWithReader`, `fenceReaderMissingError`, `stepStateOf`, `stepNotEligibleError`,
+  `runNotFoundError`, `ReclaimVersionChanged`. New `@sensigo/realm-testing` exports:
+  `createFenceRunSource`, `fenceTestRun`, and the types `FenceRunSource`, `FenceRunControl`,
+  `FenceRunPark`, `ParkedRead`. Who must act: any code outside realm that calls a fenced method,
+  constructs `JsonTraceBufferStore`, constructs `InMemoryTraceBufferStore` for fenced calls,
+  implements the fenced methods on its own `TraceBufferStore`, or supplies the published contract's
+  adapter — none known today (neither realm-cloud nor bradley-max does any of these). This is #616
+  PR-0; the SQLite store landing on top of it is why the check had to become data — a database
+  transaction cannot wait on an arbitrary callback. (Issue #616.)
 - **`LlmProvider.callStepWithMeta`'s return type widens to `{ output, meta?, usage? }`** — `usage`
   a sibling of `meta`, never nested inside it. `LlmProvider` is a published type
   (`agent/index.ts`); a third-party override returning the narrower `{ output, meta? }` still

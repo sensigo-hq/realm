@@ -508,7 +508,7 @@ export const purgeCommand = new Command('purge')
       const failedAttemptStore = new FailedAttemptStore(runsDir);
       // The run reader is the anchor store: the `run_absent_or_terminal` fence is evaluated against
       // it, inside the trace buffer's own critical section (issue #616 PR-0).
-      const traceBufferStore = new JsonTraceBufferStore(runsDir, undefined, runStore);
+      const traceBufferStore = new JsonTraceBufferStore(runsDir, runStore);
       // The crash-anchor is now STRUCTURAL, not positional (issue #184): runStore (JsonFileStore)
       // is passed to purgeRuns as the separate anchorStore argument, and purgeRuns's own control
       // flow guarantees it is only ever deleted after every entry below has succeeded — it is

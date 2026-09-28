@@ -41,20 +41,31 @@ function makeKey(): { runId: string; stepId: string } {
   return { runId: randomUUID(), stepId: 'fenced-tck-step' };
 }
 
+/** Builds this store's adapter — a fresh run source and a fresh store per call, so callers that
+ *  want isolation (every `it` below) get it by simply calling this again. */
+function makeAdapter(): { adapter: Parameters<typeof fencedTraceBufferContract>[0] } {
+  // issue #616 PR-0, D3: the store evaluates every fence against the TCK's run source; `control`
+  // is what every adapter supplies, `park` is what only an injected-reader adapter supplies.
+  const fenceRuns = createFenceRunSource();
+  const store = new InMemoryTraceBufferStore(fenceRuns.reader);
+  return {
+    adapter: {
+      store,
+      fenceRuns: fenceRuns.control,
+      makeKey,
+      fenceForm: 'injected-reader',
+      fenceRunPark: fenceRuns.park,
+    },
+  };
+}
+
 describe('InMemoryTraceBufferStore — fenced-trio TCK conformance (issue #207)', () => {
   for (const law of LAWS) {
     it(law, async () => {
       // A fresh store per law — the in-memory store's per-key chain map has no cross-test state
       // to worry about, but a fresh instance keeps each law's cases fully isolated regardless.
-      // issue #616 PR-0: the store evaluates every fence against the TCK's run source.
-      const fenceRuns = createFenceRunSource();
-      const store = new InMemoryTraceBufferStore(fenceRuns.reader);
-      const cases = fencedTraceBufferContract({
-        store,
-        fenceRuns,
-        makeKey,
-        fenceForm: 'reader-in-cs',
-      });
+      const { adapter } = makeAdapter();
+      const cases = fencedTraceBufferContract(adapter);
       const matching = cases.filter((c) => c.law === law);
       expect(matching.length, `no cases registered for law ${law}`).toBeGreaterThan(0);
       for (const c of matching) {
@@ -67,18 +78,31 @@ describe('InMemoryTraceBufferStore — fenced-trio TCK conformance (issue #207)'
   // give it a short, explicit timeout so a regression here fails fast rather than waiting out the
   // suite's default timeout (mutation-probe g in this task's report relies on this).
   it('PER_KEY_INDEPENDENCE (short-timeout variant, for the mutation-probe)', async () => {
-    const fenceRuns = createFenceRunSource();
-    const store = new InMemoryTraceBufferStore(fenceRuns.reader);
-    const cases = fencedTraceBufferContract({
-      store,
-      fenceRuns,
-      makeKey,
-      fenceForm: 'reader-in-cs',
-    });
+    const { adapter } = makeAdapter();
+    const cases = fencedTraceBufferContract(adapter);
     const target = cases.find(
       (c) => c.law === 'PER_KEY_INDEPENDENCE' && c.name.includes('disjoint-run'),
     );
     expect(target).toBeDefined();
     await target!.run();
   }, 2000);
+
+  // issue #616 PR-0, D3: a skipped case renders `✓` for its law in a runner (both realm adapters
+  // have a park, so every park-dependent law above runs for real) — the ONLY visible-but-not-a-✓
+  // skips this adapter registers are these two pre-existing ones, from not supplying the two
+  // optional byte-comparison hooks (`bytesOracle`/`rawWalAccess`; a physical file's on-disk bytes
+  // are an independent ground truth an in-memory structure's own accounting has no analogue of —
+  // see `bytesOracle`'s and `rawWalAccess`'s own doc on `FencedTraceBufferContractAdapter`). This
+  // assertion is what would fail loudly (naming what it lost) if this adapter ever lost its park.
+  it('registers exactly its two known, pre-existing skips — no park-dependent case is silently skipped', () => {
+    const { adapter } = makeAdapter();
+    const cases = fencedTraceBufferContract(adapter);
+    const skipped = cases.filter((c) => c.name.startsWith('SKIPPED — ')).map((c) => c.name);
+    expect(skipped.sort()).toEqual(
+      [
+        'SKIPPED — adapter did not supply bytesOracle (count-based assertions above still ran): byte-exactness against an adapter-supplied oracle',
+        'SKIPPED — adapter did not supply rawWalAccess (the shape-tolerant sibling case above still ran): byte-for-byte raw comparison against an adapter-supplied rawWalAccess hook',
+      ].sort(),
+    );
+  });
 });

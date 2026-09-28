@@ -41,7 +41,7 @@ async function makeAdapter(): Promise<{
 }> {
   const dir = await mkdtemp(join(tmpdir(), 'json-trace-buffer-store-tck-'));
   // issue #616 PR-0: fences read the (empty) run store beside the WAL — every run is absent.
-  const store = new JsonTraceBufferStore(dir, undefined, new JsonFileStore(dir));
+  const store = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
   const runId = randomUUID();
   /**
    * FIXTURE TEETH (issue #189): this store owns TWO artifact classes — live WAL files and SEALED

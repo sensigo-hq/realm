@@ -72,7 +72,7 @@ async function makeStores(): Promise<Stores> {
   const runStore = new JsonFileStore(dir);
   const failedAttemptStore = new FailedAttemptStore(dir);
   // issue #616 PR-0: the trace buffer evaluates fences against the anchor run store.
-  const traceBufferStore = new JsonTraceBufferStore(dir, undefined, runStore);
+  const traceBufferStore = new JsonTraceBufferStore(dir, runStore);
   return {
     dir,
     runStore,
@@ -870,7 +870,7 @@ describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
         sealed_by: { arm: 'complete' },
       });
       await injectRun(dir, run);
-      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, runStore);
+      const traceBufferStore = new JsonTraceBufferStore(dir, runStore);
       await traceBufferStore.append(run.id, 'step-agent', [{ event: 'e' }]);
       const fencedSpy = vi.spyOn(traceBufferStore, 'deleteAllForRunFenced');
       const legacySpy = vi.spyOn(traceBufferStore, 'deleteAllForRun');
@@ -924,7 +924,7 @@ describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
       };
       // issue #616 PR-0: the trace buffer evaluates the fence against ITS run reader — here the
       // anchor stub, so the simulated resume on the third read is what the fence sees.
-      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, anchorStub);
+      const traceBufferStore = new JsonTraceBufferStore(dir, anchorStub);
       await traceBufferStore.append(run.id, 'step-agent', [{ event: 'e' }]);
 
       const result = await purgeRuns({ runId: 'resumed-mid-purge', dryRun: false }, anchorStub, [
@@ -975,7 +975,7 @@ describe('purgeRuns — sealed artifacts (issue #197 PR-2, deliverable 3b: VERIF
         sealed_by: { arm: 'complete' },
       });
       await injectRun(dir, run);
-      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, runStore);
+      const traceBufferStore = new JsonTraceBufferStore(dir, runStore);
       await traceBufferStore.append(run.id, 'step-agent', [{ event: 'stale' }]);
       const sealResult = await traceBufferStore.sealFenced!(run.id, 'step-agent', {
         kind: 'run_at_version',

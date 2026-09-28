@@ -193,7 +193,7 @@ export const agentCommand = new Command('agent')
         const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
         // issue #616 PR-0: the run reader is the run store the driver writes — every fence
         // predicate is evaluated against it inside the trace buffer's own critical section.
-        const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, undefined, store);
+        const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, store);
         let provider: LlmProvider;
         // issue #313: a third-party provider cannot declare a `providerId` capability (realm
         // does not know its dialect), so its identity travels separately and evidence can still

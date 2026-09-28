@@ -30,6 +30,16 @@ function sealedFileName(runId: string, stepId: string, seq: number): string {
 /** A fence that passes while the run is absent from `runs` (issue #616 PR-0). */
 const PASS: FencePredicate = { kind: 'run_absent' };
 
+/** A reader for a store built on a path that NEVER fences (issue #616 PR-0, D2) — every unfenced
+ *  method these throwaway stores exercise (`deleteAllForRun`/`readAllForRun`/`listOrphans`) never
+ *  touches the reader, so an unexpected fence call fails loudly instead of silently reading
+ *  nothing. The constructor's required second argument, never called. */
+const NEVER_READ: FenceRunReader = {
+  get: async () => {
+    throw new Error('fence unexpectedly evaluated against NEVER_READ');
+  },
+};
+
 describe('JsonTraceBufferStore', () => {
   let dir: string;
   let store: JsonTraceBufferStore;
@@ -49,11 +59,27 @@ describe('JsonTraceBufferStore', () => {
         return run;
       },
     };
-    store = new JsonTraceBufferStore(dir, undefined, reader);
+    store = new JsonTraceBufferStore(dir, reader);
   });
 
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
+  });
+
+  // issue #616 PR-0, D2 — a plain-JavaScript caller (this package is published and used from
+  // JavaScript too) reaches the constructor with `runReader === undefined` despite the
+  // TypeScript-only required parameter; the construction itself must refuse loudly rather than
+  // let a JavaScript caller discover the gap as a bare `TypeError: Cannot read properties of
+  // undefined (reading 'get')` at its first fenced call.
+  it('a construction with no run reader throws ENGINE_INTERNAL, at construction — D2', () => {
+    let thrown: unknown;
+    try {
+      new JsonTraceBufferStore(dir, undefined as never);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as { code?: unknown }).code).toBe('ENGINE_INTERNAL');
   });
 
   it('append + read round-trips entries', async () => {
@@ -113,7 +139,10 @@ describe('JsonTraceBufferStore', () => {
     });
 
     it('a missing runsDir is a no-op (own readdir fallback path), not a throw', async () => {
-      const missingDirStore = new JsonTraceBufferStore(join(dir, 'does', 'not', 'exist'));
+      const missingDirStore = new JsonTraceBufferStore(
+        join(dir, 'does', 'not', 'exist'),
+        NEVER_READ,
+      );
       await expect(missingDirStore.deleteAllForRun('run-1')).resolves.toEqual({ bytes_deleted: 0 });
     });
 
@@ -180,7 +209,10 @@ describe('JsonTraceBufferStore', () => {
     });
 
     it('returns {} (no crash) when runsDir itself is missing', async () => {
-      const missingDirStore = new JsonTraceBufferStore(join(dir, 'does', 'not', 'exist'));
+      const missingDirStore = new JsonTraceBufferStore(
+        join(dir, 'does', 'not', 'exist'),
+        NEVER_READ,
+      );
       const all = await missingDirStore.readAllForRun('run-1');
       expect(all).toEqual({});
     });
@@ -288,14 +320,14 @@ describe('JsonTraceBufferStore', () => {
     });
 
     it('a missing runsDir (ENOENT) resolves to [] — not a throw', async () => {
-      const missingStore = new JsonTraceBufferStore(join(dir, 'does', 'not', 'exist'));
+      const missingStore = new JsonTraceBufferStore(join(dir, 'does', 'not', 'exist'), NEVER_READ);
       await expect(missingStore.listOrphans(new Set())).resolves.toEqual([]);
     });
 
     it('fail-closed: a non-ENOENT readdir error THROWS — never a fabricated empty/partial list', async () => {
       const notADir = join(dir, 'i-am-a-file');
       await writeFile(notADir, 'x');
-      const brokenStore = new JsonTraceBufferStore(notADir);
+      const brokenStore = new JsonTraceBufferStore(notADir, NEVER_READ);
 
       await expect(brokenStore.listOrphans(new Set())).rejects.toMatchObject({ code: 'ENOTDIR' });
     });

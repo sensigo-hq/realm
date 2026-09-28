@@ -36,7 +36,7 @@ import {
   BUFFER_BACKSTOP_COUNT,
   SEALED_ARTIFACTS_LIMIT_PER_STEP,
 } from '@sensigo/realm';
-import { fenceTestRun, type FenceRunSource } from './fence-run-source.js';
+import { fenceTestRun, type FenceRunControl, type FenceRunPark } from './fence-run-source.js';
 
 /**
  * One of the laws every fenced-trio-declaring `TraceBufferStore` must satisfy. The original five
@@ -44,7 +44,7 @@ import { fenceTestRun, type FenceRunSource } from './fence-run-source.js';
  * optional capability-ladder rungs a trio-declaring store MAY additionally declare (`seal` and
  * `writer_nonce_carriage`) — each of those five produces an explicit, VISIBLE documented-skip case
  * (never a silent omission) for a store that does not declare the relevant rung, mirroring the
- * `fenceForm: 'native-predicate'` skip precedent already established for the latch-based trio
+ * `fenceForm: 'in-transaction'` skip precedent already established for the latch-based trio
  * laws below.
  */
 export type FencedTraceBufferLaw =
@@ -71,35 +71,35 @@ export interface FencedTraceBufferContractCase {
   run: () => Promise<void>;
 }
 
-/** Adapter a calling test file supplies to parameterize the contract against one concrete store. */
-export interface FencedTraceBufferContractAdapter {
+/**
+ * Adapter a calling test file supplies to parameterize the contract against one concrete store.
+ *
+ * issue #616 PR-0, D3 (review finding F6): the adapter's type is a union on `fenceForm`, so the
+ * form decides whether a park exists. An injected-reader store can always park its read, so an
+ * `'injected-reader'` adapter without a park does not compile; an `'in-transaction'` store has no
+ * injected read to park, so `fenceRunPark` is absent for it — that reason is true by construction,
+ * never a value this file has to trust. (Keyed on the park's presence alone rather than
+ * `fenceForm`, an injected-reader adapter that dropped its park would lose the latch laws and
+ * racers silently, under a false reason — see `parkOf`, below, which is the ONLY place this file
+ * reads `fenceForm`.)
+ */
+export type FencedTraceBufferContractAdapter = {
   /** The store under test — already declaring the fenced trio (`appendFenced`/`deleteFenced`/
-   *  `deleteAllForRunFenced`). For `fenceForm: 'reader-in-cs'` stores it must be constructed over
+   *  `deleteAllForRunFenced`). For an `'injected-reader'` store it must be constructed over
    *  `fenceRuns.reader` (below), and with a sufficiently generous lock-acquisition profile (see
    *  `lockProfile`) so a deliberately-parked run read in the latch-based laws doesn't cause a
    *  concurrent caller's own acquisition attempt to give up before the law's observation window
    *  completes. */
   store: TraceBufferStore;
-  /** The run source every fence predicate is evaluated against (issue #616 PR-0) — the TCK creates
-   *  runs in it, changes them, removes them, and parks reads of them. For a `'reader-in-cs'` store,
-   *  `store` must read runs through `fenceRuns.reader` (see `createFenceRunSource`). */
-  fenceRuns: FenceRunSource;
+  /** What every adapter supplies to control the run every fence predicate is evaluated against
+   *  (issue #616 PR-0, D3) — the TCK creates runs in it, changes them, removes them, and reads how
+   *  many times a fence evaluation has read a given run. For an `'injected-reader'` store, `store`
+   *  must read runs through the SAME source's `reader` (see `createFenceRunSource`). */
+  fenceRuns: FenceRunControl;
   /** Returns a fresh, never-before-used (runId, stepId) pair for one case — callers should treat
    *  every returned pair as belonging to a disjoint run from every other pair this returns. */
   makeKey: () => { runId: string; stepId: string };
-  /**
-   * `'reader-in-cs'`: the store evaluates the fence inside an in-process critical section,
-   * reading the run through its injected run reader — the read literally happens inside the same
-   * lock/mutex the destructive effect does, so a parked read holds that section open.
-   * `'native-predicate'`: the store evaluates the fence inside a database transaction that also
-   * holds the runs (e.g. the SQLite store) — there is no injected read to park, so the latch-based
-   * laws (`CS_OCCUPANCY`, `PER_KEY_INDEPENDENCE`, `NO_SILENT_LOSS`) and FENCE_DATA's racer cells
-   * produce an explicit, VISIBLE documented-skip case rather than a silent omission; that store's
-   * own suite runs its racer (the transaction's own lock). FENCE_DATA's true/false cells run on
-   * both forms.
-   */
-  fenceForm: 'reader-in-cs' | 'native-predicate';
-  /** Descriptive only (present for `'reader-in-cs'` adapters): the lock-acquisition profile the
+  /** Descriptive only (present for `'injected-reader'` adapters): the lock-acquisition profile the
    *  `store` instance above was actually constructed with, for the calling test file's own
    *  documentation — the TCK itself does not need to act on this value; it exists so a wiring
    *  test can assert (and a reader can see) that a genuinely generous profile is in use. */
@@ -133,6 +133,34 @@ export interface FencedTraceBufferContractAdapter {
     readLiveRaw: (runId: string, stepId: string) => Promise<string | undefined>;
     readSealedRaw: (runId: string, stepId: string, seq: number) => Promise<string | undefined>;
   };
+} & (
+  | {
+      /** The store evaluates the fence inside an in-process critical section, reading the run
+       *  through its injected run reader — the read literally happens inside the same lock/mutex
+       *  the destructive effect does, so a parked read holds that section open. */
+      fenceForm: 'injected-reader';
+      /** What only an injected-reader adapter supplies: the ability to park or fail the store's
+       *  next read of a given run (issue #616 PR-0, D3) — see `FenceRunPark`'s own doc. */
+      fenceRunPark: FenceRunPark;
+    }
+  | {
+      /** The store evaluates the fence inside a database transaction that also holds the runs
+       *  (e.g. #616 PR-1's SQLite store) — there is no injected read to park, so the latch-based
+       *  laws (`CS_OCCUPANCY`, `PER_KEY_INDEPENDENCE`, `NO_SILENT_LOSS`), the `FENCE_REFUSES`
+       *  `FsIoError` read case, and `FENCE_DATA`'s racer cells produce an explicit, VISIBLE
+       *  documented-skip case rather than a silent omission; that store's own suite runs its racer
+       *  (the transaction's own lock). `FENCE_DATA`'s true/false cells run on both forms. */
+      fenceForm: 'in-transaction';
+      fenceRunPark?: undefined;
+    }
+);
+
+/** The adapter's park, if it has one — `undefined` for an `'in-transaction'` adapter (issue #616
+ *  PR-0, D3). This is the ONLY place this file reads `fenceForm`: every park-dependent case below
+ *  calls this rather than testing `fenceForm` itself, so a case can never silently diverge from
+ *  what the type actually guarantees. */
+function parkOf(adapter: FencedTraceBufferContractAdapter): FenceRunPark | undefined {
+  return adapter.fenceForm === 'injected-reader' ? adapter.fenceRunPark : undefined;
 }
 
 const REFUSAL_CODE = 'STATE_RUN_BUSY';
@@ -266,7 +294,9 @@ type CsHolder = 'appendFenced' | 'deleteFenced' | 'deleteAllForRunFenced';
  *  read replaced the latch-injected guard). Returns the parked promise + the release handle. Every
  *  fenced method requires an existing store to hold — for delete/deleteAllForRunFenced, the key is
  *  pre-seeded with a throwaway entry (the specific content doesn't matter; only that the operation
- *  has something to act on). */
+ *  has something to act on). Only ever called from a park-gated branch (`fencedTraceBufferContract`
+ *  checks `parkOf(adapter) !== undefined` before reaching any caller of this function) — the
+ *  non-null assertion below is that precondition, not a fresh assumption. */
 async function startLatchedHolder(
   adapter: FencedTraceBufferContractAdapter,
   holder: CsHolder,
@@ -275,7 +305,8 @@ async function startLatchedHolder(
   entriesForAppend: AgentTraceEntry[],
 ): Promise<{ parkedP: Promise<unknown>; latch: { release: () => void } }> {
   const { store } = adapter;
-  const parked = adapter.fenceRuns.parkNextRead(runId);
+  const park = parkOf(adapter)!;
+  const parked = park.parkNextRead(runId);
   let parkedP: Promise<unknown>;
   if (holder === 'appendFenced') {
     parkedP = store.appendFenced!(runId, stepId, entriesForAppend, PASSING_FENCE);
@@ -468,7 +499,9 @@ function buildNoSilentLossCase(
       const { runId, stepId } = adapter.makeKey();
       const B: AgentTraceEntry[] = [{ event: 'b0' }, { event: 'b1' }];
 
-      const parked = adapter.fenceRuns.parkNextRead(runId);
+      // Only ever reached from a park-gated branch (see fencedTraceBufferContract) — guaranteed.
+      const park = parkOf(adapter)!;
+      const parked = park.parkNextRead(runId);
       const appendP = store.appendFenced!(runId, stepId, B, PASSING_FENCE);
       // Detect (and safely ignore afterwards) a premature settlement — the conforming store must
       // not settle appendP before its fence read has been entered.
@@ -521,7 +554,7 @@ function buildNoSilentLossCase(
 }
 
 /** A visible, non-silent documented-skip case for a law that a store's declared capabilities
- *  don't reach — mirrors the `fenceForm: 'native-predicate'` skip precedent for the latch-based
+ *  don't reach — mirrors the `fenceForm: 'in-transaction'` skip precedent for the latch-based
  *  trio laws. `reason` names exactly why (e.g. "store does not declare 'seal'"). */
 function skipCase(
   law: FencedTraceBufferLaw,
@@ -1120,7 +1153,7 @@ function assertSameError(actual: unknown, expected: unknown, context: string): v
  * RACER → an update that flips the predicate, racing the fenced operation, never lands between the
  * evaluation and the operation: a same-key read started after the flip, while the evaluation is in
  * flight, cannot complete until the operation has landed, and then observes the landed state. The
- * racer cells need a parkable run read (`'reader-in-cs'`); a `'native-predicate'` store gets a
+ * racer cells need a parkable run read (`'injected-reader'`); an `'in-transaction'` store gets a
  * visible skip for them (its own suite races its transaction).
  */
 function buildFenceDataCases(
@@ -1185,12 +1218,13 @@ function buildFenceDataCases(
       });
     }
 
-    if (adapter.fenceForm === 'native-predicate') {
+    const park = parkOf(adapter);
+    if (park === undefined) {
       cases.push(
         skipCase(
           'FENCE_DATA',
           `${kind} RACER`,
-          "a native-predicate store has no injected run read to park — its own suite races its transaction's lock",
+          "an in-transaction store has no injected run read to park — its own suite races its transaction's lock",
         ),
       );
       continue;
@@ -1208,7 +1242,7 @@ function buildFenceDataCases(
         const fence = cells.fence(runId, stepId);
 
         // 1. The fenced operation reads the run for its fence — parked mid-evaluation.
-        const parked = adapter.fenceRuns.parkNextRead(runId);
+        const parked = park.parkNextRead(runId);
         const opP = callFenced(store, method, runId, stepId, fence, added);
         opP.catch(() => {}); // observed below; never an unhandled rejection
         const early = opP.then(
@@ -1275,7 +1309,7 @@ function buildFenceDataCases(
 
 /**
  * Builds the contract cases for `adapter`. See each law's own doc above (the `build*Case`
- * functions) for what it asserts. For `fenceForm: 'native-predicate'` adapters, `CS_OCCUPANCY`,
+ * functions) for what it asserts. For `fenceForm: 'in-transaction'` adapters, `CS_OCCUPANCY`,
  * `PER_KEY_INDEPENDENCE`, and `NO_SILENT_LOSS` are replaced with an explicit, VISIBLE
  * documented-skip case each (never a silent omission) — see the adapter's own `fenceForm` doc.
  */
@@ -1462,11 +1496,11 @@ export function fencedTraceBufferContract(
       }
       if (!threw) {
         throw new Error(
-          'expected the second (refuse-guard) append to reject — guard-caching would make this incorrectly pass',
+          'expected the second (refusing-fence) append to reject — fence-caching would make this incorrectly pass',
         );
       }
       const after = await store.read(runId, stepId);
-      assertDeepEqualEvents(after, [{ event: 'first' }], 'sequential two-call guard-caching kill');
+      assertDeepEqualEvents(after, [{ event: 'first' }], 'sequential two-call fence-caching kill');
     },
   });
 
@@ -1485,12 +1519,12 @@ export function fencedTraceBufferContract(
       } catch (err) {
         caught = err;
       }
-      // issue #207 correction: assert the propagated error IS the guard's own typed error —
+      // issue #207 correction: assert the propagated error IS the fence's own typed error —
       // never something a wrapping layer (e.g. toArtifactDeleteFailedError) substituted in its
       // place (that would surface as ENGINE_ARTIFACT_DELETE_FAILED instead of REFUSAL_CODE).
       if (!(caught instanceof WorkflowError) || caught.code !== REFUSAL_CODE) {
         throw new Error(
-          `expected deleteAllForRunFenced to reject with the guard's own typed error ` +
+          `expected deleteAllForRunFenced to reject with the fence's own typed error ` +
             `(WorkflowError, code=${REFUSAL_CODE}) — never wrapped — got: ${caught}`,
         );
       }
@@ -1531,44 +1565,58 @@ export function fencedTraceBufferContract(
     },
   });
 
-  cases.push({
-    law: 'FENCE_REFUSES',
-    name: "deleteAllForRunFenced: a fence run read throwing FsIoError propagates it exactly — never mistaken for deleteIfExists's own failure and wrapped",
-    run: async () => {
-      // issue #207 correction, dedicated case (D3 §1's own demanded test): a realistic scenario
-      // is the guard's lock-free `runStore.get` itself hitting a filesystem error (e.g. EACCES on
-      // the run-record file) — since that surfaces as an FsIoError too, a sweep implementation
-      // that wraps "any FsIoError seen inside the per-file try" (rather than scoping the wrap to
-      // ONLY deleteIfExists's own failure) would incorrectly re-wrap the guard's own error as
-      // ENGINE_ARTIFACT_DELETE_FAILED, discarding its original identity.
-      const { runId } = adapter.makeKey();
-      const stepA = 'fenced-tck-step-fsio';
-      await store.append(runId, stepA, [{ event: 'seed' }]);
-      const cause = Object.assign(new Error('EACCES (simulated)'), { code: 'EACCES' });
-      adapter.fenceRuns.failNextRead(
-        runId,
-        new FsIoError('read', '/fenced-tck/simulated-run-path', cause),
-      );
-      let caught: unknown;
-      try {
-        await store.deleteAllForRunFenced!(runId, PASSING_FENCE);
-      } catch (err) {
-        caught = err;
-      }
-      if (!(caught instanceof FsIoError)) {
-        throw new Error(
-          `expected the run read's own FsIoError to propagate exactly (not wrapped as ` +
-            `ENGINE_ARTIFACT_DELETE_FAILED via toArtifactDeleteFailedError), got: ${caught}`,
+  // issue #616 PR-0, D3: this case fails a specific run READ, which only an injected-reader
+  // adapter can do (it owns the read to intercept) — an in-transaction store has no such read to
+  // fail from outside, so it gets a visible, documented skip instead.
+  const fsIoPark = parkOf(adapter);
+  if (fsIoPark === undefined) {
+    cases.push(
+      skipCase(
+        'FENCE_REFUSES',
+        "deleteAllForRunFenced: a fence run read throwing FsIoError propagates it exactly — never mistaken for deleteIfExists's own failure and wrapped",
+        'an in-transaction store has no injected run read to fail — its own suite must exercise a failing in-transaction run read',
+      ),
+    );
+  } else {
+    cases.push({
+      law: 'FENCE_REFUSES',
+      name: "deleteAllForRunFenced: a fence run read throwing FsIoError propagates it exactly — never mistaken for deleteIfExists's own failure and wrapped",
+      run: async () => {
+        // issue #207 correction, dedicated case (D3 §1's own demanded test): a realistic scenario
+        // is the guard's lock-free `runStore.get` itself hitting a filesystem error (e.g. EACCES on
+        // the run-record file) — since that surfaces as an FsIoError too, a sweep implementation
+        // that wraps "any FsIoError seen inside the per-file try" (rather than scoping the wrap to
+        // ONLY deleteIfExists's own failure) would incorrectly re-wrap the guard's own error as
+        // ENGINE_ARTIFACT_DELETE_FAILED, discarding its original identity.
+        const { runId } = adapter.makeKey();
+        const stepA = 'fenced-tck-step-fsio';
+        await store.append(runId, stepA, [{ event: 'seed' }]);
+        const cause = Object.assign(new Error('EACCES (simulated)'), { code: 'EACCES' });
+        fsIoPark.failNextRead(
+          runId,
+          new FsIoError('read', '/fenced-tck/simulated-run-path', cause),
         );
-      }
-      const after = await store.read(runId, stepA);
-      if (after.length !== 1) {
-        throw new Error(
-          `expected the seeded file intact after a sweep refused by an FsIoError run read, got ${after.length}`,
-        );
-      }
-    },
-  });
+        let caught: unknown;
+        try {
+          await store.deleteAllForRunFenced!(runId, PASSING_FENCE);
+        } catch (err) {
+          caught = err;
+        }
+        if (!(caught instanceof FsIoError)) {
+          throw new Error(
+            `expected the run read's own FsIoError to propagate exactly (not wrapped as ` +
+              `ENGINE_ARTIFACT_DELETE_FAILED via toArtifactDeleteFailedError), got: ${caught}`,
+          );
+        }
+        const after = await store.read(runId, stepA);
+        if (after.length !== 1) {
+          throw new Error(
+            `expected the seeded file intact after a sweep refused by an FsIoError run read, got ${after.length}`,
+          );
+        }
+      },
+    });
+  }
 
   cases.push({
     law: 'FENCE_REFUSES',
@@ -1590,20 +1638,32 @@ export function fencedTraceBufferContract(
   cases.push(...buildFenceDataCases(adapter));
 
   // ── Latch-based laws: CS_OCCUPANCY, PER_KEY_INDEPENDENCE, NO_SILENT_LOSS ───────────────────
-  if (adapter.fenceForm === 'native-predicate') {
-    for (const law of ['CS_OCCUPANCY', 'PER_KEY_INDEPENDENCE', 'NO_SILENT_LOSS'] as const) {
-      cases.push({
-        law,
-        name:
-          `SKIPPED for native-predicate stores — TCK-green does NOT verify race closure; ` +
-          "the store's own in-transaction fencing suite must (issue #207; the same posture " +
-          "CLAIM_SINGLE_OWNER's own cross-host caveat states, issue #188). This case is an " +
-          'explicit, visible documented-skip, not a silent omission.',
-        run: async () => {
-          // Intentional no-op — see the case name for why.
-        },
-      });
-    }
+  if (parkOf(adapter) === undefined) {
+    const reason =
+      'an in-transaction store has no injected run read to park — TCK-green does NOT verify ' +
+      "race closure; the store's own in-transaction fencing suite must (issue #207; the same " +
+      "posture CLAIM_SINGLE_OWNER's own cross-host caveat states, issue #188)";
+    cases.push(
+      skipCase(
+        'CS_OCCUPANCY',
+        'holding the CS: concurrent read/delete/deleteAllForRun neither succeed during occupancy nor corrupt state after release',
+        reason,
+      ),
+    );
+    cases.push(
+      skipCase(
+        'PER_KEY_INDEPENDENCE',
+        'a disjoint-run key completes a full append+read round-trip while another key is latched open',
+        reason,
+      ),
+    );
+    cases.push(
+      skipCase(
+        'NO_SILENT_LOSS',
+        'a settle (read-then-delete) starting while append is parked adopts the full committed batch',
+        reason,
+      ),
+    );
   } else {
     cases.push(buildCsOccupancyCase(adapter, 'appendFenced'));
     cases.push(buildCsOccupancyCase(adapter, 'deleteFenced'));

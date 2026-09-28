@@ -17,7 +17,13 @@ import {
   deriveRunPhase,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
-import type { RunStore, RunRecord, CreateRunOptions, WorkflowDefinition } from '@sensigo/realm';
+import type {
+  RunStore,
+  RunRecord,
+  CreateRunOptions,
+  WorkflowDefinition,
+  FenceRunReader,
+} from '@sensigo/realm';
 import { createRealmMcpServer } from './server.js';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import type { FailedAttemptStoreLike } from './tools/start-run.js';
@@ -221,7 +227,14 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
         // pointed at the SAME runDir (as the co-located derivation would have used internally)
         // reads empty ONLY if the derivation genuinely pointed there and execute_step consumed it.
         expect(execEnvelope['status']).toBe('ok');
-        const verifyTraceBufferStore = new JsonTraceBufferStore(runDir);
+        // issue #616 PR-0, D2 — `read()` is unfenced; a throwing reader makes an unexpected fence
+        // call fail loudly rather than silently.
+        const neverRead: FenceRunReader = {
+          get: async () => {
+            throw new Error('fence unexpectedly evaluated');
+          },
+        };
+        const verifyTraceBufferStore = new JsonTraceBufferStore(runDir, neverRead);
         const remaining = await verifyTraceBufferStore.read(runId, 'step-agent');
         expect(remaining).toHaveLength(0);
       } finally {

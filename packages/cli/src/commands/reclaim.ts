@@ -115,7 +115,7 @@ export const reclaimCommand = new Command('reclaim')
       // prior/concurrent writer's lines" population.
       // issue #616 PR-0: the run reader is the run store reclaim writes — reclaim's
       // `run_at_version` fence is evaluated against it inside the trace buffer's critical section.
-      const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, undefined, store);
+      const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, store);
 
       // Loud-fail on a store that cannot persist the claim clock (liveness recovery unavailable).
       if (!store.persistsClaims) {

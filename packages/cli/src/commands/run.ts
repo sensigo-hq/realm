@@ -261,7 +261,7 @@ export const runCommand = new Command('run')
       const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
       // issue #616 PR-0: the run reader is the run store this driver writes — every fence
       // predicate is evaluated against it inside the trace buffer's own critical section.
-      const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, undefined, store);
+      const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, store);
 
       const { run: initialRecord } = await store.create({
         workflowId: definition.id,

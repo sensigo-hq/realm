@@ -34,7 +34,7 @@ async function makeStores(): Promise<{
     runStore,
     failedAttemptStore: new FailedAttemptStore(dir),
     // issue #616 PR-0: the trace buffer evaluates fences against the run store.
-    traceBufferStore: new JsonTraceBufferStore(dir, undefined, runStore),
+    traceBufferStore: new JsonTraceBufferStore(dir, runStore),
   };
 }
 

@@ -825,7 +825,7 @@ export const gcCommand = new Command('gc')
     const failedAttemptStore = new FailedAttemptStore(runsDir);
     // The run reader is the run store this sweep enumerates: the `run_absent` fence is evaluated
     // against it, inside the trace buffer's own critical section (issue #616 PR-0).
-    const traceBufferStore = new JsonTraceBufferStore(runsDir, undefined, runStore);
+    const traceBufferStore = new JsonTraceBufferStore(runsDir, runStore);
     const orphanSweepableStores: OrphanSweepableStore[] = [traceBufferStore, failedAttemptStore];
     const now = new Date();
 
