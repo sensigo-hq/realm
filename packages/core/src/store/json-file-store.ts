@@ -26,6 +26,7 @@ import {
 import { computeClaimDeadline } from '../engine/claim-liveness.js';
 import { applySettlement } from '../engine/settlement.js';
 import { TERMINAL_PHASES } from '../engine/lifecycle.js';
+import { runNotFoundError } from './fence-predicate.js';
 import { hashParams } from './params-hash.js';
 import { assertSealIntegrity } from './seal-integrity.js';
 import { decideIdempotencyPolicy } from './idempotency-policy.js';
@@ -373,15 +374,11 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     return { run, created: true };
   }
 
-  /** Shared STATE_RUN_NOT_FOUND — used both by the pre-check and the ENOENT-hardening catch (issue #107). */
+  /** Shared STATE_RUN_NOT_FOUND — used both by the pre-check and the ENOENT-hardening catch (issue
+   *  #107). Delegates to core's one builder (issue #616 PR-0), so the not-found a fence predicate
+   *  answers for an absent run and the one this store's `get()` throws can never drift apart. */
   private runNotFoundError(runId: string): WorkflowError {
-    return new WorkflowError(`Run not found: ${runId}`, {
-      code: 'STATE_RUN_NOT_FOUND',
-      category: 'STATE',
-      agentAction: 'report_to_user',
-      retryable: false,
-      details: { runId },
-    });
+    return runNotFoundError(runId);
   }
 
   async get(runId: string): Promise<RunRecord> {

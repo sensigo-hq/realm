@@ -145,7 +145,11 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
     // path), this is byte-identical to pre-#188 behavior. A store the caller DID inject here
     // (a partial injection) is still respected, never silently overridden.
     const runsDirPath = (effectiveRunStore as JsonFileStore).runsDirPath;
-    traceBufferStore = options?.traceBufferStore ?? new JsonTraceBufferStore(runsDirPath);
+    // The run reader is the server's run store: every fence predicate is evaluated against it,
+    // inside the trace buffer's own critical section (issue #616 PR-0).
+    traceBufferStore =
+      options?.traceBufferStore ??
+      new JsonTraceBufferStore(runsDirPath, undefined, effectiveRunStore);
     failedAttemptStore = options?.failedAttemptStore ?? new FailedAttemptStore(runsDirPath);
   } else {
     // The run store cannot supply an artifact directory (e.g. a Postgres-backed RunStore) AND no

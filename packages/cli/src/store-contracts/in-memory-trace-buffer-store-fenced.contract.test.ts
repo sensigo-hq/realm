@@ -9,11 +9,17 @@
 import { describe, it, expect } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { InMemoryTraceBufferStore } from '@sensigo/realm';
-import { fencedTraceBufferContract, type FencedTraceBufferLaw } from '@sensigo/realm-testing';
+import {
+  fencedTraceBufferContract,
+  createFenceRunSource,
+  type FencedTraceBufferLaw,
+} from '@sensigo/realm-testing';
 
 const LAWS: FencedTraceBufferLaw[] = [
   'STRUCTURAL',
   'FENCE_REFUSES',
+  // issue #616 PR-0: each of the five FencePredicate members — true, false, and a racer.
+  'FENCE_DATA',
   'CS_OCCUPANCY',
   'PER_KEY_INDEPENDENCE',
   'NO_SILENT_LOSS',
@@ -40,11 +46,14 @@ describe('InMemoryTraceBufferStore — fenced-trio TCK conformance (issue #207)'
     it(law, async () => {
       // A fresh store per law — the in-memory store's per-key chain map has no cross-test state
       // to worry about, but a fresh instance keeps each law's cases fully isolated regardless.
-      const store = new InMemoryTraceBufferStore();
+      // issue #616 PR-0: the store evaluates every fence against the TCK's run source.
+      const fenceRuns = createFenceRunSource();
+      const store = new InMemoryTraceBufferStore(fenceRuns.reader);
       const cases = fencedTraceBufferContract({
         store,
+        fenceRuns,
         makeKey,
-        fenceForm: 'guard-in-cs',
+        fenceForm: 'reader-in-cs',
       });
       const matching = cases.filter((c) => c.law === law);
       expect(matching.length, `no cases registered for law ${law}`).toBeGreaterThan(0);
@@ -58,8 +67,14 @@ describe('InMemoryTraceBufferStore — fenced-trio TCK conformance (issue #207)'
   // give it a short, explicit timeout so a regression here fails fast rather than waiting out the
   // suite's default timeout (mutation-probe g in this task's report relies on this).
   it('PER_KEY_INDEPENDENCE (short-timeout variant, for the mutation-probe)', async () => {
-    const store = new InMemoryTraceBufferStore();
-    const cases = fencedTraceBufferContract({ store, makeKey, fenceForm: 'guard-in-cs' });
+    const fenceRuns = createFenceRunSource();
+    const store = new InMemoryTraceBufferStore(fenceRuns.reader);
+    const cases = fencedTraceBufferContract({
+      store,
+      fenceRuns,
+      makeKey,
+      fenceForm: 'reader-in-cs',
+    });
     const target = cases.find(
       (c) => c.law === 'PER_KEY_INDEPENDENCE' && c.name.includes('disjoint-run'),
     );

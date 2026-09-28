@@ -2,6 +2,11 @@
 import type { AgentTraceEntry } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ArtifactDeletionReport } from './per-run-artifact-store.js';
+import {
+  checkFenceWithReader,
+  type FencePredicate,
+  type FenceRunReader,
+} from './fence-predicate.js';
 
 /**
  * The store-layer capability ladder (issue #197 PR-1, design record `plans/issue-197-design.md`
@@ -200,33 +205,27 @@ export interface TraceBufferStore {
    * but lets a legacy `read()`/`delete()`/`deleteAllForRun()` call bypass those critical sections
    * has not actually implemented the capability.
    *
-   * Guard contract, shared by all three methods:
-   * - `guard` is invoked at least once per call. Implementations MAY retry internally — every TCK
-   *   assertion about guard invocation is count-TOLERANT ("at least one"), never an exact count.
-   * - ALL guard invocations complete BEFORE the method's destructive/mutating effect (the write
-   *   for `appendFenced`; the delete for `deleteFenced`/`deleteAllForRunFenced`).
-   * - `guard` performs exactly one lock-free `runStore.get` read (the #132 atomic-rename-safe
-   *   read) — never more than one, and never a locked read.
-   * - `guard` never acquires a lock of its own. Global lock-ordering rule: a WAL critical-section
+   * Fence contract, shared by all three methods (issue #616 PR-0 — the fence is DATA, a
+   * `FencePredicate`, no longer an async `guard` callback):
+   * - The store evaluates `fence` with `evaluateFence` against the run it reads INSIDE its own
+   *   critical section, immediately BEFORE the method's destructive/mutating effect (the write for
+   *   `appendFenced`; the delete for `deleteFenced`/`deleteAllForRunFenced`), and at least once per
+   *   call.
+   * - The run is read ONCE per evaluation, from the store the fenced write must be checked
+   *   against: a reader-backed store (the JSON and in-memory trace buffers) reads it through its
+   *   injected run reader with `readRunForFence` (one lock-free `RunStore.get`, the #132 atomic
+   *   read — never a locked read); a store that shares one transaction with the runs reads the row
+   *   inside that transaction.
+   * - No update that would flip the predicate can land between the evaluation and the write: the
+   *   evaluation and the write share one critical section (the published fenced contract's racer
+   *   law). Global lock-ordering rule for a reader-backed store: a trace-buffer critical-section
    *   holder must never acquire the run-file lock, and a run-file-lock holder must never acquire a
-   *   WAL lock — callers that touch both (e.g. purge) always delete artifacts strictly BEFORE
-   *   their run-locked anchor delete, never the other way around.
-   * - A guard rejection propagates to the caller UNWRAPPED — the method performs no write/delete,
-   *   and the store's own error-wrapping (e.g. `toArtifactDeleteFailedError`) never touches it.
-   *
-   * Two-obligation form for a transaction-scoped store that enforces the race via a native SQL
-   * predicate instead of an in-process critical section (`fenceForm: 'native-predicate'` in the
-   * TCK): (1) `guard` is still invoked at least once per call, but MAY run outside the store's
-   * atomic section — it must never `await` foreign code while holding a transaction/row lock, and
-   * must never open a second pooled connection while the first is held. (2) The actual racing
-   * predicate must be enforced by a CONFLICT-INDUCING read in the SAME transaction as the
-   * buffer write (e.g. `SELECT ... FOR SHARE` at minimum — a plain same-transaction `WHERE` under
-   * READ COMMITTED is insufficient; it is vulnerable to statement-snapshot staleness). **A
-   * native-predicate store's race closure is NOT verified by a green TCK run** — the latch-based
-   * laws (`CS_OCCUPANCY`, `PER_KEY_INDEPENDENCE`, `NO_SILENT_LOSS`) produce an explicit, visible
-   * documented skip for such a store, never a silent pass; that store's OWN in-transaction fencing
-   * suite is what must verify race closure (the same posture `RunStore.claimStep`'s cross-host
-   * obligation already states for `CLAIM_SINGLE_OWNER`, issue #188).
+   *   trace-buffer lock — callers that touch both (e.g. purge) always delete artifacts strictly
+   *   BEFORE their run-locked anchor delete, never the other way around.
+   * - A refusal is exactly the error `evaluateFence` throws (each member's former guard's error),
+   *   propagated to the caller UNWRAPPED — the method performs no write/delete, and the store's own
+   *   error-wrapping (e.g. `toArtifactDeleteFailedError`) never touches it. A read failure other
+   *   than an absence the member tolerates also propagates unwrapped.
    *
    * Legacy `append`/`delete`/`deleteAllForRun` remain on the interface for any store that does not
    * declare the fenced trio. They are frozen in SHAPE except for the issue #189 widening, which
@@ -237,56 +236,52 @@ export interface TraceBufferStore {
     runId: string,
     stepId: string,
     entries: AgentTraceEntry[],
-    guard: () => Promise<void>,
+    fence: FencePredicate,
     options?: AppendOptions,
   ): Promise<AppendResult>;
 
   /**
-   * See `appendFenced`'s doc (above) for the shared guard contract and the all-or-nothing
-   * declaration rule. Runs `guard` inside the SAME per-(runId, stepId) critical section
+   * See `appendFenced`'s doc (above) for the shared fence contract and the all-or-nothing
+   * declaration rule. Evaluates `fence` inside the SAME per-(runId, stepId) critical section
    * `appendFenced` uses, immediately before deleting the buffer. Returns the number of entries
-   * actually deleted — `0` means the buffer was already absent (absence is success; the guard
-   * still runs first, and still gates the no-op). This same-critical-section count is what lets a
+   * actually deleted — `0` means the buffer was already absent (absence is success; the fence is
+   * still evaluated first, and still gates the no-op). This same-critical-section count is what lets a
    * caller (e.g. reclaim) report how many entries a destructive drain actually destroyed without a
    * separate, lock-re-entrant `read()` call — a store's own critical section must never be
    * re-entered from within itself.
    */
-  deleteFenced?(runId: string, stepId: string, guard: () => Promise<void>): Promise<number>;
+  deleteFenced?(runId: string, stepId: string, fence: FencePredicate): Promise<number>;
 
   /**
-   * See `appendFenced`'s doc (above) for the shared guard contract and the all-or-nothing
-   * declaration rule. Deletes every buffer for `runId` across all steps. `guard` is RE-INVOKED
-   * inside EACH per-file (per-(runId, stepId)) critical section, immediately before that file's
-   * delete — a refusal on any one file aborts the whole sweep with that file's error
+   * See `appendFenced`'s doc (above) for the shared fence contract and the all-or-nothing
+   * declaration rule. Deletes every buffer for `runId` across all steps. `fence` is RE-EVALUATED
+   * (a fresh read) inside EACH per-file (per-(runId, stepId)) critical section, immediately before
+   * that file's delete — a refusal on any one file aborts the whole sweep with that file's error
    * (stop-on-first-error, matching the legacy `deleteAllForRun`'s own semantics). When zero files
-   * match `runId` at all, `guard` is still consulted at least once — the scan (resolving which
-   * files match) necessarily runs first, then the guard is invoked at least once even for that
-   * empty result. If it throws, the sweep rejects with that error exactly as it would for a
-   * non-empty sweep — propagation is UNIFORM across the zero-match and non-empty cases (the TCK
-   * asserts rejection here, not merely invocation count: a refusing guard makes even a zero-match
-   * sweep reject). A guard rejection (e.g. a
-   * typed `STATE_RUN_BUSY`) propagates to the caller UNWRAPPED, past the store's own
-   * `toArtifactDeleteFailedError` wrapping — which still wraps genuine unlink/I-O failures,
-   * preserving the #183 absence/unreachable/corrupt trichotomy: a guard refusal is neither
+   * match `runId` at all, `fence` is still evaluated at least once — the scan (resolving which
+   * files match) necessarily runs first, then the fence is evaluated even for that empty result,
+   * and a refusal rejects the sweep exactly as it would a non-empty one (UNIFORM propagation). A
+   * refusal (e.g. a typed `STATE_RUN_BUSY`) propagates to the caller UNWRAPPED, past the store's
+   * own `toArtifactDeleteFailedError` wrapping — which still wraps genuine unlink/I-O failures,
+   * preserving the #183 absence/unreachable/corrupt trichotomy: a fence refusal is neither
    * "absent" nor a genuine I/O failure, it is a third, distinct outcome that must reach the caller
-   * exactly as the guard threw it.
+   * exactly as `evaluateFence` threw it.
    *
    * @param dirEntries Optional pre-scanned directory listing (see the legacy method's own doc) —
    *   ignored by non-fs implementations.
    */
   deleteAllForRunFenced?(
     runId: string,
-    guard: () => Promise<void>,
+    fence: FencePredicate,
     dirEntries?: readonly string[],
   ): Promise<ArtifactDeletionReport>;
 
   /**
    * **`sealFenced` (issue #197 PR-1, the `seal` rung — design §4).** Atomically retires the
    * ENTIRE live WAL for (runId, stepId) to a sealed artifact, under the SAME per-key critical
-   * section the fenced trio uses. `guard` runs IN-CS, immediately BEFORE the move (same guard
-   * contract as the trio: at-least-once invocation, completes before the mutating effect, exactly
-   * one lock-free `runStore.get`, never acquires its own lock, a rejection propagates UNWRAPPED —
-   * nothing is moved).
+   * section the fenced trio uses. `fence` is evaluated IN-CS, immediately BEFORE the move (the
+   * same fence contract as the trio: evaluated at least once, before the mutating effect, against
+   * one fresh read of the run; a refusal propagates UNWRAPPED — nothing is moved).
    *
    * Semantics:
    * - Absent live WAL ⇒ `{sealed: false, reason: 'absent'}` — #183 absence-is-success, not an
@@ -305,7 +300,7 @@ export interface TraceBufferStore {
    * A store implements this ONLY as part of declaring the `seal` rung (`storeDeclaresSeal`) —
    * requires the full fenced trio to already be declared (the ladder).
    */
-  sealFenced?(runId: string, stepId: string, guard: () => Promise<void>): Promise<SealResult>;
+  sealFenced?(runId: string, stepId: string, fence: FencePredicate): Promise<SealResult>;
 
   /**
    * **`listSealedForRun` (issue #197 PR-1, part of the `seal` rung — design §4).** Returns every
@@ -610,7 +605,7 @@ export function flattenWalBatches(batches: readonly SealedWalLine[]): BufferedEn
  * serialize on the SAME per-(runId, stepId) critical section `appendFenced`/`deleteFenced` use,
  * via a per-key async mutex (a promise-chain map) — every one of the operations for a given key
  * runs strictly after the previous operation on THAT SAME key has settled (success or failure).
- * Liveness posture: a hung guard hangs only that key's chain — a different key's chain is
+ * Liveness posture: a hung run read hangs only that key's chain — a different key's chain is
  * untouched and proceeds normally (this per-key granularity is load-bearing; see the TCK's
  * PER_KEY_INDEPENDENCE law). The chain map's entry for a key is deleted once its own tail
  * settles and no newer call has chained after it, so an idle key holds no Map entry (no leak).
@@ -636,6 +631,21 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
   // Sealed artifacts per key, in ascending `seq` order (issue #197 PR-1, the `seal` rung).
   private sealed = new Map<string, SealedArtifact[]>();
   private chains = new Map<string, Promise<void>>();
+
+  /** The run store every fence predicate is evaluated against (issue #616 PR-0) — the read the
+   *  former guards made. Absent ⇒ every fenced method refuses loudly (`fenceReaderMissingError`),
+   *  never a silently unfenced write. */
+  private readonly runReader: FenceRunReader | undefined;
+
+  constructor(runReader?: FenceRunReader) {
+    this.runReader = runReader;
+  }
+
+  /** Reads the run and evaluates `fence` — called INSIDE the per-key critical section, where the
+   *  guard call used to be. */
+  private async checkFence(runId: string, fence: FencePredicate): Promise<void> {
+    await checkFenceWithReader(this.runReader, 'InMemoryTraceBufferStore', runId, fence);
+  }
 
   private key(runId: string, stepId: string): string {
     return `${runId}:${stepId}`;
@@ -772,18 +782,18 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
     return this.withKeyLock(k, async () => this.appendUnlocked(k, entries, options?.writerNonce));
   }
 
-  /** guard runs INSIDE the per-key critical section, immediately before the write — see the
-   *  interface doc for the full guard contract. */
+  /** The fence is evaluated INSIDE the per-key critical section, immediately before the write —
+   *  see the interface doc for the full fence contract. */
   async appendFenced(
     runId: string,
     stepId: string,
     entries: AgentTraceEntry[],
-    guard: () => Promise<void>,
+    fence: FencePredicate,
     options?: AppendOptions,
   ): Promise<AppendResult> {
     const k = this.key(runId, stepId);
     return this.withKeyLock(k, async () => {
-      await guard();
+      await this.checkFence(runId, fence);
       return this.appendUnlocked(k, entries, options?.writerNonce);
     });
   }
@@ -800,16 +810,16 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
     });
   }
 
-  /** guard runs INSIDE the same per-key critical section `appendFenced` uses, immediately before
-   *  the delete — see the interface doc for the full guard contract. Returns the number of
-   *  entries actually deleted, summed across every live batch (0 = buffer already absent; the
-   *  guard still ran first). Sealed artifacts for this key are NOT touched — sealing exists
+  /** The fence is evaluated INSIDE the same per-key critical section `appendFenced` uses,
+   *  immediately before the delete — see the interface doc for the full fence contract. Returns the
+   *  number of entries actually deleted, summed across every live batch (0 = buffer already absent;
+   *  the fence was still evaluated first). Sealed artifacts for this key are NOT touched — sealing exists
    *  precisely to move content out of this destructive drain's reach; only `deleteAllForRun*`
    *  (run-level bulk delete) also retires sealed artifacts. */
-  async deleteFenced(runId: string, stepId: string, guard: () => Promise<void>): Promise<number> {
+  async deleteFenced(runId: string, stepId: string, fence: FencePredicate): Promise<number> {
     const k = this.key(runId, stepId);
     return this.withKeyLock(k, async () => {
-      await guard();
+      await this.checkFence(runId, fence);
       const existing = this.buffers.get(k);
       this.buffers.delete(k);
       return existing !== undefined ? flattenWalBatches(existing).length : 0;
@@ -869,25 +879,25 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
     return { bytes_deleted };
   }
 
-  /** guard is RE-INVOKED inside EACH per-(runId, stepId) critical section, immediately before
-   *  that key's delete — see the interface doc for the full guard contract, including the
-   *  zero-match-sweep invocation requirement (handled below: the guard still runs at least once
-   *  even when this run has no buffers at all). Sealed artifacts join this run-level bulk delete
+  /** The fence is RE-EVALUATED inside EACH per-(runId, stepId) critical section, immediately
+   *  before that key's delete — see the interface doc for the full fence contract, including the
+   *  zero-match-sweep requirement (handled below: the fence is still evaluated at least once even
+   *  when this run has no buffers at all). Sealed artifacts join this run-level bulk delete
    *  (design §4 — a sealed artifact is retained ONLY until its owning run itself is purged). */
   async deleteAllForRunFenced(
     runId: string,
-    guard: () => Promise<void>,
+    fence: FencePredicate,
     _dirEntries?: readonly string[],
   ): Promise<ArtifactDeletionReport> {
     const keys = this.keysForRun(runId);
     if (keys.size === 0) {
-      await guard();
+      await this.checkFence(runId, fence);
       return { bytes_deleted: 0 };
     }
     let bytes_deleted = 0;
     for (const k of keys) {
       await this.withKeyLock(k, async () => {
-        await guard();
+        await this.checkFence(runId, fence);
         bytes_deleted += this.bytesForKey(k);
         this.buffers.delete(k);
         this.sealed.delete(k);
@@ -896,16 +906,16 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
     return { bytes_deleted };
   }
 
-  /** guard runs INSIDE the per-key critical section, immediately before the seal-move — see the
-   *  interface doc for the full contract. Atomically retires the ENTIRE live batch history for
+  /** The fence is evaluated INSIDE the per-key critical section, immediately before the
+   *  seal-move — see the interface doc for the full contract. Atomically retires the ENTIRE live batch history for
    *  (runId, stepId) into a new sealed artifact (ascending `seq`), clearing the live buffer in
    *  the same step — the in-memory analogue of the fs store's no-clobber rename-based seal
    *  (there is no filesystem race to guard against here; the per-key mutex already serializes
    *  every operation on this key, so `seq` can simply be the next array index). */
-  async sealFenced(runId: string, stepId: string, guard: () => Promise<void>): Promise<SealResult> {
+  async sealFenced(runId: string, stepId: string, fence: FencePredicate): Promise<SealResult> {
     const k = this.key(runId, stepId);
     return this.withKeyLock(k, async () => {
-      await guard();
+      await this.checkFence(runId, fence);
       const live = this.buffers.get(k);
       if (live === undefined || live.length === 0) {
         return { sealed: false, reason: 'absent' };
