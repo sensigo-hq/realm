@@ -447,13 +447,11 @@ function buildPerKeyIndependenceCase(
  * Builds the NO_SILENT_LOSS case (issue #207, D3 §7): a settle (read-then-delete) racing a
  * still-parked `appendFenced` must adopt the full committed batch — never lose it silently.
  *
- * Scope note (issue #207 correction): this case only exercises the "settle wins the race, the
- * guard is never asked to refuse" path. The complementary branch — the guard REFUSING because a
- * settle already started (the `settledFlag` check inside this case's own guard) — is deliberately
- * NOT separately re-asserted as its own top-level assertion here: it is absorbed by
- * FENCE_REFUSES's own `appendFenced` refusal case above, which already asserts identical content
- * (typed rejection, nothing written). Duplicating that assertion under this law's banner too would
- * add no additional coverage.
+ * Scope note (issue #207 correction; #616 PR-0): this case only exercises the "settle wins the
+ * race, the fence passes" path — the append parks at its fence's run read, inside its critical
+ * section, while the settle starts. The complementary branch — the fence REFUSING because the run
+ * changed first — is not re-asserted here: FENCE_REFUSES's `appendFenced` refusal case and
+ * FENCE_DATA's false and racer cells (issue #616 PR-0) cover it.
  *
  * The one-sided fs caveat from `buildCsOccupancyCase`'s doc (above) applies here too: against a
  * lock-skipping (rather than genuinely non-serializing) violator, false-green risk here is a
@@ -1380,10 +1378,10 @@ export function fencedTraceBufferContract(
   });
 
   // ── FENCE_REFUSES ───────────────────────────────────────────────────────────────────────────
-  // Accepted limits of this law (issue #207 correction): FENCE_REFUSES asserts that a guard
-  // rejection propagates typed/unwrapped with nothing written/deleted — it does NOT, and cannot,
+  // Accepted limits of this law (issue #207 correction): FENCE_REFUSES asserts that a fence
+  // refusal propagates typed/unwrapped with nothing written/deleted — it does NOT, and cannot,
   // distinguish that outcome from a store that (a) performs the write/delete, THEN discovers the
-  // guard should have refused, and rolls the effect back via a compensating action
+  // fence should have refused, and rolls the effect back via a compensating action
   // (write-then-rollback); or (b) a genuine crash between the effect and its own bookkeeping
   // happens to leave residue that looks, from this law's own read-after observation, like
   // "nothing written". Both are indistinguishable from a true refusal by this law's assertions —
