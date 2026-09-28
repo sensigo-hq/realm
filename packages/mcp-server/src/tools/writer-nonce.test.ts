@@ -43,7 +43,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
     workflowDir = await mkdtemp(join(tmpdir(), 'realm-writer-nonce-wf-'));
     runStore = new JsonFileStore(runDir);
     workflowStore = new JsonWorkflowStore(workflowDir);
-    traceBufferStore = new InMemoryTraceBufferStore();
+    traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     const def = makeWorkflowDef();
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');

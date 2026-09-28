@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
+import { JsonFileStore } from '@sensigo/realm';
 import {
   perRunArtifactStoreContract,
   type PerRunArtifactStoreContractAdapter,
@@ -39,7 +40,8 @@ async function makeAdapter(): Promise<{
   cleanup: () => Promise<void>;
 }> {
   const dir = await mkdtemp(join(tmpdir(), 'json-trace-buffer-store-tck-'));
-  const store = new JsonTraceBufferStore(dir);
+  // issue #616 PR-0: fences read the (empty) run store beside the WAL — every run is absent.
+  const store = new JsonTraceBufferStore(dir, undefined, new JsonFileStore(dir));
   const runId = randomUUID();
   /**
    * FIXTURE TEETH (issue #189): this store owns TWO artifact classes — live WAL files and SEALED
@@ -50,7 +52,7 @@ async function makeAdapter(): Promise<{
    */
   const seed = async (): Promise<void> => {
     await store.append(runId, 'tck-sealed-step', [{ event: 'tck-to-be-sealed' }]);
-    const sealed = await store.sealFenced(runId, 'tck-sealed-step', async () => {});
+    const sealed = await store.sealFenced(runId, 'tck-sealed-step', { kind: 'run_absent' });
     if (!sealed.sealed) {
       throw new Error(
         `TCK fixture is toothless: sealFenced did not produce a sealed artifact (${JSON.stringify(sealed)}) — L6 needs both artifact classes present (issue #189).`,

@@ -115,7 +115,7 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
     const workflowStore = new JsonWorkflowStore(workflowDir);
     const runStore = makeStaticStore(makeGrandfathered());
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     // Correction: empty entries — the pre-CS checks (terminal_state, then stepStateOf) are the
     // ONLY guard on this path (issue #279 D3 §2's "raw unlocked path UNCONDITIONALLY" for the
@@ -177,7 +177,7 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
         return live;
       },
     };
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     // step 'c' is virgin on BOTH `live` and `grandfathered` (neither's completed/failed/skipped/
     // in_progress arrays name it, and the pending_gate's step_name is 'a') — so stepStateOf

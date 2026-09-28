@@ -127,7 +127,7 @@ describe('append_trace capacity early-warning (issue #208)', () => {
   // 1. Below threshold -> no warnings field at all (fenced store).
   it('below threshold: no warnings field (fenced store)', async () => {
     const { runId } = await setup();
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     const result = await handleAppendTrace(
       { run_id: runId, step_id: 'step-agent', entries: [{ event: 'tiny' }] },
@@ -141,7 +141,7 @@ describe('append_trace capacity early-warning (issue #208)', () => {
   // 2. Count-driven crossing.
   it('count-driven crossing: warning present, names entries as the binding dimension, correct numbers', async () => {
     const { runId } = await setup();
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     let result: Awaited<ReturnType<typeof handleAppendTrace>> | undefined;
     let seed = 0;
@@ -166,7 +166,7 @@ describe('append_trace capacity early-warning (issue #208)', () => {
   // 3. Bytes-driven crossing.
   it('bytes-driven crossing: entries low, bytes >= 80% -> warning present, names bytes', async () => {
     const { runId } = await setup();
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     let result: Awaited<ReturnType<typeof handleAppendTrace>> | undefined;
     let seed = 0;
@@ -217,7 +217,7 @@ describe('append_trace capacity early-warning (issue #208)', () => {
   // 5. Empty-entries probe.
   it('empty-entries probe against a buffer already >= 80%: warning present', async () => {
     const { runId } = await setup();
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     let seeded: Awaited<ReturnType<typeof handleAppendTrace>> | undefined;
     let seed = 0;
@@ -241,7 +241,7 @@ describe('append_trace capacity early-warning (issue #208)', () => {
 
   it('empty-entries probe against a small buffer: no warnings', async () => {
     const { runId } = await setup();
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(runStore);
     await handleAppendTrace(
       { run_id: runId, step_id: 'step-agent', entries: [tinyEntry(0)] },
       { runStore, workflowStore, traceBufferStore },
@@ -258,7 +258,7 @@ describe('append_trace capacity early-warning (issue #208)', () => {
   // 6. Boundary: exactly at the threshold.
   it('boundary: exactly at the 80% threshold (160/200 entries) -> warning present (>=, not >)', async () => {
     const { runId } = await setup();
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     // Seed 159 directly (bypassing the tool — InMemoryTraceBufferStore.append applies the exact
     // same normalization the tool's own call would), then the 160th via the tool — landing at

@@ -49,7 +49,7 @@ describe('handleAppendTrace', () => {
     workflowDir = await mkdtemp(join(tmpdir(), 'realm-append-trace-wf-'));
     runStore = new JsonFileStore(runDir);
     workflowStore = new JsonWorkflowStore(workflowDir);
-    traceBufferStore = new InMemoryTraceBufferStore();
+    traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     const def = makeWorkflowDef();
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
@@ -318,7 +318,7 @@ describe('append_trace terminal-run guard (issue #187)', () => {
     workflowDir = await mkdtemp(join(tmpdir(), 'realm-append-trace-terminal-wf-'));
     runStore = new JsonFileStore(runDir);
     workflowStore = new JsonWorkflowStore(workflowDir);
-    traceBufferStore = new InMemoryTraceBufferStore();
+    traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     const def = makeWorkflowDef();
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
@@ -418,7 +418,7 @@ describe('registerAppendTrace — ResponseEnvelope error shape', () => {
     workflowDir = await mkdtemp(join(tmpdir(), 'realm-append-reg-wf-'));
     runStore = new JsonFileStore(runDir);
     workflowStore = new JsonWorkflowStore(workflowDir);
-    traceBufferStore = new InMemoryTraceBufferStore();
+    traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     const def = makeWorkflowDef();
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');

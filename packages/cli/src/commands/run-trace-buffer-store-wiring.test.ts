@@ -21,7 +21,7 @@ describe("realm run's executeChain call receives a defined traceBufferStore (iss
   const src = readFileSync(join(DIR, 'run.ts'), 'utf8');
 
   it('constructs a JsonTraceBufferStore beside the run store', () => {
-    expect(src).toMatch(/new JsonTraceBufferStore\(store\.runsDirPath\)/);
+    expect(src).toMatch(/new JsonTraceBufferStore\(store\.runsDirPath, undefined, store\)/);
   });
 
   it("passes traceBufferStore into executeChain's options", () => {
@@ -35,7 +35,7 @@ describe("realm agent's runAgent calls receive a defined traceBufferStore (issue
   const src = readFileSync(join(DIR, 'agent.ts'), 'utf8');
 
   it('constructs a JsonTraceBufferStore beside the concrete JsonFileStore', () => {
-    expect(src).toMatch(/new JsonTraceBufferStore\(store\.runsDirPath\)/);
+    expect(src).toMatch(/new JsonTraceBufferStore\(store\.runsDirPath, undefined, store\)/);
   });
 
   it('both runAgent(...) call sites (attach path and fresh-workflow path) pass traceBufferStore', () => {

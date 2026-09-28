@@ -239,11 +239,13 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
         const def = agentWorkflowDef('seam-inject-wf');
         await workflowStore.register(def);
 
-        const injectedTraceBufferStore = new InMemoryTraceBufferStore();
+        // issue #616 PR-0: the injected trace buffer reads the injected run store.
+        const injectedRunStore = new MinimalRunStore();
+        const injectedTraceBufferStore = new InMemoryTraceBufferStore(injectedRunStore);
         const injectedFailedAttemptStore = makeFailedAttemptStoreDouble();
 
         const server = createRealmMcpServer({
-          runStore: new MinimalRunStore(), // no runsDirPath — injection is the ONLY path here
+          runStore: injectedRunStore, // no runsDirPath — injection is the ONLY path here
           workflowStore,
           traceBufferStore: injectedTraceBufferStore,
           failedAttemptStore: injectedFailedAttemptStore,
@@ -302,10 +304,11 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
 
         const injectedFailedAttemptStore = makeFailedAttemptStoreDouble();
 
+        const injectedRunStore = new MinimalRunStore();
         const server = createRealmMcpServer({
-          runStore: new MinimalRunStore(),
+          runStore: injectedRunStore,
           workflowStore,
-          traceBufferStore: new InMemoryTraceBufferStore(),
+          traceBufferStore: new InMemoryTraceBufferStore(injectedRunStore),
           failedAttemptStore: injectedFailedAttemptStore,
         });
         const callTool = await connectClient(server);

@@ -71,7 +71,8 @@ async function makeStores(): Promise<Stores> {
   const dir = await mkdtemp(join(tmpdir(), 'purge-test-'));
   const runStore = new JsonFileStore(dir);
   const failedAttemptStore = new FailedAttemptStore(dir);
-  const traceBufferStore = new JsonTraceBufferStore(dir);
+  // issue #616 PR-0: the trace buffer evaluates fences against the anchor run store.
+  const traceBufferStore = new JsonTraceBufferStore(dir, undefined, runStore);
   return {
     dir,
     runStore,
@@ -869,7 +870,7 @@ describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
         sealed_by: { arm: 'complete' },
       });
       await injectRun(dir, run);
-      const traceBufferStore = new JsonTraceBufferStore(dir);
+      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, runStore);
       await traceBufferStore.append(run.id, 'step-agent', [{ event: 'e' }]);
       const fencedSpy = vi.spyOn(traceBufferStore, 'deleteAllForRunFenced');
       const legacySpy = vi.spyOn(traceBufferStore, 'deleteAllForRun');
@@ -897,8 +898,6 @@ describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
         sealed_by: { arm: 'complete' },
       });
       await injectRun(dir, run);
-      const traceBufferStore = new JsonTraceBufferStore(dir);
-      await traceBufferStore.append(run.id, 'step-agent', [{ event: 'e' }]);
 
       let getCalls = 0;
       let anchorDeleteCalls = 0;
@@ -923,6 +922,10 @@ describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
           return runStore.deleteAllForRun(id, dirEntries);
         },
       };
+      // issue #616 PR-0: the trace buffer evaluates the fence against ITS run reader — here the
+      // anchor stub, so the simulated resume on the third read is what the fence sees.
+      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, anchorStub);
+      await traceBufferStore.append(run.id, 'step-agent', [{ event: 'e' }]);
 
       const result = await purgeRuns({ runId: 'resumed-mid-purge', dryRun: false }, anchorStub, [
         traceBufferStore,
@@ -972,9 +975,12 @@ describe('purgeRuns — sealed artifacts (issue #197 PR-2, deliverable 3b: VERIF
         sealed_by: { arm: 'complete' },
       });
       await injectRun(dir, run);
-      const traceBufferStore = new JsonTraceBufferStore(dir);
+      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, runStore);
       await traceBufferStore.append(run.id, 'step-agent', [{ event: 'stale' }]);
-      const sealResult = await traceBufferStore.sealFenced!(run.id, 'step-agent', async () => {});
+      const sealResult = await traceBufferStore.sealFenced!(run.id, 'step-agent', {
+        kind: 'run_at_version',
+        version: run.version,
+      });
       expect(sealResult).toEqual({ sealed: true });
       // Confirm the sealed artifact exists on disk BEFORE purging (the premise this test proves).
       expect((await traceBufferStore.listSealedForRun!(run.id)).length).toBe(1);
@@ -1026,7 +1032,9 @@ describe('purge byte figures are store-reported (issue #189)', () => {
     // counted only live WAL would under-report every run that ever sealed — a regression, since
     // the dying substring scan did catch sealed files.
     await s.traceBufferStore.append(runId, 'step-sealed', [{ event: 'to-be-sealed' }]);
-    const sealed = await s.traceBufferStore.sealFenced(runId, 'step-sealed', async () => {});
+    const sealed = await s.traceBufferStore.sealFenced(runId, 'step-sealed', {
+      kind: 'run_absent_or_terminal',
+    });
     expect(sealed.sealed, 'fixture must produce a sealed artifact').toBe(true);
   }
 

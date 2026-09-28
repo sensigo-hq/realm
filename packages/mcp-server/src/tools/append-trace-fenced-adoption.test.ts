@@ -105,7 +105,7 @@ describe('append_trace fenced-trio adoption — behavioral spy (issue #207 PR-2)
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(runStore);
     const appendFencedSpy = vi.spyOn(traceBufferStore, 'appendFenced');
     const appendSpy = vi.spyOn(traceBufferStore, 'append');
 
@@ -126,7 +126,7 @@ describe('append_trace fenced-trio adoption — behavioral spy (issue #207 PR-2)
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(runStore);
     const appendFencedSpy = vi.spyOn(traceBufferStore, 'appendFenced');
     const appendSpy = vi.spyOn(traceBufferStore, 'append');
 

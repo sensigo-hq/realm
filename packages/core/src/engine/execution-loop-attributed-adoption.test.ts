@@ -15,6 +15,7 @@ import {
 } from '../store/trace-buffer-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { TraceBufferStore } from '../store/trace-buffer-store.js';
+import type { FenceRunReader } from '../store/fence-predicate.js';
 
 const agentDef: WorkflowDefinition = {
   id: 'attributed-adoption-agent-wf',
@@ -55,8 +56,11 @@ const congruenceDef: WorkflowDefinition = {
  * modeling "a store declaring the fenced trio alone" (the shipped realm-cloud Postgres state,
  * design §3) for the floor-law test below.
  */
-function trioOnlyStore(): { store: TraceBufferStore; inner: InMemoryTraceBufferStore } {
-  const inner = new InMemoryTraceBufferStore();
+function trioOnlyStore(runReader: FenceRunReader): {
+  store: TraceBufferStore;
+  inner: InMemoryTraceBufferStore;
+} {
+  const inner = new InMemoryTraceBufferStore(runReader);
   const store: TraceBufferStore = {
     append: (runId, stepId, entries, options) => inner.append(runId, stepId, entries, options),
     read: (runId, stepId) => inner.read(runId, stepId),
@@ -64,11 +68,11 @@ function trioOnlyStore(): { store: TraceBufferStore; inner: InMemoryTraceBufferS
     deleteAllForRun: (runId, dirEntries) => inner.deleteAllForRun(runId, dirEntries),
     statAllForRun: (runId, dirEntries) => inner.statAllForRun(runId, dirEntries),
     readAllForRun: (runId) => inner.readAllForRun(runId),
-    appendFenced: (runId, stepId, entries, guard, options) =>
-      inner.appendFenced(runId, stepId, entries, guard, options),
-    deleteFenced: (runId, stepId, guard) => inner.deleteFenced(runId, stepId, guard),
-    deleteAllForRunFenced: (runId, guard, dirEntries) =>
-      inner.deleteAllForRunFenced(runId, guard, dirEntries),
+    appendFenced: (runId, stepId, entries, fence, options) =>
+      inner.appendFenced(runId, stepId, entries, fence, options),
+    deleteFenced: (runId, stepId, fence) => inner.deleteFenced(runId, stepId, fence),
+    deleteAllForRunFenced: (runId, fence, dirEntries) =>
+      inner.deleteAllForRunFenced(runId, fence, dirEntries),
   };
   return { store, inner };
 }
@@ -91,7 +95,7 @@ describe('execution-loop.ts — activation-gate floor law (issue #197 PR-2, desi
       workflowVersion: 1,
       params: {},
     });
-    const { store: traceBufferStore } = trioOnlyStore();
+    const { store: traceBufferStore } = trioOnlyStore(store);
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'a' }, { event: 'b' }]);
 
     const envelope = await executeStep(store, agentDef, {
@@ -127,7 +131,7 @@ describe('execution-loop.ts — activation-gate floor law (issue #197 PR-2, desi
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'own' }], {
       writerNonce: 'my-nonce',
     });
@@ -170,7 +174,7 @@ describe('execution-loop.ts — ADOPTION_CONGRUENCE (issue #197 PR-2, design §2
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     // A foreign line that would FAIL the schema if it were validated (event !== 'expected_event').
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'other_writers_event' }], {
       writerNonce: 'other-writer',
@@ -214,7 +218,7 @@ describe('execution-loop.ts — the three-way honest split (issue #197 PR-2, des
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'a' }, { event: 'b' }]);
 
     const envelope = await executeStep(store, agentDef, {
@@ -241,7 +245,7 @@ describe('execution-loop.ts — the three-way honest split (issue #197 PR-2, des
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'a' }, { event: 'b' }], {
       writerNonce: 'my-nonce',
     });
@@ -270,7 +274,7 @@ describe('execution-loop.ts — the three-way honest split (issue #197 PR-2, des
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'own' }], {
       writerNonce: 'my-nonce',
     });
@@ -322,7 +326,7 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'foreign' }], {
       writerNonce: 'other-writer',
     });
@@ -380,11 +384,14 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     // Fill the per-key seal budget completely BEFORE this step ever settles.
     for (let i = 0; i < SEALED_ARTIFACTS_LIMIT_PER_STEP; i++) {
       await traceBufferStore.append(run.id, 'step-agent', [{ event: `filler-${i}` }]);
-      const result = await traceBufferStore.sealFenced(run.id, 'step-agent', async () => {});
+      const result = await traceBufferStore.sealFenced(run.id, 'step-agent', {
+        kind: 'step_not_in_progress',
+        step_id: 'step-agent',
+      });
       expect(result).toEqual({ sealed: true });
     }
     // Now the step's OWN settle-time seal attempt will find the budget exhausted.
@@ -420,7 +427,7 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'foreign' }], {
       writerNonce: 'other-writer',
     });
@@ -453,7 +460,7 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'foreign' }], {
       writerNonce: 'other-writer',
     });
@@ -481,7 +488,7 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'a' }]); // bare only — all-bare traffic
     const sealSpy = vi.spyOn(traceBufferStore, 'sealFenced');
     const deleteSpy = vi.spyOn(traceBufferStore, 'delete');
@@ -519,7 +526,7 @@ describe('execution-loop.ts — half-minted advisory heuristics (issue #197 PR-2
       params: {},
     });
     // Full store (seal + carriage) so the partition genuinely runs.
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     // Two BARE lines only — no own-nonce line, no other-writer-nonce line.
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'a' }, { event: 'b' }]);
 
@@ -554,7 +561,7 @@ describe('execution-loop.ts — half-minted advisory heuristics (issue #197 PR-2
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     // Two lines, BOTH under the SAME foreign nonce — exactly one distinct foreign nonce.
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'a' }, { event: 'b' }], {
       writerNonce: 'the-only-foreign-writer',
@@ -587,7 +594,7 @@ describe('execution-loop.ts — half-minted advisory heuristics (issue #197 PR-2
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'a' }], {
       writerNonce: 'writer-a',
     });
@@ -622,7 +629,7 @@ describe('execution-loop.ts — half-minted advisory heuristics (issue #197 PR-2
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'own' }], {
       writerNonce: 'my-nonce',
     });

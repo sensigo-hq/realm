@@ -10,6 +10,7 @@ import { executeStep } from './execution-loop.js';
 import { RECLAIM_REFUSES_GATE_STEP } from './settlement.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { InMemoryTraceBufferStore } from '../store/trace-buffer-store.js';
+import { checkFenceWithReader } from '../store/fence-predicate.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunStore } from '../store/store-interface.js';
@@ -520,7 +521,7 @@ describe('reclaimStep — clearing the stale trace buffer (issue #198)', () => {
     const claimed = await store.claimStep(run.id, 'step-agent', agentReclaimWf);
     await store.update({ ...claimed, claims: { 'step-agent': { deadline: pastIso() } } });
 
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'dead_attempt_line' }]);
     expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(1);
 
@@ -631,7 +632,7 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
     const claimed = await store.claimStep(run.id, 'step-agent', agentReclaimWf);
     await store.update({ ...claimed, claims: { 'step-agent': { deadline: pastIso() } } });
 
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'dead_attempt_line' }]);
 
     const calls: string[] = [];
@@ -708,8 +709,8 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
       deleteAllForRun: async () => ({ bytes_deleted: 0 }),
       statAllForRun: async () => ({ bytes: 0 }),
       readAllForRun: async () => ({}),
-      deleteFenced: async (_runId, _stepId, guard) => {
-        await guard();
+      deleteFenced: async (runId, _stepId, fence) => {
+        await checkFenceWithReader(store, 'trio-only stub', runId, fence);
         const existing = buffers.get(key) ?? [];
         buffers.delete(key);
         return existing.length;
@@ -785,8 +786,10 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
       deleteAllForRun: async () => ({ bytes_deleted: 0 }),
       statAllForRun: async () => ({ bytes: 0 }),
       readAllForRun: async () => ({}),
-      deleteFenced: async (_runId, _stepId, guard) => {
-        await guard(); // throws (refuses) at both checkpoints in this test — never reached below
+      deleteFenced: async (runId, _stepId, fence) => {
+        // The fence reads the scripted run store (issue #616 PR-0) — refuses at both checkpoints
+        // in this test, so the clear below is never reached.
+        await checkFenceWithReader(scriptedRunStore, 'scripted stub', runId, fence);
         deleteFencedCalls.push('cleared');
         return 4;
       },

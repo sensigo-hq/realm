@@ -86,7 +86,7 @@ describe('PURGE_DERIVES_PHASE end-to-end (issue #279, increment 2, PR-C)', () =>
     const dir = await mkdtemp(join(tmpdir(), 'realm-282-purge-'));
     try {
       const runStore = new JsonFileStore(dir);
-      const traceBufferStore = new JsonTraceBufferStore(dir);
+      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, runStore);
       const run = makeGrandfatheredFixture({});
       await injectRun(dir, run);
 
@@ -106,7 +106,7 @@ describe('PURGE_DERIVES_PHASE end-to-end (issue #279, increment 2, PR-C)', () =>
     const dir = await mkdtemp(join(tmpdir(), 'realm-282-purge-batch-'));
     try {
       const runStore = new JsonFileStore(dir);
-      const traceBufferStore = new JsonTraceBufferStore(dir);
+      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, runStore);
       const run = makeGrandfatheredFixture({
         id: 'g-unknown-claim',
         completed_steps: [],
@@ -178,7 +178,7 @@ describe('EXPORT_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
     const dir = await mkdtemp(join(tmpdir(), 'realm-282-export-honest-'));
     try {
       const runStore = new JsonFileStore(dir);
-      const traceBufferStore = new JsonTraceBufferStore(dir);
+      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, runStore);
       const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
       const sealed = await runStore.update({
         ...run,
@@ -202,7 +202,7 @@ describe('EXPORT_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
     const dir = await mkdtemp(join(tmpdir(), 'realm-282-export-drain-'));
     try {
       const runStore = new JsonFileStore(dir);
-      const traceBufferStore = new JsonTraceBufferStore(dir);
+      const traceBufferStore = new JsonTraceBufferStore(dir, undefined, runStore);
       const run = makeGrandfatheredFixture({
         finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
       });
