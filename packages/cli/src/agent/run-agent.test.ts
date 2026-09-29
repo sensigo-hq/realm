@@ -519,7 +519,7 @@ describe('runAgent — traceBufferStore threading (issue #207 PR-2, mixed-wiring
     const runId = initialRecord.id;
 
     const { InMemoryTraceBufferStore } = await import('@sensigo/realm');
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(runId, 'summarize', [{ event: 'streamed_before_execute' }]);
 
     const provider = new (class extends LlmProvider {

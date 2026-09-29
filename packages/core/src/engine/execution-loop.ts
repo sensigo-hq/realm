@@ -809,8 +809,8 @@ function buildCompensatingUnclaim(pendingRun: RunRecord, stepName: string, now: 
 // surfaces as the run store's own typed `STATE_RUN_NOT_FOUND` — the predicate requires the run
 // to exist, and that refusal propagates as an ordinary fence refusal, which the caller's uniform
 // "a throw ⇒ warn + skip the delete" handling already covers correctly (residue-not-loss either
-// way). The trace buffer's run reader must be the run store `executeStep` writes — every host
-// constructs it so.
+// way). The trace buffer's run reader must read the same runs as the run store `executeStep`
+// writes — every host constructs it so (the MCP tool may open its own store over the same runs).
 
 /**
  * Issue #185 Fix 1 (budget-priority): builds the merged, canonicalized trace for an agent step,
@@ -3187,7 +3187,7 @@ export async function executeStep(
             const sealResult = await options.traceBufferStore.sealFenced!(
               options.runId,
               options.command,
-              { kind: 'step_not_in_progress', step_id: options.command },
+              { kind: 'step_not_in_progress' },
             );
             if (sealResult.sealed) {
               performPlainDelete = false;
@@ -3359,7 +3359,7 @@ export async function executeStep(
           const sealResult = await options.traceBufferStore.sealFenced!(
             options.runId,
             options.command,
-            { kind: 'step_not_in_progress', step_id: options.command },
+            { kind: 'step_not_in_progress' },
           );
           if (sealResult.sealed) {
             performPlainDelete = false;
@@ -3919,7 +3919,7 @@ export async function executeStep(
           const sealResult = await options.traceBufferStore.sealFenced!(
             options.runId,
             options.command,
-            { kind: 'step_not_in_progress', step_id: options.command },
+            { kind: 'step_not_in_progress' },
           );
           if (sealResult.sealed) {
             performPlainDelete = false;
@@ -4098,7 +4098,7 @@ export async function executeStep(
         const sealResult = await options.traceBufferStore.sealFenced!(
           options.runId,
           options.command,
-          { kind: 'step_not_in_progress', step_id: options.command },
+          { kind: 'step_not_in_progress' },
         );
         if (sealResult.sealed) {
           performPlainDelete = false;

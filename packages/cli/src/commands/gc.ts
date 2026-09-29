@@ -57,7 +57,7 @@ import type {
   RunStore,
   RunRecord,
   RunPhase,
-  FencePredicate,
+  RunScopedFencePredicate,
 } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 
@@ -234,7 +234,7 @@ export interface OrphanArtifactSweepResult {
   /**
    * A fenced candidate's `run_absent` fence refused because the run EXISTS AGAIN at destruction time — a
    * `JsonFileStore.save()` re-import landing between this sweep's snapshot and the reap (issue
-   * #207 PR-2, D3 §5: the resurrect race gc's absent-guard closes, symmetric with purge's
+   * #207 PR-2, D3 §5: the resurrect race the `run_absent` fence closes, symmetric with purge's
    * terminal-re-verify). Benign: these files are no longer orphans by definition, so this is
    * NEVER an `artifactSweepError` and never affects `gcExitCode`. Only ever populated for a
    * store that declares the fenced trio — the legacy (non-declaring-store) fallback path can't
@@ -334,7 +334,7 @@ export async function sweepOrphanArtifacts(
       }
       for (const [runId, group] of byRunId) {
         const dirEntries = group.map((a) => basename(a.path));
-        const fence: FencePredicate = { kind: 'run_absent' };
+        const fence: RunScopedFencePredicate = { kind: 'run_absent' };
         try {
           await store.deleteAllForRunFenced(runId, fence, dirEntries);
           for (const a of group) result.reaped.push({ path: a.path, runId: a.runId });
@@ -387,7 +387,7 @@ interface DeleteAllForRunFencedCapable {
   // reconcile against purge's. Behaviour is unchanged; only the type tells the truth.
   deleteAllForRunFenced(
     runId: string,
-    fence: FencePredicate,
+    fence: RunScopedFencePredicate,
     dirEntries?: readonly string[],
   ): Promise<ArtifactDeletionReport>;
 }

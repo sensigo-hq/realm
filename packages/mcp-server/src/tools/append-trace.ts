@@ -30,6 +30,8 @@ export interface HandleAppendTraceStores {
   /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
   runStore?: RunStore;
   workflowStore?: JsonWorkflowStore;
+  /** The trace buffer the entries land in. Its run reader must read the same runs as `runStore`:
+   *  the write-time fence reads the trace buffer's own reader (issue #616), never `runStore`. */
   traceBufferStore?: TraceBufferStore;
 }
 
@@ -199,7 +201,7 @@ export async function handleAppendTrace(
   // 1. Load the run. Throws STATE_RUN_NOT_FOUND if missing.
   const run = await runStore.get(args.run_id);
 
-  // 1b. issue #187: reject a terminal run BEFORE any step guard or WAL write. A WAL appended to
+  // 1b. issue #187: reject a terminal run BEFORE the fence or any WAL write. A WAL appended to
   // a completed/failed/abandoned/aborted run is always unreadable residue — the step it names
   // will never finalize again, so nothing will ever adopt or delete it. This is the one orphan
   // source correct purge ordering structurally can't reach (a WAL born after purge's snapshot
@@ -265,7 +267,7 @@ export async function handleAppendTrace(
   }
 
   // 5. Pre-CS fast-fail eligibility check (issue #207 PR-2): granular step_state values aligned
-  // to the guard taxonomy (stepStateOf/stepNotEligibleError, above) — 'skipped' is a NEW check
+  // to the fence's taxonomy (core's stepStateOf/stepNotEligibleError) — 'skipped' is a NEW check
   // (the latent omission D3 identified: a skipped step could previously still accept a trace
   // append). Race-invariant: step existence and execution === 'agent' were already closed over
   // above: this check only reads the four step-membership arrays off the SAME pre-CS `run` load.
@@ -327,11 +329,7 @@ export async function handleAppendTrace(
     // version THIS call observed: the `run_not_found` refusal reports it (the run is gone, so
     // there is no fresher version to report).
     const appendFenced = traceBufferStore.appendFenced.bind(traceBufferStore);
-    const fence: FencePredicate = {
-      kind: 'step_open_for_trace',
-      step_id: args.step_id,
-      run_version: run.version,
-    };
+    const fence: FencePredicate = { kind: 'step_open_for_trace', run_version: run.version };
     const result = await appendFenced(args.run_id, args.step_id, args.entries, fence, nonceOptions);
     return buildAppendOkResult(result, args.writer_nonce, carriageActive, []);
   }

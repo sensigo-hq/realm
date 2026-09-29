@@ -15,16 +15,18 @@
 //
 // Issue #616 PR-0: the fence is DATA (`FencePredicate`), evaluated by the store against the run
 // it reads inside its own critical section. The latch that used to be an injected guard is now a
-// PARKED RUN READ (`FenceRunSource.parkNextRead`) — the read sits exactly where the guard call sat,
+// PARKED RUN READ (`FenceRunPark.parkNextRead`) — the read sits exactly where the guard call sat,
 // so every latch-based law keeps its instrument — and the new FENCE_DATA law runs each of the five
 // members true, false, and against a racer that flips the predicate mid-evaluation.
 import {
   WorkflowError,
   FsIoError,
   evaluateFence,
+  isStepScopedFence,
   FENCE_PREDICATE_KINDS,
   type FencePredicate,
   type FencePredicateKind,
+  type RunScopedFencePredicate,
   type RunRecord,
   type TraceBufferStore,
   type AgentTraceEntry,
@@ -36,7 +38,12 @@ import {
   BUFFER_BACKSTOP_COUNT,
   SEALED_ARTIFACTS_LIMIT_PER_STEP,
 } from '@sensigo/realm';
-import { fenceTestRun, type FenceRunControl, type FenceRunPark } from './fence-run-source.js';
+import {
+  fenceTestRun,
+  type FenceRunControl,
+  type FenceRunPark,
+  type ParkedRead,
+} from './fence-run-source.js';
 
 /**
  * One of the laws every fenced-trio-declaring `TraceBufferStore` must satisfy. The original five
@@ -85,8 +92,9 @@ export interface FencedTraceBufferContractCase {
  */
 export type FencedTraceBufferContractAdapter = {
   /** The store under test — already declaring the fenced trio (`appendFenced`/`deleteFenced`/
-   *  `deleteAllForRunFenced`). For an `'injected-reader'` store it must be constructed over
-   *  `fenceRuns.reader` (below), and with a sufficiently generous lock-acquisition profile (see
+   *  `deleteAllForRunFenced`). For an `'injected-reader'` store it must be constructed over the
+   *  run source's `reader` (`createFenceRunSource().reader` — the same source whose `control` is
+   *  `fenceRuns`, below), and with a sufficiently generous lock-acquisition profile (see
    *  `lockProfile`) so a deliberately-parked run read in the latch-based laws doesn't cause a
    *  concurrent caller's own acquisition attempt to give up before the law's observation window
    *  completes. */
@@ -167,13 +175,16 @@ const REFUSAL_CODE = 'STATE_RUN_BUSY';
 
 /** A fence that PASSES on every fresh TCK key: `run_absent`, and the TCK never creates a run for a
  *  key unless a case does so explicitly. */
-const PASSING_FENCE: FencePredicate = { kind: 'run_absent' };
+const PASSING_FENCE: RunScopedFencePredicate = { kind: 'run_absent' };
 
 /** A fence that REFUSES with a typed, populated-category `WorkflowError` (`STATE_RUN_BUSY`,
  *  retryable): `run_absent_or_terminal` over a live run the TCK creates for `runId`. Deliberately a
  *  real `WorkflowError` refusal so the laws can assert the reason category actually propagates,
  *  not just "something" propagates. */
-function refusingFence(adapter: FencedTraceBufferContractAdapter, runId: string): FencePredicate {
+function refusingFence(
+  adapter: FencedTraceBufferContractAdapter,
+  runId: string,
+): RunScopedFencePredicate {
   adapter.fenceRuns.put(fenceTestRun(runId));
   return { kind: 'run_absent_or_terminal' };
 }
@@ -289,6 +300,31 @@ function recordSettlement<T>(p: Promise<T>): {
 
 type CsHolder = 'appendFenced' | 'deleteFenced' | 'deleteAllForRunFenced';
 
+/**
+ * Waits until the holder's fenced read is parked inside its critical section — that parked read is
+ * what holds the key. A holder that settles first never read the run, so it never held the key: that
+ * is a named failure, never a wait for the framework's timeout (a store is free to wire each case as
+ * its own test, where a bare timeout would say nothing).
+ */
+async function awaitHolderParked(
+  parked: ParkedRead,
+  holderP: Promise<unknown>,
+  holderMethod: string,
+  context: string,
+): Promise<void> {
+  const settled = holderP.then(
+    () => 'settled' as const,
+    () => 'settled' as const,
+  );
+  const first = await Promise.race([parked.entered.then(() => 'entered' as const), settled]);
+  if (first !== 'entered') {
+    throw new Error(
+      `${context}: ${holderMethod} settled without reading the run for its fence, so the key was ` +
+        'never held — a fenced method must read the run inside the critical section it fences',
+    );
+  }
+}
+
 /** Starts `holder` latched open on (runId, stepId): the NEXT read of `runId` is parked, so the
  *  holder parks INSIDE its critical section at its fence evaluation (issue #616 PR-0 — the parked
  *  read replaced the latch-injected guard). Returns the parked promise + the release handle. Every
@@ -315,7 +351,7 @@ async function startLatchedHolder(
   } else {
     parkedP = store.deleteAllForRunFenced!(runId, PASSING_FENCE);
   }
-  await parked.entered;
+  await awaitHolderParked(parked, parkedP, holder, 'the key-holding setup');
   return { parkedP, latch: { release: parked.release } };
 }
 
@@ -968,10 +1004,10 @@ function buildVerbatimCases(
 
 // ── FENCE_DATA (issue #616 PR-0, design D4 L-FENCE-DATA) ─────────────────────────────────────────
 
-/** The fenced method each member's realm call sites use — the true/false/racer cells drive the
- *  member through it. `step_not_in_progress` is realm's settle-time SEAL fence; on a store that
- *  does not declare `seal` it is driven through `deleteFenced` (the evaluation does not depend on
- *  the method that carries it). */
+/** The fenced methods that carry each member — the true/false/racer cells drive the member through
+ *  every one of them. `step_not_in_progress` is realm's settle-time SEAL fence and is driven
+ *  through `deleteFenced` as well, so each per-step method is seen passing its own step to a step
+ *  member; on a store that does not declare `seal`, `deleteFenced` alone carries it. */
 type FencedMethod = 'appendFenced' | 'deleteFenced' | 'deleteAllForRunFenced' | 'sealFenced';
 
 /** One run state a member is evaluated against: `run` is what the store reads (`null` = absent). */
@@ -981,20 +1017,20 @@ interface FenceState {
 }
 
 /** A member's cells: the fence, the state(s) that make it TRUE, the state(s) that make it FALSE,
- *  and the method that carries it. Every member of `FENCE_PREDICATE_KINDS` has exactly one row —
+ *  and the methods that carry it. Every member of `FENCE_PREDICATE_KINDS` has exactly one row —
  *  the `satisfies` below breaks the build if a sixth member is added without its cells. */
 interface FenceMemberCells {
   fence: (runId: string, stepId: string) => FencePredicate;
   trueStates: FenceState[];
   falseStates: FenceState[];
-  method: (store: TraceBufferStore) => FencedMethod;
+  methods: (store: TraceBufferStore) => FencedMethod[];
 }
 
 const ABSENT: FenceState = { label: 'the run is absent', run: () => null };
 
 const FENCE_MEMBER_CELLS = {
   step_open_for_trace: {
-    fence: (_runId, stepId) => ({ kind: 'step_open_for_trace', step_id: stepId, run_version: 1 }),
+    fence: () => ({ kind: 'step_open_for_trace', run_version: 1 }),
     trueStates: [
       { label: 'a live run with the step in no set', run: (runId) => fenceTestRun(runId) },
     ],
@@ -1008,18 +1044,26 @@ const FENCE_MEMBER_CELLS = {
         run: (runId, stepId) => fenceTestRun(runId, { version: 3, completed_steps: [stepId] }),
       },
       {
+        label: 'the step failed',
+        run: (runId, stepId) => fenceTestRun(runId, { version: 5, failed_steps: [stepId] }),
+      },
+      {
+        label: 'the step was skipped',
+        run: (runId, stepId) => fenceTestRun(runId, { version: 6, skipped_steps: [stepId] }),
+      },
+      {
         label: 'the run is terminal',
         run: (runId) => fenceTestRun(runId, { version: 4, terminal: true }),
       },
       ABSENT,
     ],
-    method: () => 'appendFenced',
+    methods: () => ['appendFenced'],
   },
   run_absent: {
     fence: () => ({ kind: 'run_absent' }),
     trueStates: [ABSENT],
     falseStates: [{ label: 'the run exists again', run: (runId) => fenceTestRun(runId) }],
-    method: () => 'deleteAllForRunFenced',
+    methods: () => ['deleteAllForRunFenced'],
   },
   run_absent_or_terminal: {
     fence: () => ({ kind: 'run_absent_or_terminal' }),
@@ -1030,7 +1074,7 @@ const FENCE_MEMBER_CELLS = {
     falseStates: [
       { label: 'the run is live again (resumed)', run: (runId) => fenceTestRun(runId) },
     ],
-    method: () => 'deleteAllForRunFenced',
+    methods: () => ['deleteAllForRunFenced'],
   },
   run_at_version: {
     fence: () => ({ kind: 'run_at_version', version: 1 }),
@@ -1040,12 +1084,17 @@ const FENCE_MEMBER_CELLS = {
         label: 'the run moved to version 2',
         run: (runId) => fenceTestRun(runId, { version: 2 }),
       },
+      {
+        label: 'the run moved back to version 0',
+        run: (runId) => fenceTestRun(runId, { version: 0 }),
+      },
       ABSENT,
     ],
-    method: () => 'deleteFenced',
+    methods: (store) =>
+      storeDeclaresSeal(store) ? ['deleteFenced', 'sealFenced'] : ['deleteFenced'],
   },
   step_not_in_progress: {
-    fence: (_runId, stepId) => ({ kind: 'step_not_in_progress', step_id: stepId }),
+    fence: () => ({ kind: 'step_not_in_progress' }),
     trueStates: [
       {
         label: 'the step has left in_progress_steps',
@@ -1059,7 +1108,8 @@ const FENCE_MEMBER_CELLS = {
       },
       ABSENT,
     ],
-    method: (store) => (storeDeclaresSeal(store) ? 'sealFenced' : 'deleteFenced'),
+    methods: (store) =>
+      storeDeclaresSeal(store) ? ['sealFenced', 'deleteFenced'] : ['deleteFenced'],
   },
 } satisfies Record<FencePredicateKind, FenceMemberCells>;
 
@@ -1090,9 +1140,42 @@ function callFenced(
     case 'deleteFenced':
       return store.deleteFenced!(runId, stepId, fence);
     case 'deleteAllForRunFenced':
-      return store.deleteAllForRunFenced!(runId, fence);
+      return store.deleteAllForRunFenced!(runId, runScoped(fence));
     case 'sealFenced':
       return store.sealFenced!(runId, stepId, fence);
+  }
+}
+
+/** Only run-scoped members are driven through the run-wide method (`FENCE_MEMBER_CELLS`). */
+function runScoped(fence: FencePredicate): RunScopedFencePredicate {
+  if (isStepScopedFence(fence)) {
+    throw new Error(
+      `FENCE_DATA setup: ${fence.kind} is step-scoped — it cannot drive the run-wide method`,
+    );
+  }
+  return fence;
+}
+
+/** Runs `method` with a deliberately malformed `fence` — no typing, exactly what a plain-JavaScript
+ *  caller can pass. */
+function callFencedUnchecked(
+  store: TraceBufferStore,
+  method: FencedMethod,
+  runId: string,
+  stepId: string,
+  fence: unknown,
+  entries: AgentTraceEntry[],
+): Promise<unknown> {
+  const untyped = fence as never;
+  switch (method) {
+    case 'appendFenced':
+      return store.appendFenced!(runId, stepId, entries, untyped);
+    case 'deleteFenced':
+      return store.deleteFenced!(runId, stepId, untyped);
+    case 'deleteAllForRunFenced':
+      return store.deleteAllForRunFenced!(runId, untyped);
+    case 'sealFenced':
+      return store.sealFenced!(runId, stepId, untyped);
   }
 }
 
@@ -1106,13 +1189,18 @@ function expectedAfterLanding(
   return method === 'appendFenced' ? [...seed, ...added] : [];
 }
 
-/** The exact error a refusal must carry: `evaluateFence`'s own, for the same fence, run and id —
- *  every store propagates it unwrapped (a reader-backed store's reader throws core's
+/** The exact error a refusal must carry: `evaluateFence`'s own, for the same fence, run, id and step
+ *  — every store propagates it unwrapped (a reader-backed store's reader throws core's
  *  `runNotFoundError` for an absent run, which is also what `evaluateFence` answers for the
- *  members that require the run). */
-function expectedRefusal(fence: FencePredicate, run: RunRecord | null, runId: string): unknown {
+ *  members that require the run). A run-scoped member ignores `stepId`. */
+function expectedRefusal(
+  fence: FencePredicate,
+  run: RunRecord | null,
+  runId: string,
+  stepId: string,
+): unknown {
   try {
-    evaluateFence(fence, run, runId);
+    evaluateFence(fence, run, runId, stepId);
   } catch (err) {
     return err;
   }
@@ -1149,12 +1237,16 @@ function assertSameError(actual: unknown, expected: unknown, context: string): v
 
 /**
  * FENCE_DATA — each of the five `FencePredicate` members: TRUE → the fenced operation lands; FALSE
- * → refused with exactly the error its former guard threw (`evaluateFence`'s), nothing written;
+ * → refused with exactly `evaluateFence`'s error for that fence and run, nothing written (core's
+ * `fence-predicate.test.ts` pins every refusal field by field);
  * RACER → an update that flips the predicate, racing the fenced operation, never lands between the
  * evaluation and the operation: a same-key read started after the flip, while the evaluation is in
  * flight, cannot complete until the operation has landed, and then observes the landed state. The
  * racer cells need a parkable run read (`'injected-reader'`); an `'in-transaction'` store gets a
- * visible skip for them (its own suite races its transaction).
+ * visible skip for them (its own suite races its transaction). MALFORMED → a value that is not a
+ * fence predicate, a member with a wrong or extra field, and a step member on the run-wide method
+ * are refused with `ENGINE_INTERNAL` without the run being read and with nothing written — and, on
+ * an injected-reader store, at once while another call holds the key.
  */
 function buildFenceDataCases(
   adapter: FencedTraceBufferContractAdapter,
@@ -1166,35 +1258,128 @@ function buildFenceDataCases(
 
   for (const kind of FENCE_PREDICATE_KINDS) {
     const cells: FenceMemberCells = FENCE_MEMBER_CELLS[kind];
-    const method = cells.method(store);
+    for (const method of cells.methods(store)) {
+      for (const state of cells.trueStates) {
+        cases.push({
+          law: 'FENCE_DATA',
+          name: `${kind} TRUE (${state.label}): ${method} lands`,
+          run: async () => {
+            const { runId, stepId } = adapter.makeKey();
+            await store.append(runId, stepId, seed);
+            applyState(adapter, state, runId, stepId);
+            await callFenced(store, method, runId, stepId, cells.fence(runId, stepId), added);
+            assertDeepEqualEvents(
+              await store.read(runId, stepId),
+              expectedAfterLanding(method, seed, added),
+              `FENCE_DATA ${kind} TRUE`,
+            );
+          },
+        });
+      }
 
-    for (const state of cells.trueStates) {
+      for (const state of cells.falseStates) {
+        cases.push({
+          law: 'FENCE_DATA',
+          name: `${kind} FALSE (${state.label}): ${method} refused with evaluateFence's exact error, nothing written`,
+          run: async () => {
+            const { runId, stepId } = adapter.makeKey();
+            await store.append(runId, stepId, seed);
+            const run = applyState(adapter, state, runId, stepId);
+            const fence = cells.fence(runId, stepId);
+            let caught: unknown;
+            try {
+              await callFenced(store, method, runId, stepId, fence, added);
+            } catch (err) {
+              caught = err;
+            }
+            if (caught === undefined) {
+              throw new Error(
+                `FENCE_DATA ${kind} FALSE (${state.label}): ${method} was not refused`,
+              );
+            }
+            assertSameError(
+              caught,
+              expectedRefusal(fence, run, runId, stepId),
+              `FENCE_DATA ${kind} FALSE (${state.label})`,
+            );
+            assertDeepEqualEvents(
+              await store.read(runId, stepId),
+              seed,
+              `FENCE_DATA ${kind} FALSE (${state.label}) — nothing written`,
+            );
+          },
+        });
+      }
+
+      const park = parkOf(adapter);
+      if (park === undefined) {
+        cases.push(
+          skipCase(
+            'FENCE_DATA',
+            `${kind} RACER (${method})`,
+            "an in-transaction store has no injected run read to park — its own suite races its transaction's lock",
+          ),
+        );
+        continue;
+      }
+
       cases.push({
         law: 'FENCE_DATA',
-        name: `${kind} TRUE (${state.label}): ${method} lands`,
+        name: `${kind} RACER: an update flipping the predicate during the evaluation never lands between the evaluation and ${method}`,
         run: async () => {
           const { runId, stepId } = adapter.makeKey();
+          const trueState = cells.trueStates[0]!;
+          const falseState = cells.falseStates[0]!;
           await store.append(runId, stepId, seed);
-          applyState(adapter, state, runId, stepId);
-          await callFenced(store, method, runId, stepId, cells.fence(runId, stepId), added);
-          assertDeepEqualEvents(
-            await store.read(runId, stepId),
-            expectedAfterLanding(method, seed, added),
-            `FENCE_DATA ${kind} TRUE`,
-          );
-        },
-      });
-    }
-
-    for (const state of cells.falseStates) {
-      cases.push({
-        law: 'FENCE_DATA',
-        name: `${kind} FALSE (${state.label}): ${method} refused with its former guard's exact error, nothing written`,
-        run: async () => {
-          const { runId, stepId } = adapter.makeKey();
-          await store.append(runId, stepId, seed);
-          const run = applyState(adapter, state, runId, stepId);
+          applyState(adapter, trueState, runId, stepId);
           const fence = cells.fence(runId, stepId);
+
+          // 1. The fenced operation reads the run for its fence — parked mid-evaluation.
+          const parked = park.parkNextRead(runId);
+          const opP = callFenced(store, method, runId, stepId, fence, added);
+          opP.catch(() => {}); // observed below; never an unhandled rejection
+          const early = opP.then(
+            () => 'settled',
+            () => 'settled',
+          );
+          const first = await Promise.race([parked.entered.then(() => 'entered'), early]);
+          if (first !== 'entered') {
+            throw new Error(
+              `FENCE_DATA ${kind} RACER: ${method} settled without reading the run for its fence`,
+            );
+          }
+
+          // 2. The racer flips the predicate, then touches the same key.
+          const flipped = applyState(adapter, falseState, runId, stepId);
+          const racerP = store.read(runId, stepId);
+          const racerRec = recordSettlement(racerP.catch((e) => Promise.reject(e)));
+          await drain(store);
+          if (racerRec.outcome() === 'fulfilled') {
+            throw new Error(
+              `FENCE_DATA ${kind} RACER: the racer's read completed while the fence evaluation was ` +
+                `in flight — it landed between the evaluation and ${method} (the evaluation is not ` +
+                'inside the critical section the operation holds)',
+            );
+          }
+
+          // 3. The evaluation completes on the state it read (TRUE): the operation lands.
+          parked.release();
+          try {
+            await opP;
+          } catch (err) {
+            throw new Error(
+              `FENCE_DATA ${kind} RACER: ${method} did not land — it was evaluated on the state it ` +
+                `read before the flip, which is TRUE: ${describeError(err)}`,
+              { cause: err },
+            );
+          }
+          assertDeepEqualEvents(
+            await racerP,
+            expectedAfterLanding(method, seed, added),
+            `FENCE_DATA ${kind} RACER — the racer observes the landed state`,
+          );
+
+          // 4. The flip is visible to the next evaluation: the same operation is now refused.
           let caught: unknown;
           try {
             await callFenced(store, method, runId, stepId, fence, added);
@@ -1202,105 +1387,138 @@ function buildFenceDataCases(
             caught = err;
           }
           if (caught === undefined) {
-            throw new Error(`FENCE_DATA ${kind} FALSE (${state.label}): ${method} was not refused`);
+            throw new Error(`FENCE_DATA ${kind} RACER: ${method} after the flip was not refused`);
           }
           assertSameError(
             caught,
-            expectedRefusal(fence, run, runId),
-            `FENCE_DATA ${kind} FALSE (${state.label})`,
-          );
-          assertDeepEqualEvents(
-            await store.read(runId, stepId),
-            seed,
-            `FENCE_DATA ${kind} FALSE (${state.label}) — nothing written`,
+            expectedRefusal(fence, flipped, runId, stepId),
+            `FENCE_DATA ${kind} RACER — after the flip`,
           );
         },
       });
     }
+  }
 
-    const park = parkOf(adapter);
-    if (park === undefined) {
+  // MALFORMED: a plain-JavaScript caller can pass anything — including the guard callback these
+  // methods took before issue #616, or a member with a field it does not have — and can hand a step
+  // member to the run-wide method. Each is refused with ENGINE_INTERNAL before the run is read or
+  // anything is written, on a live run nothing about which would refuse.
+  const malformed: Array<{ label: string; method: FencedMethod; fence: unknown }> = [
+    { label: 'a function in place of the fence', method: 'appendFenced', fence: () => undefined },
+    { label: 'null in place of the fence', method: 'deleteFenced', fence: null },
+    { label: 'an unknown kind', method: 'appendFenced', fence: { kind: 'step_open' } },
+    {
+      label: 'a step_id field',
+      method: 'appendFenced',
+      fence: { kind: 'step_open_for_trace', run_version: 1, step_id: 'another-step' },
+    },
+    { label: 'a missing version', method: 'deleteFenced', fence: { kind: 'run_at_version' } },
+    {
+      label: 'a step member on the run-wide method',
+      method: 'deleteAllForRunFenced',
+      fence: { kind: 'step_not_in_progress' },
+    },
+  ];
+  for (const m of malformed) {
+    cases.push({
+      law: 'FENCE_DATA',
+      name: `MALFORMED (${m.label}): ${m.method} refused with ENGINE_INTERNAL, nothing written`,
+      run: async () => {
+        const { runId, stepId } = adapter.makeKey();
+        await store.append(runId, stepId, seed);
+        adapter.fenceRuns.put(fenceTestRun(runId));
+        let caught: unknown;
+        try {
+          await callFencedUnchecked(store, m.method, runId, stepId, m.fence, added);
+        } catch (err) {
+          caught = err;
+        }
+        if (!(caught instanceof WorkflowError) || caught.code !== 'ENGINE_INTERNAL') {
+          throw new Error(
+            `FENCE_DATA MALFORMED (${m.label}): ${m.method} was not refused with ENGINE_INTERNAL — ` +
+              `got ${describeError(caught)}`,
+          );
+        }
+        if (adapter.fenceRuns.readCount(runId) !== 0) {
+          throw new Error(
+            `FENCE_DATA MALFORMED (${m.label}): ${m.method} read the run before refusing the fence`,
+          );
+        }
+        assertDeepEqualEvents(
+          await store.read(runId, stepId),
+          seed,
+          `FENCE_DATA MALFORMED (${m.label}) — nothing written`,
+        );
+      },
+    });
+  }
+
+  // MALFORMED while another call holds the key: the store validates the fence as the method's first
+  // act, so a malformed fence is refused at once — never after waiting on the key's lock, and never
+  // as a busy or contention error. Needs a parkable read to hold the key (`'injected-reader'`).
+  const heldPark = parkOf(adapter);
+  const whileHeld: Array<{ label: string; method: FencedMethod; fence: unknown }> = [
+    { label: 'a function in place of the fence', method: 'appendFenced', fence: () => undefined },
+    { label: 'null in place of the fence', method: 'deleteFenced', fence: null },
+    ...(storeDeclaresSeal(store)
+      ? [{ label: 'an unknown kind', method: 'sealFenced' as const, fence: { kind: 'step_open' } }]
+      : []),
+    {
+      label: 'a step member on the run-wide method',
+      method: 'deleteAllForRunFenced',
+      fence: { kind: 'step_not_in_progress' },
+    },
+  ];
+  for (const m of whileHeld) {
+    if (heldPark === undefined) {
       cases.push(
         skipCase(
           'FENCE_DATA',
-          `${kind} RACER`,
-          "an in-transaction store has no injected run read to park — its own suite races its transaction's lock",
+          `MALFORMED while the key is held (${m.label})`,
+          'an in-transaction store has no injected run read to park — its own suite holds its lock',
         ),
       );
       continue;
     }
-
     cases.push({
       law: 'FENCE_DATA',
-      name: `${kind} RACER: an update flipping the predicate during the evaluation never lands between the evaluation and ${method}`,
+      name: `MALFORMED while the key is held (${m.label}): ${m.method} refused at once with ENGINE_INTERNAL`,
       run: async () => {
         const { runId, stepId } = adapter.makeKey();
-        const trueState = cells.trueStates[0]!;
-        const falseState = cells.falseStates[0]!;
         await store.append(runId, stepId, seed);
-        applyState(adapter, trueState, runId, stepId);
-        const fence = cells.fence(runId, stepId);
-
-        // 1. The fenced operation reads the run for its fence — parked mid-evaluation.
-        const parked = park.parkNextRead(runId);
-        const opP = callFenced(store, method, runId, stepId, fence, added);
-        opP.catch(() => {}); // observed below; never an unhandled rejection
-        const early = opP.then(
-          () => 'settled',
-          () => 'settled',
+        adapter.fenceRuns.put(fenceTestRun(runId));
+        // A valid fenced call enters the key's critical section and parks on its run read.
+        const parked = heldPark.parkNextRead(runId);
+        const holderP = store.appendFenced!(runId, stepId, added, {
+          kind: 'step_open_for_trace',
+          run_version: 1,
+        });
+        holderP.catch(() => {}); // observed below; never an unhandled rejection
+        await awaitHolderParked(
+          parked,
+          holderP,
+          'appendFenced',
+          `FENCE_DATA MALFORMED while the key is held (${m.label})`,
         );
-        const first = await Promise.race([parked.entered.then(() => 'entered'), early]);
-        if (first !== 'entered') {
-          throw new Error(
-            `FENCE_DATA ${kind} RACER: ${method} settled without reading the run for its fence`,
-          );
-        }
-
-        // 2. The racer flips the predicate, then touches the same key.
-        const flipped = applyState(adapter, falseState, runId, stepId);
-        const racerP = store.read(runId, stepId);
-        const racerRec = recordSettlement(racerP.catch((e) => Promise.reject(e)));
+        const malformedP = callFencedUnchecked(store, m.method, runId, stepId, m.fence, added);
+        const rec = recordSettlement(malformedP);
         await drain(store);
-        if (racerRec.outcome() === 'fulfilled') {
-          throw new Error(
-            `FENCE_DATA ${kind} RACER: the racer's read completed while the fence evaluation was ` +
-              `in flight — it landed between the evaluation and ${method} (the evaluation is not ` +
-              'inside the critical section the operation holds)',
-          );
-        }
-
-        // 3. The evaluation completes on the state it read (TRUE): the operation lands.
+        const outcome = rec.outcome();
+        const error = rec.error();
         parked.release();
-        try {
-          await opP;
-        } catch (err) {
+        await holderP;
+        if (outcome !== 'rejected') {
           throw new Error(
-            `FENCE_DATA ${kind} RACER: ${method} did not land — it was evaluated on the state it ` +
-              `read before the flip, which is TRUE: ${describeError(err)}`,
-            { cause: err },
+            `FENCE_DATA MALFORMED while the key is held (${m.label}): ${m.method} did not refuse ` +
+              'while the key was held — it waited for the lock before checking the fence',
           );
         }
-        assertDeepEqualEvents(
-          await racerP,
-          expectedAfterLanding(method, seed, added),
-          `FENCE_DATA ${kind} RACER — the racer observes the landed state`,
-        );
-
-        // 4. The flip is visible to the next evaluation: the same operation is now refused.
-        let caught: unknown;
-        try {
-          await callFenced(store, method, runId, stepId, fence, added);
-        } catch (err) {
-          caught = err;
+        if (!(error instanceof WorkflowError) || error.code !== 'ENGINE_INTERNAL') {
+          throw new Error(
+            `FENCE_DATA MALFORMED while the key is held (${m.label}): ${m.method} was not refused ` +
+              `with ENGINE_INTERNAL — got ${describeError(error)}`,
+          );
         }
-        if (caught === undefined) {
-          throw new Error(`FENCE_DATA ${kind} RACER: ${method} after the flip was not refused`);
-        }
-        assertSameError(
-          caught,
-          expectedRefusal(fence, flipped, runId),
-          `FENCE_DATA ${kind} RACER — after the flip`,
-        );
       },
     });
   }
@@ -1583,10 +1801,10 @@ export function fencedTraceBufferContract(
       name: "deleteAllForRunFenced: a fence run read throwing FsIoError propagates it exactly — never mistaken for deleteIfExists's own failure and wrapped",
       run: async () => {
         // issue #207 correction, dedicated case (D3 §1's own demanded test): a realistic scenario
-        // is the guard's lock-free `runStore.get` itself hitting a filesystem error (e.g. EACCES on
-        // the run-record file) — since that surfaces as an FsIoError too, a sweep implementation
-        // that wraps "any FsIoError seen inside the per-file try" (rather than scoping the wrap to
-        // ONLY deleteIfExists's own failure) would incorrectly re-wrap the guard's own error as
+        // is the fence's own lock-free run read hitting a filesystem error (e.g. EACCES on the
+        // run-record file) — since that surfaces as an FsIoError too, a sweep implementation that
+        // wraps "any FsIoError seen inside the per-file try" (rather than scoping the wrap to ONLY
+        // deleteIfExists's own failure) would incorrectly re-wrap the fence read's error as
         // ENGINE_ARTIFACT_DELETE_FAILED, discarding its original identity.
         const { runId } = adapter.makeKey();
         const stepA = 'fenced-tck-step-fsio';

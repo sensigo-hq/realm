@@ -17,8 +17,9 @@
 // constructor requiring a reader (D2) catches a MISSING one; it cannot catch a WRONG one. The
 // seven-host table below pins, for every production construction site, that the reader argument
 // names the exact run store that host writes (or, for `export.ts`, reads) — replacing the two
-// narrower `run.ts`/`agent.ts`-only pins below, which pinned the SAME fact under the pre-D2
-// argument order and would otherwise duplicate the new table's first two rows.
+// narrower `run.ts`/`agent.ts` constructor pins this file carried before D5, which pinned the SAME
+// fact under the pre-D2 argument order and would otherwise duplicate the new table's first two
+// rows.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -71,16 +72,44 @@ const HOSTS: Array<{ file: string; path: string; readerName: string }> = [
   { file: 'server.ts', path: mcpServerSrcPath('server.ts'), readerName: 'effectiveRunStore' },
 ];
 
+/** The D5 pin: the reader argument is EXACTLY `readerName` — whitespace-tolerant, a trailing comma
+ *  or a third (lock-profile) argument allowed, but nothing may continue the name (`storeForTrace`,
+ *  `store.inner`, `stores[0]` are different stores and must not satisfy the pin). The name is
+ *  escaped, so a dotted reader (`deps.runStore`) is matched literally, never as a wildcard. */
+function readerPin(readerName: string): RegExp {
+  const name = readerName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(
+    `new\\s+JsonTraceBufferStore\\(\\s*[A-Za-z0-9_.]+\\s*,\\s*${name}\\s*(?:,[\\s\\S]{0,80}?)?\\)`,
+  );
+}
+
 describe('issue #616 PR-0 (D5) — every host fences against the run store it actually writes (or, for export, reads)', () => {
+  it('the reader pin accepts the host store in every layout and rejects a different store whose name starts with it', () => {
+    const accepted = [
+      'new JsonTraceBufferStore(store.runsDirPath, store);',
+      'new JsonTraceBufferStore(\n  store.runsDirPath,\n  store,\n);',
+      'new JsonTraceBufferStore(dir, store, GENEROUS_LOCK_PROFILE)',
+    ];
+    const rejected = [
+      'new JsonTraceBufferStore(store.runsDirPath, storeForTrace);',
+      'new JsonTraceBufferStore(store.runsDirPath, store.inner);',
+      'new JsonTraceBufferStore(store.runsDirPath, stores[0]);',
+      'new JsonTraceBufferStore(store.runsDirPath, otherStore);',
+    ];
+    for (const src of accepted) expect(src, src).toMatch(readerPin('store'));
+    for (const src of rejected) expect(src, src).not.toMatch(readerPin('store'));
+    // A dotted reader is matched literally: its `.` is not a wildcard.
+    expect('new JsonTraceBufferStore(dir, deps.runStore)').toMatch(readerPin('deps.runStore'));
+    expect('new JsonTraceBufferStore(dir, depsXrunStore)').not.toMatch(readerPin('deps.runStore'));
+  });
+
   for (const { file, path, readerName } of HOSTS) {
     it(`${file} pins the reader to '${readerName}', and builds exactly one JsonTraceBufferStore`, () => {
       const src = readFileSync(path, 'utf8');
       // Whitespace-tolerant, a trailing comma allowed: the repo's pre-commit hook runs
       // `prettier --write .`, which re-flows `server.ts`'s construction onto one line once the
       // reader moves to second place — a rigid pin would fail for a reason that is not this test's.
-      const pinned = new RegExp(
-        `new\\s+JsonTraceBufferStore\\(\\s*[A-Za-z0-9_.]+\\s*,\\s*${readerName}\\s*,?[\\s\\S]{0,80}?\\)`,
-      );
+      const pinned = readerPin(readerName);
       expect(
         src,
         `${file} must construct JsonTraceBufferStore with '${readerName}' as its reader`,

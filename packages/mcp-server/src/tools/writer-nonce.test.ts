@@ -178,7 +178,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
         params: {},
       });
       // A store with the fenced trio but NO traceCapabilities at all (no carriage).
-      const inner = new InMemoryTraceBufferStore();
+      const inner = new InMemoryTraceBufferStore(runStore);
       const nonCarryingStore: TraceBufferStore = {
         append: (runId, stepId, entries) => inner.append(runId, stepId, entries),
         read: (runId, stepId) => inner.read(runId, stepId),

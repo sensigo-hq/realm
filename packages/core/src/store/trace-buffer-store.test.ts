@@ -7,12 +7,48 @@ import {
   FINAL_LIMIT_BYTES,
 } from './trace-buffer-store.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import { fenceReaderMissingError, type FenceRunReader } from './fence-predicate.js';
+
+/** The run reader for the tests below, none of which makes a fenced call — so no test here ever
+ *  touches the reader, and an unexpected fence call fails loudly instead of silently reading
+ *  nothing. The constructor's required argument, never called. */
+const NEVER_READ: FenceRunReader = {
+  get: async () => {
+    throw new Error('fence unexpectedly evaluated against NEVER_READ');
+  },
+};
 
 describe('InMemoryTraceBufferStore', () => {
   let store: InMemoryTraceBufferStore;
 
   beforeEach(() => {
-    store = new InMemoryTraceBufferStore();
+    store = new InMemoryTraceBufferStore(NEVER_READ);
+  });
+
+  // issue #616 PR-0 — the run reader is REQUIRED, as on `JsonTraceBufferStore`: a plain-JavaScript
+  // caller (core is published and used from JavaScript too) can still reach the constructor with no
+  // reader — the previous release's only form — with `null`, or with something that has no `get`
+  // method in its place; the construction itself must refuse loudly, never build a store whose
+  // every fenced call would refuse later.
+  it('a construction with no run reader throws ENGINE_INTERNAL, at construction', () => {
+    const notReaders: Array<[string, unknown]> = [
+      ['no reader', undefined],
+      ['null', null],
+      ['not a reader', { retries: 1 }],
+    ];
+    for (const [label, notReader] of notReaders) {
+      let thrown: unknown;
+      try {
+        new InMemoryTraceBufferStore(notReader as never);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown, label).toBeInstanceOf(Error);
+      expect((thrown as { code?: unknown }).code, label).toBe('ENGINE_INTERNAL');
+      expect((thrown as Error).message, label).toBe(
+        fenceReaderMissingError('InMemoryTraceBufferStore').message,
+      );
+    }
   });
 
   it('append returns correct buffer_count and buffer_bytes after adding entries', async () => {

@@ -2,7 +2,7 @@
 // #107). append/read/delete are exercised indirectly elsewhere (execution-loop finalization); this
 // file did not previously have dedicated coverage, so a handful of sanity tests are included too.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, readdir, writeFile, appendFile, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, writeFile, appendFile, readFile, chmod } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,7 @@ import {
   storeDeclaresSeal,
   storeDeclaresNonceCarriage,
   runNotFoundError,
+  fenceReaderMissingError,
   type FencePredicate,
   type FenceRunReader,
   type RunRecord,
@@ -67,19 +68,53 @@ describe('JsonTraceBufferStore', () => {
   });
 
   // issue #616 PR-0, D2 — a plain-JavaScript caller (this package is published and used from
-  // JavaScript too) reaches the constructor with `runReader === undefined` despite the
-  // TypeScript-only required parameter; the construction itself must refuse loudly rather than
-  // let a JavaScript caller discover the gap as a bare `TypeError: Cannot read properties of
-  // undefined (reading 'get')` at its first fenced call.
+  // JavaScript too) can reach the constructor with no reader, with `null`, or with the previous
+  // release's `(runsDir, lockProfile)` shape despite the TypeScript-only required parameter; the
+  // construction itself must refuse loudly rather than let a JavaScript caller discover the gap
+  // as a bare `TypeError` at its first fenced call (and, for the lock profile, drop it silently).
   it('a construction with no run reader throws ENGINE_INTERNAL, at construction — D2', () => {
-    let thrown: unknown;
-    try {
-      new JsonTraceBufferStore(dir, undefined as never);
-    } catch (err) {
-      thrown = err;
+    const notReaders: Array<[string, unknown]> = [
+      ['no reader', undefined],
+      ['null', null],
+      ["the previous release's lock profile", { retries: { retries: 1 } }],
+    ];
+    for (const [label, notReader] of notReaders) {
+      let thrown: unknown;
+      try {
+        new JsonTraceBufferStore(dir, notReader as never);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown, label).toBeInstanceOf(Error);
+      expect((thrown as { code?: unknown }).code, label).toBe('ENGINE_INTERNAL');
+      expect((thrown as Error).message, label).toBe(
+        fenceReaderMissingError('JsonTraceBufferStore').message,
+      );
     }
-    expect(thrown).toBeInstanceOf(Error);
-    expect((thrown as { code?: unknown }).code).toBe('ENGINE_INTERNAL');
+  });
+
+  // issue #616 PR-0 — the fence is checked before the runs directory is scanned, not only before
+  // the lock: a malformed fence is the caller's mistake (ENGINE_INTERNAL) even when the directory
+  // cannot be read. The valid-fence control proves the directory really is unreadable here, so the
+  // malformed assertion cannot pass by accident (never run as root in this repo's CI or dev boxes).
+  it('deleteAllForRunFenced checks the fence before it scans the runs directory', async () => {
+    await chmod(dir, 0o000);
+    let control: unknown;
+    let malformed: unknown;
+    try {
+      await store.deleteAllForRunFenced('run-unreadable', PASS).catch((err: unknown) => {
+        control = err;
+      });
+      await store
+        .deleteAllForRunFenced('run-unreadable', { kind: 'step_not_in_progress' } as never)
+        .catch((err: unknown) => {
+          malformed = err;
+        });
+    } finally {
+      await chmod(dir, 0o700);
+    }
+    expect((control as { code?: unknown } | undefined)?.code).toBe('ENGINE_ARTIFACT_DELETE_FAILED');
+    expect((malformed as { code?: unknown } | undefined)?.code).toBe('ENGINE_INTERNAL');
   });
 
   it('append + read round-trips entries', async () => {

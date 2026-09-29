@@ -284,8 +284,9 @@ describe('handleAppendTrace', () => {
   });
 
   it('C10 (issue #456) a workflow-absent run carries the remedy', async () => {
-    // NON-terminal — the terminal guard at :254 precedes the workflow fetch at :276, so a
-    // terminal fixture would refuse there first and never reach this cell's target.
+    // NON-terminal — the terminal check (step 1b of `handleAppendTrace`) precedes the workflow
+    // fetch (step 2), so a terminal fixture would refuse there first and never reach this cell's
+    // target.
     const { run: run } = await runStore.create({
       workflowId: 'dev456',
       workflowVersion: 1,

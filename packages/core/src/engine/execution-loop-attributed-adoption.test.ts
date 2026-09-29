@@ -16,6 +16,8 @@ import {
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { TraceBufferStore } from '../store/trace-buffer-store.js';
 import type { FenceRunReader } from '../store/fence-predicate.js';
+import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
+import type { RunRecord } from '../types/run-record.js';
 
 const agentDef: WorkflowDefinition = {
   id: 'attributed-adoption-agent-wf',
@@ -75,6 +77,35 @@ function trioOnlyStore(runReader: FenceRunReader): {
       inner.deleteAllForRunFenced(runId, fence, dirEntries),
   };
   return { store, inner };
+}
+
+/**
+ * A run store that does not declare `settleStep` — every call delegates to a real `JsonFileStore`,
+ * and `settleStep` is simply absent — so both settle sites take their legacy branch (the
+ * dormancy-suite-279 precedent, narrowed to what these cells need).
+ */
+class LegacySettleStore implements RunStore {
+  readonly persistsClaims: boolean;
+
+  constructor(private readonly inner: JsonFileStore) {
+    this.persistsClaims = inner.persistsClaims;
+  }
+
+  create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
+    return this.inner.create(options);
+  }
+  get(runId: string): Promise<RunRecord> {
+    return this.inner.get(runId);
+  }
+  update(record: RunRecord): Promise<RunRecord> {
+    return this.inner.update(record);
+  }
+  list(workflowId?: string): Promise<RunRecord[]> {
+    return this.inner.list(workflowId);
+  }
+  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<RunRecord> {
+    return this.inner.claimStep(runId, stepName, definition);
+  }
 }
 
 describe('execution-loop.ts — activation-gate floor law (issue #197 PR-2, design §3)', () => {
@@ -378,6 +409,99 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
     expect(persisted.evidence[0]?.trace_summary?.foreign_lines_preserved).toBe(1);
   });
 
+  // issue #616 PR-0 — the seal fence sits at FOUR settle sites (migrated and legacy, success and
+  // failure), each of which PR-0 rewrote; the cell above covers the migrated success site, these
+  // three cover the others. At each, a refusing seal fence would leave the foreign lines behind as
+  // residue under a "Failed to seal" warning — so each cell asserts the seal happened.
+  it('the migrated FAILURE site seals foreign lines too (a failed step, settleStep-declaring store)', async () => {
+    const { run } = await store.create({
+      workflowId: 'attributed-adoption-agent-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
+    await traceBufferStore.append(run.id, 'step-agent', [{ event: 'foreign' }], {
+      writerNonce: 'other-writer',
+    });
+
+    const envelope = await executeStep(store, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => {
+        throw new Error('handler boom');
+      },
+      traceBufferStore,
+    });
+
+    expect((await store.get(run.id)).failed_steps).toContain('step-agent');
+    expect(
+      envelope.warnings.some((w) => w.includes('Failed to seal trace buffer after step failure')),
+    ).toBe(false);
+    expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(0);
+    expect(await traceBufferStore.listSealedForRun(run.id)).toHaveLength(1);
+  });
+
+  it('the legacy FAILURE site seals foreign lines too (a failed step, no settleStep)', async () => {
+    const legacy = new LegacySettleStore(store);
+    const { run } = await legacy.create({
+      workflowId: 'attributed-adoption-agent-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const traceBufferStore = new InMemoryTraceBufferStore(legacy);
+    await traceBufferStore.append(run.id, 'step-agent', [{ event: 'foreign' }], {
+      writerNonce: 'other-writer',
+    });
+
+    const envelope = await executeStep(legacy, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => {
+        throw new Error('handler boom');
+      },
+      traceBufferStore,
+    });
+
+    expect((await legacy.get(run.id)).failed_steps).toContain('step-agent');
+    expect(
+      envelope.warnings.some((w) => w.includes('Failed to seal trace buffer after step failure')),
+    ).toBe(false);
+    expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(0);
+    expect(await traceBufferStore.listSealedForRun(run.id)).toHaveLength(1);
+  });
+
+  it('the legacy SUCCESS site seals foreign lines too (a completed step, no settleStep)', async () => {
+    const legacy = new LegacySettleStore(store);
+    const { run } = await legacy.create({
+      workflowId: 'attributed-adoption-agent-wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const traceBufferStore = new InMemoryTraceBufferStore(legacy);
+    await traceBufferStore.append(run.id, 'step-agent', [{ event: 'foreign' }], {
+      writerNonce: 'other-writer',
+    });
+
+    const envelope = await executeStep(legacy, agentDef, {
+      runId: run.id,
+      command: 'step-agent',
+      input: {},
+      dispatcher: async () => ({}),
+      traceBufferStore,
+    });
+
+    expect(envelope.status).toBe('ok');
+    expect(
+      envelope.warnings.some(
+        (w) => w.includes('foreign line(s) preserved (sealed)') && w.includes('realm run export'),
+      ),
+    ).toBe(true);
+    expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(0);
+    expect(await traceBufferStore.listSealedForRun(run.id)).toHaveLength(1);
+  });
+
   it('capped ⇒ falls back to the existing delete() + a loud "cap reached" warning (no silent eviction of an already-sealed artifact)', async () => {
     const { run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
@@ -390,7 +514,6 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
       await traceBufferStore.append(run.id, 'step-agent', [{ event: `filler-${i}` }]);
       const result = await traceBufferStore.sealFenced(run.id, 'step-agent', {
         kind: 'step_not_in_progress',
-        step_id: 'step-agent',
       });
       expect(result).toEqual({ sealed: true });
     }

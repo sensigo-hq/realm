@@ -389,6 +389,8 @@ export {
 export type {
   FencePredicate,
   FencePredicateKind,
+  StepScopedFencePredicate,
+  RunScopedFencePredicate,
   FenceRunReader,
   StepEligibilityState,
   StepMembershipState,
@@ -396,9 +398,13 @@ export type {
 export {
   FENCE_PREDICATE_KINDS,
   FENCE_REQUIRES_RUN,
+  FENCE_TARGETS_STEP,
+  isStepScopedFence,
+  assertFencePredicate,
   evaluateFence,
   readRunForFence,
   checkFenceWithReader,
+  isFenceRunReader,
   fenceReaderMissingError,
   stepStateOf,
   stepNotEligibleError,

@@ -3208,7 +3208,7 @@ describe('WAL trace buffer integration (B-lite)', () => {
   });
 
   it('WAL entries present + no execute_step.trace → evidence has trace from WAL', async () => {
-    const bufferStore = new InMemoryTraceBufferStore();
+    const bufferStore = new InMemoryTraceBufferStore(store);
     const { run: run } = await store.create({
       workflowId: 'wal-test-wf',
       workflowVersion: 1,
@@ -3234,7 +3234,7 @@ describe('WAL trace buffer integration (B-lite)', () => {
   });
 
   it('WAL entries + execute_step.trace entries → merged, WAL entries first', async () => {
-    const bufferStore = new InMemoryTraceBufferStore();
+    const bufferStore = new InMemoryTraceBufferStore(store);
     const { run: run } = await store.create({
       workflowId: 'wal-test-wf',
       workflowVersion: 1,
@@ -3282,7 +3282,7 @@ describe('WAL trace buffer integration (B-lite)', () => {
       },
     };
 
-    const bufferStore = new InMemoryTraceBufferStore();
+    const bufferStore = new InMemoryTraceBufferStore(store);
     const { run: run } = await store.create({
       workflowId: 'wal-schema-wf',
       workflowVersion: 1,
@@ -3310,7 +3310,7 @@ describe('WAL trace buffer integration (B-lite)', () => {
   });
 
   it('execute_step succeeds → WAL is deleted', async () => {
-    const bufferStore = new InMemoryTraceBufferStore();
+    const bufferStore = new InMemoryTraceBufferStore(store);
     const { run: run } = await store.create({
       workflowId: 'wal-test-wf',
       workflowVersion: 1,
@@ -3333,7 +3333,7 @@ describe('WAL trace buffer integration (B-lite)', () => {
   });
 
   it('execute_step dispatch fails → WAL is deleted', async () => {
-    const bufferStore = new InMemoryTraceBufferStore();
+    const bufferStore = new InMemoryTraceBufferStore(store);
     const { run: run } = await store.create({
       workflowId: 'wal-test-wf',
       workflowVersion: 1,
@@ -3413,7 +3413,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
 
   describe('Finding 1 — budget-priority preserves the conclusion', () => {
     it('a WAL with more entries than the truncation budget still yields a canonical trace containing the execute_step conclusion, dropping the OLDEST buffer lines as overflow', async () => {
-      const bufferStore = new InMemoryTraceBufferStore();
+      const bufferStore = new InMemoryTraceBufferStore(store);
       const { run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
@@ -3469,7 +3469,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
     });
 
     it('the conclusion still survives when the WAL alone (no execute_step.trace overlap needed) pushes the merge past the byte budget', async () => {
-      const bufferStore = new InMemoryTraceBufferStore();
+      const bufferStore = new InMemoryTraceBufferStore(store);
       const { run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
@@ -3510,7 +3510,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
 
   describe('Finding 2 — the post-claim re-read closes the silent-loss window', () => {
     it('a line appended in the window between the pre-claim read and the claim is captured, not silently lost before WAL delete()', async () => {
-      const bufferStore = new InMemoryTraceBufferStore();
+      const bufferStore = new InMemoryTraceBufferStore(store);
       const { run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
@@ -3574,7 +3574,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
           },
         },
       };
-      const bufferStore = new InMemoryTraceBufferStore();
+      const bufferStore = new InMemoryTraceBufferStore(store);
       const { run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
@@ -3600,7 +3600,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
 
   describe('Fix 3 — the honest trace_summary caveat', () => {
     it('adopting any buffer/WAL line carries buffered_lines_adopted with the exact count', async () => {
-      const bufferStore = new InMemoryTraceBufferStore();
+      const bufferStore = new InMemoryTraceBufferStore(store);
       const { run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
@@ -3627,7 +3627,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
     });
 
     it('an execute_step.trace-only execution (no buffer contribution) carries NO caveat', async () => {
-      const bufferStore = new InMemoryTraceBufferStore();
+      const bufferStore = new InMemoryTraceBufferStore(store);
       const { run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
@@ -3671,7 +3671,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
 
   describe('Regression guard — off the overflow/race/foreign-line paths, output is unchanged', () => {
     it('a normal WAL contribution (buffer well under budget) + a conclusion produces the same merged trace shape as before #185', async () => {
-      const bufferStore = new InMemoryTraceBufferStore();
+      const bufferStore = new InMemoryTraceBufferStore(store);
       const { run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
@@ -3887,7 +3887,7 @@ describe('Step 5 dispatch-failure envelope', () => {
   });
 
   it('WAL deletion failure does NOT suppress next_actions', async () => {
-    const bufferStore = new InMemoryTraceBufferStore();
+    const bufferStore = new InMemoryTraceBufferStore(store);
     vi.spyOn(bufferStore, 'delete').mockRejectedValue(new Error('disk contention'));
 
     const { run: run } = await store.create({

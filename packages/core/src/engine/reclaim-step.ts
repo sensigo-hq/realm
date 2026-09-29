@@ -221,25 +221,25 @@ interface FencedClearResult {
  * BEFORE the un-claiming `store.update`, guarded by a run-VERSION fence (the `run_at_version`
  * predicate, issue #616 PR-0) the trace buffer evaluates inside the SAME per-(runId, stepName)
  * critical section `deleteFenced` uses, against the run it reads there. The trace buffer's run
- * reader must be the run store reclaim writes — the hosts construct it so. `expectedVersion` is the
- * version captured at THIS call's own reclaim-decision read (the primary path's `run` at :133 —
- * now above; the CAS-retry path's `reloaded` — never a fresh get taken here). Every `RunStore`
- * mutation (claimStep, settle, reclaim) bumps `version`, so ANY intervening write on this run is
- * detected — a concurrent claim/settle/reclaim of this exact step since the decision read means
- * reclaim's premise ("this is a dead, still-in-progress claim") may no longer hold, and the guard
- * refuses rather than risk destroying content a live/newer actor already adopted or is
- * mid-adopting.
+ * reader must read the same runs as the run store reclaim writes — the hosts construct it so.
+ * `expectedVersion` is the version captured at THIS call's own reclaim-decision read (the primary
+ * path's `run`, read by `reclaimStep` below; the CAS-retry path's `reloaded` — never a fresh get
+ * taken here). Every `RunStore` mutation (claimStep, settle, reclaim) bumps `version`, so ANY
+ * intervening write on this run is detected — a concurrent claim/settle/reclaim of this exact step
+ * since the decision read means reclaim's premise ("this is a dead, still-in-progress claim") may
+ * no longer hold, and the fence refuses rather than risk destroying content a live/newer actor
+ * already adopted or is mid-adopting.
  *
  * A separate `step ∈ in_progress_steps` re-check is deliberately NOT added: since ANY store
  * mutation bumps version, an unchanged version already implies a byte-identical record — the
  * membership fact cannot have changed without the version changing too. D3 §5 states this
  * explicitly: every agent `ClaimRecord` is `{deadline: null}`, so record identity/classification
- * cannot discriminate further — the version fence alone is the whole guard.
+ * cannot discriminate further — the version fence alone is the whole check.
  *
- * Returns `{skipped: true}` when the guard refused (the caller must skip-and-warn, never treat
+ * Returns `{skipped: true}` when the fence refused (the caller must skip-and-warn, never treat
  * this as an error). Any OTHER thrown error (lock contention, genuine I/O failure) propagates to
  * the caller UNCHANGED and must abort the reclaim entirely, BEFORE the un-claiming update — the
- * decision table is total (guard-pass ⇒ drain-with-warned-count; guard-refusal ⇒ skip+warn;
+ * decision table is total (fence-pass ⇒ drain-with-warned-count; fence-refusal ⇒ skip+warn;
  * genuine throw ⇒ propagate, claim intact, retryable).
  */
 async function clearStaleWalFenced(
@@ -295,7 +295,7 @@ interface FencedSealResult {
  * Fenced pre-update SEAL (issue #197 PR-2, deliverable 1g): reclaim ALWAYS preserves ALL of a
  * stale step's WAL (no partitioning — zero-cooperation preservation, design §3: "reclaim/settle
  * preservation ⇔ trio ∧ seal, no carriage needed") on any store declaring `seal`, via the exact
- * SAME version-fence guard `clearStaleWalFenced` uses above (re-verified against
+ * SAME version fence `clearStaleWalFenced` uses above (re-verified against
  * `expectedVersion`, captured at THIS call's own reclaim-decision read — never a fresh get taken
  * here). `{sealed:false, reason:'capped'}` falls back to the existing destructive drain
  * (`deleteFenced`, reusing the SAME `run_at_version` fence — a second, independent version-fence

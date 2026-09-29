@@ -3,9 +3,13 @@ import type { AgentTraceEntry } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ArtifactDeletionReport } from './per-run-artifact-store.js';
 import {
+  assertFencePredicate,
   checkFenceWithReader,
+  fenceReaderMissingError,
+  isFenceRunReader,
   type FencePredicate,
   type FenceRunReader,
+  type RunScopedFencePredicate,
 } from './fence-predicate.js';
 
 /**
@@ -223,6 +227,14 @@ export interface TraceBufferStore {
    *   holder must never acquire the run-file lock, and a run-file-lock holder must never acquire a
    *   trace-buffer lock — callers that touch both (e.g. purge) always delete artifacts strictly
    *   BEFORE their run-locked anchor delete, never the other way around.
+   * - A fence names no target of its own: the run is the method's `runId`, and a step member
+   *   (`StepScopedFencePredicate`) is evaluated against the method's `stepId` — so the store
+   *   passes its `stepId` to the evaluation, and the run-wide `deleteAllForRunFenced` accepts only
+   *   a `RunScopedFencePredicate` (the per-step methods accept every member).
+   * - The method's FIRST act is `assertFencePredicate(fence, stepId)`: a value that is not a fence
+   *   predicate, a member with a wrong or extra field, and a step member on the run-wide method
+   *   are refused with `ENGINE_INTERNAL` before any lock, scan, read or write — never reported as
+   *   contention.
    * - A refusal is exactly the error `evaluateFence` throws (each member's former guard's error),
    *   propagated to the caller UNWRAPPED — the method performs no write/delete, and the store's own
    *   error-wrapping (e.g. `toArtifactDeleteFailedError`) never touches it. A read failure other
@@ -273,7 +285,7 @@ export interface TraceBufferStore {
    */
   deleteAllForRunFenced?(
     runId: string,
-    fence: FencePredicate,
+    fence: RunScopedFencePredicate,
     dirEntries?: readonly string[],
   ): Promise<ArtifactDeletionReport>;
 
@@ -634,18 +646,20 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
   private chains = new Map<string, Promise<void>>();
 
   /** The run store every fence predicate is evaluated against (issue #616 PR-0) — the read the
-   *  former guards made. Absent ⇒ every fenced method refuses loudly (`fenceReaderMissingError`),
-   *  never a silently unfenced write. */
-  private readonly runReader: FenceRunReader | undefined;
+   *  former guards made. REQUIRED, like `JsonTraceBufferStore`'s: building the store with nothing
+   *  that has a `get` method in its place (`isFenceRunReader`) throws `fenceReaderMissingError` at
+   *  construction — never a store whose fenced calls all refuse later. */
+  private readonly runReader: FenceRunReader;
 
-  constructor(runReader?: FenceRunReader) {
+  /** `runReader` is REQUIRED (issue #616 PR-0). A TypeScript caller that omits it is a compile
+   *  error; a plain-JavaScript caller that passes nothing, `null`, or anything without a `get`
+   *  method is refused here, at construction. The previous release's form — no argument at all —
+   *  is refused the same way. */
+  constructor(runReader: FenceRunReader) {
+    if (!isFenceRunReader(runReader)) {
+      throw fenceReaderMissingError('InMemoryTraceBufferStore');
+    }
     this.runReader = runReader;
-  }
-
-  /** Reads the run and evaluates `fence` — called INSIDE the per-key critical section, where the
-   *  guard call used to be. */
-  private async checkFence(runId: string, fence: FencePredicate): Promise<void> {
-    await checkFenceWithReader(this.runReader, 'InMemoryTraceBufferStore', runId, fence);
   }
 
   private key(runId: string, stepId: string): string {
@@ -792,9 +806,10 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
     fence: FencePredicate,
     options?: AppendOptions,
   ): Promise<AppendResult> {
+    assertFencePredicate(fence, stepId);
     const k = this.key(runId, stepId);
     return this.withKeyLock(k, async () => {
-      await this.checkFence(runId, fence);
+      await checkFenceWithReader(this.runReader, runId, fence, stepId);
       return this.appendUnlocked(k, entries, options?.writerNonce);
     });
   }
@@ -818,9 +833,10 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
    *  precisely to move content out of this destructive drain's reach; only `deleteAllForRun*`
    *  (run-level bulk delete) also retires sealed artifacts. */
   async deleteFenced(runId: string, stepId: string, fence: FencePredicate): Promise<number> {
+    assertFencePredicate(fence, stepId);
     const k = this.key(runId, stepId);
     return this.withKeyLock(k, async () => {
-      await this.checkFence(runId, fence);
+      await checkFenceWithReader(this.runReader, runId, fence, stepId);
       const existing = this.buffers.get(k);
       this.buffers.delete(k);
       return existing !== undefined ? flattenWalBatches(existing).length : 0;
@@ -887,18 +903,19 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
    *  (design §4 — a sealed artifact is retained ONLY until its owning run itself is purged). */
   async deleteAllForRunFenced(
     runId: string,
-    fence: FencePredicate,
+    fence: RunScopedFencePredicate,
     _dirEntries?: readonly string[],
   ): Promise<ArtifactDeletionReport> {
+    assertFencePredicate(fence);
     const keys = this.keysForRun(runId);
     if (keys.size === 0) {
-      await this.checkFence(runId, fence);
+      await checkFenceWithReader(this.runReader, runId, fence);
       return { bytes_deleted: 0 };
     }
     let bytes_deleted = 0;
     for (const k of keys) {
       await this.withKeyLock(k, async () => {
-        await this.checkFence(runId, fence);
+        await checkFenceWithReader(this.runReader, runId, fence);
         bytes_deleted += this.bytesForKey(k);
         this.buffers.delete(k);
         this.sealed.delete(k);
@@ -914,9 +931,10 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
    *  (there is no filesystem race to guard against here; the per-key mutex already serializes
    *  every operation on this key, so `seq` can simply be the next array index). */
   async sealFenced(runId: string, stepId: string, fence: FencePredicate): Promise<SealResult> {
+    assertFencePredicate(fence, stepId);
     const k = this.key(runId, stepId);
     return this.withKeyLock(k, async () => {
-      await this.checkFence(runId, fence);
+      await checkFenceWithReader(this.runReader, runId, fence, stepId);
       const live = this.buffers.get(k);
       if (live === undefined || live.length === 0) {
         return { sealed: false, reason: 'absent' };

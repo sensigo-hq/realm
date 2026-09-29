@@ -709,8 +709,8 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
       deleteAllForRun: async () => ({ bytes_deleted: 0 }),
       statAllForRun: async () => ({ bytes: 0 }),
       readAllForRun: async () => ({}),
-      deleteFenced: async (runId, _stepId, fence) => {
-        await checkFenceWithReader(store, 'trio-only stub', runId, fence);
+      deleteFenced: async (runId, stepId, fence) => {
+        await checkFenceWithReader(store, runId, fence, stepId);
         const existing = buffers.get(key) ?? [];
         buffers.delete(key);
         return existing.length;
@@ -741,13 +741,13 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
     }
   });
 
-  it('version-fence refusal: a concurrent bump detected at EITHER clear-guard skips the clear (WAL intact) and warns — the state reclaim itself still proceeds via the existing CAS-retry machinery', async () => {
+  it('version-fence refusal: a concurrent bump detected at EITHER clear-fence skips the clear (WAL intact) and warns — the state reclaim itself still proceeds via the existing CAS-retry machinery', async () => {
     // A fully scripted store (mirrors the CAS-mismatch describe block above) — four DISTINCT
-    // get() calls occur in order: (1) the initial decision read, (2) the primary clear-guard's
-    // fresh get, (3) the CAS-retry's own reloaded re-evaluation read, (4) the retry clear-guard's
+    // get() calls occur in order: (1) the initial decision read, (2) the primary clear-fence's
+    // fresh get, (3) the CAS-retry's own reloaded re-evaluation read, (4) the retry clear-fence's
     // fresh get. Scripting all four independently (rather than relying on the 2-record clamping
     // shape the CAS-mismatch tests above use) lets this test force a version mismatch at BOTH
-    // clear-guard checkpoints deterministically, without also being forced through by the
+    // clear-fence checkpoints deterministically, without also being forced through by the
     // update() calls' own (separately scripted) CAS behavior.
     const staleClaim = { deadline: pastIso() };
     const decisionRead = makeRun({
@@ -755,7 +755,7 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
       claims: { work: staleClaim },
       version: 5,
     });
-    const primaryGuardSees = makeRun({
+    const primaryFenceSees = makeRun({
       in_progress_steps: ['work'],
       claims: { work: staleClaim },
       version: 6,
@@ -765,12 +765,12 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
       claims: { work: staleClaim },
       version: 6,
     });
-    const retryGuardSees = makeRun({
+    const retryFenceSees = makeRun({
       in_progress_steps: ['work'],
       claims: { work: staleClaim },
       version: 9,
     });
-    const records = [decisionRead, primaryGuardSees, retryDecisionRead, retryGuardSees];
+    const records = [decisionRead, primaryFenceSees, retryDecisionRead, retryFenceSees];
     let getIdx = 0;
     const updateCalls: RunRecord[] = [];
     let updateCallNum = 0;
@@ -786,10 +786,10 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
       deleteAllForRun: async () => ({ bytes_deleted: 0 }),
       statAllForRun: async () => ({ bytes: 0 }),
       readAllForRun: async () => ({}),
-      deleteFenced: async (runId, _stepId, fence) => {
+      deleteFenced: async (runId, stepId, fence) => {
         // The fence reads the scripted run store (issue #616 PR-0) — refuses at both checkpoints
         // in this test, so the clear below is never reached.
-        await checkFenceWithReader(scriptedRunStore, 'scripted stub', runId, fence);
+        await checkFenceWithReader(scriptedRunStore, runId, fence, stepId);
         deleteFencedCalls.push('cleared');
         return 4;
       },
@@ -815,10 +815,10 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const result = await reclaimStep(scriptedRunStore, 'r1', 'work', { traceBufferStore });
-      // The state reclaim itself still proceeds — unaffected by either clear-guard refusal.
+      // The state reclaim itself still proceeds — unaffected by either clear-fence refusal.
       expect(result.outcome).toBe('reclaimed');
       expect(updateCalls).toHaveLength(1); // re-applied once, on the reloaded record
-      // The WAL was NEVER cleared: both clear-guards refused.
+      // The WAL was NEVER cleared: both clear-fences refused.
       expect(deleteFencedCalls).toHaveLength(0);
       expect(
         warnSpy.mock.calls.filter(([msg]) => String(msg).includes('version fence refused')),

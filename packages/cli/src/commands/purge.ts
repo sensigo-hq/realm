@@ -26,7 +26,12 @@
 // purging a just-abandoned run is `--older-than`, never a fossil claim.
 import { readdir } from 'node:fs/promises';
 import { Command } from 'commander';
-import type { RunRecord, RunStore, PerRunArtifactStore, FencePredicate } from '@sensigo/realm';
+import type {
+  RunRecord,
+  RunStore,
+  PerRunArtifactStore,
+  RunScopedFencePredicate,
+} from '@sensigo/realm';
 import {
   type ArtifactDeletionReport,
   WorkflowError,
@@ -308,8 +313,8 @@ export async function purgeRuns(
       result.freed_bytes[run.id] = freedThisRun;
     } catch (err) {
       // A run refused here may still have had real bytes freed by the stores that ran BEFORE the
-      // refusal (an anchor ELOCKED, a no_longer_terminal re-check, a mid-sweep fenced-guard
-      // refusal). Recorded so the run's own line can say so — silently dropping it would tell an
+      // refusal (an anchor ELOCKED, a no_longer_terminal re-check, a mid-sweep fence refusal).
+      // Recorded so the run's own line can say so — silently dropping it would tell an
       // operator nothing was freed when something was.
       if (freedThisRun > 0) {
         result.partial_frees[run.id] = { bytes: freedThisRun, stores: storesFreed };
@@ -343,7 +348,7 @@ export async function purgeRuns(
 interface DeleteAllForRunFencedCapable {
   deleteAllForRunFenced(
     runId: string,
-    fence: FencePredicate,
+    fence: RunScopedFencePredicate,
     dirEntries?: readonly string[],
   ): Promise<ArtifactDeletionReport>;
 }
@@ -368,7 +373,7 @@ function hasDeleteAllForRunFenced(
  * terminal-re-verify from the anchor layer to the WAL artifact layer, closing the purge/resume
  * resurrect race for WALs too.
  */
-const PURGE_FENCE: FencePredicate = { kind: 'run_absent_or_terminal' };
+const PURGE_FENCE: RunScopedFencePredicate = { kind: 'run_absent_or_terminal' };
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;

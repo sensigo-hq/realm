@@ -719,9 +719,9 @@ describe('sweepOrphanArtifacts — fenced reap path (issue #207 PR-2)', () => {
       const liveRunIds = await runStore.listRunIds();
       expect(liveRunIds.has(resurrectedId)).toBe(false);
 
-      // ...but a save() re-import lands (with that SAME id) before the fenced guard's own read —
+      // ...but a save() re-import lands (with that SAME id) before the fence's own read —
       // simulated by writing the run file directly between the snapshot above and the sweep call
-      // below (the guard's own runStore.get() runs INSIDE the sweep, after this).
+      // below (the fence's own runStore.get() runs INSIDE the sweep, after this).
       await runStore.create({
         workflowId: 'wf-1',
         workflowVersion: 1,

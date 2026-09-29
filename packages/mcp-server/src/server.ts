@@ -69,7 +69,9 @@ export interface RealmMcpServerOptions {
   /**
    * Trace-buffer WAL store for incremental agent-trace ingestion (B-lite). Object injection, not
    * a path string — a Postgres/object-storage-backed run store has no filesystem directory to
-   * derive one from. See the co-location contract on `runStore` above.
+   * derive one from. See the co-location contract on `runStore` above. Its run reader must read the
+   * same runs as `runStore`: the fenced writes are checked against the trace buffer's own reader
+   * (issue #616), never against `runStore`.
    */
   traceBufferStore?: TraceBufferStore;
   /**

@@ -859,7 +859,7 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
   });
 });
 
-describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
+describe('purgeRuns — fenced WAL delete (issue #207 PR-2)', () => {
   it('a declaring artifact store (JsonTraceBufferStore) routes through deleteAllForRunFenced, not the legacy deleteAllForRun, and still clears the WAL', async () => {
     const { dir, runStore } = await makeStores();
     try {
@@ -888,7 +888,7 @@ describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
     }
   });
 
-  it('resumed-mid-purge: a run that becomes non-terminal between selection and the fenced guard is refused — bucketed blocked, anchor untouched, WAL intact', async () => {
+  it('resumed-mid-purge: a run that becomes non-terminal between selection and the fence is refused — bucketed blocked, anchor untouched, WAL intact', async () => {
     const { dir, runStore } = await makeStores();
     try {
       const run = makeRun({
@@ -907,7 +907,7 @@ describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
         get: async (id: string) => {
           getCalls++;
           // Calls 1-2 are purgeRuns's own selection + pre-delete re-check (both still terminal —
-          // unaffected by this test). Call 3+ is the fenced guard's OWN re-check, invoked from
+          // unaffected by this test). Call 3+ is the fence's OWN re-check, invoked from
           // inside deleteAllForRunFenced — simulate a concurrent `realm run resume` landing exactly
           // there.
           if (getCalls <= 2) return runStore.get(id);
@@ -933,11 +933,16 @@ describe('purgeRuns — fenced WAL delete guard (issue #207 PR-2)', () => {
 
       expect(result.blocked).toHaveLength(1);
       expect(result.blocked[0]?.runId).toBe('resumed-mid-purge');
+      // The reason purge prints on its `⚠ <run>: <reason>` line (issue #616 PR-0 moved this
+      // sentence into core's fence; the operator still reads exactly it).
+      expect(result.blocked[0]?.reason).toBe(
+        "run 'resumed-mid-purge' is no longer terminal (resumed since selection) — refusing to purge its trace buffer",
+      );
       expect(result.failed).toEqual([]);
       expect(result.purged).toEqual([]);
       expect(anchorDeleteCalls).toBe(0); // anchor never reached
       expect(existsSync(join(dir, 'resumed-mid-purge.json'))).toBe(true);
-      // The WAL survives too — the guard refused before deleteIfExists ever ran.
+      // The WAL survives too — the fence refused before deleteIfExists ever ran.
       expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(1);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1194,7 +1199,7 @@ describe('purge report wording and partial-free disclosure (issue #189)', () => 
 
   it('a refusal that already freed bytes SAYS SO on its own line', async () => {
     // The honesty case. Earlier stores can delete real bytes before the anchor refuses (ELOCKED,
-    // no_longer_terminal, drain_pending, a mid-sweep fenced-guard refusal). Without this line the
+    // no_longer_terminal, drain_pending, a mid-sweep fence refusal). Without this line the
     // run reads as untouched, and an operator re-running the purge expects the same figure back.
     const run = makeRun({ id: 'r-partial', terminal_state: true, sealed_by: { arm: 'complete' } });
     const result = {

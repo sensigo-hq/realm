@@ -34,11 +34,17 @@ import {
   linkNoClobberThenUnlink,
   errnoCode,
   FsIoError,
-  readRunForFence,
-  evaluateFence,
+  assertFencePredicate,
+  checkFenceWithReader,
   fenceReaderMissingError,
+  isFenceRunReader,
 } from '@sensigo/realm';
-import type { AgentTraceEntry, FencePredicate, FenceRunReader } from '@sensigo/realm';
+import type {
+  AgentTraceEntry,
+  FencePredicate,
+  FenceRunReader,
+  RunScopedFencePredicate,
+} from '@sensigo/realm';
 import { WorkflowError } from '@sensigo/realm';
 
 /** Line format stored in the JSONL WAL file — literally `SealedWalLine` (issue #197 PR-1: a
@@ -187,37 +193,32 @@ export class JsonTraceBufferStore
   private readonly lockProfile: TraceBufferLockProfile;
   /** The run store every fence predicate is evaluated against (issue #616 PR-0) — the read the
    *  former guards made: one lock-free `get`, inside this store's WAL lock. REQUIRED (issue #616
-   *  PR-0, D2): a store built without one is a construction-time error, never a silently unfenced
-   *  write discovered at the first fenced call. */
+   *  PR-0, D2): building the store with nothing that has a `get` method in the reader's place
+   *  (`isFenceRunReader`) throws at construction — never a silently unfenced write discovered at
+   *  the first fenced call. */
   private readonly runReader: FenceRunReader;
 
   /**
    * `runReader` is REQUIRED (issue #616 PR-0, D2) — it must sit before `lockProfile` because a
    * required parameter cannot follow an optional one. A TypeScript caller that omits it is a
    * compile error; a plain-JavaScript caller (this package is published and consumed from
-   * JavaScript too) reaches this constructor with `runReader === undefined`, which throws
-   * `fenceReaderMissingError` here — at construction, not at the first fenced call, where the
-   * failure would otherwise surface as a bare `TypeError: Cannot read properties of undefined
-   * (reading 'get')`.
+   * JavaScript too) can reach this constructor with no reader, with `null`, or with the previous
+   * release's `(runsDir, lockProfile)` shape — a lock profile where the reader now goes. None of
+   * them has a `get` method (`isFenceRunReader`), so each throws `fenceReaderMissingError` here —
+   * at construction, not at the first fenced call, where the failure would otherwise surface as a
+   * bare `TypeError` (and a lock profile passed that way would be dropped without a word).
    */
   constructor(
     runsDir: string,
     runReader: FenceRunReader,
     lockProfile?: Partial<TraceBufferLockProfile>,
   ) {
-    if (runReader === undefined) {
+    if (!isFenceRunReader(runReader)) {
       throw fenceReaderMissingError('JsonTraceBufferStore');
     }
     this.runsDir = runsDir;
     this.lockProfile = { ...DEFAULT_LOCK_PROFILE, ...lockProfile };
     this.runReader = runReader;
-  }
-
-  /** Reads the run and evaluates `fence` — called INSIDE the WAL lock, where the guard call used
-   *  to be (issue #616 PR-0). The reader is REQUIRED (D2), so there is no per-call branch for a
-   *  missing one — that case is refused once, at construction. */
-  private async checkFence(runId: string, fence: FencePredicate): Promise<void> {
-    evaluateFence(fence, await readRunForFence(this.runReader, runId, fence), runId);
   }
 
   private walPath(runId: string, stepId: string): string {
@@ -482,10 +483,11 @@ export class JsonTraceBufferStore
     fence: FencePredicate,
     options?: AppendOptions,
   ): Promise<AppendResult> {
+    assertFencePredicate(fence, stepId);
     const walPath = this.walPath(runId, stepId);
     const release = await this.lockWal(walPath, APPEND_RETRIES);
     try {
-      await this.checkFence(runId, fence);
+      await checkFenceWithReader(this.runReader, runId, fence, stepId);
       return await this.appendWithinCS(walPath, entries, options?.writerNonce);
     } finally {
       await release();
@@ -511,13 +513,12 @@ export class JsonTraceBufferStore
     // declaring the fenced trio commits read/delete/deleteAllForRun to the same CS (see the
     // interface doc).
     //
-    // issue #183: this single-step cleanup is best-effort BY CONVENTION at MOST call sites — but
-    // NOT ALL FOUR: execution-loop.ts's :1857 success-settle call site does NOT wrap this call in
-    // a try/catch today (a follow-up PR fixes that site directly); the other three
-    // (execution-loop.ts's other two + reclaim-step.ts's one) do. Converting the raw unlink to
-    // deleteIfExists here doesn't change that contract — delete() can still fail; it just stops a
-    // real I/O error from being invisibly swallowed with NO signal at all, which the source-text
-    // guard (store-fs-guard.test.ts) also requires (no raw unlink in this file).
+    // issue #183: this single-step cleanup is best-effort BY CONVENTION — every engine call site
+    // (the four settle sites in execution-loop.ts and reclaim-step.ts's `clearStaleWal`) wraps it
+    // in a try/catch. Converting the raw unlink to deleteIfExists here doesn't change that
+    // contract — delete() can still fail; it just stops a real I/O error from being invisibly
+    // swallowed with NO signal at all, which the source-text guard (store-fs-guard.test.ts) also
+    // requires (no raw unlink in this file).
     const walPath = this.walPath(runId, stepId);
     const release = await this.lockWal(walPath);
     try {
@@ -536,10 +537,11 @@ export class JsonTraceBufferStore
    * from within itself — `proper-lockfile` is not reentrant).
    */
   async deleteFenced(runId: string, stepId: string, fence: FencePredicate): Promise<number> {
+    assertFencePredicate(fence, stepId);
     const walPath = this.walPath(runId, stepId);
     const release = await this.lockWal(walPath);
     try {
-      await this.checkFence(runId, fence);
+      await checkFenceWithReader(this.runReader, runId, fence, stepId);
       const { count } = await this.readWal(walPath);
       await deleteIfExists(walPath);
       return count;
@@ -568,10 +570,11 @@ export class JsonTraceBufferStore
    * gets sealed like any other live WAL (a harmless, if pointless, empty sealed artifact).
    */
   async sealFenced(runId: string, stepId: string, fence: FencePredicate): Promise<SealResult> {
+    assertFencePredicate(fence, stepId);
     const walPath = this.walPath(runId, stepId);
     const release = await this.lockWal(walPath);
     try {
-      await this.checkFence(runId, fence);
+      await checkFenceWithReader(this.runReader, runId, fence, stepId);
 
       const stat = await statIfExists(walPath);
       if (stat === undefined) {
@@ -799,16 +802,17 @@ export class JsonTraceBufferStore
    */
   async deleteAllForRunFenced(
     runId: string,
-    fence: FencePredicate,
+    fence: RunScopedFencePredicate,
     dirEntries?: readonly string[],
   ): Promise<ArtifactDeletionReport> {
+    assertFencePredicate(fence);
     const matching = [
       ...(await this.matchingWalFiles(runId, dirEntries)),
       ...(await this.matchingSealedFiles(runId, dirEntries)),
     ];
 
     if (matching.length === 0) {
-      await this.checkFence(runId, fence);
+      await checkFenceWithReader(this.runReader, runId, fence);
       return { bytes_deleted: 0 };
     }
 
@@ -830,7 +834,7 @@ export class JsonTraceBufferStore
         // exactly as thrown. The earlier shape wrapped BOTH the check and `deleteIfExists` in one
         // try/catch keyed only on `err instanceof FsIoError` — which mistook a check-thrown
         // FsIoError for deleteIfExists's own failure and wrapped it too.
-        await this.checkFence(runId, fence);
+        await checkFenceWithReader(this.runReader, runId, fence);
         try {
           const bytes = (await statIfExists(path))?.size ?? 0;
           const didDelete = await deleteIfExists(path);

@@ -367,10 +367,11 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
     });
 
     it('injecting only ONE of the two artifact stores (with a runsDirPath-less run store) still throws — partial injection is not enough', () => {
+      const runStore = new MinimalRunStore();
       expect(() =>
         createRealmMcpServer({
-          runStore: new MinimalRunStore(),
-          traceBufferStore: new InMemoryTraceBufferStore(),
+          runStore,
+          traceBufferStore: new InMemoryTraceBufferStore(runStore),
           // failedAttemptStore NOT injected.
         }),
       ).toThrow(/runsDirPath/);

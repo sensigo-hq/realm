@@ -20,7 +20,8 @@ import {
 const LAWS: FencedTraceBufferLaw[] = [
   'STRUCTURAL',
   'FENCE_REFUSES',
-  // issue #616 PR-0: each of the five FencePredicate members — true, false, and a racer.
+  // issue #616 PR-0: each of the five FencePredicate members — true, false, and a racer, through
+  // every method that carries it — plus the malformed fences.
   'FENCE_DATA',
   'CS_OCCUPANCY',
   'PER_KEY_INDEPENDENCE',
@@ -134,15 +135,15 @@ async function makeAdapter(): Promise<{
   const dir = await mkdtemp(join(tmpdir(), 'json-trace-buffer-store-fenced-tck-'));
   // issue #616 PR-0, D3: the store evaluates every fence against the TCK's run source; `control`
   // is what every adapter supplies, `park` is what only an injected-reader adapter supplies.
-  const fenceRuns = createFenceRunSource();
-  const store = new JsonTraceBufferStore(dir, fenceRuns.reader, GENEROUS_LOCK_PROFILE);
+  const runSource = createFenceRunSource();
+  const store = new JsonTraceBufferStore(dir, runSource.reader, GENEROUS_LOCK_PROFILE);
   return {
     adapter: {
       store,
-      fenceRuns: fenceRuns.control,
+      fenceRuns: runSource.control,
       makeKey: () => ({ runId: randomUUID(), stepId: 'fenced-tck-step' }),
       fenceForm: 'injected-reader',
-      fenceRunPark: fenceRuns.park,
+      fenceRunPark: runSource.park,
       lockProfile: GENEROUS_LOCK_PROFILE,
       // issue #197 PR-1: a physical file's on-disk bytes are an independent ground truth (unlike
       // the in-memory store's own accounting) — see each helper's own doc above.
@@ -184,6 +185,12 @@ describe('JsonTraceBufferStore — fenced-trio TCK conformance (issue #207)', ()
         (c) => c.law === 'PER_KEY_INDEPENDENCE' && c.name.includes('disjoint-run'),
       );
       expect(target).toBeDefined();
+      // A skip case's name carries the real case's text, so `find` alone would accept
+      // it — and a skip's no-op `run` passes. The variant exists to run the REAL case
+      // under a short timeout.
+      expect(target!.name.startsWith('SKIPPED — '), 'must run the real case, never a skip').toBe(
+        false,
+      );
       await target!.run();
     } finally {
       await cleanup();
