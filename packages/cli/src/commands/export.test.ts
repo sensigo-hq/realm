@@ -28,11 +28,13 @@ async function makeStores(): Promise<{
   traceBufferStore: JsonTraceBufferStore;
 }> {
   const dir = await mkdtemp(join(tmpdir(), 'export-test-'));
+  const runStore = new JsonFileStore(dir);
   return {
     dir,
-    runStore: new JsonFileStore(dir),
+    runStore,
     failedAttemptStore: new FailedAttemptStore(dir),
-    traceBufferStore: new JsonTraceBufferStore(dir),
+    // issue #616 PR-0: the trace buffer evaluates fences against the run store.
+    traceBufferStore: new JsonTraceBufferStore(dir, runStore),
   };
 }
 
@@ -617,7 +619,10 @@ describe('sealed trace artifacts (issue #197 PR-2)', () => {
       const run = makeRun({ run_phase: 'completed', terminal_state: true });
       await injectRun(dir, run);
       await traceBufferStore.append(run.id, 'step-a', [{ event: 'stale' }]);
-      await traceBufferStore.sealFenced!(run.id, 'step-a', async () => {});
+      await traceBufferStore.sealFenced!(run.id, 'step-a', {
+        kind: 'run_at_version',
+        version: run.version,
+      });
 
       const { bundle } = await buildExportBundle(run.id, {
         runStore,
@@ -765,7 +770,10 @@ describe('non-disclosure redaction (issue #197 PR-2, design §6)', () => {
       await traceBufferStore.append(run.id, 'step-a', [{ event: 'stale' }], {
         writerNonce: 'sealed-live-nonce',
       });
-      await traceBufferStore.sealFenced!(run.id, 'step-a', async () => {});
+      await traceBufferStore.sealFenced!(run.id, 'step-a', {
+        kind: 'run_at_version',
+        version: run.version,
+      });
 
       const { bundle } = await buildExportBundle(run.id, {
         runStore,

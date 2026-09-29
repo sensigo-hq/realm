@@ -799,39 +799,18 @@ function buildCompensatingUnclaim(pendingRun: RunRecord, stepName: string, now: 
   };
 }
 
-/**
- * Guard for the settle-time seal attempt (issue #197 PR-2, deliverable 1f) — ONE lock-free
- * `store.get` re-verifying the run exists and this step has actually LEFT `in_progress_steps`
- * (i.e. our own settling `store.update` already landed) — the "purge-guard shape" (mirrors
- * #184's terminal-re-verify-under-lock precedent). In the normal case this always passes: by the
- * time either settle site calls `sealFenced`, the settling update has already committed
- * synchronously just above it. A run genuinely gone (e.g. concurrently purged) surfaces as
- * `store.get`'s own typed `STATE_RUN_NOT_FOUND` throw — deliberately NOT special-cased here; it
- * propagates as an ordinary guard THROW, which the caller's uniform "a throw ⇒ warn + skip the
- * delete" handling already covers correctly (residue-not-loss either way).
- */
-function buildSettleSealGuard(
-  store: RunStore,
-  runId: string,
-  stepName: string,
-): () => Promise<void> {
-  return async () => {
-    const fresh = await store.get(runId);
-    if (fresh.in_progress_steps.includes(stepName)) {
-      throw new WorkflowError(
-        `Refusing to seal trace buffer for run '${runId}' step '${stepName}': the step is still ` +
-          'in_progress (the settling update has not yet landed) — residue-not-loss, the live WAL ' +
-          'is left intact.',
-        {
-          code: 'STATE_STEP_PENDING',
-          category: 'STATE',
-          agentAction: 'report_to_user',
-          retryable: true,
-        },
-      );
-    }
-  };
-}
+// The settle-time seal fence (issue #197 PR-2, deliverable 1f) is the `step_not_in_progress`
+// predicate (issue #616 PR-0 — `store/fence-predicate.ts`), passed at all four settle sites: the
+// trace buffer re-reads the run inside its own critical section and refuses the seal unless this
+// step has actually LEFT `in_progress_steps` (i.e. our own settling `store.update` already
+// landed) — the "purge-guard shape" (mirrors #184's terminal-re-verify-under-lock precedent). In
+// the normal case it always passes: by the time a settle site calls `sealFenced`, the settling
+// update has already committed just above it. A run genuinely gone (e.g. concurrently purged)
+// surfaces as the run store's own typed `STATE_RUN_NOT_FOUND` — the predicate requires the run
+// to exist, and that refusal propagates as an ordinary fence refusal, which the caller's uniform
+// "a throw ⇒ warn + skip the delete" handling already covers correctly (residue-not-loss either
+// way). The trace buffer's run reader must read the same runs as the run store `executeStep`
+// writes — every host constructs it so (the MCP tool may open its own store over the same runs).
 
 /**
  * Issue #185 Fix 1 (budget-priority): builds the merged, canonicalized trace for an agent step,
@@ -3208,7 +3187,7 @@ export async function executeStep(
             const sealResult = await options.traceBufferStore.sealFenced!(
               options.runId,
               options.command,
-              buildSettleSealGuard(store, options.runId, options.command),
+              { kind: 'step_not_in_progress' },
             );
             if (sealResult.sealed) {
               performPlainDelete = false;
@@ -3380,7 +3359,7 @@ export async function executeStep(
           const sealResult = await options.traceBufferStore.sealFenced!(
             options.runId,
             options.command,
-            buildSettleSealGuard(store, options.runId, options.command),
+            { kind: 'step_not_in_progress' },
           );
           if (sealResult.sealed) {
             performPlainDelete = false;
@@ -3940,7 +3919,7 @@ export async function executeStep(
           const sealResult = await options.traceBufferStore.sealFenced!(
             options.runId,
             options.command,
-            buildSettleSealGuard(store, options.runId, options.command),
+            { kind: 'step_not_in_progress' },
           );
           if (sealResult.sealed) {
             performPlainDelete = false;
@@ -4119,7 +4098,7 @@ export async function executeStep(
         const sealResult = await options.traceBufferStore.sealFenced!(
           options.runId,
           options.command,
-          buildSettleSealGuard(store, options.runId, options.command),
+          { kind: 'step_not_in_progress' },
         );
         if (sealResult.sealed) {
           performPlainDelete = false;

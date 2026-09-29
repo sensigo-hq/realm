@@ -2,11 +2,19 @@
 // #107). append/read/delete are exercised indirectly elsewhere (execution-loop finalization); this
 // file did not previously have dedicated coverage, so a handful of sanity tests are included too.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, readdir, writeFile, appendFile, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, writeFile, appendFile, readFile, chmod } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { storeDeclaresSeal, storeDeclaresNonceCarriage } from '@sensigo/realm';
+import {
+  storeDeclaresSeal,
+  storeDeclaresNonceCarriage,
+  runNotFoundError,
+  fenceReaderMissingError,
+  type FencePredicate,
+  type FenceRunReader,
+  type RunRecord,
+} from '@sensigo/realm';
 import { JsonTraceBufferStore, DEFAULT_LOCK_PROFILE } from './json-trace-buffer-store.js';
 
 /** Recomputes the exact on-disk WAL filename `walPath` uses — test-side only. */
@@ -20,17 +28,93 @@ function sealedFileName(runId: string, stepId: string, seq: number): string {
   return `sealed-trace-${runId}-${Buffer.from(stepId).toString('base64url')}.${seq}.jsonl`;
 }
 
+/** A fence that passes while the run is absent from `runs` (issue #616 PR-0). */
+const PASS: FencePredicate = { kind: 'run_absent' };
+
+/** A reader for a store built on a path that NEVER fences (issue #616 PR-0, D2) — every unfenced
+ *  method these throwaway stores exercise (`deleteAllForRun`/`readAllForRun`/`listOrphans`) never
+ *  touches the reader, so an unexpected fence call fails loudly instead of silently reading
+ *  nothing. The constructor's required second argument, never called. */
+const NEVER_READ: FenceRunReader = {
+  get: async () => {
+    throw new Error('fence unexpectedly evaluated against NEVER_READ');
+  },
+};
+
 describe('JsonTraceBufferStore', () => {
   let dir: string;
   let store: JsonTraceBufferStore;
+  // The run reader every fence is evaluated against (issue #616 PR-0): runs absent unless set.
+  let runs: Map<string, RunRecord>;
+  let reads: string[];
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'jtbs-'));
-    store = new JsonTraceBufferStore(dir);
+    runs = new Map();
+    reads = [];
+    const reader: FenceRunReader = {
+      get: async (runId) => {
+        reads.push(runId);
+        const run = runs.get(runId);
+        if (run === undefined) throw runNotFoundError(runId);
+        return run;
+      },
+    };
+    store = new JsonTraceBufferStore(dir, reader);
   });
 
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
+  });
+
+  // issue #616 PR-0, D2 — a plain-JavaScript caller (this package is published and used from
+  // JavaScript too) can reach the constructor with no reader, with `null`, or with the previous
+  // release's `(runsDir, lockProfile)` shape despite the TypeScript-only required parameter; the
+  // construction itself must refuse loudly rather than let a JavaScript caller discover the gap
+  // as a bare `TypeError` at its first fenced call (and, for the lock profile, drop it silently).
+  it('a construction with no run reader throws ENGINE_INTERNAL, at construction — D2', () => {
+    const notReaders: Array<[string, unknown]> = [
+      ['no reader', undefined],
+      ['null', null],
+      ["the previous release's lock profile", { retries: { retries: 1 } }],
+    ];
+    for (const [label, notReader] of notReaders) {
+      let thrown: unknown;
+      try {
+        new JsonTraceBufferStore(dir, notReader as never);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown, label).toBeInstanceOf(Error);
+      expect((thrown as { code?: unknown }).code, label).toBe('ENGINE_INTERNAL');
+      expect((thrown as Error).message, label).toBe(
+        fenceReaderMissingError('JsonTraceBufferStore').message,
+      );
+    }
+  });
+
+  // issue #616 PR-0 — the fence is checked before the runs directory is scanned, not only before
+  // the lock: a malformed fence is the caller's mistake (ENGINE_INTERNAL) even when the directory
+  // cannot be read. The valid-fence control proves the directory really is unreadable here, so the
+  // malformed assertion cannot pass by accident (never run as root in this repo's CI or dev boxes).
+  it('deleteAllForRunFenced checks the fence before it scans the runs directory', async () => {
+    await chmod(dir, 0o000);
+    let control: unknown;
+    let malformed: unknown;
+    try {
+      await store.deleteAllForRunFenced('run-unreadable', PASS).catch((err: unknown) => {
+        control = err;
+      });
+      await store
+        .deleteAllForRunFenced('run-unreadable', { kind: 'step_not_in_progress' } as never)
+        .catch((err: unknown) => {
+          malformed = err;
+        });
+    } finally {
+      await chmod(dir, 0o700);
+    }
+    expect((control as { code?: unknown } | undefined)?.code).toBe('ENGINE_ARTIFACT_DELETE_FAILED');
+    expect((malformed as { code?: unknown } | undefined)?.code).toBe('ENGINE_INTERNAL');
   });
 
   it('append + read round-trips entries', async () => {
@@ -90,7 +174,10 @@ describe('JsonTraceBufferStore', () => {
     });
 
     it('a missing runsDir is a no-op (own readdir fallback path), not a throw', async () => {
-      const missingDirStore = new JsonTraceBufferStore(join(dir, 'does', 'not', 'exist'));
+      const missingDirStore = new JsonTraceBufferStore(
+        join(dir, 'does', 'not', 'exist'),
+        NEVER_READ,
+      );
       await expect(missingDirStore.deleteAllForRun('run-1')).resolves.toEqual({ bytes_deleted: 0 });
     });
 
@@ -157,7 +244,10 @@ describe('JsonTraceBufferStore', () => {
     });
 
     it('returns {} (no crash) when runsDir itself is missing', async () => {
-      const missingDirStore = new JsonTraceBufferStore(join(dir, 'does', 'not', 'exist'));
+      const missingDirStore = new JsonTraceBufferStore(
+        join(dir, 'does', 'not', 'exist'),
+        NEVER_READ,
+      );
       const all = await missingDirStore.readAllForRun('run-1');
       expect(all).toEqual({});
     });
@@ -265,14 +355,14 @@ describe('JsonTraceBufferStore', () => {
     });
 
     it('a missing runsDir (ENOENT) resolves to [] — not a throw', async () => {
-      const missingStore = new JsonTraceBufferStore(join(dir, 'does', 'not', 'exist'));
+      const missingStore = new JsonTraceBufferStore(join(dir, 'does', 'not', 'exist'), NEVER_READ);
       await expect(missingStore.listOrphans(new Set())).resolves.toEqual([]);
     });
 
     it('fail-closed: a non-ENOENT readdir error THROWS — never a fabricated empty/partial list', async () => {
       const notADir = join(dir, 'i-am-a-file');
       await writeFile(notADir, 'x');
-      const brokenStore = new JsonTraceBufferStore(notADir);
+      const brokenStore = new JsonTraceBufferStore(notADir, NEVER_READ);
 
       await expect(brokenStore.listOrphans(new Set())).rejects.toMatchObject({ code: 'ENOTDIR' });
     });
@@ -286,7 +376,7 @@ describe('JsonTraceBufferStore', () => {
 
     it('a sealed artifact whose run is NOT live is also reported as an orphan (issue #197 PR-1)', async () => {
       await store.append(ORPHAN, 'step-a', [{ event: 'x' }]);
-      const sealed = await store.sealFenced(ORPHAN, 'step-a', async () => {});
+      const sealed = await store.sealFenced(ORPHAN, 'step-a', PASS);
       expect(sealed).toEqual({ sealed: true });
 
       const orphans = await store.listOrphans(new Set());
@@ -298,7 +388,7 @@ describe('JsonTraceBufferStore', () => {
 
     it('a sealed artifact whose run IS live is not reported', async () => {
       await store.append(LIVE, 'step-a', [{ event: 'x' }]);
-      await store.sealFenced(LIVE, 'step-a', async () => {});
+      await store.sealFenced(LIVE, 'step-a', PASS);
 
       const orphans = await store.listOrphans(new Set([LIVE]));
 
@@ -323,7 +413,7 @@ describe('JsonTraceBufferStore', () => {
   describe('filename collision (issue #197 PR-1 — sealed vs live-WAL matchers)', () => {
     it('a sealed artifact filename never matches the live-WAL matcher, and vice versa', async () => {
       await store.append('run-1', 'step-a', [{ event: 'a' }]);
-      await store.sealFenced('run-1', 'step-a', async () => {});
+      await store.sealFenced('run-1', 'step-a', PASS);
 
       const files = await readdir(dir);
       const liveMatches = files.filter(
@@ -348,7 +438,7 @@ describe('JsonTraceBufferStore', () => {
       await store.append('run-1', 'step-a', [{ event: 'a1' }]);
       await store.append('run-1', 'step-a', [{ event: 'a2' }]);
 
-      const result = await store.sealFenced('run-1', 'step-a', async () => {});
+      const result = await store.sealFenced('run-1', 'step-a', PASS);
 
       expect(result).toEqual({ sealed: true });
       expect(existsSync(join(dir, walFileName('run-1', 'step-a')))).toBe(false);
@@ -362,15 +452,15 @@ describe('JsonTraceBufferStore', () => {
     });
 
     it('returns {sealed:false, reason:"absent"} when no live WAL exists for this key', async () => {
-      const result = await store.sealFenced('run-1', 'never-appended', async () => {});
+      const result = await store.sealFenced('run-1', 'never-appended', PASS);
       expect(result).toEqual({ sealed: false, reason: 'absent' });
     });
 
     it('repeated seals of the same key get ascending seq numbers', async () => {
       await store.append('run-1', 'step-a', [{ event: 'a1' }]);
-      await store.sealFenced('run-1', 'step-a', async () => {});
+      await store.sealFenced('run-1', 'step-a', PASS);
       await store.append('run-1', 'step-a', [{ event: 'a2' }]);
-      await store.sealFenced('run-1', 'step-a', async () => {});
+      await store.sealFenced('run-1', 'step-a', PASS);
 
       const sealedArtifacts = await store.listSealedForRun('run-1');
       expect(sealedArtifacts.map((a) => a.seq).sort()).toEqual([0, 1]);
@@ -379,11 +469,11 @@ describe('JsonTraceBufferStore', () => {
     it('returns {sealed:false, reason:"capped"} once SEALED_ARTIFACTS_LIMIT_PER_STEP is reached', async () => {
       for (let i = 0; i < 8; i++) {
         await store.append('run-1', 'step-a', [{ event: `a${i}` }]);
-        const result = await store.sealFenced('run-1', 'step-a', async () => {});
+        const result = await store.sealFenced('run-1', 'step-a', PASS);
         expect(result).toEqual({ sealed: true });
       }
       await store.append('run-1', 'step-a', [{ event: 'one-too-many' }]);
-      const result = await store.sealFenced('run-1', 'step-a', async () => {});
+      const result = await store.sealFenced('run-1', 'step-a', PASS);
       expect(result).toEqual({ sealed: false, reason: 'capped' });
     });
 
@@ -393,7 +483,7 @@ describe('JsonTraceBufferStore', () => {
       await writeFile(sentinelPath, sentinelBytes);
 
       await store.append('run-1', 'step-a', [{ event: 'a' }]);
-      const result = await store.sealFenced('run-1', 'step-a', async () => {});
+      const result = await store.sealFenced('run-1', 'step-a', PASS);
 
       expect(result).toEqual({ sealed: true });
       const sentinelAfter = await readFile(sentinelPath, 'utf8');
@@ -405,21 +495,15 @@ describe('JsonTraceBufferStore', () => {
       expect(bumpedArtifact?.lines.flatMap((l) => l.entries)).toEqual([{ event: 'a' }]);
     });
 
-    it('the guard runs even when the result is "absent" (guard-in-CS, not conditional on presence)', async () => {
-      let guardCalls = 0;
-      await store.sealFenced('run-1', 'never-appended', async () => {
-        guardCalls++;
-      });
-      expect(guardCalls).toBe(1);
+    it('the fence is evaluated even when the result is "absent" (in-CS, not conditional on presence)', async () => {
+      await store.sealFenced('run-1', 'never-appended', PASS);
+      expect(reads.filter((id) => id === 'run-1')).toHaveLength(1);
     });
 
-    it('a refusing guard rejects the whole call — no seal happens', async () => {
+    it('a refusing fence rejects the whole call — no seal happens', async () => {
       await store.append('run-1', 'step-a', [{ event: 'a' }]);
-      await expect(
-        store.sealFenced('run-1', 'step-a', async () => {
-          throw new Error('refused');
-        }),
-      ).rejects.toThrow('refused');
+      runs.set('run-1', { id: 'run-1' } as RunRecord); // present ⇒ `run_absent` refuses
+      await expect(store.sealFenced('run-1', 'step-a', PASS)).rejects.toThrow('exists again');
       expect(existsSync(join(dir, walFileName('run-1', 'step-a')))).toBe(true); // untouched
     });
   });
@@ -528,7 +612,7 @@ describe('JsonTraceBufferStore', () => {
   describe('sealed artifacts join deleteAllForRun (issue #197 PR-1)', () => {
     it('deleteAllForRun removes sealed artifacts for the run alongside live WAL files', async () => {
       await store.append('run-1', 'step-a', [{ event: 'a' }]);
-      await store.sealFenced('run-1', 'step-a', async () => {});
+      await store.sealFenced('run-1', 'step-a', PASS);
       await store.append('run-1', 'step-b', [{ event: 'b' }]); // stays live, unset
 
       await store.deleteAllForRun('run-1');
@@ -539,9 +623,9 @@ describe('JsonTraceBufferStore', () => {
 
     it('leaves a different run’s sealed artifacts untouched', async () => {
       await store.append('run-1', 'step-a', [{ event: 'a' }]);
-      await store.sealFenced('run-1', 'step-a', async () => {});
+      await store.sealFenced('run-1', 'step-a', PASS);
       await store.append('run-2', 'step-a', [{ event: 'b' }]);
-      await store.sealFenced('run-2', 'step-a', async () => {});
+      await store.sealFenced('run-2', 'step-a', PASS);
 
       await store.deleteAllForRun('run-1');
 

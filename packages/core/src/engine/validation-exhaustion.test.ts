@@ -313,7 +313,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     // option) and called with NO writerNonce — a nonced/mismatched config would instead route
     // the line to preserved-foreign/attributed, not bare-adoption, which is what this test needs
     // to discriminate (see deliverable 2's own note on this).
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(run.id, 'draft', [{ event: 'wal-thinking' }]);
 
     const envelope = await executeStep(store, def, {
@@ -571,7 +571,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     // nonces at the adoption layer — countRejection itself never reads nonce at all, but wiring
     // real nonce differentiation is what makes a per-nonce-keying mutant visible (undefined≡
     // undefined would otherwise mask it).
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
 
     let last;
     for (let i = 0; i < DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD; i++) {

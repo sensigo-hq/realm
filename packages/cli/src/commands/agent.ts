@@ -191,7 +191,9 @@ export const agentCommand = new Command('agent')
         // concrete JsonFileStore (same runsDir), mirroring reclaim.ts's own wiring shape — without
         // this, `realm agent`'s driver never adopted/fenced a step's streamed WAL trace at all.
         const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
-        const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath);
+        // issue #616 PR-0: the run reader is the run store the driver writes — every fence
+        // predicate is evaluated against it inside the trace buffer's own critical section.
+        const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, store);
         let provider: LlmProvider;
         // issue #313: a third-party provider cannot declare a `providerId` capability (realm
         // does not know its dialect), so its identity travels separately and evidence can still

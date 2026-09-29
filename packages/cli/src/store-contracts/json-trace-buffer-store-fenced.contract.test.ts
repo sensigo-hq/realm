@@ -11,11 +11,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
-import { fencedTraceBufferContract, type FencedTraceBufferLaw } from '@sensigo/realm-testing';
+import {
+  fencedTraceBufferContract,
+  createFenceRunSource,
+  type FencedTraceBufferLaw,
+} from '@sensigo/realm-testing';
 
 const LAWS: FencedTraceBufferLaw[] = [
   'STRUCTURAL',
   'FENCE_REFUSES',
+  // issue #616 PR-0: each of the five FencePredicate members — true, false, and a racer, through
+  // every method that carries it — plus the malformed fences.
+  'FENCE_DATA',
   'CS_OCCUPANCY',
   'PER_KEY_INDEPENDENCE',
   'NO_SILENT_LOSS',
@@ -113,7 +120,7 @@ async function bytesOracle(
  * concurrent caller's lock acquisition giving up (ELOCKED) before the law's own observation
  * window completes on a loaded CI runner. Passed via the constructor-injectable lock-profile
  * parameter (issue #207); this is the "injectable generous lock profile" the adapter's own doc
- * requires for `guard-in-cs` stores.
+ * requires for `'injected-reader'` stores.
  */
 const GENEROUS_LOCK_PROFILE = {
   retries: { retries: 20, minTimeout: 20, maxTimeout: 200 },
@@ -126,12 +133,17 @@ async function makeAdapter(): Promise<{
   cleanup: () => Promise<void>;
 }> {
   const dir = await mkdtemp(join(tmpdir(), 'json-trace-buffer-store-fenced-tck-'));
-  const store = new JsonTraceBufferStore(dir, GENEROUS_LOCK_PROFILE);
+  // issue #616 PR-0, D3: the store evaluates every fence against the TCK's run source; `control`
+  // is what every adapter supplies, `park` is what only an injected-reader adapter supplies.
+  const runSource = createFenceRunSource();
+  const store = new JsonTraceBufferStore(dir, runSource.reader, GENEROUS_LOCK_PROFILE);
   return {
     adapter: {
       store,
+      fenceRuns: runSource.control,
       makeKey: () => ({ runId: randomUUID(), stepId: 'fenced-tck-step' }),
-      fenceForm: 'guard-in-cs',
+      fenceForm: 'injected-reader',
+      fenceRunPark: runSource.park,
       lockProfile: GENEROUS_LOCK_PROFILE,
       // issue #197 PR-1: a physical file's on-disk bytes are an independent ground truth (unlike
       // the in-memory store's own accounting) — see each helper's own doc above.
@@ -173,9 +185,30 @@ describe('JsonTraceBufferStore — fenced-trio TCK conformance (issue #207)', ()
         (c) => c.law === 'PER_KEY_INDEPENDENCE' && c.name.includes('disjoint-run'),
       );
       expect(target).toBeDefined();
+      // A skip case's name carries the real case's text, so `find` alone would accept
+      // it — and a skip's no-op `run` passes. The variant exists to run the REAL case
+      // under a short timeout.
+      expect(target!.name.startsWith('SKIPPED — '), 'must run the real case, never a skip').toBe(
+        false,
+      );
       await target!.run();
     } finally {
       await cleanup();
     }
   }, 3000);
+
+  // issue #616 PR-0, D3: a skipped case renders `✓` for its law in a runner (both realm adapters
+  // have a park, so every park-dependent law above runs for real) — this adapter supplies EVERY
+  // optional hook (`bytesOracle`, `rawWalAccess`), so it registers NO skip at all. This assertion
+  // is what would fail loudly (naming what it lost) if this adapter ever lost its park.
+  it('registers no skipped cases at all — every optional hook is supplied', async () => {
+    const { adapter, cleanup } = await makeAdapter();
+    try {
+      const cases = fencedTraceBufferContract(adapter);
+      const skipped = cases.filter((c) => c.name.startsWith('SKIPPED — ')).map((c) => c.name);
+      expect(skipped).toEqual([]);
+    } finally {
+      await cleanup();
+    }
+  });
 });

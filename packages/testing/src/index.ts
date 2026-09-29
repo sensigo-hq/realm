@@ -15,6 +15,13 @@ export type {
   RunStoreFidelityContractAdapter,
 } from './store/run-store-fidelity-contract.js';
 export { fencedTraceBufferContract } from './store/fenced-trace-buffer-contract.js';
+export { createFenceRunSource, fenceTestRun } from './store/fence-run-source.js';
+export type {
+  FenceRunSource,
+  FenceRunControl,
+  FenceRunPark,
+  ParkedRead,
+} from './store/fence-run-source.js';
 export type {
   FencedTraceBufferLaw,
   FencedTraceBufferContractCase,

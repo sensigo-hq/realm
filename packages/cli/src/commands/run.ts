@@ -259,7 +259,9 @@ export const runCommand = new Command('run')
       // run store (same runsDir) and thread it into executeChain below — without this, `realm
       // run`'s own dev-mode driver never adopted/fenced a step's streamed WAL trace at all.
       const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
-      const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath);
+      // issue #616 PR-0: the run reader is the run store this driver writes — every fence
+      // predicate is evaluated against it inside the trace buffer's own critical section.
+      const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, store);
 
       const { run: initialRecord } = await store.create({
         workflowId: definition.id,

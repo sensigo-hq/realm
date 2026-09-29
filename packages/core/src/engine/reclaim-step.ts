@@ -11,6 +11,7 @@ import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { TraceBufferStore } from '../store/trace-buffer-store.js';
 import { storeDeclaresSeal } from '../store/trace-buffer-store.js';
+import { ReclaimVersionChanged, type FencePredicate } from '../store/fence-predicate.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { classifyClaim, omitClaim, type ClaimState } from './claim-liveness.js';
@@ -198,13 +199,13 @@ async function clearStaleWal(
   }
 }
 
-/** Internal control-flow signal (issue #207 PR-2): thrown by `clearStaleWalFenced`'s own guard
- *  when the run's version no longer matches the version captured at reclaim's decision read —
- *  caught ONLY inside `clearStaleWalFenced`, immediately below; never propagates past this file.
- *  A plain `Error` (deliberately NOT a `WorkflowError`) so no store's own error-classification
- *  logic (e.g. a fenced fs store's `instanceof FsIoError` wrap-scoping) could ever mistake it for
- *  something else — it exists purely as a private signal between the guard and its caller. */
-class ReclaimVersionChanged extends Error {}
+// `ReclaimVersionChanged` (issue #207 PR-2) now lives in `store/fence-predicate.ts` (issue #616
+// PR-0): it is the `run_at_version` fence's refusal, thrown by `evaluateFence` inside the trace
+// buffer's critical section when the run's version no longer matches the version captured at
+// reclaim's decision read — caught ONLY inside `clearStaleWalFenced`/`sealStaleWalFenced`, below;
+// never propagates past this file. A plain `Error` (deliberately NOT a `WorkflowError`) so no
+// store's own error-classification logic (e.g. a fenced fs store's `instanceof FsIoError`
+// wrap-scoping) could ever mistake it for something else.
 
 /** Outcome of `clearStaleWalFenced` (issue #207 PR-2) — what `reclaimStep` needs to decide what
  *  to log; never surfaced to reclaim's own caller beyond the console.warn it drives. */
@@ -217,48 +218,42 @@ interface FencedClearResult {
 
 /**
  * Fenced pre-update clear (issue #207 PR-2, D3 §5): clears the reclaimed step's trace buffer
- * BEFORE the un-claiming `store.update`, guarded by a run-VERSION fence re-verified inside the
- * SAME per-(runId, stepName) critical section `deleteFenced` uses. `expectedVersion` is the
- * version captured at THIS call's own reclaim-decision read (the primary path's `run` at :133 —
- * now above; the CAS-retry path's `reloaded` — never a fresh get taken here). Every `RunStore`
- * mutation (claimStep, settle, reclaim) bumps `version`, so ANY intervening write on this run is
- * detected — a concurrent claim/settle/reclaim of this exact step since the decision read means
- * reclaim's premise ("this is a dead, still-in-progress claim") may no longer hold, and the guard
- * refuses rather than risk destroying content a live/newer actor already adopted or is
- * mid-adopting.
+ * BEFORE the un-claiming `store.update`, guarded by a run-VERSION fence (the `run_at_version`
+ * predicate, issue #616 PR-0) the trace buffer evaluates inside the SAME per-(runId, stepName)
+ * critical section `deleteFenced` uses, against the run it reads there. The trace buffer's run
+ * reader must read the same runs as the run store reclaim writes — the hosts construct it so.
+ * `expectedVersion` is the version captured at THIS call's own reclaim-decision read (the primary
+ * path's `run`, read by `reclaimStep` below; the CAS-retry path's `reloaded` — never a fresh get
+ * taken here). Every `RunStore` mutation (claimStep, settle, reclaim) bumps `version`, so ANY
+ * intervening write on this run is detected — a concurrent claim/settle/reclaim of this exact step
+ * since the decision read means reclaim's premise ("this is a dead, still-in-progress claim") may
+ * no longer hold, and the fence refuses rather than risk destroying content a live/newer actor
+ * already adopted or is mid-adopting.
  *
  * A separate `step ∈ in_progress_steps` re-check is deliberately NOT added: since ANY store
  * mutation bumps version, an unchanged version already implies a byte-identical record — the
  * membership fact cannot have changed without the version changing too. D3 §5 states this
  * explicitly: every agent `ClaimRecord` is `{deadline: null}`, so record identity/classification
- * cannot discriminate further — the version fence alone is the whole guard.
+ * cannot discriminate further — the version fence alone is the whole check.
  *
- * Returns `{skipped: true}` when the guard refused (the caller must skip-and-warn, never treat
+ * Returns `{skipped: true}` when the fence refused (the caller must skip-and-warn, never treat
  * this as an error). Any OTHER thrown error (lock contention, genuine I/O failure) propagates to
  * the caller UNCHANGED and must abort the reclaim entirely, BEFORE the un-claiming update — the
- * decision table is total (guard-pass ⇒ drain-with-warned-count; guard-refusal ⇒ skip+warn;
+ * decision table is total (fence-pass ⇒ drain-with-warned-count; fence-refusal ⇒ skip+warn;
  * genuine throw ⇒ propagate, claim intact, retryable).
  */
 async function clearStaleWalFenced(
-  store: RunStore,
   traceBufferStore: TraceBufferStore,
   runId: string,
   stepName: string,
   expectedVersion: number,
 ): Promise<FencedClearResult> {
-  const guard = async (): Promise<void> => {
-    // Fresh lock-free read — never the record already in hand (`run`/`reloaded`), which is
-    // exactly what this guard exists to re-verify against.
-    const fresh = await store.get(runId);
-    if (fresh.version !== expectedVersion) {
-      throw new ReclaimVersionChanged(
-        `reclaim's version fence refused: run '${runId}' changed since the reclaim decision ` +
-          `(expected version ${expectedVersion}, observed ${fresh.version})`,
-      );
-    }
-  };
+  // The trace buffer reads the run afresh inside its own critical section — never the record
+  // already in hand (`run`/`reloaded`), which is exactly what this fence exists to re-verify
+  // against (issue #616 PR-0: the fence is data, evaluated by the store).
+  const fence: FencePredicate = { kind: 'run_at_version', version: expectedVersion };
   try {
-    const count = await traceBufferStore.deleteFenced!(runId, stepName, guard);
+    const count = await traceBufferStore.deleteFenced!(runId, stepName, fence);
     return { skipped: false, count };
   } catch (err) {
     if (err instanceof ReclaimVersionChanged) {
@@ -300,38 +295,29 @@ interface FencedSealResult {
  * Fenced pre-update SEAL (issue #197 PR-2, deliverable 1g): reclaim ALWAYS preserves ALL of a
  * stale step's WAL (no partitioning — zero-cooperation preservation, design §3: "reclaim/settle
  * preservation ⇔ trio ∧ seal, no carriage needed") on any store declaring `seal`, via the exact
- * SAME version-fence guard `clearStaleWalFenced` uses above (re-verified against
+ * SAME version fence `clearStaleWalFenced` uses above (re-verified against
  * `expectedVersion`, captured at THIS call's own reclaim-decision read — never a fresh get taken
  * here). `{sealed:false, reason:'capped'}` falls back to the existing destructive drain
- * (`deleteFenced`, reusing the SAME guard closure — a second, independent version-fence
+ * (`deleteFenced`, reusing the SAME `run_at_version` fence — a second, independent version-fence
  * re-verification, cheap and safe even if slightly redundant) rather than silently evicting an
  * already-sealed artifact to make room. `{sealed:false, reason:'absent'}` (no live WAL at all) is
  * a no-op — nothing to preserve or destroy. Any OTHER thrown error (lock contention, genuine I/O
  * failure) propagates UNCHANGED, exactly like `clearStaleWalFenced`'s own contract.
  */
 async function sealStaleWalFenced(
-  store: RunStore,
   traceBufferStore: TraceBufferStore,
   runId: string,
   stepName: string,
   expectedVersion: number,
 ): Promise<FencedSealResult> {
-  const guard = async (): Promise<void> => {
-    const fresh = await store.get(runId);
-    if (fresh.version !== expectedVersion) {
-      throw new ReclaimVersionChanged(
-        `reclaim's version fence refused: run '${runId}' changed since the reclaim decision ` +
-          `(expected version ${expectedVersion}, observed ${fresh.version})`,
-      );
-    }
-  };
+  const fence: FencePredicate = { kind: 'run_at_version', version: expectedVersion };
   try {
-    const result = await traceBufferStore.sealFenced!(runId, stepName, guard);
+    const result = await traceBufferStore.sealFenced!(runId, stepName, fence);
     if (result.sealed) {
       return { skipped: false, sealed: true };
     }
     if (result.reason === 'capped') {
-      const count = await traceBufferStore.deleteFenced!(runId, stepName, guard);
+      const count = await traceBufferStore.deleteFenced!(runId, stepName, fence);
       return { skipped: false, sealed: false, cappedFallbackCount: count };
     }
     // reason === 'absent' — nothing to seal or drain.
@@ -466,17 +452,10 @@ export async function reclaimStep(
 
   try {
     if (sealCapable) {
-      const sealResult = await sealStaleWalFenced(
-        store,
-        traceBufferStore!,
-        runId,
-        stepName,
-        run.version,
-      );
+      const sealResult = await sealStaleWalFenced(traceBufferStore!, runId, stepName, run.version);
       warnFencedSealOutcome(runId, stepName, sealResult);
     } else if (fenced) {
       const clearResult = await clearStaleWalFenced(
-        store,
         traceBufferStore!,
         runId,
         stepName,
@@ -543,7 +522,6 @@ export async function reclaimStep(
     // never `run`'s.
     if (sealCapable) {
       const sealResult = await sealStaleWalFenced(
-        store,
         traceBufferStore!,
         runId,
         stepName,
@@ -552,7 +530,6 @@ export async function reclaimStep(
       warnFencedSealOutcome(runId, stepName, sealResult);
     } else if (fenced) {
       const clearResult = await clearStaleWalFenced(
-        store,
         traceBufferStore!,
         runId,
         stepName,

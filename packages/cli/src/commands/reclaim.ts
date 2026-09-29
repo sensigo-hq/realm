@@ -113,7 +113,9 @@ export const reclaimCommand = new Command('reclaim')
       // undefined) and the next attempt adopts the dead attempt's buffered lines, which is the
       // mechanical reason a sequential-abandon-then-retry is #185's dominant "adopted a
       // prior/concurrent writer's lines" population.
-      const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath);
+      // issue #616 PR-0: the run reader is the run store reclaim writes — reclaim's
+      // `run_at_version` fence is evaluated against it inside the trace buffer's critical section.
+      const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, store);
 
       // Loud-fail on a store that cannot persist the claim clock (liveness recovery unavailable).
       if (!store.persistsClaims) {

@@ -102,7 +102,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'pre_failure_line' }]);
     const deleteSpy = vi.spyOn(traceBufferStore, 'delete');
 
@@ -144,7 +144,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
       workflowVersion: 1,
       params: {},
     });
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(store);
     const deleteSpy = vi.spyOn(traceBufferStore, 'delete');
     // issue #207 correction (item 4a): also spy on deleteFenced — InMemoryTraceBufferStore
     // declares the fenced trio, so a hypothetically REINTRODUCED capability-block delete that

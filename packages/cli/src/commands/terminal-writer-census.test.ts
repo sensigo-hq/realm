@@ -112,7 +112,7 @@ interface CensusEntry {
 
 /**
  * THE MAP. Every count here was recomputed from the tree, not inherited: 84 raw hits strip to 68
- * once comments are removed, across 13 files.
+ * once comments are removed, across 13 files (14 since #616 PR-0 added the fenced TCK run source).
  */
 const EXPECTED: Record<string, CensusEntry> = {
   'packages/cli/src/agent/run-attach.ts': {
@@ -186,6 +186,14 @@ const EXPECTED: Record<string, CensusEntry> = {
     count: 1,
     classes: ['fixture-input'],
     reason: 'SEALED_BY_ROUNDTRIP seals a run properly to prove the arm survives a round trip.',
+  },
+  'packages/testing/src/store/fence-run-source.ts': {
+    count: 2,
+    classes: ['fixture-input'],
+    reason:
+      "The fenced trace-buffer TCK's run source (issue #616 PR-0): `fenceTestRun` builds the live " +
+      'and the sealed-terminal fixture runs the FENCE_DATA law evaluates predicates against — read ' +
+      'by the store under test through its run reader, never written to any run store.',
   },
   'packages/testing/src/store/settlement-contract.ts': {
     count: 46,
@@ -334,11 +342,11 @@ describe('#367 — the terminal-writer census', () => {
     expect(turbo.globalDependencies).toEqual(['eslint.config.ts', 'scripts/**/*.mjs']);
   });
 
-  it('the post-strip total is 78 across 13 files — the figure the map is built from', () => {
+  it('the post-strip total is 80 across 14 files — the figure the map is built from', () => {
     const scan = scanTerminalWriters(REPO_ROOT);
     const total = Object.values(scan.hits).reduce((n, l) => n + l.length, 0);
-    expect(total).toBe(78);
-    expect(Object.keys(scan.hits)).toHaveLength(13);
+    expect(total).toBe(80);
+    expect(Object.keys(scan.hits)).toHaveLength(14);
   });
 });
 

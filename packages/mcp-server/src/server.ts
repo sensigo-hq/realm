@@ -69,7 +69,9 @@ export interface RealmMcpServerOptions {
   /**
    * Trace-buffer WAL store for incremental agent-trace ingestion (B-lite). Object injection, not
    * a path string — a Postgres/object-storage-backed run store has no filesystem directory to
-   * derive one from. See the co-location contract on `runStore` above.
+   * derive one from. See the co-location contract on `runStore` above. Its run reader must read the
+   * same runs as `runStore`: the fenced writes are checked against the trace buffer's own reader
+   * (issue #616), never against `runStore`.
    */
   traceBufferStore?: TraceBufferStore;
   /**
@@ -145,7 +147,10 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
     // path), this is byte-identical to pre-#188 behavior. A store the caller DID inject here
     // (a partial injection) is still respected, never silently overridden.
     const runsDirPath = (effectiveRunStore as JsonFileStore).runsDirPath;
-    traceBufferStore = options?.traceBufferStore ?? new JsonTraceBufferStore(runsDirPath);
+    // The run reader is the server's run store: every fence predicate is evaluated against it,
+    // inside the trace buffer's own critical section (issue #616 PR-0).
+    traceBufferStore =
+      options?.traceBufferStore ?? new JsonTraceBufferStore(runsDirPath, effectiveRunStore);
     failedAttemptStore = options?.failedAttemptStore ?? new FailedAttemptStore(runsDirPath);
   } else {
     // The run store cannot supply an artifact directory (e.g. a Postgres-backed RunStore) AND no

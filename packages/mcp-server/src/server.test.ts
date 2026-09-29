@@ -17,7 +17,13 @@ import {
   deriveRunPhase,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
-import type { RunStore, RunRecord, CreateRunOptions, WorkflowDefinition } from '@sensigo/realm';
+import type {
+  RunStore,
+  RunRecord,
+  CreateRunOptions,
+  WorkflowDefinition,
+  FenceRunReader,
+} from '@sensigo/realm';
 import { createRealmMcpServer } from './server.js';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import type { FailedAttemptStoreLike } from './tools/start-run.js';
@@ -221,7 +227,14 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
         // pointed at the SAME runDir (as the co-located derivation would have used internally)
         // reads empty ONLY if the derivation genuinely pointed there and execute_step consumed it.
         expect(execEnvelope['status']).toBe('ok');
-        const verifyTraceBufferStore = new JsonTraceBufferStore(runDir);
+        // issue #616 PR-0, D2 — `read()` is unfenced; a throwing reader makes an unexpected fence
+        // call fail loudly rather than silently.
+        const neverRead: FenceRunReader = {
+          get: async () => {
+            throw new Error('fence unexpectedly evaluated');
+          },
+        };
+        const verifyTraceBufferStore = new JsonTraceBufferStore(runDir, neverRead);
         const remaining = await verifyTraceBufferStore.read(runId, 'step-agent');
         expect(remaining).toHaveLength(0);
       } finally {
@@ -239,11 +252,13 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
         const def = agentWorkflowDef('seam-inject-wf');
         await workflowStore.register(def);
 
-        const injectedTraceBufferStore = new InMemoryTraceBufferStore();
+        // issue #616 PR-0: the injected trace buffer reads the injected run store.
+        const injectedRunStore = new MinimalRunStore();
+        const injectedTraceBufferStore = new InMemoryTraceBufferStore(injectedRunStore);
         const injectedFailedAttemptStore = makeFailedAttemptStoreDouble();
 
         const server = createRealmMcpServer({
-          runStore: new MinimalRunStore(), // no runsDirPath — injection is the ONLY path here
+          runStore: injectedRunStore, // no runsDirPath — injection is the ONLY path here
           workflowStore,
           traceBufferStore: injectedTraceBufferStore,
           failedAttemptStore: injectedFailedAttemptStore,
@@ -302,10 +317,11 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
 
         const injectedFailedAttemptStore = makeFailedAttemptStoreDouble();
 
+        const injectedRunStore = new MinimalRunStore();
         const server = createRealmMcpServer({
-          runStore: new MinimalRunStore(),
+          runStore: injectedRunStore,
           workflowStore,
-          traceBufferStore: new InMemoryTraceBufferStore(),
+          traceBufferStore: new InMemoryTraceBufferStore(injectedRunStore),
           failedAttemptStore: injectedFailedAttemptStore,
         });
         const callTool = await connectClient(server);
@@ -351,10 +367,11 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
     });
 
     it('injecting only ONE of the two artifact stores (with a runsDirPath-less run store) still throws — partial injection is not enough', () => {
+      const runStore = new MinimalRunStore();
       expect(() =>
         createRealmMcpServer({
-          runStore: new MinimalRunStore(),
-          traceBufferStore: new InMemoryTraceBufferStore(),
+          runStore,
+          traceBufferStore: new InMemoryTraceBufferStore(runStore),
           // failedAttemptStore NOT injected.
         }),
       ).toThrow(/runsDirPath/);

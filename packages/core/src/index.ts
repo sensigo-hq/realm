@@ -384,3 +384,30 @@ export {
   bufferFullError,
   flattenWalBatches,
 } from './store/trace-buffer-store.js';
+
+// The trace buffer's fence as data (issue #616 PR-0)
+export type {
+  FencePredicate,
+  FencePredicateKind,
+  StepScopedFencePredicate,
+  RunScopedFencePredicate,
+  FenceRunReader,
+  StepEligibilityState,
+  StepMembershipState,
+} from './store/fence-predicate.js';
+export {
+  FENCE_PREDICATE_KINDS,
+  FENCE_REQUIRES_RUN,
+  FENCE_TARGETS_STEP,
+  isStepScopedFence,
+  assertFencePredicate,
+  evaluateFence,
+  readRunForFence,
+  checkFenceWithReader,
+  isFenceRunReader,
+  fenceReaderMissingError,
+  stepStateOf,
+  stepNotEligibleError,
+  runNotFoundError,
+  ReclaimVersionChanged,
+} from './store/fence-predicate.js';

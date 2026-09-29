@@ -380,7 +380,7 @@ export const exportCommand = new Command('export')
     const runStore = new JsonFileStore();
     const runsDir = runStore.runsDirPath;
     const failedAttemptStore = new FailedAttemptStore(runsDir);
-    const traceBufferStore = new JsonTraceBufferStore(runsDir);
+    const traceBufferStore = new JsonTraceBufferStore(runsDir, runStore);
 
     try {
       const { bundle, warning } = await buildExportBundle(runId, {

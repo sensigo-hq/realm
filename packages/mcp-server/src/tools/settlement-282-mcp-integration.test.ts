@@ -30,7 +30,7 @@ const def: WorkflowDefinition = {
     // VIRGIN on the grandfathered fixture below — not in completed_steps/failed_steps/
     // skipped_steps/in_progress_steps, not the pending_gate's step_name. `stepStateOf` returns
     // `undefined` for it, so the terminal_state check is the ONLY thing that can refuse it —
-    // unlike step 'a' (already in completed_steps), which let a reverted terminal-state guard
+    // unlike step 'a' (already in completed_steps), which let a reverted terminal-state check
     // hide behind stepStateOf's OWN (unrelated) 'completed' refusal, same code, vacuous pin.
     c: { description: 'c', execution: 'agent', depends_on: [] },
   },
@@ -110,19 +110,20 @@ function makeStaticStore(run: RunRecord): RunStore {
 }
 
 describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
-  it("a G record (terminal, stale persisted phase) is refused at the pre-CS check — keyed on terminal_state, not run_phase, on a VIRGIN step ('c') so stepStateOf cannot mask a reverted guard", async () => {
+  it("a G record (terminal, stale persisted phase) is refused at the pre-CS check — keyed on terminal_state, not run_phase, on a VIRGIN step ('c') so stepStateOf cannot mask a reverted check", async () => {
     const workflowDir = await mkdtemp(join(tmpdir(), 'realm-282-append-trace-wf-'));
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
     const workflowStore = new JsonWorkflowStore(workflowDir);
     const runStore = makeStaticStore(makeGrandfathered());
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     // Correction: empty entries — the pre-CS checks (terminal_state, then stepStateOf) are the
-    // ONLY guard on this path (issue #279 D3 §2's "raw unlocked path UNCONDITIONALLY" for the
-    // empty-probe case never re-invokes the fenced guard). A non-empty append on this SAME
-    // static (always-terminal) store would ALSO get caught by the appendFenced guard's own
-    // independent terminal_state re-check (:380, unmutated) — masking a `:254`-only revert
-    // behind an unrelated, differently-sited pass. Empty entries isolates the pre-CS check.
+    // ONLY check on this path (issue #279 D3 §2's "raw unlocked path UNCONDITIONALLY" for the
+    // empty-probe case never evaluates the fence). A non-empty append on this SAME static
+    // (always-terminal) store would ALSO get caught by the fence's own independent terminal_state
+    // re-check (`step_open_for_trace`, evaluated by core's `evaluateFence`) — masking a revert of
+    // the pre-CS terminal check alone (step 1b of `handleAppendTrace`) behind an unrelated,
+    // differently-sited pass. Empty entries isolates the pre-CS check.
     await expect(
       handleAppendTrace(
         { run_id: 'g1', step_id: 'c', entries: [] },
@@ -134,7 +135,7 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
     });
   });
 
-  it("a two-phase store (LIVE at the pre-CS get, G at the fenced guard's own re-check) is ALSO refused — proving the guard's own keying, not just the pre-CS one", async () => {
+  it("a two-phase store (LIVE at the pre-CS get, G at the fence's own re-check) is ALSO refused — proving the fence's own keying, not just the pre-CS one", async () => {
     const workflowDir = await mkdtemp(join(tmpdir(), 'realm-282-append-trace-wf-2-'));
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
     const workflowStore = new JsonWorkflowStore(workflowDir);
@@ -159,7 +160,7 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
             agentAction: 'report_to_user',
             retryable: false,
           });
-        // First call: the pre-CS check (live). Second+ call: the fenced guard's OWN re-check —
+        // First call: the pre-CS check (live). Second+ call: the fence's OWN re-check —
         // simulates a concurrent settle terminalizing the run (into a #282-shaped stale record)
         // between the pre-CS read and the physical write.
         return getCallCount === 1 ? live : grandfathered;
@@ -177,13 +178,14 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
         return live;
       },
     };
-    const traceBufferStore = new InMemoryTraceBufferStore();
+    const traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     // step 'c' is virgin on BOTH `live` and `grandfathered` (neither's completed/failed/skipped/
     // in_progress arrays name it, and the pending_gate's step_name is 'a') — so stepStateOf
     // returns undefined at every read, and the ONLY thing that can refuse this call at all is the
-    // guard's OWN terminal_state re-check at append-trace.ts:380 (unmutated) or its :254 sibling
-    // (which never fires here, since the pre-CS read sees `live`, not `grandfathered`).
+    // fence's OWN terminal_state re-check (`step_open_for_trace`, in core's `evaluateFence`) or the
+    // pre-CS terminal check (step 1b of `handleAppendTrace` — which never fires here, since the
+    // pre-CS read sees `live`, not `grandfathered`).
     await expect(
       handleAppendTrace(
         { run_id: 'g1', step_id: 'c', entries: [{ event: 'x' }] },
@@ -193,14 +195,73 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
       code: 'STATE_STEP_NOT_ELIGIBLE',
       details: {
         step_state: 'run_terminal',
-        // Pins the :380 hunk's OWN derive-for-message (not just its terminal_state check): the
-        // guard's fresh read sees the GRANDFATHERED record, so the derived phase must be
+        // Pins the fence's OWN derive-for-message (not just its terminal_state check): the
+        // fence's fresh read sees the GRANDFATHERED record, so the derived phase must be
         // 'completed' (from terminal_reason) while the persisted one stays the stale 'gate_waiting'.
         run_phase: 'completed',
         persisted_run_phase: 'gate_waiting',
       },
     });
-    expect(getCallCount).toBeGreaterThanOrEqual(2); // the pre-CS read AND the guard's own re-check
+    expect(getCallCount).toBeGreaterThanOrEqual(2); // the pre-CS read AND the fence's own re-check
+  });
+
+  // issue #616 PR-0 — when the run is gone by the fence's own re-check there is no run to read a
+  // version from, so the refusal reports the version the pre-CS read saw (the fence's
+  // `run_version`, set by handleAppendTrace from that read).
+  it("a run that vanishes between the pre-CS read and the fence's re-check is refused run_not_found, reporting the version the pre-CS read saw", async () => {
+    const workflowDir = await mkdtemp(join(tmpdir(), 'realm-282-append-trace-wf-3-'));
+    await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+    const workflowStore = new JsonWorkflowStore(workflowDir);
+
+    const live = makeGrandfathered({
+      terminal_state: false,
+      terminal_reason: undefined,
+      pending_gate: undefined,
+      completed_steps: [],
+      run_phase: 'running',
+      version: 4,
+    });
+    let getCallCount = 0;
+    const runStore: RunStore = {
+      persistsClaims: true,
+      async get() {
+        getCallCount += 1;
+        // First call: the pre-CS check sees the live run. Second+ call: the fence's own
+        // re-check finds it gone — a concurrent purge landing between the two reads.
+        if (getCallCount === 1) return live;
+        throw new WorkflowError('not found', {
+          code: 'STATE_RUN_NOT_FOUND',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: false,
+        });
+      },
+      async create() {
+        return { run: live, created: true };
+      },
+      async update(r) {
+        return r;
+      },
+      async list() {
+        return [live];
+      },
+      async claimStep() {
+        return live;
+      },
+    };
+    const traceBufferStore = new InMemoryTraceBufferStore(runStore);
+
+    await expect(
+      handleAppendTrace(
+        { run_id: 'g1', step_id: 'c', entries: [{ event: 'x' }] },
+        { runStore, workflowStore, traceBufferStore },
+      ),
+    ).rejects.toMatchObject({
+      code: 'STATE_STEP_NOT_ELIGIBLE',
+      details: { step_id: 'c', step_state: 'run_not_found', run_version: 4 },
+    });
+    expect(getCallCount).toBe(2);
+    expect(await traceBufferStore.read('g1', 'c')).toEqual([]);
   });
 });
 
