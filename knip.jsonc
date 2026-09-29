@@ -22,7 +22,9 @@
     // knip doesn't know to scan them, and root devDependencies that only those scripts import
     // (e.g. json5) would misreport as unused.
     ".": {
-      "entry": ["scripts/*.mjs"],
+      // issue #620 PR-A (D8): scripts/test/*.test.mjs use `semver` (a root devDependency); knip
+      // must see them as an entry point or `semver` misreports as unused.
+      "entry": ["scripts/*.mjs", "scripts/test/*.test.mjs"],
       "project": ["scripts/**/*.mjs"],
     },
 

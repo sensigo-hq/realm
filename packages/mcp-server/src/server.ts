@@ -17,6 +17,7 @@ import {
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
+import { VERSION } from './version.js';
 import { registerListWorkflows } from './tools/list-workflows.js';
 import { registerGetWorkflowProtocol } from './tools/get-workflow-protocol.js';
 import { registerStartRun } from './tools/start-run.js';
@@ -108,7 +109,7 @@ export { createDefaultRegistry };
 export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer {
   const server = new McpServer({
     name: 'realm',
-    version: '0.45.0',
+    version: VERSION,
   });
 
   // When no registry is provided, use the default registry that pre-registers built-in

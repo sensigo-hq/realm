@@ -75,7 +75,7 @@ Follow this checklist in order before merging any branch into `main`.
 
 > Run Part B after the Part A PR has been merged and your local `main` is up to date (`git switch main && git pull`).
 >
-> This repository uses a two-part release process. The release script (`scripts/release.mjs`) bumps all four packages atomically and creates the release git commit and tag. Publishing to npm is handled by `.github/workflows/publish.yml`, which is triggered automatically when the tag is pushed after the release PR is merged. Do not attempt manual per-package publishes; the workflow is the authoritative publish mechanism.
+> This repository uses a two-part release process. The release script (`scripts/release.mjs`) bumps every package to one version, creates the release commit and tag, and then moves the tree to the next development version. Publishing to npm is handled by `.github/workflows/publish.yml`, which is triggered automatically when the tag is pushed after the release PR is merged. Do not attempt manual per-package publishes; the workflow is the authoritative publish mechanism.
 >
 > A package with `"private": true` in its manifest is not published. Part B does not apply to it.
 
@@ -120,7 +120,7 @@ git commit -m "docs: update changelog for v<version>"
 npm run release -- --version <version>
 ```
 
-The script: checks the working tree is clean, bumps `version` in all four `package.json` files and five source-file `VERSION` constants, runs `npm run build` as a local sanity check, stages the changed files, commits with `chore: release v<version>`, and creates the git tag `v<version>`. It does **not** publish — publishing is handled by GitHub Actions when the tag is pushed. If any step fails, the script exits without creating the commit or tag — fix the issue and re-run.
+The script refuses, before it changes anything: an unfinished earlier release, a dirty working tree, a version that is not `MAJOR.MINOR.PATCH`, a tree that fails `check-versions`, a version not above the current one, a tag that already exists here or on origin, and a version that is already published or not above the highest published one. It reads the npm registry for that, and refuses if it cannot. Then it works in two steps. First it sets every package's `package.json` and `src/version.ts` to the new version, syncs the lockfile, runs `npm run build`, commits `chore: release v<version>` and creates the tag `v<version>`. Then it sets the next development version (`X.Y.Z+1-dev.0`) and commits `chore: begin development after v<version>`, so the source tree never claims to be a release. It does **not** publish: publishing happens in GitHub Actions when the tag is pushed. If it fails or is interrupted before the release commit, it restores every file it changed: fix the cause and re-run. After the release commit, it tells you to run `npm run release -- --resume`, which finishes the remaining steps. The same command recovers after a crash.
 
 **4. Push and open a PR**
 
@@ -138,14 +138,16 @@ After the PR is merged:
 
 ```bash
 git switch main && git pull
-git push --tags
+git push origin v<version>
 ```
 
-Pushing the tag triggers `.github/workflows/publish.yml`, which builds and publishes all four packages to npm using OIDC Trusted Publishing — no token required.
+Push only this tag: `git push --tags` would also push any stray local tag, and the workflow publishes every `v*` tag it receives.
+
+Pushing the tag triggers `.github/workflows/publish.yml`, which builds and publishes every package to npm using OIDC Trusted Publishing — no token required.
 
 **6. Verify the publish workflow**
 
-Go to https://github.com/sensigo-hq/realm/actions and confirm the **Publish** workflow triggered and completed successfully on the `v<version>` tag. Each of the four `npm publish` steps should be green.
+Go to https://github.com/sensigo-hq/realm/actions and confirm the **Publish** workflow triggered and completed successfully on the `v<version>` tag. Each publish step should be green.
 
 **7. Verify the published artifact**
 
@@ -176,7 +178,7 @@ then `npm run deploy`.
 
 **9. Rollback note**
 
-If the publish workflow fails after some packages are published but before all four complete: re-push the tag (delete and re-push, or re-trigger the workflow manually). `npm publish` will skip packages already at the target version with a `EPUBLISHCONFLICT` error. Confirm all four packages appear on the registry before proceeding.
+If the publish workflow fails after some packages are published: open the failed **Publish** run on the Actions page and re-run all its jobs. Each publish step skips a package already published from the tagged commit and publishes the rest. A package already published from a different commit makes its step fail instead; that needs a new version. Starting the workflow by hand does not help: a manual run is always a dry run. Confirm every package appears on the registry before proceeding.
 
 If the tag was pushed but verification (step 7) reveals a broken artifact: publish a patch release following this entire Part B sequence with an incremented patch version.
 
@@ -219,4 +221,4 @@ _(Review these before running the build in Part B step 3. For projects with full
 
 - Treat each numbered step as a hard gate. Do not proceed to the next step until the current step has completed successfully.
 - Do not run `npm run release` directly on `main`. Always use a `release/v<version>` branch.
-- Do not create git tags manually. The release script creates the tag after a successful publish.
+- Do not create release tags manually. The release script creates the tag, and `npm run release -- --resume` creates it if a failure left it missing. Pushing the tag starts the publish.

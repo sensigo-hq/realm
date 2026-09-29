@@ -25,10 +25,22 @@ jobs:
           if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
             echo "::error::id-token must not be available in the build job"; exit 1
           fi
+      # fetch-depth: 0 — the main-ancestry check below needs origin/main, not just the tagged commit.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
+      # issue #620 PR-A (D7) — the scripts need no dependencies, so these run before `npm ci`.
+      - name: Check versions, and that the tag names the version
+        if: ${{ github.event_name == 'push' }}
+        run: node scripts/check-versions.mjs --tag "$GITHUB_REF_NAME"
+      - name: Check versions (manual dry run)
+        if: ${{ github.event_name != 'push' }}
+        run: node scripts/check-versions.mjs
+      - name: Check the commit is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - run: npm ci --ignore-scripts
       - name: Release audit (prod-high backstop — same gate as PR-time)
         run: npm run audit:ci
@@ -84,18 +96,35 @@ jobs:
       # --provenance is FAIL-CLOSED and load-bearing — do NOT remove it. --ignore-scripts is defense-in-depth.
       # DRY_RUN is 'true' for ANY workflow_dispatch and 'false' ONLY for a v* TAG PUSH — a tag push always
       # publishes for real; a dispatch can never real-publish.
+      # issue #620 PR-A (D7) — the guard (scripts/publish-guard.mjs) skips a package already published
+      # from this commit, so re-running a partial release finishes it instead of failing on
+      # EPUBLISHCONFLICT. A dry run passes --tag dry-run: between releases the tree is at a development
+      # (prerelease) version, and npm refuses to publish a prerelease, even as a dry run, without --tag.
+      # A real publish still passes no tag, so it goes to latest.
       - name: Publish @sensigo/realm
         working-directory: packages/core
-        run: npm publish --provenance --ignore-scripts ${{ env.DRY_RUN == 'true' && '--dry-run' || '' }}
+        run: |
+          decision="$(node ../../scripts/publish-guard.mjs)"
+          if [ "$decision" = skip ]; then exit 0; fi
+          npm publish --provenance --ignore-scripts ${{ env.DRY_RUN == 'true' && '--dry-run --tag dry-run' || '' }}
       - name: Publish @sensigo/realm-mcp
         working-directory: packages/mcp-server
-        run: npm publish --provenance --ignore-scripts ${{ env.DRY_RUN == 'true' && '--dry-run' || '' }}
+        run: |
+          decision="$(node ../../scripts/publish-guard.mjs)"
+          if [ "$decision" = skip ]; then exit 0; fi
+          npm publish --provenance --ignore-scripts ${{ env.DRY_RUN == 'true' && '--dry-run --tag dry-run' || '' }}
       - name: Publish @sensigo/realm-testing
         working-directory: packages/testing
-        run: npm publish --provenance --ignore-scripts ${{ env.DRY_RUN == 'true' && '--dry-run' || '' }}
+        run: |
+          decision="$(node ../../scripts/publish-guard.mjs)"
+          if [ "$decision" = skip ]; then exit 0; fi
+          npm publish --provenance --ignore-scripts ${{ env.DRY_RUN == 'true' && '--dry-run --tag dry-run' || '' }}
       - name: Publish @sensigo/realm-cli
         working-directory: packages/cli
-        run: npm publish --provenance --ignore-scripts ${{ env.DRY_RUN == 'true' && '--dry-run' || '' }}
+        run: |
+          decision="$(node ../../scripts/publish-guard.mjs)"
+          if [ "$decision" = skip ]; then exit 0; fi
+          npm publish --provenance --ignore-scripts ${{ env.DRY_RUN == 'true' && '--dry-run --tag dry-run' || '' }}
       # NO in-workflow registry-query verify: --provenance is FAIL-CLOSED, so a SUCCESSFUL publish
       # already guarantees provenance was generated (npm throws EUSAGE before the PUT otherwise).
       # A `npm view --json` right after publish would risk a false failure from registry-propagation

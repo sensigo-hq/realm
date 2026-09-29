@@ -44,6 +44,11 @@ jobs:
       # claims to scan, not just passing vacuously on an empty/under-scoped tree.
       - run: npm ls ajv --omit=dev
       - run: node scripts/check-versions.mjs
+      # issue #620 PR-A (D8) — the release scripts' own tests. Not an npm script: a root script
+      # running `node --test` makes knip's `node` plugin treat test files as entries in every
+      # workspace (knip/dist/plugins/node/index.js:26 reads the root manifest's scripts), which
+      # would turn `npm run deps:audit` red.
+      - run: node --test 'scripts/test/*.test.mjs'
       - run: npm run format:check
       - run: npm run lint
       - run: npm run test
