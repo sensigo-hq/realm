@@ -58,7 +58,9 @@ test('PG2 — the commit equals HEAD → skip, exit 0, the notice on stderr', ()
     assert.equal(r.stdout.trim(), 'skip');
     assert.match(
       r.stderr,
-      new RegExp(`::notice::@q/guarded@1\\.0\\.0 is already published from ${head}; skipping\\.`),
+      new RegExp(
+        `::notice::@q/guarded@1\\.0\\.0 is already published from this commit \\(${head.slice(0, 7)}\\); skipping\\.`,
+      ),
     );
   } finally {
     removeTempDir(root);
@@ -77,7 +79,7 @@ test('PG3 — another commit → exit 1; stderr names both commits', () => {
     assert.match(
       r.stderr,
       new RegExp(
-        `::error::@q/guarded@1\\.0\\.0 is already published from ${other}, not from this commit ${head}\\. A version names one artifact: release a new version\\.`,
+        `::error::@q/guarded@1\\.0\\.0 is already published from commit ${other.slice(0, 7)} \\(the v1\\.0\\.0 release\\), not from this commit ${head.slice(0, 7)}\\. npm cannot publish the same version twice\\. To publish these changes, release a new version with npm run release\\. A manual dry run shows this for any commit that carries an already-published version\\.`,
       ),
     );
   } finally {
@@ -95,7 +97,7 @@ test('PG4 — exit 0 with empty output → exit 1', () => {
     assert.equal(r.stdout, '');
     assert.match(
       r.stderr,
-      /::error::@q\/guarded@1\.0\.0 is already published, and the registry records no commit for it\. Release a new version\./,
+      /::error::@q\/guarded@1\.0\.0 is already published, and the registry records no commit for it, so this commit cannot be shown to be that release\. To publish these changes, release a new version with npm run release\./,
     );
   } finally {
     removeTempDir(root);

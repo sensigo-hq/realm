@@ -144,7 +144,7 @@ export function checkRelease(root, { tag } = {}) {
       );
     } else if (match[1] !== m.version) {
       fail(
-        `${m.dir}/src/version.ts says ${match[1]}, but ${m.dir}/package.json says ${m.version}. Make them equal (the release script writes both).`,
+        `${m.dir}/src/version.ts says ${match[1]}, but ${m.dir}/package.json says ${m.version}. Set ${m.dir}/src/version.ts to '${m.version}', commit, then re-run.`,
       );
     }
   }

@@ -97,10 +97,10 @@ jobs:
       # DRY_RUN is 'true' for ANY workflow_dispatch and 'false' ONLY for a v* TAG PUSH — a tag push always
       # publishes for real; a dispatch can never real-publish.
       # issue #620 PR-A (D7) — the guard (scripts/publish-guard.mjs) skips a package already published
-      # from this commit, so re-running a partial release finishes it instead of failing on
-      # EPUBLISHCONFLICT. A dry run passes --tag dry-run: between releases the tree is at a development
-      # (prerelease) version, and npm refuses to publish a prerelease, even as a dry run, without --tag.
-      # A real publish still passes no tag, so it goes to latest.
+      # from this commit, so re-running a partial release finishes it instead of stopping at npm's
+      # refusal to publish over a published version. A dry run passes --tag dry-run: npm refuses to
+      # publish a prerelease, even as a dry run, without --tag, and after each release main sits at a
+      # development (prerelease) version. A real publish still passes no tag, so it goes to latest.
       - name: Publish @sensigo/realm
         working-directory: packages/core
         run: |

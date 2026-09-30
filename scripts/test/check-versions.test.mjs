@@ -69,7 +69,7 @@ test('CV2 — each fixture exits 1 with its ✗ line', () => {
         writePublishYml(root, publishYmlFor(['a']));
       },
       matches:
-        /✗ packages\/a\/src\/version\.ts says 0\.9\.0, but packages\/a\/package\.json says 1\.0\.0\. Make them equal \(the release script writes both\)\./,
+        /✗ packages\/a\/src\/version\.ts says 0\.9\.0, but packages\/a\/package\.json says 1\.0\.0\. Set packages\/a\/src\/version\.ts to '1\.0\.0', commit, then re-run\./,
     },
     {
       name: 'two versions',

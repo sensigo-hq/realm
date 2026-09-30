@@ -75,20 +75,25 @@ if (exitCode !== 0) {
 }
 
 // npm view succeeded: the version IS published. What commit does the registry record for it?
+// Commits are shown by their first 7 characters throughout — a full 40-char sha is unreadable in
+// a workflow annotation.
+const sha7 = (sha) => sha.slice(0, 7);
 const trimmed = stdout.trim();
 if (trimmed === '') {
   console.error(
-    `::error::${name}@${version} is already published, and the registry records no commit for it. Release a new version.`,
+    `::error::${name}@${version} is already published, and the registry records no commit for it, so this commit cannot be shown to be that release. To publish these changes, release a new version with npm run release.`,
   );
   process.exit(1);
 }
 const recordedSha = JSON.parse(trimmed);
 if (recordedSha === head) {
-  console.error(`::notice::${name}@${version} is already published from ${recordedSha}; skipping.`);
+  console.error(
+    `::notice::${name}@${version} is already published from this commit (${sha7(recordedSha)}); skipping.`,
+  );
   console.log('skip');
   process.exit(0);
 }
 console.error(
-  `::error::${name}@${version} is already published from ${recordedSha}, not from this commit ${head}. A version names one artifact: release a new version.`,
+  `::error::${name}@${version} is already published from commit ${sha7(recordedSha)} (the v${version} release), not from this commit ${sha7(head)}. npm cannot publish the same version twice. To publish these changes, release a new version with npm run release. A manual dry run shows this for any commit that carries an already-published version.`,
 );
 process.exit(1);

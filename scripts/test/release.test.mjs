@@ -102,6 +102,13 @@ function buildFixture(prefix, { version = '0.45.0', withOrigin = true } = {}) {
     publishYmlFor(['core', 'mcp-server', 'testing', 'cli']),
   );
 
+  // C1 item 10: the script now refuses without a "## [<V>]" CHANGELOG section — sections for both
+  // versions the cells release (0.46.0, and RL4's follow-on release 0.46.1).
+  writeFileSync(
+    join(root, 'CHANGELOG.md'),
+    '# Changelog\n\n## [0.46.1] — 2026-01-02\n\n## [0.46.0] — 2026-01-01\n',
+  );
+
   execFileSync('npm', ['install', '--package-lock-only', '--ignore-scripts'], {
     cwd: root,
     env,
@@ -112,6 +119,9 @@ function buildFixture(prefix, { version = '0.45.0', withOrigin = true } = {}) {
   git(root, env, 'add', '-A');
   git(root, env, 'commit', '-q', '-m', 'base');
   git(root, env, 'tag', '--no-sign', 'base-point');
+  // the isolated git config's default branch is `main`, which the script now refuses to release
+  // from — every fixture releases from its own branch, as a real releaser would.
+  git(root, env, 'switch', '-c', 'release/test');
 
   let origin = null;
   if (withOrigin) {
@@ -126,12 +136,53 @@ function buildFixture(prefix, { version = '0.45.0', withOrigin = true } = {}) {
   return { root, home, env, origin, journalPath: absoluteJournalPath };
 }
 
+/**
+ * `--registry-fixture` now holds npm's RAW result per package (`{ exitCode, stdout, stderr }`,
+ * exactly what `npm view <name> versions --json` produces), so the same parsing that a real call
+ * goes through runs on the fixture too. `rawResultFor` translates each cell's override (unchanged
+ * from before: `{ versions: [...] }`, `{ error: 'E404' }`, `{ error: 'ETIMEDOUT: request timed
+ * out' }`) into the shape captured from the real registry on 2026-09-30.
+ */
+function rawResultFor(name, override) {
+  if (override.versions !== undefined) {
+    return { exitCode: 0, stdout: JSON.stringify(override.versions, null, 2), stderr: '' };
+  }
+  if (override.error === 'E404') {
+    const encodedName = name.replace('/', '%2f');
+    return {
+      exitCode: 1,
+      stdout: JSON.stringify(
+        {
+          error: {
+            code: 'E404',
+            summary: `Not Found - GET https://registry.npmjs.org/${encodedName} - Not found`,
+          },
+        },
+        null,
+        2,
+      ),
+      stderr: 'npm error code E404\n',
+    };
+  }
+  // any other override string is "CODE: summary" — the shape every non-E404 override the cells
+  // pass uses (e.g. "ETIMEDOUT: request timed out").
+  const m = /^([A-Z0-9_]+): (.+)$/.exec(override.error);
+  const code = m ? m[1] : 'EUNKNOWN';
+  const summary = m ? m[2] : override.error;
+  return {
+    exitCode: 1,
+    stdout: JSON.stringify({ error: { code, summary } }, null, 2),
+    stderr: `npm error code ${code}\n`,
+  };
+}
+
 /** A registry fixture where every package is unpublished (E404) except when overridden. Written
  * OUTSIDE the git repo root, so it never dirties the working tree. */
 function makeRegistryFixture(home, overrides = {}) {
   const names = ['@q/core', '@q/mcp-server', '@q/testing', '@q/cli'];
   const fixture = {};
-  for (const name of names) fixture[name] = overrides[name] ?? { error: 'E404' };
+  for (const name of names)
+    fixture[name] = rawResultFor(name, overrides[name] ?? { error: 'E404' });
   const p = join(home, 'registry-fixture.json');
   writeJson(p, fixture);
   return p;
@@ -263,6 +314,24 @@ test('RL1 — happy path, 0.45.0 -> 0.46.0', () => {
       fixture,
     ]);
     assert.equal(r.status, 0, `stdout: ${r.stdout}\nstderr: ${r.stderr}`);
+
+    // C1 items 7/9: the exact progress lines, in order, and no leaked npm "up to date" summary
+    // (C1 item 8 — the lockfile sync hides its own stdout).
+    const arrowLines = r.stdout.split('\n').filter((l) => l.startsWith('→ '));
+    assert.deepEqual(arrowLines, [
+      '→ Checking that v0.46.0 can be released: the version files, publish.yml, CHANGELOG.md, the tags here and on origin, and the npm registry',
+      '→ Setting every package to 0.46.0',
+      '→ Syncing the lockfile',
+      '→ Building',
+      '→ Staging the version files',
+      '→ Committing chore: release v0.46.0',
+      '→ Tagging v0.46.0',
+      '→ Setting every package to 0.46.1-dev.0',
+      '→ Syncing the lockfile',
+      '→ Staging the version files',
+      '→ Committing chore: begin development after v0.46.0',
+    ]);
+    assert.doesNotMatch(r.stdout, /up to date/);
 
     // two new commits
     const log = git(root, env, 'log', '--format=%s', '-3');
@@ -435,7 +504,36 @@ test('RL5 — refused: local tag; tag on origin; no origin remote; unreadable or
         fixture,
       ]);
       assert.equal(r.status, 1);
-      assert.match(r.stderr, /Tag v0\.46\.0 already exists on origin\. Choose another version\./);
+      assert.match(
+        r.stderr,
+        /Tag v0\.46\.0 already exists on origin: v0\.46\.0 is already released\. Choose another version\./,
+      );
+    } finally {
+      cleanup(root, home, origin);
+    }
+  }
+  {
+    // C1 item 12 (K7): the tag exists BOTH locally and on origin — the origin check runs first,
+    // so this must get the origin text, never the local "git tag -d" hint.
+    const { root, home, env, origin } = buildFixture('rl5e');
+    try {
+      git(root, env, 'tag', '--no-sign', 'v0.46.0', 'base-point');
+      execFileSync('git', ['push', 'origin', 'v0.46.0'], { cwd: root, env, stdio: 'ignore' });
+      const fixture = makeRegistryFixture(home);
+      const r = releaseSync(root, env, [
+        '--root',
+        root,
+        '--version',
+        '0.46.0',
+        '--registry-fixture',
+        fixture,
+      ]);
+      assert.equal(r.status, 1);
+      assert.match(
+        r.stderr,
+        /Tag v0\.46\.0 already exists on origin: v0\.46\.0 is already released\. Choose another version\./,
+      );
+      assert.doesNotMatch(r.stderr, /git tag -d/);
     } finally {
       cleanup(root, home, origin);
     }
@@ -550,7 +648,7 @@ test('RL6 — refused: already published; above highest published; registry erro
       assert.equal(r.status, 1);
       assert.match(
         r.stderr,
-        /^Error: Cannot read @q\/core from the npm registry: ETIMEDOUT: request timed out\. Check that npm view @q\/core versions works, then re-run\./,
+        /^Error: Cannot read @q\/core from the npm registry \(npm ETIMEDOUT: request timed out\)\. Check that npm view @q\/core versions works, then re-run\./,
       );
     } finally {
       cleanup(root, home, origin);
@@ -573,6 +671,12 @@ test('RL6 — refused: already published; above highest published; registry erro
         fixture,
       ]);
       assert.equal(r.status, 0, r.stderr);
+      // C6: RL6's accepted leg must assert the success line, not only exit 0 — with phase 2
+      // removed (K10) it still exited 0, so this is the discriminating assertion (mutant K10).
+      assert.match(
+        r.stdout,
+        /^Prepared v0\.46\.0 \(not pushed or published yet\): release commit [0-9a-f]+, tag v0\.46\.0\. Development continues at 0\.46\.1-dev\.0\.$/m,
+      );
     } finally {
       cleanup(root, home, origin);
     }
@@ -596,9 +700,13 @@ test('RL7 — refused: a dirty tree; a tree that fails checkRelease', () => {
         fixture,
       ]);
       assert.equal(r.status, 1);
-      assert.match(
-        r.stderr,
-        /^Error: The working tree has uncommitted changes\. Commit or stash them, then re-run\./,
+      // C1 item 6 / C6: the full listing text, naming the one untracked file (its porcelain
+      // status column preserved — the message reads it untrimmed).
+      assert.equal(
+        r.stderr.trim(),
+        'Error: The working tree is not clean:\n' +
+          '  ?? packages/core/README.md\n' +
+          'Commit, stash (git stash -u also stashes untracked files) or remove them, then re-run.',
       );
     } finally {
       cleanup(root, home, origin);
@@ -627,7 +735,7 @@ test('RL7 — refused: a dirty tree; a tree that fails checkRelease', () => {
       assert.match(r.stderr, /^Error: The release checks failed:/);
       assert.match(
         r.stderr,
-        /packages\/core\/src\/version\.ts says 0\.44\.0, but packages\/core\/package\.json says 0\.45\.0\. Make them equal/,
+        /packages\/core\/src\/version\.ts says 0\.44\.0, but packages\/core\/package\.json says 0\.45\.0\. Set packages\/core\/src\/version\.ts to '0\.45\.0', commit, then re-run\./,
       );
       assert.match(r.stderr, /Fix these, then re-run\.$/m);
     } finally {
@@ -675,6 +783,16 @@ test('RL8 — the commit fails (signing with a key that does not exist): exit 1;
       fixture,
     ]);
     assert.equal(r2.status, 0, r2.stderr);
+    // C6: assert the success line itself, and that no journal remains — with phase 2 removed
+    // (K10) the re-run still exited 0, so this is the discriminating assertion.
+    assert.match(
+      r2.stdout,
+      /^Prepared v0\.46\.0 \(not pushed or published yet\): release commit [0-9a-f]+, tag v0\.46\.0\. Development continues at 0\.46\.1-dev\.0\.$/m,
+    );
+    assert.equal(
+      existsSync(join(git(root, env, 'rev-parse', '--git-dir'), 'realm-release.json')),
+      false,
+    );
   } finally {
     cleanup(root, home, origin);
   }
@@ -747,7 +865,7 @@ test('RL9 — SIGTERM to the release process during the build: exit 1; restored;
     assert.equal(code, 1, `stdout: ${readOut(handle)}\nstderr: ${readErr(handle)}`);
     assert.match(
       readErr(handle),
-      /^Error: The release of v0\.46\.0 stopped: interrupted by SIGTERM\. Every file it changed is restored\. Fix the cause, then re-run: npm run release -- --version 0\.46\.0$/m,
+      /^Error: The release of v0\.46\.0 was interrupted \(SIGTERM\)\. Every tracked file it changed is restored; packages\/\*\/dist may still hold its v0\.46\.0 build, so run npm run build before using this checkout\. To release, re-run: npm run release -- --version 0\.46\.0$/m,
     );
     assert.equal(git(root, env, 'status', '--porcelain'), '');
     assert.equal(existsSync(journalPath), false);
@@ -780,7 +898,7 @@ test('RL10 — the tag step fails (a stale ref lock): exit 1 naming --resume; th
     assert.equal(r.status, 1);
     assert.match(
       r.stderr,
-      /^Error: The release commit for v0\.46\.0 exists \([0-9a-f]+\), but it is not tagged: git tag --no-sign v0\.46\.0 exited \d+\. Fix the cause, then run: npm run release -- --resume$/m,
+      /^Error: The release commit for v0\.46\.0 exists \([0-9a-f]+\), but it is not tagged: tagging failed \(exit \d+; its message is above\)\. Fix the cause, then run: npm run release -- --resume$/m,
     );
     assert.equal(existsSync(journalPath), true);
 
@@ -790,7 +908,7 @@ test('RL10 — the tag step fails (a stale ref lock): exit 1 naming --resume; th
     assert.equal(r2.status, 0, r2.stderr);
     assert.match(
       r2.stdout,
-      /^Released v0\.46\.0: commit [0-9a-f]+, tag v0\.46\.0\. Development continues at 0\.46\.1-dev\.0\.$/m,
+      /^Prepared v0\.46\.0 \(not pushed or published yet\): release commit [0-9a-f]+, tag v0\.46\.0\. Development continues at 0\.46\.1-dev\.0\.$/m,
     );
     assert.equal(readPkgVersion(root, 'core'), '0.46.1-dev.0');
     assert.equal(git(root, env, 'status', '--porcelain'), '');
@@ -830,13 +948,18 @@ test('RL11 — SIGKILL during the build: the journal stays; --version refused na
       fixture,
     ]);
     assert.equal(versionAttempt.status, 1);
-    assert.match(versionAttempt.stderr, /Run: npm run release -- --resume$/m);
+    // C1 item 2 / C6: the new nothing-committed journal-refusal text.
+    assert.match(
+      versionAttempt.stderr,
+      /^Error: An earlier release of v0\.46\.0 stopped before its release commit, so nothing is committed\. Run npm run release -- --resume to restore the files it changed, then re-run npm run release -- --version 0\.46\.0\.$/m,
+    );
 
     const resumeAttempt = releaseSync(root, env, ['--root', root, '--resume']);
     assert.equal(resumeAttempt.status, 0, resumeAttempt.stderr);
+    // C1 item 5: the restored text names the file count (9 = 4 packages × 2 files + the lockfile).
     assert.match(
       resumeAttempt.stdout,
-      /^Restored\. Re-run: npm run release -- --version 0\.46\.0$/m,
+      /^Restored the 9 files the unfinished v0\.46\.0 release changed\. packages\/\*\/dist may still hold its v0\.46\.0 build: run npm run build before using this checkout\. Re-run: npm run release -- --version 0\.46\.0$/m,
     );
     assert.equal(existsSync(journalPath), false);
     assert.equal(git(root, env, 'status', '--porcelain'), '');
@@ -882,7 +1005,7 @@ test('RL12 — the development commit fails (a commit-msg hook rejects it): exit
     assert.equal(r.status, 1);
     assert.match(
       r.stderr,
-      /^Error: v0\.46\.0 is committed and tagged, but the development version is not committed: git commit -m chore: begin development after v0\.46\.0 -- .+ exited \d+\. Fix the cause, then run: npm run release -- --resume$/m,
+      /^Error: v0\.46\.0 is committed and tagged, but the development version is not committed: the commit failed \(exit \d+; its message is above\)\. Fix the cause, then run: npm run release -- --resume$/m,
     );
     // the release commit and tag stand
     assert.equal(git(root, env, 'cat-file', '-t', 'v0.46.0'), 'commit');
@@ -892,16 +1015,55 @@ test('RL12 — the development commit fails (a commit-msg hook rejects it): exit
       'chore: release v0.46.0',
     );
     assert.equal(existsSync(journalPath), true);
+    // C6 / M10 & K9: right after the failed dev commit, the tagged-state restore must have run —
+    // the bumped dev-version edits are gone from both the worktree and the index.
+    assert.equal(git(root, env, 'status', '--porcelain'), '');
 
     unlinkSync(hookPath);
+    // C6 / K8: an unrelated staged file must survive the resume's dev commit untouched — proving
+    // the commit is scoped by `-- <files>`, never "whatever happens to be staged".
+    writeFileSync(join(root, 'unrelated.txt'), 'unrelated\n');
+    git(root, env, 'add', 'unrelated.txt');
+
     const r2 = releaseSync(root, env, ['--root', root, '--resume']);
     assert.equal(r2.status, 0, r2.stderr);
     assert.match(
       r2.stdout,
-      /^Released v0\.46\.0: commit [0-9a-f]+, tag v0\.46\.0\. Development continues at 0\.46\.1-dev\.0\.$/m,
+      /^Prepared v0\.46\.0 \(not pushed or published yet\): release commit [0-9a-f]+, tag v0\.46\.0\. Development continues at 0\.46\.1-dev\.0\.$/m,
     );
     assert.equal(readPkgVersion(root, 'core'), '0.46.1-dev.0');
     assert.equal(existsSync(journalPath), false);
+
+    // the development commit names exactly the 9 version files, not the unrelated one
+    const devCommit = git(root, env, 'rev-parse', 'HEAD');
+    const devCommitFiles = git(
+      root,
+      env,
+      'diff-tree',
+      '--no-commit-id',
+      '--name-only',
+      '-r',
+      devCommit,
+    )
+      .split('\n')
+      .filter(Boolean)
+      .sort();
+    assert.deepEqual(devCommitFiles, [
+      'package-lock.json',
+      'packages/cli/package.json',
+      'packages/cli/src/version.ts',
+      'packages/core/package.json',
+      'packages/core/src/version.ts',
+      'packages/mcp-server/package.json',
+      'packages/mcp-server/src/version.ts',
+      'packages/testing/package.json',
+      'packages/testing/src/version.ts',
+    ]);
+    // the unrelated file is still staged, untouched by the development commit
+    assert.equal(
+      git(root, env, 'status', '--porcelain', '--', 'unrelated.txt'),
+      'A  unrelated.txt',
+    );
   } finally {
     cleanup(root, home, origin);
   }
@@ -972,7 +1134,7 @@ test('RL13 — SIGKILL during the development phase: the journal says developmen
     );
     assert.match(
       resumeAttempt.stdout,
-      /^Released v0\.46\.0: commit [0-9a-f]+, tag v0\.46\.0\. Development continues at 0\.46\.1-dev\.0\.$/m,
+      /^Prepared v0\.46\.0 \(not pushed or published yet\): release commit [0-9a-f]+, tag v0\.46\.0\. Development continues at 0\.46\.1-dev\.0\.$/m,
     );
     assert.equal(readPkgVersion(root, 'core'), '0.46.1-dev.0');
     assert.equal(git(root, env, 'status', '--porcelain'), '');
@@ -1037,7 +1199,7 @@ test('RL14 — SIGINT after the development commit: exit 0; the release is intac
     assert.equal(code, 0, `stdout: ${readOut(handle)}\nstderr: ${readErr(handle)}`);
     assert.match(
       readOut(handle),
-      /^Released v0\.46\.0: commit [0-9a-f]+, tag v0\.46\.0\. Development continues at 0\.46\.1-dev\.0\.$/m,
+      /^Prepared v0\.46\.0 \(not pushed or published yet\): release commit [0-9a-f]+, tag v0\.46\.0\. Development continues at 0\.46\.1-dev\.0\.$/m,
     );
     assert.equal(existsSync(journalPath), false);
     const log = git(root, env, 'log', '--format=%s', '-3');
@@ -1050,6 +1212,123 @@ test('RL14 — SIGINT after the development commit: exit 0; the release is intac
   } finally {
     handle.killGroup('SIGKILL');
     cleanupSignalFiles(handle);
+    cleanup(root, home, origin);
+  }
+});
+
+// ── RL17-RL21 — new entry checks (the correction, C1 items 1.4/1.5/1.2/1.10, and --help) ─────
+
+test('RL17 — on main: refused with its text', () => {
+  const { root, home, env, origin } = buildFixture('rl17');
+  try {
+    git(root, env, 'switch', 'main');
+    const before = state(root, env);
+    const fixture = makeRegistryFixture(home);
+    const r = releaseSync(root, env, [
+      '--root',
+      root,
+      '--version',
+      '0.46.0',
+      '--registry-fixture',
+      fixture,
+    ]);
+    assert.equal(r.status, 1);
+    assert.match(
+      r.stderr,
+      /^Error: You are on main\. Run the release on its own branch: git switch -c release\/v0\.46\.0, then re-run\.$/m,
+    );
+    assert.deepEqual(state(root, env), before);
+  } finally {
+    cleanup(root, home, origin);
+  }
+});
+
+test('RL18 — a detached HEAD: refused with its text', () => {
+  const { root, home, env, origin } = buildFixture('rl18');
+  try {
+    git(root, env, 'checkout', '-q', '--detach', 'HEAD');
+    const before = state(root, env);
+    const fixture = makeRegistryFixture(home);
+    const r = releaseSync(root, env, [
+      '--root',
+      root,
+      '--version',
+      '0.46.0',
+      '--registry-fixture',
+      fixture,
+    ]);
+    assert.equal(r.status, 1);
+    assert.match(
+      r.stderr,
+      /^Error: You are not on a branch\. Run the release on its own branch: git switch -c release\/v0\.46\.0, then re-run\.$/m,
+    );
+    assert.deepEqual(state(root, env), before);
+  } finally {
+    cleanup(root, home, origin);
+  }
+});
+
+test('RL19 — v0.46.0: refused with the leading-v text', () => {
+  const { root, home, env, origin } = buildFixture('rl19');
+  try {
+    const before = state(root, env);
+    const fixture = makeRegistryFixture(home);
+    const r = releaseSync(root, env, [
+      '--root',
+      root,
+      '--version',
+      'v0.46.0',
+      '--registry-fixture',
+      fixture,
+    ]);
+    assert.equal(r.status, 1);
+    assert.match(
+      r.stderr,
+      /^Error: Write the version without the leading v: npm run release -- --version 0\.46\.0$/m,
+    );
+    assert.deepEqual(state(root, env), before);
+  } finally {
+    cleanup(root, home, origin);
+  }
+});
+
+test('RL20 — a committed CHANGELOG.md whose only section is ## [Unreleased]: refused with its text', () => {
+  const { root, home, env, origin } = buildFixture('rl20');
+  try {
+    writeFileSync(join(root, 'CHANGELOG.md'), '# Changelog\n\n## [Unreleased]\n');
+    git(root, env, 'add', '-A');
+    git(root, env, 'commit', '-q', '-m', 'changelog: only unreleased');
+    const before = state(root, env);
+    const fixture = makeRegistryFixture(home);
+    const r = releaseSync(root, env, [
+      '--root',
+      root,
+      '--version',
+      '0.46.0',
+      '--registry-fixture',
+      fixture,
+    ]);
+    assert.equal(r.status, 1);
+    assert.match(
+      r.stderr,
+      /^Error: CHANGELOG\.md has no "## \[0\.46\.0\]" section\. Rename its "## \[Unreleased\]" heading to "## \[0\.46\.0\] — <YYYY-MM-DD>" and commit it \(Part B step 2\), then re-run\.$/m,
+    );
+    assert.deepEqual(state(root, env), before);
+  } finally {
+    cleanup(root, home, origin);
+  }
+});
+
+test('RL21 — --help: exit 0, and stdout is exactly the usage line', () => {
+  const { root, home, env, origin } = buildFixture('rl21');
+  try {
+    const r = releaseSync(root, env, ['--root', root, '--help']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(
+      r.stdout.trim(),
+      'Usage: npm run release -- --version <MAJOR.MINOR.PATCH>, or npm run release -- --resume',
+    );
+  } finally {
     cleanup(root, home, origin);
   }
 });

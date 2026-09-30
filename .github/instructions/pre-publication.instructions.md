@@ -101,7 +101,7 @@ git switch -c release/v<version>
 
 **2. Update CHANGELOG.md**
 
-Rename `## [Unreleased]` to `## [<version>] — YYYY-MM-DD`. Use [keepachangelog.com](https://keepachangelog.com/en/1.1.0/) sections: `## Added`, `## Changed`, `## Fixed`, `## Removed`, `## Deprecated`, `## Security`. Rules:
+Rename `## [Unreleased]` to `## [<version>] — YYYY-MM-DD`. Use [keepachangelog.com](https://keepachangelog.com/en/1.1.0/) sections: `### Added`, `### Changed`, `### Fixed`, `### Removed`, `### Deprecated`, `### Security`. Rules:
 
 - Security entries must link to a CVE or advisory if applicable.
 - Breaking changes: include a note referencing the migration guide.
@@ -120,7 +120,7 @@ git commit -m "docs: update changelog for v<version>"
 npm run release -- --version <version>
 ```
 
-The script refuses, before it changes anything: an unfinished earlier release, a dirty working tree, a version that is not `MAJOR.MINOR.PATCH`, a tree that fails `check-versions`, a version not above the current one, a tag that already exists here or on origin, and a version that is already published or not above the highest published one. It reads the npm registry for that, and refuses if it cannot. Then it works in two steps. First it sets every package's `package.json` and `src/version.ts` to the new version, syncs the lockfile, runs `npm run build`, commits `chore: release v<version>` and creates the tag `v<version>`. Then it sets the next development version (`X.Y.Z+1-dev.0`) and commits `chore: begin development after v<version>`, so the source tree never claims to be a release. It does **not** publish: publishing happens in GitHub Actions when the tag is pushed. If it fails or is interrupted before the release commit, it restores every file it changed: fix the cause and re-run. After the release commit, it tells you to run `npm run release -- --resume`, which finishes the remaining steps. The same command recovers after a crash.
+The script refuses, before it changes anything: an unfinished earlier release; a version written with a leading `v`, or one that is not `MAJOR.MINOR.PATCH`; a run on `main` or on no branch; a working tree with uncommitted changes or untracked files; a tree that fails `check-versions`; a version not above the current one; a `CHANGELOG.md` with no `## [<version>]` section; a tag that already exists on origin or here; and a version that is already published or not above the highest published one. It reads the npm registry for that, and refuses if it cannot. Then it works in two steps. First it sets every package's `package.json` and `src/version.ts` to the new version, syncs the lockfile, runs `npm run build`, commits `chore: release v<version>` and creates the tag `v<version>`. Then it sets the next development version (`X.Y.Z+1-dev.0`) and commits `chore: begin development after v<version>`, so the source tree never claims to be a release. It does **not** publish: publishing happens in GitHub Actions when the tag is pushed. If it fails or is interrupted before the release commit, it restores every tracked file it changed; re-run it once the cause of a failure is fixed. `packages/*/dist` may still hold the new version's build, so run `npm run build` before using this checkout. After the release commit, it tells you to run `npm run release -- --resume`, which finishes the remaining steps. After a crash, run the release command again: it names the next command.
 
 **4. Push and open a PR**
 
