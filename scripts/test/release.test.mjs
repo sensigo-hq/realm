@@ -148,7 +148,7 @@ function rawResultFor(name, override) {
     return { exitCode: 0, stdout: JSON.stringify(override.versions, null, 2), stderr: '' };
   }
   if (override.error === 'E404') {
-    const encodedName = name.replace('/', '%2f');
+    const encodedName = name.replaceAll('/', '%2f'); // every '/', not only the first
     return {
       exitCode: 1,
       stdout: JSON.stringify(
