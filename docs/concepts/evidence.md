@@ -31,7 +31,7 @@ A human gate leaves its own entry when it is answered, with the choice that was 
 
 ## What is not in the evidence
 
-**Refused answers.** An answer that fails a step's schema is not recorded as that step's output. The record keeps a count of refusals for the step, and `realm run attempts <run-id>` lists them: when each happened and which rule it broke. Answers refused at the `realm workflow run` prompt are not listed.
+**Refused answers.** An answer that fails a step's schema is not recorded as that step's output. The record keeps a count of refusals for the step. For a step driven over MCP, `realm run attempts <run-id>` lists them: when each happened and which rule it broke. Refusals at the `realm workflow run` prompt, and the ones `realm agent` repairs by asking the model again, are not listed there; `realm agent` reports its own under `Drive failures` when it gives up.
 
 **Skipped steps.** A step that never ran has no entry. It is listed under `Skipped`, with the reason:
 
