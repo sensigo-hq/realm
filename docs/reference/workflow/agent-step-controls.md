@@ -116,7 +116,7 @@ Providers accept only some schemas for this. Realm checks the schema when the fi
 Invalid workflow: Step 'a': 'structured_output: strict' is not eligible for this step's schema — add 'additionalProperties: false' at 'the schema root'
 ```
 
-When `realm agent` runs the step, the schema is checked again with the rules of the provider in use. These are the results of that check for 16 schemas, under both sets of rules:
+When `realm agent` runs the step, the schema is checked again with the rules of the provider in use. These are the results of that check for 14 schemas, under both sets of rules:
 
 | The schema has                                    | Anthropic rules                           | OpenAI rules                              |
 | ------------------------------------------------- | ----------------------------------------- | ----------------------------------------- |
@@ -131,28 +131,27 @@ When `realm agent` runs the step, the schema is checked again with the rules of 
 | Minimum / maximum                                 | refused (`unsupported_keyword`)           | used                                      |
 | MinLength                                         | used, with a note (`unenforced_keyword`)  | used                                      |
 | Pattern                                           | used, with a note (`unenforced_pattern`)  | used                                      |
-| Format: email                                     | used                                      | used                                      |
-| Format: phone (not a listed format)               | used, with a note (`unenforced_format`)   | used                                      |
 | Recursive ($ref to the root)                      | refused (`unsupported_keyword`)           | refused (`not_all_required`)              |
 | 17 optional properties whose type is a union      | refused (`too_many_unions`)               | refused (`not_all_required`)              |
 | Objects nested 11 deep                            | used                                      | refused (`exceeds_provider_limit`)        |
 
 "Used, with a note" means strict mode is used and the named part of the schema is not enforced by the provider. Realm's own check still enforces it. The codes mean:
 
-| Code                                                            | Meaning                                                                                     |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `no_schema`                                                     | The step has no schema, or its top level is not `type: object`.                             |
-| `missing_additional_properties`                                 | An object in the schema does not say `additionalProperties: false`.                         |
-| `unsupported_keyword`                                           | The schema uses a keyword that the provider rejects.                                        |
-| `too_many_optionals`                                            | More than 24 properties are optional.                                                       |
-| `too_many_unions`                                               | More than 16 optional properties have a union type.                                         |
-| `not_all_required`                                              | A property is not listed in `required`. OpenAI requires every property to be listed.        |
-| `exceeds_provider_limit`                                        | The schema is larger than one of OpenAI's limits, such as 10 levels of nesting.             |
-| `unsupported_context_tools`                                     | The step has `tools`. Its answer is then not restricted; see [below](#with-tools).          |
-| `unenforced_keyword`, `unenforced_pattern`, `unenforced_format` | A keyword, `pattern`, or `format` value that the provider does not enforce.                 |
-| `optional_emission`                                             | The schema has an optional property. Under strict mode a model may leave it out more often. |
-| `null_union_emission`                                           | A property allows `null`. Under strict mode a model may answer `null` more often.           |
-| `tools_runtime_assessed`                                        | The step has `tools`. Shown when the file is loaded; see [below](#with-tools).              |
+| Code                                       | Meaning                                                                                                                                        |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `no_schema`                                | The step has no schema, or its top level is not `type: object`.                                                                                |
+| `missing_additional_properties`            | An object in the schema does not say `additionalProperties: false`.                                                                            |
+| `unsupported_keyword`                      | The schema uses a keyword that the provider rejects.                                                                                           |
+| `too_many_optionals`                       | More than 24 properties are optional.                                                                                                          |
+| `too_many_unions`                          | More than 16 optional properties have a union type.                                                                                            |
+| `not_all_required`                         | A property is not listed in `required`. OpenAI requires every property to be listed.                                                           |
+| `exceeds_provider_limit`                   | The schema is larger than one of OpenAI's limits, such as 10 levels of nesting.                                                                |
+| `unsupported_context_tools`                | The step has `tools`. Its answer is then not restricted; see [below](#with-tools).                                                             |
+| `unenforced_keyword`, `unenforced_pattern` | A keyword, or a `pattern`, that the provider does not enforce.                                                                                 |
+| `unenforced_format`                        | A `format` value that the provider does not enforce. It cannot occur for a workflow file, because the loader refuses `format` in every schema. |
+| `optional_emission`                        | The schema has an optional property. Under strict mode a model may leave it out more often.                                                    |
+| `null_union_emission`                      | A property allows `null`. Under strict mode a model may answer `null` more often.                                                              |
+| `tools_runtime_assessed`                   | The step has `tools`. Shown when the file is loaded; see [below](#with-tools).                                                                 |
 
 `realm workflow validate` prints the notes for each step that asks for strict mode:
 
