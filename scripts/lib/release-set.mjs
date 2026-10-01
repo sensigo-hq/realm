@@ -11,6 +11,19 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
+ * `<root>/packages/<dir>/package.json`, parsed. A file that is not JSON is named: without the name,
+ * the parser's own message ("Unexpected end of JSON input") says nothing about which of the
+ * workspace's files it came from.
+ */
+function readPackageJson(pkgPath, dir) {
+  try {
+    return JSON.parse(readFileSync(pkgPath, 'utf-8'));
+  } catch (e) {
+    throw new Error(`packages/${dir}/package.json is not valid JSON (${e.message})`, { cause: e });
+  }
+}
+
+/**
  * The `name` of every `<root>/packages/*` directory that has a `package.json`, in the release
  * set or not. These are the "workspace packages" — a superset of the release set, since a
  * private package with neither `exports` nor `main` (issue #616's `engine-tests`) is still a
@@ -26,7 +39,7 @@ export function readWorkspaceNames(root) {
   for (const dir of dirs) {
     const pkgPath = join(packagesDir, dir, 'package.json');
     if (!existsSync(pkgPath)) continue;
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    const pkg = readPackageJson(pkgPath, dir);
     names.push(pkg.name);
   }
   return names;
@@ -50,7 +63,7 @@ export function readReleaseSet(root) {
   for (const dir of dirs) {
     const pkgPath = join(packagesDir, dir, 'package.json');
     if (!existsSync(pkgPath)) continue;
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    const pkg = readPackageJson(pkgPath, dir);
     if (pkg.exports === undefined && pkg.main === undefined) continue;
     set.push({
       dir: `packages/${dir}`,

@@ -1,4 +1,4 @@
-// scripts/test/release-set.test.mjs — issue #620 PR-A (D11 RS1-RS4).
+// scripts/test/release-set.test.mjs — issue #620 PR-A (D11 RS1-RS5).
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -87,6 +87,34 @@ test('RS4 — readReleaseSet / readWorkspaceNames', () => {
 
     const names = readWorkspaceNames(root);
     assert.deepEqual([...names].sort(), ['@q/alpha', '@q/beta', '@q/gamma'].sort());
+  } finally {
+    removeTempDir(root);
+  }
+});
+
+test('RS5 — a package.json that is not JSON is named', () => {
+  const root = makeTempDir('rs5');
+  try {
+    mkdirSync(join(root, 'packages', 'alpha'), { recursive: true });
+    writeFileSync(
+      join(root, 'packages', 'alpha', 'package.json'),
+      JSON.stringify({ name: '@q/alpha', version: '1.0.0', main: './dist/index.js' }, null, 2),
+    );
+    mkdirSync(join(root, 'packages', 'broken'), { recursive: true });
+    writeFileSync(join(root, 'packages', 'broken', 'package.json'), '{ "name": ');
+    for (const read of [readReleaseSet, readWorkspaceNames]) {
+      assert.throws(
+        () => read(root),
+        (e) => {
+          assert.ok(e instanceof Error);
+          assert.ok(
+            e.message.startsWith('packages/broken/package.json is not valid JSON ('),
+            e.message,
+          );
+          return true;
+        },
+      );
+    }
   } finally {
     removeTempDir(root);
   }

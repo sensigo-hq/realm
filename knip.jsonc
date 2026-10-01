@@ -26,6 +26,10 @@
       // must see them as an entry point or `semver` misreports as unused.
       "entry": ["scripts/*.mjs", "scripts/test/*.test.mjs"],
       "project": ["scripts/**/*.mjs"],
+      // ssh-keygen is OpenSSH's, not an npm package's: a release test (RL61) makes a throwaway SSH
+      // key with it to sign the fixture's commits, as git itself runs it when gpg.format is ssh.
+      // knip's own list of system binaries has `ssh` but not `ssh-keygen`.
+      "ignoreBinaries": ["ssh-keygen"],
     },
 
     // packages/* all stay on knip's defaults — each is a normal npm-workspace TypeScript package
