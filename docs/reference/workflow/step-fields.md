@@ -55,11 +55,11 @@ Three fields have a further condition:
 
 ## What the step is
 
-| Field          | Type                                    | Default  | What it does                                                                                                                                                                 |
-| -------------- | --------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `description`  | string                                  | Required | What the step is for. Shown to assistants and in the record.                                                                                                                 |
-| `execution`    | `auto`, `agent`, `guard` or `finalizer` | Required | The kind of step. See [Step kinds](../../concepts/step-kinds.md).                                                                                                            |
-| `use_template` | string                                  | None     | Replaces this entry with the steps of a template. The entry then takes `prefix` and `params` and no other field. See [Input maps and templates](input-map-and-templates.md). |
+| Field          | Type                                    | Default  | What it does                                                                                                                                                                             |
+| -------------- | --------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `description`  | string                                  | Required | What the step is for. Shown to assistants and in the record.                                                                                                                             |
+| `execution`    | `auto`, `agent`, `guard` or `finalizer` | Required | The kind of step. See [Step kinds](../../concepts/step-kinds.md).                                                                                                                        |
+| `use_template` | string                                  | None     | Replaces this entry with the steps of a template. The entry then takes `prefix` and `params` and no other field. See [Services, profiles and context](services-profiles-and-context.md). |
 
 ## When the step runs
 
@@ -86,7 +86,7 @@ See [Conditions](conditions.md) for how conditions are written, and [Order and r
 | `retry`           | map                                     | None                 | Tries the step again after an error marked as retryable.                                                    |
 | `idempotent`      | true or false                           | false                | States that the step is safe to run again. Needed for `retry.on_timeout` and for `realm run reclaim --all`. |
 
-See [Input maps and templates](input-map-and-templates.md) and [Retry and timeouts](retry-and-timeouts.md).
+See [Input maps, template expressions and filters](input-map-and-templates.md) and [Retry and timeouts](retry-and-timeouts.md).
 
 ## What an agent step is given and must return
 

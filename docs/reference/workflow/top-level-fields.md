@@ -153,7 +153,7 @@ mcp_servers:
 ## `templates`
 
 - **Type:** map from a template name to a group of steps with parameters. **Optional.**
-- A step entry that has `use_template` is replaced, when the file is loaded, by the template's steps. See [Input maps and templates](input-map-and-templates.md).
+- A step entry that has `use_template` is replaced, when the file is loaded, by the template's steps. See [Services, profiles and context](services-profiles-and-context.md).
 
 ```yaml
 templates:
