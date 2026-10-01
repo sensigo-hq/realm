@@ -1,33 +1,41 @@
 # Install and first run
 
-This page takes you from nothing to a finished run you can inspect. You install the command-line tool, create a small workflow, run it by hand, and read the record it leaves behind. It needs no AI model and no account.
+At the end of this page you have a finished Realm run on your machine and you have read the record it left behind. On the way, you watch Realm refuse a wrong answer. You need no AI model and no account: you play the part of the model yourself.
 
 ## Before you start
 
-You need Node.js 22 or later.
+You need Node.js 22 or later, and a terminal.
 
-## Install the CLI
+## 1. Install the command-line tool
+
+Install the `realm` command with npm:
 
 ```bash
 npm install -g @sensigo/realm-cli
 ```
 
-Check that it works:
+Check the install by asking for the version:
 
 ```bash
 realm --version
 ```
 
-It prints the installed version, for example `0.45.0`.
+It prints the version number, for example:
 
-## Create a workflow
+```text
+0.45.0
+```
 
-A **workflow** is a file that lists the steps of a job and the order they run in. The `init` command writes a starter one:
+## 2. Create a workflow
+
+A **workflow** is a file that lists the steps of a job and the order they run in. Create a starter workflow and move into its folder:
 
 ```bash
 realm workflow init my-first
 cd my-first
 ```
+
+It prints:
 
 ```text
 Created: my-first/
@@ -41,17 +49,9 @@ Created: my-first/
 Next: realm workflow validate ./my-first/
 ```
 
-Only `workflow.yaml` matters for this page. The other files are starting points for later: `realm.yaml` holds deployment settings, `.env.example` lists secrets, and `registry.sample.js` shows where your own code plugs in.
-
-## Read the workflow
-
-Open `workflow.yaml`:
+Notice `workflow.yaml`. It is the only file this page uses. It describes two steps:
 
 ```yaml
-id: my-first
-name: 'my-first'
-version: 1
-
 steps:
   step_one:
     description: 'First step — replace with your own'
@@ -70,60 +70,37 @@ steps:
     depends_on: [step_one]
 ```
 
-- `id` is the name you use for this workflow in every command.
-- `steps` lists the work. This workflow has two steps.
-- `step_one` has `execution: agent`. An **agent step** waits for someone to submit its output. Usually that is an AI model. On this page it is you.
-- `input_schema` describes the output `step_one` will accept: an object with exactly one field, `result`, which must be text. Realm refuses anything else.
-- `step_two` has `execution: auto`. Realm runs an **auto step** itself.
-- `depends_on: [step_one]` means `step_two` cannot run until `step_one` has finished.
+`step_one` is an **agent step**: it waits for someone to submit its output, and `input_schema` says what output it accepts. `step_two` is an **auto step**: Realm runs it itself, after `step_one`.
 
-## Check the file
+## 3. Register the workflow
 
-```bash
-realm workflow validate ./
-```
-
-```text
-Valid: my-first v1 (2 steps)
-ℹ 1 step ready for structured_output: strict — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).
-```
-
-`Valid` means Realm can load the file. The second line is a suggestion you can ignore for now.
-
-## Register it
-
-Registering stores a copy of the workflow so that Realm can run it:
+Save a copy of the workflow with Realm, so that later commands can find it by name:
 
 ```bash
 realm workflow register ./
 ```
 
+It prints:
+
 ```text
 Registered: my-first v1 (2 steps)
 ```
 
-List what is registered:
+## 4. Run it, and give a wrong answer
 
-```bash
-realm workflow list
-```
-
-```text
-ID        NAME      VERSION  ORIGIN  SCHEMA
-my-first  my-first  1        human   1 (current)
-
-1 workflow registered.
-```
-
-## Run it by hand
-
-`realm workflow run` starts a **run**, which is one execution of the workflow. It asks you for the output of each agent step, so you play the part of the model. It needs a real terminal, because it prompts you.
+Start a **run**, which is one execution of the workflow:
 
 ```bash
 realm workflow run ./
 ```
 
-It stops at `step_one` and asks for the output as JSON. First give it a wrong answer, a number where the schema asks for text:
+Realm stops at `step_one` and asks for its output. The schema asks for text in `result`. Type a number instead:
+
+```text
+{"result": 42}
+```
+
+It prints:
 
 ```text
 Realm — my-first v1
@@ -132,48 +109,47 @@ Run ID: 731242a8-3350-46a5-b723-a5b7ad1680f2
 → [agent] step_one: First step — replace with your own
   Agent output JSON (Enter for {}): {"result": 42}
   ✗ error: Invalid input for step 'step_one'
+
+→ [agent] step_one: First step — replace with your own
+  Agent output JSON (Enter for {}):
 ```
 
-Realm refuses it and asks again. The run has not moved. Now give it a valid answer:
+Notice that Realm refused the answer and is asking again. The run has not moved forward.
+
+## 5. Give a valid answer
+
+Type text for `result` this time:
 
 ```text
-→ [agent] step_one: First step — replace with your own
-  Agent output JSON (Enter for {}): {"result":"hello from my first run"}
+{"result":"hello from my first run"}
+```
+
+It prints:
+
+```text
   ✓ → completed | hash: 735e6dd8... | 0ms
 
 Run complete. Phase: completed
 ```
 
-Realm accepted the output, recorded it, and then ran `step_two` itself. That finished the run.
+Notice that you answered once and the run finished. Realm accepted `step_one`, then ran `step_two` itself.
 
-## Read the record
+## 6. Read the record
 
-List your runs:
-
-```bash
-realm run list
-```
-
-```text
-731242a8-3350-46a5-b723-a5b7ad1680f2  my-first v1  completed  10/1/2026, 3:48:23 PM  2 step(s)
-```
-
-Then inspect one, using its run ID:
+Print the record of the run. Use the run ID from step 4; yours is different.
 
 ```bash
 realm run inspect 731242a8-3350-46a5-b723-a5b7ad1680f2
 ```
 
+It prints the following. Some lines are left out here and marked `…`.
+
 ```text
 Run: 731242a8-3350-46a5-b723-a5b7ad1680f2
 Workflow: my-first v1
 Phase: completed  ✓
-Sealed by: complete
-Cause: Workflow completed.
+…
 Completed: step_one, step_two
-In Progress: (none)
-Failed: (none)
-Skipped: (none)
 …
 Evidence (2 steps):
 
@@ -188,16 +164,21 @@ Evidence (2 steps):
      …
 ```
 
-Each step that ran has one entry under `Evidence`: what went in, what came out, and a hash of the output. A hash is a short fingerprint: if the output changed, the hash would change too. The wrong answer you gave first is not in the evidence, because Realm never accepted it.
+Notice three things:
 
-## Where things are stored
+- Each step has one entry under `Evidence`, with what went in and what came out.
+- Each entry has a **hash**, a short fingerprint of the output. The two hashes match because the outputs match: the starter `step_two` has no work of its own, and its entry repeats the output of `step_one`.
+- The number `42` is nowhere in the evidence. Realm never accepted it.
 
-Everything stays on your machine, under your home directory:
+## If you see something else
 
-- `~/.realm/workflows/` holds one file per registered workflow, for example `my-first.json`.
-- `~/.realm/runs/` holds one file per run, named after the run ID.
+- **`Error: dev-mode run is interactive — it prompts on stdin for every step and gate, and stdin here is not a terminal.`** You ran `realm workflow run` from a script or a pipe. Run it in a terminal window, where it can ask you questions.
 
-## See also
+## What you did
+
+You installed Realm, created a workflow with two steps, and ran it to the end. Realm refused an answer that did not match the step's schema, accepted one that did, and kept a record of every step.
+
+Next:
 
 - [Write your first workflow](../guides/first-workflow.md) builds a workflow from an empty file.
 - [Run a workflow with `realm agent`](../guides/realm-agent.md) lets a model do the agent steps.
