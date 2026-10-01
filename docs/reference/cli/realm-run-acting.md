@@ -373,7 +373,7 @@ Re-run with --force to actually delete.
 
 When no run is old enough, it prints `No eligible runs found to purge.`
 
-**Exit code:** 0, also when a run was blocked or nothing matched. 1 for one of:
+**Exit code:** 0, also when a run was blocked or nothing matched. 1 if a run could not be deleted because of an error, or for one of:
 
 ```text
 Provide a <run-id> to purge, or use --older-than for batch mode.
