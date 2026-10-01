@@ -149,7 +149,8 @@ It prints:
 
 ```text
 Would mark 1 run(s) as abandoned.
-  • f4dee18d-e5a4-4989-885d-bea2a7b60483
+  • 79b5ba95-7bc1-4779-ab12-2e653139eb29
+abandon is a kill — declared finalizers (if any) did NOT run and will not for this run. …
 ```
 
 Without `--dry-run`, the same command abandons them. It leaves runs that are waiting at a gate.
@@ -184,17 +185,19 @@ realm run purge --older-than 30d
 It prints:
 
 ```text
-6 run(s) WOULD be purged (25.9 KB to free):
+6 run(s) WOULD be purged (21.3 KB to free):
   • 0fdae340-a7e5-4ff5-b83f-9fb6086a53be  (failed, 3.6 KB)
   …
-5 of 6 selected run(s) are resumable via 'realm run resume' — purging would destroy that path permanently.
+
+3 of 6 selected run(s) are resumable via 'realm run resume' — purging would destroy that path permanently.
 Re-run with --force to actually delete.
 ```
 
 Read the list, then run it again with `--force`:
 
 ```text
-Purged 1/1 run(s) (6.4 KB freed, store-reported). 0 already gone, 0 blocked, 0 failed.
+Purged 6/6 run(s) (21.3 KB freed, store-reported). 0 already gone, 0 blocked, 0 failed.
+3 of 6 selected run(s) were resumable via 'realm run resume' — purging has destroyed that path for them.
 ```
 
 Purge never touches a run that is still open. To purge one run, give its ID in place of `--older-than`.
@@ -213,6 +216,8 @@ It prints, on a clean store:
 No orphaned .tmp files found to reap.
 
 No run-less orphaned WAL/sidecar artifacts found to reap.
+
+gc does NOT yet reap orphaned .lock dirs (deferred — issue #164). Their presence in runsDir is expected and not a sign gc is broken.
 ```
 
 ## Two rarer cases
