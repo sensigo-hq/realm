@@ -228,8 +228,8 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
     `resolution_error`). `ended_by: { arm, step, reason? }` is added when one of them ended the
     run; `status` stays `ok` for an applied answer, and `context_hint` is the guard's sentence. An
     answer that arrives after the gate's time is up carries `answer_recorded: false`, and, when
-    that answer carried out the expiry, a `context_hint` that is the expiry's sentence followed by
-    the guard's. `realm run respond` prints what the guards did before its last line. For an
+    that answer carried out the expiry, a `context_hint` that is the expiry's sentence, followed by
+    the guard's when a guard ended the run. `realm run respond` prints what the guards did before its last line. For an
     answer the expiry beat, that last line used to be `Responded: …` and is now
     `Not recorded: <run> | gate settled by timeout with choice '<c>' | state '<phase>'`. Its exit
     code follows the reply (0 for an applied answer even when the run it ended is aborted, 0 for a
@@ -251,8 +251,8 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
     `describeGuardLines`, `describeEndedBy`, `guardPassedLine`, and the types `AdvanceRunState` and
     `GuardEnding`. `ResponseEnvelope` gains the three fields in (d); `SettleGuardDelta`'s
     `resolutionError` gains an optional `cause`.
-  - (g) **A failed step's own write settles a guard it leaves eligible.** On earlier versions no
-    guard ran after a failed step. The failed step's reply keeps its status and errors and adds
+  - (g) **A failed step's own write settles a guard it leaves eligible.** On earlier versions the
+    failing call settled no guard. The failed step's reply keeps its status and errors and adds
     `guards`, and `ended_by` when the guard ended the run.
   - (h) **A guard whose `when` or `abort_unless` cannot be evaluated is settled as a resolution
     error.** Before, the write that made such a guard eligible failed: a guard with `when: 42`

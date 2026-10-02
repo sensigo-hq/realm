@@ -352,7 +352,7 @@ A guard step that the answer makes ready is decided in the same write. The reply
 }
 ```
 
-**An answer after the gate's time is up** is not recorded. The call carries out the expiry first. For a gate that settles its default choice, the reply has `answer_recorded: false`, the guards that the expiry's write decided, and a `context_hint` that is the expiry's sentence followed by the guard's. An answer that names the settled choice gets `status: ok`:
+**An answer after the gate's time is up** is not recorded. The call carries out the expiry first. For a gate that settles its default choice, the reply has `answer_recorded: false`, the guards that the expiry's write decided, and a `context_hint` that is the expiry's sentence. When one of those guards ended the run, the guard's sentence follows it. An answer that names the settled choice gets `status: ok`:
 
 ```json
 {

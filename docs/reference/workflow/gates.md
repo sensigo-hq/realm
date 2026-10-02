@@ -196,7 +196,7 @@ and `realm run list --stuck` says what would be done:
 Drained 2/2 run(s).
 ```
 
-After `settle_default`, the record says that the answer came from the time limit. `realm run inspect` shows `Sealed by: gate_expiry_default (approve)`, and the run's record holds `"choice": "hold", "resolved_by": "timeout"` for the step.
+After `settle_default`, the record says that the answer came from the time limit: it holds `"choice": "hold", "resolved_by": "timeout"` for the step. `realm run inspect` shows `Sealed by: gate_expiry_default (approve)` only when the expiry itself completed the run, with nothing left to run after the gate. When the run goes on, or a guard after the gate ends it, `inspect` does not show that the choice came from the time limit.
 
 After `abort`, the run reads:
 

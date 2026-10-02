@@ -37,7 +37,7 @@ start_run     →  Step 'fetch_pr' completed. 1 step(s) now available.
 
 The reply then names the one step the agent may run, `write_review`, with its task and its schema.
 
-One case needs care. When a gate is answered, the answer is recorded, but the steps after the gate do not start by themselves. They run on the next call. In the same example, after the reviewer approved:
+One case needs care. When a gate is answered, the answer is recorded, and a `guard` step that the answer makes ready is decided in the same call. The `auto` steps after the gate do not start by themselves. They run on the next call. In the same example, after the reviewer approved:
 
 ```text
 submit_human_response  →  Gate 'confirm_review' resolved with choice 'approve'. 0 step(s) now available.
