@@ -218,18 +218,19 @@ After the last of 3 attempts, the reply carries the last error's message in its 
 }
 ```
 
-### The handler and `realm` must load the same copy of `@sensigo/realm`
+### The handler and `realm` must use the same realm version
 
-Realm recognises a `WorkflowError` only if it was made by the copy of `@sensigo/realm` that the `realm` command itself loaded. An error from another copy is treated as an ordinary `Error`: it is not tried again, and its code and details are lost.
+Realm recognises a `WorkflowError` made by any copy of `@sensigo/realm` at the version the `realm` command uses. An error from another version is treated as an ordinary `Error`: it is not tried again, and its code and details are lost. See [Which realm your code imports](project-extensions.md#which-realm-your-code-imports).
 
-The same handler and workflow, with a retryable error on the first 2 attempts:
+Recognising another copy of the same version was added after version 0.45.0. On 0.45.0 the second row below gives the first row's result; [Which realm your code imports](project-extensions.md#which-realm-your-code-imports) says what to do there.
 
-| How Realm was installed                                                                                       | Result                                                                      |
-| ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `@sensigo/realm` installed in the project, a `realm` command from somewhere else                              | 1 attempt, then `✗ Step 'only' failed: Handler 'flaky' threw: rate limited` |
-| `@sensigo/realm-cli` and `@sensigo/realm` installed in the project, at the same version, run with `npx realm` | 3 attempts, then `Run complete`                                             |
+The same handler and workflow, with a retryable error on the first 2 attempts, run with `realm agent` and a provider module the command accepts (see [Your own provider](cli/realm-agent.md#your-own-provider)):
 
-The second row was run with the published version 0.45.0.
+| How Realm was installed                                                                      | Result                                                                      |
+| -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| The project's `@sensigo/realm` at another version than the `realm` command's                 | 1 attempt, then `✗ Step 'only' failed: Handler 'flaky' threw: rate limited` |
+| The project's `@sensigo/realm` and the `realm` command's own copy, two copies of one version | 3 attempts, then `Run complete`                                             |
+| One copy of `@sensigo/realm`, shared by the project and the `realm` command                  | 3 attempts, then `Run complete`                                             |
 
 ## When the time limit passes
 

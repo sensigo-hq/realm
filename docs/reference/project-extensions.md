@@ -294,6 +294,20 @@ The check compares files on disk with what the run recorded. A running `realm mc
 
 A workflow made with the `create_workflow` tool has agent steps only, and the tool takes no `extensions`. Realm also refuses to load code for a stored workflow that is marked as made by an assistant and has `extensions`.
 
+## Which realm your code imports
+
+npm can install a realm package more than once on one machine: once in your project, and once more with the `realm` command, or nested under another realm package. Your code imports the copy nearest its own file. The `realm` command imports the copy installed with it. This page calls each of them a copy.
+
+Your code and the `realm` command must use the same realm version. Copies of one version work together: an error or a provider made with one copy is recognised by the other. Copies of different versions do not, even one patch apart. The same holds for a program of your own that uses the realm packages as a library.
+
+Copies of one version working together was added after version 0.45.0. On 0.45.0 two copies do not recognise each other's objects, whatever their versions, so matching version numbers are not enough there: your code and the command must share one copy. Install `@sensigo/realm-cli` in the project beside `@sensigo/realm`, at the same version, and run it with `npx realm`.
+
+With different versions, a `WorkflowError` your handler throws is treated as an ordinary error: it is not tried again, and its code is replaced by `ENGINE_HANDLER_FAILED`. A provider module given to `realm agent --provider-module` is refused with `Error: provider module default export must be an instance extending LlmProvider.` The message's second line tells you to import `LlmProvider` from `@sensigo/realm-cli/agent`. With different versions your module already does that; the cause is the version.
+
+To see the versions, run `realm --version`, and in the project `npm ls @sensigo/realm @sensigo/realm-cli`. Every number must be the same. To fix a difference, install every realm package the project uses, and the `realm` command, at one exact version (see [Upgrade Realm](../guides/upgrade.md#2-upgrade-every-package-together)). Or install `@sensigo/realm-cli` in the project at that version and run it with `npx realm`.
+
+A package of handlers or adapters that other projects install should declare `@sensigo/realm` in `peerDependencies` with a caret range on the version it was built against (for example `"^0.45.0"`), and also in `devDependencies`, so that its own tests have a copy. When the project's version is inside the range, the package uses the project's copy. When it is outside, npm with its default settings refuses the install with `ERESOLVE`. A package that declares `@sensigo/realm` as an ordinary dependency at a version other than the project's brings a second copy, and Realm does not recognise that copy's errors.
+
 ## See also
 
 - [Write a step handler](../guides/step-handlers.md)

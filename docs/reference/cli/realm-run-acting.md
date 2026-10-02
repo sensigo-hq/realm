@@ -471,7 +471,7 @@ realm run gc --older-than 1d
 
 ```text
 1 orphaned .tmp file(s) WOULD be reaped (2.4 KB to free):
-  • ~/.realm/runs/08c61d5d-8db8-4556-87e4-0ba4cc76dc6c.json.4242.1.tmp
+  • ~/.realm/runs/08c61d5d-8db8-4556-87e4-0ba4cc76dc6c.json.4242.9f3c2a1b.tmp
 
 Re-run with --force to actually delete.
 
@@ -481,6 +481,8 @@ Re-run with --force to actually delete.
 
 gc does NOT yet reap orphaned .lock dirs (deferred — issue #164). Their presence in runsDir is expected and not a sign gc is broken.
 ```
+
+On version 0.45.0 the part after the process id is a counter instead of 8 random characters: `….json.4242.1.tmp`. gc removes both forms.
 
 With `--force`:
 

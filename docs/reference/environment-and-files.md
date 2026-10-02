@@ -73,12 +73,14 @@ A key file looks like this:
 
 Two more kinds of entry exist only while a file is being written:
 
-| Path                        | Is                                                                                |
-| --------------------------- | --------------------------------------------------------------------------------- |
-| `runs/<file>.lock`          | A folder that marks the file as being written. It is removed when the write ends. |
-| `runs/<file>.<pid>.<n>.tmp` | The new contents of a file, before it replaces the old one.                       |
+| Path                             | Is                                                                                |
+| -------------------------------- | --------------------------------------------------------------------------------- |
+| `runs/<file>.lock`               | A folder that marks the file as being written. It is removed when the write ends. |
+| `runs/<file>.<pid>.<random>.tmp` | The new contents of a file, before it replaces the old one.                       |
 
-One left behind by a process that was killed is cleaned up by [`realm run gc`](cli/realm-run-acting.md#gc).
+A temp file left behind by a process that was killed is removed by [`realm run gc`](cli/realm-run-acting.md#gc). A `.lock` folder left behind is not removed by gc; the next write to that file takes it over once it is stale.
+
+On version 0.45.0 the temp file's name has a counter where the random part is: `runs/<file>.<pid>.<n>.tmp`.
 
 ### Which commands remove files
 
