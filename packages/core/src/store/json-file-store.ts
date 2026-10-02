@@ -613,7 +613,12 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       }
       const fresh = JSON.parse(raw) as RunRecord;
 
-      const outcome = applySettlement(fresh, delta, definition, options);
+      // issue #625: a store's own `settleStep` settles, in this SAME write, every guard the delta
+      // makes eligible — so no record this store persists is "answered, guard not decided".
+      const outcome = applySettlement(fresh, delta, definition, {
+        ...options,
+        cascadeGuards: true,
+      });
       if (!outcome.applied) {
         return outcome; // refusal/noop — fresh state, NO write (version unchanged)
       }

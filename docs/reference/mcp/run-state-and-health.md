@@ -133,7 +133,7 @@ A run ID that is not in the store gets a reply with `status: "error"` and the me
 
 When more than one applies, `awaiting_human` comes first, then `blocked_on_capability`, then `claim_stale`.
 
-`ok` with an empty `next_actions` on an open run means nothing can be called at the moment. One case is a guard step that became ready when a gate was answered: see `resolved_gate_with_eligible_guard` below.
+`ok` with an empty `next_actions` on an open run means nothing can be called at the moment. One case is a guard step that is ready and that no write has decided: see `guard_awaiting_settlement` below.
 
 ## `include_steps`
 
@@ -214,19 +214,19 @@ A finding is one thing Realm has noticed about a run that someone may need to ac
 
 Findings about a run that is open:
 
-| `kind`                              | Found when                                                                                                          | Label in `list --stuck`                                        |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `never_claimed_idle`                | The run is in `running`, no step is in progress, and it has not changed for 24 hours.                               | None. The line ends after `idle:`.                             |
-| `drive_failing`                     | The last thing that happened to the run was a failed drive by `realm agent`.                                        | `<step>=drive_failing(<kind>)`                                 |
-| `stale_claim`                       | A step is in progress past its time, or for an unknown time, and the run is in `running`.                           | `<step>=claim_stale` or `<step>=claim_unknown_age`             |
-| `wedged_gate_sibling`               | The same, in a run that is waiting at a gate, for a step other than the gate's.                                     | `<step>=claim_stale` or `<step>=claim_unknown_age`             |
-| `capability_block`                  | A step needs a handler or an adapter that the process which tried it did not have.                                  | `<step>: needs handler '<name>'`                               |
-| `gate_expired_awaiting_drive`       | A gate's time has passed and nothing has yet carried out what was declared for it.                                  | `<step>=gate_expired(<on_expiry>)`                             |
-| `resolved_gate_with_eligible_guard` | A gate was answered and a guard step is ready, and nothing has run it.                                              | Not found by `list`.                                           |
-| `trust_value_invalid`               | A step that is ready has a `trust` value Realm does not accept. The registered copy was stored by an older version. | Not found by `list`.                                           |
-| `definition_unresolvable`           | The run's registered workflow cannot be read.                                                                       | `definition_unresolvable (<why>) (realm run inspect <run-id>)` |
-| `gate_corruption`                   | The run's record says a gate is both answered and open.                                                             | `<step>=gate_corruption`                                       |
-| `structured_output_downgraded`      | A step asked for `structured_output: strict` and ran without it.                                                    | None. It does not select a run.                                |
+| `kind`                         | Found when                                                                                                          | Label in `list --stuck`                                        |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `never_claimed_idle`           | The run is in `running`, no step is in progress, and it has not changed for 24 hours.                               | None. The line ends after `idle:`.                             |
+| `drive_failing`                | The last thing that happened to the run was a failed drive by `realm agent`.                                        | `<step>=drive_failing(<kind>)`                                 |
+| `stale_claim`                  | A step is in progress past its time, or for an unknown time, and the run is in `running`.                           | `<step>=claim_stale` or `<step>=claim_unknown_age`             |
+| `wedged_gate_sibling`          | The same, in a run that is waiting at a gate, for a step other than the gate's.                                     | `<step>=claim_stale` or `<step>=claim_unknown_age`             |
+| `capability_block`             | A step needs a handler or an adapter that the process which tried it did not have.                                  | `<step>: needs handler '<name>'`                               |
+| `gate_expired_awaiting_drive`  | A gate's time has passed and nothing has yet carried out what was declared for it.                                  | `<step>=gate_expired(<on_expiry>)`                             |
+| `guard_awaiting_settlement`    | A guard step is ready, and no write has decided it.                                                                 | Not found by `list`.                                           |
+| `trust_value_invalid`          | A step that is ready has a `trust` value Realm does not accept. The registered copy was stored by an older version. | Not found by `list`.                                           |
+| `definition_unresolvable`      | The run's registered workflow cannot be read.                                                                       | `definition_unresolvable (<why>) (realm run inspect <run-id>)` |
+| `gate_corruption`              | The run's record says a gate is both answered and open.                                                             | `<step>=gate_corruption`                                       |
+| `structured_output_downgraded` | A step asked for `structured_output: strict` and ran without it.                                                    | None. It does not select a run.                                |
 
 Findings about a run that has ended:
 
@@ -317,17 +317,17 @@ e315bb67-091d-4283-aa74-3b85503ef109  fan v1  gate_waiting  10/2/2026, 2:38:47 A
 }
 ```
 
-`resolved_gate_with_eligible_guard`:
+`guard_awaiting_settlement`, for a workflow whose only first step is the guard `limit`:
 
 ```json
 {
-  "kind": "resolved_gate_with_eligible_guard",
+  "kind": "guard_awaiting_settlement",
   "step": "limit",
-  "reason": "gate resolved; guard 'limit' awaits the next drive"
+  "reason": "guard 'limit' is eligible and has not been settled"
 }
 ```
 
-In this state `next_actions` is empty, and a call to the guard or to the step after it is refused as not eligible.
+A guard is decided inside the write that makes it ready: a step that finishes, an answer to a gate, or a gate whose time runs out. This finding is about a guard that became ready some other way. That is a guard that is ready when the run is created, as here, or when `realm run resume` opens the run again at a failed guard, or a run kept in a store that does not settle in one write. Such a guard is decided by the run's next finished step or gate answer. Where the run has none, as in the workflow above, `next_actions` is empty, and a call to the guard or to the step after it is refused as not eligible.
 
 `trust_value_invalid`, for a workflow registered by version 0.38 with `trust: human_confirm`:
 

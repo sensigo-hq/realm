@@ -196,7 +196,7 @@ and `realm run list --stuck` says what would be done:
 Drained 2/2 run(s).
 ```
 
-After `settle_default`, the record says that the answer came from the time limit. `realm run inspect` shows `Sealed by: gate_expiry_default (approve)`, and the run's record holds `"choice": "hold", "resolved_by": "timeout"` for the step.
+After `settle_default`, the record says that the answer came from the time limit: it holds `"choice": "hold", "resolved_by": "timeout"` for the step. `realm run inspect` shows `Sealed by: gate_expiry_default (approve)` only when the expiry itself completed the run, with nothing left to run after the gate. When the run goes on, or a guard after the gate ends it, `inspect` does not show that the choice came from the time limit.
 
 After `abort`, the run reads:
 
@@ -206,10 +206,73 @@ Sealed by: gate_expiry_abort (approve)
 Cause: Gate 'approve' expired and the run aborted per the workflow's declared on_expiry.
 ```
 
-**An answer that arrives after the time is up is not recorded.** The expiry is carried out first, and the person is told:
+Over MCP, the call that carries out an expiry says so in its `warnings`, with how late it was. `realm run drain` and the process waiting at the gate print a line of their own. Afterwards, `realm run inspect` and `get_run_state` do not show which call carried it out.
+
+### A guard after the gate
+
+A guard step that the settled choice makes ready is decided in the same write as the expiry. In the examples below the gate's step is followed by a guard, `only_if_shipping`, which stops the run unless the choice is `ship`.
+
+For one run, `realm run drain <run-id> --expired` names the choice it would settle and says what the guard would then do. With `--force` it carries the expiry out and says what the guard did:
 
 ```text
-Gate '9e07b1ef-ea66-4469-a3e1-fc0ce75372d3' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded.
+Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate expired 0m ago — would enact settle_default 'hold'; guard 'only_if_shipping' would then abort the run (The order was held.) on --force.
+```
+
+```text
+✓ gate enacted (settle_default 'hold').
+Guard step 'only_if_shipping' aborted the run.
+Reason: The order was held.
+```
+
+See [`drain`](../cli/realm-run-acting.md#drain) for the other forms.
+
+### An answer after the time is up
+
+**An answer that arrives after the time is up is not recorded.** The expiry is carried out first. What the person is told depends on what the gate declared.
+
+**`on_expiry: settle_default`.** The gate was settled with its default choice. For such an answer `realm run respond` does not print `Responded:`. Its last line is `Not recorded:`, with the choice the gate was settled with and the run's phase.
+
+If the answer is the choice the gate was settled with, the command exits 0:
+
+```text
+the outcome matches your choice, but it was settled by timeout; your response was not recorded.
+Guard step 'only_if_shipping' passed.
+Not recorded: e428e60c-a362-410f-8819-008e40456639 | gate settled by timeout with choice 'ship' | state 'running'
+```
+
+If the answer is a different choice, it is refused. Every line goes to the error stream, and the command exits 1:
+
+```text
+Gate '80e024ee-2fd7-415e-8d38-a2fb8faf0cbb' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded.
+Guard step 'only_if_shipping' aborted the run.
+Reason: The order was held.
+Not recorded: 71f47780-06a7-421c-87d0-c74d2c8998de | gate settled by timeout with choice 'hold' | state 'aborted'
+```
+
+The lines about the guard are printed only when this answer is the call that carried out the expiry. If `realm run drain --expired`, the process waiting at the gate, or `realm listen` carried it out first, that call reported the guard. The late answer then prints its first line and `Not recorded:`, and a different choice is told `was already resolved with choice 'ship'` in place of `was settled by timeout`:
+
+```text
+the outcome matches your choice, but it was settled by timeout; your response was not recorded.
+Not recorded: 96727c7c-cdf5-495c-92ed-28cd478b19d6 | gate settled by timeout with choice 'ship' | state 'running'
+```
+
+```text
+Gate '5f71e609-cf61-40ef-8397-2d46f5dd1a54' was already resolved with choice 'ship' — your choice 'hold' was not recorded.
+Not recorded: efe0a7c8-65f7-4be4-9fd9-447f5badd0ed | gate settled by timeout with choice 'ship' | state 'running'
+```
+
+Over MCP these replies carry `answer_recorded: false`. See [`submit_human_response`](../mcp/tools.md#submit_human_response).
+
+**`on_expiry: abort`.** The run ended and no choice was settled, so there is no `Not recorded:` line. The answer that carries out the abort is refused with the message below, and its MCP reply carries `answer_recorded: false`:
+
+```text
+Gate '638d412e-ee8a-492c-ae80-750d2a26cbc2' on 'approve' expired and the run aborted per the workflow's declared on_expiry — your choice was NOT recorded.
+```
+
+An answer that arrives after something else carried out the abort gets the refusal that every ended run gives, without that field:
+
+```text
+Run '063dee23-e68e-4d7f-bcc2-968dd764370c' is terminal; cannot submit a gate response — 'realm run resume' clears a stale pending gate on a resumable run, or 'realm run purge' removes the record entirely.
 ```
 
 A gate with `timeout_seconds` and no `on_expiry` accepts an answer after its time is up.

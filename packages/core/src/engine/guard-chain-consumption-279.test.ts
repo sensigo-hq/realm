@@ -1,6 +1,6 @@
 // guard-chain-consumption-279.test.ts — GUARD_CHAIN_CONSUMPTION (issue #279, increment 2, PR-D,
 // Deliverable 5; design record §6/§8, gate-1 gap-1's forcing test). Five legs through the REAL
-// engine (executeChain) + a REAL JsonFileStore, exercising the chain-consumption table adjudicated
+// engine (the chain's guard loop, `advanceRun`) + a REAL JsonFileStore, exercising the chain-consumption table adjudicated
 // for settle_guard's refusal reasons:
 //   (a) a sibling settles the guard FIRST (same outcome) ⇒ our own attempt returns already_settled
 //       ⇒ the chain ADVANCES, threading result.run, with NO error envelope.
@@ -9,7 +9,8 @@
 //   (c) same as (b), but OUR OWN attempt is the ABORT leg ⇒ report_to_user + chain-RETURN
 //       (STATE_STEP_ALREADY_SETTLED) — the abort was never recorded.
 //   (d) a gate opens on ANOTHER step between the guard's pre-seal snapshot and its own settle call
-//       ⇒ gate_open_wait ⇒ quiet end-of-pass; the guard re-applies cleanly once the gate resolves.
+//       ⇒ gate_open_wait ⇒ quiet end-of-pass; the write that resolves the gate then settles the
+//       guard (issue #625 — before it, a later drive re-applied the guard).
 //   (e) [correction, MA review of reports/atomic-settle-279-pr-d.md] a sibling settles the guard
 //       FIRST with the SAME outcome as our own attempt (same shape as leg (a)), but the sibling's
 //       commit is a RAW `store.settleStep` call — it terminalizes the run and mints the finalizer
@@ -33,12 +34,22 @@
 // constraint is stated ONLY for R3-death's specific mechanism (verbatim from symptom-death-279);
 // GUARD_CHAIN_CONSUMPTION's own record language ("an engine-level guard-chain fixture") calls for
 // exactly this kind of deterministic construction.
+//
+// issue #625 (RE-HOMED onto `advanceRun`): on a store that declares `settleStep`, the named step's
+// own write now settles every guard it makes eligible, so `executeChain` never issues a
+// `settle_guard` of its own — the interposition below would never fire through it, and legs (a)
+// and (e) would stay green for another reason (the cascade settled the guard; the step's own
+// transitioned drain ran the finalizer). The table these legs pin lives in the chain's guard loop,
+// which is now `advanceRun`; it settles a guard only on a record that some OTHER write left with
+// an eligible one. Each leg therefore (1) leaves such a record with `store.update` — one completed
+// step and its evidence entry — (2) calls `advanceRun` directly, and (3) asserts the interposition
+// FIRED, so no leg can pass without entering the arm it names.
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
-import { executeChain, submitHumanResponse } from './execution-loop.js';
+import { advanceRun, executeChain, submitHumanResponse } from './execution-loop.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
@@ -56,6 +67,12 @@ import type { StepHandler } from '../extensions/step-handler.js';
 class InjectBeforeSettleStore implements RunStore {
   readonly persistsClaims: boolean;
   private injected = false;
+
+  /** Whether the interposition ran — every leg asserts it (issue #625: without this a leg can
+   *  pass having never entered the arm it names). */
+  get fired(): boolean {
+    return this.injected;
+  }
 
   constructor(
     private readonly inner: JsonFileStore,
@@ -146,6 +163,31 @@ const defWithFinalizer: WorkflowDefinition = {
   },
 };
 
+/**
+ * issue #625: leaves `guard_b` ELIGIBLE and unsettled — `step_a` completed with the given output,
+ * written by `store.update`, a write that settles no guard. This is the record the chain's guard
+ * loop (`advanceRun`) exists for on a `settleStep` store.
+ */
+async function leaveGuardEligible(
+  inner: JsonFileStore,
+  run: RunRecord,
+  stepAOutput: Record<string, unknown>,
+): Promise<RunRecord> {
+  return inner.update({
+    ...run,
+    completed_steps: ['step_a'],
+    evidence: [
+      captureEvidence({
+        stepId: 'step_a',
+        startedAt: new Date(),
+        completedAt: new Date(),
+        input: {},
+        output: stepAOutput,
+      }),
+    ],
+  });
+}
+
 function makeGuardEvidence(outcome: 'pass' | 'resolution_error' | 'abort') {
   return captureEvidence({
     stepId: 'guard_b',
@@ -179,13 +221,17 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
         },
       );
 
-      const result = await executeChain(store, def, {
+      await leaveGuardEligible(inner, run, { status: 'open' }); // guard_b's own condition would ALSO pass
+      const result = await advanceRun(store, def, {
         runId: run.id,
         command: 'step_a',
         input: {},
-        dispatcher: async () => ({ status: 'open' }), // guard_b's own condition would ALSO pass
+        dispatcher: async () => ({}),
       });
 
+      // (a) red when the guard loop never issues its own settle_guard (the arm is not entered);
+      //     (b) prints true/false.
+      expect(store.fired).toBe(true);
       expect(result.status).toBe('ok');
       expect(result.errors).toEqual([]);
       expect(result.error_code).toBeUndefined();
@@ -225,13 +271,16 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
         },
       );
 
-      const result = await executeChain(store, def, {
+      await leaveGuardEligible(inner, run, { status: 'open' }); // OUR own guard evaluation would PASS
+      const result = await advanceRun(store, def, {
         runId: run.id,
         command: 'step_a',
         input: {},
-        dispatcher: async () => ({ status: 'open' }), // OUR own guard evaluation would PASS
+        dispatcher: async () => ({}),
       });
 
+      // (a) red when the guard loop never issues its own settle_guard; (b) prints true/false.
+      expect(store.fired).toBe(true);
       expect(result.status).toBe('ok');
       expect(result.error_code).toBeUndefined();
       expect(result.warnings.some((w) => w.includes('guard') && w.includes('diverged'))).toBe(true);
@@ -268,13 +317,16 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
         },
       );
 
-      const result = await executeChain(store, def, {
+      await leaveGuardEligible(inner, run, { status: 'closed' }); // OUR OWN guard evaluation aborts
+      const result = await advanceRun(store, def, {
         runId: run.id,
         command: 'step_a',
         input: {},
-        dispatcher: async () => ({ status: 'closed' }), // OUR OWN guard evaluation aborts
+        dispatcher: async () => ({}),
       });
 
+      // (a) red when the guard loop never issues its own settle_guard; (b) prints true/false.
+      expect(store.fired).toBe(true);
       expect(result.status).toBe('error');
       expect(result.error_code).toBe('STATE_STEP_ALREADY_SETTLED');
       expect(result.agent_action).toBe('report_to_user');
@@ -288,7 +340,7 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
     }
   });
 
-  it("(d) a gate opens on ANOTHER step between the guard's pre-seal snapshot and its own settle ⇒ gate_open_wait ⇒ quiet end-of-pass; the guard re-applies cleanly once the gate resolves", async () => {
+  it("(d) a gate opens on ANOTHER step between the guard's pre-seal snapshot and its own settle ⇒ gate_open_wait ⇒ quiet end-of-pass; the write that resolves the gate then settles the guard", async () => {
     const dir = await mkdtemp(join(tmpdir(), 'realm-gcc-d-'));
     try {
       const inner = new JsonFileStore(dir);
@@ -326,13 +378,16 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       // guard_b's OWN condition must be NON-PASS to ever be eligible for gate_open_wait at all
       // (design record §3: "if fresh.pending_gate !== undefined && delta.outcome !== 'pass'" —
       // D-2 lets a PASSING guard through even under an open gate; only abort/resolution_error wait).
-      const result = await executeChain(store, defWithRecheck, {
+      await leaveGuardEligible(inner, run, { status: 'closed' }); // guard_b's OWN condition would ABORT
+      const result = await advanceRun(store, defWithRecheck, {
         runId: run.id,
         command: 'step_a',
         input: {},
-        dispatcher: async () => ({ status: 'closed' }), // guard_b's OWN condition would ABORT
+        dispatcher: async () => ({}),
       });
 
+      // (a) red when the guard loop never issues its own settle_guard; (b) prints true/false.
+      expect(store.fired).toBe(true);
       // Quiet end-of-pass: guard_b is neither completed/failed/skipped — the chain simply stops
       // (the gate now blocks everything), no error.
       expect(result.status).toBe('ok');
@@ -343,16 +398,19 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       expect(midRun.skipped_steps).not.toContain('guard_b');
       expect(midRun.pending_gate?.step_name).toBe('gated_step');
 
-      // Resolve the gate — guard_b becomes eligible again. Drive the independent auto step
-      // (`trigger_recheck`) to re-enter the chain and re-check guard eligibility as a side effect
-      // — the guard re-applies CLEANLY this time (no gate in the way), aborting the run per its
-      // own (unchanged) condition.
+      // Resolve the gate — guard_b becomes eligible again, and (issue #625) the ANSWER'S OWN WRITE
+      // settles it: no gate is in the way any more, so the guard aborts the run per its own
+      // (unchanged) condition right there. The drive of `trigger_recheck` that follows finds the
+      // run already ended and executes nothing; before #625 it was that drive that re-applied the
+      // guard.
       const resolved = await submitHumanResponse(inner, defWithRecheck, {
         runId: run.id,
         gateId: 'sibling-gate',
         choice: 'approve',
       });
       expect(resolved.status).toBe('ok');
+      // (a) red when the answer's write stops settling the guard it unblocks; (b) prints `guards`.
+      expect(resolved.guards).toEqual([{ step: 'guard_b', outcome: 'abort' }]);
       const finalChain = await executeChain(inner, defWithRecheck, {
         runId: run.id,
         command: 'trigger_recheck',
@@ -418,14 +476,18 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
         },
       );
 
-      const result = await executeChain(store, defWithFinalizer, {
+      await leaveGuardEligible(inner, run, { status: 'closed' }); // OUR OWN attempt also aborts — same outcome
+      const result = await advanceRun(store, defWithFinalizer, {
         runId: run.id,
         command: 'step_a',
         input: {},
-        dispatcher: async () => ({ status: 'closed' }), // OUR OWN attempt also aborts — same outcome
+        dispatcher: async () => ({}),
         registry,
       });
 
+      // (a) red when the guard loop never issues its own settle_guard — the NOOP-drain arm this
+      //     leg pins is then never entered; (b) prints true/false.
+      expect(store.fired).toBe(true);
       expect(result.status).toBe('ok');
       expect(result.errors).toEqual([]);
       expect(result.error_code).toBeUndefined();

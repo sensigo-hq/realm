@@ -1,5 +1,5 @@
 // Types for the ResponseEnvelope returned by every step execution.
-import type { EvidenceSnapshot, RunPhase } from './run-record.js';
+import type { EvidenceSnapshot, RunPhase, SealArm } from './run-record.js';
 import type { AgentAction, ErrorCode } from './workflow-error.js';
 import type { LoaderWarning } from '../workflow/diagnostics.js';
 
@@ -160,4 +160,33 @@ export interface ResponseEnvelope {
    * persisted record, so a non-persisting store can't silently drop it from this envelope too).
    */
   defaulted_steps?: string[];
+  /**
+   * Issue #625. The guards the write behind this reply settled, in the order they were settled —
+   * a store's own `settleStep` settles, in the same write as an answer, an expired gate or a
+   * finished step, every guard that write makes eligible. Absent when it settled none.
+   *
+   * After `start_run` / `execute_step` the same guards are also listed in `chained_auto_steps`;
+   * after an answer (`submit_human_response`) this field is where they appear.
+   */
+  guards?: Array<{ step: string; outcome: 'pass' | 'abort' | 'resolution_error' }>;
+  /**
+   * Issue #625. Present when one of `guards` ENDED the run in that write: the sealing guard's own
+   * arm and step — never the gate's or the named step's.
+   *
+   * `reason` is the guard's authored `abort_message` on an abort (absent when the author wrote
+   * none); on a resolution error the guard's own recorded evidence `error`; absent on a pass that
+   * completed the run.
+   *
+   * The reply's `status` is unchanged by this field: an answer that was recorded stays `ok` even
+   * when the guard it unlocked aborted the run — the answer succeeded; the ending is its own fact.
+   */
+  ended_by?: { arm: SealArm; step: string; reason?: string };
+  /**
+   * Issue #625. `false` on a reply to an answer the gate's expiry beat: the gate was settled by
+   * its timeout (or the run was aborted by it) before this answer could be recorded, so the
+   * choice in this call was NOT recorded — including when it matches the choice the expiry
+   * enacted, where `status` is still `ok`. Absent on every other reply; never `true`. Read this
+   * field, not the reply's prose, to tell a late answer from a recorded one.
+   */
+  answer_recorded?: false;
 }

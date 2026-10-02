@@ -503,7 +503,7 @@ describe('classifyRunHealth', () => {
     expect(terminalFindings.some((f) => f.kind === 'gate_corruption')).toBe(true);
   });
 
-  it('resolved_gate_with_eligible_guard: a resolved gate with a NOW-eligible guard names it, ONLY when a definition is supplied', () => {
+  it('guard_awaiting_settlement: an eligible guard that nothing has settled is named, ONLY when a definition is supplied', () => {
     const run = makeRun({
       completed_steps: ['gated_step'],
       run_phase: 'running',
@@ -523,23 +523,22 @@ describe('classifyRunHealth', () => {
       },
     };
     const withDefinition = classifyRunHealth(run, { now: NOW, definition });
-    expect(withDefinition.some((f) => f.kind === 'resolved_gate_with_eligible_guard')).toBe(true);
-    const finding = withDefinition.find((f) => f.kind === 'resolved_gate_with_eligible_guard');
+    expect(withDefinition.some((f) => f.kind === 'guard_awaiting_settlement')).toBe(true);
+    const finding = withDefinition.find((f) => f.kind === 'guard_awaiting_settlement');
     expect(finding?.step).toBe('guard_after');
-    expect(finding?.reason).toContain('guard_after');
-    expect(finding?.reason).toContain('next drive');
+    // issue #625 — the whole sentence. (a) red when the sentence goes back to promising a later
+    // call ("awaits the next drive") or to naming a gate; (b) prints the finding's reason text.
+    expect(finding?.reason).toBe("guard 'guard_after' is eligible and has not been settled");
 
     // Definition-free: the finding never surfaces (findEligibleGuardSteps needs a definition) —
     // matches list.ts's own disclosed, accepted limitation (design record §9).
     const withoutDefinition = classifyRunHealth(run, { now: NOW });
-    expect(withoutDefinition.some((f) => f.kind === 'resolved_gate_with_eligible_guard')).toBe(
-      false,
-    );
+    expect(withoutDefinition.some((f) => f.kind === 'guard_awaiting_settlement')).toBe(false);
   });
 
   // ---------------------------------------------------------------------
   // issue #508 — trust_value_invalid: intersected with ELIGIBILITY (findEligibleSteps), never a
-  // whole-definition scan. Definition-gated, like resolved_gate_with_eligible_guard above.
+  // whole-definition scan. Definition-gated, like guard_awaiting_settlement above.
   // ---------------------------------------------------------------------
   describe('trust_value_invalid (issue #508)', () => {
     function makeDef(steps: WorkflowDefinition['steps']): WorkflowDefinition {

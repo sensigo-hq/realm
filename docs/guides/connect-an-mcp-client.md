@@ -88,7 +88,7 @@ When the run reaches a gate, the reply has `status: confirm_required`, the text 
 
 Realm records the choice it is given. It does not check that you made it. If the assistant must not be able to approve its own work, see [Human gates and trust levels](../concepts/gates-and-trust.md#who-can-answer).
 
-After a gate is answered, the steps that follow do not start by themselves, and the reply does not name them. If the run does not finish, tell the assistant to call `execute_step` for the next step by name.
+After a gate is answered, a guard step that the answer makes ready is decided in the same call, and the reply names it in `guards`. The `auto` steps that follow do not start by themselves, and the reply does not name them. If the run does not finish, tell the assistant to call `execute_step` for the next step by name.
 
 ## Connecting over HTTP
 

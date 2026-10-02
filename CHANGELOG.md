@@ -201,6 +201,76 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   step's attempts (a token sum over a cold write, a warm read and a retry answers no question
   without a price; that is issue #600 PR 2's job). (Issue #600 PR 1b.)
 
+- **BREAKING —** **A guard step is settled by the write that makes it eligible (issue #625).** The
+  fix below changes nine things a consumer can see:
+  - (a) **Store implementers.** A store that declares `settleStep` must settle guards in the same
+    write: its `settleStep` passes the new option `cascadeGuards: true` to `applySettlement`
+    (options are now `{ now?, cascadeGuards? }`), which then settles every guard the applied change
+    makes eligible, and any guard those make eligible, on the record it returns, and lists them in
+    the result's new `guards`. `JsonFileStore` and realm-testing's `InMemoryStore` do. The published
+    contract (`settlementContract`) gains two laws, `GUARD_CASCADE_ONE_WRITE` and
+    `GUARD_CASCADE_TOTAL`; `GUARD_WAITS_ON_OPEN_GATE` case 2 is restated (the write that answers the
+    gate already returns the guard settled; a caller's own `settle_guard` with the same outcome is
+    the existing `already_settled` no-op); `CWFS_FIRES_PER_ARM`'s guard leg now expects the failing
+    step's own write to return the mixed-complete seal; and `TRANSFORM_FIDELITY` (with
+    `TERMINAL_GATE_EXCLUSION`, which shares its fixture) now runs the transform with the option
+    against a fixture that has a guard. A store that calls `applySettlement` without the option
+    fails the contract. A store without `settleStep` is unchanged: two writes, as before.
+  - (b) **The hint "guard now eligible — converges at the next drive" is removed** from the
+    `warnings` of an answer's reply. The reply's `guards` field says what the guard did.
+  - (c) **The run-health kind `resolved_gate_with_eligible_guard` is renamed
+    `guard_awaiting_settlement`**, and its sentence is now
+    `guard '<step>' is eligible and has not been settled`. It fires on runs that never had a gate,
+    so the old name was wrong. Anything that matches the old kind or the old sentence must be
+    updated.
+  - (d) **Replies gain `guards`, `ended_by` and `answer_recorded`.** `guards: [{ step, outcome }]`
+    is on every reply whose write settled guards (`outcome` is `pass`, `abort` or
+    `resolution_error`). `ended_by: { arm, step, reason? }` is added when one of them ended the
+    run; `status` stays `ok` for an applied answer, and `context_hint` is the guard's sentence. An
+    answer that arrives after the gate's time is up carries `answer_recorded: false`, and, when
+    that answer carried out the expiry, a `context_hint` that is the expiry's sentence, followed by
+    the guard's when a guard ended the run. `realm run respond` prints what the guards did before its last line. For an
+    answer the expiry beat, that last line used to be `Responded: …` and is now
+    `Not recorded: <run> | gate settled by timeout with choice '<c>' | state '<phase>'`. Its exit
+    code follows the reply (0 for an applied answer even when the run it ended is aborted, 0 for a
+    late answer whose choice matched the expiry's, 1 for a refused one).
+    `realm run drain <run> --expired`
+    names the choice it would enact and predicts what a guard behind the gate would do: where it
+    printed `would enact settle_default on --force.` it now prints
+    `would enact settle_default 'hold'; guard 'check' would pass on --force.` With `--force`, where
+    it printed `✓ gate enacted (settle_default).` it now prints
+    `✓ gate enacted (settle_default 'hold').`, followed by what the guard did. Scripts that match
+    either line, or the last line of `respond`, must be updated.
+  - (e) **A guard-caused ending after an answer now seals the run in the answering process**, so
+    the run's cleanup steps (finalizers) run there, with that process's handlers and credentials:
+    an approval can now complete the run in the answerer's process. Before, such a run never
+    ended at all (#635 tracks which credentials cleanup steps should run with).
+  - (f) **New exports from `@sensigo/realm`:** `advanceRun` (the chain's tail: settle eligible
+    guards, then run the next automatic step — `executeChain` is its only caller in realm),
+    `describeAnswerEnding`, `lateAnswerOutcome`, `guardEndingOf`, `describeGuardEndingLines`,
+    `describeGuardLines`, `describeEndedBy`, `guardPassedLine`, and the types `AdvanceRunState` and
+    `GuardEnding`. `ResponseEnvelope` gains the three fields in (d); `SettleGuardDelta`'s
+    `resolutionError` gains an optional `cause`.
+  - (g) **A failed step's own write settles a guard it leaves eligible.** On earlier versions the
+    failing call settled no guard. The failed step's reply keeps its status and errors and adds
+    `guards`, and `ended_by` when the guard ended the run.
+  - (h) **A guard whose `when` or `abort_unless` cannot be evaluated is settled as a resolution
+    error.** Before, the write that made such a guard eligible failed: a guard with `when: 42`
+    made the gate in front of it unanswerable (`Failed to persist gate response`). Now the answer
+    is recorded and the run fails with
+    `Guard step '<step>' failed: its 'when' could not be evaluated: <message>`.
+  - (i) **`realm run drain` gives different advice for a run that is waiting at a gate.** It
+    printed `Answer its gate first: realm run respond …; then realm run abandon <run>.` An answer
+    can end the run: it completes the workflow when the gate was the last open step, and a guard
+    behind the gate is now settled by the answer's write. `realm run abandon` refuses a run that
+    has ended. It now prints
+    `To end the run, answer its gate first: realm run respond <run> --gate <gate> --choice <…>.`
+    `The answer can end the run by itself. If the run is still open after it: realm run abandon <run>.`
+    For a gate whose time limit has passed and that declares `on_expiry`, drained without
+    `--expired`, it prints
+    `Its gate expired <age> ago. To see what the expiry will do: realm run drain <run> --expired;`
+    `add --force to carry it out.` Scripts that match the old line must be updated.
+
 ### Fixed
 
 - **An auto step that `realm agent` runs straight after an agent step no longer records that agent
@@ -211,6 +281,16 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   the evidence of those runs overcounts; the agent step's own entry was always right. The same leak
   also copied the agent step's model-call usage; that half never shipped (see
   `StepDiagnostics.cache` above).
+
+- **A guard step behind a human gate is now decided when the gate is answered.** Nothing ever ran
+  such a guard. An MCP client that called it was refused as not eligible, and the answer's reply
+  offered no step (`0 step(s) now available`); `realm agent --run-id` exited 1 with the run still
+  `running`; and `realm workflow run` stalled. The write that records the answer now also settles
+  every guard the answer makes eligible, in that one write, so a crash cannot leave a run answered
+  with its guard undecided. The same holds for a gate that expires to its default choice and for a
+  step that finishes. Not covered: an automatic (non-guard) step after a gate still waits for a
+  driver's call, and a guard that is already eligible when a run is created or resumed is decided
+  only by the run's next such write (#625 stays open for both).
 
 ---
 

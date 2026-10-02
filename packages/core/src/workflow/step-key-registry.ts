@@ -804,7 +804,9 @@ export const STEP_KEY_REGISTRY = {
       c: 'consumed',
       where: [
         {
-          file: EL,
+          // issue #625: the guard's evaluation is ONE function (`buildGuardDelta`), shared by the
+          // chain's `executeGuardStep` and the settlement cascade — the read moved there with it.
+          file: SETTLE,
           pattern:
             'const conditions = Array.isArray(stepDef.abort_unless) ? stepDef.abort_unless : [stepDef.abort_unless!];',
         },
@@ -829,13 +831,22 @@ export const STEP_KEY_REGISTRY = {
       c: 'consumed',
       where: [
         {
-          file: EL,
+          // issue #625: the shared evaluation (`buildGuardDelta`) writes the message into the
+          // guard's evidence output AND into the settle_guard delta's abort payload.
+          file: SETTLE,
           pattern:
             '...(stepDef.abort_message !== undefined ? { abort_message: stepDef.abort_message } : {}),',
           count: 2, // both guard-abort output branches carry the disclosure (census lane-1 correction)
         },
         {
+          // …and ONE read stays in the engine's execution loop: the legacy seal's `aborted_at`,
+          // built by `executeGuardStep` for a store without `settleStep`.
           file: EL,
+          pattern:
+            '...(stepDef.abort_message !== undefined ? { abort_message: stepDef.abort_message } : {}),',
+        },
+        {
+          file: SETTLE,
           pattern: "error: stepDef.abort_message ?? `Guard step '${stepName}' aborted the run.`,",
         },
       ],

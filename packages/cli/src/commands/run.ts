@@ -9,6 +9,8 @@ import {
   findEligibleSteps,
   executeChain,
   submitHumanResponse,
+  describeAnswerEnding,
+  lateAnswerOutcome,
   unmetCapabilities,
   capabilityWarning,
   WorkflowError,
@@ -343,15 +345,41 @@ export const runCommand = new Command('run')
             });
             if (respondResult.status === 'ok') {
               run = await store.get(runId);
-              console.log(`  ✓ → ${run.run_phase}\n`);
+              // issue #625: what the answer's write settled is said BEFORE the state line — the
+              // guard that ended the run (its sentence, `Reason:`, each finalizer's outcome) or
+              // one passed line per guard; for an answer the gate's expiry beat, the expiry
+              // sentence comes first. One composer with `realm run respond` and the Slack notifier.
+              for (const line of describeAnswerEnding(respondResult, run)) console.log(`  ${line}`);
+              const late = lateAnswerOutcome(respondResult, run);
+              if (late !== undefined) {
+                // The call succeeded and the answer was NOT recorded (this process's own timer
+                // enacted the expiry first, with the same choice): never `✓ →`.
+                console.log(
+                  `  ✗ not recorded — gate settled by timeout with choice '${late.choice}' → ${late.phase}\n`,
+                );
+              } else {
+                console.log(`  ✓ → ${run.run_phase}\n`);
+              }
             } else {
-              console.error(`  ✗ ${respondResult.errors.join(', ')}\n`);
               // issue #468 — a FRESH read, not a break: most of this arm's members are a live
               // gate re-asking (a typo, a stale choice) — rl.question blocks, no hot spin. The
               // members that are NOT retryable (the gate/run moved or terminalized elsewhere) are
               // exactly what this read converges: the next iteration sees the real state and
               // either re-prompts honestly or reaches the stall/tail. Mirrors the ok arm above.
               run = await store.get(runId);
+              // issue #625: a refused LATE answer (the expiry settled the other choice) says what
+              // the run is doing now — the refusal, what the expiry's guards did, then the state.
+              const late = lateAnswerOutcome(respondResult, run);
+              if (late !== undefined) {
+                for (const line of describeAnswerEnding(respondResult, run)) {
+                  console.error(`  ${line}`);
+                }
+                console.error(
+                  `  ✗ not recorded — gate settled by timeout with choice '${late.choice}' → ${late.phase}\n`,
+                );
+              } else {
+                console.error(`  ✗ ${respondResult.errors.join(', ')}\n`);
+              }
             }
             continue;
           }

@@ -128,7 +128,7 @@ describe('the --stuck label law (issue #558 PR-T)', () => {
     // five `list.ts` names as its deliberate no-label decisions (issue #406 settled each).
     const UNLABELLED: Kind[] = [
       'never_claimed_idle',
-      'resolved_gate_with_eligible_guard',
+      'guard_awaiting_settlement',
       'completed_with_failed_steps',
       'structured_output_downgraded',
       'trust_value_invalid',

@@ -40,18 +40,42 @@ realm run respond 3ebc1158-1d29-41b5-9ca5-df054a681b58 --gate 0d499c26-a6b4-406f
 Responded: 3ebc1158-1d29-41b5-9ca5-df054a681b58 | choice 'approve' | new state 'running'
 ```
 
-`new state` is the run's phase after the answer: `running` if steps remain, `completed` if the gate's step was the last. `respond` records the answer and runs no step. The steps that follow run when a driver next calls the run.
+`new state` is the run's phase after the answer: `running` if steps remain, `completed` if the gate's step was the last.
 
-Giving the same answer again prints the same line and changes nothing.
+`respond` records the answer. A guard step that the answer makes ready is decided in the same write, and what it did is printed before the `Responded:` line. No other step runs: the steps that follow run when a driver next calls the run.
 
-**Exit code:** 0 if the answer was recorded, otherwise 1:
+A guard that passed, with steps still to run:
 
-| Case                                 | Message                                                                                                                                                                              |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--gate` is not the open gate        | `Gate 'wrong' is not the open gate and matches no committed resolution.`                                                                                                             |
-| `--choice` is not one of the choices | `Choice 'maybe' is not valid. Expected one of: approve, reject`                                                                                                                      |
-| The gate was answered differently    | `Gate '70d76b3b-…' was already resolved with choice 'approve' — your choice 'reject' was not recorded.`                                                                              |
-| The run has ended                    | `Run '00b33778-…' is terminal; cannot submit a gate response — 'realm run resume' clears a stale pending gate on a resumable run, or 'realm run purge' removes the record entirely.` |
+```text
+Guard step 'only_if_shipping' passed.
+Responded: 989c0619-1bda-4b2e-b5e3-4d33d6519a67 | choice 'ship' | new state 'running'
+```
+
+A guard that ended the run. `Reason:` is the guard's `abort_message`, and is left out when the guard has none:
+
+```text
+Guard step 'only_if_shipping' aborted the run.
+Reason: The order was held.
+Responded: c267f37e-bddb-46aa-aea2-b14f62ba358e | choice 'hold' | new state 'aborted'
+```
+
+The first line is one of three sentences: `Guard step '<step>' aborted the run.`, `Guard step '<step>' failed with a resolution error. Run is terminated.`, or `Guard step '<step>' passed and completed the run.` When the run ended and it has cleanup steps, they run in this process, and one line per cleanup step follows: `finalizer '<name>': <status>`.
+
+Giving the same answer again prints the `Responded:` line again and changes nothing.
+
+An answer that arrives after the gate's time is up is not recorded, and for a gate that was settled with its default choice the last line is `Not recorded:` in place of `Responded:`. See [An answer after the time is up](../workflow/gates.md#an-answer-after-the-time-is-up).
+
+**Exit code:** 0 if the call succeeded, otherwise 1. An answer that was recorded exits 0, also when the guard it made ready aborted the run. A late answer that names the choice the gate was settled with exits 0, although it was not recorded. A refused answer exits 1. This differs from `realm workflow run`, which exits 1 for a run that ended as aborted.
+
+The refusals:
+
+| Case                                                           | Message                                                                                                                                                                                            |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--gate` is not the open gate                                  | `Gate 'wrong' is not the open gate and matches no committed resolution.`                                                                                                                           |
+| `--choice` is not one of the choices                           | `Choice 'maybe' is not valid. Expected one of: approve, reject`                                                                                                                                    |
+| The gate was answered differently                              | `Gate '70d76b3b-…' was already resolved with choice 'approve' — your choice 'reject' was not recorded.`                                                                                            |
+| The gate's time was up, and it was settled with another choice | `Gate '80e024ee-…' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded.` Then what the guard did, if this answer carried out the expiry, and the `Not recorded:` line. |
+| The run has ended                                              | `Run '00b33778-…' is terminal; cannot submit a gate response — 'realm run resume' clears a stale pending gate on a resumable run, or 'realm run purge' removes the record entirely.`               |
 
 ## `resume`
 
@@ -298,15 +322,60 @@ Re-run with --force to actually drain them.
 Drained 1/1 run(s).
 ```
 
+With `--expired`, a gate whose time has passed is reported first, with the choice it would be settled with. If the settled choice would make a guard step ready, the report says what the guard would then do: `would pass`, `would pass and complete the run`, `would then abort the run (<reason>)` or `would then fail the run (<reason>)`. Nothing is written:
+
+```text
+Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate expired 0m ago — would enact settle_default 'hold'; guard 'only_if_shipping' would then abort the run (The order was held.) on --force.
+Run '230b0939-9c61-40e4-8b6f-910594a81e92': gate expired 0m ago — would enact settle_default 'ship'; guard 'only_if_shipping' would pass on --force.
+```
+
+The report leaves the guard out when the run's registered workflow cannot be read.
+
+With `--expired --force`, the gate is carried out. The same write decides the guard, and its lines follow. Then the run's cleanup steps are drained as usual:
+
+```text
+✓ gate enacted (settle_default 'hold').
+Guard step 'only_if_shipping' aborted the run.
+Reason: The order was held.
+Run '0e0ace7e-e57c-400c-a63a-eaf685688d19' has no pending finalizers. Nothing to drain.
+```
+
+```text
+✓ gate enacted (settle_default 'ship').
+Guard step 'only_if_shipping' passed.
+Run '230b0939-9c61-40e4-8b6f-910594a81e92' is not terminal (phase: 'running') — nothing further to drain.
+```
+
+With `--all --expired`, the list names what each gate declared, without the choice or the guard. With `--force`, what each guard did is printed under its run:
+
+```text
+2 run(s) WOULD be drained:
+  • 962cb7f0-a894-4592-aadc-a4907ef14c9c: gate expired 0m ago — would enact settle_default
+  • ce8296d1-c5d3-4ea6-b62c-7dc0f795fb09: gate expired 0m ago — would enact settle_default
+
+Re-run with --force to actually drain them.
+```
+
+```text
+  ✓ 962cb7f0-a894-4592-aadc-a4907ef14c9c: gate enacted
+    Guard step 'only_if_shipping' passed.
+  ✓ ce8296d1-c5d3-4ea6-b62c-7dc0f795fb09: gate enacted
+    Guard step 'only_if_shipping' aborted the run.
+    Reason: The order was held.
+Drained 2/2 run(s).
+```
+
 When there is nothing to do, it prints one of:
 
 ```text
 Run '03431f4f-7b71-4ad0-98b1-f1d51cc5c4c8' has no pending finalizers. Nothing to drain.
 Run 'cba9901c-fa22-47dd-97e2-47439238d01f' is not terminal (phase: 'running') — nothing to drain. To end the run: realm run abandon cba9901c-fa22-47dd-97e2-47439238d01f.
+Run '22efc6a7-01f8-4256-9d2f-74621b621d28' is not terminal (phase: 'gate_waiting') — nothing to drain. To end the run, answer its gate first: realm run respond 22efc6a7-01f8-4256-9d2f-74621b621d28 --gate 817f3921-6ddd-4bda-9506-762892ae37e7 --choice <one of: approve, reject>. The answer can end the run by itself. If the run is still open after it: realm run abandon 22efc6a7-01f8-4256-9d2f-74621b621d28.
+Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate expired 0m ago. To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired; add --force to carry it out.
 No runs with an actionable pending finalizer.
 ```
 
-**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. 1 if a cleanup step is left owed after `--force`, or for one of:
+**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the three `is not terminal … nothing to drain` lines above, or for one of:
 
 ```text
 Provide a <run-id>, or use --all for batch mode.
