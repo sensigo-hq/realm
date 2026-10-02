@@ -144,6 +144,17 @@ export type SettlementLaw =
    *  definition's drifted value); the evidence `gate_response` snapshot's `responded_by`/
    *  `resolution` fields. */
   | 'EXPIRE_DEFAULT_RESOLVE'
+  // issue #625 — a store that declares `settleStep` settles guards in the SAME write.
+  /** After an APPLIED `settle_step` / `settle_gate` / `expire_gate` / `settle_guard`, every guard
+   *  that write made eligible is settled on the returned (and persisted) record and listed in
+   *  `guards`, in ONE write. With a gate open nothing cascades; `open_gate` / `release_step`
+   *  results carry no `guards`; `applySettlement` called WITHOUT `cascadeGuards` cascades nothing
+   *  (so a store that does not pass the option — one that settles guards in a separate write —
+   *  fails this law). */
+  | 'GUARD_CASCADE_ONE_WRITE'
+  /** The cascade never makes a write unrecordable: a guard whose `abort_unless` or whose `when`
+   *  cannot be evaluated is settled `resolution_error`, and the delta still applies. */
+  | 'GUARD_CASCADE_TOTAL'
   /** Not a real settlement law — a wiring-gap sentinel (see `settlementContract`'s own doc: a
    *  store declaring `settleStep` with no `settlementFixture` supplied gets ONE failing case
    *  tagged with this, never a silent zero-cases pass). */
@@ -334,6 +345,60 @@ function makeEvidence(stepId: string, overrides: Partial<EvidenceSnapshot> = {})
     evidence_hash: 'tck-evidence',
     ...overrides,
   };
+}
+
+/**
+ * Contract-INTERNAL (issue #625): adds one guard step with the given fields. The published
+ * `SettlementFixture.withGuard` hook builds a guard with no `depends_on`, no `when` and no
+ * `trigger_rule`; the cascade laws need all three, and they are properties of the WORKFLOW
+ * DEFINITION the transform reads — nothing store-specific — so this is built here, as
+ * `GUARD_OUTCOME_DIVERGENCE`'s own hand-rolled guard already is.
+ */
+function withGuardStep(
+  def: WorkflowDefinition,
+  guardName: string,
+  guard: Omit<StepDefinition, 'description' | 'execution'>,
+): WorkflowDefinition {
+  return {
+    ...def,
+    steps: {
+      ...def.steps,
+      [guardName]: { description: guardName, execution: 'guard', ...guard },
+    },
+  };
+}
+
+/** Contract-INTERNAL (issue #625): which membership array, if any, holds `step`. */
+function membershipOf(run: RunRecord, step: string): 'completed' | 'failed' | 'skipped' | 'none' {
+  if (run.completed_steps.includes(step)) return 'completed';
+  if (run.failed_steps.includes(step)) return 'failed';
+  if (run.skipped_steps.includes(step)) return 'skipped';
+  return 'none';
+}
+
+/** Contract-INTERNAL (issue #625): asserts an applied result settled exactly `expected` guards, in
+ *  order, and that each is in the membership array its outcome writes. */
+function assertGuards(
+  result: Extract<SettlementResult, { applied: true }>,
+  expected: ReadonlyArray<{ step: string; outcome: 'pass' | 'abort' | 'resolution_error' }>,
+  context: string,
+): void {
+  const actual = (result.guards ?? []).map((g) => `${g.step}:${g.outcome}`);
+  const wanted = expected.map((g) => `${g.step}:${g.outcome}`);
+  if (JSON.stringify(actual) !== JSON.stringify(wanted)) {
+    throw new Error(
+      `${context}: expected guards [${wanted.join(', ')}], got [${actual.join(', ')}]`,
+    );
+  }
+  for (const g of expected) {
+    const want = g.outcome === 'pass' ? 'completed' : g.outcome === 'abort' ? 'skipped' : 'failed';
+    const got = membershipOf(result.run, g.step);
+    if (got !== want) {
+      throw new Error(
+        `${context}: guard '${g.step}' (${g.outcome}) must be in ${want}_steps on the returned record, found: ${got}`,
+      );
+    }
+  }
 }
 
 /** Creates a fresh run and claims `stepName` — returns the claimed run plus the REAL,
@@ -852,7 +917,8 @@ function terminalStateOnlyCases(adapter: SettlementContractAdapter): SettlementC
 }
 
 // ---------------------------------------------------------------------------
-// L7 CS-purity — structural: `options` carries VALUES only ({now}); no callback, no registry.
+// L7 CS-purity — structural: `options` carries VALUES only ({now, cascadeGuards}); no callback,
+// no registry.
 // In-repo source-text guard (the calling test file greps applySettlement's own signature).
 // ---------------------------------------------------------------------------
 
@@ -1525,13 +1591,15 @@ function csPurityCases(_adapter: SettlementContractAdapter): SettlementContractC
   return [
     {
       law: 'CS_PURITY',
-      name: 'applySettlement is callable with ONLY {now?: Date} as its options — no callback, no registry parameter exists to pass',
+      name: 'applySettlement takes VALUES only as its options — {now?: Date, cascadeGuards?: boolean}; no callback, no registry parameter exists to pass',
       run: async () => {
         // A structural proof, not a source-text grep (that lives in the calling test file, which
         // can read its own source — this module ships compiled and has no access to its own
         // source text at runtime). Calling applySettlement with a bare {now} object and nothing
-        // else demonstrates the FULL options surface is exhausted by that one field — TypeScript
-        // itself would reject an extra property on a literal passed here if the type carried one.
+        // else demonstrates the transform needs no callback and no registry — TypeScript itself
+        // would reject an extra property on a literal passed here if the type did not carry it.
+        // (issue #625: the options surface is no longer exactly `{now}` — it gained the VALUE
+        // `cascadeGuards`, which a store's own `settleStep` sets; the purity claim is unchanged.)
         const def = minimalDefinition(['a']);
         const fresh: RunRecord = {
           id: 'tck-cs-purity',
@@ -1733,7 +1801,14 @@ function transformFidelityCases(adapter: SettlementContractAdapter): SettlementC
   const settleStep = requireSettleStep(adapter.store);
 
   async function fidelityRun(outcome: 'complete' | 'fail' | 'abort'): Promise<void> {
-    const def = minimalDefinition(['a', 'b']);
+    // issue #625: the fixture carries a guard that becomes eligible once 'a' settles either way
+    // (`all_done`), so the complete and the fail legs both compare a write that ALSO settles a
+    // guard — a store that persists the delta without its guards cannot match the harness.
+    const def = withGuardStep(minimalDefinition(['a', 'b']), 'fidelity_guard', {
+      abort_unless: ['a.ok == true'],
+      depends_on: ['a'],
+      trigger_rule: 'all_done',
+    });
     const { run, token } = await createClaimed(adapter.store, def, 'a');
     const now = new Date('2026-06-15T12:00:00.000Z');
     const delta: SettlementDelta =
@@ -1743,7 +1818,7 @@ function transformFidelityCases(adapter: SettlementContractAdapter): SettlementC
             step: 'a',
             outcome: 'abort',
             claimToken: token,
-            evidence: [makeEvidence('a')],
+            evidence: [makeEvidence('a', { output_summary: { ok: true } })],
             abort: { stepId: 'a', abortMessage: 'tck-fidelity-abort' },
           }
         : {
@@ -1751,15 +1826,25 @@ function transformFidelityCases(adapter: SettlementContractAdapter): SettlementC
             step: 'a',
             outcome,
             claimToken: token,
-            evidence: [makeEvidence('a')],
+            evidence: [makeEvidence('a', { output_summary: { ok: true } })],
             ...(outcome === 'fail' ? { failureMessage: 'tck-fidelity-fail' } : {}),
           };
 
     // Harness-controlled fresh read — the SAME state settleStep's own internal fresh read will see
     // (nothing else mutates this run between the two reads in a single-threaded test).
     const freshRead = await adapter.store.get(run.id);
-    const expected = applySettlement(freshRead, delta, def, { now });
+    // issue #625: the harness applies the transform exactly as a conforming store's `settleStep`
+    // must — WITH `cascadeGuards` — so the comparison below covers the guards too.
+    const expected = applySettlement(freshRead, delta, def, { now, cascadeGuards: true });
     const actual = await settleStep(run.id, delta, def, { now });
+    if (outcome !== 'abort') {
+      // Non-vacuity: on the complete and fail legs the harness's own output settled the guard.
+      if (!expected.applied || expected.guards?.[0]?.step !== 'fidelity_guard') {
+        throw new Error(
+          `fixture premise violated: the harness transform did not settle 'fidelity_guard' on the ${outcome} leg`,
+        );
+      }
+    }
 
     if (expected.applied !== actual.applied) {
       throw new Error(
@@ -3720,10 +3805,18 @@ function guardCases(adapter: SettlementContractAdapter): SettlementContractCase[
     },
     {
       law: 'GUARD_WAITS_ON_OPEN_GATE',
-      name: `[${adapter.storeName}] re-applying the SAME guard after the gate resolves now APPLIES`,
+      // issue #625 (RESTATED — before it, "re-applying the SAME guard after the gate resolves now
+      // APPLIES"): a guard that waited on an open gate is settled by the write that resolves the
+      // gate, so a caller no longer re-applies it — its own settle_guard with the same outcome is
+      // the existing already_settled no-op.
+      name: `[${adapter.storeName}] a guard that waited on an open gate is settled BY the write that resolves the gate; a caller's own settle_guard with the same outcome then NOOPs as already_settled`,
       run: async () => {
-        let def = minimalDefinition(['gated']);
-        def = withGuard(def, 'g', ['1 == 2']);
+        // A COMPUTABLE condition: the guard reads the gate's own answer, so the outcome the
+        // resolving write settles is known (approve ⇒ `gated.choice == 'reject'` is false ⇒ abort).
+        const def = withGuardStep(minimalDefinition(['gated']), 'g', {
+          abort_unless: ["gated.choice == 'reject'"],
+          depends_on: ['gated'],
+        });
         const { run, token } = await createClaimed(adapter.store, def, 'gated');
         const gate = makePendingGate('gated');
         const opened = await settleStep(
@@ -3737,18 +3830,44 @@ function guardCases(adapter: SettlementContractAdapter): SettlementContractCase[
           step: 'g',
           outcome: 'abort',
           evidence: makeEvidence('g'),
-          abort: { conditions: [{ condition: '1 == 2', resolved_value: false, passed: false }] },
+          abort: {
+            conditions: [
+              { condition: "gated.choice == 'reject'", resolved_value: 'approve', passed: false },
+            ],
+          },
         };
         const waited = await settleStep(run.id, guardDelta, def);
         assertRefused(waited, 'gate_open_wait', 'first attempt, gate open');
         const resolved = await settleStep(
           run.id,
-          { kind: 'settle_gate', gateId: gate.gate_id, choice: 'approve', evidence: [] },
+          {
+            kind: 'settle_gate',
+            gateId: gate.gate_id,
+            choice: 'approve',
+            evidence: [
+              makeEvidence('gated', {
+                kind: 'gate_response',
+                output_summary: { choice: 'approve' },
+              }),
+            ],
+          },
           def,
         );
         assertApplied(resolved, 'settle_gate resolve');
+        // The resolving write's own returned record already carries the guard's settlement.
+        assertGuards(resolved, [{ step: 'g', outcome: 'abort' }], 'settle_gate resolve');
+        if (resolved.run.skip_details?.['g']?.kind !== 'guard_abort') {
+          throw new Error(
+            `the resolving write must settle the guard itself (skip_details.g.kind 'guard_abort'), got: ${JSON.stringify(resolved.run.skip_details?.['g'])}`,
+          );
+        }
+        if (resolved.run.version !== opened.run.version + 1) {
+          throw new Error(
+            `the gate and its guard must land in ONE write: version ${opened.run.version} → ${resolved.run.version}`,
+          );
+        }
         const retried = await settleStep(run.id, guardDelta, def);
-        assertApplied(retried, 'settle_guard retry, gate resolved');
+        assertRefused(retried, 'already_settled', "a caller's settle_guard after the cascade");
       },
     },
     {
@@ -3885,6 +4004,465 @@ function guardCases(adapter: SettlementContractAdapter): SettlementContractCase[
       },
     },
   ];
+}
+
+// ---------------------------------------------------------------------------
+// GUARD_CASCADE_ONE_WRITE / GUARD_CASCADE_TOTAL (issue #625) — a store that declares `settleStep`
+// settles, in the SAME write as its delta, every guard that delta makes eligible.
+// ---------------------------------------------------------------------------
+
+function guardCascadeCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition } = adapter.settlementFixture!;
+  const settleStep = requireSettleStep(adapter.store);
+
+  /** Every case asserts the PERSISTED record too: the guards are in the store's own write, not
+   *  only on the object `settleStep` returned. */
+  async function assertPersisted(
+    runId: string,
+    result: Extract<SettlementResult, { applied: true }>,
+    context: string,
+  ): Promise<void> {
+    const stored = await adapter.store.get(runId);
+    if (stored.version !== result.run.version) {
+      throw new Error(
+        `${context}: the stored record's version (${stored.version}) differs from the returned one (${result.run.version})`,
+      );
+    }
+    for (const g of result.guards ?? []) {
+      if (membershipOf(stored, g.step) !== membershipOf(result.run, g.step)) {
+        throw new Error(
+          `${context}: guard '${g.step}' is ${membershipOf(result.run, g.step)} on the returned record but ${membershipOf(stored, g.step)} on the STORED one — the store did not persist the guard in the same write`,
+        );
+      }
+    }
+  }
+
+  const cases: SettlementContractCase[] = [
+    {
+      law: 'GUARD_CASCADE_ONE_WRITE',
+      name: `[${adapter.storeName}] an applied settle_step settles the guard it makes eligible in the SAME write, and lists it in guards`,
+      run: async () => {
+        // a → g (reads a's output) → b: the guard passes and the run goes on.
+        let def = minimalDefinition(['a']);
+        def = withGuardStep(def, 'g', { abort_unless: ['a.ok == true'], depends_on: ['a'] });
+        def = {
+          ...def,
+          steps: { ...def.steps, b: { description: 'b', execution: 'agent', depends_on: ['g'] } },
+        };
+        const { run, token } = await createClaimed(adapter.store, def, 'a');
+        const result = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'a',
+            outcome: 'complete',
+            claimToken: token,
+            evidence: [makeEvidence('a', { output_summary: { ok: true } })],
+          },
+          def,
+        );
+        assertApplied(result, 'settle_step a');
+        assertGuards(result, [{ step: 'g', outcome: 'pass' }], 'settle_step a');
+        if (result.run.version !== run.version + 1) {
+          throw new Error(
+            `the step and its guard must land in ONE write: version ${run.version} → ${result.run.version}`,
+          );
+        }
+        if (result.run.terminal_state === true || result.transitioned !== false) {
+          throw new Error('a guard that passes with a step still to run must not end the run');
+        }
+        if (result.run.settled?.['g'] !== undefined) {
+          throw new Error('a cascaded guard must never write a settled-map entry (GUARD_NO_ENTRY)');
+        }
+        await assertPersisted(run.id, result, 'settle_step a');
+      },
+    },
+    {
+      law: 'GUARD_CASCADE_ONE_WRITE',
+      name: `[${adapter.storeName}] ONE write settles a CHAIN of guards — each guard the previous one makes eligible, in order`,
+      run: async () => {
+        // a → g1 → g2 → b. Settling 'a' makes g1 eligible; g1 passing makes g2 eligible.
+        let def = minimalDefinition(['a']);
+        def = withGuardStep(def, 'g1', { abort_unless: ['a.ok == true'], depends_on: ['a'] });
+        def = withGuardStep(def, 'g2', { abort_unless: ['a.ok == true'], depends_on: ['g1'] });
+        def = {
+          ...def,
+          steps: { ...def.steps, b: { description: 'b', execution: 'agent', depends_on: ['g2'] } },
+        };
+        const { run, token } = await createClaimed(adapter.store, def, 'a');
+        const result = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'a',
+            outcome: 'complete',
+            claimToken: token,
+            evidence: [makeEvidence('a', { output_summary: { ok: true } })],
+          },
+          def,
+        );
+        assertApplied(result, 'settle_step a (two-guard chain)');
+        assertGuards(
+          result,
+          [
+            { step: 'g1', outcome: 'pass' },
+            { step: 'g2', outcome: 'pass' },
+          ],
+          'settle_step a (two-guard chain)',
+        );
+        if (result.run.version !== run.version + 1) {
+          throw new Error(
+            `the step and BOTH guards must land in ONE write: version ${run.version} → ${result.run.version}`,
+          );
+        }
+        await assertPersisted(run.id, result, 'settle_step a (two-guard chain)');
+      },
+    },
+    {
+      law: 'GUARD_CASCADE_ONE_WRITE',
+      name: `[${adapter.storeName}] an applied settle_gate settles the guard the answer makes eligible in the SAME write — here the guard aborts, and the write's result is the sealed record`,
+      run: async () => {
+        const def = withGuardStep(minimalDefinition(['gated']), 'g', {
+          abort_unless: ["gated.choice == 'approve'"],
+          depends_on: ['gated'],
+          abort_message: 'tck: not approved',
+        });
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated');
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(
+          run.id,
+          {
+            kind: 'settle_gate',
+            gateId: gate.gate_id,
+            choice: 'reject',
+            evidence: [
+              makeEvidence('gated', {
+                kind: 'gate_response',
+                output_summary: { choice: 'reject' },
+              }),
+            ],
+          },
+          def,
+        );
+        assertApplied(result, 'settle_gate reject');
+        assertGuards(result, [{ step: 'g', outcome: 'abort' }], 'settle_gate reject');
+        if (result.run.version !== opened.run.version + 1) {
+          throw new Error(
+            `the answer and its guard must land in ONE write: version ${opened.run.version} → ${result.run.version}`,
+          );
+        }
+        if (
+          result.run.terminal_state !== true ||
+          result.transitioned !== true ||
+          result.run.sealed_by?.arm !== 'guard_abort' ||
+          result.run.sealed_by.step !== 'g'
+        ) {
+          throw new Error(
+            `the answer's write must return the run sealed BY THE GUARD (arm guard_abort, step g), got terminal=${result.run.terminal_state} transitioned:${result.transitioned} sealed_by:${JSON.stringify(result.run.sealed_by)}`,
+          );
+        }
+        if (result.run.settled?.['gated']?.choice !== 'reject') {
+          throw new Error('the answer itself must be recorded in the same write as its guard');
+        }
+        if (result.run.aborted_at?.abort_message !== 'tck: not approved') {
+          throw new Error(
+            `the guard's authored abort_message must be on the seal, got: ${JSON.stringify(result.run.aborted_at)}`,
+          );
+        }
+        await assertPersisted(run.id, result, 'settle_gate reject');
+      },
+    },
+    {
+      law: 'GUARD_CASCADE_ONE_WRITE',
+      name: `[${adapter.storeName}] an applied expire_gate (settle_default) settles the guard its default makes eligible in the SAME write`,
+      run: async () => {
+        const def = withGuardStep(minimalDefinition(['gated', 'later']), 'g', {
+          abort_unless: ["gated.choice == 'approve'"],
+          depends_on: ['gated'],
+        });
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const gate = makePendingGate('gated', {
+          expiresAt: '2026-01-01T00:10:00.000Z',
+          onExpiry: 'settle_default',
+          defaultChoice: 'approve',
+        });
+        const opened = await settleStep(
+          run.id,
+          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const result = await settleStep(
+          run.id,
+          { kind: 'expire_gate', gateId: gate.gate_id },
+          def,
+          { now: new Date('2026-01-01T00:20:00.000Z') },
+        );
+        assertApplied(result, 'expire_gate settle_default');
+        assertGuards(result, [{ step: 'g', outcome: 'pass' }], 'expire_gate settle_default');
+        if (result.run.version !== opened.run.version + 1) {
+          throw new Error(
+            `the expiry and its guard must land in ONE write: version ${opened.run.version} → ${result.run.version}`,
+          );
+        }
+        await assertPersisted(run.id, result, 'expire_gate settle_default');
+      },
+    },
+    {
+      law: 'GUARD_CASCADE_ONE_WRITE',
+      name: `[${adapter.storeName}] a caller's own applied settle_guard settles the NEXT guard it makes eligible in the SAME write`,
+      run: async () => {
+        let def = withGuardStep(minimalDefinition(['later']), 'g1', { abort_unless: [] });
+        def = withGuardStep(def, 'g2', { abort_unless: [], depends_on: ['g1'] });
+        const { run } = await adapter.store.create({
+          workflowId: def.id,
+          workflowVersion: def.version,
+          params: {},
+        });
+        const result = await settleStep(
+          run.id,
+          { kind: 'settle_guard', step: 'g1', outcome: 'pass', evidence: makeEvidence('g1') },
+          def,
+        );
+        assertApplied(result, "a caller's settle_guard g1");
+        assertGuards(result, [{ step: 'g2', outcome: 'pass' }], "a caller's settle_guard g1");
+        if (membershipOf(result.run, 'g1') !== 'completed') {
+          throw new Error("the caller's own guard must be settled by its own delta");
+        }
+        await assertPersisted(run.id, result, "a caller's settle_guard g1");
+      },
+    },
+    {
+      law: 'GUARD_CASCADE_ONE_WRITE',
+      name: `[${adapter.storeName}] with a gate OPEN nothing cascades — an applied settle_step leaves an otherwise-eligible guard unsettled until the gate resolves`,
+      run: async () => {
+        // 'free' has no dependencies: eligible from the start, and held back only by the gate.
+        const def = withGuardStep(minimalDefinition(['a', 'gated']), 'free', {
+          abort_unless: [],
+        });
+        const { run, token: aToken } = await createClaimed(adapter.store, def, 'a');
+        const claimedGated = await adapter.store.claimStep(run.id, 'gated', def);
+        const gatedToken = claimedGated.claims!['gated']!.token!;
+        const gate = makePendingGate('gated');
+        const opened = await settleStep(
+          run.id,
+          {
+            kind: 'open_gate',
+            step: 'gated',
+            claimToken: gatedToken,
+            pendingGate: gate,
+            evidence: [],
+          },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        const whileOpen = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'a',
+            outcome: 'complete',
+            claimToken: aToken,
+            evidence: [makeEvidence('a')],
+          },
+          def,
+        );
+        assertApplied(whileOpen, 'settle_step a, gate open');
+        if (whileOpen.guards !== undefined || membershipOf(whileOpen.run, 'free') !== 'none') {
+          throw new Error(
+            `the gate wins: no guard may be settled while a gate is open, got guards:${JSON.stringify(whileOpen.guards)} free:${membershipOf(whileOpen.run, 'free')}`,
+          );
+        }
+        const resolved = await settleStep(
+          run.id,
+          { kind: 'settle_gate', gateId: gate.gate_id, choice: 'approve', evidence: [] },
+          def,
+        );
+        assertApplied(resolved, 'settle_gate resolve');
+        assertGuards(resolved, [{ step: 'free', outcome: 'pass' }], 'settle_gate resolve');
+      },
+    },
+    {
+      law: 'GUARD_CASCADE_ONE_WRITE',
+      name: `[${adapter.storeName}] open_gate and release_step results carry no guards and settle none — only a settlement of a step, a gate or a guard cascades`,
+      run: async () => {
+        // 'free' is eligible from the start, so a cascade after either kind would settle it.
+        const def = withGuardStep(minimalDefinition(['a', 'gated']), 'free', {
+          abort_unless: [],
+        });
+        const { run, token: aToken } = await createClaimed(adapter.store, def, 'a');
+        const released = await settleStep(
+          run.id,
+          { kind: 'release_step', step: 'a', claimToken: aToken },
+          def,
+        );
+        assertApplied(released, 'release_step a');
+        if (released.guards !== undefined || membershipOf(released.run, 'free') !== 'none') {
+          throw new Error(
+            `release_step must settle no guard, got guards:${JSON.stringify(released.guards)} free:${membershipOf(released.run, 'free')}`,
+          );
+        }
+        const claimedGated = await adapter.store.claimStep(run.id, 'gated', def);
+        const opened = await settleStep(
+          run.id,
+          {
+            kind: 'open_gate',
+            step: 'gated',
+            claimToken: claimedGated.claims!['gated']!.token!,
+            pendingGate: makePendingGate('gated'),
+            evidence: [],
+          },
+          def,
+        );
+        assertApplied(opened, 'open_gate');
+        if (opened.guards !== undefined || membershipOf(opened.run, 'free') !== 'none') {
+          throw new Error(
+            `open_gate must settle no guard, got guards:${JSON.stringify(opened.guards)} free:${membershipOf(opened.run, 'free')}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'GUARD_CASCADE_ONE_WRITE',
+      name: `[${adapter.storeName}] applySettlement called WITHOUT cascadeGuards settles no guard (a store that does not pass the option keeps the delta and the guard in two writes); WITH it, the same call settles the guard`,
+      run: async () => {
+        const def = withGuardStep(minimalDefinition(['a', 'b']), 'g', {
+          abort_unless: ['a.ok == true'],
+          depends_on: ['a'],
+        });
+        // The record the transform is given is one the store itself wrote: created, then claimed.
+        // Nothing below writes to the store — both calls are the pure transform.
+        const { run: claimed, token } = await createClaimed(adapter.store, def, 'a');
+        const fresh = await adapter.store.get(claimed.id);
+        const delta: SettlementDelta = {
+          kind: 'settle_step',
+          step: 'a',
+          outcome: 'complete',
+          claimToken: token,
+          evidence: [makeEvidence('a', { output_summary: { ok: true } })],
+        };
+        const now = new Date('2026-01-01T00:00:00.000Z');
+        const without = applySettlement(fresh, delta, def, { now });
+        assertApplied(without, 'applySettlement without the option');
+        if (without.guards !== undefined || membershipOf(without.run, 'g') !== 'none') {
+          throw new Error(
+            `without cascadeGuards the transform must settle no guard, got guards:${JSON.stringify(without.guards)} g:${membershipOf(without.run, 'g')}`,
+          );
+        }
+        const withOption = applySettlement(fresh, delta, def, { now, cascadeGuards: true });
+        assertApplied(withOption, 'applySettlement with the option');
+        assertGuards(
+          withOption,
+          [{ step: 'g', outcome: 'pass' }],
+          'applySettlement with the option',
+        );
+        // The guard's evidence entry is stamped with the transform's own `now`, and records the
+        // record version its conditions were evaluated against.
+        const guardEvidence = withOption.run.evidence.find((e) => e.step_id === 'g');
+        if (guardEvidence?.started_at !== now.toISOString()) {
+          throw new Error(
+            `the cascaded guard's evidence must be stamped with the transform's now (${now.toISOString()}), got: ${guardEvidence?.started_at}`,
+          );
+        }
+      },
+    },
+
+    // --- GUARD_CASCADE_TOTAL ---
+    {
+      law: 'GUARD_CASCADE_TOTAL',
+      name: `[${adapter.storeName}] a guard whose abort_unless cannot be evaluated (abort_unless: [42]) is settled resolution_error — the delta still APPLIES`,
+      run: async () => {
+        const def = withGuardStep(minimalDefinition(['a']), 'g', {
+          // A non-string condition: the evaluator throws on it.
+          abort_unless: [42 as unknown as string],
+          depends_on: ['a'],
+        });
+        const { run, token } = await createClaimed(adapter.store, def, 'a');
+        const result = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'a',
+            outcome: 'complete',
+            claimToken: token,
+            evidence: [makeEvidence('a')],
+          },
+          def,
+        );
+        assertApplied(result, 'settle_step a (abort_unless: [42])');
+        assertGuards(
+          result,
+          [{ step: 'g', outcome: 'resolution_error' }],
+          'settle_step a (abort_unless: [42])',
+        );
+        if (membershipOf(result.run, 'a') !== 'completed') {
+          throw new Error("the step's own delta must still be applied");
+        }
+        const reason = result.run.terminal_reason ?? '';
+        if (
+          !reason.startsWith(
+            "Guard step 'g' failed: its 'abort_unless' could not be evaluated: ",
+          ) ||
+          reason.includes('unresolvable path')
+        ) {
+          throw new Error(
+            `the seal sentence must say the guard's abort_unless could not be evaluated, and never "unresolvable path", got: ${JSON.stringify(reason)}`,
+          );
+        }
+        await assertPersisted(run.id, result, 'settle_step a (abort_unless: [42])');
+      },
+    },
+    {
+      law: 'GUARD_CASCADE_TOTAL',
+      name: `[${adapter.storeName}] a guard whose when cannot be evaluated (when: 42) is settled resolution_error — the delta still APPLIES`,
+      run: async () => {
+        const def = withGuardStep(minimalDefinition(['a']), 'g', {
+          abort_unless: [],
+          depends_on: ['a'],
+          // A non-string `when`: every read of this guard's eligibility throws on it.
+          when: 42 as unknown as string,
+        });
+        const { run, token } = await createClaimed(adapter.store, def, 'a');
+        const result = await settleStep(
+          run.id,
+          {
+            kind: 'settle_step',
+            step: 'a',
+            outcome: 'complete',
+            claimToken: token,
+            evidence: [makeEvidence('a')],
+          },
+          def,
+        );
+        assertApplied(result, 'settle_step a (when: 42)');
+        assertGuards(
+          result,
+          [{ step: 'g', outcome: 'resolution_error' }],
+          'settle_step a (when: 42)',
+        );
+        if (membershipOf(result.run, 'a') !== 'completed') {
+          throw new Error("the step's own delta must still be applied");
+        }
+        const reason = result.run.terminal_reason ?? '';
+        if (
+          !reason.startsWith("Guard step 'g' failed: its 'when' could not be evaluated: ") ||
+          reason.includes('unresolvable path')
+        ) {
+          throw new Error(
+            `the seal sentence must say the guard's when could not be evaluated, and never "unresolvable path", got: ${JSON.stringify(reason)}`,
+          );
+        }
+        await assertPersisted(run.id, result, 'settle_step a (when: 42)');
+      },
+    },
+  ];
+  return cases;
 }
 
 // ---------------------------------------------------------------------------
@@ -4199,7 +4777,10 @@ function cwfsFiresPerArmCases(adapter: SettlementContractAdapter): SettlementCon
     const withGuard = fixture.withGuard;
     cases.push({
       law: 'CWFS_FIRES_PER_ARM',
-      name: `[${adapter.storeName}] mixed-complete VIA settle_guard pass mints the declared completed_with_failed_steps finalizer`,
+      // issue #625 (positive form): the guard that completes the run is settled by the FAILING
+      // step's own write, so the mixed-complete seal — and the finalizer it mints — is on that
+      // write's result. The arm is still `guard_pass_complete` → `completed_with_failed_steps`.
+      name: `[${adapter.storeName}] mixed-complete VIA a guard pass mints the declared completed_with_failed_steps finalizer — in the failing step's own write, which settles the guard`,
       run: async () => {
         const def = withFinalizer(
           withGuard(minimalDefinition(['fail_step']), 'g', []), // empty abort_unless ⇒ always passes
@@ -4220,21 +4801,36 @@ function cwfsFiresPerArmCases(adapter: SettlementContractAdapter): SettlementCon
           def,
         );
         assertApplied(failed, 'fail fail_step');
-        if (failed.run.terminal_state) {
+        assertGuards(failed, [{ step: 'g', outcome: 'pass' }], 'fail fail_step');
+        if (failed.run.terminal_state !== true || failed.transitioned !== true) {
           throw new Error(
-            "fixture setup: run must NOT terminalize while guard 'g' is still eligible",
+            `the failing step's own write must return the mixed-complete seal (guard 'g' passed and nothing else can run), got terminal=${failed.run.terminal_state} transitioned:${failed.transitioned}`,
           );
         }
-
-        const passed = await settleStep(
-          run.id,
-          { kind: 'settle_guard', step: 'g', outcome: 'pass', evidence: makeEvidence('g') },
-          def,
-        );
-        assertApplied(passed, 'settle_guard pass (terminalizes mixed-complete)');
-        if (passed.run.finalizer_ledger?.['fin']?.status !== 'pending') {
+        if (
+          failed.run.sealed_by?.arm !== 'guard_pass_complete' ||
+          failed.run.sealed_by.step !== 'g'
+        ) {
           throw new Error(
-            `expected 'fin' minted pending on the settle_guard-driven mixed-complete seal, got: ${JSON.stringify(passed.run.finalizer_ledger)}`,
+            `expected the seal arm guard_pass_complete on 'g', got: ${JSON.stringify(failed.run.sealed_by)}`,
+          );
+        }
+        if (
+          failed.run.run_phase !== 'completed' ||
+          !failed.run.failed_steps.includes('fail_step')
+        ) {
+          throw new Error(
+            `expected a COMPLETED seal that still carries the failed step, got run_phase:${failed.run.run_phase} failed_steps:${JSON.stringify(failed.run.failed_steps)}`,
+          );
+        }
+        if (failed.run.finalizer_ledger?.['fin']?.status !== 'pending') {
+          throw new Error(
+            `expected 'fin' minted pending on the guard-pass mixed-complete seal, got: ${JSON.stringify(failed.run.finalizer_ledger)}`,
+          );
+        }
+        if (!failed.pendingFinalizers.includes('fin')) {
+          throw new Error(
+            `the result's pendingFinalizers must describe the record AFTER the guard, got: ${JSON.stringify(failed.pendingFinalizers)}`,
           );
         }
       },
@@ -5150,6 +5746,7 @@ export function settlementContract(adapter: SettlementContractAdapter): Settleme
     ...gateResolutionConflictCases(adapter),
     ...gateMismatchCases(adapter),
     ...guardCases(adapter),
+    ...guardCascadeCases(adapter),
     ...releaseIdempotentCases(adapter),
     ...phaseIsGeneratedCases(adapter),
     // issue #302 (finalizer outcome×trigger matrix).

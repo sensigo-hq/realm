@@ -14,6 +14,7 @@ import type {
   StepDiagnostics,
   UsageRecord,
   StepCacheDetail,
+  SealArm,
 } from '../types/run-record.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import { extensionIdentityDiffers } from '../types/extension-identity.js';
@@ -38,6 +39,7 @@ import {
   selectFinalizers,
   deriveEffectiveTriggers,
   applySettlement,
+  buildGuardDelta,
   renderFailCause,
   failureMessagesFromEvidence,
   failureMessagesWithOverlay,
@@ -1044,7 +1046,7 @@ function computeReArmWarnings(
  * here (a `default` throws rather than silently mis-rendering one) — `choice_not_eligible` +
  * `gate_choice_conflict` + the settle_gate `gate_mismatch`/`run_terminal` variants are consumed at
  * 1b's own `errorEnvelope` (submitHumanResponse), never here; `gate_open_wait` is chain-consumed
- * (executeChainInternal's guard loop); `already_released` is site-handled at 1d/1e (never routed
+ * (advanceRun's guard loop); `already_released` is site-handled at 1d/1e (never routed
  * through this shared builder).
  */
 function buildSettlementRefusalEnvelope(
@@ -1267,6 +1269,17 @@ async function enactExpiredGateIfDue(
   disclosureParts.push(
     `gate '${gate.gate_id}' on '${gate.step_name}' had expired — enacted declared ${disposition} before this execute_step call (enacted_via: execute_step).`,
   );
+  // issue #625: the expiry's own write settled the guards its default made eligible. This leg
+  // builds no reply of its own (the reply is the commanded step's), so each guard is named here,
+  // on the disclosure line: a passed line per guard that let the run go on, then the ending
+  // sentence and its reason when one of them ended the run.
+  const expiryEnding = guardEndingOf(expireOutcome);
+  for (const g of expireOutcome.guards ?? []) {
+    if (expiryEnding === undefined || g.step !== expiryEnding.step) {
+      disclosureParts.push(guardPassedLine(g.step));
+    }
+  }
+  disclosureParts.push(...describeGuardEndingLines(expireOutcome));
 
   if (expireOutcome.transitioned) {
     try {
@@ -3235,32 +3248,38 @@ export async function executeStep(
               ? `Step '${options.command}' failed due to external service unavailability. Wait for service recovery, then proceed with the steps in next_actions.`
               : `Step '${options.command}' failed. ${result.transitioned ? 'Run is terminated.' : 'Recovery steps are available in next_actions.'}`;
 
-      return {
-        command: options.command,
-        run_id: options.runId,
-        run_version: finalRun.version,
-        status: 'error',
-        data: {},
-        evidence: allEvidence,
-        warnings: mergeWarnings(
-          traceWarnings,
-          migratedWalCleanupWarning,
-          ...reArmWarnings,
-          ...drainWarnings,
-        ),
-        errors: [dispatchError.message],
-        agent_action: migratedEffectiveAction,
-        error_code: dispatchError.code,
-        ...(Object.keys(dispatchError.details).length > 0
-          ? { error_details: dispatchError.details }
-          : {}),
-        ...(dispatchError.retry_after !== undefined
-          ? { retry_after: dispatchError.retry_after }
-          : {}),
-        context_hint: migratedContextHint,
-        run_phase: finalRun.run_phase,
-        next_actions: migratedNextActions,
-      };
+      // issue #625: a failed step's own write settles the guards it leaves eligible. This reply is
+      // not `ok`, so the rule adds `guards` / `ended_by` only — the step's failure stays the
+      // reply's own status, errors, evidence and sentence.
+      return withCascadedGuards(
+        {
+          command: options.command,
+          run_id: options.runId,
+          run_version: finalRun.version,
+          status: 'error',
+          data: {},
+          evidence: allEvidence,
+          warnings: mergeWarnings(
+            traceWarnings,
+            migratedWalCleanupWarning,
+            ...reArmWarnings,
+            ...drainWarnings,
+          ),
+          errors: [dispatchError.message],
+          agent_action: migratedEffectiveAction,
+          error_code: dispatchError.code,
+          ...(Object.keys(dispatchError.details).length > 0
+            ? { error_details: dispatchError.details }
+            : {}),
+          ...(dispatchError.retry_after !== undefined
+            ? { retry_after: dispatchError.retry_after }
+            : {}),
+          context_hint: migratedContextHint,
+          run_phase: finalRun.run_phase,
+          next_actions: migratedNextActions,
+        },
+        result,
+      );
     }
 
     // --- Legacy path (dormancy fallback — byte-identical to pre-#279 behavior) ---
@@ -3962,35 +3981,42 @@ export async function executeStep(
         ? `Step '${options.command}' completed. ${migratedNextActions.length} step(s) now available.`
         : `Step '${options.command}' completed. Waiting for other steps to complete.`;
 
-    return {
-      command: options.command,
-      run_id: options.runId,
-      run_version: finalRun.version,
-      status: 'ok',
-      data: output,
-      evidence: allEvidence,
-      warnings: mergeWarnings(
-        traceWarnings,
-        currentWarn,
-        migratedSuccessWalCleanupWarning,
-        migratedDefaultedStepsDurabilityWarning,
-        ...reArmWarnings,
-        ...drainWarnings,
-      ),
-      errors: [],
-      context_hint: migratedOrientation,
-      run_phase: finalRun.run_phase,
-      next_actions: migratedNextActions,
-      ...(carriageActive && adoptionPartition !== undefined
-        ? {
-            adopted_own: adoptionPartition.adopted_own,
-            adopted_anonymous: adoptionPartition.adopted_anonymous,
-            preserved_foreign: adoptionPartition.preserved_foreign,
-          }
-        : {}),
-      ...(settledByDefault ? { settled_by_default: true } : {}),
-      ...(finalRun.defaulted_steps?.length ? { defaulted_steps: finalRun.defaulted_steps } : {}),
-    };
+    // issue #625: this step's own write settled every guard it made eligible. When one of them
+    // ended the run the reply says so as the chain always has (the guard's evidence entry,
+    // `data: {}`, the guard's sentence) — never "Run completed (phase: 'aborted')" with no guard
+    // named.
+    return withCascadedGuards(
+      {
+        command: options.command,
+        run_id: options.runId,
+        run_version: finalRun.version,
+        status: 'ok',
+        data: output,
+        evidence: allEvidence,
+        warnings: mergeWarnings(
+          traceWarnings,
+          currentWarn,
+          migratedSuccessWalCleanupWarning,
+          migratedDefaultedStepsDurabilityWarning,
+          ...reArmWarnings,
+          ...drainWarnings,
+        ),
+        errors: [],
+        context_hint: migratedOrientation,
+        run_phase: finalRun.run_phase,
+        next_actions: migratedNextActions,
+        ...(carriageActive && adoptionPartition !== undefined
+          ? {
+              adopted_own: adoptionPartition.adopted_own,
+              adopted_anonymous: adoptionPartition.adopted_anonymous,
+              preserved_foreign: adoptionPartition.preserved_foreign,
+            }
+          : {}),
+        ...(settledByDefault ? { settled_by_default: true } : {}),
+        ...(finalRun.defaulted_steps?.length ? { defaulted_steps: finalRun.defaulted_steps } : {}),
+      },
+      result,
+    );
   }
 
   // --- Legacy path (dormancy fallback — byte-identical to pre-#279 behavior) ---
@@ -4175,6 +4201,243 @@ export async function executeStep(
   };
 }
 
+// ---------------------------------------------------------------------------
+// issue #625 — what the guards a write settled mean for the reply and for the screen.
+//
+// A store's own `settleStep` settles, in the same write as its delta, every guard that delta makes
+// eligible, and returns them as `SettlementResult.guards`. Everything a caller or a surface says
+// about those guards is minted HERE, once: the three ending sentences, the passed line, the
+// `Reason:` line, the reply rule, and the lines a surface prints after an answer.
+// ---------------------------------------------------------------------------
+
+/** A guard's settled outcome, as `SettlementResult.guards` reports it. */
+type GuardOutcome = 'pass' | 'abort' | 'resolution_error';
+
+/**
+ * The sentence for a guard that ENDED a run — the ONE mint of the three, verbatim what the chain
+ * has always answered when a guard it settled ended the run.
+ */
+function guardEndingSentence(step: string, outcome: GuardOutcome): string {
+  return outcome === 'abort'
+    ? `Guard step '${step}' aborted the run.`
+    : outcome === 'resolution_error'
+      ? `Guard step '${step}' failed with a resolution error. Run is terminated.`
+      : `Guard step '${step}' passed and completed the run.`;
+}
+
+/** The line for a settled guard that passed and did NOT end the run — the same voice as the three
+ *  ending sentences. */
+export function guardPassedLine(step: string): string {
+  return `Guard step '${step}' passed.`;
+}
+
+/** The guard arms of `sealed_by`, and the outcome each one records. */
+const GUARD_ARM_OUTCOME: Partial<Record<SealArm, GuardOutcome>> = {
+  guard_abort: 'abort',
+  guard_resolution_error: 'resolution_error',
+  guard_pass_complete: 'pass',
+};
+
+/** The cascaded guard that ended a run in one settlement write — see {@link guardEndingOf}. */
+export interface GuardEnding {
+  step: string;
+  outcome: GuardOutcome;
+  /** The seal arm the guard's settlement stamped (`guard_abort`, `guard_resolution_error` or
+   *  `guard_pass_complete`). */
+  arm: SealArm;
+  /** One of the three ending sentences. */
+  sentence: string;
+  /** The guard's authored `abort_message` on an abort (absent when the author wrote none); the
+   *  guard's own recorded evidence `error` on a resolution error; absent on a completing pass. */
+  reason?: string;
+}
+
+/**
+ * issue #625: the cascaded guard that ENDED the run in this settlement write, or `undefined` when
+ * none did (the delta was refused, it settled no guard, or every guard it settled passed and the
+ * run goes on).
+ *
+ * The ONE reader: the reply rule below, `realm run drain --expired` (its `--force` line and its
+ * dry-run prediction) and the attending-process gate-expiry timer all take the ending — step,
+ * arm, sentence and reason — from here.
+ */
+export function guardEndingOf(result: SettlementResult): GuardEnding | undefined {
+  if (!result.applied || result.guards === undefined || result.guards.length === 0) {
+    return undefined;
+  }
+  const last = result.guards[result.guards.length - 1]!;
+  const seal = result.run.sealed_by;
+  // A guard ended the run iff the record this write produced is terminal AND sealed by that guard.
+  // (A write whose own delta ended the run settles no guard at all — none is eligible on a
+  // terminal run — so `guards` is absent there.)
+  if (result.run.terminal_state !== true || seal === undefined || seal.step !== last.step) {
+    return undefined;
+  }
+  const reason =
+    last.outcome === 'abort'
+      ? result.run.aborted_at?.abort_message
+      : last.outcome === 'resolution_error'
+        ? result.run.evidence.filter((e) => e.step_id === last.step).slice(-1)[0]?.error
+        : undefined;
+  return {
+    step: last.step,
+    outcome: last.outcome,
+    arm: seal.arm,
+    sentence: guardEndingSentence(last.step, last.outcome),
+    ...(reason !== undefined ? { reason } : {}),
+  };
+}
+
+/** The ending sentence, then `Reason: <reason>` when there is one (never truncated). Empty when no
+ *  cascaded guard ended the run. */
+export function describeGuardEndingLines(result: SettlementResult): string[] {
+  const ending = guardEndingOf(result);
+  if (ending === undefined) return [];
+  return [ending.sentence, ...(ending.reason !== undefined ? [`Reason: ${ending.reason}`] : [])];
+}
+
+/**
+ * Every line a surface holding a settlement RESULT prints about the guards that write settled:
+ * the ending sentence and its `Reason:` line when one of them ended the run, otherwise one passed
+ * line per guard. Empty when the write settled no guard.
+ */
+export function describeGuardLines(result: SettlementResult): string[] {
+  if (!result.applied || result.guards === undefined || result.guards.length === 0) return [];
+  const endingLines = describeGuardEndingLines(result);
+  if (endingLines.length > 0) return endingLines;
+  return result.guards.map((g) => guardPassedLine(g.step));
+}
+
+/**
+ * The same two lines as {@link describeGuardEndingLines}, read off a REPLY that carries
+ * `ended_by` — for a surface that holds only the reply. Empty when the reply carries none.
+ */
+export function describeEndedBy(reply: ResponseEnvelope): string[] {
+  const endedBy = reply.ended_by;
+  if (endedBy === undefined) return [];
+  const outcome =
+    GUARD_ARM_OUTCOME[endedBy.arm] ?? reply.guards?.find((g) => g.step === endedBy.step)?.outcome;
+  if (outcome === undefined) return [];
+  return [
+    guardEndingSentence(endedBy.step, outcome),
+    ...(endedBy.reason !== undefined ? [`Reason: ${endedBy.reason}`] : []),
+  ];
+}
+
+/**
+ * issue #625 (the one reply rule): what a reply gains when the write behind it settled guards.
+ *
+ *  - always: `guards`, in the order they were settled;
+ *  - when the last of them ENDED the run: `ended_by` — the sealing GUARD's arm and step, never
+ *    the gate's or the named step's — plus, on an `ok` reply, what the chain has always answered
+ *    for a guard that ended a run: the guard's own evidence entry, `data: {}`, the guard's
+ *    sentence, and no next actions.
+ *
+ * A reply that is NOT `ok` (a failed step; a late answer refused after its gate's expiry was
+ * enacted) keeps its own status, errors, evidence and sentence, and gains the two fields only.
+ * `status` is never changed here: an answer that was recorded stays `ok` even when the guard it
+ * unlocked aborted the run.
+ */
+function withCascadedGuards(
+  envelope: ResponseEnvelope,
+  result: SettlementResult,
+): ResponseEnvelope {
+  if (!result.applied || result.guards === undefined || result.guards.length === 0) return envelope;
+  const guards = result.guards.map((g) => ({ step: g.step, outcome: g.outcome }));
+  const ending = guardEndingOf(result);
+  if (ending === undefined) return { ...envelope, guards };
+  const endedBy = {
+    arm: ending.arm,
+    step: ending.step,
+    ...(ending.reason !== undefined ? { reason: ending.reason } : {}),
+  };
+  if (envelope.status !== 'ok') return { ...envelope, guards, ended_by: endedBy };
+  return {
+    ...envelope,
+    guards,
+    ended_by: endedBy,
+    data: {},
+    // The guard's own evidence entry, read off the record the write produced (before any
+    // finalizer drain appended to it).
+    evidence: result.run.evidence.filter((e) => e.step_id === ending.step).slice(-1),
+    context_hint: ending.sentence,
+    next_actions: [],
+  };
+}
+
+/** The sentence an expiry reply carries when the late answer's choice matched the default the
+ *  expiry enacted (issue #291 [F12]'s pinned string). */
+const LATE_SAME_CHOICE_SENTENCE =
+  'the outcome matches your choice, but it was settled by timeout; your response was not recorded.';
+
+/**
+ * issue #625: what a surface that speaks after an ANSWER prints about what the answer's write
+ * settled — the ONE composer for `realm run respond`, the Slack gate notifier and the terminal run
+ * prompt. `run` is the record the surface reads after the call (finalizers already drained).
+ *
+ *  - a LATE answer (`answer_recorded: false` — the gate's expiry beat it): the expiry sentence
+ *    first, on its own line, whether or not a guard ended the run; then the guard lines (the
+ *    ending sentence and its `Reason:`, or one passed line per guard); then, when a guard ended
+ *    the run, each finalizer's outcome;
+ *  - a recorded answer that ENDED the run (`ended_by`): the reply's own sentence first, then
+ *    `Reason: <reason>` when there is one, then each finalizer's outcome;
+ *  - a recorded answer whose guards passed and the run goes on: one passed line per guard;
+ *  - no guards: nothing.
+ *
+ * Each finalizer line reads `finalizer '<name>': <status>`, in the ledger's rank order.
+ */
+export function describeAnswerEnding(reply: ResponseEnvelope, run: RunRecord): string[] {
+  const finalizerLines = (): string[] =>
+    Object.entries(run.finalizer_ledger ?? {})
+      .sort(([, a], [, b]) => a.rank - b.rank)
+      .map(([name, entry]) => `finalizer '${name}': ${entry.status}`);
+  const passedLines = (): string[] => (reply.guards ?? []).map((g) => guardPassedLine(g.step));
+  if (reply.answer_recorded === false) {
+    const expirySentence =
+      reply.status === 'ok' ? LATE_SAME_CHOICE_SENTENCE : (reply.errors[0] ?? reply.context_hint);
+    return reply.ended_by !== undefined
+      ? [expirySentence, ...describeEndedBy(reply), ...finalizerLines()]
+      : [expirySentence, ...passedLines()];
+  }
+  if (reply.ended_by === undefined) return passedLines();
+  return [
+    reply.context_hint,
+    ...(reply.ended_by.reason !== undefined ? [`Reason: ${reply.ended_by.reason}`] : []),
+    ...finalizerLines(),
+  ];
+}
+
+/**
+ * issue #625: for a late answer on a gate whose expiry SETTLED A CHOICE (`on_expiry:
+ * settle_default`), the choice the expiry enacted and the run's derived phase — read off the run
+ * record, never off the reply's text. `undefined` for every other reply: an answer that was
+ * recorded, and a late answer on a gate whose expiry aborted the run (it settled no choice).
+ */
+export function lateAnswerOutcome(
+  reply: ResponseEnvelope,
+  run: RunRecord,
+): { choice: string; phase: RunPhase } | undefined {
+  if (reply.answer_recorded !== false) return undefined;
+  const entry = run.settled?.[reply.command];
+  if (
+    entry === undefined ||
+    entry.outcome !== 'gate' ||
+    entry.resolved_by !== 'timeout' ||
+    entry.choice === undefined
+  ) {
+    return undefined;
+  }
+  return { choice: entry.choice, phase: deriveRunPhase(run) };
+}
+
+/** Whether the gate on `step` was settled by its expiry (`resolved_by: 'timeout'`) rather than by
+ *  a person's answer (issue #625). */
+function gateSettledByTimeout(run: RunRecord, step: string | undefined): boolean {
+  if (step === undefined) return false;
+  const entry = run.settled?.[step];
+  return entry !== undefined && entry.outcome === 'gate' && entry.resolved_by === 'timeout';
+}
+
 /**
  * Submits a human response for a gate-waiting run.
  * Validates the gate_id and choice, then moves the step to completed_steps.
@@ -4251,6 +4514,45 @@ async function composeExpiredGateEnvelope(
   overdueMs: number,
   expireResult: SettlementResult,
 ): Promise<ResponseEnvelope> {
+  const expiryReply = await composeExpiryReply(
+    store,
+    definition,
+    registry,
+    originalGateId,
+    originalChoice,
+    overdueMs,
+    expireResult,
+  );
+  // issue #625 — two facts, both kept, on every form of this reply:
+  //  1. this answer was NOT recorded — the gate's expiry beat it. `answer_recorded: false` is the
+  //     typed fact every surface reads (never the prose), on the same-choice (`ok`) reply, the
+  //     different-choice (refused) reply, the abort disposition's reply and the race fallback.
+  //  2. what the expiry's write then settled. The one reply rule adds `guards` (so a guard that
+  //     passed is on the refused reply too) and, when a guard ended the run, `ended_by`.
+  // When a guard ended the run the sentence is the expiry sentence FOLLOWED BY the guard's — never
+  // one replacing the other: the reply rule would put the guard's sentence alone on an `ok` reply
+  // and leave it off a refused one.
+  const reply = withCascadedGuards(expiryReply, expireResult);
+  const ending = guardEndingOf(expireResult);
+  return {
+    ...reply,
+    answer_recorded: false,
+    ...(ending !== undefined
+      ? { context_hint: `${expiryReply.context_hint} ${ending.sentence}` }
+      : {}),
+  };
+}
+
+/** The expiry reply before the guard rule — see {@link composeExpiredGateEnvelope}. */
+async function composeExpiryReply(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  registry: ExtensionRegistry | undefined,
+  originalGateId: string,
+  originalChoice: string,
+  overdueMs: number,
+  expireResult: SettlementResult,
+): Promise<ResponseEnvelope> {
   let finalRun = expireResult.run;
   let drainWarnings: string[] = [];
   if (expireResult.applied && expireResult.transitioned) {
@@ -4284,8 +4586,7 @@ async function composeExpiredGateEnvelope(
         evidence: [],
         warnings: mergeWarnings([], enactedDisclosure, ...drainWarnings),
         errors: [],
-        context_hint:
-          'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
+        context_hint: LATE_SAME_CHOICE_SENTENCE,
         run_phase: finalRun.run_phase,
         next_actions: finalRun.terminal_state ? [] : buildNextActions(definition, finalRun),
       };
@@ -4543,6 +4844,12 @@ export async function submitHumanResponse(
             evidence: [],
             warnings: mergeWarnings([], ...noopDrainWarnings),
             errors: [],
+            // issue #625: when it was the gate's EXPIRY that settled it (the attending-process
+            // timer, `realm run drain --expired --force` or the listen sweeper enacted it before
+            // this answer arrived), this answer was not recorded either — the same typed fact the
+            // expiry reply carries. A person's replayed answer never carries it. No `guards`
+            // here: the write that enacted the expiry reported its own.
+            ...(gateSettledByTimeout(noopRun, stepName) ? { answer_recorded: false as const } : {}),
             context_hint: `Gate '${options.gateId}' was already resolved with choice '${options.choice}' — no action was taken.`,
             run_phase: noopRun.run_phase,
             next_actions: noopRun.terminal_state ? [] : buildNextActions(definition, noopRun),
@@ -4565,7 +4872,7 @@ export async function submitHumanResponse(
               },
             },
           );
-          return errorEnvelope(
+          const conflictReply = errorEnvelope(
             stepName ?? 'submit_gate',
             options.runId,
             result.run.version,
@@ -4573,6 +4880,10 @@ export async function submitHumanResponse(
             err.message,
             result.run.run_phase,
           );
+          // issue #625: see `already_settled` above — a gate its expiry settled.
+          return gateSettledByTimeout(result.run, stepName)
+            ? { ...conflictReply, answer_recorded: false }
+            : conflictReply;
         }
         case 'choice_not_eligible': {
           // VALIDATION_INPUT_SCHEMA envelope — parity with the legacy path's own step 4 (below).
@@ -4721,14 +5032,6 @@ export async function submitHumanResponse(
       }
     }
 
-    // Convergence hint (design record D-2 N8 narrowing, pedestal steal — must not drop): after a
-    // committed RESOLVE, when a guard is thereby eligible, append one line per eligible guard.
-    // findEligibleGuardSteps self-filters terminal runs (returns [] there), so this is inert on a
-    // gate-completion terminal transition.
-    const convergenceHints = findEligibleGuardSteps(definition, finalRun).map(
-      (name) => `guard '${name}' now eligible — converges at the next drive`,
-    );
-
     const defaultedStepsDurabilityWarning =
       finalRun.defaulted_steps !== undefined &&
       finalRun.defaulted_steps.length > 0 &&
@@ -4743,20 +5046,28 @@ export async function submitHumanResponse(
       ? `Run completed (phase: '${finalRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
       : `Gate '${resolvedGateStepName}' resolved with choice '${options.choice}'. ${migratedNextActions.length} step(s) now available.`;
 
-    return {
-      command: resolvedGateStepName,
-      run_id: options.runId,
-      run_version: finalRun.version,
-      status: 'ok',
-      data: { ...run.pending_gate!.preview, choice: options.choice },
-      evidence: [],
-      warnings: mergeWarnings(convergenceHints, ...drainWarnings, defaultedStepsDurabilityWarning),
-      errors: [],
-      context_hint: migratedOrientation,
-      run_phase: finalRun.run_phase,
-      next_actions: migratedNextActions,
-      ...(finalRun.defaulted_steps?.length ? { defaulted_steps: finalRun.defaulted_steps } : {}),
-    };
+    // issue #625: the answer's own write settled every guard the answer made eligible, so no guard
+    // is left "eligible, to be decided by some later call" — the reply lists them in `guards`, and
+    // when one ended the run it names that guard (`ended_by`) and says the guard's sentence.
+    // (#279's "guard now eligible — converges at the next drive" advisory is removed with the
+    // state it described.)
+    return withCascadedGuards(
+      {
+        command: resolvedGateStepName,
+        run_id: options.runId,
+        run_version: finalRun.version,
+        status: 'ok',
+        data: { ...run.pending_gate!.preview, choice: options.choice },
+        evidence: [],
+        warnings: mergeWarnings([], ...drainWarnings, defaultedStepsDurabilityWarning),
+        errors: [],
+        context_hint: migratedOrientation,
+        run_phase: finalRun.run_phase,
+        next_actions: migratedNextActions,
+        ...(finalRun.defaulted_steps?.length ? { defaulted_steps: finalRun.defaulted_steps } : {}),
+      },
+      result,
+    );
   }
 
   // --- Legacy path (dormancy fallback — byte-identical to pre-#279 behavior) ---
@@ -5026,11 +5337,14 @@ export async function submitHumanResponse(
 const MAX_CHAIN_DEPTH = 50;
 
 /**
- * Executes a guard step inline within the engine's auto-chain.
+ * Evaluates a guard step for `advanceRun`'s guard loop.
  *
- * Guard steps are never claimed via claimStep — they execute synchronously as part of
- * the chain, not via agent execute_step calls. This function evaluates all abort_unless
- * conditions and returns an updated RunRecord:
+ * Guard steps are never claimed via claimStep and never called by an agent. Since issue #625 a
+ * guard is normally settled by the store write that makes it eligible (the settlement cascade,
+ * `applySettlement` with `cascadeGuards`), so `advanceRun` reaches this function only for a guard
+ * that is still eligible on the record it reads: on a store without `settleStep`, or a guard that
+ * was already eligible when the run was created or resumed. This function evaluates all
+ * abort_unless conditions and returns an updated RunRecord:
  *
  * - PASS: guard in completed_steps, run continues.
  * - ABORT: guard in skipped_steps, terminal_state=true, aborted_at set.
@@ -5044,42 +5358,18 @@ async function executeGuardStep(
   definition: WorkflowDefinition,
   run: RunRecord,
 ): Promise<RunRecord> {
-  // Normalise abort_unless to string[].
-  const conditions = Array.isArray(stepDef.abort_unless)
-    ? stepDef.abort_unless
-    : [stepDef.abort_unless!];
+  // issue #625: ONE evaluation. The conditions, their outcome and the guard's evidence entry come
+  // from `buildGuardDelta` (settlement.ts) — the same pure function the settlement cascade calls
+  // when a store's own `settleStep` settles a guard — so the chain and the cascade cannot decide
+  // one guard two ways. What stays here is the LEGACY seal built from that evaluation: the record
+  // a store without `settleStep` persists through `store.update`.
+  const evaluated = buildGuardDelta(stepName, definition, run, new Date(), run.version);
+  const evidenceEntry = evaluated.evidence;
 
-  // Build evidenceByStep from current run.
-  const evidenceByStep = buildEvidenceByStep(run);
-
-  // Evaluate all conditions (no short-circuit — record all outcomes).
-  const outcome = evaluateGuardConditions(conditions, evidenceByStep);
-
-  const now = new Date();
-
-  if (outcome.kind === 'resolution_error') {
+  if (evaluated.outcome === 'resolution_error') {
     // Authoring error — a path in abort_unless could not be resolved.
-    // Record evidence with error status and place guard in failed_steps.
-    const evidenceEntry = captureEvidence({
-      stepId: stepName,
-      startedAt: now,
-      completedAt: now,
-      input: {},
-      output: { error: `Unresolvable path: ${outcome.unresolvable_path}` },
-      // issue #373 correction: the path is the DIAGNOSTIC, and it used to live only in
-      // `output_summary` + a transient seal-time overlay — so the post-drain re-render, which
-      // rebuilds the cause from evidence alone, replaced it with the generic condition text.
-      // Carrying it here makes every downstream read of this failure lossless. Sole production
-      // mint: the settlement delta reuses this exact snapshot via `guardOwnEvidence`.
-      //
-      // The path goes FIRST because the per-message cap slices from the head: with the path last,
-      // a long enough condition pushed it off the tail and the diagnostic vanished again. Honest
-      // bound: a pathological PATH over ~230 chars still truncates itself, which is accepted —
-      // head-first truncation keeps its prefix, and the prefix is the orienting part. ASCII
-      // parenthetical, not an em dash, for the same reason the truncation marker is ASCII (logs,
-      // terminals, a Postgres text column) — and a cut-off parenthetical reads as obviously partial.
-      error: `Guard resolution error: unresolvable path '${outcome.unresolvable_path}' (condition: ${outcome.condition})`,
-    });
+    // The guard goes in failed_steps; its evidence entry carries the error.
+    const unresolvablePath = evaluated.resolutionError!.unresolvable_path;
 
     const withFailed: RunRecord = {
       ...run,
@@ -5095,7 +5385,7 @@ async function executeGuardStep(
     // issue #373 — twin of settlement.ts's guard seal. The overlay is DEFENSIVE once evidence
     // carries the path (issue #373 correction, the `error` above); kept against caller-shaped
     // evidence that arrives without it.
-    const guardPath = `unresolvable path '${outcome.unresolvable_path}'`;
+    const guardPath = `unresolvable path '${unresolvablePath}'`;
     return {
       ...withSkipped,
       terminal_state: true,
@@ -5111,16 +5401,8 @@ async function executeGuardStep(
     };
   }
 
-  if (outcome.kind === 'pass') {
+  if (evaluated.outcome === 'pass') {
     // All conditions true — guard passed, run continues.
-    const evidenceEntry = captureEvidence({
-      stepId: stepName,
-      startedAt: now,
-      completedAt: now,
-      input: {},
-      output: { conditions: outcome.conditions, aborted: false },
-    });
-
     const withCompleted: RunRecord = {
       ...run,
       evidence: [...run.evidence, evidenceEntry],
@@ -5150,19 +5432,6 @@ async function executeGuardStep(
   }
 
   // Guard fired — one or more conditions false; abort the run.
-  const evidenceEntry = captureEvidence({
-    stepId: stepName,
-    startedAt: now,
-    completedAt: now,
-    input: {},
-    output: {
-      conditions: outcome.conditions,
-      aborted: true,
-      ...(stepDef.abort_message !== undefined ? { abort_message: stepDef.abort_message } : {}),
-    },
-    error: stepDef.abort_message ?? `Guard step '${stepName}' aborted the run.`,
-  });
-
   const withGuardSkipped: RunRecord = {
     ...run,
     evidence: [...run.evidence, evidenceEntry],
@@ -5187,7 +5456,7 @@ async function executeGuardStep(
     sealed_by: { arm: 'guard_abort', step: stepName },
     aborted_at: {
       step_id: stepName,
-      conditions: outcome.conditions,
+      conditions: evaluated.abort!.conditions,
       ...(stepDef.abort_message !== undefined ? { abort_message: stepDef.abort_message } : {}),
     },
   };
@@ -5656,7 +5925,7 @@ async function executeChainInternal(
     };
   }
 
-  let result = await executeStep(store, definition, options);
+  const result = await executeStep(store, definition, options);
 
   // Stop chaining on any non-ok result.
   if (result.status !== 'ok') {
@@ -5671,14 +5940,121 @@ async function executeChainInternal(
     return result;
   }
 
+  // issue #625: on a store that declares `settleStep`, the named step's own write settled every
+  // guard it made eligible (`result.guards`). A guard was eligible after the step's own delta, so
+  // the run was 'running' then: that is the phase the step's own entry and every guard that let
+  // the run go on carry. A guard that ended the run carries the phase it sealed. (`run`, read
+  // above, is already the record AFTER those guards.)
+  const cascadedGuards = result.guards ?? [];
+
   // Record this auto step in the accumulator.
   if (definition.steps[options.command]?.execution === 'auto') {
     chainedSteps.push({
       step: options.command,
-      run_phase: run.run_phase,
+      run_phase: cascadedGuards.length > 0 ? 'running' : run.run_phase,
       ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
     });
   }
+  // The published `chained_auto_steps` keeps listing every step the engine ran on its own.
+  cascadedGuards.forEach((guard, index) => {
+    const endedTheRun = index === cascadedGuards.length - 1 && result.ended_by !== undefined;
+    chainedSteps.push({
+      step: guard.step,
+      run_phase: endedTheRun ? (result.run_phase ?? run.run_phase) : 'running',
+    });
+  });
+
+  return advanceRun(store, definition, options, {
+    run,
+    result,
+    depth,
+    chainedSteps,
+    depth0Warnings,
+  });
+}
+
+/** One entry of the chain's `chained_auto_steps` accumulator. */
+type ChainedStepEntry = {
+  step: string;
+  run_phase: string;
+  branched_via?: string;
+  warnings?: string[];
+};
+
+/**
+ * The state `executeChain` already holds when it hands a run to {@link advanceRun}: the record it
+ * read after the named step settled, that step's reply, the chain depth, and the two accumulators
+ * (see `executeChainInternal`'s own parameters for what each carries).
+ */
+export interface AdvanceRunState {
+  run: RunRecord;
+  result: ResponseEnvelope;
+  depth: number;
+  chainedSteps: ChainedStepEntry[];
+  depth0Warnings: string[];
+}
+
+/**
+ * issue #625 (PR-1): the chain's tail — settle every eligible guard, then run the next eligible
+ * `auto` step — MOVED here out of `executeChainInternal` (moved, not copied; it stays in this file
+ * because every `store.settleStep` call site lives here). `executeChain` is its only production
+ * caller: after its named step settles it passes the state it already holds as `state`.
+ *
+ * Called WITHOUT `state`, it advances a run from its stored record: it reads the record, starts
+ * from a neutral `ok` reply, and wraps `chained_auto_steps` and the chained steps' warnings exactly
+ * as `executeChain` does. `options.command` only labels the reply in that case.
+ *
+ * On a store that declares `settleStep`, a write settles the guards it makes eligible itself, so
+ * the guard loop below finds work only on a record that some OTHER kind of write left with an
+ * eligible guard (`store.update`, a resume, run creation) — and on every store without
+ * `settleStep`, where it is the only thing that settles a guard.
+ */
+export async function advanceRun(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  options: ExecuteChainOptions,
+  state?: AdvanceRunState,
+): Promise<ResponseEnvelope> {
+  if (state === undefined) {
+    const stored = await store.get(options.runId);
+    const chained: ChainedStepEntry[] = [];
+    const ownDepth0Warnings: string[] = [];
+    const advanced = await advanceRun(
+      store,
+      definition,
+      { ...options, registry: options.registry ?? createDefaultRegistry() },
+      {
+        run: stored,
+        result: {
+          command: options.command,
+          run_id: options.runId,
+          run_version: stored.version,
+          status: 'ok',
+          data: {},
+          evidence: [],
+          warnings: [],
+          errors: [],
+          context_hint: `Run '${options.runId}' advanced from its stored record.`,
+          run_phase: stored.run_phase,
+          next_actions: stored.terminal_state ? [] : buildNextActions(definition, stored),
+        },
+        depth: 0,
+        chainedSteps: chained,
+        depth0Warnings: ownDepth0Warnings,
+      },
+    );
+    const chainWarnings = [...ownDepth0Warnings, ...chained.flatMap((c) => c.warnings ?? [])];
+    const envelope = {
+      ...advanced,
+      ...(chainWarnings.length > 0
+        ? { warnings: [...(advanced.warnings ?? []), ...chainWarnings] }
+        : {}),
+    };
+    return chained.length > 0 ? { ...envelope, chained_auto_steps: chained } : envelope;
+  }
+
+  const { depth, chainedSteps, depth0Warnings } = state;
+  let { run, result } = state;
 
   if (run.terminal_state || run.pending_gate !== undefined) {
     return result;

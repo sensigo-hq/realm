@@ -63,10 +63,15 @@
 //          NOOP-not-RESOLVE pinned in settlement.ts, but `pending_gate` then never clears itself).
 //          Checked in BOTH the terminal branch (1) and the non-terminal path — a live pending_gate
 //          can coexist with either. Exits: settle_step abort or purge.
-//        - `resolved_gate_with_eligible_guard` (N8's surface): `opts.definition` supplied AND
-//          `findEligibleGuardSteps(definition, run)` non-empty — that function ALREADY self-filters
-//          both a terminal run and an open gate (eligibility.ts), so this is checked unconditionally
-//          in the non-terminal path with no extra gating needed. Disclosed consequence (list.ts is
+//        - `guard_awaiting_settlement` (issue #625; before it, `resolved_gate_with_eligible_guard`,
+//          N8's surface): `opts.definition` supplied AND `findEligibleGuardSteps(definition, run)`
+//          non-empty — that function ALREADY self-filters both a terminal run and an open gate
+//          (eligibility.ts), so this is checked unconditionally in the non-terminal path with no
+//          extra gating needed. It names a guard that is eligible and that nothing has settled.
+//          Since #625 a store's own `settleStep` settles a guard in the write that makes it
+//          eligible, so on such a store the state is left only by a write that is not a settlement
+//          (a resume, run creation, `store.update`) — it never needed a gate, which is why the
+//          name and the sentence no longer mention one. Disclosed consequence (list.ts is
 //          frozen and passes no `definition` — this finding never surfaces there; ACCEPTABLE, not a
 //          list.ts defect — see `trust_value_invalid` below, the SECOND finding this consequence
 //          now applies to).
@@ -136,7 +141,7 @@ export interface RunHealthFinding {
     // issue #279 (increment 2, PR-D, design record §9) — the #282 class + its adjacent classes.
     | 'terminal_with_stale_gate'
     | 'gate_corruption'
-    | 'resolved_gate_with_eligible_guard'
+    | 'guard_awaiting_settlement'
     // issue #302 (disclosure gaps) — a completed seal that still carries failed_steps (designed
     // recovery behavior; see item 6 in the branch-conditioning table above).
     | 'completed_with_failed_steps'
@@ -156,7 +161,7 @@ export interface RunHealthFinding {
     | 'structured_output_downgraded'
     // issue #508: an ELIGIBLE step (auto/agent, on a definition that was supplied) whose `trust`
     // value the engine will refuse at dispatch (VALIDATION_TRUST_VALUE) — see item 5b in the
-    // branch-conditioning table above. Definition-gated, like `resolved_gate_with_eligible_guard`.
+    // branch-conditioning table above. Definition-gated, like `guard_awaiting_settlement`.
     | 'trust_value_invalid'
     // issue #558 PR-T: this run's registered workflow copy cannot be read — missing, permission-
     // denied, a directory, empty, corrupt JSON, a legacy record, or a registry directory that
@@ -586,15 +591,17 @@ export function classifyRunHealth(
     });
   }
 
-  // issue #279 (increment 2, PR-D, design record §9, N8's surface): resolved-gate-with-eligible-
-  // guard. findEligibleGuardSteps ALREADY self-filters both a terminal run and an open gate
-  // (eligibility.ts), so no extra gating is needed beyond requiring a definition.
+  // issue #279 (increment 2, PR-D, design record §9, N8's surface), renamed by issue #625: a guard
+  // that is eligible and has not been settled. findEligibleGuardSteps ALREADY self-filters both a
+  // terminal run and an open gate (eligibility.ts), so no extra gating is needed beyond requiring
+  // a definition. The sentence states the record's fact and nothing about what will settle it —
+  // the finding fires on runs that never had a gate, and no later call is promised.
   if (opts?.definition !== undefined) {
     for (const guardName of findEligibleGuardSteps(opts.definition, run)) {
       findings.push({
-        kind: 'resolved_gate_with_eligible_guard',
+        kind: 'guard_awaiting_settlement',
         step: guardName,
-        reason: `gate resolved; guard '${guardName}' awaits the next drive`,
+        reason: `guard '${guardName}' is eligible and has not been settled`,
       });
     }
   }

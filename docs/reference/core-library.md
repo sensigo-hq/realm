@@ -87,7 +87,7 @@ The replies have the fields of an MCP tool reply. See [MCP tools](mcp/tools.md).
 | `store.create(options)`                                                                    | Makes a run. Returns `{ run, created }`.                                                                                  |
 | `executeChain(store, definition, options)`                                                 | Runs one step, then each `auto` step that becomes ready. Returns the reply.                                               |
 | `executeStep(store, definition, options)`                                                  | Runs one step only.                                                                                                       |
-| `submitHumanResponse(store, definition, options)`                                          | Answers a gate.                                                                                                           |
+| `submitHumanResponse(store, definition, options)`                                          | Answers a gate. A guard step the answer makes ready is decided in the same write, and the reply's `guards` names it.      |
 | `findEligibleSteps(definition, run)`                                                       | Returns the names of the steps that can run now.                                                                          |
 | `deriveRunPhase(run)`                                                                      | Returns the run's phase, worked out from its record.                                                                      |
 | `classifyRunHealth(run, definition)`                                                       | Returns the run's [health findings](mcp/run-state-and-health.md).                                                         |
@@ -225,6 +225,9 @@ this run store does not persist 'capability_blocks' — capability-block state i
 | Throw when the store itself fails: it cannot be reached, or the lock cannot be taken.             |
 | Throw for a kind of change the store does not know. Do not ignore it.                             |
 | Make the read, the change and the write one atomic act, however many statements that takes.       |
+| Call `applySettlement` with the option `cascadeGuards: true`.                                     |
+
+With `cascadeGuards: true`, a change that makes a guard step ready also decides that guard, and any guard that one makes ready, in the record `applySettlement` returns. The store writes that record once. The result lists the guards in `guards`. A guard whose `when` or `abort_unless` cannot be evaluated is recorded as failed, and the change still applies. Without the option, `applySettlement` decides no guard, and throws on such a guard. Only a store's own `settleStep` sets the option on a write: Realm's callers pass the store the change and read `guards` from what it returns. The contract's laws `GUARD_CASCADE_ONE_WRITE` and `GUARD_CASCADE_TOTAL` check it.
 
 A store without `settleStep` still works. Each reply for a step that ends a run then carries a warning:
 

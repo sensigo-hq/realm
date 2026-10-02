@@ -46,11 +46,14 @@ import {
   findEligibleSteps,
   findEligibleGuardSteps,
   propagateSkips,
+  buildEvidenceByStep,
+  evaluateWhenCondition,
 } from './eligibility.js';
 import { deriveDefaultedSteps } from './defaulted-steps.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { omitClaim } from './claim-liveness.js';
 import { DRAIN_LEASE_MAX } from './lifecycle.js';
+import { evaluateGuardConditions } from './precondition.js';
 
 /** Projects the per-step settled-map entry shape directly off `RunRecord` — avoids a second,
  *  independently-maintained type that could drift from the field it describes. */
@@ -1119,7 +1122,9 @@ function applySettleGuard(
   }
 
   if (fresh.pending_gate !== undefined && outcome !== 'pass') {
-    // D-2: the GATE WINS; quiet end-of-pass — the guard re-evaluates at the NEXT drive (N8).
+    // D-2: the GATE WINS; quiet end-of-pass — nothing is decided here. The guard is decided by the
+    // write that settles the gate (issue #625: an answer or an expiry settles the guards it makes
+    // eligible in that same write).
     return { applied: false, reason: 'gate_open_wait', run: fresh };
   }
 
@@ -1139,7 +1144,10 @@ function applySettleGuard(
     // issue #373: this site names the guard alone even when other steps had already failed
     // (executed with failed_steps=["fail_a","g"]). At >1 distinct failure it renders the whole
     // set; at exactly one the sentence below is byte-unchanged.
-    const guardPath = `unresolvable path '${resolutionError!.unresolvable_path}'`;
+    // issue #625: a guard that could not be evaluated at all carries its own `cause` — there is no
+    // path to name. This line stays the ONE mint of the sentence either way.
+    const guardPath =
+      resolutionError!.cause ?? `unresolvable path '${resolutionError!.unresolvable_path}'`;
     const draft: RunRecord = {
       ...withSkipped,
       terminal_state: true,
@@ -1448,9 +1456,321 @@ export function applySettlement(
   fresh: RunRecord,
   delta: SettlementDelta,
   definition: WorkflowDefinition,
-  options?: { now?: Date },
+  options?: { now?: Date; cascadeGuards?: boolean },
 ): SettlementResult {
   const now = options?.now ?? new Date();
+  // issue #625: without the option the transform is exactly what it was — one delta, no guard
+  // settled, and every throw it had. Only a store's own `settleStep` sets the option on a write
+  // (plus the drain dry run, which predicts and never persists).
+  if (options?.cascadeGuards !== true || !CASCADING_KINDS.has(delta.kind)) {
+    return applyDelta(fresh, delta, definition, now);
+  }
+  // With the option set, a guard whose `when` cannot be evaluated must not make THIS write
+  // unrecordable: the base arm, the loop's eligibility read and `applySettleGuard` all get a copy
+  // of the definition in which such a guard has no `when`, so it reads as eligible and the loop
+  // settles it as a resolution error.
+  const total = totalGuardDefinition(definition, fresh);
+  const base = applyDelta(fresh, delta, total.definition, now);
+  // Only an APPLIED delta cascades: a refusal or a no-op stays write-free.
+  if (!base.applied) return base;
+  return settleEligibleGuards(base, total, now, fresh.version);
+}
+
+/** The delta kinds after which an applied write settles the guards it made eligible (issue #625).
+ *  `open_gate` and `release_step` make no guard eligible (a gate is open, or a step returned to
+ *  eligible); the two finalizer kinds need a terminal run, where no guard is eligible. */
+const CASCADING_KINDS: ReadonlySet<SettlementDelta['kind']> = new Set<SettlementDelta['kind']>([
+  'settle_step',
+  'settle_gate',
+  'expire_gate',
+  'settle_guard',
+]);
+
+/**
+ * issue #625: a guard's evaluation — its `abort_unless` conditions over the record's evidence, and
+ * ONE evidence entry stamped with the caller's `now`. Pure: no await, no registry, no store.
+ *
+ * The ONE evaluation: the chain's `executeGuardStep` and the settlement cascade both call this, so
+ * a guard decided by an answer's write and a guard decided by the chain cannot disagree.
+ *
+ * Throws when a condition cannot be split (a non-string `abort_unless` entry, e.g. `[42]`). The
+ * chain lets that throw, as it always has; the cascade catches it and settles the guard as a
+ * resolution error.
+ */
+export function buildGuardDelta(
+  stepName: string,
+  definition: WorkflowDefinition,
+  run: RunRecord,
+  now: Date,
+  evaluatedAtVersion: number,
+): SettleGuardDelta {
+  const stepDef = definition.steps[stepName]!;
+  // Normalise abort_unless to string[].
+  const conditions = Array.isArray(stepDef.abort_unless)
+    ? stepDef.abort_unless
+    : [stepDef.abort_unless!];
+  // Evaluate all conditions (no short-circuit — record all outcomes).
+  const outcome = evaluateGuardConditions(conditions, buildEvidenceByStep(run));
+
+  if (outcome.kind === 'resolution_error') {
+    // Authoring error — a path in abort_unless could not be resolved.
+    return {
+      kind: 'settle_guard',
+      step: stepName,
+      outcome: 'resolution_error',
+      evidence: captureEvidence({
+        stepId: stepName,
+        startedAt: now,
+        completedAt: now,
+        input: {},
+        output: { error: `Unresolvable path: ${outcome.unresolvable_path}` },
+        // issue #373 correction: the path is the DIAGNOSTIC, and it used to live only in
+        // `output_summary` + a transient seal-time overlay — so the post-drain re-render, which
+        // rebuilds the cause from evidence alone, replaced it with the generic condition text.
+        // Carrying it here makes every downstream read of this failure lossless.
+        //
+        // The path goes FIRST because the per-message cap slices from the head: with the path last,
+        // a long enough condition pushed it off the tail and the diagnostic vanished again. Honest
+        // bound: a pathological PATH over ~230 chars still truncates itself, which is accepted —
+        // head-first truncation keeps its prefix, and the prefix is the orienting part. ASCII
+        // parenthetical, not an em dash, for the same reason the truncation marker is ASCII (logs,
+        // terminals, a Postgres text column) — and a cut-off parenthetical reads as obviously partial.
+        error: `Guard resolution error: unresolvable path '${outcome.unresolvable_path}' (condition: ${outcome.condition})`,
+      }),
+      resolutionError: {
+        condition: outcome.condition,
+        unresolvable_path: outcome.unresolvable_path,
+      },
+      evaluatedAtVersion,
+    };
+  }
+
+  if (outcome.kind === 'pass') {
+    // All conditions true — guard passed, run continues.
+    return {
+      kind: 'settle_guard',
+      step: stepName,
+      outcome: 'pass',
+      evidence: captureEvidence({
+        stepId: stepName,
+        startedAt: now,
+        completedAt: now,
+        input: {},
+        output: { conditions: outcome.conditions, aborted: false },
+      }),
+      evaluatedAtVersion,
+    };
+  }
+
+  // Guard fired — one or more conditions false; abort the run.
+  return {
+    kind: 'settle_guard',
+    step: stepName,
+    outcome: 'abort',
+    evidence: captureEvidence({
+      stepId: stepName,
+      startedAt: now,
+      completedAt: now,
+      input: {},
+      output: {
+        conditions: outcome.conditions,
+        aborted: true,
+        ...(stepDef.abort_message !== undefined ? { abort_message: stepDef.abort_message } : {}),
+      },
+      error: stepDef.abort_message ?? `Guard step '${stepName}' aborted the run.`,
+    }),
+    abort: {
+      conditions: outcome.conditions,
+      ...(stepDef.abort_message !== undefined ? { abort_message: stepDef.abort_message } : {}),
+    },
+    evaluatedAtVersion,
+  };
+}
+
+/** A definition whose guards can all have their `when` evaluated, plus what was removed to make
+ *  it so (issue #625) — see {@link totalGuardDefinition}. */
+interface TotalGuardDefinition {
+  definition: WorkflowDefinition;
+  /** guard step name → the message its `when` threw and the `when` it declared. Empty when no
+   *  guard's `when` throws. */
+  whenFailures: ReadonlyMap<string, { thrown: string; declared: unknown }>;
+}
+
+/**
+ * issue #625 (the cascade never throws, site b): a copy of the definition in which every guard
+ * whose `when` THROWS on evaluation has no `when`, plus the thrown message per such guard.
+ *
+ * Why a copy and not a catch: a guard's `when` is evaluated by `propagateSkips` — which every
+ * settling arm calls, `applySettleGuard` included — and again by `findEligibleGuardSteps`. A
+ * non-string `when` (`when: 42`) throws there, before any guard loop runs, and made the write that
+ * reached it unrecordable. Without its `when` the guard reads as eligible once its trigger rule
+ * holds, and the cascade settles it as a resolution error.
+ *
+ * Each LEAF is evaluated on its own: `evaluateWhen` stops at the first false leaf, so a clause
+ * like `['a.x == 1', 42]` would pass this check on a record where `a.x` is not 1 and throw on the
+ * record the delta produces.
+ *
+ * Returns the definition itself (same object) when nothing throws.
+ */
+function totalGuardDefinition(
+  definition: WorkflowDefinition,
+  run: RunRecord,
+): TotalGuardDefinition {
+  const whenFailures = new Map<string, { thrown: string; declared: unknown }>();
+  let evidenceByStep: ReturnType<typeof buildEvidenceByStep> | undefined;
+  for (const [name, step] of Object.entries(definition.steps)) {
+    if (step.execution !== 'guard' || step.when === undefined) continue;
+    evidenceByStep ??= buildEvidenceByStep(run);
+    const leaves: readonly string[] = Array.isArray(step.when) ? step.when : [step.when];
+    for (const leaf of leaves) {
+      try {
+        evaluateWhenCondition(leaf, evidenceByStep, run.params);
+      } catch (err) {
+        whenFailures.set(name, {
+          thrown: err instanceof Error ? err.message : String(err),
+          declared: step.when,
+        });
+        break;
+      }
+    }
+  }
+  if (whenFailures.size === 0) return { definition, whenFailures };
+  const steps: WorkflowDefinition['steps'] = {};
+  for (const [name, step] of Object.entries(definition.steps)) {
+    if (whenFailures.has(name)) {
+      const { when: _unevaluable, ...withoutWhen } = step;
+      steps[name] = withoutWhen;
+    } else {
+      steps[name] = step;
+    }
+  }
+  return { definition: { ...definition, steps }, whenFailures };
+}
+
+/**
+ * The resolution-error delta for a guard that could not be evaluated at all (issue #625): its
+ * `when` or its `abort_unless` threw. `cause` is the whole diagnostic — the seal sentence and the
+ * evidence entry's `error` both carry it, and neither says "unresolvable path" (no path failed to
+ * resolve; the expression itself could not be read).
+ */
+function unevaluableGuardDelta(
+  stepName: string,
+  key: 'when' | 'abort_unless',
+  declared: unknown,
+  thrown: string,
+  now: Date,
+  evaluatedAtVersion: number,
+): SettleGuardDelta {
+  const cause = `its '${key}' could not be evaluated: ${thrown}`;
+  const rendered = renderDeclared(declared);
+  return {
+    kind: 'settle_guard',
+    step: stepName,
+    outcome: 'resolution_error',
+    evidence: captureEvidence({
+      stepId: stepName,
+      startedAt: now,
+      completedAt: now,
+      input: {},
+      output: { error: cause },
+      error: cause,
+    }),
+    resolutionError: { condition: `${key}: ${rendered}`, unresolvable_path: rendered, cause },
+    evaluatedAtVersion,
+  };
+}
+
+/** A declared `when` / `abort_unless` value as text, for a record field. Never throws. */
+function renderDeclared(declared: unknown): string {
+  try {
+    return JSON.stringify(declared) ?? String(declared);
+  } catch {
+    return String(declared);
+  }
+}
+
+/**
+ * issue #625: after an applied delta, settle every guard that delta made eligible — in THIS apply,
+ * so the store persists the delta and its guards in one write. Each guard goes through the shipped
+ * `applySettleGuard` arm (evidence entry, skip propagation, and on a run-ending outcome the seal
+ * and the finalizer mint); a guard writes no `settled` entry.
+ *
+ * Bounded by the number of guard steps: one guard settles per pass and a settled guard is never
+ * eligible again.
+ *
+ * Never throws. A guard that cannot be evaluated is settled as a resolution error; if the arm
+ * refuses a guard this loop itself found eligible, or anything else goes wrong, the loop stops and
+ * what was applied so far stands.
+ */
+function settleEligibleGuards(
+  base: Extract<SettlementResult, { applied: true }>,
+  total: TotalGuardDefinition,
+  now: Date,
+  evaluatedAtVersion: number,
+): SettlementResult {
+  const { definition, whenFailures } = total;
+  const bound = Object.values(definition.steps).filter((s) => s.execution === 'guard').length;
+  let run = base.run;
+  let transitioned = base.transitioned;
+  const guards: Array<{ step: string; outcome: SettleGuardDelta['outcome'] }> = [];
+  for (let settledCount = 0; settledCount < bound; settledCount++) {
+    let guardDelta: SettleGuardDelta;
+    let guardResult: SettlementResult;
+    try {
+      // Self-filters a terminal run and an open gate ("the gate wins").
+      const eligible = findEligibleGuardSteps(definition, run);
+      if (eligible.length === 0) break;
+      const stepName = eligible[0]!;
+      const whenFailure = whenFailures.get(stepName);
+      if (whenFailure !== undefined) {
+        guardDelta = unevaluableGuardDelta(
+          stepName,
+          'when',
+          whenFailure.declared,
+          whenFailure.thrown,
+          now,
+          evaluatedAtVersion,
+        );
+      } else {
+        try {
+          guardDelta = buildGuardDelta(stepName, definition, run, now, evaluatedAtVersion);
+        } catch (err) {
+          guardDelta = unevaluableGuardDelta(
+            stepName,
+            'abort_unless',
+            definition.steps[stepName]!.abort_unless,
+            err instanceof Error ? err.message : String(err),
+            now,
+            evaluatedAtVersion,
+          );
+        }
+      }
+      guardResult = applySettleGuard(run, guardDelta, definition);
+    } catch {
+      break;
+    }
+    // The arm refused a guard this loop found eligible: stop; what was applied so far stands.
+    if (!guardResult.applied) break;
+    guards.push({ step: guardDelta.step, outcome: guardDelta.outcome });
+    run = guardResult.run;
+    transitioned = transitioned || guardResult.transitioned;
+  }
+  if (guards.length === 0) return base;
+  return {
+    applied: true,
+    run,
+    transitioned,
+    pendingFinalizers: pendingFinalizerNames(run.finalizer_ledger),
+    guards,
+  };
+}
+
+function applyDelta(
+  fresh: RunRecord,
+  delta: SettlementDelta,
+  definition: WorkflowDefinition,
+  now: Date,
+): SettlementResult {
   switch (delta.kind) {
     case 'settle_step':
       return applySettleStep(fresh, delta, definition, now);

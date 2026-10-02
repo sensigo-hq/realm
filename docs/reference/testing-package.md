@@ -371,7 +371,7 @@ Build a new adapter and store for each case, as above. Several cases delete or d
 | Contract                      | For a store that implements                  | Laws | Cases with Realm's own store        |
 | ----------------------------- | -------------------------------------------- | ---- | ----------------------------------- |
 | `runStoreFidelityContract`    | `RunStore`                                   | 3    | 9, with `InMemoryStore`             |
-| `settlementContract`          | `RunStore` with `settleStep`                 | 52   | 124, with `InMemoryStore`           |
+| `settlementContract`          | `RunStore` with `settleStep`                 | 54   | 134, with `InMemoryStore`           |
 | `perRunArtifactStoreContract` | `PerRunArtifactStore`                        | 6    | 6, with `FailedAttemptStore`        |
 | `fencedTraceBufferContract`   | `TraceBufferStore` with the fenced functions | 11   | 73, with `InMemoryTraceBufferStore` |
 
@@ -416,7 +416,7 @@ The failing case says what to do:
 [Mine] settlementContract: adapter.store declares settleStep, but adapter.settlementFixture is undefined — this is a WIRING GAP in the calling test file, not a store defect. Pass 'defaultSettlementFixture' from this module …
 ```
 
-The 52 laws:
+The 54 laws:
 
 ```text
 FRESH_APPLICATION, CONDITIONAL_NOOP, CONDITIONAL_NOOP_GRANDFATHERED, OWNERSHIP_REFUSAL,
@@ -426,6 +426,7 @@ RESULT_AS_APPLIED, MARK_MEMBERSHIP, REFUSAL_SWEEP, MINT_FRESH, SELF_IMAGE_IDEMPO
 TERMINAL_GATE_EXCLUSION, COMPLETE_SEAL_PHASE, WHEN_ROUTED_TERMINALIZATION, G1_GATE_COEXISTENCE,
 GATE_OPEN_IDEMPOTENT, GATE_RESOLUTION_CONFLICT, GATE_MISMATCH, GUARD_OUTCOME_DIVERGENCE,
 GUARD_WAITS_ON_OPEN_GATE, GUARD_PASS_COMPLETE_OUTCOME, GUARD_ABORT_CASCADE, GUARD_NO_ENTRY,
+GUARD_CASCADE_ONE_WRITE, GUARD_CASCADE_TOTAL,
 RELEASE_IDEMPOTENT, PHASE_IS_GENERATED, CWFS_FIRES_PER_ARM, CWFS_NEGATIVES,
 SEAL_FRESH_WRITE_REFUSED, SEAL_ORPHAN_REFUSED, SEAL_ERASE_REFUSED, SEAL_UNKNOWN_ARM_REFUSED,
 STAMP_PRESERVES_UPDATED_AT, STAMP_BUMPS_VERSION_ONCE, STAMP_REFUSES_ON_VERSION_MOVE,
@@ -434,7 +435,7 @@ SEAL_REWRITE_REFUSED, CWFS_SECOND_EPOCH, CWFS_ARRAY_ONCE, CURRENT_BEHAVIOR_PINNE
 EXPIRE_ARM_MATRIX, EXPIRE_ABORT_CASCADE, EXPIRE_DEFAULT_RESOLVE, ADAPTER_WIRING
 ```
 
-Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, 51 of the laws have cases. `ADAPTER_WIRING` has one only when the adapter is incomplete.
+Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, 53 of the laws have cases. `ADAPTER_WIRING` has one only when the adapter is incomplete.
 
 `defaultSettlementFixture` has 3 functions: `minimalDefinition(stepNames)`, `withFinalizer(definition, name, onOutcome)` and `withGuard(definition, name, abortUnless, options?)`.
 

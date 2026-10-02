@@ -141,8 +141,12 @@ export interface SettleGuardDelta {
   outcome: 'pass' | 'resolution_error' | 'abort';
   evidence: EvidenceSnapshot;
   /** REQUIRED iff `outcome === 'resolution_error'` — feeds the terminal_reason string minted at
-   *  execution-loop.ts:3671 ("Guard step '<s>' failed: unresolvable path '<p>'"). */
-  resolutionError?: { condition: string; unresolvable_path: string };
+   *  execution-loop.ts:3671 ("Guard step '<s>' failed: unresolvable path '<p>'").
+   *
+   *  `cause` (issue #625): set ONLY when the guard could not be evaluated at all — its `when` or
+   *  its `abort_unless` threw — so there is no unresolvable path to name. When present, the seal
+   *  sentence reads "Guard step '<s>' failed: <cause>" instead of the path sentence. */
+  resolutionError?: { condition: string; unresolvable_path: string; cause?: string };
   /** REQUIRED iff `outcome === 'abort'` — mirrors `RunRecord.aborted_at`'s shipped shape
    *  (`run-record.ts:426-430`, the `GuardConditionResult` object array — NOT `string[]`; a
    *  record defect in an earlier design draft, corrected at the PR-C prompt audit). `step_id` on
@@ -306,6 +310,11 @@ export type SettlementResult =
        *  re-reads the ledger from the latest settle/lease/mark result directly, never trusting a
        *  cached list across iterations — this field is that first read). */
       pendingFinalizers: readonly string[];
+      /** issue #625: the guards THIS apply settled after its own delta, in the order they were
+       *  settled — present only when `applySettlement` ran with `cascadeGuards` (a store's own
+       *  `settleStep`) and at least one guard was eligible after the delta. Absent when none.
+       *  `run`, `transitioned` and `pendingFinalizers` describe the record AFTER these guards. */
+      guards?: ReadonlyArray<{ step: string; outcome: 'pass' | 'abort' | 'resolution_error' }>;
     }
   | {
       applied: false;

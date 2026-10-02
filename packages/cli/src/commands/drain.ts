@@ -15,7 +15,14 @@ import type {
   CaptureEvidenceParams,
   SettlementResult,
 } from '@sensigo/realm';
-import { WorkflowError, applySettlement, deriveRunPhase, getWorkflowForRun } from '@sensigo/realm';
+import {
+  WorkflowError,
+  applySettlement,
+  deriveRunPhase,
+  getWorkflowForRun,
+  describeGuardLines,
+  guardEndingOf,
+} from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 
 /**
@@ -89,7 +96,7 @@ async function enactGateExpiry(
   definition: WorkflowDefinition,
   run: RunRecord,
   now: Date,
-): Promise<{ run: RunRecord; applied: boolean }> {
+): Promise<{ run: RunRecord; applied: boolean; guardLines: string[] }> {
   const gateId = run.pending_gate!.gate_id;
   const delta = { kind: 'expire_gate' as const, gateId };
   let outcome: SettlementResult;
@@ -97,11 +104,62 @@ async function enactGateExpiry(
     outcome = await runStore.settleStep(run.id, delta, definition, { now });
   } else {
     const pure = applySettlement(run, delta, definition, { now });
-    if (!pure.applied) return { run: pure.run, applied: false };
+    if (!pure.applied) return { run: pure.run, applied: false, guardLines: [] };
     const persisted = await runStore.update(pure.run);
     outcome = { ...pure, run: persisted };
   }
-  return { run: outcome.run, applied: outcome.applied };
+  // issue #625: on a store that declares `settleStep` the expiry's write also settled the guards
+  // its default made eligible — the ending sentence and its `Reason:` when one ended the run,
+  // otherwise a passed line per guard. The legacy branch above never sets the option (a store
+  // without `settleStep` settles no guard in this write), so it reports none.
+  return { run: outcome.run, applied: outcome.applied, guardLines: describeGuardLines(outcome) };
+}
+
+/** issue #625: what an expired gate's frozen disposition enacts, naming the choice a
+ *  `settle_default` settles — `settle_default 'reject'` / `abort`. */
+function describeEnactment(run: RunRecord, disposition: 'settle_default' | 'abort'): string {
+  const choice = run.pending_gate?.default_choice;
+  return disposition === 'settle_default' && choice !== undefined
+    ? `settle_default '${choice}'`
+    : disposition;
+}
+
+/**
+ * issue #625: what `--force` would do to this run's guards, one clause per guard — PREDICTED by
+ * running the same pure transform the store's `settleStep` runs, and never persisted (the record
+ * and its version are untouched). Empty when the expiry would settle no guard, when the store
+ * declares no `settleStep` (there `--force` settles no guard, so none is predicted), or when the
+ * prediction cannot be made.
+ */
+function predictExpiryGuards(
+  runStore: RunStore,
+  definition: WorkflowDefinition,
+  run: RunRecord,
+  now: Date,
+): string[] {
+  if (runStore.settleStep === undefined || run.pending_gate === undefined) return [];
+  let predicted: SettlementResult;
+  try {
+    predicted = applySettlement(
+      run,
+      { kind: 'expire_gate', gateId: run.pending_gate.gate_id },
+      definition,
+      { now, cascadeGuards: true },
+    );
+  } catch {
+    return [];
+  }
+  if (!predicted.applied || predicted.guards === undefined) return [];
+  const ending = guardEndingOf(predicted);
+  return predicted.guards.map((g) => {
+    if (ending === undefined || g.step !== ending.step) return `guard '${g.step}' would pass`;
+    const reason = ending.reason !== undefined ? ` (${ending.reason})` : '';
+    return ending.outcome === 'abort'
+      ? `guard '${g.step}' would then abort the run${reason}`
+      : ending.outcome === 'resolution_error'
+        ? `guard '${g.step}' would then fail the run${reason}`
+        : `guard '${g.step}' would pass and complete the run`;
+  });
 }
 
 // issue #279 (increment 1, PR-B): NO top-level VALUE import from `@sensigo/realm` in THIS file —
@@ -215,13 +273,19 @@ function renderGateExpiryDryRun(
   run: RunRecord,
   now: Date,
   expiredFlag: boolean,
+  predictedGuards: readonly string[] = [],
 ): boolean {
   if (!expiredFlag) return false;
   const cls = classifyGateExpiry(run, now);
   if (cls.kind === 'enactable') {
     const overdue = formatOverdueDuration(cls.overdueMs);
+    // issue #625: the line names the choice a `settle_default` would settle, then what the
+    // guards that choice unlocks would do — one clause per guard.
     console.log(
-      `Run '${runId}': gate expired ${overdue} ago — would enact ${cls.disposition} on --force.`,
+      `Run '${runId}': gate expired ${overdue} ago — would enact ` +
+        describeEnactment(run, cls.disposition) +
+        predictedGuards.map((clause) => `; ${clause}`).join('') +
+        ' on --force.',
     );
     return true;
   }
@@ -241,8 +305,9 @@ function renderDryRun(
   now: Date,
   expiredFlag = false,
   declared?: ReadonlySet<string>,
+  predictedGuards: readonly string[] = [],
 ): void {
-  const gateReported = renderGateExpiryDryRun(runId, run, now, expiredFlag);
+  const gateReported = renderGateExpiryDryRun(runId, run, now, expiredFlag, predictedGuards);
   if (!run.terminal_state) {
     if (!gateReported) {
       console.log(
@@ -525,13 +590,20 @@ export async function runDrainAction(
           verb: 'drain',
           terminalOk: true,
         });
-        const { run: enactedRun, applied } = await enactGateExpiry(runStore, workflow, r, now);
+        const {
+          run: enactedRun,
+          applied,
+          guardLines,
+        } = await enactGateExpiry(runStore, workflow, r, now);
         if (!applied) {
           console.log(`  • ${r.id}: gate expiry already resolved (race) — skipped`);
           continue;
         }
         drained += 1;
         console.log(`  ✓ ${r.id}: gate enacted`);
+        // issue #625: what the guards the expiry unlocked did — a run a guard ended is never
+        // reported as "gate enacted" alone.
+        for (const line of guardLines) console.log(`    ${line}`);
         if (enactedRun.terminal_state && isBatchActionable(enactedRun, now)) {
           // issue #466 — the resolve call alone, in place: the enactment above already ran and
           // stays counted (`drained` already incremented, `✓ gate enacted` already printed) — a
@@ -588,7 +660,23 @@ export async function runDrainAction(
           );
         }
       }
-      renderDryRun(runId, run, now, opts.expired === true, declared);
+      // issue #625: an expired, enactable gate — say what `--force` would do to the guards its
+      // disposition unlocks. A JSON read of the registered copy plus the pure transform; nothing
+      // is written. When the copy cannot be read, nothing is added to the line.
+      let predictedGuards: string[] = [];
+      if (hasEnactableGate) {
+        try {
+          const workflowForGate = await getWorkflowForRun(workflowStore, run, {
+            retryVerb: 'drain again',
+            verb: 'drain',
+            terminalOk: true,
+          });
+          predictedGuards = predictExpiryGuards(runStore, workflowForGate, run, now);
+        } catch (err) {
+          if (!(err instanceof WorkflowError)) throw err;
+        }
+      }
+      renderDryRun(runId, run, now, opts.expired === true, declared, predictedGuards);
       return;
     }
 
@@ -611,16 +699,19 @@ export async function runDrainAction(
         verb: 'drain',
         terminalOk: true,
       });
-      const { run: enactedRun, applied } = await enactGateExpiry(
-        runStore,
-        workflowForGate,
-        run,
-        now,
-      );
+      const {
+        run: enactedRun,
+        applied,
+        guardLines,
+      } = await enactGateExpiry(runStore, workflowForGate, run, now);
       if (applied) {
         console.log(
-          `✓ gate enacted (${gateClass.kind === 'enactable' ? gateClass.disposition : ''}).`,
+          `✓ gate enacted (${gateClass.kind === 'enactable' ? describeEnactment(run, gateClass.disposition) : ''}).`,
         );
+        // issue #625: the guards the expiry unlocked, right after the enactment line — the
+        // ending sentence and its `Reason:` when one of them ended the run, otherwise a passed
+        // line per guard.
+        for (const line of guardLines) console.log(line);
         workingRun = enactedRun;
       } else {
         console.log(`• gate expiry already resolved (race) — skipped.`);

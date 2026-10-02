@@ -77,6 +77,9 @@ const LAWS: SettlementLaw[] = [
   'STAMP_IDEMPOTENT',
   'STAMP_CLASSIFIED_ROUNDTRIP',
   'SEAL_REWRITE_REFUSED',
+  // issue #625 — a store that declares settleStep settles guards in the same write.
+  'GUARD_CASCADE_ONE_WRITE',
+  'GUARD_CASCADE_TOTAL',
 ];
 
 describe('JsonFileStore — settlement TCK conformance (issue #279, increment 1 + 2)', () => {

@@ -122,7 +122,7 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
     // These kinds carry no --stuck label, and issue #406 settled why for each — this is a
     // decision, not a status quo. `never_claimed_idle` IS the listing reason itself; the
     // threshold header already says it, and a per-step label would restate the line.
-    // `resolved_gate_with_eligible_guard` AND `trust_value_invalid` (issue #508) cannot reach
+    // `guard_awaiting_settlement` AND `trust_value_invalid` (issue #508) cannot reach
     // this surface at all: both producers require a workflow definition and `list` classifies
     // definition-free, so a label for either would be dead code.
     // `completed_with_failed_steps` and `structured_output_downgraded` are EXCLUDED from --stuck
@@ -130,7 +130,7 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
     // some other finding, which renders its own label, so a label here would never be the reason
     // a reader is looking at the line.
     case 'never_claimed_idle':
-    case 'resolved_gate_with_eligible_guard':
+    case 'guard_awaiting_settlement':
     case 'completed_with_failed_steps':
     case 'structured_output_downgraded':
     case 'trust_value_invalid':

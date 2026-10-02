@@ -126,7 +126,11 @@ See [Gates](gates.md).
 | `abort_unless`  | condition, or list of conditions | Required on a guard | The run is aborted if any condition is false.       |
 | `abort_message` | string                           | None                | The message recorded when the guard aborts the run. |
 
-A guard runs by itself when the steps it depends on are settled. If a condition refers to a value that does not exist, the run fails, and is not recorded as aborted.
+A guard is never called. It is decided inside the write that makes it ready: a step that finishes, an answer to a gate, or a gate whose time runs out. The reply to that call says what the guard did. See [The reply](../mcp/tools.md#the-reply).
+
+A guard that is already ready when a run is created or resumed is not decided by that act. It is decided by the run's next such write. A workflow whose only first step is a guard has no such write, so that guard is never decided. The run then carries the finding [`guard_awaiting_settlement`](../mcp/run-state-and-health.md#the-14-findings).
+
+If a condition refers to a value that does not exist, the run fails, and is not recorded as aborted. The same holds for a guard whose `when` or `abort_unless` cannot be evaluated at all: the guard is recorded as failed, and the write that made it ready still succeeds.
 
 ## Finalizers
 

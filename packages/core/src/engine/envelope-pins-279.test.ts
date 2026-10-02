@@ -1,7 +1,8 @@
 // envelope-pins-279.test.ts — D-4 typed envelope pins (issue #279, increment 2, PR-D, Deliverable
 // 5): the run_terminal cancelled/zombie discriminator, gate_choice_conflict + winning_choice,
 // already_open's LIVE-gate render, the N1 neutral-wording arm, capability-block refusal
-// degradation, the convergence hint, respondedBy, and evaluatedAtVersion. A mix of real-engine-flow
+// degradation, the answer reply's `guards` (issue #625 — it replaces the convergence hint),
+// respondedBy, and evaluatedAtVersion. A mix of real-engine-flow
 // tests (where the scenario is genuinely reachable) and forced-result store doubles (where D-1/N1's
 // own defensive arms are documented as in-contract UNREACHABLE — the ENVELOPE TEXT LOGIC is still
 // unit-testable this way, per the same technique used by guard-chain-consumption-279.test.ts).
@@ -10,7 +11,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
-import { executeStep, executeChain, submitHumanResponse } from './execution-loop.js';
+import { executeStep, submitHumanResponse, advanceRun } from './execution-loop.js';
+import { captureEvidence } from '../evidence/snapshot.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -396,8 +398,11 @@ describe('capability-block refusal degradation (issue #279, increment 2, PR-D, D
   });
 });
 
-describe('the convergence hint (issue #279, increment 2, PR-D, design record D-2 N8 narrowing)', () => {
-  it('present: a committed RESOLVE that makes a guard eligible appends "guard <name> now eligible" to the success envelope', async () => {
+// issue #625: #279's "guard now eligible — converges at the next drive" advisory is DELETED with
+// the state it described. An answer's own write settles the guard it makes eligible, so the reply
+// lists that guard in `guards` instead of promising that some later call will decide it.
+describe('an answer settles the guard it makes eligible — the #279 convergence hint is gone (issue #625)', () => {
+  it("the answer's reply lists the guard its write settled in `guards`, and carries no convergence hint", async () => {
     const def: WorkflowDefinition = {
       id: 'convergence-hint-present-wf',
       name: 'Convergence hint present',
@@ -434,11 +439,16 @@ describe('the convergence hint (issue #279, increment 2, PR-D, design record D-2
         choice: 'approve',
       });
       expect(result.status).toBe('ok');
-      expect(
-        result.warnings.some(
-          (w) => w.includes("guard 'guard_after' now eligible") && w.includes('converges'),
-        ),
-      ).toBe(true);
+      // (a) red when the answer's write stops settling the guard (the store no longer passes
+      //     `cascadeGuards`), or the reply rule stops adding `guards`; (b) prints the reply's
+      //     `guards` value.
+      expect(result.guards).toEqual([{ step: 'guard_after', outcome: 'pass' }]);
+      // (a) red when the removed advisory comes back; (b) prints the reply's warnings.
+      expect(result.warnings.filter((w) => w.includes('converges'))).toEqual([]);
+      // The guard is settled on the record the answer's write produced — nothing is left eligible.
+      // (a) red when the guard is still unsettled after the answer; (b) prints the step lists.
+      const afterAnswer = await store.get(run.id);
+      expect(afterAnswer.completed_steps).toEqual(['gate_step', 'guard_after']);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -603,27 +613,43 @@ describe("evaluatedAtVersion — the chain's own evaluation snapshot (issue #279
         (fresh) => ({ applied: true, run: fresh, transitioned: false, pendingFinalizers: [] }),
       );
 
-      const preGuardRun = await inner.get(run.id); // before step_a settles — just to prove intent
-      expect(preGuardRun.version).toBeDefined();
+      // issue #625 (re-homed): on a store that declares `settleStep`, the named step's own write
+      // settles every guard it makes eligible, so `executeChain` never issues a `settle_guard` of
+      // its own and this stamp can no longer be observed through it. The chain's guard loop —
+      // moved into `advanceRun` — still issues one on a record that some OTHER write left with an
+      // eligible guard. `store.update` is such a write: one completed step and its evidence entry.
+      const leftover = await inner.update({
+        ...run,
+        completed_steps: ['step_a'],
+        evidence: [
+          captureEvidence({
+            stepId: 'step_a',
+            startedAt: new Date(),
+            completedAt: new Date(),
+            input: {},
+            output: { status: 'open' },
+          }),
+        ],
+      });
 
-      await executeChain(store, def, {
+      await advanceRun(store, def, {
         runId: run.id,
         command: 'step_a',
         input: {},
         dispatcher: async () => ({ status: 'open' }),
       });
 
+      // (a) red when `advanceRun`'s guard loop stops issuing a settle_guard for an eligible guard
+      //     (the loop is not reached, or the record was not left with one); (b) prints the kind.
       expect(capturedDelta?.kind).toBe('settle_guard');
-      const runAfterStepA = await inner.get(run.id).catch(() => undefined);
-      // The captured delta's evaluatedAtVersion is the run version AT THE MOMENT the guard chain
-      // evaluated it — i.e., immediately after step_a's own settle committed (version bumped once),
-      // strictly BEFORE the guard's own settle (which would bump it again).
-      expect((capturedDelta as { evaluatedAtVersion?: number }).evaluatedAtVersion).toBeDefined();
-      if (runAfterStepA !== undefined) {
-        expect(
-          (capturedDelta as { evaluatedAtVersion?: number }).evaluatedAtVersion,
-        ).toBeLessThanOrEqual(runAfterStepA.version);
-      }
+      // The captured delta's evaluatedAtVersion is the version of the record the guard's
+      // conditions were evaluated AGAINST — the leftover record's own version, strictly before the
+      // guard's own settle bumps it. (On main this could only be bounded from above; here the
+      // record the loop read is known exactly.)
+      // (a) red when the stamp is dropped or taken from another record; (b) prints the two versions.
+      expect((capturedDelta as { evaluatedAtVersion?: number }).evaluatedAtVersion).toBe(
+        leftover.version,
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
