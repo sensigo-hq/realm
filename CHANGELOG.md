@@ -200,6 +200,16 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   which a fresh operator walk read as the step's WHOLE cost. There is deliberately no total across a
   step's attempts (a token sum over a cold write, a warm read and a retry answers no question
   without a price; that is issue #600 PR 2's job). (Issue #600 PR 1b.)
+- **BREAKING —** **Realm's packages require each other at exactly the same version.**
+  `@sensigo/realm-cli`, `@sensigo/realm-mcp` and `@sensigo/realm-testing` now depend on the other
+  realm packages at exactly their own version (it was `^` of it), so npm never combines realm
+  packages from different releases. Install every realm package your project uses at one version,
+  for example `npm install @sensigo/realm@<v> @sensigo/realm-cli@<v> --save-exact`. A project whose
+  own `@sensigo/realm` is newer than the version a realm package requires now gets a separate copy
+  instead of sharing its own. (Issue #620.)
+- **Between releases, realm's source reports a development version** (the next patch with
+  `-dev.0`). Only published packages carry a release version. A project that runs realm from its
+  source, for example through `file:` dependencies, sees the development version. (Issue #620.)
 
 - **BREAKING —** **A guard step is settled by the write that makes it eligible (issue #625).** The
   fix below changes nine things a consumer can see:

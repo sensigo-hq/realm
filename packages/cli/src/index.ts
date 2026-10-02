@@ -4,10 +4,11 @@ import 'dotenv/config';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { workflowCommands, runCommands, topLevelCommands } from './commands-registry.js';
+import { VERSION } from './version.js';
 
 const program = new Command();
 
-program.name('realm').description('Realm workflow engine CLI').version('0.45.0');
+program.name('realm').description('Realm workflow engine CLI').version(VERSION);
 
 // realm workflow — operations on workflow definitions
 const workflowCmd = new Command('workflow').description('Manage workflow definitions');
