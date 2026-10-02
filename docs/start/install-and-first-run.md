@@ -51,10 +51,11 @@ Next: realm workflow validate ./my-first/
 
 Notice `workflow.yaml`. It is the only file this page uses. It describes two steps:
 
+<!-- prettier-ignore -->
 ```yaml
 steps:
   step_one:
-    description: 'First step — replace with your own'
+    description: "First step — replace with your own"
     execution: agent
     input_schema:
       type: object
@@ -65,7 +66,7 @@ steps:
           type: string
 
   step_two:
-    description: 'Second step'
+    description: "Second step"
     execution: auto
     depends_on: [step_one]
 ```

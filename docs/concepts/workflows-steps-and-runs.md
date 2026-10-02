@@ -6,14 +6,15 @@ Realm has four things you will meet in every command: the workflow file, the reg
 
 A workflow is a YAML file, usually named `workflow.yaml`. It has an `id`, a `name`, a `version`, and a list of steps:
 
+<!-- prettier-ignore -->
 ```yaml
 id: my-first
-name: 'my-first'
+name: "my-first"
 version: 1
 
 steps:
   step_one:
-    description: 'First step — replace with your own'
+    description: "First step — replace with your own"
     execution: agent
     input_schema:
       type: object
@@ -24,7 +25,7 @@ steps:
           type: string
 
   step_two:
-    description: 'Second step'
+    description: "Second step"
     execution: auto
     depends_on: [step_one]
 ```
