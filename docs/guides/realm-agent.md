@@ -115,6 +115,8 @@ Drive failures:
     usage: 3 requests billed before the output was rejected — 1236 prompt tokens (totals across 3 requests), 114 output tokens (totals across 3 requests), cache not reported
 ```
 
+The `usage` line was added after version 0.45.0. That version prints the line above it and nothing about cost.
+
 ## Pick up a run that stopped
 
 To continue a run, name it with `--run-id`, without `--workflow`:
@@ -139,6 +141,8 @@ Run complete: 0bd6b09c-fb00-4826-afd1-a721e57e63fa
 The run carries on from where it was. Steps that already completed are not run again.
 
 ## What a run costs
+
+The measured figures in this section were added after version 0.45.0. On 0.45.0 the line reads `Diagnostics: ~23 tokens | no preconditions`.
 
 `realm run inspect` shows, for each step the model answered, how many tokens the provider counted:
 

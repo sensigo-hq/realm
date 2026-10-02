@@ -113,7 +113,7 @@ A step with a gate has two entries: one for the step's run, and one with `kind: 
 | `validation_rejections` | number  | No           | How many of the step's answers had been refused when this entry was written.                                                           |
 | `settled_by_default`    | boolean | No           | `true` if the step was given its default output.                                                                                       |
 | `structured_output`     | object  | No           | Whether strict structured output was asked for and sent. See [Agent-step controls](workflow/agent-step-controls.md#structured_output). |
-| `cache`                 | object  | No           | What the model's provider reported about the prompt cache: `state`, `basis` and `requests`.                                            |
+| `cache`                 | object  | No           | What the model's provider reported about the prompt cache: `state`, `basis` and `requests`. Added after version 0.45.0.                |
 
 `cache.state` is `engaged`, `never_engaged`, `write_only`, `partially_observed` or `unobservable`. `cache.basis` is `provider_reported` or `unobservable`. Each of `cache.requests` has `request_index` and `request_start`, and the counts the provider reported: `prompt_tokens`, `uncached_input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cache_write_tokens`, `output_tokens`, `cache_creation`.
 
@@ -217,7 +217,7 @@ A record written before version 0.39.0 has no `sealed_by`.
 | `attempts_sdk`                                    | No           | How many times the provider's client tried.                                                                                  |
 | `declared_per_attempt_ms`, `derived_ceiling_ms`   | No           | The time limits that applied.                                                                                                |
 | `last_observed_status`, `retry_after_observed_ms` | No           | The last HTTP status and wait the provider gave.                                                                             |
-| `usage`                                           | No           | The tokens billed before the failure.                                                                                        |
+| `usage`                                           | No           | The tokens billed before the failure. Added after version 0.45.0.                                                            |
 
 ## The export bundle
 

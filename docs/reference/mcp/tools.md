@@ -305,10 +305,10 @@ A step with a gate:
 
 ## `get_run_state`
 
-| Parameter       | Type    | Required | Holds                                                    |
-| --------------- | ------- | -------- | -------------------------------------------------------- |
-| `run_id`        | text    | Yes      | The run.                                                 |
-| `include_steps` | boolean | No       | Adds each step's attempts and what the model calls cost. |
+| Parameter       | Type    | Required | Holds                                                                                |
+| --------------- | ------- | -------- | ------------------------------------------------------------------------------------ |
+| `run_id`        | text    | Yes      | The run.                                                                             |
+| `include_steps` | boolean | No       | Adds each step's attempts and what the model calls cost. Added after version 0.45.0. |
 
 The reply has its own shape. See [Run state and health findings](run-state-and-health.md).
 

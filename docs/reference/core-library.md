@@ -263,7 +263,7 @@ Two rules hold for every store that deletes:
 - A thing that is not there counts as deleted. A thing that cannot be reached must make the call fail. `realm run purge` reports a run as removed only because every store said so.
 - `statAllForRun` must report the same number of bytes that `deleteAllForRun` then reports for an unchanged run.
 
-The 3 fenced functions of a trace buffer take a condition on the run, and must check it and write as one atomic act. A store that has one of them must have all 3.
+The 3 fenced functions of a trace buffer take a condition on the run, and must check it and write as one atomic act. In version 0.45.0 they take a function that checks the run instead. A store that has one of them must have all 3.
 
 ## Check a store
 

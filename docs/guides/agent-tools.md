@@ -132,9 +132,17 @@ A call that fails is recorded too, with its error, and the model is told about t
        [notes:list_directory]  7ms  error: ENOENT: no such file or directory, scandir '[REDACTED]/notes/notes'
 ```
 
-Realm replaces any text that equals the value of an environment variable with `[REDACTED]`, in what it records and in what it shows the model, so that a secret held in a variable does not end up in either. Here it replaced the path of the working folder.
+`realm agent` replaces the values of its environment variables with `[REDACTED]` in tool results and in error messages, in what it records and in what it shows the model. Here it replaced the path of the working folder.
 
-The record does not yet include what the model's requests cost for a step that uses tools. `realm run inspect` says so on the step's `cost` line.
+This does not catch everything, so do not rely on it to keep a secret out of a record. It leaves alone:
+
+- a value of four characters or fewer;
+- the word `false`, and a version number such as `11.8.0`;
+- the values of three variables that npm sets: `npm_package_name`, `npm_package_version` and `npm_lifecycle_event`;
+- the rest of a path under your home folder: only the home folder's part is replaced;
+- the model's own answers, and the arguments of its tool calls. Neither is checked.
+
+The record does not yet include what the model's requests cost for a step that uses tools. `realm run inspect` says so on the step's `cost` line. That line was added after version 0.45.0.
 
 ## See Realm hold the limits
 

@@ -6,6 +6,8 @@
 npm install --save-dev @sensigo/realm-testing
 ```
 
+This page describes the package on the `main` branch. Version 0.45.0 exports 23 values: `createFenceRunSource` and `fenceTestRun` were added after it, and the adapter that `fencedTraceBufferContract` takes changed with them (`fenceRuns` and `fenceRunPark` are new, and `fenceForm` has other values).
+
 Nothing in the package depends on a test framework. A function that checks something throws an `Error` when the check fails, which any framework reports as a failed test.
 
 To test a workflow from the command line, with no test file, see [Test a workflow](../guides/test-a-workflow.md).

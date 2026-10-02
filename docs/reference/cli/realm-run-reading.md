@@ -90,6 +90,8 @@ realm run inspect <run-id> [--verbose] [--check-drift]
 
 Prints the run's record: where it stands, then one entry for each step that ran.
 
+The outputs in this section are from the `main` branch. Version 0.45.0 prints the `Diagnostics` line as `~10 tokens | no preconditions`: it has no `(estimate, step input)`, no measured token figures and no cache part. It also prints no `cost` line, and no `usage` line under a drive failure.
+
 | Flag            | What it does                                                                                              |
 | --------------- | --------------------------------------------------------------------------------------------------------- |
 | `--verbose`     | Under each tool call, also prints the arguments it was given and what it returned.                        |

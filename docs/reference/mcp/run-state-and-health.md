@@ -137,6 +137,8 @@ When more than one applies, `awaiting_human` comes first, then `blocked_on_capab
 
 ## `include_steps`
 
+`include_steps`, and the `steps` and `drive_failure_costs` fields it adds, were added after version 0.45.0. So was the record of what a failed drive was billed.
+
 With `include_steps: true`, the reply has a `steps` object with one entry for each step that ran:
 
 ```json

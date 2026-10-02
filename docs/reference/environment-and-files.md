@@ -24,7 +24,7 @@ Realm reads other variables by names that you give it:
 | `${secret:NAME}` in `realm.yaml`, when `secrets.sources` has `env`                                      | Every command that runs steps | The secret's value. See [Deployment manifest](deployment-manifest.md#secrets). |
 | `'${NAME}'` in the `env` of an agent profile's [tool server](workflow/services-profiles-and-context.md) | `realm agent`                 | A value handed to the tool server it starts.                                   |
 
-`realm agent` also reads the value of every variable, so that it can replace those values with `[REDACTED]` in what it records and in what it shows the model.
+`realm agent` also reads the values of the variables in its environment, so that it can replace them with `[REDACTED]` in tool results and error messages. It leaves some values alone: see [Give an agent step tools](../guides/agent-tools.md#4-read-what-was-recorded).
 
 Three more are read by libraries that Realm uses, and change what Realm does:
 

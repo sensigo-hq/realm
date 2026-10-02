@@ -1,6 +1,6 @@
 # Realm documentation
 
-Realm is a workflow engine that an AI agent calls. These pages describe Realm as it is on the `main` branch. Every command and output in them came from a run.
+Realm is a workflow engine that an AI agent calls. These pages describe Realm as it is on the `main` branch. Where a page shows something that the published version, 0.45.0, does not have yet, the page says so. Every command and output in them came from a run.
 
 ## Start here
 

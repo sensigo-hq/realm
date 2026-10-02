@@ -202,6 +202,7 @@ realm run inspect 6824dacc-5f25-4a6e-a152-3dee7c88ea97
 It prints the following. Some lines are left out here and marked `…`.
 
 ```text
+…
 Phase: completed  ✓
 …
 Completed: outline, write, publish
