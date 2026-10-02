@@ -23,6 +23,7 @@ import {
   rmSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { hostname } from 'node:os';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
   makeTempDir,
@@ -113,6 +114,7 @@ if (env.BUILD_STAGE_EDIT) {
 }
 if (env.BUILD_LOCK_EDIT) editJson('package-lock.json', (o) => { o['x-edited-during-the-build'] = true; });
 if (env.BUILD_EDIT_OTHER) editJson('packages/engine-tests/package.json', (o) => { o.dependencies = { '@q/core': '*' }; });
+if (env.BUILD_NPM_INSTALL) execFileSync('npm', ['install', '--package-lock-only', '--ignore-scripts'], { stdio: 'ignore' });
 if (env.BUILD_CHMOD) fs.chmodSync('packages/core/package.json', 0o755);
 if (env.BUILD_LINK) {
   for (const file of env.BUILD_LINK.split(',')) {
@@ -124,9 +126,22 @@ if (env.BUILD_LINK) {
 }
 if (env.BUILD_COMMIT) execFileSync('git', ['commit', '-q', '--allow-empty', '-m', env.BUILD_COMMIT]);
 if (env.BUILD_COMMIT_ALL) execFileSync('git', ['commit', '-q', '-am', env.BUILD_COMMIT_ALL]);
+if (env.BUILD_UNLOCK) execFileSync('git', ['update-ref', '-d', 'refs/realm/release-lock']);
+if (env.BUILD_SWITCH) execFileSync('git', ['switch', '-q', '-c', env.BUILD_SWITCH]);
+if (env.BUILD_DETACH) execFileSync('git', ['checkout', '-q', '--detach']);
+if (env.BUILD_DELETE_BRANCH) execFileSync('git', ['branch', '-q', '-D', env.BUILD_DELETE_BRANCH]);
+if (env.BUILD_RM_JOURNAL) {
+  const gitDir = execFileSync('git', ['rev-parse', '--git-dir'], { encoding: 'utf8' }).trim();
+  fs.unlinkSync(path.join(gitDir, 'realm-release.json'));
+}
 if (env.BUILD_FAIL) process.exit(Number(env.BUILD_FAIL));
 if (env.BUILD_MARKER) fs.writeFileSync(env.BUILD_MARKER, String(process.pid));
-setTimeout(() => process.exit(0), Number(env.BUILD_MS || 0));
+if (env.BUILD_WAIT) {
+  const wait = () => (fs.existsSync(env.BUILD_WAIT) ? process.exit(0) : setTimeout(wait, 20));
+  wait();
+} else {
+  setTimeout(() => process.exit(0), Number(env.BUILD_MS || 0));
+}
 `;
 
 /** `npm install --package-lock-only` writes the fixture's lockfile. This machine's npm sometimes
@@ -236,14 +251,16 @@ function buildFixture(prefix, { version = '0.45.0', withOrigin = true } = {}) {
     tryGit: (...a) => tryGit(root, env, ...a),
     short: (rev) => git(root, env, 'rev-parse', '--short', rev),
     /** `--version <v>` with the registry fixture; `extra` is layered onto the environment. */
-    version: (v = '0.46.0', extra = {}) =>
+    version: (v = '0.46.0', extra = {}, opts = {}) =>
       releaseSync(
         root,
         env,
         ['--root', root, '--version', v, '--registry-fixture', registry],
         extra,
+        opts,
       ),
-    resume: (extra = {}) => releaseSync(root, env, ['--root', root, '--resume'], extra),
+    resume: (extra = {}, opts = {}) =>
+      releaseSync(root, env, ['--root', root, '--resume'], extra, opts),
     cleanup: () => cleanup(root, home, origin),
   };
   return fx;
@@ -301,8 +318,27 @@ function makeRegistryFixture(home, overrides = {}) {
   return p;
 }
 
-function releaseSync(root, env, args, extra = {}) {
-  return runNode(scriptPath('release.mjs'), args, { cwd: root, env: { ...env, ...extra } });
+const LOCK_REF = 'refs/realm/release-lock';
+/** The id the release lock's ref holds in `root`, or null. */
+function lockIdAt(root, env) {
+  return tryGit(root, env, 'rev-parse', '-q', '--verify', LOCK_REF);
+}
+/**
+ * Every run that goes to its own end leaves the lock as it found it: a run that takes the lock
+ * gives it back, and a run refused at a held lock reads it and writes nothing. `lockCheck: false`
+ * for the cells that change the lock while the run is going on (RL77 leg 10).
+ */
+function releaseSync(root, env, args, extra = {}, { lockCheck = true } = {}) {
+  const before = lockIdAt(root, env);
+  const r = runNode(scriptPath('release.mjs'), args, { cwd: root, env: { ...env, ...extra } });
+  if (lockCheck) {
+    assert.equal(
+      lockIdAt(root, env),
+      before,
+      `the lock after the run is not what it was before it\nstdout: ${r.stdout}\nstderr: ${r.stderr}`,
+    );
+  }
+  return r;
 }
 
 function cleanup(...dirs) {
@@ -434,6 +470,7 @@ function spawnReleaseDetached(root, env, args, envOverrides = {}) {
   const errFile = join(root, '..', `err-${process.pid}-${Date.now()}-${Math.random()}.log`);
   const outFd = openSync(outFile, 'w');
   const errFd = openSync(errFile, 'w');
+  const lockBefore = lockIdAt(root, env);
   const child = spawn('node', [scriptPath('release.mjs'), ...args], {
     cwd: root,
     env: { ...env, ...envOverrides },
@@ -452,12 +489,21 @@ function spawnReleaseDetached(root, env, args, envOverrides = {}) {
     child,
     outFile,
     errFile,
-    async waitExit(timeoutMs = 60000) {
+    /** Wait for the release to exit. Unless it was killed with SIGKILL (which leaves its lock) or
+     * `lockCheck` is false, the lock is then what it was when the release started. */
+    async waitExit(timeoutMs = 60000, { lockCheck = true } = {}) {
       const start = Date.now();
       while (!exited) {
         if (Date.now() - start > timeoutMs)
           throw new Error('timed out waiting for release.mjs to exit');
         await new Promise((r) => setTimeout(r, 20));
+      }
+      if (lockCheck && exitSignal !== 'SIGKILL') {
+        assert.equal(
+          lockIdAt(root, env),
+          lockBefore,
+          'the lock after the detached run is not what it was when it started',
+        );
       }
       return { code: exitCode, signal: exitSignal };
     },
@@ -515,7 +561,7 @@ function writeJournal(fx, overrides = {}) {
 
 /** RL11's steps: start `--version 0.46.0` detached with a 4 s build (and the build's variables in
  * `extra`), SIGKILL the release process once the build's marker exists, and wait for it to exit. */
-async function crashDuringBuild(fx, extra = {}) {
+async function crashDuringBuild(fx, extra = {}, { keepLock = false } = {}) {
   const marker = join(fx.home, 'build-marker');
   const handle = spawnReleaseDetached(
     fx.root,
@@ -529,8 +575,44 @@ async function crashDuringBuild(fx, extra = {}) {
     await handle.waitExit();
   } finally {
     handle.killGroup('SIGKILL');
+    killBuildGroup(marker);
     cleanupSignalFiles(handle);
   }
+  if (!keepLock) deleteKilledLock(fx, handle.child.pid);
+  return handle.child.pid;
+}
+
+/** C11: the build runs in a process group of its own, so killing the release's group no longer
+ * reaches it. SIGKILL the build's group, found from the pid its marker holds. */
+function killBuildGroup(marker) {
+  let pid;
+  try {
+    pid = Number(readFileSync(marker, 'utf-8'));
+  } catch {
+    return; // no build started
+  }
+  let pgid = null;
+  try {
+    pgid = Number(
+      execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf-8' }).trim(),
+    );
+  } catch {
+    return; // the build is gone
+  }
+  try {
+    process.kill(-pgid, 'SIGKILL');
+  } catch {
+    // already gone
+  }
+}
+
+/** After a SIGKILL: the lock the killed release left names it; delete it by its id, as the gone
+ * text says. */
+function deleteKilledLock(fx, pid) {
+  const id = lockIdAt(fx.root, fx.env);
+  assert.notEqual(id, null, 'a release killed with SIGKILL leaves its lock');
+  assert.equal(JSON.parse(fx.git('cat-file', '-p', id)).pid, pid);
+  fx.git('update-ref', '-d', LOCK_REF, id);
 }
 
 /** A commit-msg hook that refuses the development commit: the release commit and its tag stand
@@ -593,6 +675,7 @@ async function leaveDoneJournal(fx) {
     await handle.waitExit();
     writeFileSync(releaseFile, '');
     await waitForFileGone(join(fx.root, '.git', 'index.lock'));
+    deleteKilledLock(fx, handle.child.pid);
   } finally {
     handle.killGroup('SIGKILL');
     cleanupSignalFiles(handle);
@@ -632,6 +715,7 @@ function makeShimDir(fx, kind) {
     `    staged) cp packages/core/package.json "$HOME/prev-package.json"; printf 'staged meanwhile\\n' >> packages/core/package.json; ${REAL_GIT} add packages/core/package.json; cp "$HOME/prev-package.json" packages/core/package.json ;;`,
     '    link) cp packages/core/src/version.ts "$HOME/outside-version.ts"; rm packages/core/src/version.ts; ln -s "$HOME/outside-version.ts" packages/core/src/version.ts ;;',
     '    link-and-edit) cp packages/core/src/version.ts "$HOME/outside-version.ts"; rm packages/core/src/version.ts; ln -s "$HOME/outside-version.ts" packages/core/src/version.ts; printf \'edited meanwhile\\n\' >> packages/core/package.json ;;',
+    `    switch) ${REAL_GIT} switch -q -c side ;;`,
   ];
   writeFileSync(
     join(dir, 'git'),
@@ -671,7 +755,7 @@ test('RL1 — happy path, 0.45.0 -> 0.46.0', () => {
     const arrowLines = r.stdout.split('\n').filter((l) => l.startsWith('→ '));
     assert.deepEqual(arrowLines, [
       '→ Checking that v0.46.0 can be released: the version files, publish.yml, CHANGELOG.md, and the tags here and on origin',
-      '→ Reading the published versions from the npm registry',
+      '→ Reading the published versions from the npm registry (when it cannot be reached, npm keeps retrying, which can take over a minute)',
       '→ Setting every package to 0.46.0',
       '→ Building',
       '→ Staging the version files',
@@ -1220,7 +1304,7 @@ test('RL16 — a journal whose state is unknown: refused with the cannot-continu
     const r = fx.resume();
     assertRefusal(
       r,
-      `Error: The unfinished v0.99.9 release cannot continue from here: release/test is at ${head} "a commit that changes a file the release sets". It can start again from ${fx.startShort}, where it started: put release/test back there (git reset ${fx.startShort} keeps the current files, with the differences unstaged), then run npm run release -- --resume to put back the files the release changed, and re-run: npm run release -- --version 0.99.9. The reset takes ${head} off release/test; its changes stay in your files, uncommitted.`,
+      `Error: The unfinished v0.99.9 release cannot continue from here: release/test is at ${head} "a commit that changes a file the release sets". It can start again from ${fx.startShort}, where it started: put release/test back there (git reset ${fx.startShort} keeps the current files, with the differences unstaged), then run npm run release -- --resume, which first stops over the changes left in packages/core/package.json and prints what to do with them, and then puts back the files the release changed; then re-run: npm run release -- --version 0.99.9. The reset takes ${head} off release/test; its changes stay in your files, uncommitted.`,
     );
     assertNothingChanged(fx, before);
     assert.equal(existsSync(fx.journalPath), true, 'journal must be left untouched');
@@ -1254,6 +1338,7 @@ async function interruptDuringBuild(prefix, buildEnv, check) {
     check(fx, err);
   } finally {
     handle.killGroup('SIGKILL');
+    killBuildGroup(marker);
     cleanupSignalFiles(handle);
     fx.cleanup();
   }
@@ -1274,7 +1359,7 @@ test('RL9 — SIGTERM to the release process during the build: exit 1; restored;
   await interruptDuringBuild('rl9b', { BUILD_EDIT: 'edited during the build' }, (fx, err) => {
     assert.ok(
       err.includes(
-        `Error: The release of v0.46.0 was interrupted (SIGTERM). Every tracked file it changed is restored, except packages/core/package.json, which also holds a change the release did not make and is left as it is: set the version in it to 0.45.0, and commit or set aside the rest; ${DIST('0.46.0')} To release, re-run: npm run release -- --version 0.46.0`,
+        `Error: The release of v0.46.0 was interrupted (SIGTERM). Every tracked file it changed is restored, except packages/core/package.json, which also holds a change the release did not make and is left as it is: set the version in it back to 0.45.0, the release's only change there, then commit what is left or set it aside (git stash push -- packages/core/package.json): the release's success text names that stash; ${DIST('0.46.0')} To release, re-run: npm run release -- --version 0.46.0`,
       ),
       err.join('\n'),
     );
@@ -1346,7 +1431,7 @@ test('RL11 — SIGKILL during the build: the journal stays; --version refused na
     const versionAttempt = fx.version();
     assertRefusal(
       versionAttempt,
-      'Error: An earlier release of v0.46.0 stopped before its release commit, so nothing is committed. Run npm run release -- --resume to restore the files it changed, then re-run npm run release -- --version 0.46.0.',
+      'Error: An earlier release of v0.46.0 did not finish, and release/test holds no release commit of it. Run npm run release -- --resume to restore the files it changed, then re-run npm run release -- --version 0.46.0.',
     );
 
     // the branch is gone: --resume names where to recreate it
@@ -1365,7 +1450,7 @@ test('RL11 — SIGKILL during the build: the journal stays; --version refused na
     assert.equal(resumeAttempt.stdout, '');
     assert.equal(
       resumeAttempt.stderr.trimEnd(),
-      `Error: The unfinished v0.46.0 release stopped before its release commit, so --resume cannot finish it. It restored the 9 files the release sets to their content at ${fx.startShort}. packages/*/dist may still hold its v0.46.0 build: run npm run build before using this checkout. Re-run: npm run release -- --version 0.46.0`,
+      `Error: The unfinished v0.46.0 release has no release commit on release/test, so --resume cannot finish it. It restored the 9 files the release sets to their content at ${fx.startShort}. packages/*/dist may still hold its v0.46.0 build: run npm run build before using this checkout. Re-run: npm run release -- --version 0.46.0`,
     );
     assert.equal(existsSync(fx.journalPath), false);
     assert.equal(fx.git('status', '--porcelain'), '');
@@ -1496,6 +1581,7 @@ test('RL13 — SIGKILL during the development phase: the journal says developmen
     // unblock the orphaned hook so its `git commit` aborts cleanly and releases index.lock
     writeFileSync(releaseFile, '');
     await waitForFileGone(join(fx.root, '.git', 'index.lock'));
+    deleteKilledLock(fx, handle.child.pid);
 
     // the hook fires again on the retried commit; it must see the SAME MARKER_FILE (already
     // created) to recognise this as the retry and let the commit through instead of blocking again.
@@ -1691,7 +1777,7 @@ test('RL20 — a committed CHANGELOG.md with no section for the version: refused
 const HELP_LINES = [
   'Usage: npm run release -- --version <MAJOR.MINOR.PATCH>, or npm run release -- --resume',
   '  --version <V>  Release V: set every package to it, build, commit and tag the release, then commit the next development version. Nothing is pushed or published.',
-  '  --resume       Finish a release that stopped after its release commit. For one that stopped before it, restore its files and exit 1, since nothing was released: run --version again.',
+  '  --resume       Finish a release whose release commit is on the branch. For one with no release commit there, restore its files and exit 1, since nothing was released: run --version again.',
 ];
 
 test('RL21 — --help: exit 0, and stdout is exactly the three help lines; a missing value and no flag are refused', () => {
@@ -1792,9 +1878,9 @@ test("RL24 — a finished release's journal, with its branch deleted", async () 
 
 test('RL25 — phase release, a commit after a crash: released when it changes no file the release sets, taken off when it does', async () => {
   const nothingCommittedText = (V = '0.46.0') =>
-    `Error: An earlier release of v${V} stopped before its release commit, so nothing is committed. Run npm run release -- --resume to restore the files it changed, then re-run npm run release -- --version ${V}.`;
+    `Error: An earlier release of v${V} did not finish, and release/test holds no release commit of it. Run npm run release -- --resume to restore the files it changed, then re-run npm run release -- --version ${V}.`;
   const restoredText = (start, tail) =>
-    `Error: The unfinished v0.46.0 release stopped before its release commit, so --resume cannot finish it. It restored the 9 files the release sets to their content at ${start}.${tail}`;
+    `Error: The unfinished v0.46.0 release has no release commit on release/test, so --resume cannot finish it. It restored the 9 files the release sets to their content at ${start}.${tail}`;
   const DIST_RESTORED =
     ' packages/*/dist may still hold its v0.46.0 build: run npm run build before using this checkout.';
 
@@ -1927,7 +2013,7 @@ test('RL26 — phase development, an extra commit after the release commit', () 
     );
     commitAll(fx, 'docs: fix changelog typo');
     const extra = fx.short('HEAD');
-    const text = `Error: The unfinished v0.46.0 release cannot continue from here: release/test is at ${extra} "docs: fix changelog typo". It can continue from ${release}, its release commit: put release/test back there (git reset ${release} keeps the current files, with the differences unstaged), then re-run: npm run release -- --resume. The reset takes ${extra} off release/test; its changes stay in your files, uncommitted, and are not part of v0.46.0. To abandon the release instead: Part B step 3, "To abandon an unfinished release": put the branch back at ${fx.startShort} "base", where it started (git reset --keep ${fx.startShort} brings its files too, and refuses rather than overwrite a change of yours), which takes the 1 commit after ${release} off it too (to keep it, run git branch release/test-kept-${extra} ${extra} first: when the release has run again, its text says how to bring it back), then delete its tag (git tag -d v0.46.0), then its journal (rm ${fx.journalPath}), then re-run: npm run release -- --version 0.46.0`;
+    const text = `Error: The unfinished v0.46.0 release cannot continue from here: release/test is at ${extra} "docs: fix changelog typo". It can continue from ${release}, its release commit: put release/test back there (git reset ${release} keeps the current files, with the differences unstaged), then re-run: npm run release -- --resume. The reset takes ${extra} off release/test; its changes stay in your files, uncommitted, and are not part of v0.46.0. To abandon the release instead: Part B step 3, "To abandon an unfinished release": put the branch back at ${fx.startShort} "base", where it started (git reset --keep ${fx.startShort} brings its files too, and refuses rather than overwrite a change of yours), which takes the 1 commit after ${release} off it too (to keep it, run git branch release/test-kept-${extra} ${extra} first: when the release has run again, its text says how to bring it back; to have v0.46.0 include it, bring it back before the re-run instead, as item 4 of that section says), then delete its tag (git tag -d v0.46.0), then its journal (rm ${fx.journalPath}), then re-run: npm run release -- --version 0.46.0`;
     const before = snapshot(fx);
     assertRefusal(fx.version(), text);
     assertRefusal(fx.resume(), text);
@@ -2059,6 +2145,38 @@ test('RL27 — the release tag deleted, moved or annotated', async () => {
           .filter((s) => s.startsWith('chore: begin development')).length,
         1,
       );
+    } finally {
+      fx.cleanup();
+    }
+  }
+  {
+    // moved, with the branch moved too: --resume does not tag until the branch is put back (C4)
+    const fx = buildFixture('rl27g');
+    try {
+      const remove = postCommitFor(
+        fx,
+        'chore: release',
+        hookCommit('a commit after the release commit'),
+      );
+      const stopped = fx.version();
+      remove();
+      assert.equal(stopped.status, 1, stopped.stderr);
+      const release = fx.short('HEAD~1');
+      const head = fx.short('HEAD');
+      fx.git('tag', '--no-sign', 'v0.46.0', fx.start);
+      assertRefusal(
+        fx.resume(),
+        `Error: The unfinished v0.46.0 release cannot continue from here: tag v0.46.0 points at ${fx.startShort}, not at its release commit ${release}, and release/test is at ${head} "a commit after the release commit", which is not a commit of the release. Delete the tag (git tag -d v0.46.0), then re-run npm run release -- --resume: it then says how to go on from ${head}.`,
+      );
+      fx.git('tag', '-d', 'v0.46.0');
+      const r = fx.resume();
+      assertRefusal(
+        r,
+        `Error: The unfinished v0.46.0 release cannot continue from here: release/test is at ${head} "a commit after the release commit". It can continue from ${release}, its release commit: put release/test back there (git reset ${release} keeps the current files, with the differences unstaged), then re-run: npm run release -- --resume. The reset takes ${head} off release/test; its changes stay in your files, uncommitted, and are not part of v0.46.0. To abandon the release instead: Part B step 3, "To abandon an unfinished release": put the branch back at ${fx.startShort} "base", where it started (git reset --keep ${fx.startShort} brings its files too, and refuses rather than overwrite a change of yours), which takes the 1 commit after ${release} off it too (to keep it, run git branch release/test-kept-${head} ${head} first: when the release has run again, its text says how to bring it back; to have v0.46.0 include it, bring it back before the re-run instead, as item 4 of that section says), then delete its journal (rm ${fx.journalPath}), then re-run: npm run release -- --version 0.46.0`,
+      );
+      runPrinted(fx, between(r.stderr, 'put release/test back there (', ' keeps'));
+      assertSuccess(fx, fx.resume());
+      assert.equal(fx.short('v0.46.0^{commit}'), release);
     } finally {
       fx.cleanup();
     }
@@ -2432,7 +2550,7 @@ test("RL30 — a failed restore shows git's message, and the journal stays", () 
     assert.equal(ok.status, 1);
     assert.equal(
       ok.stderr.trimEnd(),
-      `Error: The unfinished v0.46.0 release stopped before its release commit, so --resume cannot finish it. It restored the 9 files the release sets to their content at ${fx.startShort}. packages/*/dist may still hold its v0.46.0 build: run npm run build before using this checkout. Re-run: npm run release -- --version 0.46.0`,
+      `Error: The unfinished v0.46.0 release has no release commit on release/test, so --resume cannot finish it. It restored the 9 files the release sets to their content at ${fx.startShort}. packages/*/dist may still hold its v0.46.0 build: run npm run build before using this checkout. Re-run: npm run release -- --version 0.46.0`,
     );
   } finally {
     fx.cleanup();
@@ -2445,11 +2563,19 @@ const progressLines = (r) => r.stdout.split('\n').filter((l) => l.startsWith('�
 const STOPPED = (reason) =>
   `Error: The release of v0.46.0 stopped: ${reason}. Every tracked file it changed is restored; ${DIST('0.46.0')} Fix the cause, then re-run: npm run release -- --version 0.46.0`;
 const EXCEPT_CORE =
-  'Every tracked file it changed is restored, except packages/core/package.json, which also holds a change the release did not make and is left as it is: set the version in it to 0.45.0, and commit or set aside the rest;';
+  "Every tracked file it changed is restored, except packages/core/package.json, which also holds a change the release did not make and is left as it is: set the version in it back to 0.45.0, the release's only change there, then commit what is left or set it aside (git stash push -- packages/core/package.json): the release's success text names that stash;";
 const STOPPED_EXCEPT_CORE = (reason) =>
   `Error: The release of v0.46.0 stopped: ${reason}. ${EXCEPT_CORE} ${DIST('0.46.0')} Fix the cause, then re-run: npm run release -- --version 0.46.0`;
+/** C6.2: when what stopped the release is a file that changed, the text says "Then re-run". */
+const CHANGED_EXCEPT_CORE = `Error: The release of v0.46.0 stopped: packages/core/package.json changed while the release ran. ${EXCEPT_CORE} ${DIST('0.46.0')} Then re-run: npm run release -- --version 0.46.0`;
+const STOPPED_CHANGED = (reason) =>
+  `Error: The release of v0.46.0 stopped: ${reason}. Every tracked file it changed is restored; ${DIST('0.46.0')} Then re-run: npm run release -- --version 0.46.0`;
+const LOCK_NOTICE_BEFORE =
+  'package-lock.json held changes the release did not make; it is restored, so they are gone. If they came from npm install, run it again and commit what it writes before you re-run the release.';
 const LOCK_NOTICE =
   'package-lock.json held changes the release did not make; it is restored, so they are gone. If they came from npm install, run it again after the release.';
+const LOCK_SUCCESS_LINE =
+  'package-lock.json held changes the release did not make, and this run restored it, so they are gone. If they came from npm install, run it again now.';
 const CHANGED_CORE = 'packages/core/package.json changed while the release ran';
 
 function assertNoRelease(fx) {
@@ -2717,7 +2843,7 @@ test('RL40 — nothing reaches the release commit that the release did not write
     const fx = buildFixture('rl40a');
     try {
       const r = fx.version('0.46.0', { BUILD_EDIT: 'edited during the build' });
-      assertRefusal(r, STOPPED_EXCEPT_CORE(CHANGED_CORE), { whole: false });
+      assertRefusal(r, CHANGED_EXCEPT_CORE, { whole: false });
       assert.equal(progressLines(r).at(-1), '→ Staging the version files');
       assertNoRelease(fx);
       assert.equal(
@@ -2737,7 +2863,7 @@ test('RL40 — nothing reaches the release commit that the release did not write
       });
       assertRefusal(
         r,
-        `Error: The release of v0.46.0 stopped: packages/cli/package.json, packages/core/package.json changed while the release ran. Every tracked file it changed is restored, except packages/cli/package.json, packages/core/package.json, which also hold changes the release did not make and are left as they are: set the version in each to 0.45.0, and commit or set aside the rest; ${DIST('0.46.0')} Fix the cause, then re-run: npm run release -- --version 0.46.0`,
+        `Error: The release of v0.46.0 stopped: packages/cli/package.json, packages/core/package.json changed while the release ran. Every tracked file it changed is restored, except packages/cli/package.json, packages/core/package.json, which also hold changes the release did not make and are left as they are: set the version in each back to 0.45.0, the release's only change there, then commit what is left or set it aside (git stash push -- packages/cli/package.json packages/core/package.json): the release's success text names that stash; ${DIST('0.46.0')} Then re-run: npm run release -- --version 0.46.0`,
         { whole: false },
       );
       for (const dir of ['cli', 'core']) {
@@ -2765,7 +2891,7 @@ test('RL41 — nor, through the lockfile, a change to a file the release does no
         stdoutFrom(r, 'Prepared'),
         successLines(fx, {
           extra: [
-            'This checkout also holds changes that are not committed, in modified packages/engine-tests/package.json: they are not part of v0.46.0. Commit them on release/test if the release PR should carry them.',
+            'This checkout also holds changes that are not committed, in modified packages/engine-tests/package.json: they are not part of v0.46.0. Commit them on release/test if the release PR should carry them. After a change to a package.json, run npm install before you commit it, so package-lock.json follows.',
           ],
         }),
       );
@@ -2789,7 +2915,7 @@ test('RL41 — nor, through the lockfile, a change to a file the release does no
         stdoutFrom(r, 'Prepared'),
         successLines(fx, {
           extra: [
-            'This checkout also holds changes that are not committed, in modified packages/engine-tests/package.json, untracked .npmrc: they are not part of v0.46.0. Commit them on release/test if the release PR should carry them.',
+            'This checkout also holds changes that are not committed, in modified packages/engine-tests/package.json, untracked .npmrc: they are not part of v0.46.0. Commit them on release/test if the release PR should carry them. After a change to a package.json, run npm install before you commit it, so package-lock.json follows.',
           ],
         }),
       );
@@ -2809,7 +2935,7 @@ test('RL42 — nor a change that is only staged', () => {
   const fx = buildFixture('rl42');
   try {
     const r = fx.version('0.46.0', { BUILD_STAGE_EDIT: 'staged during the build' });
-    assertRefusal(r, STOPPED_EXCEPT_CORE(CHANGED_CORE), { whole: false });
+    assertRefusal(r, CHANGED_EXCEPT_CORE, { whole: false });
     assert.ok(fx.git('show', ':packages/core/package.json').includes('staged during the build'));
     assertNoRelease(fx);
   } finally {
@@ -2823,11 +2949,12 @@ test('RL43 — nor a change to the lockfile', () => {
     const r = fx.version('0.46.0', { BUILD_LOCK_EDIT: '1' });
     assert.equal(r.status, 1);
     const err = lines(r.stderr);
-    const notice = err.indexOf(LOCK_NOTICE);
+    // C13: a restore made before the release commit says to commit what npm writes first
+    const notice = err.indexOf(LOCK_NOTICE_BEFORE);
     assert.notEqual(notice, -1, r.stderr);
     assert.equal(
       err[notice + 1],
-      STOPPED('package-lock.json changed while the release ran'),
+      STOPPED_CHANGED('package-lock.json changed while the release ran'),
       r.stderr,
     );
     assertNoRelease(fx);
@@ -3055,7 +3182,8 @@ test('RL45 — every restore before phase 2 puts the lockfile back, and says so'
   const check = (fx, r) => {
     assert.equal(r.status, 0, `stdout: ${r.stdout}\nstderr: ${r.stderr}`);
     assert.ok(lines(r.stderr).includes(LOCK_NOTICE), r.stderr);
-    assert.deepEqual(stdoutFrom(r, 'Prepared'), successLines(fx));
+    // C6.6: the success text of the run that restored it says so once more
+    assert.deepEqual(stdoutFrom(r, 'Prepared'), successLines(fx, { extra: [LOCK_SUCCESS_LINE] }));
     assert.equal(fx.git('status', '--porcelain'), '');
   };
   {
@@ -3223,14 +3351,14 @@ test('RL49 — a pre-commit hook puts a change into the release commit', () => {
     const rel = fx.short('HEAD');
     const start = fx.startShort;
     const step1 = (files) =>
-      `Error: The release commit ${rel} holds changes the release did not make (${files}): they changed while the commit ran, most likely in a git hook. Put release/test back at ${start} (git reset ${start} keeps the current files, with the differences unstaged), fix or remove whatever changed them, then run npm run release -- --resume to put back the files the release changed, and re-run: npm run release -- --version 0.46.0`;
+      `Error: The release commit ${rel} holds changes the release did not make (${files}): they changed while the commit ran, most likely in a git hook. Put release/test back at ${start} (git reset ${start} keeps the current files, with the differences unstaged), fix or remove whatever changed them, then run npm run release -- --resume, which first stops over the changes left in packages/core/package.json and prints what to do with them, and then puts back the files the release changed; then re-run: npm run release -- --version 0.46.0`;
     assertRefusal(r, step1('packages/core/package.json'), { whole: false });
     assert.equal(fx.tryGit('rev-parse', '-q', '--verify', 'refs/tags/v0.46.0'), null);
     assert.equal(existsSync(fx.journalPath), true);
 
     // remove the hook: --resume now refuses the commit
     unlinkSync(join(fx.root, '.git', 'hooks', 'pre-commit'));
-    const cannot = `Error: The unfinished v0.46.0 release cannot continue from here: release/test is at ${rel} "chore: release v0.46.0". It can start again from ${start}, where it started: put release/test back there (git reset ${start} keeps the current files, with the differences unstaged), then run npm run release -- --resume to put back the files the release changed, and re-run: npm run release -- --version 0.46.0. The reset takes ${rel} off release/test; its changes stay in your files, uncommitted.`;
+    const cannot = `Error: The unfinished v0.46.0 release cannot continue from here: release/test is at ${rel} "chore: release v0.46.0". It can start again from ${start}, where it started: put release/test back there (git reset ${start} keeps the current files, with the differences unstaged), then run npm run release -- --resume, which first stops over the changes left in packages/core/package.json and prints what to do with them, and then puts back the files the release changed; then re-run: npm run release -- --version 0.46.0. The reset takes ${rel} off release/test; its changes stay in your files, uncommitted.`;
     assertRefusal(fx.resume(), cannot);
     assert.equal(fx.tryGit('rev-parse', '-q', '--verify', 'refs/tags/v0.46.0'), null);
 
@@ -3292,7 +3420,7 @@ test('RL49b — a pre-commit hook stages a file outside the journal into the rel
     const rel = fx.short('HEAD');
     assertRefusal(
       r,
-      `Error: The release commit ${rel} holds changes the release did not make (packages/core/package.json, hook-added.txt): they changed while the commit ran, most likely in a git hook. Put release/test back at ${fx.startShort} (git reset ${fx.startShort} keeps the current files, with the differences unstaged), fix or remove whatever changed them, then run npm run release -- --resume to put back the files the release changed, and re-run: npm run release -- --version 0.46.0`,
+      `Error: The release commit ${rel} holds changes the release did not make (packages/core/package.json, hook-added.txt): they changed while the commit ran, most likely in a git hook. Put release/test back at ${fx.startShort} (git reset ${fx.startShort} keeps the current files, with the differences unstaged), fix or remove whatever changed them, then run npm run release -- --resume, which first stops over the changes left in packages/core/package.json and prints what to do with them, and then puts back the files the release changed; then re-run: npm run release -- --version 0.46.0`,
       { whole: false },
     );
     assert.equal(fx.tryGit('rev-parse', '-q', '--verify', 'refs/tags/v0.46.0'), null);
@@ -3324,10 +3452,39 @@ test('RL50 — a pre-commit hook puts a change into the development commit', () 
     const ok = fx.resume();
     assert.equal(ok.status, 0, ok.stderr);
     assert.ok(lines(ok.stderr).includes(LOCK_NOTICE), ok.stderr);
-    assert.deepEqual(stdoutFrom(ok, 'Prepared'), successLines(fx));
+    // C6.6: the run that restored the lockfile says so once more in its success text
+    assert.deepEqual(stdoutFrom(ok, 'Prepared'), successLines(fx, { extra: [LOCK_SUCCESS_LINE] }));
     assert.equal(JSON.parse(fx.git('show', `HEAD:${LOCK}`))['x-hook'], undefined);
   } finally {
     fx.cleanup();
+  }
+  {
+    // a file the release sets, in the development commit: --resume first has you keep or drop it
+    const fx2 = buildFixture('rl50b');
+    try {
+      installHook(
+        fx2,
+        'pre-commit',
+        `case "$(git show :packages/core/package.json)" in\n  *-dev.*) ${NODE_EDIT_CORE('edited by a hook')} && git add packages/core/package.json ;;\nesac\nexit 0`,
+      );
+      const r = fx2.version();
+      const dev = fx2.short('HEAD');
+      const rel = fx2.short('HEAD~1');
+      assertRefusal(
+        r,
+        `Error: The development commit ${dev} holds changes the release did not make (packages/core/package.json): they changed while the commit ran, most likely in a git hook. Put release/test back at ${rel} (git reset ${rel} keeps the current files, with the differences unstaged), fix or remove whatever changed them, then re-run npm run release -- --resume, which first stops over the changes left in packages/core/package.json and prints what to do with them`,
+        { whole: false },
+      );
+      unlinkSync(join(fx2.root, '.git', 'hooks', 'pre-commit'));
+      runPrinted(fx2, between(r.stderr, `Put release/test back at ${rel} (`, ' keeps'));
+      const refused = fx2.resume();
+      assert.equal(refused.status, 1);
+      assert.equal(lines(refused.stderr)[0], OVERWRITE);
+      runPrinted(fx2, between(refused.stderr, 'To drop them: ', ', then re-run'));
+      assertSuccess(fx2, fx2.resume());
+    } finally {
+      fx2.cleanup();
+    }
   }
 });
 
@@ -3371,7 +3528,7 @@ test('RL52 — HEAD after a commit step is not the commit the step made: nothing
   const noTag = (fx) =>
     assert.equal(fx.tryGit('rev-parse', '-q', '--verify', 'refs/tags/v0.46.0'), null);
   const abandonKeep = (fx, itsShort, headShort, withTag) =>
-    `Part B step 3, "To abandon an unfinished release": put the branch back at ${fx.startShort} "base", where it started (git reset --keep ${fx.startShort} brings its files too, and refuses rather than overwrite a change of yours), which takes the 1 commit after ${itsShort} off it too (to keep it, run git branch release/test-kept-${headShort} ${headShort} first: when the release has run again, its text says how to bring it back), then ${withTag ? 'delete its tag (git tag -d v0.46.0), then its journal' : 'delete its journal'} (rm ${fx.journalPath}), then re-run: npm run release -- --version 0.46.0`;
+    `Part B step 3, "To abandon an unfinished release": put the branch back at ${fx.startShort} "base", where it started (git reset --keep ${fx.startShort} brings its files too, and refuses rather than overwrite a change of yours), which takes the 1 commit after ${itsShort} off it too (to keep it, run git branch release/test-kept-${headShort} ${headShort} first: when the release has run again, its text says how to bring it back; to have v0.46.0 include it, bring it back before the re-run instead, as item 4 of that section says), then ${withTag ? 'delete its tag (git tag -d v0.46.0), then its journal' : 'delete its journal'} (rm ${fx.journalPath}), then re-run: npm run release -- --version 0.46.0`;
   const continueText = (fx, kind, head, headSubject, its, withTag) =>
     `Error: The unfinished v0.46.0 release cannot continue from here: release/test is at ${head} "${headSubject}". It can continue from ${its}, its ${kind} commit: put release/test back there (git reset ${its} keeps the current files, with the differences unstaged), then re-run: npm run release -- --resume. The reset takes ${head} off release/test; its changes stay in your files, uncommitted, and are not part of v0.46.0. To abandon the release instead: ${abandonKeep(fx, its, head, withTag)}`;
   {
@@ -3574,7 +3731,8 @@ test('RL53 — a hook of the release commit leaves a file the bump cannot transf
 
 const BEFORE_CHANGING = (what) =>
   `Error: The release of v0.46.0 stopped before changing anything: ${what}`;
-const registryLine = '→ Reading the published versions from the npm registry';
+const registryLine =
+  '→ Reading the published versions from the npm registry (when it cannot be reached, npm keeps retrying, which can take over a minute)';
 const discardText = (file) =>
   `Commit, stash or discard what changed (git restore --staged --worktree -- ${file} discards it), then re-run: npm run release -- --version 0.46.0`;
 
@@ -3685,7 +3843,7 @@ test("RL56 — a pre-commit hook changes only a journal file's mode: nothing is 
     const rel = fx.short('HEAD');
     assertRefusal(
       r,
-      `Error: The release commit ${rel} holds changes the release did not make (packages/core/package.json): they changed while the commit ran, most likely in a git hook. Put release/test back at ${fx.startShort} (git reset ${fx.startShort} keeps the current files, with the differences unstaged), fix or remove whatever changed them, then run npm run release -- --resume to put back the files the release changed, and re-run: npm run release -- --version 0.46.0`,
+      `Error: The release commit ${rel} holds changes the release did not make (packages/core/package.json): they changed while the commit ran, most likely in a git hook. Put release/test back at ${fx.startShort} (git reset ${fx.startShort} keeps the current files, with the differences unstaged), fix or remove whatever changed them, then run npm run release -- --resume, which first stops over the changes left in packages/core/package.json and prints what to do with them, and then puts back the files the release changed; then re-run: npm run release -- --version 0.46.0`,
       { whole: false },
     );
     assert.equal(fx.tryGit('rev-parse', '-q', '--verify', 'refs/tags/v0.46.0'), null);
@@ -3753,7 +3911,7 @@ test('RL59 — a mode change the release did not make is a change it did not mak
     const fx = buildFixture('rl59a');
     try {
       const r = fx.version('0.46.0', { BUILD_CHMOD: '1' });
-      assertRefusal(r, STOPPED_EXCEPT_CORE(CHANGED_CORE), { whole: false });
+      assertRefusal(r, CHANGED_EXCEPT_CORE, { whole: false });
       assert.equal(progressLines(r).at(-1), '→ Staging the version files');
       assert.equal(fx.git('rev-parse', 'HEAD'), fx.start);
       assert.equal(existsSync(fx.journalPath), false);
@@ -3932,7 +4090,7 @@ test('RL61 — signed commits with log.showSignature set: every subject is read 
     assert.equal(r.status, 1);
     assertRefusal(
       r,
-      `Error: The unfinished v0.46.0 release cannot continue from here: release/test is at ${head} "a signed commit after it". It can continue from ${release}, its release commit: put release/test back there (git reset ${release} keeps the current files, with the differences unstaged), then re-run: npm run release -- --resume. The reset takes ${head} off release/test; its changes stay in your files, uncommitted, and are not part of v0.46.0. To abandon the release instead: Part B step 3, "To abandon an unfinished release": put the branch back at ${fx.startShort} "base", where it started (git reset --keep ${fx.startShort} brings its files too, and refuses rather than overwrite a change of yours), which takes the 1 commit after ${release} off it too (to keep it, run git branch release/test-kept-${head} ${head} first: when the release has run again, its text says how to bring it back), then delete its tag (git tag -d v0.46.0), then its journal (rm ${fx.journalPath}), then re-run: npm run release -- --version 0.46.0`,
+      `Error: The unfinished v0.46.0 release cannot continue from here: release/test is at ${head} "a signed commit after it". It can continue from ${release}, its release commit: put release/test back there (git reset ${release} keeps the current files, with the differences unstaged), then re-run: npm run release -- --resume. The reset takes ${head} off release/test; its changes stay in your files, uncommitted, and are not part of v0.46.0. To abandon the release instead: Part B step 3, "To abandon an unfinished release": put the branch back at ${fx.startShort} "base", where it started (git reset --keep ${fx.startShort} brings its files too, and refuses rather than overwrite a change of yours), which takes the 1 commit after ${release} off it too (to keep it, run git branch release/test-kept-${head} ${head} first: when the release has run again, its text says how to bring it back; to have v0.46.0 include it, bring it back before the re-run instead, as item 4 of that section says), then delete its tag (git tag -d v0.46.0), then its journal (rm ${fx.journalPath}), then re-run: npm run release -- --version 0.46.0`,
     );
     assertNothingChanged(fx, before);
 
@@ -3980,6 +4138,28 @@ const FORWARD = (b) =>
 /** The text for a branch put back before the release commit (HEAD is before the anchor). */
 function beforeText(fx, { head, headSubject = 'base', rel, left = '', abandon, V = '0.46.0' }) {
   return `Error: The unfinished v${V} release cannot continue from here: release/test is at ${head} "${headSubject}", before ${rel}, its release commit.${left} It can continue from there: move release/test forward to it ${FORWARD(rel)}, then re-run: npm run release -- --resume. To abandon the release instead: ${abandon}, then re-run: npm run release -- --version ${V}`;
+}
+/** C6.5: the same text when there are steps to take first, as lines. */
+function beforeLines(fx, { head, headSubject = 'base', rel, steps, abandon, V = '0.46.0' }) {
+  return [
+    `Error: The unfinished v${V} release cannot continue from here: release/test is at ${head} "${headSubject}", before ${rel}, its release commit.`,
+    'First, whichever way you take:',
+    ...steps.map((s, i) => `  ${i + 1}. ${s}`),
+    `To continue: move release/test forward to ${rel} ${FORWARD(rel)}, then re-run: npm run release -- --resume`,
+    `To abandon the release instead: ${abandon}, then re-run: npm run release -- --version ${V}`,
+  ].join('\n');
+}
+const OWN_STEP = (files) =>
+  `Put back the release's own changes, which a reset that kept the files left uncommitted: git restore --staged --worktree -- ${files.join(' ')}`;
+const LOCK_STEP =
+  'Put back package-lock.json, which holds changes the release did not make (npm owns the rest of it; if they came from npm install, run it again after the release): git restore --staged --worktree -- package-lock.json';
+const YOURS_STEP =
+  'Set the version in packages/core/package.json to 0.45.0 and set it aside, since it holds a change the release did not make: git stash push -- packages/core/package.json (when the release has run, its text names that stash and how to bring it back)';
+/** The command of numbered step `i`, as printed. */
+function stepCommand(stderr, i) {
+  const line = lines(stderr).find((l) => l.startsWith(`  ${i}. `));
+  assert.ok(line, `no step ${i} in: ${stderr}`);
+  return line.slice(line.indexOf(': git ') + 2).replace(/ \(when the release has run, .*\)$/, '');
 }
 /** The text for a branch put back and committed on: a line that does not hold the release commit. */
 function otherLineText(fx, { head, headSubject, rel, n, abandon, V = '0.46.0' }) {
@@ -4063,7 +4243,7 @@ test('RL63 — the branch put back before the release commit: move it forward, o
       const before = snapshot(fx);
       assertRefusal(
         fx.resume(),
-        `Error: The unfinished v0.46.0 release cannot continue from here: release/test is at ${head} "docs: fix changelog typo". It can continue from ${rel}, its release commit: put release/test back there (git reset ${rel} keeps the current files, with the differences unstaged), then re-run: npm run release -- --resume. The reset takes 2 commits off release/test, ${head} the newest; their changes stay in your files, uncommitted, and are not part of v0.46.0. To abandon the release instead: Part B step 3, "To abandon an unfinished release": put the branch back at ${fx.startShort} "base", where it started ${FORWARD(fx.startShort)}, which takes the 2 commits after ${rel} off it too (to keep them, run git branch release/test-kept-${head} ${head} first: when the release has run again, its text says how to bring them back), then ${BOTH(fx)}, then re-run: npm run release -- --version 0.46.0`,
+        `Error: The unfinished v0.46.0 release cannot continue from here: release/test is at ${head} "docs: fix changelog typo". It can continue from ${rel}, its release commit: put release/test back there (git reset ${rel} keeps the current files, with the differences unstaged), then re-run: npm run release -- --resume. The reset takes 2 commits off release/test, ${head} the newest; their changes stay in your files, uncommitted, and are not part of v0.46.0. To abandon the release instead: Part B step 3, "To abandon an unfinished release": put the branch back at ${fx.startShort} "base", where it started ${FORWARD(fx.startShort)}, which takes the 2 commits after ${rel} off it too (to keep them, run git branch release/test-kept-${head} ${head} first: when the release has run again, its text says how to bring them back; to have v0.46.0 include them, bring them back before the re-run instead, as item 4 of that section says), then ${BOTH(fx)}, then re-run: npm run release -- --version 0.46.0`,
       );
       assertNothingChanged(fx, before);
       fx.git('reset', rel);
@@ -4247,8 +4427,6 @@ test('RL63 — the branch put back before the release commit: move it forward, o
   }
   {
     // 9. a reset that kept the files: the release's own changes are still in them
-    const leftOwn = (files) =>
-      ` The files the release sets hold its own changes, uncommitted, in ${files.join(', ')} (a reset that kept the files left them there): whichever way you take below, put them back first (git restore --staged --worktree -- ${files.join(' ')}).`;
     {
       const fx = buildFixture('rl63i1');
       try {
@@ -4259,12 +4437,17 @@ test('RL63 — the branch put back before the release commit: move it forward, o
         const r = fx.resume();
         assertRefusal(
           r,
-          beforeText(fx, { head: fx.startShort, rel, left: leftOwn(FILES), abandon: BOTH(fx) }),
+          beforeLines(fx, {
+            head: fx.startShort,
+            rel,
+            steps: [OWN_STEP(FILES)],
+            abandon: BOTH(fx),
+          }),
         );
         assertNothingChanged(fx, before);
-        runPrinted(fx, between(r.stderr, 'put them back first (', ').'));
+        runPrinted(fx, stepCommand(r.stderr, 1));
         assert.equal(fx.git('status', '--porcelain'), '');
-        runPrinted(fx, between(r.stderr, `move release/test forward to it (`, ' brings'));
+        runPrinted(fx, between(r.stderr, `move release/test forward to ${rel} (`, ' brings'));
         assertSuccess(fx, fx.resume());
       } finally {
         fx.cleanup();
@@ -4279,23 +4462,23 @@ test('RL63 — the branch put back before the release commit: move it forward, o
         fx.git('reset', fx.start);
         editCoreDescription(fx, 'my own change');
         const eight = FILES.filter((f) => f !== 'packages/core/package.json');
-        const yours = ` packages/core/package.json holds a change the release did not make: whichever way you take below, set the version in that file to 0.45.0 and set it aside first (git stash push -- packages/core/package.json); when the release has run, its text names that stash and how to bring it back.`;
         const r = fx.resume();
+        // two steps at once: the numbering is pinned
         assertRefusal(
           r,
-          beforeText(fx, {
+          beforeLines(fx, {
             head: fx.startShort,
             rel,
-            left: leftOwn(eight) + yours,
+            steps: [OWN_STEP(eight), YOURS_STEP],
             abandon: BOTH(fx),
           }),
         );
-        runPrinted(fx, between(r.stderr, 'put them back first (', ').'));
+        runPrinted(fx, stepCommand(r.stderr, 1));
         editJson(join(fx.root, 'packages', 'core', 'package.json'), (o) => {
           o.version = '0.45.0';
         });
-        runPrinted(fx, between(r.stderr, 'set it aside first (', '); when the release has run'));
-        runPrinted(fx, between(r.stderr, `move release/test forward to it (`, ' brings'));
+        runPrinted(fx, stepCommand(r.stderr, 2));
+        runPrinted(fx, between(r.stderr, `move release/test forward to ${rel} (`, ' brings'));
         const ok = fx.resume();
         assert.deepEqual(
           stdoutFrom(ok, 'Prepared'),
@@ -4324,20 +4507,19 @@ test('RL63 — the branch put back before the release commit: move it forward, o
           o['x-edited-while-stopped'] = true;
         });
         const eight = FILES.filter((f) => f !== LOCK);
-        const lockSentence = ` package-lock.json holds changes the release did not make, and npm owns the rest of it: whichever way you take below, put it back first too (git restore --staged --worktree -- package-lock.json); if they came from npm install, run it again after the release.`;
         const r = fx.resume();
         assertRefusal(
           r,
-          beforeText(fx, {
+          beforeLines(fx, {
             head: fx.startShort,
             rel,
-            left: leftOwn(eight) + lockSentence,
+            steps: [OWN_STEP(eight), LOCK_STEP],
             abandon: BOTH(fx),
           }),
         );
-        runPrinted(fx, between(r.stderr, 'put them back first (', ').'));
-        runPrinted(fx, between(r.stderr, 'put it back first too (', '); if they came from'));
-        runPrinted(fx, between(r.stderr, `move release/test forward to it (`, ' brings'));
+        runPrinted(fx, stepCommand(r.stderr, 1));
+        runPrinted(fx, stepCommand(r.stderr, 2));
+        runPrinted(fx, between(r.stderr, `move release/test forward to ${rel} (`, ' brings'));
         assertSuccess(fx, fx.resume());
         assert.equal(
           JSON.parse(fx.git('show', `HEAD:${LOCK}`))['x-edited-while-stopped'],
@@ -4347,6 +4529,37 @@ test('RL63 — the branch put back before the release commit: move it forward, o
       } finally {
         fx.cleanup();
       }
+    }
+  }
+  {
+    // 9d. a reset that kept the files, then a commit: the line form with steps first
+    const fx = buildFixture('rl63i4');
+    try {
+      failDevCommit(fx);
+      const rel = fx.short('HEAD');
+      fx.git('reset', fx.start);
+      writeFileSync(join(fx.root, 'notes.md'), 'notes\n');
+      fx.git('add', 'notes.md');
+      fx.git('-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'fix something', '--', 'notes.md');
+      const head = fx.short('HEAD');
+      const kept = `release/test-kept-${head}`;
+      const r = fx.resume();
+      assertRefusal(
+        r,
+        [
+          `Error: The unfinished v0.46.0 release cannot continue from here: release/test is at ${head} "fix something", on a line that does not hold ${rel}, its release commit. Moving release/test there takes ${head} off it, with its changes.`,
+          'First, whichever way you take:',
+          `  1. ${OWN_STEP(FILES)}`,
+          `To continue: keep it on a branch (git branch ${kept} ${head}), move release/test to ${rel} ${FORWARD(rel)}, then re-run: npm run release -- --resume; when the release has finished, its text says how to bring it back.`,
+          `To abandon the release instead and release from ${head}, that commit included: ${BOTH(fx)}, then re-run: npm run release -- --version 0.46.0`,
+        ].join('\n'),
+      );
+      runPrinted(fx, stepCommand(r.stderr, 1));
+      for (const c of printedMoveCommands(r.stderr, rel)) runPrinted(fx, c);
+      const ok = fx.resume();
+      assert.equal(ok.status, 0, ok.stderr);
+    } finally {
+      fx.cleanup();
     }
   }
   {
@@ -4618,7 +4831,7 @@ test('RL67 — a file the release sets replaced by a symbolic link is only ever 
       assert.equal(r.status, 1);
       assert.equal(
         r.stderr.trimEnd(),
-        `Error: The release of v0.46.0 stopped: ${versionTs} was replaced by a symbolic link while the release ran. Every tracked file it changed is restored, except ${versionTs}, which also holds a change the release did not make and is left as it is: put back the file the link replaced (${restore([versionTs])}); ${DIST('0.46.0')} Fix the cause, then re-run: npm run release -- --version 0.46.0`,
+        `Error: The release of v0.46.0 stopped: ${versionTs} was replaced by a symbolic link while the release ran. Every tracked file it changed is restored, except ${versionTs}, which also holds a change the release did not make and is left as it is: put back the file the link replaced (${restore([versionTs])}); ${DIST('0.46.0')} Then re-run: npm run release -- --version 0.46.0`,
       );
       assert.equal(lstatSync(join(fx.root, versionTs)).isSymbolicLink(), true);
       runPrinted(fx, between(r.stderr, 'the link replaced (', '); packages'));
@@ -4643,7 +4856,7 @@ test('RL67 — a file the release sets replaced by a symbolic link is only ever 
       assert.equal(r.status, 1);
       assert.equal(
         r.stderr.trimEnd(),
-        `Error: The release of v0.46.0 stopped: packages/core/package.json changed, and ${versionTs} was replaced by a symbolic link while the release ran. Every tracked file it changed is restored, except packages/core/package.json, ${versionTs}, which also hold changes the release did not make and are left as they are: put back the file the link replaced (${restore([versionTs])}), set the version in the other to 0.45.0, and commit or set aside the rest; ${DIST('0.46.0')} Fix the cause, then re-run: npm run release -- --version 0.46.0`,
+        `Error: The release of v0.46.0 stopped: packages/core/package.json changed, and ${versionTs} was replaced by a symbolic link while the release ran. Every tracked file it changed is restored, except packages/core/package.json, ${versionTs}, which also hold changes the release did not make and are left as they are: put back the file the link replaced (${restore([versionTs])}), set the version in the other back to 0.45.0, the release's only change there, then commit what is left or set it aside (git stash push -- packages/core/package.json): the release's success text names that stash; ${DIST('0.46.0')} Then re-run: npm run release -- --version 0.46.0`,
       );
     } finally {
       fx.cleanup();
@@ -4657,7 +4870,7 @@ test('RL67 — a file the release sets replaced by a symbolic link is only ever 
       assert.equal(r.status, 1);
       assert.equal(
         r.stderr.trimEnd(),
-        `Error: The release of v0.46.0 stopped: ${cliVersionTs} was replaced by a symbolic link, and ${versionTs} was replaced by a symbolic link while the release ran. Every tracked file it changed is restored, except ${cliVersionTs}, ${versionTs}, which also hold changes the release did not make and are left as they are: put back the file each link replaced (${restore([cliVersionTs, versionTs])}); ${DIST('0.46.0')} Fix the cause, then re-run: npm run release -- --version 0.46.0`,
+        `Error: The release of v0.46.0 stopped: ${cliVersionTs} was replaced by a symbolic link, and ${versionTs} was replaced by a symbolic link while the release ran. Every tracked file it changed is restored, except ${cliVersionTs}, ${versionTs}, which also hold changes the release did not make and are left as they are: put back the file each link replaced (${restore([cliVersionTs, versionTs])}); ${DIST('0.46.0')} Then re-run: npm run release -- --version 0.46.0`,
       );
       runPrinted(fx, between(r.stderr, 'each link replaced (', '); packages'));
       assert.equal(fx.git('status', '--porcelain'), '');
@@ -4944,7 +5157,7 @@ test('RL69 — HEAD moved while the build ran', async () => {
       assert.equal(r.status, 1);
       assert.equal(
         r.stderr.trimEnd(),
-        `Error: The release of v0.46.0 stopped: ${CHANGED_CORE}, and ${MOVED(fx.startShort, head)}. ${EXCEPT_CORE} ${DIST('0.46.0')} Fix the cause, then re-run to release ${head}: npm run release -- --version 0.46.0`,
+        `Error: The release of v0.46.0 stopped: ${CHANGED_CORE}, and ${MOVED(fx.startShort, head)}. ${EXCEPT_CORE} ${DIST('0.46.0')} Then re-run to release ${head}: npm run release -- --version 0.46.0`,
       );
       assert.equal(existsSync(fx.journalPath), false);
     } finally {
@@ -4978,7 +5191,7 @@ test('RL70 — after a restore, the text that says to re-run names what else is 
       assert.equal(r.stdout, '');
       assert.equal(
         r.stderr.trimEnd(),
-        `Error: The unfinished v0.46.0 release stopped before its release commit, so --resume cannot finish it. It restored the 9 files the release sets to their content at ${fx.startShort}. packages/*/dist may still hold its v0.46.0 build: run npm run build before using this checkout. This checkout also holds changes that are not committed, in modified packages/engine-tests/package.json, and the re-run needs a clean checkout: commit, stash or remove them. Re-run: npm run release -- --version 0.46.0`,
+        `Error: The unfinished v0.46.0 release has no release commit on release/test, so --resume cannot finish it. It restored the 9 files the release sets to their content at ${fx.startShort}. packages/*/dist may still hold its v0.46.0 build: run npm run build before using this checkout. This checkout also holds changes that are not committed, in modified packages/engine-tests/package.json, and the re-run needs a clean checkout: commit, stash or remove them. Re-run: npm run release -- --version 0.46.0`,
       );
     } finally {
       fx.cleanup();
@@ -5055,11 +5268,11 @@ const RESET_KEEP = (s) =>
 const putBack = (start, tail = '') =>
   `: put the branch back at ${start} "base", where it started ${RESET_KEEP(start)}${tail}`;
 /** `, which takes <the commits> after <after> off it too (to keep <them>, run …)`. */
-function takesOff({ n, after, head, branch = 'release/test' }) {
+function takesOff({ n, after, head, branch = 'release/test', version = '0.46.0' }) {
   const the = n === 1 ? 'the 1 commit' : `the ${n} commits`;
   const them = n === 1 ? 'it' : 'them';
   const back = n === 1 ? 'it' : 'them';
-  return `, which takes ${the} after ${after} off it too (to keep ${them}, run git branch ${branch}-kept-${head} ${head} first: when the release has run again, its text says how to bring ${back} back)`;
+  return `, which takes ${the} after ${after} off it too (to keep ${them}, run git branch ${branch}-kept-${head} ${head} first: when the release has run again, its text says how to bring ${back} back; to have v${version} include ${back}, bring ${back} back before the re-run instead, as item 4 of that section says)`;
 }
 const WAY_OUT = (where, x = '0.46.0') =>
   `Finish it by hand (Part B step 3, "To finish an unfinished release by hand"), then go on with Part B step 4. Or abandon it (Part B step 3, "To abandon an unfinished release"${where}), then re-run: npm run release -- --version ${x}`;
@@ -5652,7 +5865,7 @@ test('RL76 — the abandon keeps commits of yours made after the release own on 
       const them = n === 1 ? 'it' : 'them';
       const r = fx.resume();
       assert.equal(r.status, 1, r.stderr);
-      const phrase = `which takes the ${n === 1 ? '1 commit' : `${n} commits`} after ${dev} off it too (to keep ${them}, run git branch release/test-kept-${head} ${head} first: when the release has run again, its text says how to bring ${them} back)`;
+      const phrase = `which takes the ${n === 1 ? '1 commit' : `${n} commits`} after ${dev} off it too (to keep ${them}, run git branch release/test-kept-${head} ${head} first: when the release has run again, its text says how to bring ${them} back; to have v0.46.0 include ${them}, bring ${them} back before the re-run instead, as item 4 of that section says)`;
       assert.ok(r.stderr.includes(phrase), r.stderr);
 
       // the four items as written
@@ -5689,5 +5902,1409 @@ test('RL76 — the abandon keeps commits of yours made after the release own on 
     } finally {
       fx.cleanup();
     }
+  }
+});
+
+// ── correction 3: one release at a time, on its own branch ─────────────────────────────────────
+
+/** The lock's blob, read from the ref (what a cell needs from the lock it reads there). */
+function lockBlob(fx) {
+  return JSON.parse(fx.git('cat-file', '-p', LOCK_REF));
+}
+const lockId = (fx) => lockIdAt(fx.root, fx.env);
+/** A lock "by hand": a blob written with `git hash-object -w --stdin`, set with `git update-ref`. */
+function writeBlob(fx, text) {
+  return execFileSync('git', ['hash-object', '-w', '--stdin'], {
+    cwd: fx.root,
+    env: fx.env,
+    input: text,
+    encoding: 'utf-8',
+  }).trim();
+}
+function lockByHand(fx, content) {
+  const text = typeof content === 'string' ? content : JSON.stringify(content) + '\n';
+  const id = writeBlob(fx, text);
+  fx.git('update-ref', LOCK_REF, id);
+  return id;
+}
+/** The fields of a lock by hand, for 0.46.0 in this fixture; `over` overrides them. */
+function handLock(fx, over = {}) {
+  return {
+    pid: process.pid,
+    host: hostname(),
+    started: 'proc:1',
+    at: '2026-10-02T10:03:18Z',
+    command: '--version 0.46.0',
+    root: fx.root,
+    token: '0123456789abcdef',
+    ...over,
+  };
+}
+/** `proc:<field 22>` and the state of `pid`, as the release reads them. */
+function procStat(pid) {
+  const stat = readFileSync(`/proc/${pid}/stat`, 'utf-8');
+  const after = stat
+    .slice(stat.lastIndexOf(')') + 1)
+    .trim()
+    .split(/\s+/);
+  return { started: `proc:${after[19]}`, state: after[0] };
+}
+const NEXT_RESUME = 'npm run release -- --resume';
+const NEXT_VERSION = 'npm run release -- --version 0.46.0';
+const DELETE_LOCK = (id) => `git update-ref -d ${LOCK_REF} ${id}`;
+const RUNNING = (l) =>
+  `Error: A release is already running in this repository: npm run release -- ${l.command}, in ${l.root} (process ${l.pid}, started ${l.at}). Wait for it to finish, or stop it (kill ${l.pid}): it stops at its next step, cleans up and says what to run next. A commit hook it had started runs to its end: wait until its output stops.`;
+const GONE = (l, id, next) =>
+  `Error: A release ran in this repository (npm run release -- ${l.command}, in ${l.root}, process ${l.pid}, started ${l.at}) and is no longer running: it stopped without giving back its lock. What it had started (a build, a commit) may still be running: wait until its output stops. Delete that lock (${DELETE_LOCK(id)}; git refuses if another release has taken the lock since), then run: ${next}`;
+const CANNOT_TELL = (l, id, why, next) =>
+  `Error: This repository holds the lock of a release (npm run release -- ${l.command}, in ${l.root}, process ${l.pid} on ${l.host}, started ${l.at}), and this run cannot tell whether that release is still running: ${why}. If it is not, delete that lock (${DELETE_LOCK(id)}; git refuses if another release has taken the lock since), then run: ${next}`;
+const UNREADABLE = (id, reason, next) =>
+  `Error: The release lock (${LOCK_REF}) cannot be read: ${reason}. If no release is running in this repository, delete it (${DELETE_LOCK(id)}), then run: ${next}`;
+const LOCK_LOST = (opening) =>
+  `Error: The release ${opening}. Its lock was removed, or taken by another release, while it ran, so it does nothing more: see what it left (git status, git log --oneline -3), and when no release is running in this repository, run: npm run release -- --resume`;
+const LOCK_LOST_NOTHING = (opening) =>
+  `Error: The release ${opening}. Its lock was removed, or taken by another release, while it ran, so it does nothing more, and its journal is gone too, so --resume has nothing to go on. Nothing of v0.46.0 is committed: when no release is running in this repository, put back the files it set (git restore --staged --worktree -- ${FILES.join(' ')}; set aside any change of yours in them first), then run: npm run release -- --version 0.46.0`;
+const RESTORED = (fx) =>
+  `Error: The unfinished v0.46.0 release has no release commit on release/test, so --resume cannot finish it. It restored the 9 files the release sets to their content at ${fx.startShort}. packages/*/dist may still hold its v0.46.0 build: run npm run build before using this checkout. Re-run: npm run release -- --version 0.46.0`;
+const LEFT = 'stopped, because this checkout left release/test while it ran';
+const OFF_BRANCH = (opening, where = 'You are on side', extra = '') =>
+  `Error: The release of v0.46.0 ${opening}. ${where}, but the unfinished v0.46.0 release ran on release/test. Switch back to it (git switch release/test)${extra}, then run: npm run release -- --resume`;
+const versionsAt = (fx, v) => {
+  for (const dir of ['cli', 'core', 'mcp-server', 'testing']) {
+    assert.equal(readPkgVersion(fx.root, dir), v, dir);
+  }
+};
+
+test('RL77 leg 1 — a release already running: --version and --resume are refused, and change nothing', async () => {
+  const fx = buildFixture('rl77a');
+  const marker = join(fx.home, 'build-marker');
+  const go = join(fx.home, 'build-go');
+  const handle = spawnReleaseDetached(
+    fx.root,
+    fx.env,
+    ['--root', fx.root, '--version', '0.46.0', '--registry-fixture', fx.registry],
+    { BUILD_MARKER: marker, BUILD_WAIT: go },
+  );
+  try {
+    await waitForFile(marker);
+    const lock = lockBlob(fx);
+    const id = lockId(fx);
+    assert.equal(lock.pid, handle.child.pid);
+    assert.equal(lock.command, '--version 0.46.0');
+    assert.equal(lock.root, fx.root);
+    assert.equal(lock.host, hostname());
+    assert.match(lock.token, /^[0-9a-f]{16}$/);
+    assert.match(lock.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+    const before = snapshot(fx);
+    assertRefusal(fx.version(), RUNNING(lock));
+    assertNothingChanged(fx, before);
+    assert.equal(lockId(fx), id);
+    assertRefusal(fx.resume(), RUNNING(lock));
+    assertNothingChanged(fx, before);
+    assert.equal(lockId(fx), id);
+    writeFileSync(go, '');
+    const { code } = await handle.waitExit();
+    assert.equal(code, 0, `stdout: ${readOut(handle)}\nstderr: ${readErr(handle)}`);
+    assert.deepEqual(stdoutFrom({ stdout: readOut(handle) }, 'Prepared'), successLines(fx));
+    versionsAt(fx, '0.46.1-dev.0');
+    assert.equal(lockId(fx), null);
+  } finally {
+    handle.killGroup('SIGKILL');
+    killBuildGroup(marker);
+    cleanupSignalFiles(handle);
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 2 — a release killed with a journal: the gone text names --resume; its delete command, then --resume', async () => {
+  const fx = buildFixture('rl77b');
+  try {
+    const pid = await crashDuringBuild(fx, {}, { keepLock: true });
+    const lock = lockBlob(fx);
+    const id = lockId(fx);
+    assert.equal(lock.pid, pid);
+    const before = snapshot(fx);
+    const r = fx.version();
+    assertRefusal(r, GONE(lock, id, NEXT_RESUME));
+    assertRefusal(fx.resume(), GONE(lock, id, NEXT_RESUME));
+    assertNothingChanged(fx, before);
+    assert.equal(lockId(fx), id);
+    runPrinted(fx, between(r.stderr, 'Delete that lock (', '; git refuses'));
+    assert.equal(lockId(fx), null);
+    assertRefusal(fx.resume(), RESTORED(fx));
+    assertSuccess(fx, fx.version());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 3 — a lock whose process is gone, no journal: the gone text names the run own command', () => {
+  const fx = buildFixture('rl77c');
+  try {
+    const dead = spawnSync(process.execPath, ['-e', '0']).pid;
+    const lock = handLock(fx, { pid: dead });
+    const id = lockByHand(fx, lock);
+    const before = snapshot(fx);
+    assertRefusal(fx.version(), GONE(lock, id, NEXT_VERSION));
+    assertRefusal(fx.resume(), GONE(lock, id, NEXT_RESUME));
+    assertNothingChanged(fx, before);
+    assert.equal(lockId(fx), id);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 4 — a recycled pid: a live process with another start time is not the holder', () => {
+  const fx = buildFixture('rl77d');
+  try {
+    const lock = handLock(fx, { started: 'proc:1' });
+    const id = lockByHand(fx, lock);
+    assertRefusal(fx.version(), GONE(lock, id, NEXT_VERSION));
+    assert.equal(lockId(fx), id);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test(
+  'RL77 leg 5 — a zombie holder is gone',
+  { skip: !existsSync('/proc/self/stat') && 'no /proc' },
+  async () => {
+    const fx = buildFixture('rl77e');
+    const holder = spawn('sh', ['-c', 'sleep 1 & echo $!; exec sleep 30'], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    try {
+      const pid = await new Promise((res) => {
+        let out = '';
+        holder.stdout.on('data', (d) => {
+          out += d;
+          if (out.includes('\n')) res(Number(out.trim()));
+        });
+      });
+      // the child sleeps 1 s, so the shell has exec'd into `sleep 30` (which never reaps) before it
+      // exits: with `true &`, dash can reap it before the exec, and no zombie is left (5 of 40 runs
+      // under load)
+      let stat = procStat(pid);
+      for (let i = 0; i < 1000 && stat.state !== 'Z'; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        stat = procStat(pid);
+      }
+      assert.equal(stat.state, 'Z');
+      process.kill(pid, 0); // kill -0 still finds it
+      const lock = handLock(fx, { pid, started: stat.started });
+      const id = lockByHand(fx, lock);
+      assertRefusal(fx.version(), GONE(lock, id, NEXT_VERSION));
+    } finally {
+      holder.kill('SIGKILL');
+      fx.cleanup();
+    }
+  },
+);
+
+test('RL77 leg 6 — another host, or no start time to compare: the release cannot tell', () => {
+  const fx = buildFixture('rl77f');
+  try {
+    const other = handLock(fx, { host: 'another-machine.invalid', pid: 4321 });
+    const a = lockByHand(fx, other);
+    assertRefusal(
+      fx.version(),
+      CANNOT_TELL(other, a, 'the lock was taken on another machine', NEXT_VERSION),
+    );
+    const noStart = handLock(fx, { started: null });
+    const b = lockByHand(fx, noStart);
+    assertRefusal(
+      fx.version(),
+      CANNOT_TELL(
+        noStart,
+        b,
+        `the start time of process ${process.pid} cannot be compared`,
+        NEXT_VERSION,
+      ),
+    );
+    assertRefusal(
+      fx.resume(),
+      CANNOT_TELL(
+        noStart,
+        b,
+        `the start time of process ${process.pid} cannot be compared`,
+        NEXT_RESUME,
+      ),
+    );
+    assert.equal(lockId(fx), b);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 7 — a lock that cannot be read: refused, and its delete command works', () => {
+  const fx = buildFixture('rl77g');
+  try {
+    const notJson = lockByHand(fx, '{');
+    const before = snapshot(fx);
+    const r = fx.version();
+    assertRefusal(r, UNREADABLE(notJson, 'it is not valid JSON', NEXT_VERSION));
+    assertNothingChanged(fx, before);
+    assert.equal(lockId(fx), notJson);
+    const empty = lockByHand(fx, '{}\n');
+    const r2 = fx.version();
+    assertRefusal(
+      r2,
+      UNREADABLE(empty, 'it does not hold what a release writes there', NEXT_VERSION),
+    );
+    assertNothingChanged(fx, before);
+    assert.equal(lockId(fx), empty);
+    runPrinted(fx, between(r2.stderr, 'delete it (', '), then run'));
+    assert.equal(lockId(fx), null);
+    assertSuccess(fx, fx.version());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 8 — the printed delete command cannot remove a newer lock', async () => {
+  const fx = buildFixture('rl77h');
+  try {
+    await crashDuringBuild(fx, {}, { keepLock: true });
+    const old = lockId(fx);
+    const r = fx.version();
+    const printed = between(r.stderr, 'Delete that lock (', '; git refuses');
+    assert.equal(printed, DELETE_LOCK(old));
+    const newer = writeBlob(fx, JSON.stringify(handLock(fx)) + '\n');
+    fx.git('update-ref', LOCK_REF, newer, old);
+    assert.throws(() => runPrinted(fx, printed));
+    assert.equal(lockId(fx), newer);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 9 — the lock removed under a live run: it stops and changes nothing more', () => {
+  const fx = buildFixture('rl77i');
+  try {
+    const r = fx.version('0.46.0', { BUILD_UNLOCK: '1' });
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.stderr.trimEnd(), LOCK_LOST('stopped'));
+    versionsAt(fx, '0.46.0');
+    assert.equal(existsSync(fx.journalPath), true);
+    assertRefusal(fx.resume(), RESTORED(fx));
+    assertSuccess(fx, fx.version());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 9a — the lock removed under a live run whose build then fails', () => {
+  const fx = buildFixture('rl77i2');
+  try {
+    const r = fx.version('0.46.0', { BUILD_UNLOCK: '1', BUILD_FAIL: '1' });
+    assertRefusal(r, LOCK_LOST('stopped: the build failed (exit 1; its message is above)'), {
+      whole: false,
+    });
+    versionsAt(fx, '0.46.0');
+    assert.equal(existsSync(fx.journalPath), true);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 9b — the lock and the journal both removed under a live run, nothing committed: the second text, and its restore works', () => {
+  const fx = buildFixture('rl77i4');
+  try {
+    const r = fx.version('0.46.0', { BUILD_UNLOCK: '1', BUILD_RM_JOURNAL: '1' });
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.stderr.trimEnd(), LOCK_LOST_NOTHING('stopped'));
+    assert.equal(existsSync(fx.journalPath), false);
+    versionsAt(fx, '0.46.0');
+    runPrinted(fx, between(r.stderr, 'put back the files it set (', '; set aside'));
+    assert.equal(fx.git('status', '--porcelain'), '');
+    assertSuccess(fx, fx.version());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 9c — the lock removed under a live run, then SIGINT during the build', async () => {
+  const fx = buildFixture('rl77i3');
+  const marker = join(fx.home, 'build-marker');
+  const handle = spawnReleaseDetached(
+    fx.root,
+    fx.env,
+    ['--root', fx.root, '--version', '0.46.0', '--registry-fixture', fx.registry],
+    { BUILD_UNLOCK: '1', BUILD_MARKER: marker, BUILD_MS: '4000' },
+  );
+  try {
+    await waitForFile(marker);
+    handle.killPid('SIGINT');
+    const { code } = await handle.waitExit();
+    assert.equal(code, 1);
+    assert.ok(
+      lines(readErr(handle)).includes(LOCK_LOST('was interrupted (SIGINT)')),
+      readErr(handle),
+    );
+    versionsAt(fx, '0.46.0');
+    assert.equal(existsSync(fx.journalPath), true);
+  } finally {
+    handle.killGroup('SIGKILL');
+    killBuildGroup(marker);
+    cleanupSignalFiles(handle);
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 9d — the lock and the journal both removed right after the release commit: the first text, and --resume names that commit', () => {
+  const fx = buildFixture('rl77i5');
+  try {
+    const remove = postCommitFor(
+      fx,
+      'chore: release',
+      `git update-ref -d refs/realm/release-lock && ${rmJournal}`,
+    );
+    const r = fx.version();
+    remove();
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.stderr.trimEnd(), LOCK_LOST('stopped'));
+    assert.equal(existsSync(fx.journalPath), false);
+    const rel = fx.short('HEAD');
+    assert.equal(fx.git('log', '-1', '--format=%s'), RELEASE_SUBJECT);
+    assert.equal(fx.tryGit('rev-parse', '-q', '--verify', 'refs/tags/v0.46.0'), null);
+    assertRefusal(
+      fx.resume(),
+      RESUME_NAMES(
+        `HEAD is ${rel} "${RELEASE_SUBJECT}", the release commit of v0.46.0, not tagged v0.46.0`,
+        WAY_OUT(putBack(fx.startShort)),
+      ),
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 9e — the lock and the journal both removed after a commit of yours on top of the start: the second text, and the release goes on top of it', () => {
+  const fx = buildFixture('rl77i6');
+  try {
+    const r = fx.version('0.46.0', {
+      BUILD_COMMIT: 'a commit of yours',
+      BUILD_UNLOCK: '1',
+      BUILD_RM_JOURNAL: '1',
+    });
+    assert.equal(r.status, 1, r.stdout);
+    // readState gives `moved`: nothing of the release is committed
+    assert.equal(r.stderr.trimEnd(), LOCK_LOST_NOTHING('stopped'));
+    assertRefusal(fx.resume(), NO_RELEASE);
+    runPrinted(fx, between(r.stderr, 'put back the files it set (', '; set aside'));
+    assertSuccess(fx, fx.version());
+    assert.deepEqual(fx.git('log', '--format=%s', '-3').split('\n'), [
+      DEV_SUBJECT,
+      RELEASE_SUBJECT,
+      'a commit of yours',
+    ]);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 10 — the lock taken by another run under a live run: it stops, and leaves that lock', async () => {
+  const fx = buildFixture('rl77j');
+  const marker = join(fx.home, 'build-marker');
+  const go = join(fx.home, 'build-go');
+  const handle = spawnReleaseDetached(
+    fx.root,
+    fx.env,
+    ['--root', fx.root, '--version', '0.46.0', '--registry-fixture', fx.registry],
+    { BUILD_MARKER: marker, BUILD_WAIT: go },
+  );
+  try {
+    await waitForFile(marker);
+    const old = lockId(fx);
+    const other = writeBlob(fx, JSON.stringify(handLock(fx, { token: 'fedcba9876543210' })) + '\n');
+    fx.git('update-ref', LOCK_REF, other, old);
+    writeFileSync(go, '');
+    const { code } = await handle.waitExit(60000, { lockCheck: false });
+    assert.equal(code, 1);
+    assert.equal(readErr(handle).trimEnd(), LOCK_LOST('stopped'));
+    assert.equal(lockId(fx), other);
+    assert.equal(existsSync(fx.journalPath), true);
+    fx.git('update-ref', '-d', LOCK_REF, other);
+  } finally {
+    handle.killGroup('SIGKILL');
+    killBuildGroup(marker);
+    cleanupSignalFiles(handle);
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 11 — every way out gives the lock back', async () => {
+  const fx = buildFixture('rl77k');
+  try {
+    fx.git('switch', '-q', 'main');
+    assert.equal(fx.version().status, 1);
+    assert.equal(lockId(fx), null);
+    fx.git('switch', '-q', 'release/test');
+    assert.equal(fx.version('0.46.0', { BUILD_FAIL: '3' }).status, 1);
+    assert.equal(lockId(fx), null);
+    assertRefusal(fx.resume(), 'Error: There is no unfinished release to resume.');
+    assert.equal(lockId(fx), null);
+  } finally {
+    fx.cleanup();
+  }
+  const fx2 = buildFixture('rl77k2');
+  const marker = join(fx2.home, 'build-marker');
+  const handle = spawnReleaseDetached(
+    fx2.root,
+    fx2.env,
+    ['--root', fx2.root, '--version', '0.46.0', '--registry-fixture', fx2.registry],
+    { BUILD_MARKER: marker, BUILD_MS: '4000' },
+  );
+  try {
+    await waitForFile(marker);
+    handle.killPid('SIGINT');
+    const { code } = await handle.waitExit();
+    assert.equal(code, 1);
+    assert.equal(lockId(fx2), null);
+  } finally {
+    handle.killGroup('SIGKILL');
+    killBuildGroup(marker);
+    cleanupSignalFiles(handle);
+    fx2.cleanup();
+  }
+});
+
+test('RL77 leg 12 — a lock git cannot create: the release says so, and changes nothing', () => {
+  const fx = buildFixture('rl77l');
+  try {
+    // a file where git keeps the refs/realm directory: update-ref cannot create the lock, and no
+    // lock is held
+    writeFileSync(join(fx.root, '.git', 'refs', 'realm'), '');
+    const before = snapshot(fx);
+    assertRefusal(
+      fx.version(),
+      "Error: The release cannot take its lock (refs/realm/release-lock): update_ref failed for ref 'refs/realm/release-lock': cannot lock ref 'refs/realm/release-lock': unable to create lock file .git/refs/realm/release-lock.lock; non-directory in the way.",
+    );
+    assertNothingChanged(fx, before);
+    unlinkSync(join(fx.root, '.git', 'refs', 'realm'));
+    assertSuccess(fx, fx.version());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 13 — a holder this user may not signal (EPERM) exists: with its start time, it is running', () => {
+  const fx = buildFixture('rl77m');
+  try {
+    let code = null;
+    try {
+      process.kill(1, 0);
+    } catch (e) {
+      code = e.code;
+    }
+    // pid 1 belongs to root; under a root test run, kill -0 succeeds and it exists all the same
+    assert.ok(code === null || code === 'EPERM', String(code));
+    const lock = handLock(fx, { pid: 1, started: procStat(1).started });
+    lockByHand(fx, lock);
+    assertRefusal(fx.version(), RUNNING(lock));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 14 — the kill the running text names: the release cleans up and says what to run next', async () => {
+  const fx = buildFixture('rl77n');
+  const marker = join(fx.home, 'build-marker');
+  const handle = spawnReleaseDetached(
+    fx.root,
+    fx.env,
+    ['--root', fx.root, '--version', '0.46.0', '--registry-fixture', fx.registry],
+    { BUILD_MARKER: marker, BUILD_MS: '4000' },
+  );
+  try {
+    await waitForFile(marker);
+    const r = fx.version();
+    assertRefusal(r, RUNNING(lockBlob(fx)));
+    runPrinted(fx, between(r.stderr, 'or stop it (', '): it stops at its next step'));
+    const { code } = await handle.waitExit();
+    assert.equal(code, 1);
+    assert.ok(
+      lines(readErr(handle)).includes(
+        `Error: The release of v0.46.0 was interrupted (SIGTERM). Every tracked file it changed is restored; ${DIST('0.46.0')} To release, re-run: npm run release -- --version 0.46.0`,
+      ),
+      readErr(handle),
+    );
+    assert.equal(lockId(fx), null);
+    assertSuccess(fx, fx.version());
+  } finally {
+    handle.killGroup('SIGKILL');
+    killBuildGroup(marker);
+    cleanupSignalFiles(handle);
+    fx.cleanup();
+  }
+});
+
+test('RL77 leg 15 — a SHA-256 repository: the lock is taken and given back', (t) => {
+  const { home, env } = makeIsolatedEnv('rl77o');
+  const root = makeTempDir('rl77o-repo');
+  try {
+    if (tryGit(root, env, 'init', '-q', '--object-format=sha256', '.') === null) {
+      t.skip('git cannot make a SHA-256 repository');
+      return;
+    }
+    assert.equal(git(root, env, 'rev-parse', '--show-object-format'), 'sha256');
+    const r = releaseSync(root, env, ['--root', root, '--resume']);
+    assertRefusal(r, 'Error: There is no unfinished release to resume.');
+    assert.equal(lockIdAt(root, env), null);
+  } finally {
+    cleanup(root, home);
+  }
+});
+
+test('RL78 leg 1 — switched during the build: it stops on the other branch, changes nothing more, and names the switch back', () => {
+  const fx = buildFixture('rl78a');
+  try {
+    const r = fx.version('0.46.0', { BUILD_SWITCH: 'side' });
+    assertRefusal(r, OFF_BRANCH(LEFT));
+    assert.equal(fx.git('symbolic-ref', '--short', 'HEAD'), 'side');
+    assert.equal(fx.short('HEAD'), fx.startShort);
+    assert.equal(fx.short('release/test'), fx.startShort);
+    assert.equal(fx.tryGit('rev-parse', '-q', '--verify', 'refs/tags/v0.46.0'), null);
+    assert.equal(JSON.parse(readFileSync(fx.journalPath, 'utf-8')).phase, 'release');
+    versionsAt(fx, '0.46.0');
+    runPrinted(fx, between(r.stderr, 'Switch back to it (', '), then run'));
+    assertRefusal(fx.resume(), RESTORED(fx));
+    assertSuccess(fx, fx.version());
+    assert.deepEqual(fx.git('log', '--format=%s', '-2', 'release/test').split('\n'), [
+      'chore: begin development after v0.46.0',
+      'chore: release v0.46.0',
+    ]);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL78 leg 2 — detached during the build', () => {
+  const fx = buildFixture('rl78b');
+  try {
+    const r = fx.version('0.46.0', { BUILD_DETACH: '1' });
+    assertRefusal(r, OFF_BRANCH(LEFT, 'HEAD is not on a branch'));
+    runPrinted(fx, between(r.stderr, 'Switch back to it (', '), then run'));
+    assertRefusal(fx.resume(), RESTORED(fx));
+    assertSuccess(fx, fx.version());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL78 leg 3 — switched while origin is read: nothing was bumped', () => {
+  const fx = buildFixture('rl78c');
+  try {
+    const path = makeShimDir(fx, 'wrappers');
+    const r = fx.version('0.46.0', { PATH: path, LS_REMOTE_BREAK: 'switch' });
+    assertRefusal(r, OFF_BRANCH(LEFT));
+    assert.equal(fx.gitRaw('status', '--porcelain'), '');
+    runPrinted(fx, between(r.stderr, 'Switch back to it (', '), then run'));
+    assertRefusal(fx.resume(), RESTORED(fx));
+    assertSuccess(fx, fx.version());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** A pre-commit hook that switches to `side` when the staged core version is (or is not) a
+ * development version. */
+const SWITCH_IN_PRE_COMMIT = (dev) =>
+  `case "$(git show :packages/core/package.json | grep '"version"')" in\n  *-dev.*) ${dev ? 'git switch -q -c side' : ':'} ;;\n  *) ${dev ? ':' : 'git switch -q -c side'} ;;\nesac\nexit 0`;
+
+test('RL78 leg 4 — a hook switches after the release commit: nothing is tagged, and no merge is named', () => {
+  const fx = buildFixture('rl78d');
+  try {
+    const remove = postCommitFor(fx, 'chore: release', 'git switch -q -c side');
+    const r = fx.version();
+    remove();
+    assertRefusal(r, OFF_BRANCH(LEFT));
+    const rel = fx.git('rev-parse', 'side');
+    assert.equal(fx.git('log', '-1', '--format=%s', rel), 'chore: release v0.46.0');
+    assert.equal(fx.git('rev-parse', 'release/test'), rel);
+    assert.equal(fx.tryGit('rev-parse', '-q', '--verify', 'refs/tags/v0.46.0'), null);
+    runPrinted(fx, between(r.stderr, 'Switch back to it (', '), then run'));
+    assertSuccess(fx, fx.resume());
+    assert.equal(fx.git('rev-parse', 'v0.46.0^{commit}'), rel);
+    assert.equal(fx.git('rev-parse', 'release/test~1'), rel);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL78 leg 5 — the release commit lands on another branch: the merge that takes it is named', () => {
+  const fx = buildFixture('rl78e');
+  try {
+    const remove = installHook(fx, 'pre-commit', SWITCH_IN_PRE_COMMIT(false));
+    const r = fx.version();
+    remove();
+    const rel = fx.short('side');
+    assertRefusal(
+      r,
+      OFF_BRANCH(
+        LEFT,
+        'You are on side',
+        `, take the release commit the release made there (git merge --ff-only ${rel})`,
+      ),
+    );
+    assert.equal(fx.short('release/test'), fx.startShort);
+    assert.equal(fx.tryGit('rev-parse', '-q', '--verify', 'refs/tags/v0.46.0'), null);
+    runPrinted(fx, between(r.stderr, 'Switch back to it (', '), take the'));
+    runPrinted(fx, between(r.stderr, 'made there (', '), then run'));
+    assertSuccess(fx, fx.resume());
+    assert.equal(fx.short('v0.46.0^{commit}'), rel);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL78 leg 6 — the development commit lands on another branch', () => {
+  const fx = buildFixture('rl78f');
+  try {
+    const remove = installHook(fx, 'pre-commit', SWITCH_IN_PRE_COMMIT(true));
+    const r = fx.version();
+    remove();
+    const dev = fx.short('side');
+    const rel = fx.short('v0.46.0^{commit}');
+    assertRefusal(
+      r,
+      OFF_BRANCH(
+        LEFT,
+        'You are on side',
+        `, take the development commit the release made there (git merge --ff-only ${dev})`,
+      ),
+    );
+    assert.equal(fx.short('release/test'), rel);
+    runPrinted(fx, between(r.stderr, 'Switch back to it (', '), take the'));
+    runPrinted(fx, between(r.stderr, 'made there (', '), then run'));
+    assertSuccess(fx, fx.resume());
+    assert.equal(fx.short('HEAD'), dev);
+    assert.equal(existsSync(fx.journalPath), false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL78 leg 7 — interrupted while off the branch', async () => {
+  const fx = buildFixture('rl78g');
+  const marker = join(fx.home, 'build-marker');
+  const handle = spawnReleaseDetached(
+    fx.root,
+    fx.env,
+    ['--root', fx.root, '--version', '0.46.0', '--registry-fixture', fx.registry],
+    { BUILD_SWITCH: 'side', BUILD_MARKER: marker, BUILD_MS: '4000' },
+  );
+  try {
+    await waitForFile(marker);
+    handle.killPid('SIGINT');
+    const { code } = await handle.waitExit();
+    assert.equal(code, 1);
+    assert.ok(
+      lines(readErr(handle)).includes(OFF_BRANCH('was interrupted (SIGINT)')),
+      readErr(handle),
+    );
+    versionsAt(fx, '0.46.0');
+    assert.equal(existsSync(fx.journalPath), true);
+  } finally {
+    handle.killGroup('SIGKILL');
+    killBuildGroup(marker);
+    cleanupSignalFiles(handle);
+    fx.cleanup();
+  }
+});
+
+test('RL78 leg 8 — another failure while off the branch', () => {
+  const fx = buildFixture('rl78h');
+  try {
+    const r = fx.version('0.46.0', { BUILD_SWITCH: 'side', BUILD_FAIL: '1' });
+    assertRefusal(r, OFF_BRANCH('stopped: the build failed (exit 1; its message is above)'), {
+      whole: false,
+    });
+    versionsAt(fx, '0.46.0');
+    assert.equal(existsSync(fx.journalPath), true);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL78 leg 9 — the branch deleted while off it: the recreate form', () => {
+  const fx = buildFixture('rl78i');
+  try {
+    const r = fx.version('0.46.0', { BUILD_SWITCH: 'side', BUILD_DELETE_BRANCH: 'release/test' });
+    assertRefusal(
+      r,
+      `Error: The release of v0.46.0 ${LEFT}. You are on side, but the unfinished v0.46.0 release ran on release/test, which no longer exists. Recreate it at ${fx.startShort} (git switch -c release/test ${fx.startShort}), then run: npm run release -- --resume`,
+    );
+    runPrinted(fx, between(r.stderr, 'Recreate it at ', '), then run').split(' (')[1]);
+    assertRefusal(fx.resume(), RESTORED(fx));
+    assertSuccess(fx, fx.version());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL79 leg 1 — release/v<V> exists: the release runs there', () => {
+  const fx = buildFixture('rl79a');
+  try {
+    fx.git('branch', 'release/v0.46.0');
+    const before = snapshot(fx);
+    const r = fx.version();
+    assertRefusal(
+      r,
+      'Error: You are on release/test, but release/v0.46.0 exists. Run the release there (git switch release/v0.46.0), then re-run. If release/v0.46.0 is left from an earlier attempt and release/test is the branch to release from, delete it first (git branch -D release/v0.46.0).',
+    );
+    assertNothingChanged(fx, before);
+    runPrinted(fx, between(r.stderr, 'Run the release there (', '), then re-run'));
+    assertSuccess(fx, fx.version(), { branch: 'release/v0.46.0' });
+  } finally {
+    fx.cleanup();
+  }
+  const fx2 = buildFixture('rl79a2');
+  try {
+    fx2.git('branch', 'release/v0.46.0');
+    const r = fx2.version();
+    runPrinted(fx2, between(r.stderr, 'delete it first (', ').'));
+    assertSuccess(fx2, fx2.version());
+  } finally {
+    fx2.cleanup();
+  }
+});
+
+test('RL79 leg 2 — on the release branch of another version', () => {
+  const fx = buildFixture('rl79b');
+  try {
+    fx.git('switch', '-q', '-c', 'release/v0.47.0');
+    const before = snapshot(fx);
+    const r = fx.version();
+    assertRefusal(
+      r,
+      'Error: You are on release/v0.47.0, the release branch of 0.47.0, and asked to release 0.46.0. Run the release of 0.46.0 on its own branch (git switch -c release/v0.46.0), then re-run.',
+    );
+    assertNothingChanged(fx, before);
+    runPrinted(fx, between(r.stderr, 'on its own branch (', '), then re-run'));
+    assertSuccess(fx, fx.version(), { branch: 'release/v0.46.0' });
+  } finally {
+    fx.cleanup();
+  }
+});
+
+const REWRITTEN = (fx) =>
+  `The release journal ${fx.journalPath} was deleted while the release ran: this run has written it again.`;
+const rmJournal = 'rm -f "$(git rev-parse --git-dir)/realm-release.json"';
+
+test('RL80 leg 1 — the journal deleted during a build that fails: written again, then the failed build text', () => {
+  const fx = buildFixture('rl80a');
+  try {
+    const r = fx.version('0.46.0', { BUILD_RM_JOURNAL: '1', BUILD_FAIL: '1' });
+    assert.equal(r.status, 1, r.stdout);
+    // the whole of stderr: C7's line, then exactly what a failed build prints today
+    assert.equal(
+      r.stderr,
+      `${REWRITTEN(fx)}\n${STOPPED('the build failed (exit 1; its message is above)')}\n`,
+    );
+    assert.equal(fx.git('status', '--porcelain'), '');
+    assert.equal(existsSync(fx.journalPath), false);
+    assert.equal(lockId(fx), null);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL80 leg 2 — the journal deleted during a build that succeeds: the release finishes', () => {
+  const fx = buildFixture('rl80b');
+  try {
+    const r = fx.version('0.46.0', { BUILD_RM_JOURNAL: '1' });
+    assertSuccess(fx, r);
+    assert.equal(r.stderr, '');
+    versionsAt(fx, '0.46.1-dev.0');
+    assert.equal(existsSync(fx.journalPath), false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL80 leg 3 — the journal deleted while the development commit is made: the release finishes', () => {
+  const fx = buildFixture('rl80c');
+  try {
+    const remove = installHook(
+      fx,
+      'pre-commit',
+      `case "$(git show :packages/core/package.json)" in\n  *-dev.*) ${rmJournal} ;;\nesac\nexit 0`,
+    );
+    const r = fx.version();
+    remove();
+    assertSuccess(fx, r);
+    versionsAt(fx, '0.46.1-dev.0');
+    assert.equal(existsSync(fx.journalPath), false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL80 leg 4 — the journal deleted after the release commit, and tagging fails: written again, then --resume finishes', () => {
+  const fx = buildFixture('rl80d');
+  try {
+    const remove = postCommitFor(fx, 'chore: release', rmJournal);
+    const tagLock = join(fx.root, '.git', 'refs', 'tags', 'v0.46.0.lock');
+    mkdirSync(join(fx.root, '.git', 'refs', 'tags'), { recursive: true });
+    writeFileSync(tagLock, '');
+    const r = fx.version();
+    remove();
+    assert.equal(r.status, 1, r.stdout);
+    const rel = fx.short('HEAD');
+    assert.deepEqual(lines(r.stderr).slice(-2), [
+      REWRITTEN(fx),
+      `Error: The release commit for v0.46.0 exists (${rel}), but it is not tagged: tagging failed (exit 128; its message is above). Fix the cause, then run: npm run release -- --resume`,
+    ]);
+    assert.equal(existsSync(fx.journalPath), true);
+    unlinkSync(tagLock);
+    assertSuccess(fx, fx.resume());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+// ── RL82 — 6.3: a text that names a plain reset says what --resume does first ──────────────
+
+const STOPS_FROM_START = (files) =>
+  `then run npm run release -- --resume, which first stops over the changes left in ${files} and prints what to do with them, and then puts back the files the release changed; then re-run: npm run release -- --version 0.46.0`;
+const STOPS = (files) =>
+  `then re-run npm run release -- --resume, which first stops over the changes left in ${files} and prints what to do with them`;
+const editCoreAndCommit = (message) =>
+  `${NODE_EDIT_CORE('edited by a hook')} && git -c commit.gpgsign=false commit -q -m "${message}" -- packages/core/package.json`;
+
+test('RL80 leg 5 — the journal deleted, and the checkout switched, during the build: written again, then the switch-back text', () => {
+  const fx = buildFixture('rl80e');
+  try {
+    const r = fx.version('0.46.0', { BUILD_SWITCH: 'side', BUILD_RM_JOURNAL: '1' });
+    assert.equal(r.status, 1, r.stdout);
+    // onFailure's order: the journal step, then the branch arm (C7)
+    assert.equal(r.stderr, `${REWRITTEN(fx)}\n${OFF_BRANCH(LEFT)}\n`);
+    assert.equal(JSON.parse(readFileSync(fx.journalPath, 'utf-8')).phase, 'release');
+    versionsAt(fx, '0.46.0');
+    runPrinted(fx, between(r.stderr, 'Switch back to it (', '), then run'));
+    assertRefusal(fx.resume(), RESTORED(fx));
+    assertSuccess(fx, fx.version());
+  } finally {
+    fx.cleanup();
+  }
+});
+test('RL82 leg 1 — a hook change only in the commit: the ending is today, and --resume does not stop over it', () => {
+  const fx = buildFixture('rl82a');
+  try {
+    const remove = installHook(
+      fx,
+      'pre-commit',
+      `case "$(git show :packages/core/package.json)" in\n  *-dev.*) ;;\n  *) cp packages/core/package.json "$HOME/kept.json" && ${NODE_EDIT_CORE('staged by a hook')} && git add packages/core/package.json && cp "$HOME/kept.json" packages/core/package.json ;;\nesac\nexit 0`,
+    );
+    const r = fx.version();
+    remove();
+    const rel = fx.short('HEAD');
+    const start = fx.startShort;
+    assertRefusal(
+      r,
+      `Error: The release commit ${rel} holds changes the release did not make (packages/core/package.json): they changed while the commit ran, most likely in a git hook. Put release/test back at ${start} (git reset ${start} keeps the current files, with the differences unstaged), fix or remove whatever changed them, then run npm run release -- --resume to put back the files the release changed, and re-run: npm run release -- --version 0.46.0`,
+      { whole: false },
+    );
+    runPrinted(fx, between(r.stderr, `Put release/test back at ${start} (`, ' keeps'));
+    const restored = fx.resume();
+    assertRefusal(restored, RESTORED(fx));
+    assert.equal(fx.git('status', '--porcelain'), '');
+    assertSuccess(fx, fx.version());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL82 leg 2 — a hook commit after the release commit that changes a file the release sets: --resume stops over it first', () => {
+  const fx = buildFixture('rl82b');
+  try {
+    const remove = postCommitFor(fx, 'chore: release v0.46.0', editCoreAndCommit('made by a hook'));
+    const r = fx.version();
+    remove();
+    const head = fx.short('HEAD');
+    const rel = fx.short('HEAD~1');
+    assertRefusal(
+      r,
+      `Error: After the release commit step, release/test is at ${head} "made by a hook", not at the release commit ${rel}: something made another commit after it while the release ran, most likely a git hook. Put release/test back at ${rel} (git reset ${rel} keeps the current files, with the differences unstaged), fix or remove what did it, ${STOPS('packages/core/package.json')}`,
+      { whole: false },
+    );
+    runPrinted(fx, between(r.stderr, `Put release/test back at ${rel} (`, ' keeps'));
+    const stopped = fx.resume();
+    assert.equal(stopped.status, 1);
+    assert.equal(
+      lines(stopped.stderr)[0],
+      'Error: Resuming would commit changes the release did not make into the development commit, in:',
+    );
+    runPrinted(fx, between(stopped.stderr, 'To drop them: ', ', then re-run'));
+    assertSuccess(fx, fx.resume());
+    assert.equal(fx.short('v0.46.0^{commit}'), rel);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL82 leg 3 — a hook commit after the development commit that changes a file the release sets', () => {
+  const fx = buildFixture('rl82c');
+  try {
+    const remove = postCommitFor(
+      fx,
+      'chore: begin development',
+      editCoreAndCommit('made by a hook'),
+    );
+    const r = fx.version();
+    remove();
+    const head = fx.short('HEAD');
+    const dev = fx.short('HEAD~1');
+    // at the development commit --resume does not stop over the files: it finishes, and its
+    // success text names the change left uncommitted. The text says only that (6.3 as built).
+    assertRefusal(r, AFTER_STEP('development', head, 'made by a hook', dev), { whole: false });
+    // --resume without the reset: the cannot-continue text names the same reset, with the same
+    // ending (the development commit is its anchor here too).
+    assertRefusal(
+      fx.resume(),
+      `Error: The unfinished v0.46.0 release cannot continue from here: release/test is at ${head} "made by a hook". It can continue from ${dev}, its development commit: put release/test back there (git reset ${dev} keeps the current files, with the differences unstaged), then re-run: npm run release -- --resume. The reset takes ${head} off release/test; its changes stay in your files, uncommitted, and are not part of v0.46.0. To abandon the release instead: Part B step 3, "To abandon an unfinished release": put the branch back at ${fx.startShort} "base", where it started (git reset --keep ${fx.startShort} brings its files too, and refuses rather than overwrite a change of yours), which takes the 1 commit after ${dev} off it too (to keep it, run git branch release/test-kept-${head} ${head} first: when the release has run again, its text says how to bring it back; to have v0.46.0 include it, bring it back before the re-run instead, as item 4 of that section says), then delete its tag (git tag -d v0.46.0), then its journal (rm ${fx.journalPath}), then re-run: npm run release -- --version 0.46.0`,
+    );
+    runPrinted(fx, between(r.stderr, `Put release/test back at ${dev} (`, ' keeps'));
+    const ok = fx.resume();
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.deepEqual(
+      stdoutFrom(ok, 'Prepared'),
+      successLines(fx, {
+        extra: [
+          'This checkout also holds changes that are not committed, in modified packages/core/package.json: they are not part of v0.46.0. Commit them on release/test if the release PR should carry them. After a change to a package.json, run npm install before you commit it, so package-lock.json follows.',
+        ],
+      }),
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL82 leg 4 — the subject rewritten and a file changed in the release commit: the fallback text says --resume stops over it first', () => {
+  const fx = buildFixture('rl82d');
+  try {
+    const removeMsg = installHook(
+      fx,
+      'prepare-commit-msg',
+      'case "$(head -n1 "$1")" in\n  "chore: release"*) { printf \'[REL] \'; cat "$1"; } > "$1.new" && mv "$1.new" "$1" ;;\nesac\nexit 0',
+    );
+    const removePre = installHook(fx, 'pre-commit', PRE_COMMIT_RELEASE());
+    const r = fx.version();
+    removeMsg();
+    removePre();
+    const head = fx.short('HEAD');
+    const start = fx.startShort;
+    assertRefusal(
+      r,
+      `Error: After the release commit step, release/test is at ${head} "[REL] chore: release v0.46.0", but the release commit must have the subject "chore: release v0.46.0" and the parent ${start}: something changed that commit or made another one while the release ran, most likely a git hook. Put release/test back at ${start} (git reset ${start} keeps the current files, with the differences unstaged), fix or remove what did it, ${STOPS_FROM_START('packages/core/package.json')}`,
+      { whole: false },
+    );
+    runPrinted(fx, between(r.stderr, `Put release/test back at ${start} (`, ' keeps'));
+    const stopped = fx.resume();
+    assert.equal(stopped.status, 1);
+    assert.equal(lines(stopped.stderr)[0], OVERWRITE);
+    runPrinted(fx, between(stopped.stderr, 'To drop them: ', ', then re-run'));
+    assertRefusal(fx.resume(), RESTORED(fx));
+    assertSuccess(fx, fx.version());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL82 leg 5 — a hook changes only the mode of a file the release sets, in the development commit', () => {
+  const fx = buildFixture('rl82e');
+  try {
+    installHook(
+      fx,
+      'pre-commit',
+      `case "$(git show :packages/core/package.json)" in\n  *-dev.*) chmod +x packages/core/package.json && git add packages/core/package.json ;;\nesac\nexit 0`,
+    );
+    const r = fx.version();
+    const dev = fx.short('HEAD');
+    const rel = fx.short('HEAD~1');
+    assertRefusal(
+      r,
+      `Error: The development commit ${dev} holds changes the release did not make (packages/core/package.json): they changed while the commit ran, most likely in a git hook. Put release/test back at ${rel} (git reset ${rel} keeps the current files, with the differences unstaged), fix or remove whatever changed them, ${STOPS(['packages/core/package.json'])}`,
+      { whole: false },
+    );
+    unlinkSync(join(fx.root, '.git', 'hooks', 'pre-commit'));
+    runPrinted(fx, between(r.stderr, `Put release/test back at ${rel} (`, ' keeps'));
+    const refused = fx.resume();
+    assert.equal(refused.status, 1);
+    assert.equal(lines(refused.stderr)[0], OVERWRITE);
+    runPrinted(fx, between(refused.stderr, 'To drop them: ', ', then re-run'));
+    assertSuccess(fx, fx.resume());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL82 leg 6 — a hook deletes a file the release sets (git rm -f), in the development commit', () => {
+  const fx = buildFixture('rl82f');
+  try {
+    installHook(
+      fx,
+      'pre-commit',
+      `case "$(git show :packages/core/package.json)" in\n  *-dev.*) git rm -f -q packages/core/package.json ;;\nesac\nexit 0`,
+    );
+    const r = fx.version();
+    const dev = fx.short('HEAD');
+    const rel = fx.short('HEAD~1');
+    assertRefusal(
+      r,
+      `Error: The development commit ${dev} holds changes the release did not make (packages/core/package.json): they changed while the commit ran, most likely in a git hook. Put release/test back at ${rel} (git reset ${rel} keeps the current files, with the differences unstaged), fix or remove whatever changed them, ${STOPS('packages/core/package.json')}`,
+      { whole: false },
+    );
+    assert.equal(existsSync(join(fx.root, 'packages', 'core', 'package.json')), false);
+    unlinkSync(join(fx.root, '.git', 'hooks', 'pre-commit'));
+    runPrinted(fx, between(r.stderr, `Put release/test back at ${rel} (`, ' keeps'));
+    const refused = fx.resume();
+    assert.equal(refused.status, 1);
+    assert.equal(lines(refused.stderr)[0], OVERWRITE);
+    runPrinted(fx, between(refused.stderr, 'To drop them: ', ', then re-run'));
+    assertSuccess(fx, fx.resume());
+    assert.equal(
+      readJson(join(fx.root, 'packages', 'core', 'package.json')).version,
+      '0.46.1-dev.0',
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+test('RL81 — Part B step 3, "To abandon", item 4: kept commits brought back before the re-run are in the release', () => {
+  const doc = readFileSync(INSTRUCTIONS_FILE, 'utf-8');
+  const item4 = doc
+    .split('\n')
+    .find((l) => l.startsWith('4. Run the release again from the start'));
+  assert.ok(item4, 'item 4 of "To abandon an unfinished release"');
+  const back = item4.slice(item4.indexOf('bring them back before you run it:'));
+  const commands = [...back.matchAll(/`([^`]+)`/g)]
+    .map((m) => m[1])
+    .filter((c) => c.startsWith('git '));
+  assert.equal(commands.length, 4, back);
+  const fx = buildFixture('rl81');
+  try {
+    failDevCommit(fx);
+    const rel = fx.short('HEAD');
+    writeFileSync(
+      join(fx.root, 'CHANGELOG.md'),
+      `${readFileSync(join(fx.root, 'CHANGELOG.md'), 'utf-8')}- a fix to the release notes\n`,
+    );
+    commitAll(fx, 'docs: fix the release notes');
+    const head = fx.short('HEAD');
+    // the script's message names the kept branch and the commit it counts them after
+    const text = fx.resume().stderr;
+    const last = between(text, 'which takes the 1 commit after ', ' off it too');
+    assert.equal(last, rel);
+    runPrinted(fx, between(text, '(to keep it, run ', ' first:')); // item 1
+    fx.git('reset', '-q', '--keep', fx.startShort); // item 2
+    fx.git('tag', '-d', 'v0.46.0'); // item 3
+    unlinkSync(fx.journalPath);
+    const kept = `release/test-kept-${head}`;
+    for (const c of commands) {
+      runPrinted(
+        fx,
+        c
+          .replaceAll('release/v<version>-kept-<commit>', kept)
+          .replaceAll('release/v<version>', 'release/test')
+          .replaceAll('<last>', last),
+      );
+    }
+    assertSuccess(fx, fx.version());
+    assert.ok(fx.git('show', 'v0.46.0:CHANGELOG.md').includes('- a fix to the release notes'));
+    assert.equal(fx.tryGit('rev-parse', '-q', '--verify', `refs/heads/${kept}`), null);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+// ── RL83 — stopping the release stops its build (C11) ─────────────────────────────────────────
+
+/** True while `pid` is a live process (a zombie counts as gone). */
+function processAlive(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf-8');
+    return stat.slice(stat.lastIndexOf(')') + 2)[0] !== 'Z';
+  } catch {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+async function stopDuringBuild(prefix, sig) {
+  const fx = buildFixture(prefix);
+  const marker = join(fx.home, 'build-marker');
+  const handle = spawnReleaseDetached(
+    fx.root,
+    fx.env,
+    ['--root', fx.root, '--version', '0.46.0', '--registry-fixture', fx.registry],
+    { BUILD_MARKER: marker, BUILD_MS: '8000' },
+  );
+  try {
+    await waitForFile(marker);
+    const buildPid = Number(readFileSync(marker, 'utf-8'));
+    assert.equal(processAlive(buildPid), true);
+    handle.killPid(sig);
+    const deadline = Date.now() + 1000;
+    while (processAlive(buildPid) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.equal(processAlive(buildPid), false, 'the build still runs a second after the signal');
+    const { code } = await handle.waitExit();
+    assert.equal(code, 1, `stdout: ${readOut(handle)}\nstderr: ${readErr(handle)}`);
+    assert.deepEqual(lines(readErr(handle)), [
+      `Interrupt received (${sig}): stopping the current step, then cleaning up.`,
+      `Error: The release of v0.46.0 was interrupted (${sig}). Every tracked file it changed is restored; ${DIST('0.46.0')} To release, re-run: npm run release -- --version 0.46.0`,
+    ]);
+    assert.equal(fx.git('status', '--porcelain'), '');
+  } finally {
+    handle.killGroup('SIGKILL');
+    killBuildGroup(marker);
+    cleanupSignalFiles(handle);
+    fx.cleanup();
+  }
+}
+
+test('RL83 leg 1 — SIGTERM to the release alone stops its build', async () => {
+  await stopDuringBuild('rl83a', 'SIGTERM');
+});
+
+test('RL83 leg 2 — SIGINT to the release alone stops its build', async () => {
+  await stopDuringBuild('rl83b', 'SIGINT');
+});
+
+// ── RL84 — an interrupt during the entry checks (C12) ─────────────────────────────────────────
+
+const C12_TEXT = (sig) =>
+  `Error: The release of v0.46.0 was interrupted (${sig}) before it changed anything. To release, re-run: npm run release -- --version 0.46.0`;
+
+/** An `npm` on PATH whose `view` writes a marker, waits until `go` exists (or about 5 s), then
+ * answers E404 as npm does; anything else goes to the real npm. */
+function makeWaitingNpm(fx) {
+  const dir = join(fx.home, 'npm-wait-bin');
+  mkdirSync(dir, { recursive: true });
+  const realNpm = execFileSync('sh', ['-c', 'command -v npm'], {
+    env: fx.env,
+    encoding: 'utf-8',
+  }).trim();
+  const waiting = join(fx.home, 'npm-waiting');
+  const go = join(fx.home, 'npm-go');
+  writeFileSync(
+    join(dir, 'npm'),
+    `#!/bin/sh
+if [ "$1" = view ]; then
+  : > '${waiting}'
+  i=0
+  while [ ! -e '${go}' ] && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done
+  printf '%s\\n' '{ "error": { "code": "E404", "summary": "Not Found - GET https://registry.npmjs.org/x - Not found" } }'
+  echo 'npm error code E404' >&2
+  exit 1
+fi
+exec '${realNpm}' "$@"
+`,
+  );
+  chmodSync(join(dir, 'npm'), 0o755);
+  return { env: { PATH: `${dir}:${fx.env.PATH}` }, waiting, go };
+}
+
+async function interruptRegistryRead(prefix, signalIt) {
+  const fx = buildFixture(prefix);
+  const npm = makeWaitingNpm(fx);
+  const before = snapshot(fx);
+  const handle = spawnReleaseDetached(
+    fx.root,
+    fx.env,
+    ['--root', fx.root, '--version', '0.46.0'],
+    npm.env,
+  );
+  try {
+    await waitForFile(npm.waiting);
+    signalIt(handle);
+    writeFileSync(npm.go, '');
+    const { code } = await handle.waitExit();
+    return { fx, code, out: readOut(handle), err: readErr(handle), before };
+  } finally {
+    handle.killGroup('SIGKILL');
+    cleanupSignalFiles(handle);
+  }
+}
+
+test('RL84 leg 1 — SIGTERM while the registry is read: stopped before anything changed', async () => {
+  const { fx, code, out, err, before } = await interruptRegistryRead('rl84a', (h) =>
+    h.killPid('SIGTERM'),
+  );
+  try {
+    assert.equal(code, 1, `stdout: ${out}\nstderr: ${err}`);
+    assert.deepEqual(lines(err), [
+      'Interrupt received (SIGTERM): stopping the current step, then cleaning up.',
+      C12_TEXT('SIGTERM'),
+    ]);
+    assert.ok(!out.includes('→ Setting every package'), out);
+    assert.equal(existsSync(fx.journalPath), false);
+    assert.equal(lockIdAt(fx.root, fx.env), null);
+    assertNothingChanged(fx, before);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL84 leg 2 — SIGINT to the group while the registry is read (npm dies of it): the same', async () => {
+  const { fx, code, out, err, before } = await interruptRegistryRead('rl84b', (h) =>
+    h.killGroup('SIGINT'),
+  );
+  try {
+    assert.equal(code, 1, `stdout: ${out}\nstderr: ${err}`);
+    assert.deepEqual(lines(err), [
+      'Interrupt received (SIGINT): stopping the current step, then cleaning up.',
+      C12_TEXT('SIGINT'),
+    ]);
+    assert.ok(!err.includes('from the npm registry'), err);
+    assert.ok(!out.includes('→ Setting every package'), out);
+    assert.equal(existsSync(fx.journalPath), false);
+    assert.equal(lockIdAt(fx.root, fx.env), null);
+    assertNothingChanged(fx, before);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+// ── RL85 — the lockfile records what the manifests declare (C13) ──────────────────────────────
+
+const C13_TEXT = (field, name, spec, manifest, has = '') =>
+  `Error: package-lock.json does not record ${field}.${name} ${JSON.stringify(spec)} of ${manifest}${has}: npm ci would refuse this tree. Write the lockfile with npm (${NPM_LOCK}), commit it (${COMMIT_LOCK}), then re-run.`;
+
+/** Follow C13's text: its npm command, then its commit. */
+function followC13(fx, stderr) {
+  runPrinted(fx, between(stderr, 'Write the lockfile with npm (', '), commit it ('));
+  runPrinted(fx, between(stderr, '), commit it (', '), then re-run.'));
+}
+
+test('RL85 leg 1 — a dependency the lockfile does not record: refused, and its two commands make the release work', () => {
+  const fx = buildFixture('rl85a');
+  try {
+    editJson(join(fx.root, 'packages', 'engine-tests', 'package.json'), (o) => {
+      o.dependencies = { '@q/core': '*' };
+    });
+    commitAll(fx, 'engine-tests depends on core');
+    const before = snapshot(fx);
+    const r = fx.version();
+    assertRefusal(
+      r,
+      C13_TEXT('dependencies', '@q/core', '*', 'packages/engine-tests/package.json'),
+      { whole: false },
+    );
+    assertNothingChanged(fx, before);
+    followC13(fx, r.stderr);
+    assert.equal(fx.git('status', '--porcelain'), '');
+    assertSuccess(fx, fx.version());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL85 leg 2 — a dependency whose value differs from the lockfile: the text names both', () => {
+  const fx = buildFixture('rl85b');
+  try {
+    editJson(join(fx.root, 'package.json'), (o) => {
+      o.devDependencies = { '@q/engine-tests': '*' };
+    });
+    writeLockfile(fx.root, fx.env);
+    commitAll(fx, 'the root depends on engine-tests');
+    editJson(join(fx.root, 'package.json'), (o) => {
+      o.devDependencies = { '@q/engine-tests': '0.0.0' };
+    });
+    commitAll(fx, 'pin engine-tests');
+    const before = snapshot(fx);
+    const r = fx.version();
+    assertRefusal(
+      r,
+      C13_TEXT('devDependencies', '@q/engine-tests', '0.0.0', 'package.json', ' (it has "*")'),
+      { whole: false },
+    );
+    assertNothingChanged(fx, before);
+    followC13(fx, r.stderr);
+    assertSuccess(fx, fx.version());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL85 leg 3 — npm install during the build: the notice before the release commit; committing the manifest alone meets C13; following it releases a tree npm ci accepts', () => {
+  const fx = buildFixture('rl85c');
+  try {
+    const r = fx.version('0.46.0', { BUILD_EDIT_OTHER: '1', BUILD_NPM_INSTALL: '1' });
+    assert.equal(r.status, 1, r.stdout);
+    const err = lines(r.stderr);
+    assert.equal(err[err.length - 2], LOCK_NOTICE_BEFORE);
+    assert.ok(
+      err[err.length - 1].startsWith(
+        'Error: The release of v0.46.0 stopped: package-lock.json changed while the release ran.',
+      ),
+      r.stderr,
+    );
+    // commit the manifest alone, as the stopped text allows
+    fx.git(
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-q',
+      '-m',
+      'engine-tests depends on core',
+      '--',
+      'packages/engine-tests/package.json',
+    );
+    const again = fx.version();
+    assertRefusal(
+      again,
+      C13_TEXT('dependencies', '@q/core', '*', 'packages/engine-tests/package.json'),
+      { whole: false },
+    );
+    followC13(fx, again.stderr);
+    assertSuccess(fx, fx.version());
+    const tagged = JSON.parse(fx.git('show', 'v0.46.0:package-lock.json'));
+    assert.deepEqual(tagged.packages['packages/engine-tests'].dependencies, { '@q/core': '*' });
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL85 leg 4 — --resume restoring a changed lockfile after the release commit: the notice as today', () => {
+  const fx = buildFixture('rl85d');
+  try {
+    failDevCommit(fx);
+    editJson(join(fx.root, 'package-lock.json'), (o) => {
+      o['x-edited'] = true;
+    });
+    const ok = fx.resume();
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.ok(lines(ok.stderr).includes(LOCK_NOTICE), ok.stderr);
+    assert.ok(!lines(ok.stderr).includes(LOCK_NOTICE_BEFORE), ok.stderr);
+    assert.deepEqual(stdoutFrom(ok, 'Prepared'), successLines(fx, { extra: [LOCK_SUCCESS_LINE] }));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('RL85 leg 5 — a name in both dependencies and optionalDependencies: npm records it under optionalDependencies only, and the release goes through', () => {
+  const fx = buildFixture('rl85e');
+  try {
+    editJson(join(fx.root, 'package.json'), (o) => {
+      o.dependencies = { '@q/engine-tests': '*' };
+      o.optionalDependencies = { '@q/engine-tests': '0.0.0' };
+    });
+    writeLockfile(fx.root, fx.env);
+    const lock = JSON.parse(readFileSync(join(fx.root, 'package-lock.json'), 'utf-8'));
+    assert.equal(lock.packages[''].dependencies, undefined);
+    assert.deepEqual(lock.packages[''].optionalDependencies, { '@q/engine-tests': '0.0.0' });
+    commitAll(fx, 'the root depends on engine-tests, optionally');
+    assertSuccess(fx, fx.version());
+  } finally {
+    fx.cleanup();
   }
 });

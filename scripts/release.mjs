@@ -31,8 +31,11 @@
 // way npm would); it acts only on what it has checked (HEAD and each version file, content and mode,
 // before the bump writes and again before it stages; each commit it makes, by subject, parent,
 // content and modes, before it tags or records it); and `--resume` runs only on the branch the
-// release ran on.
+// release ran on. It never runs beside another release in the same repository, and never removes
+// another run's lock (correction 3).
 
+import { hostname } from 'node:os';
+import { randomBytes } from 'node:crypto';
 import {
   readFileSync,
   writeFileSync,
@@ -61,12 +64,16 @@ const USAGE =
 const HELP = [
   USAGE,
   '  --version <V>  Release V: set every package to it, build, commit and tag the release, then commit the next development version. Nothing is pushed or published.',
-  '  --resume       Finish a release that stopped after its release commit. For one that stopped before it, restore its files and exit 1, since nothing was released: run --version again.',
+  '  --resume       Finish a release whose release commit is on the branch. For one with no release commit there, restore its files and exit 1, since nothing was released: run --version again.',
 ].join('\n');
 
 // Said once a restore has put back a lockfile that held a change the release did not make.
 const LOCKFILE_NOTICE =
   'package-lock.json held changes the release did not make; it is restored, so they are gone. If they came from npm install, run it again after the release.';
+// The same, for a restore made while no release commit exists (C13): the re-run releases what is
+// committed, so the lockfile npm writes must be committed before it.
+const LOCKFILE_NOTICE_BEFORE =
+  'package-lock.json held changes the release did not make; it is restored, so they are gone. If they came from npm install, run it again and commit what it writes before you re-run the release.';
 
 // ── small git/text helpers ─────────────────────────────────────────────────────────────────────
 
@@ -231,8 +238,14 @@ function writeJournal(journalPath, journal) {
     if (!['EISDIR', 'EPERM', 'EINVAL', 'ENOTSUP'].includes(e.code)) throw e;
   }
 }
+/** Delete the journal. A journal already gone (deleted while a run that then succeeds was
+ * finishing) is not an error (C7). */
 function removeJournal(journalPath) {
-  unlinkSync(journalPath);
+  try {
+    unlinkSync(journalPath);
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e;
+  }
 }
 
 const HEX_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -679,6 +692,40 @@ function thenText(journal, fromStart) {
     ? `then run npm run release -- --resume to put back the files the release changed, and re-run: npm run release -- --version ${journal.version}`
     : 'then re-run: npm run release -- --resume';
 }
+/**
+ * 6.3: the files the release sets, other than the lockfile, that `--resume` will stop over after a
+ * plain reset to `anchor`: a plain reset keeps the working tree, so these are the files whose
+ * WORKING-TREE content is none of the release's own contents from `anchor`, or that are missing,
+ * or whose working-tree mode is not `anchor`'s. (Not the index, and not a failed commit's file
+ * list: a change only in the commit or only staged is gone after the reset.)
+ */
+function heldAfterReset(root, anchor, journal) {
+  const files = journal.files.filter((f) => f !== LOCKFILE);
+  const base = readBase(root, anchor, files);
+  const work = readWorkState(root, files);
+  return files.filter((f) => {
+    const b = base.get(f);
+    const st = work.get(f);
+    if (st.work === null) return true;
+    if (!releaseContents(f, b.text, journal).includes(st.work)) return true;
+    return workModeOf(st) !== b.mode;
+  });
+}
+/** The ending of every text that names a plain reset to `anchor` and then `--resume` (6.3). */
+function thenAfterReset(root, journal, anchor, fromStart) {
+  // At the development commit, --resume does not look at the files: the release is done, or only
+  // its tag is missing, and it finishes, its success text naming what is left uncommitted. Only a
+  // reset to the start or to the release commit leads to a state where it stops over them.
+  if (journal.phase === 'development' && anchor !== journal.releaseSha) {
+    return thenText(journal, fromStart);
+  }
+  const held = heldAfterReset(root, anchor, journal);
+  if (held.length === 0) return thenText(journal, fromStart);
+  const list = held.join(', ');
+  return fromStart
+    ? `then run npm run release -- --resume, which first stops over the changes left in ${list} and prints what to do with them, and then puts back the files the release changed; then re-run: npm run release -- --version ${journal.version}`
+    : `then re-run npm run release -- --resume, which first stops over the changes left in ${list} and prints what to do with them`;
+}
 /** The tag and the journal an abandon deletes, in Part B step 3's order. */
 function abandonDeletes(root, version, journalPath) {
   const parts = [];
@@ -702,7 +749,7 @@ function abandonWhere(root, { startSha, itsSha, n, keptBranch, version, journalP
     const headShort = shortSha(root, headSha(root));
     const the = n === 1 ? 'the 1 commit' : `the ${n} commits`;
     const them = n === 1 ? 'it' : 'them';
-    text += `, which takes ${the} after ${shortSha(root, itsSha)} off it too (to keep ${them}, run git branch ${keptBranch} ${headShort} first: when the release has run again, its text says how to bring ${them} back)`;
+    text += `, which takes ${the} after ${shortSha(root, itsSha)} off it too (to keep ${them}, run git branch ${keptBranch} ${headShort} first: when the release has run again, its text says how to bring ${them} back; to have v${version} include ${them}, bring ${them} back before the re-run instead, as item 4 of that section says)`;
   }
   const deletes = abandonDeletes(root, version, journalPath);
   if (deletes !== null) text += `, then ${deletes}`;
@@ -795,7 +842,7 @@ function printRestoreFailedAndExit() {
  * change as every other place), say so once the restore has succeeded: npm owns the rest of that
  * file, so a restore puts it back rather than keeping a change to it.
  */
-function restoreWithNotice(root, base, journal, files, inspected = null) {
+function restoreWithNotice(root, base, journal, files, inspected = null, beforeRelease = false) {
   let notice = false;
   if (files.includes(LOCKFILE)) {
     const insp = inspected ?? inspectFiles(root, base, journal, [LOCKFILE]);
@@ -803,8 +850,15 @@ function restoreWithNotice(root, base, journal, files, inspected = null) {
   }
   const r = restoreFiles(root, base, files);
   if (!r.ok) printRestoreFailedAndExit();
-  if (notice) console.error(LOCKFILE_NOTICE);
+  if (notice) {
+    console.error(beforeRelease ? LOCKFILE_NOTICE_BEFORE : LOCKFILE_NOTICE);
+    lockfileNoticePrinted = true;
+  }
 }
+/** Set where `LOCKFILE_NOTICE` is printed: the success text of the same run says it once more. */
+let lockfileNoticePrinted = false;
+const LOCKFILE_SUCCESS_LINE =
+  'package-lock.json held changes the release did not make, and this run restored it, so they are gone. If they came from npm install, run it again now.';
 
 // ── what a restore leaves, and the clause that says so ─────────────────────────────────────────
 
@@ -823,7 +877,9 @@ function restoreOnlyReleaseChanges(root, base, journal, onlyIfDiffers) {
   const leftNames = left.map((l) => l.file);
   const toRestore = journal.files.filter((f) => !leftNames.includes(f));
   if (toRestore.length > 0 && (!onlyIfDiffers || differsFrom(root, base, toRestore))) {
-    restoreWithNotice(root, base, journal, toRestore, inspected);
+    // `onlyIfDiffers` is false exactly before the release commit (the failure path's
+    // `nothing-committed` and `moved`)
+    restoreWithNotice(root, base, journal, toRestore, inspected, !onlyIfDiffers);
   }
   return left;
 }
@@ -851,7 +907,7 @@ function restoredClause(root, base, journal, left) {
             ? 'the other'
             : 'each of the others';
       steps.push(
-        `set the version in ${which} to ${versionAt(root, base, journal)}, and commit or set aside the rest`,
+        `set the version in ${which} back to ${versionAt(root, base, journal)}, the release's only change there, then commit what is left or set it aside (git stash push -- ${others.join(' ')}): the release's success text names that stash`,
       );
     }
     clause = `Every tracked file it changed is restored, except ${left.map((l) => l.file).join(', ')}, which also ${one ? 'holds a change' : 'hold changes'} the release did not make and ${one ? 'is' : 'are'} left as ${one ? 'it is' : 'they are'}: ${steps.join(', ')}`;
@@ -902,24 +958,31 @@ function releaseChangesLeft(root, journal) {
   }
   return left;
 }
-/** ` <left>` of the text for a branch put back by hand, going on from a commit of the release. */
-function leftClause(root, journal) {
-  if (journal.phase !== 'development') return '';
+/** The steps to take first, whichever way out, for a branch put back by hand, going on from a
+ * commit of the release (C6.5): each only when its files exist. Empty outside phase development. */
+function leftSteps(root, journal) {
+  if (journal.phase !== 'development') return [];
   const own = releaseChangesLeft(root, journal);
-  let text = '';
+  const steps = [];
   if (own.length > 0) {
-    text += ` The files the release sets hold its own changes, uncommitted, in ${own.join(', ')} (a reset that kept the files left them there): whichever way you take below, put them back first (git restore --staged --worktree -- ${own.join(' ')}).`;
+    steps.push(
+      `put back the release's own changes, which a reset that kept the files left uncommitted: git restore --staged --worktree -- ${own.join(' ')}`,
+    );
   }
   const rest = journal.files.filter((f) => !own.includes(f) && differsFrom(root, 'HEAD', [f]));
   if (rest.includes(LOCKFILE)) {
-    text += ` ${LOCKFILE} holds changes the release did not make, and npm owns the rest of it: whichever way you take below, put it back first too (git restore --staged --worktree -- ${LOCKFILE}); if they came from npm install, run it again after the release.`;
+    steps.push(
+      `put back ${LOCKFILE}, which holds changes the release did not make (npm owns the rest of it; if they came from npm install, run it again after the release): git restore --staged --worktree -- ${LOCKFILE}`,
+    );
   }
   const yours = rest.filter((f) => f !== LOCKFILE);
   if (yours.length > 0) {
     const one = yours.length === 1;
-    text += ` ${yours.join(', ')} ${one ? 'holds a change' : 'hold changes'} the release did not make: whichever way you take below, set the version in ${one ? 'that file' : 'each file'} to ${versionAt(root, 'HEAD', journal)} and set ${one ? 'it' : 'them'} aside first (git stash push -- ${yours.join(' ')}); when the release has run, its text names that stash and how to bring it back.`;
+    steps.push(
+      `set the version in ${yours.join(', ')} to ${versionAt(root, 'HEAD', journal)} and set ${one ? 'it' : 'them'} aside, since ${one ? 'it holds a change' : 'they hold changes'} the release did not make: git stash push -- ${yours.join(' ')} (when the release has run, its text names that stash and how to bring it back)`,
+    );
   }
-  return text;
+  return steps;
 }
 
 /**
@@ -948,7 +1011,15 @@ function cannotContinueText(root, journalPath, journal) {
     releaseCommit = stepCommitBelowHead(root, journal);
   }
   if (tagAt !== null && releaseCommit !== null && tagAt !== releaseCommit) {
-    return `${prefix}: tag v${V} points at ${shortSha(root, tagAt)}, not at its release commit ${shortSha(root, releaseCommit)}. Delete the tag (git tag -d v${V}), then re-run npm run release -- --resume: it tags ${shortSha(root, releaseCommit)}.`;
+    // C4: `it tags <R>` only where `--resume` does, once the tag is deleted: HEAD the release
+    // commit, or (phase development) the development commit.
+    const tagsNext =
+      head === releaseCommit ||
+      (journal.phase === 'development' && testStepCommit(root, journal, 'development', head).ok);
+    if (tagsNext) {
+      return `${prefix}: tag v${V} points at ${shortSha(root, tagAt)}, not at its release commit ${shortSha(root, releaseCommit)}. Delete the tag (git tag -d v${V}), then re-run npm run release -- --resume: it tags ${shortSha(root, releaseCommit)}.`;
+    }
+    return `${prefix}: tag v${V} points at ${shortSha(root, tagAt)}, not at its release commit ${shortSha(root, releaseCommit)}, and ${B} is at ${headShort} "${headSubject}", which is not a commit of the release. Delete the tag (git tag -d v${V}), then re-run npm run release -- --resume: it then says how to go on from ${headShort}.`;
   }
 
   const below = stepCommitBelowHead(root, journal);
@@ -992,13 +1063,19 @@ function cannotContinueText(root, journalPath, journal) {
     const abandonHere = fromStart
       ? ''
       : ` To abandon the release instead: Part B step 3, "To abandon an unfinished release"${where(anchor, n)}, then re-run: npm run release -- --version ${V}`;
-    return `${prefix}: ${B} is at ${headShort} "${headSubject}". ${from}: put ${B} back there ${resetHint(root, anchor)}, ${then}. ${off}${abandonHere}`;
+    const thenReset = thenAfterReset(root, journal, anchor, fromStart);
+    return `${prefix}: ${B} is at ${headShort} "${headSubject}". ${from}: put ${B} back there ${resetHint(root, anchor)}, ${thenReset}. ${off}${abandonHere}`;
   }
 
   // The branch was put back by hand before the anchor, and maybe committed on since. No commit of
   // the release is below HEAD: a plain reset would leave the old files in place, and `--resume`
   // would refuse them as changes the release did not make.
-  const left = leftClause(root, journal);
+  const steps = leftSteps(root, journal);
+  // the preparations, as numbered lines (C6.5); only in phase development
+  const first = [
+    'First, whichever way you take:',
+    ...steps.map((s, i) => `  ${i + 1}. ${capitalize(s)}`),
+  ];
   const fromThere =
     journal.phase === 'development'
       ? 'It can continue from there'
@@ -1007,7 +1084,15 @@ function cannotContinueText(root, journalPath, journal) {
   const abandon = abandonDeletes(root, V, journalPath);
   const forward = `(git reset --keep ${anchorShort} brings its files too, and refuses rather than overwrite a change of yours)`;
   if (n === 0) {
-    return `${prefix}: ${B} is at ${headShort} "${headSubject}", before ${anchorShort}, ${words}.${left} ${fromThere}: move ${B} forward to it ${forward}, ${then}. To abandon the release instead: ${abandon}, then re-run: npm run release -- --version ${V}`;
+    if (steps.length === 0) {
+      return `${prefix}: ${B} is at ${headShort} "${headSubject}", before ${anchorShort}, ${words}. ${fromThere}: move ${B} forward to it ${forward}, ${then}. To abandon the release instead: ${abandon}, then re-run: npm run release -- --version ${V}`;
+    }
+    return [
+      `${prefix}: ${B} is at ${headShort} "${headSubject}", before ${anchorShort}, ${words}.`,
+      ...first,
+      `To continue: move ${B} forward to ${anchorShort} ${forward}, ${then}`,
+      `To abandon the release instead: ${abandon}, then re-run: npm run release -- --version ${V}`,
+    ].join('\n');
   }
   const taken =
     n === 1
@@ -1015,7 +1100,15 @@ function cannotContinueText(root, journalPath, journal) {
       : `${n} commits off it, ${headShort} the newest, with their changes`;
   const them = n === 1 ? 'it' : 'them';
   const included = n === 1 ? 'that commit' : `those ${n} commits`;
-  return `${prefix}: ${B} is at ${headShort} "${headSubject}", on a line that does not hold ${anchorShort}, ${words}. Moving ${B} there takes ${taken}.${left} ${fromThere}: keep ${them} on a branch (git branch ${kept} ${headShort}), move ${B} to ${anchorShort} ${forward}, ${then}; when the release has finished, its text says how to bring ${them} back. To abandon the release instead and release from ${headShort}, ${included} included: ${abandon}, then re-run: npm run release -- --version ${V}`;
+  if (steps.length === 0) {
+    return `${prefix}: ${B} is at ${headShort} "${headSubject}", on a line that does not hold ${anchorShort}, ${words}. Moving ${B} there takes ${taken}. ${fromThere}: keep ${them} on a branch (git branch ${kept} ${headShort}), move ${B} to ${anchorShort} ${forward}, ${then}; when the release has finished, its text says how to bring ${them} back. To abandon the release instead and release from ${headShort}, ${included} included: ${abandon}, then re-run: npm run release -- --version ${V}`;
+  }
+  return [
+    `${prefix}: ${B} is at ${headShort} "${headSubject}", on a line that does not hold ${anchorShort}, ${words}. Moving ${B} there takes ${taken}.`,
+    ...first,
+    `To continue: keep ${them} on a branch (git branch ${kept} ${headShort}), move ${B} to ${anchorShort} ${forward}, ${then}; when the release has finished, its text says how to bring ${them} back.`,
+    `To abandon the release instead and release from ${headShort}, ${included} included: ${abandon}, then re-run: npm run release -- --version ${V}`,
+  ].join('\n');
 }
 function printCannotContinue(root, journalPath, journal) {
   console.error(cannotContinueText(root, journalPath, journal));
@@ -1047,6 +1140,8 @@ class InterruptError extends Error {
 let interrupted = null;
 let interruptPrinted = false;
 let currentChild = null;
+/** True while `currentChild` was started in a process group of its own (C11). */
+let currentChildOwnGroup = false;
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   process.on(sig, () => {
     if (!interruptPrinted) {
@@ -1054,7 +1149,17 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
       interruptPrinted = true;
     }
     interrupted = sig;
-    if (currentChild) currentChild.kill(sig);
+    if (!currentChild) return;
+    if (currentChildOwnGroup) {
+      // the whole group: npm, and the build it started (turbo, tsc)
+      try {
+        process.kill(-currentChild.pid, sig);
+        return;
+      } catch {
+        // the group is gone or cannot be signalled: fall back to the child itself
+      }
+    }
+    currentChild.kill(sig);
   });
 }
 
@@ -1062,9 +1167,10 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
  * `noun` names the step for its failure message ("the build", "the commit", …), never the raw
  * command line.
  */
-function run(root, cmd, cmdArgs, noun) {
+function run(root, cmd, cmdArgs, noun, { ownGroup = false } = {}) {
   return new Promise((resolveStep, rejectStep) => {
-    currentChild = spawn(cmd, cmdArgs, { cwd: root, stdio: 'inherit' });
+    currentChild = spawn(cmd, cmdArgs, { cwd: root, stdio: 'inherit', detached: ownGroup });
+    currentChildOwnGroup = ownGroup;
     currentChild.on('exit', (code, signal) => {
       currentChild = null;
       if (interrupted) {
@@ -1117,6 +1223,8 @@ function changedReason(changed, links) {
  * reads each file once, here, and transforms what it read.
  */
 function checkBeforeBump(root, journal, anchor) {
+  assertLockHeld(root);
+  assertOnBranch(root, journal);
   const files = journal.files;
   const base = readBase(root, anchor, files);
   const work = readWorkState(root, files);
@@ -1149,6 +1257,8 @@ function checkBeforeBump(root, journal, anchor) {
  * would otherwise become the release commit's parent.
  */
 function checkBeforeAdd(root, journal, anchor, version) {
+  assertLockHeld(root);
+  assertOnBranch(root, journal);
   const files = journal.files;
   const dirs = dirsOfFiles(files);
   const base = readBase(root, anchor, files);
@@ -1225,6 +1335,9 @@ async function commitStep(root, journal, kind) {
     'the commit',
   );
   const sha = headSha(root);
+  // C2: a commit that landed on another branch is never tagged and never recorded
+  assertLockHeld(root);
+  assertOnBranch(root, journal, { sha, stepKind: kind });
   assertStepCommit(root, journal, kind, sha);
   return sha;
 }
@@ -1240,9 +1353,18 @@ function tagStep(root, version, releaseSha) {
 
 /** The line about changes that are not committed (C2.9), or null. */
 function uncommittedLine(root, version, branch) {
-  const words = uncleanWords(porcelainLines(root));
+  const lines = porcelainLines(root);
+  const words = uncleanWords(lines);
   if (words === null) return null;
-  return `This checkout also holds changes that are not committed, in ${words}: they are not part of v${version}. Commit them on ${branch} if the release PR should carry them.`;
+  // C14: the paths the line lists (the first ten)
+  const manifestListed = lines
+    .slice(0, 10)
+    .map(pathOfPorcelain)
+    .some((path) => path === 'package.json' || path.endsWith('/package.json'));
+  const npmNote = manifestListed
+    ? ' After a change to a package.json, run npm install before you commit it, so package-lock.json follows.'
+    : '';
+  return `This checkout also holds changes that are not committed, in ${words}: they are not part of v${version}. Commit them on ${branch} if the release PR should carry them.${npmNote}`;
 }
 /** The lines for every stash made on `branch` (C2.10), oldest first, or []. */
 function stashLines(root, branch, devVersion, journalFiles) {
@@ -1367,9 +1489,13 @@ function printSuccess(root, journal, releaseCommit) {
   console.log(
     `Prepared v${V} (not pushed or published yet): release commit ${short}, tag v${V}. Development continues at ${journal.devVersion}.`,
   );
-  for (const line of followLines(root, V, journal.devVersion, branch, journal.files)) {
-    console.log(line);
+  const follow = followLines(root, V, journal.devVersion, branch, journal.files);
+  if (lockfileNoticePrinted) {
+    // C6.6: once more at the end, right after the line about uncommitted changes (or first)
+    const at = uncommittedLine(root, V, branch) === null ? 0 : 1;
+    follow.splice(at, 0, LOCKFILE_SUCCESS_LINE);
   }
+  for (const line of follow) console.log(line);
   console.log('Next steps:');
   console.log(`  1. Push the branch:  git push -u origin ${branch}`);
   console.log(
@@ -1407,7 +1533,7 @@ function printCommitStepFailure(root, journal, err) {
   const fromStart = kind === 'release';
   if (err.part === 2) {
     console.error(
-      `Error: ${capitalize(commitChangedSentence(root, kind, err.sha, err.files))}: they changed while the commit ran, most likely in a git hook. Put ${B} back at ${anchorShort} ${resetHint(root, anchor)}, fix or remove whatever changed them, ${thenText(journal, fromStart)}`,
+      `Error: ${capitalize(commitChangedSentence(root, kind, err.sha, err.files))}: they changed while the commit ran, most likely in a git hook. Put ${B} back at ${anchorShort} ${resetHint(root, anchor)}, fix or remove whatever changed them, ${thenAfterReset(root, journal, anchor, fromStart)}`,
     );
     return;
   }
@@ -1415,19 +1541,74 @@ function printCommitStepFailure(root, journal, err) {
   if (below !== null && below !== head) {
     const belowShort = shortSha(root, below);
     console.error(
-      `Error: After the ${kind} commit step, ${B} is at ${headShort} "${headSubject}", not at the ${kind} commit ${belowShort}: something made another commit after it while the release ran, most likely a git hook. Put ${B} back at ${belowShort} ${resetHint(root, below)}, fix or remove what did it, then re-run: npm run release -- --resume`,
+      `Error: After the ${kind} commit step, ${B} is at ${headShort} "${headSubject}", not at the ${kind} commit ${belowShort}: something made another commit after it while the release ran, most likely a git hook. Put ${B} back at ${belowShort} ${resetHint(root, below)}, fix or remove what did it, ${thenAfterReset(root, journal, below, false)}`,
     );
     return;
   }
   console.error(
-    `Error: After the ${kind} commit step, ${B} is at ${headShort} "${headSubject}", but the ${kind} commit must have the subject "${stepSubject(kind, journal.version)}" and the parent ${anchorShort}: something changed that commit or made another one while the release ran, most likely a git hook. Put ${B} back at ${anchorShort} ${resetHint(root, anchor)}, fix or remove what did it, ${thenText(journal, fromStart)}`,
+    `Error: After the ${kind} commit step, ${B} is at ${headShort} "${headSubject}", but the ${kind} commit must have the subject "${stepSubject(kind, journal.version)}" and the parent ${anchorShort}: something changed that commit or made another one while the release ran, most likely a git hook. Put ${B} back at ${anchorShort} ${resetHint(root, anchor)}, fix or remove what did it, ${thenAfterReset(root, journal, anchor, fromStart)}`,
   );
 }
 
-async function onFailure(root, journalPath, err) {
+async function onFailure(root, journalPath, err, heldJournal) {
+  const signal = err instanceof InterruptError ? err.signal : null;
+
+  // Three arms before anything else, in this order (lock, journal, branch). Each restores nothing: a run that has
+  // lost its lock, its journal or its branch no longer knows the checkout is its own.
+  // (1) the lock is not this run's: it does nothing more, and keeps the journal.
+  if (!lockIsMine(root)) {
+    const opening =
+      signal !== null
+        ? `was interrupted (${signal})`
+        : err.kind === 'lock-lost'
+          ? 'stopped'
+          : `stopped: ${err.message}`;
+    // With the journal gone too and nothing of the release committed, `--resume` would find
+    // nothing to resume while the files it set are still changed: say what to do. This only reads.
+    // (With a commit of the release on the branch, `--resume` with no journal names that release.)
+    const nothingCommitted =
+      !existsSync(journalPath) &&
+      ['nothing-committed', 'moved'].includes(readState(root, heldJournal).name);
+    console.error(
+      nothingCommitted
+        ? `Error: The release ${opening}. ${capitalize(LOCK_LOST)}, so it does nothing more, and its journal is gone too, so --resume has nothing to go on. Nothing of v${heldJournal.version} is committed: when no release is running in this repository, put back the files it set (git restore --staged --worktree -- ${heldJournal.files.join(' ')}; set aside any change of yours in them first), then run: npm run release -- --version ${heldJournal.version}`
+        : `Error: The release ${opening}. ${capitalize(LOCK_LOST)}, so it does nothing more: see what it left (git status, git log --oneline -3), and when no release is running in this repository, run: npm run release -- --resume`,
+    );
+    process.exit(1);
+  }
+  // (2) the journal is gone (C7): this run still holds it in memory, and holds the lock: it is the
+  // release. Write it again, say so, and go on as today.
+  if (!existsSync(journalPath)) {
+    writeJournal(journalPath, heldJournal);
+    console.error(
+      `The release journal ${journalPath} was deleted while the release ran: this run has written it again.`,
+    );
+  }
   const journal = readJournalOrExit(root, journalPath);
   const V = journal.version;
-  const signal = err instanceof InterruptError ? err.signal : null;
+  // (3) the checkout is off the branch the release ran on (C2): the place sentence `--resume`
+  // prints, with `run` for `re-run`, and, when a commit of the release was made on the other
+  // branch, the merge that takes it.
+  if (currentBranch(root) !== journal.branch) {
+    const B = journal.branch;
+    const opening =
+      signal !== null
+        ? `was interrupted (${signal})`
+        : err.kind === 'left-branch'
+          ? `stopped, because ${err.message}`
+          : `stopped: ${err.message}`;
+    let extra = '';
+    if (typeof err.sha === 'string' && testStepCommit(root, journal, err.stepKind, err.sha).ok) {
+      const at = tryGit(root, 'rev-parse', '-q', '--verify', `refs/heads/${B}`);
+      if (at !== null && at !== err.sha) {
+        extra = `, take the ${err.stepKind} commit the release made there (git merge --ff-only ${shortSha(root, err.sha)})`;
+      }
+    }
+    console.error(
+      `Error: The release of v${V} ${opening}. ${placeSentence(root, journal, 'run', extra)}`,
+    );
+    process.exit(1);
+  }
 
   // The first comparison failed in phase 1: the bump comes first, so the release has written
   // nothing. Remove the journal, restore nothing (a file that changed is someone else's change).
@@ -1463,6 +1644,9 @@ async function onFailure(root, journalPath, err) {
     removeJournal(journalPath);
     const restored = restoredClause(root, base, journal, left);
     const dist = DIST_NOTE(V);
+    // C6.2: "Fix the cause" only where something failed; a file that changed is the cause itself
+    const causeIsChange =
+      err.kind === 'before-add' && (err.changed.length > 0 || err.links.length > 0);
     if (state.name === 'nothing-committed') {
       if (signal !== null) {
         console.error(
@@ -1470,7 +1654,9 @@ async function onFailure(root, journalPath, err) {
         );
       } else {
         console.error(
-          `Error: The release of v${V} stopped: ${err.message}. ${restored} ${dist} Fix the cause, then re-run: npm run release -- --version ${V}`,
+          causeIsChange
+            ? `Error: The release of v${V} stopped: ${err.message}. ${restored} ${dist} Then re-run: npm run release -- --version ${V}`
+            : `Error: The release of v${V} stopped: ${err.message}. ${restored} ${dist} Fix the cause, then re-run: npm run release -- --version ${V}`,
         );
       }
       process.exit(1);
@@ -1478,7 +1664,7 @@ async function onFailure(root, journalPath, err) {
     const headShort = shortSha(root, state.head);
     const moved = `HEAD moved while the release ran, from ${shortSha(root, base)} to ${headShort} "${subjectOf(root, state.head)}"`;
     const onlyHead =
-      (err.kind === 'before-bump' || err.kind === 'before-add') &&
+      err.kind === 'before-add' &&
       err.changed.length === 0 &&
       err.links.length === 0 &&
       err.headMoved;
@@ -1492,7 +1678,9 @@ async function onFailure(root, journalPath, err) {
       );
     } else {
       console.error(
-        `Error: The release of v${V} stopped: ${err.message}, and ${moved}. ${restored} ${dist} Fix the cause, then re-run to release ${headShort}: npm run release -- --version ${V}`,
+        causeIsChange
+          ? `Error: The release of v${V} stopped: ${err.message}, and ${moved}. ${restored} ${dist} Then re-run to release ${headShort}: npm run release -- --version ${V}`
+          : `Error: The release of v${V} stopped: ${err.message}, and ${moved}. ${restored} ${dist} Fix the cause, then re-run to release ${headShort}: npm run release -- --version ${V}`,
       );
     }
     process.exit(1);
@@ -1553,7 +1741,7 @@ async function enterAndRunPhase2(root, journalPath, journal, releaseSha) {
       commitStep(root, newJournal, 'development'),
     );
   } catch (e) {
-    await onFailure(root, journalPath, e);
+    await onFailure(root, journalPath, e, newJournal);
     return;
   }
   removeJournal(journalPath);
@@ -1566,14 +1754,21 @@ async function runPhase1(root, journalPath, journal) {
   try {
     const texts = checkBeforeBump(root, journal, journal.startSha);
     await step(`Setting every package to ${V}`, () => bumpFiles(root, journal, texts, V));
-    await step('Building', () => run(root, 'npm', ['run', 'build'], 'the build'));
+    // C11: the build runs in a process group of its own, so a signal reaches what npm started
+    // under it (turbo, tsc), not npm alone. Only the build: a commit step keeps the terminal (a
+    // signing prompt may need it); a hook git runs stays in the release's process group, so a kill
+    // of the release's pid reaches git and not the hook, which runs to its end (a Ctrl-C reaches
+    // both).
+    await step('Building', () =>
+      run(root, 'npm', ['run', 'build'], 'the build', { ownGroup: true }),
+    );
     await step('Staging the version files', () => stageStep(root, journal, journal.startSha, V));
     await step(`Committing chore: release v${V}`, async () => {
       releaseSha = await commitStep(root, journal, 'release');
     });
     await step(`Tagging v${V}`, () => tagStep(root, V, releaseSha));
   } catch (e) {
-    await onFailure(root, journalPath, e);
+    await onFailure(root, journalPath, e, journal);
     return;
   }
   await enterAndRunPhase2(root, journalPath, journal, releaseSha);
@@ -1626,26 +1821,204 @@ function readPublishedVersions(root, name, fixturePath) {
 
 // ── the place check: `--resume` and entry check 1 act only on the branch the release ran on ────
 
-function placeCheck(root, journal) {
+/**
+ * The place sentence (the text after `Error: `), or null on the branch the release ran on. One
+ * mint for `--resume`, entry check 1 (`re-run`) and the failure path (`run`). `extra` goes into
+ * the switch-back form only, after the switch.
+ */
+function placeSentence(root, journal, verb, extra = '') {
   const B = journal.branch;
   const current = currentBranch(root);
-  if (current === B) return;
+  if (current === B) return null;
   const V = journal.version;
   const opening = current === null ? 'HEAD is not on a branch' : `You are on ${current}`;
   if (tryGit(root, 'rev-parse', '-q', '--verify', `refs/heads/${B}`) !== null) {
-    console.error(
-      `Error: ${opening}, but the unfinished v${V} release ran on ${B}. Switch back to it (git switch ${B}), then re-run: npm run release -- --resume`,
-    );
-    process.exit(1);
+    return `${opening}, but the unfinished v${V} release ran on ${B}. Switch back to it (git switch ${B})${extra}, then ${verb}: npm run release -- --resume`;
   }
   const head = headSha(root);
   const keepsEverything = readState(root, journal).name !== 'unknown';
   const at = keepsEverything ? head : stepAnchorOf(journal);
   const short = shortSha(root, at);
+  return `${opening}, but the unfinished v${V} release ran on ${B}, which no longer exists. Recreate it at ${short} (git switch -c ${B} ${short}), then ${verb}: npm run release -- --resume`;
+}
+function placeCheck(root, journal) {
+  const sentence = placeSentence(root, journal, 're-run');
+  if (sentence === null) return;
+  console.error(`Error: ${sentence}`);
+  process.exit(1);
+}
+/** C2: the release goes on only on the branch it started on. `extra`: what the error carries
+ * (the commit a commit step just made, and its kind). */
+function assertOnBranch(root, journal, extra = {}) {
+  if (currentBranch(root) !== journal.branch) {
+    throw new StepError(`this checkout left ${journal.branch} while it ran`, {
+      kind: 'left-branch',
+      ...extra,
+    });
+  }
+}
+
+// ── one release at a time: the lock (C1) ──────────────────────────────────────────────────────
+//
+// The lock is the git ref `refs/realm/release-lock`, pointing at a blob that names its holder. A
+// ref is shared by every linked worktree: one release at a time in a repository. Git creates it
+// only when it does not exist (`update-ref <ref> <blob> <zeros>`) and deletes it only while it
+// holds the blob given (`update-ref -d <ref> <blob>`): compare-and-swap, both ways.
+//
+// The rule: the script never removes a lock it did not take, whatever it reads in it. The
+// verdict on a held lock (running, gone, cannot tell, cannot be read) only chooses the text. A
+// person removes a dead run's lock, with a command that names the lock by its id, so it can
+// never remove a lock another run took in the meantime. And the holder checks its lock again
+// before the bump, before staging and after each commit: a lock removed under it stops it.
+
+const LOCK_REF = 'refs/realm/release-lock';
+let lockMine = null; // the blob this run's lock holds, once taken
+
+/** `{ started, zombie }` of `pid`, as the kernel reports it: `proc:<field 22 of /proc/<pid>/stat>`
+ * (clock ticks since boot: it never moves), else `ps:<lstart>`, else null. */
+function processStart(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf-8');
+    // field 2, the command name, may hold spaces and parentheses: split after the LAST `)`
+    const after = stat
+      .slice(stat.lastIndexOf(')') + 1)
+      .trim()
+      .split(/\s+/);
+    const state = after[0];
+    return {
+      started: `proc:${after[19]}`,
+      zombie: state === 'Z' || state === 'X' || state === 'x',
+    };
+  } catch {
+    // no /proc: ps below
+  }
+  const r = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+    encoding: 'utf-8',
+    env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
+  });
+  const text = r.status === 0 ? (r.stdout ?? '').trim() : '';
+  return { started: text === '' ? null : `ps:${text}`, zombie: false };
+}
+function lockIsMine(root) {
+  return lockMine !== null && tryGit(root, 'rev-parse', '-q', '--verify', LOCK_REF) === lockMine;
+}
+/** The one mint of the sentence a lost lock gives (C1). */
+const LOCK_LOST = 'its lock was removed, or taken by another release, while it ran';
+function assertLockHeld(root) {
+  if (!lockIsMine(root)) throw new StepError(LOCK_LOST, { kind: 'lock-lost' });
+}
+/** The lock's content, or `{ reason }` when it cannot be read as a release writes it. */
+function readLock(root, held) {
+  const text = tryGitRaw(root, 'cat-file', '-p', held);
+  if (text === null) return { reason: 'it is not valid JSON' };
+  let lock;
+  try {
+    lock = JSON.parse(text);
+  } catch {
+    return { reason: 'it is not valid JSON' };
+  }
+  const nonEmpty = (v) => typeof v === 'string' && v !== '';
+  if (
+    !isPlainObject(lock) ||
+    !Number.isInteger(lock.pid) ||
+    lock.pid <= 0 ||
+    !['host', 'at', 'command', 'root', 'token'].every((k) => nonEmpty(lock[k])) ||
+    !(typeof lock.started === 'string' || lock.started === null)
+  ) {
+    return { reason: 'it does not hold what a release writes there' };
+  }
+  return { lock };
+}
+/** A held lock: print the one text that fits and exit 1. Reads the lock and whether this
+ * checkout's journal exists; writes nothing. */
+function refuseHeldLock(root, held, command, journalPath) {
+  const del = `git update-ref -d ${LOCK_REF} ${held}`;
+  const next = existsSync(journalPath)
+    ? 'npm run release -- --resume'
+    : `npm run release -- ${command}`;
+  const read = readLock(root, held);
+  if (read.reason !== undefined) {
+    console.error(
+      `Error: The release lock (${LOCK_REF}) cannot be read: ${read.reason}. If no release is running in this repository, delete it (${del}), then run: ${next}`,
+    );
+    process.exit(1);
+  }
+  const { pid, host, at, root: lockRoot } = read.lock;
+  const H = `npm run release -- ${read.lock.command}`;
+  const cannotTell = (why) => {
+    console.error(
+      `Error: This repository holds the lock of a release (${H}, in ${lockRoot}, process ${pid} on ${host}, started ${at}), and this run cannot tell whether that release is still running: ${why}. If it is not, delete that lock (${del}; git refuses if another release has taken the lock since), then run: ${next}`,
+    );
+    process.exit(1);
+  };
+  const gone = () => {
+    console.error(
+      `Error: A release ran in this repository (${H}, in ${lockRoot}, process ${pid}, started ${at}) and is no longer running: it stopped without giving back its lock. What it had started (a build, a commit) may still be running: wait until its output stops. Delete that lock (${del}; git refuses if another release has taken the lock since), then run: ${next}`,
+    );
+    process.exit(1);
+  };
+  if (host !== hostname()) cannotTell('the lock was taken on another machine');
+  try {
+    process.kill(pid, 0);
+  } catch (e) {
+    if (e.code === 'ESRCH') gone(); // EPERM: the process exists
+  }
+  const now = processStart(pid);
+  if (now.zombie) gone();
+  if (read.lock.started === null || now.started === null) {
+    cannotTell(`the start time of process ${pid} cannot be compared`);
+  }
+  if (now.started !== read.lock.started) gone(); // the pid belongs to another process
   console.error(
-    `Error: ${opening}, but the unfinished v${V} release ran on ${B}, which no longer exists. Recreate it at ${short} (git switch -c ${B} ${short}), then re-run: npm run release -- --resume`,
+    `Error: A release is already running in this repository: ${H}, in ${lockRoot} (process ${pid}, started ${at}). Wait for it to finish, or stop it (kill ${pid}): it stops at its next step, cleans up and says what to run next. A commit hook it had started runs to its end: wait until its output stops.`,
   );
   process.exit(1);
+}
+/** Take the lock, first thing in a `--version` or `--resume` run, or print why not and exit 1. */
+function takeLock(root, command, journalPath) {
+  const content =
+    JSON.stringify({
+      pid: process.pid,
+      host: hostname(),
+      started: processStart(process.pid).started,
+      at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      command,
+      root,
+      token: randomBytes(8).toString('hex'),
+    }) + '\n';
+  const cannot = (message) => {
+    const gitLine = firstLine(message).replace(/^(?:fatal|error): /, '');
+    console.error(`Error: The release cannot take its lock (${LOCK_REF}): ${gitLine}.`);
+    process.exit(1);
+  };
+  const made = spawnSync('git', ['hash-object', '-w', '--stdin'], {
+    cwd: root,
+    input: content,
+    encoding: 'utf-8',
+  });
+  if (made.status !== 0) cannot(made.stderr || made.error?.message || '');
+  const mine = made.stdout.trim();
+  // git's null id has the length of the repository's object ids (40, or 64 under SHA-256)
+  const zeros = '0'.repeat(mine.length);
+  let lastError = '';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const r = spawnSync('git', ['update-ref', LOCK_REF, mine, zeros], {
+      cwd: root,
+      encoding: 'utf-8',
+    });
+    if (r.status === 0) {
+      lockMine = mine;
+      process.on('exit', () => {
+        spawnSync('git', ['update-ref', '-d', LOCK_REF, mine], { cwd: root, stdio: 'ignore' });
+      });
+      return;
+    }
+    lastError = r.stderr;
+    const held = tryGit(root, 'rev-parse', '-q', '--verify', LOCK_REF);
+    if (held !== null) refuseHeldLock(root, held, command, journalPath);
+    // no lock held: it went between the two commands; try once more
+  }
+  cannot(lastError);
 }
 
 // ── an unfinished or a prepared release that no journal records ────────────────────────────────
@@ -1980,6 +2353,40 @@ function checkFilesTheReleaseSets(root, set, files) {
       `Error: The overrides in package.json name ${named}. The release sets versions without npm, and ${LOCKFILE} does not record overrides, so the release cannot tell how npm would resolve ${named} after the version changes: remove that override, write the lockfile with npm (${NPM_LOCK}), commit both (git commit -m 'chore: remove the override of ${named}' -- package.json ${LOCKFILE}), then re-run.`,
     );
   }
+
+  // C13: the lockfile records what the manifests declare. The release PR's CI and the Publish
+  // workflow run `npm ci`, which refuses a tree whose lockfile does not.
+  const lockEntryOf = (manifest) =>
+    manifest === 'package.json'
+      ? lock.packages?.['']
+      : lock.packages?.[manifest.slice(0, -'/package.json'.length)];
+  for (const [manifest, pkg] of manifests) {
+    if (pkg === null) continue;
+    const entry = isPlainObject(lockEntryOf(manifest)) ? lockEntryOf(manifest) : {};
+    const optional = isPlainObject(pkg.optionalDependencies) ? pkg.optionalDependencies : {};
+    for (const field of [
+      'dependencies',
+      'devDependencies',
+      'optionalDependencies',
+      'peerDependencies',
+    ]) {
+      const deps = pkg[field];
+      if (!isPlainObject(deps)) continue;
+      const recorded = isPlainObject(entry[field]) ? entry[field] : {};
+      for (const [name, spec] of Object.entries(deps)) {
+        // npm records a name that is also in optionalDependencies there only (an optional
+        // dependency overrides a dependency of the same name)
+        if (field === 'dependencies' && Object.hasOwn(optional, name)) continue;
+        if (Object.hasOwn(recorded, name) && recorded[name] === spec) continue;
+        const has = Object.hasOwn(recorded, name)
+          ? ` (it has ${JSON.stringify(recorded[name])})`
+          : '';
+        refuse(
+          `Error: ${LOCKFILE} does not record ${field}.${name} ${JSON.stringify(spec)} of ${manifest}${has}: npm ci would refuse this tree. Write the lockfile with npm (${NPM_LOCK}), commit it (${commitLock}), then re-run.`,
+        );
+      }
+    }
+  }
 }
 
 function isPlainObject(v) {
@@ -2063,7 +2470,7 @@ async function runVersion(root, journalPath, V, registryFixturePath) {
       printCannotContinue(root, journalPath, journal);
     } else if (state.name === 'nothing-committed' || state.name === 'moved') {
       console.error(
-        `Error: An earlier release of v${journal.version} stopped before its release commit, so nothing is committed. Run npm run release -- --resume to restore the files it changed, then re-run npm run release -- --version ${journal.version}.`,
+        `Error: An earlier release of v${journal.version} did not finish, and ${journal.branch} holds no release commit of it. Run npm run release -- --resume to restore the files it changed, then re-run npm run release -- --version ${journal.version}.`,
       );
     } else {
       console.error(
@@ -2121,6 +2528,27 @@ async function runVersion(root, journalPath, V, registryFixturePath) {
   if (branch === 'main') {
     console.error(
       `Error: You are on main. Run the release on its own branch: ${suggestion}, then re-run.`,
+    );
+    process.exit(1);
+  }
+
+  // 5b. the branch named for the version (C3): when release/v<V> exists, the release runs there;
+  // and never on the release branch of another version. Any other name is accepted.
+  const named = `release/v${V}`;
+  if (
+    tryGit(root, 'rev-parse', '-q', '--verify', `refs/heads/${named}`) !== null &&
+    branch !== named
+  ) {
+    console.error(
+      `Error: You are on ${branch}, but ${named} exists. Run the release there (git switch ${named}), then re-run. If ${named} is left from an earlier attempt and ${branch} is the branch to release from, delete it first (git branch -D ${named}).`,
+    );
+    process.exit(1);
+  }
+  const otherRelease = /^release\/v(.+)$/.exec(branch);
+  if (otherRelease !== null && isFinal(otherRelease[1]) && otherRelease[1] !== V) {
+    const X = otherRelease[1];
+    console.error(
+      `Error: You are on ${branch}, the release branch of ${X}, and asked to release ${V}. Run the release of ${V} on its own branch (git switch -c ${named}), then re-run.`,
     );
     process.exit(1);
   }
@@ -2284,9 +2712,24 @@ async function runVersion(root, journalPath, V, registryFixturePath) {
   }
 
   // 14. the registry
-  console.log('→ Reading the published versions from the npm registry');
+  console.log(
+    '→ Reading the published versions from the npm registry (when it cannot be reached, npm keeps retrying, which can take over a minute)',
+  );
+  // C12: the entry checks run synchronously, so a signal's handler runs only when the event loop
+  // turns. Let it turn after each registry read, before its result is looked at, and once more
+  // before the journal is written: an interrupt then stops the run before it changes anything.
+  const stopIfInterrupted = async () => {
+    await new Promise((r) => setImmediate(r));
+    if (interrupted !== null) {
+      console.error(
+        `Error: The release of v${V} was interrupted (${interrupted}) before it changed anything. To release, re-run: npm run release -- --version ${V}`,
+      );
+      process.exit(1);
+    }
+  };
   for (const m of published) {
     const registry = readPublishedVersions(root, m.name, registryFixturePath);
+    await stopIfInterrupted();
     if (registry.kind === 'error') {
       console.error(
         `Error: Cannot read ${m.name} from the npm registry (${registry.reason}). Check that npm view ${m.name} versions works, then re-run.`,
@@ -2309,6 +2752,7 @@ async function runVersion(root, journalPath, V, registryFixturePath) {
   }
 
   // every entry check passed: write the journal, then run.
+  await stopIfInterrupted();
   const journal = {
     version: V,
     devVersion: devVersionAfter(V),
@@ -2361,7 +2805,7 @@ async function doResume(root, journalPath) {
     const base = journal.startSha;
     const held = heldChanges(root, base, journal);
     if (held.listed.length > 0) refuseResume(root, journal, state, base, held);
-    restoreWithNotice(root, base, journal, journal.files, held.inspected);
+    restoreWithNotice(root, base, journal, journal.files, held.inspected, true);
     removeJournal(journalPath);
     const startShort = shortSha(root, base);
     const moved =
@@ -2378,7 +2822,7 @@ async function doResume(root, journalPath) {
         ? `Re-run to release ${shortSha(root, state.head)}: npm run release -- --version ${V}`
         : `Re-run: npm run release -- --version ${V}`;
     console.error(
-      `Error: The unfinished v${V} release stopped before its release commit, so --resume cannot finish it. It restored the ${journal.files.length} files the release sets to their content at ${startShort}.${moved} packages/*/dist may still hold its v${V} build: run npm run build before using this checkout.${unclean} ${last}`,
+      `Error: The unfinished v${V} release has no release commit on ${journal.branch}, so --resume cannot finish it. It restored the ${journal.files.length} files the release sets to their content at ${startShort}.${moved} packages/*/dist may still hold its v${V} build: run npm run build before using this checkout.${unclean} ${last}`,
     );
     process.exit(1);
   }
@@ -2393,7 +2837,7 @@ async function doResume(root, journalPath) {
       try {
         await step(`Tagging v${V}`, () => tagStep(root, V, state.releaseCommit));
       } catch (e) {
-        await onFailure(root, journalPath, e);
+        await onFailure(root, journalPath, e, journal);
         return;
       }
     }
@@ -2404,7 +2848,7 @@ async function doResume(root, journalPath) {
     try {
       await step(`Tagging v${V}`, () => tagStep(root, V, state.releaseCommit));
     } catch (e) {
-      await onFailure(root, journalPath, e);
+      await onFailure(root, journalPath, e, journal);
       return;
     }
     removeJournal(journalPath);
@@ -2445,11 +2889,14 @@ async function main() {
 
   const journalPath = journalPathFor(root);
 
+  // C1: the lock, first thing, before the journal is looked at; not for --help or a usage error
   if (hasResumeFlag && !hasVersionFlag) {
+    takeLock(root, '--resume', journalPath);
     await doResume(root, journalPath);
     return;
   }
   if (hasVersionFlag && !hasResumeFlag && versionValueOk) {
+    takeLock(root, `--version ${versionValue}`, journalPath);
     await runVersion(root, journalPath, versionValue, registryFixturePath);
     return;
   }
