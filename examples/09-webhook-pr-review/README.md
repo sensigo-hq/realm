@@ -279,5 +279,5 @@ GitHub.
   approve fires parallel writes, reject skips both.
 - [Example 8 — PR Review](../08-pr-review/) — PR review without a webhook trigger; both
   gate choices post to GitHub.
-- [YAML Schema Reference](../../docs/reference/yaml-schema.md) — `trust: human_confirmed`,
+- [Workflow file reference](../../docs/reference/workflow/top-level-fields.md) — `trust: human_confirmed`,
   `when` condition syntax, `resolution_messages`, the `trigger:` block, and `realm listen`.

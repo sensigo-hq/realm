@@ -217,7 +217,7 @@ evidence chain tells you whether the extractor or the classifier was at fault.
   `context.resources` data-flow pattern from this example and adds a human gate:
   execution is structurally blocked until an engineer chooses to send or reject the
   drafted response.
-- [YAML Schema Reference](../../docs/reference/yaml-schema.md) — all step fields,
+- [Workflow file reference](../../docs/reference/workflow/top-level-fields.md) — all step fields,
   execution modes, gate configuration, and `depends_on` / `trigger_rule`
 - [Example 6 — Ticket Router](../06-ticket-router/) — builds on this example's
   `classify_ticket.category` field: uses `when` conditions to route to one of five

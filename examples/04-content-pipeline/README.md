@@ -208,5 +208,5 @@ You can see the timestamp of the failed attempt and the successful retry side by
 
 - [Example 3 — Incident Response](../03-incident-response/) — the preceding example in the
   ladder; demonstrates human gates and structured approval before a message is sent
-- [YAML Schema Reference](../../docs/reference/yaml-schema.md) — all step fields, execution
+- [Workflow file reference](../../docs/reference/workflow/top-level-fields.md) — all step fields, execution
   modes, service adapters, and input_schema configuration
