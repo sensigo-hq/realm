@@ -104,7 +104,7 @@ function entriesOf(member) {
       const file = join(folder, name);
       if (!binFiles.has(file)) {
         entries.push({
-          key: key.replace('*', name.slice(prefix.length, name.length - after.length)),
+          key: key.replaceAll('*', name.slice(prefix.length, name.length - after.length)),
           target,
           file,
         });
