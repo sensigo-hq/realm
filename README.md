@@ -187,13 +187,17 @@ Run `realm <command> --help` for full options on any command.
 
 ## Documentation
 
-- [Getting Started](docs/getting-started.md) — end-to-end walkthrough including service adapters, human gates, and step handlers
-- [YAML Schema Reference](docs/reference/yaml-schema.md) — all step fields, execution modes, transitions, trust levels, agent profiles
-- [Handler Authoring Reference](docs/reference/handlers.md) — `StepHandler` interface, `StepContext` fields, primitives catalogue, built-in handlers, registration
-- [MCP Protocol Reference](docs/reference/mcp-protocol.md) — tools, response envelope, next_action, agent_action
-- [CLI Reference](docs/reference/cli-commands.md) — all commands with options
-- [Built-in Service Adapters](docs/reference/adapters.md) — `FileSystemAdapter`, `GitHubAdapter`, `GenericHttpAdapter` — config, operations, response shapes
-- [Testing Reference](docs/reference/testing.md) — `@sensigo/realm-testing` full API: fixture runner, mocks, assertions, GitHub mock server
+Start at the [documentation index](docs/README.md). The main entry points:
+
+- [What Realm is, and when to use it](docs/start/what-realm-is.md) and [Install and first run](docs/start/install-and-first-run.md)
+- [Concepts](docs/concepts/workflows-steps-and-runs.md) — workflows, steps, gates, evidence, and who drives a run
+- [Guides](docs/guides/first-workflow.md) — one task each, from a first workflow to deploying a project
+- [Workflow file reference](docs/reference/workflow/top-level-fields.md) — every field of `workflow.yaml`
+- [Command-line reference](docs/reference/cli/realm-workflow.md) — every `realm` command
+- [MCP reference](docs/reference/mcp/tools.md) — the 10 tools and their replies
+- [Adapters](docs/reference/adapters.md), [Handlers](docs/reference/handlers.md), [Deployment manifest](docs/reference/deployment-manifest.md) and [Project extensions](docs/reference/project-extensions.md)
+- [Testing package](docs/reference/testing-package.md) and [Core library](docs/reference/core-library.md)
+- [Error codes](docs/reference/error-codes.md), [Run record and export bundle format](docs/reference/run-record-and-export.md), [Environment variables and files on disk](docs/reference/environment-and-files.md), [Glossary](docs/reference/glossary.md)
 - [Examples](examples/) — working workflow examples
 
 ## Development

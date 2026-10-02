@@ -195,7 +195,7 @@ realm run respond <run-id> --gate <gate-id> --choice reject
 
 Three modes are available. The active mode is selected automatically from which env vars are
 set. For full setup instructions including step-by-step Slack app creation, see
-[Slack Gate Modes reference](../../docs/reference/realm-agent-slack.md).
+[Slack Gate Modes reference](../../docs/guides/slack-gates.md).
 
 | Mode                     | Env vars                                                        | Resolution                      |
 | ------------------------ | --------------------------------------------------------------- | ------------------------------- |
@@ -224,7 +224,7 @@ SLACK_CHANNEL_ID=C...
 SLACK_APP_TOKEN=xapp-...
 ```
 
-See the [full Mode 2 setup guide](../../docs/reference/realm-agent-slack.md#mode-2----socket-mode-bidirectional-no-public-url) for every step.
+See the [full Mode 2 setup guide](../../docs/guides/slack-gates.md) for every step.
 
 #### Mode 3 — quick start (~15 min)
 
@@ -238,7 +238,7 @@ SLACK_SIGNING_SECRET=...
 
 The Events API endpoint must be configured in Slack while `realm agent` is paused at a gate
 (that’s when the HTTP server is running). See the
-[full Mode 3 setup guide](../../docs/reference/realm-agent-slack.md#mode-3----events-api-bidirectional-real-time) for every step including ngrok.
+[full Mode 3 setup guide](../../docs/guides/slack-gates.md) for every step including ngrok.
 
 The workspace instruction file (`.github/instructions/realm.instructions.md`) gives your agent
 the generic Realm protocol. The `realm-incident-response.md` skill layers the workflow-specific
@@ -298,5 +298,5 @@ shows exactly what was approved, what the analysis contained, and the full draft
 
 - [Example 2 — Ticket Classifier](../02-ticket-classifier/) — agent step schema enforcement,
   `input_schema` validation, `provide_input` on schema rejection
-- [YAML Schema Reference](../../docs/reference/yaml-schema.md) — all step fields, execution
+- [Workflow file reference](../../docs/reference/workflow/top-level-fields.md) — all step fields, execution
   modes, gate configuration, and `depends_on` / `trigger_rule`

@@ -16,7 +16,7 @@ workflow), so you can see exactly what changes and why.
 | [08-pr-review/](08-pr-review/)                       | AI review lands on Slack, not the PR; gate choice is meta; LLM recommendation has no effect on outcome                             | Agent step + separate gate step + mutually exclusive routed writes — both choices trigger a write to different PR outcomes                                                                                               | ⏸     |
 | [09-webhook-pr-review/](09-webhook-pr-review/)       | End-to-end webhook pipeline with no structural boundary between MCP tool calls, Slack notification, human review, and GitHub write | `realm listen` verifies and routes the event via the workflow's `trigger:` block, MCP agent steps fetch and analyze, Slack adapter fires before gate opens, `when` condition blocks the GitHub write until gate resolves | ⏸     |
 
-⏸ = example has a human gate. Slack gate modes (webhook notification, bidirectional thread reply, or Events API real-time push) apply to these examples. See [Slack Gate Modes](../docs/reference/realm-agent-slack.md) for setup.
+⏸ = example has a human gate. Slack gate modes (webhook notification, bidirectional thread reply, or Events API real-time push) apply to these examples. See [Slack Gate Modes](../docs/guides/slack-gates.md) for setup.
 
 More examples covering multi-agent coordination are planned.
 

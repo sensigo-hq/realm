@@ -1,0 +1,301 @@
+# Core library: stores and the store contract
+
+`@sensigo/realm` is the engine as a library. A program of your own can use it to run workflows without the `realm` command, and to keep runs somewhere other than files on disk. This page covers the functions that run a workflow, the stores Realm ships, the store interfaces, what a store of your own must do, and how to check that it does. Every output shown came from a program run against the built packages.
+
+The package exports 213 values. This page covers the ones named above. Most of the rest are the parts the `realm` command is built from.
+
+| Package                  | Holds                                                            |
+| ------------------------ | ---------------------------------------------------------------- |
+| `@sensigo/realm`         | The engine, the loader, the file stores, the built-in adapters.  |
+| `@sensigo/realm-mcp`     | The MCP server, as a function you can call with your own stores. |
+| `@sensigo/realm-testing` | An in-memory run store, and the tests for a store of your own.   |
+
+All three are ES modules and need Node 22 or later.
+
+## Run a workflow from your own program
+
+```js
+import {
+  JsonFileStore,
+  loadWorkflowFromFile,
+  createDefaultRegistry,
+  executeChain,
+  submitHumanResponse,
+  deriveRunPhase,
+} from '@sensigo/realm';
+
+const store = new JsonFileStore('./data/runs');
+const definition = loadWorkflowFromFile('flow/workflow.yaml');
+
+const registry = createDefaultRegistry();
+registry.register('handler', 'refund_amount', {
+  id: 'refund_amount',
+  async execute(inputs, context) {
+    return { data: { amount: context.run_params.total / 2 } };
+  },
+});
+
+const dispatcher = async (stepName, input) => input;
+
+const { run } = await store.create({
+  workflowId: definition.id,
+  workflowVersion: definition.version,
+  params: { total: 40 },
+});
+
+let reply = await executeChain(store, definition, {
+  runId: run.id,
+  command: 'price',
+  input: {},
+  dispatcher,
+  registry,
+});
+reply = await executeChain(store, definition, {
+  runId: run.id,
+  command: 'decide',
+  input: { refund: true },
+  dispatcher,
+  registry,
+});
+reply = await submitHumanResponse(store, definition, {
+  runId: run.id,
+  gateId: reply.gate.gate_id,
+  choice: 'approve',
+  registry,
+});
+
+deriveRunPhase(await store.get(run.id)); // 'completed'
+```
+
+The workflow has an `auto` step `price`, then an agent step `decide` with a gate. Each call returned:
+
+| Call                        | `status`           | `run_phase`    | Also                                     |
+| --------------------------- | ------------------ | -------------- | ---------------------------------------- |
+| `executeChain` for `price`  | `ok`               | `running`      | `data` is `{"amount":20}`                |
+| `executeChain` for `decide` | `confirm_required` | `gate_waiting` | `gate.choices` is `["approve","reject"]` |
+| `submitHumanResponse`       | `ok`               | `completed`    |                                          |
+
+The replies have the fields of an MCP tool reply. See [MCP tools](mcp/tools.md).
+
+| Function                                                                                   | What it does                                                                                                              |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `loadWorkflowFromFile(path)`                                                               | Reads and checks a workflow file. Takes the file's path, not its folder. Throws a `WorkflowError` if the file is refused. |
+| `loadWorkflowFromString(text)`                                                             | The same, from text.                                                                                                      |
+| `loadWorkflowFromFileWithDiagnostics(path)`, `loadWorkflowFromStringWithDiagnostics(text)` | Return `{ definition, warnings }`, with the loader's warnings as data.                                                    |
+| `createDefaultRegistry()`                                                                  | Returns an `ExtensionRegistry` that holds the `filesystem` adapter.                                                       |
+| `registry.register(kind, name, thing)`                                                     | Adds an adapter, a handler or a processor. `kind` is `'adapter'`, `'handler'` or `'processor'`.                           |
+| `store.create(options)`                                                                    | Makes a run. Returns `{ run, created }`.                                                                                  |
+| `executeChain(store, definition, options)`                                                 | Runs one step, then each `auto` step that becomes ready. Returns the reply.                                               |
+| `executeStep(store, definition, options)`                                                  | Runs one step only.                                                                                                       |
+| `submitHumanResponse(store, definition, options)`                                          | Answers a gate.                                                                                                           |
+| `findEligibleSteps(definition, run)`                                                       | Returns the names of the steps that can run now.                                                                          |
+| `deriveRunPhase(run)`                                                                      | Returns the run's phase, worked out from its record.                                                                      |
+| `classifyRunHealth(run, definition)`                                                       | Returns the run's [health findings](mcp/run-state-and-health.md).                                                         |
+| `WorkflowError`                                                                            | The class of every error Realm throws on purpose. It has a `code`. See [Error codes](error-codes.md).                     |
+
+### The options of `executeChain` and `executeStep`
+
+| Option       | Required | Holds                                                                                                                        |
+| ------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `runId`      | Yes      | The run.                                                                                                                     |
+| `command`    | Yes      | The step's name.                                                                                                             |
+| `input`      | Yes      | For an agent step, the answer. For an `auto` step, `{}`.                                                                     |
+| `dispatcher` | Yes      | A function Realm calls for an agent step. What it returns is recorded as the step's answer. The one above returns the input. |
+| `registry`   | No       | The adapters and handlers the steps can use. Without it, only the `filesystem` adapter.                                      |
+
+`submitHumanResponse` takes `runId`, `gateId`, `choice`, and optionally `registry` and `respondedBy`.
+
+## Serve MCP from your own program
+
+```js
+import { createRealmMcpServer } from '@sensigo/realm-mcp';
+
+const server = createRealmMcpServer({
+  runStore,
+  workflowStore,
+  registry,
+  traceBufferStore,
+  failedAttemptStore,
+});
+await server.connect(transport);
+```
+
+`createRealmMcpServer` returns the MCP server that `realm mcp` runs, with the 10 tools. Every option can be left out:
+
+| Option               | Default                                       | Holds                                                                                               |
+| -------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `runStore`           | A `JsonFileStore` on `~/.realm/runs`          | Any run store.                                                                                      |
+| `workflowStore`      | A `JsonWorkflowStore` on `~/.realm/workflows` | A `JsonWorkflowStore`.                                                                              |
+| `registry`           | The default registry                          | The adapters and handlers for every workflow.                                                       |
+| `registryProvider`   | None                                          | A function that returns the registry for one workflow. If given, it is used in place of `registry`. |
+| `traceBufferStore`   | Made from the run store's folder              | Where trace entries are kept until their step completes.                                            |
+| `failedAttemptStore` | Made from the run store's folder              | Where refused attempts are kept.                                                                    |
+
+A run store that is not a `JsonFileStore` has no folder, so both of the last two must be given. With one missing:
+
+```text
+createRealmMcpServer: the run store does not expose 'runsDirPath' (it is not a local JsonFileStore) and no traceBufferStore/failedAttemptStore were injected. Artifact stores cannot be derived — inject BOTH traceBufferStore and failedAttemptStore co-located with the run store's own domain, or use a JsonFileStore run store.
+```
+
+The three stores must keep their data in the same place: a trace written through one server has to be readable by the server that completes the step. Realm cannot check this.
+
+With an in-memory run store and both other stores given, `start_run` over this server ran the workflow's first step and replied `ok`.
+
+## The stores Realm ships
+
+| Class                      | Package                  | Keeps                                  | Built with                                                          |
+| -------------------------- | ------------------------ | -------------------------------------- | ------------------------------------------------------------------- |
+| `JsonFileStore`            | `@sensigo/realm`         | Runs, one JSON file each.              | `new JsonFileStore(dir?)`. The default is `~/.realm/runs`.          |
+| `JsonWorkflowStore`        | `@sensigo/realm`         | Registered workflows.                  | `new JsonWorkflowStore(dir?)`. The default is `~/.realm/workflows`. |
+| `FailedAttemptStore`       | `@sensigo/realm`         | Refused attempts, a file for each run. | `new FailedAttemptStore(dir)`.                                      |
+| `JsonTraceBufferStore`     | `@sensigo/realm-mcp`     | Trace entries, in files.               | See `createRealmMcpServer`'s defaults.                              |
+| `InMemoryTraceBufferStore` | `@sensigo/realm`         | Trace entries, in memory.              | `new InMemoryTraceBufferStore(runStore)`.                           |
+| `InMemoryStore`            | `@sensigo/realm-testing` | Runs, in memory.                       | `new InMemoryStore()`.                                              |
+
+`JsonFileStore` has a `runsDirPath` property with its folder.
+
+## The run store interface
+
+A run store implements `RunStore`. It has 2 properties, 5 functions every store must have, and 2 optional functions.
+
+| Member                                           | Required | What it must do                                                                                                                                                                                                                                    |
+| ------------------------------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `persistsClaims`                                 | Yes      | `true` if the store keeps a record's `claims` field. With `false`, `realm run reclaim` reports that it cannot work, and does nothing.                                                                                                              |
+| `persistedRunRecordFields`                       | No       | The set of [record fields](#persistedrunrecordfields) the store keeps unchanged.                                                                                                                                                                   |
+| `create(options)`                                | Yes      | Make a run and return `{ run, created: true }`. With an idempotency key that matches a run, apply the [policy](#createoptions) for it.                                                                                                             |
+| `get(runId)`                                     | Yes      | Return the record. If there is none, throw a `WorkflowError` with the code `STATE_RUN_NOT_FOUND`.                                                                                                                                                  |
+| `update(record)`                                 | Yes      | Write the record if its `version` equals the stored one, and add 1 to the version. Otherwise throw `STATE_SNAPSHOT_MISMATCH`.                                                                                                                      |
+| `list(workflowId?)`                              | Yes      | Return every record, or those of one workflow.                                                                                                                                                                                                     |
+| `claimStep(runId, stepName, definition)`         | Yes      | As one atomic act: read the record afresh, check that the step is not started or settled and can still run, add it to `in_progress_steps`, add 1 to the version, write. Throw `STATE_STEP_ALREADY_CLAIMED` or `STATE_STEP_NOT_ELIGIBLE` otherwise. |
+| `settleStep(runId, delta, definition, options?)` | No       | As one atomic act: read the record afresh, apply one settlement to it, write. See [`settleStep`](#settlestep).                                                                                                                                     |
+| `stampSeal(runId, sealedBy, expectedVersion)`    | No       | Write how an ended run ended onto a record that lacks it. Used by `realm run migrate --stamp-seals`, which refuses a store without it.                                                                                                             |
+
+Of 2 `claimStep` calls for the same step made at the same time, from any process on any machine that shares the store, exactly 1 must succeed. Everything that keeps a step from running twice rests on this.
+
+The file store's two errors, as a caller sees them:
+
+```json
+{ "code": "STATE_RUN_NOT_FOUND", "message": "Run not found: nope" }
+{ "code": "STATE_SNAPSHOT_MISMATCH", "message": "Version conflict — run was modified by another process" }
+```
+
+### `create(options)`
+
+| Option            | Required | Holds                                                                                                                                                                             |
+| ----------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workflowId`      | Yes      | The workflow's ID.                                                                                                                                                                |
+| `workflowVersion` | Yes      | The workflow's version.                                                                                                                                                           |
+| `params`          | Yes      | The run's parameters.                                                                                                                                                             |
+| `idempotencyKey`  | No       | A key. A second `create` with the same workflow and key finds the first run.                                                                                                      |
+| `onLiveMatch`     | No       | What to do when the key matches an open run: `use_existing` (the default) returns it with `created: false`; `fail` throws `STATE_RUN_ALREADY_ACTIVE`.                             |
+| `onTerminalMatch` | No       | What to do when the key matches an ended run: `reuse` (the default), `reject`, `rerun_if_failed` or `rerun`. See [Idempotency and batches](../guides/idempotency-and-batches.md). |
+| `parentRunId`     | No       | The run that started this one.                                                                                                                                                    |
+
+A new run has `version` 0 and the phase `running`.
+
+### `persistedRunRecordFields`
+
+A store that keeps the whole record, as the file store does, lists all 8 fields. A store that maps a record onto columns lists only the fields it has columns for. For a field that is not listed, Realm does not trust an empty value, and says so.
+
+| Field                        | If the store loses it                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------------------------ |
+| `capability_blocks`          | A step that is blocked looks free.                                                         |
+| `workflow_context_snapshots` | The history of the workflow's context files is lost.                                       |
+| `extension_identity`         | A change in the project's code can never be detected.                                      |
+| `validation_rejections`      | A step whose answers keep being refused is never stopped.                                  |
+| `defaulted_steps`            | The run no longer lists the steps that were given their default output.                    |
+| `settled`                    | `settleStep` cannot tell what was already settled. A store with `settleStep` must list it. |
+| `finalizer_ledger`           | Cleanup steps may run twice, or not at all. A store with `settleStep` must list it.        |
+| `sealed_by`                  | Readers get the wrong answer to how the run ended. A store with `settleStep` must list it. |
+
+With a store that lists no fields, `get_run_state` warned:
+
+```text
+this run store does not persist 'capability_blocks' — capability-block state is unavailable and not authoritative (an empty result may mean "no blocks" or "this store cannot report blocks at all").
+```
+
+### `settleStep`
+
+`settleStep` applies one change to a run under the store's own lock: a step's result, a gate opened or answered, a cleanup step taken or done. Realm gives the change as data, and the store applies it with the function `applySettlement`, which `@sensigo/realm` exports.
+
+| Rule                                                                                              |
+| ------------------------------------------------------------------------------------------------- |
+| Read the record inside the lock. Do not use a record the caller read earlier.                     |
+| Return `{ applied: false, reason, run }` when `applySettlement` refuses the change. Do not throw. |
+| Throw when the store itself fails: it cannot be reached, or the lock cannot be taken.             |
+| Throw for a kind of change the store does not know. Do not ignore it.                             |
+| Make the read, the change and the write one atomic act, however many statements that takes.       |
+
+A store without `settleStep` still works. Each reply for a step that ends a run then carries a warning:
+
+```text
+settled via the legacy compatibility path — this store does not declare atomic settlement (RunStore.settleStep); upgrade the store to close the fan-out seal race (issue #279)
+```
+
+Without it, two steps that complete at the same moment can each write an ending for the run.
+
+### Writing a run store
+
+`InMemoryStore` in `@sensigo/realm-testing` is a complete run store in about 300 lines. It is built from functions that `@sensigo/realm` exports, and a store of your own can use the same ones:
+
+| Function                  | Used in      | Does                                                                                  |
+| ------------------------- | ------------ | ------------------------------------------------------------------------------------- |
+| `decideIdempotencyPolicy` | `create`     | Decides what a matching idempotency key means.                                        |
+| `findEligibleSteps`       | `claimStep`  | Says whether the step can still run.                                                  |
+| `computeClaimDeadline`    | `claimStep`  | Works out when the claim becomes stale.                                               |
+| `applySettlement`         | `settleStep` | Applies a change to a record and returns the new record, or the reason it is refused. |
+| `assertSealIntegrity`     | Every write  | Refuses a write that would lose or alter the record of how a run ended.               |
+| `deriveRunPhase`          | Every write  | Works out the phase to store with the record.                                         |
+
+## The other store interfaces
+
+| Interface              | Functions                                                                                                                                                                                                                   | Implemented by                                                |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `TraceBufferStore`     | `append`, `read`, `delete`, `deleteAllForRun`, `statAllForRun`, `readAllForRun`. Optional: `appendFenced`, `deleteFenced`, `deleteAllForRunFenced`, `sealFenced`, `listSealedForRun`, and the property `traceCapabilities`. | `JsonTraceBufferStore`, `InMemoryTraceBufferStore`            |
+| `PerRunArtifactStore`  | `deleteAllForRun`, `statAllForRun`                                                                                                                                                                                          | `JsonFileStore`, `FailedAttemptStore`, `JsonTraceBufferStore` |
+| `OrphanSweepableStore` | `listOrphans`                                                                                                                                                                                                               | `FailedAttemptStore`, `JsonTraceBufferStore`                  |
+| `WorkflowRegistrar`    | `register`, `get`, `list`                                                                                                                                                                                                   | `JsonWorkflowStore`                                           |
+
+`createRealmMcpServer` takes its failed-attempt store as any object with the functions `append`, `read`, `deleteAllForRun` and `listOrphans`.
+
+Two rules hold for every store that deletes:
+
+- A thing that is not there counts as deleted. A thing that cannot be reached must make the call fail. `realm run purge` reports a run as removed only because every store said so.
+- `statAllForRun` must report the same number of bytes that `deleteAllForRun` then reports for an unchanged run.
+
+The 3 fenced functions of a trace buffer take a condition on the run, and must check it and write as one atomic act. In version 0.45.0 they take a function that checks the run instead. A store that has one of them must have all 3.
+
+## Check a store
+
+`@sensigo/realm-testing` has a set of tests for each interface. Each takes your store and returns cases to run in your test framework. See [Store contracts](testing-package.md#store-contracts).
+
+| For                                        | Contract                      |
+| ------------------------------------------ | ----------------------------- |
+| A run store                                | `runStoreFidelityContract`    |
+| A run store's `settleStep` and `stampSeal` | `settlementContract`          |
+| A store that deletes                       | `perRunArtifactStoreContract` |
+| A trace buffer's fenced functions          | `fencedTraceBufferContract`   |
+
+`runStoreFidelityContract` was run on 3 stores:
+
+| Store                                                          | Cases | Failed |
+| -------------------------------------------------------------- | ----- | ------ |
+| `InMemoryStore`                                                | 9     | 0      |
+| A copy that lists `capability_blocks` and drops it on `update` | 9     | 1      |
+| A copy that lists no fields                                    | 1     | 0      |
+
+The failure:
+
+```text
+FIDELITY_HONESTY — store declares persistedRunRecordFields includes 'capability_blocks' but a round-trip did NOT preserve it — the declared fidelity is DISHONEST (issue #188). …
+```
+
+The contracts run in one process. They cannot show that `claimStep` and `settleStep` are atomic across machines. A store shared by several machines needs its own test of that, against its real database.
+
+## See also
+
+- [Testing package](testing-package.md)
+- [Run record and export bundle format](run-record-and-export.md)
+- [Error codes](error-codes.md)
+- [Handlers](handlers.md) and [Project extensions](project-extensions.md)
+- [MCP tools](mcp/tools.md)

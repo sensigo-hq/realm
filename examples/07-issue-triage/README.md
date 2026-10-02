@@ -211,5 +211,5 @@ trail shows which `when` condition was evaluated and that neither write step was
   example: a gate on an auto step (no agent output at gate time) with routing on gate choice.
 - [Example 6 — Ticket Router](../06-ticket-router/) — `when` conditions for routing without
   a gate; structurally similar to the post-gate routing here.
-- [YAML Schema Reference](../../docs/reference/yaml-schema.md) — `trust: human_confirmed`,
+- [Workflow file reference](../../docs/reference/workflow/top-level-fields.md) — `trust: human_confirmed`,
   `when` condition syntax, `resolution_messages`, and `display` field.
