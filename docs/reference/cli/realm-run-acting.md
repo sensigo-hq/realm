@@ -370,10 +370,12 @@ When there is nothing to do, it prints one of:
 ```text
 Run '03431f4f-7b71-4ad0-98b1-f1d51cc5c4c8' has no pending finalizers. Nothing to drain.
 Run 'cba9901c-fa22-47dd-97e2-47439238d01f' is not terminal (phase: 'running') — nothing to drain. To end the run: realm run abandon cba9901c-fa22-47dd-97e2-47439238d01f.
+Run '22efc6a7-01f8-4256-9d2f-74621b621d28' is not terminal (phase: 'gate_waiting') — nothing to drain. To end the run, answer its gate first: realm run respond 22efc6a7-01f8-4256-9d2f-74621b621d28 --gate 817f3921-6ddd-4bda-9506-762892ae37e7 --choice <one of: approve, reject>. The answer can end the run by itself. If the run is still open after it: realm run abandon 22efc6a7-01f8-4256-9d2f-74621b621d28.
+Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate expired 0m ago. To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired; add --force to carry it out.
 No runs with an actionable pending finalizer.
 ```
 
-**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. 1 if a cleanup step is left owed after `--force`, or for one of:
+**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the three `is not terminal … nothing to drain` lines above, or for one of:
 
 ```text
 Provide a <run-id>, or use --all for batch mode.

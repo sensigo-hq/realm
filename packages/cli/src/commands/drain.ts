@@ -38,19 +38,33 @@ const nothingToDrain = (runId: string): string =>
 /**
  * issue #558 PR-C (walk 2): the way out of a NON-terminal run, named from the record. `abandon`
  * refuses a run carrying a LIVE gate (`pending_gate` — the same predicate, never the persisted
- * label), so pointing such a run at `abandon` named a command that would fail on the next line —
- * answer the gate first (its id and choices are on the record), then abandon. ONE mint, rendered
- * by both non-terminal refusals.
+ * label), so pointing such a run at `abandon` named a command that would fail on the next line.
+ * ONE mint, rendered by both non-terminal refusals. Three arms:
+ *
+ * - no gate: `abandon` ends the run.
+ * - a gate whose time limit has passed and that declares `on_expiry`: the command that acts is
+ *   this one with `--expired` (reached only when the caller left `--expired` out — with it, the
+ *   dry run reports the gate and `--force` enacts it, and neither prints this sentence).
+ * - any other gate: answer it first. The answer can end the run in its own write — it completes
+ *   the workflow when the gate was its last open step, and (issue #625) it settles the guards
+ *   behind the gate, any of which can end the run; `abandon` then refuses ("already terminal").
+ *   The sentence therefore names `abandon` only for a run that is still open after the answer.
  */
-const wayOutOf = (runId: string, run: RunRecord): string => {
+const wayOutOf = (runId: string, run: RunRecord, now: Date): string => {
   const gate = run.pending_gate;
-  if (gate !== undefined) {
+  if (gate === undefined) return `To end the run: realm run abandon ${runId}.`;
+  const expiry = classifyGateExpiry(run, now);
+  if (expiry.kind === 'enactable') {
     return (
-      `Answer its gate first: realm run respond ${runId} --gate ${gate.gate_id} ` +
-      `--choice <one of: ${gate.choices.join(', ')}>; then realm run abandon ${runId}.`
+      `Its gate expired ${formatOverdueDuration(expiry.overdueMs)} ago. To see what the expiry ` +
+      `will do: realm run drain ${runId} --expired; add --force to carry it out.`
     );
   }
-  return `To end the run: realm run abandon ${runId}.`;
+  return (
+    `To end the run, answer its gate first: realm run respond ${runId} --gate ${gate.gate_id} ` +
+    `--choice <one of: ${gate.choices.join(', ')}>. The answer can end the run by itself. ` +
+    `If the run is still open after it: realm run abandon ${runId}.`
+  );
 };
 
 /**
@@ -267,7 +281,9 @@ export function isBatchActionable(run: RunRecord, now: Date): boolean {
  *  "expired — finding-only"). Returns `true` when an enactable gate was reported (the caller
  *  uses this to decide whether the run still counts as "nothing to drain" when it has neither a
  *  gate nor pending finalizers). No-op (returns `false`) when `--expired` is unset or nothing
- *  gate-related applies — bare `drain` stays byte-stable. */
+ *  gate-related applies: bare `drain` neither predicts nor enacts the expiry. Its one mention of
+ *  an expired, enactable gate is `wayOutOf`'s line, which says the gate has expired and names
+ *  `--expired` (issue #625). */
 function renderGateExpiryDryRun(
   runId: string,
   run: RunRecord,
@@ -312,7 +328,7 @@ function renderDryRun(
     if (!gateReported) {
       console.log(
         `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ` +
-          wayOutOf(runId, run),
+          wayOutOf(runId, run, now),
       );
     }
     return;
@@ -380,7 +396,9 @@ export interface DrainCommandOptions {
   project?: string;
   extensionsModule?: string;
   /** Issue #291 ([F5]): opt-in — without it, drain's terminal-only behavior (incl. batch
-   *  `--force`) stays byte-stable. With it, drain ALSO reports/enacts expired-and-enactable
+   *  `--force`) is unchanged: it writes nothing to a run that has not ended. Its "not terminal"
+   *  line for such a run names this flag when the run's gate has expired and declares
+   *  `on_expiry` (issue #625). With it, drain ALSO reports/enacts expired-and-enactable
    *  gates (never finding-only ones), flowing an abort-disposition's terminalization straight
    *  into drain's native finalizer pass. */
   expired?: boolean;
@@ -683,7 +701,7 @@ export async function runDrainAction(
     if (!run.terminal_state && !hasEnactableGate) {
       console.error(
         `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ` +
-          wayOutOf(runId, run),
+          wayOutOf(runId, run, now),
       );
       process.exit(1);
     }
@@ -798,8 +816,9 @@ export const drainCommand = new Command('drain')
   .option(
     '--expired',
     'OPT-IN (issue #291): also report/enact expired-and-enactable gates (never finding-only ' +
-      'ones) — a non-terminal run with an expired gate is invisible without this flag, on both ' +
-      "per-run and --all. An abort disposition's terminalization flows into the same drain pass.",
+      'ones). Without this flag drain acts on no expired gate: --all does not list such a run, ' +
+      "and per-run drain only names this flag. An abort disposition's terminalization flows into " +
+      'the same drain pass.',
   )
   .option(
     '--project <dir>',

@@ -1,7 +1,8 @@
 // drain-expired.test.ts — issue #291, Deliverable 4d ([F5] `drain --expired` opt-in flag): a
-// non-terminal run with an expired, enactable gate is invisible to bare `drain` (the damage
-// rail: byte-stable terminal-only behavior, incl. batch --force) and only reported/enacted under
-// `--expired`. finding-only gates are listed but never acted on.
+// non-terminal run with an expired, enactable gate is never acted on by bare `drain` (the damage
+// rail: terminal-only behavior, incl. batch --force) and only reported/enacted under `--expired`.
+// Issue #625: bare per-run `drain` says the gate has expired and names `--expired` in its "not
+// terminal" line for such a run; it still predicts nothing and writes nothing. finding-only gates are listed but never acted on.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -109,16 +110,23 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
     });
   }
 
-  describe('bare drain (no --expired) — byte-stable, never sees the gate', () => {
-    it('per-run dry-run: no gate line, non-terminal "nothing to drain" message', async () => {
+  describe('bare drain (no --expired) — never predicts or enacts the expiry', () => {
+    it('per-run dry-run: no "would enact" line; the non-terminal "nothing to drain" message names --expired', async () => {
+      // Issue #625 restated this cell: it asserted that no line contained 'gate expired'. The
+      // prediction ("would enact …") still belongs to `--expired` alone; the "not terminal" line
+      // now says the gate has expired and names the flag (whole sentence pinned in drain.test.ts).
       const run = await seedExpiredGateRun('abort');
       await runDrainAction(run.id, {}, store, workflowStore, DEPS);
-      expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('gate expired'))).toBe(
-        false,
-      );
-      expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('not terminal'))).toBe(
-        true,
-      );
+      const lines: string[] = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(lines.some((l) => l.includes('would enact'))).toBe(false);
+      expect(
+        lines.some(
+          (l) => l.includes('not terminal') && l.includes(`realm run drain ${run.id} --expired`),
+        ),
+      ).toBe(true);
+      const reloaded = await store.get(run.id);
+      expect(reloaded.pending_gate).toBeDefined(); // untouched
+      expect(reloaded.version).toBe(run.version); // nothing written
     });
 
     it('per-run --force: refuses (not terminal) — never enacts the gate', async () => {

@@ -202,7 +202,7 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   without a price; that is issue #600 PR 2's job). (Issue #600 PR 1b.)
 
 - **BREAKING —** **A guard step is settled by the write that makes it eligible (issue #625).** The
-  fix below changes eight things a consumer can see:
+  fix below changes nine things a consumer can see:
   - (a) **Store implementers.** A store that declares `settleStep` must settle guards in the same
     write: its `settleStep` passes the new option `cascadeGuards: true` to `applySettlement`
     (options are now `{ now?, cascadeGuards? }`), which then settles every guard the applied change
@@ -259,6 +259,17 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
     made the gate in front of it unanswerable (`Failed to persist gate response`). Now the answer
     is recorded and the run fails with
     `Guard step '<step>' failed: its 'when' could not be evaluated: <message>`.
+  - (i) **`realm run drain` gives different advice for a run that is waiting at a gate.** It
+    printed `Answer its gate first: realm run respond …; then realm run abandon <run>.` An answer
+    can end the run: it completes the workflow when the gate was the last open step, and a guard
+    behind the gate is now settled by the answer's write. `realm run abandon` refuses a run that
+    has ended. It now prints
+    `To end the run, answer its gate first: realm run respond <run> --gate <gate> --choice <…>.`
+    `The answer can end the run by itself. If the run is still open after it: realm run abandon <run>.`
+    For a gate whose time limit has passed and that declares `on_expiry`, drained without
+    `--expired`, it prints
+    `Its gate expired <age> ago. To see what the expiry will do: realm run drain <run> --expired;`
+    `add --force to carry it out.` Scripts that match the old line must be updated.
 
 ### Fixed
 

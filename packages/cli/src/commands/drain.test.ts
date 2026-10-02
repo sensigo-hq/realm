@@ -1026,7 +1026,9 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
 
   // ---- issue #558 PR-C (walk 2): the non-terminal way out is forked on the gate ---------------
 
-  async function seedGateWaiting(): Promise<RunRecord> {
+  async function seedGateWaiting(
+    gateExtra: Partial<NonNullable<RunRecord['pending_gate']>> = {},
+  ): Promise<RunRecord> {
     await workflowStore.register(wf);
     const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
     return await store.update({
@@ -1037,23 +1039,80 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
         preview: {},
         choices: ['approve', 'reject'],
         opened_at: new Date().toISOString(),
+        ...gateExtra,
       },
     });
   }
 
-  it('a gate-waiting run: the way out names the answer command FIRST, then abandon — on the dry run and on --force', async () => {
-    // walk 2 RED: `To end the run: realm run abandon <id>` on a gate-waiting run named a command
-    // that refuses on the next line (abandon refuses a run waiting on a human gate).
+  /** 90 minutes and 5 seconds ago: renders as `1h 30m` for the next 55 seconds. */
+  const expiredNinetyMinutesAgo = (): string =>
+    new Date(Date.now() - (90 * 60_000 + 5_000)).toISOString();
+
+  it('a gate-waiting run: the way out names the answer command first, and abandon only for a run still open after the answer — on the dry run and on --force', async () => {
+    // walk 2 RED (#558 PR-C): `To end the run: realm run abandon <id>` on a gate-waiting run named
+    // a command that refuses on the next line (abandon refuses a run waiting on a human gate).
+    // Issue #625 (review walk J4): `…; then realm run abandon <id>` named a command that refuses
+    // when the answer itself ends the run — the answer completes the workflow, or a guard behind
+    // the gate, settled by the answer's write, ends it — and read as "answer, then abandon" on
+    // the path where the run goes on.
     const run = await seedGateWaiting();
     const expected =
       `Run '${run.id}' is not terminal (phase: 'gate_waiting') — nothing to drain. ` +
-      `Answer its gate first: realm run respond ${run.id} --gate g-approve-1 --choice <one of: approve, reject>; then realm run abandon ${run.id}.`;
+      `To end the run, answer its gate first: realm run respond ${run.id} --gate g-approve-1 --choice <one of: approve, reject>. ` +
+      `The answer can end the run by itself. If the run is still open after it: realm run abandon ${run.id}.`;
     await runDrainAction(run.id, {}, store, workflowStore, DEPS);
     expect(logs()).toContain(expected);
     await expect(
       runDrainAction(run.id, { force: true }, store, workflowStore, DEPS),
     ).rejects.toThrow('process.exit:1');
     expect(errs()).toContain(expected);
+  });
+
+  it('a gate whose time limit has passed, drained without --expired: the way out names drain --expired, never the answer command — on the dry run and on --force', async () => {
+    // Issue #625 (review walk J4): the answer sentence was printed for an expired gate too, and
+    // never named `--expired`, the flag that acts on it.
+    const run = await seedGateWaiting({
+      expires_at: expiredNinetyMinutesAgo(),
+      on_expiry: 'settle_default',
+      default_choice: 'reject',
+    });
+    const expected =
+      `Run '${run.id}' is not terminal (phase: 'gate_waiting') — nothing to drain. ` +
+      `Its gate expired 1h 30m ago. To see what the expiry will do: realm run drain ${run.id} --expired; add --force to carry it out.`;
+    await runDrainAction(run.id, {}, store, workflowStore, DEPS);
+    expect(logs()).toContain(expected);
+    expect(logs().join('\n')).not.toContain('realm run respond');
+    await expect(
+      runDrainAction(run.id, { force: true }, store, workflowStore, DEPS),
+    ).rejects.toThrow('process.exit:1');
+    expect(errs()).toContain(expected);
+    expect(errs().join('\n')).not.toContain('realm run respond');
+  });
+
+  it('an expired gate that declares no on_expiry: the way out stays the answer command', async () => {
+    // Control for the cell above: the expired arm keys on a gate the expiry can ACT on. With no
+    // `on_expiry` there is nothing for `--expired` to enact, and the answer arm still accepts an
+    // answer (core's settle_gate refuses a late answer only when `on_expiry` is declared).
+    const run = await seedGateWaiting({ expires_at: expiredNinetyMinutesAgo() });
+    await runDrainAction(run.id, {}, store, workflowStore, DEPS);
+    expect(logs()).toContain(
+      `Run '${run.id}' is not terminal (phase: 'gate_waiting') — nothing to drain. ` +
+        `To end the run, answer its gate first: realm run respond ${run.id} --gate g-approve-1 --choice <one of: approve, reject>. ` +
+        `The answer can end the run by itself. If the run is still open after it: realm run abandon ${run.id}.`,
+    );
+  });
+
+  it('a gate with a time limit that has not passed: the way out is the answer command', async () => {
+    const run = await seedGateWaiting({
+      expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+      on_expiry: 'settle_default',
+      default_choice: 'reject',
+    });
+    await runDrainAction(run.id, {}, store, workflowStore, DEPS);
+    expect(logs().join('\n')).toContain(
+      `To end the run, answer its gate first: realm run respond ${run.id} --gate g-approve-1`,
+    );
+    expect(logs().join('\n')).not.toContain('--expired');
   });
 
   it('the #432-class divergent record (persisted gate_waiting, no pending_gate): the way out is abandon — there is no gate to answer', async () => {
