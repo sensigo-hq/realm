@@ -1,5 +1,6 @@
 // Structured, categorized error class used throughout the engine.
 import type { LoaderWarning } from '../workflow/diagnostics.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 export type ErrorCategory = 'NETWORK' | 'SERVICE' | 'STATE' | 'VALIDATION' | 'ENGINE' | 'RESOURCE';
 
@@ -259,3 +260,5 @@ export class WorkflowError extends Error {
     if (options.errors !== undefined) this.errors = options.errors;
   }
 }
+
+brandClass(WorkflowError, Symbol.for('@sensigo/realm/WorkflowError'), REALM_BRAND);

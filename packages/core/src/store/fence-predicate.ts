@@ -17,6 +17,7 @@ import type { RunStore } from './store-interface.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { deriveRunPhase } from '../engine/eligibility.js';
 import { TERMINAL_PHASES } from '../engine/lifecycle.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 /**
  * The five facts a fenced trace-buffer operation can be conditioned on (issue #616 PR-0). Derived
@@ -179,6 +180,8 @@ export function stepNotEligibleError(
  * reclaim.
  */
 export class ReclaimVersionChanged extends Error {}
+
+brandClass(ReclaimVersionChanged, Symbol.for('@sensigo/realm/ReclaimVersionChanged'), REALM_BRAND);
 
 /** The run store's `STATE_RUN_NOT_FOUND` shape (`JsonFileStore`'s, which delegates here) — what a
  *  `FENCE_REQUIRES_RUN` member answers for an absent run when the store reads runs directly. */

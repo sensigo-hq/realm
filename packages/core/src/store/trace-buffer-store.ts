@@ -11,6 +11,7 @@ import {
   type FenceRunReader,
   type RunScopedFencePredicate,
 } from './fence-predicate.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 /**
  * The store-layer capability ladder (issue #197 PR-1, design record `plans/issue-197-design.md`
@@ -980,3 +981,9 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
     return result;
   }
 }
+
+brandClass(
+  InMemoryTraceBufferStore,
+  Symbol.for('@sensigo/realm/InMemoryTraceBufferStore'),
+  REALM_BRAND,
+);

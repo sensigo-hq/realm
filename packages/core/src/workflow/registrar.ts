@@ -8,6 +8,7 @@ import { WorkflowError } from '../types/workflow-error.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
 import { deriveRunPhase } from '../engine/eligibility.js';
 import { atomicWriteFile } from '../store/atomic-write.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 /** issue #558 PR-T — what a registry read can fail as, before any bytes are parsed. */
 export type ProbeFailureClass =
@@ -493,6 +494,8 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
     return { workflows, unreadable, mismatched };
   }
 }
+
+brandClass(JsonWorkflowStore, Symbol.for('@sensigo/realm/JsonWorkflowStore'), REALM_BRAND);
 
 /**
  * Fetches the workflow definition a run-context resolution needs, wrapping a

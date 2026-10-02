@@ -1,6 +1,7 @@
 // MockAdapter — returns pre-configured responses for named operations.
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 /**
  * MockAdapter returns pre-configured responses for named operations.
@@ -77,3 +78,5 @@ export class MockAdapter implements ServiceAdapter {
     return this.resolve(operation);
   }
 }
+
+brandClass(MockAdapter, Symbol.for('@sensigo/realm/MockAdapter'), REALM_BRAND);

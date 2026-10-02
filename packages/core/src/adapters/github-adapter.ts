@@ -1,6 +1,7 @@
 // GitHubAdapter — communicates with the GitHub REST API.
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 /**
  * Configuration for GitHubAdapter.
@@ -367,3 +368,5 @@ export class GitHubAdapter implements ServiceAdapter {
     });
   }
 }
+
+brandClass(GitHubAdapter, Symbol.for('@sensigo/realm/GitHubAdapter'), REALM_BRAND);

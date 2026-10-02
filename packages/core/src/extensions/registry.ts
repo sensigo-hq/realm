@@ -6,6 +6,7 @@ import type { RateLimitConfig } from '../types/workflow-definition.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
 import type { RateLimiter } from '../adapters/rate-limiter.js';
 import { TokenBucketRateLimiter } from '../adapters/token-bucket.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 export class ExtensionRegistry {
   private adapters = new Map<string, ServiceAdapter>();
@@ -94,3 +95,5 @@ export class ExtensionRegistry {
     return this.rateLimiters.get(serviceName)!;
   }
 }
+
+brandClass(ExtensionRegistry, Symbol.for('@sensigo/realm/ExtensionRegistry'), REALM_BRAND);

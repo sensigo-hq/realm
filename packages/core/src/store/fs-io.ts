@@ -17,6 +17,7 @@
 import { unlink, readFile, stat, link } from 'node:fs/promises';
 import type { Stats } from 'node:fs';
 import { WorkflowError } from '../types/workflow-error.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 const WIN32_RETRY_COUNT = 3;
 const WIN32_RETRY_DELAY_MS = 50;
@@ -58,6 +59,8 @@ export class FsIoError extends Error {
     if (cause instanceof Error) this.cause = cause;
   }
 }
+
+brandClass(FsIoError, Symbol.for('@sensigo/realm/FsIoError'), REALM_BRAND);
 
 /**
  * Exported ONLY so the retry policy itself can be unit-tested directly with an injected fake

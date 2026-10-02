@@ -1,5 +1,7 @@
 // llm-provider.ts — LLM provider interface and factory function for realm agent.
+import { brandClass } from '@sensigo/realm';
 import type { StructuredOutputMeta, UsageRecord } from '@sensigo/realm';
+import { REALM_CLI_BRAND } from '../../brand.js';
 import type { ToolDefinition, ToolExecutor, StepWithToolsResult } from '../mcp/mcp-extensions.js';
 import type { LlmClock } from './agent-utils.js';
 
@@ -125,6 +127,8 @@ export abstract class LlmProvider {
   }
 }
 
+brandClass(LlmProvider, Symbol.for('@sensigo/realm-cli/LlmProvider'), REALM_CLI_BRAND);
+
 /**
  * Extended abstract class for providers that support the agentic tool-calling loop.
  * Extend this class if your provider can drive tool-enabled workflow steps.
@@ -175,6 +179,12 @@ export abstract class ToolCapableLlmProvider extends LlmProvider {
     },
   ): Promise<StepWithToolsResult>;
 }
+
+brandClass(
+  ToolCapableLlmProvider,
+  Symbol.for('@sensigo/realm-cli/ToolCapableLlmProvider'),
+  REALM_CLI_BRAND,
+);
 
 /**
  * Returns true if the provider supports the agentic tool-calling loop.

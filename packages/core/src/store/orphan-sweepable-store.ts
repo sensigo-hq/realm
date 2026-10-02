@@ -11,7 +11,7 @@
 // `runStore.get(runId)` FIRST, so a WAL's `<runId>.json` provably existed at WAL-creation time and
 // exists for the run's entire life. "Artifact present, run file absent" is therefore ONLY true
 // after the run file has been deleted (a pre-#183 purge, a manual `rm`, disk corruption) or DURING
-// the sub-second atomic-write temp-rename window (the run file is a `<id>.json.<pid>.tmp`, not yet
+// the sub-second atomic-write temp-rename window (the run file is a `<id>.json.<pid>.<8 hex>.tmp`, not yet
 // renamed to `<id>.json`). The age floor `gc` already enforces for temps covers that second,
 // narrow window; a genuinely run-less artifact older than the floor is the first, real case.
 

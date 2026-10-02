@@ -1,5 +1,11 @@
 // MockServiceRecorder — records all calls and returns pre-configured responses.
-import { WorkflowError, type ServiceAdapter, type ServiceResponse } from '@sensigo/realm';
+import {
+  WorkflowError,
+  brandClass,
+  type ServiceAdapter,
+  type ServiceResponse,
+} from '@sensigo/realm';
+import { REALM_TESTING_BRAND } from '../brand.js';
 
 /** A single recorded call to the mock adapter. */
 export interface RecordedCall {
@@ -67,3 +73,9 @@ export class MockServiceRecorder implements ServiceAdapter {
     return response;
   }
 }
+
+brandClass(
+  MockServiceRecorder,
+  Symbol.for('@sensigo/realm-testing/MockServiceRecorder'),
+  REALM_TESTING_BRAND,
+);

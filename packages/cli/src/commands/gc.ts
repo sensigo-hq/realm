@@ -4,7 +4,7 @@
 //
 // --- Sweep 1: atomic-write temps (issue #160, Phase 1: .tmp only) ---
 // atomicWriteFile (packages/core/src/store/atomic-write.ts) writes a unique sibling temp
-// (`${path}.<pid>.<counter>.tmp`) then POSIX-renames it over the target. A process dying between
+// (`${path}.<pid>.<8 hex>.tmp`) then POSIX-renames it over the target. A process dying between
 // the write and the rename orphans that temp forever — it is not runId-keyed for the key-pointer
 // case (`keys/<hash>.json.<pid>.*.tmp`), so `realm run purge` (#107), which acts by runId, can
 // never reach it. Temps are invisible to `list()` (no `.json` suffix) but accumulate on disk
@@ -23,7 +23,7 @@
 // `runStore.get(runId)` FIRST, so a WAL's `<runId>.json` provably existed at WAL-creation time and
 // exists for the run's ENTIRE life. "Artifact present, run file absent" is therefore only true
 // AFTER the run file has been deleted (a pre-#183 purge, a manual `rm`, disk corruption) or DURING
-// the sub-second atomic-write temp-rename window (the run file is a `<id>.json.<pid>.tmp`, not yet
+// the sub-second atomic-write temp-rename window (the run file is a `<id>.json.<pid>.<8 hex>.tmp`, not yet
 // renamed). This is remediation for the rare/residual case, not a rescue for an ongoing leak — the
 // git history shows the pre-#183/#184 orphan-manufacturing window was ~48h and opt-in.
 //
@@ -257,7 +257,7 @@ export interface OrphanArtifactSweepResult {
  * time and exists for the run's entire life (see this module's own header for the full
  * correctness backbone). The ONLY way "artifact present, run file absent" can be true for a
  * FRESH run is the sub-second window between the run file being written as a temp
- * (`<id>.json.<pid>.tmp`) and its atomic rename to `<id>.json` — during which `listRunIds()`
+ * (`<id>.json.<pid>.<8 hex>.tmp`) and its atomic rename to `<id>.json` — during which `listRunIds()`
  * would not yet see it. `FLOOR_MS` (1h) dwarfs that window by many orders of magnitude, so a
  * fresh in-flight run's WAL is always younger than the floor and never selected; a WAL/sidecar
  * OLDER than the floor with no matching run file is genuinely run-less.
