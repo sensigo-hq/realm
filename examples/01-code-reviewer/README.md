@@ -181,5 +181,5 @@ attempts appear in the chain.
 - [Example 2 — Verified Data Flows Between Steps](../02-ticket-classifier/) — two
   chained agent steps where each step's output is validated before the next step starts;
   `context.resources` threads verified data between steps
-- [YAML Schema Reference](../../docs/reference/yaml-schema.md) — all step fields,
+- [Workflow file reference](../../docs/reference/workflow/top-level-fields.md) — all step fields,
   execution modes, `input_schema` constraints, and `depends_on` / `trigger_rule`

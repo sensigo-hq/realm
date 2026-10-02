@@ -165,15 +165,21 @@ export interface RunStore {
    * own serialization (issue #279). Optional (the `persistedRunRecordFields` precedent —
    * additive-optional, never retroactively required of an external implementer).
    *
-   * **LIVE since v0.32.0** for the `settle_step`/`lease_finalizer`/`mark_finalizer` kinds: three
-   * engine call sites (the seal sites) plus `drainFinalizers` construct these deltas and call this
-   * method today — this is corrected from an earlier "dormant until PR-B" framing that is now
-   * stale. The four increment-2 kinds (`open_gate`/`settle_gate`/`settle_guard`/`release_step`)
-   * remain engine-inert until PR-D migrates their five legacy write sites (enforced by an in-repo
-   * source-text guard in the interim) — declaring this method commits a store to the FULL,
+   * **LIVE for every kind.** The engine constructs and passes `settle_step`, `lease_finalizer` and
+   * `mark_finalizer` since v0.32.0; `open_gate`, `settle_gate`, `settle_guard` and `release_step`
+   * since v0.33.0; `expire_gate` since v0.34.0. Declaring this method commits a store to the FULL,
    * OPEN-ended `SettlementDelta` union (see that type's own doc): a re-implementing store MUST
    * refuse-loud (throw a contract-violation error) on any `kind` it does not recognize, never
    * default-arm it.
+   *
+   * **Guards in the same write (issue #625).** A store that declares this method MUST pass
+   * `cascadeGuards: true` to `applySettlement` and persist the record it returns in ONE write. With
+   * that option a delta that makes a guard step eligible also settles that guard, and any guard
+   * that one makes eligible; the applied result lists them in `guards`. The engine reads `guards`
+   * from what this method returns and does not settle those guards itself on the gate-answer and
+   * gate-expiry paths, so a store that omits the option leaves a guard after a gate unsettled.
+   * The caller never passes the option: `options` here carries `now` only. The contract's laws
+   * `GUARD_CASCADE_ONE_WRITE` and `GUARD_CASCADE_TOTAL` check this.
    *
    * **A WRITE surface, not a read-only helper** — it carries every obligation `update()` already
    * does for this store (e.g. a cloud store's own policy/authorization gate on the write; M1):

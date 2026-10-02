@@ -262,5 +262,5 @@ workflow-level standing configuration, not run-specific data.
 
 - [04-content-pipeline/](../04-content-pipeline/) — the preceding example in the ladder:
   checkpoint/resume when a step fails mid-run
-- [YAML Schema Reference](../../docs/reference/yaml-schema.md) — full reference for
+- [Workflow file reference](../../docs/reference/workflow/top-level-fields.md) — full reference for
   `workflow_context`, `depends_on`, `input_schema`, and `input_map`

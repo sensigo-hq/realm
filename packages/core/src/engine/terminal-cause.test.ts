@@ -558,31 +558,21 @@ describe('#373 — a guard-sealed run whose finalizer ALSO fails keeps the path 
     );
     if (!failed.applied) throw new Error(`fixture: fail(fail_a) refused — ${failed.reason}`);
 
-    // Mirrors executeGuardStep's own resolution_error snapshot, enriched string included — the
-    // production mint of that string is pinned by cell (8) and by the legacy cell below.
-    const sealed = await store.settleStep!(
-      run.id,
-      {
-        kind: 'settle_guard',
-        step: 'g',
-        outcome: 'resolution_error',
-        evidence: captureEvidence({
-          stepId: 'g',
-          startedAt: new Date(),
-          completedAt: new Date(),
-          input: {},
-          output: { error: 'Unresolvable path: $.nope.field' },
-          error:
-            "Guard resolution error: unresolvable path '$.nope.field' (condition: $.nope.field == true)",
-        }),
-        resolutionError: {
-          condition: '$.nope.field == true',
-          unresolvable_path: '$.nope.field',
-        },
-      },
-      guardDef,
-    );
-    if (!sealed.applied) throw new Error(`fixture: guard settle refused — ${sealed.reason}`);
+    // issue #625: the failing step's OWN write settles the guard it leaves eligible — `g` has no
+    // dependencies, so it is eligible the moment the step's delta applies, and its condition
+    // cannot be resolved. The fixture no longer issues a `settle_guard` of its own (it would be
+    // refused: the guard is already settled); it asserts the settlement the write produced. The
+    // evidence entry and its enriched `error` string are now the PRODUCTION mint (`buildGuardDelta`),
+    // not a hand-built mirror of it.
+    // (a) red when the store's settleStep stops settling the guard in the step's own write;
+    //     (b) prints the result's `guards`.
+    expect(failed.guards).toEqual([{ step: 'g', outcome: 'resolution_error' }]);
+    const sealed = failed;
+    // (a) red when the guard's evidence stops carrying the unresolvable path first; (b) prints the
+    //     guard's recorded error text.
+    expect(sealed.run.evidence.filter((e) => e.step_id === 'g').map((e) => e.error)).toEqual([
+      "Guard resolution error: unresolvable path '$.nope.field' (condition: $.nope.field == true)",
+    ]);
     // SEAL TIME: the path is present, carried by the call site's overlay.
     expect(sealed.run.terminal_reason).toBe(
       '2 steps failed: fail_a ("Dispatcher failed: a exploded"), ' +

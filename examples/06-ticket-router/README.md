@@ -164,5 +164,5 @@ condition matched and which four were skipped.
 - [Example 2 — Ticket Classifier](../02-ticket-classifier/) — this example builds directly
   on it: `classify_ticket.category` is the field the `when` conditions evaluate. Start there
   if you want to understand the schema design.
-- [YAML Schema Reference](../../docs/reference/yaml-schema.md) — `when` condition syntax,
+- [Workflow file reference](../../docs/reference/workflow/top-level-fields.md) — `when` condition syntax,
   `skipped_steps` in run state, and all other step fields.

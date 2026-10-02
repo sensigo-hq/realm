@@ -4,6 +4,8 @@
 // Internal to the CLI package — not exported from the package's public index.
 import {
   submitHumanResponse,
+  describeAnswerEnding,
+  describeEndedBy,
   type RunStore,
   type WorkflowDefinition,
   type PendingGate,
@@ -389,9 +391,27 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
         } else {
           // Success — resolution IS the store write inside submitHumanResponse. Confirm + stop.
           if (gateThreadTs !== undefined) {
-            const confirmationText =
+            // issue #625: the answer's own write settles the guards it makes eligible, and one of
+            // them may have ENDED the run. The authored resolution message (and the default's
+            // "run continuing") is posted only when the answer did not end the run — posted over
+            // an aborted run it would tell the channel the opposite of what happened. When the
+            // answer ended the run the post says so: the guard's sentence, its reason, and each
+            // finalizer's outcome (the one composer `realm run respond` and the run prompt use).
+            let confirmationText =
               gate.resolution_messages?.[exactMatch] ??
               `✅ Gate resolved: \`${exactMatch}\` — run continuing.`;
+            if (result.ended_by !== undefined) {
+              let endingLines: string[];
+              try {
+                endingLines = describeAnswerEnding(result, await store.get(runId));
+              } catch {
+                // The answer IS recorded — a failed read here must not reach the catch below and
+                // post "Couldn't record your response". Only the finalizer outcomes need the
+                // record; the ending and its reason are on the reply.
+                endingLines = describeEndedBy(result);
+              }
+              confirmationText = [`Gate resolved: \`${exactMatch}\`.`, ...endingLines].join('\n');
+            }
             await postSlackReply(slackBotToken, slackChannelId, gateThreadTs, confirmationText);
           }
           abortController.abort();

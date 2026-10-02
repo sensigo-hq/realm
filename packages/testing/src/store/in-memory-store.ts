@@ -237,7 +237,9 @@ export class InMemoryStore implements RunStore {
         retryable: false,
       });
     }
-    const outcome = applySettlement(fresh, delta, definition, options);
+    // issue #625: a store's own `settleStep` settles, in this SAME write, every guard the delta
+    // makes eligible (the published law GUARD_CASCADE_ONE_WRITE).
+    const outcome = applySettlement(fresh, delta, definition, { ...options, cascadeGuards: true });
     if (!outcome.applied) {
       return outcome; // refusal/noop — fresh state, NO write (version unchanged)
     }

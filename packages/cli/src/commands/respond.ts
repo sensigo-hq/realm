@@ -3,8 +3,44 @@ import { Command } from 'commander';
 import type { RunStore } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
 import type { ExtensionRegistry } from '@sensigo/realm';
-import { WorkflowError, submitHumanResponse, getWorkflowForRun } from '@sensigo/realm';
+import {
+  WorkflowError,
+  submitHumanResponse,
+  getWorkflowForRun,
+  describeAnswerEnding,
+  describeEndedBy,
+  lateAnswerOutcome,
+} from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+
+/**
+ * issue #625: the last line for an answer the gate's expiry beat — never `Responded:`. The choice
+ * and the phase come from the run record (`lateAnswerOutcome`), never from the reply's text.
+ */
+function notRecordedLine(runId: string, late: { choice: string; phase: string }): string {
+  return `Not recorded: ${runId} | gate settled by timeout with choice '${late.choice}' | state '${late.phase}'`;
+}
+
+/** What `respondToGate` hands the command to print (issue #625). */
+export interface RespondOutcome {
+  choice: string;
+  newState: string;
+  /**
+   * `false` when the gate's expiry had already settled it, so this answer was NOT recorded even
+   * though the call succeeded (its choice matched the one the expiry enacted). The command then
+   * prints `Not recorded:` as its last line, never `Responded:`.
+   */
+  recorded: boolean;
+  /**
+   * What the answer's write settled, one line each, printed BEFORE the last line: the guard that
+   * ended the run (its sentence, `Reason:`, each finalizer's outcome), or one passed line per
+   * guard; for a late answer the expiry sentence comes first. Empty when the write settled no
+   * guard and the answer was recorded.
+   */
+  lines: string[];
+  /** The last line to print: `Responded: …` or `Not recorded: …`. */
+  lastLine: string;
+}
 
 /**
  * Submits a human choice response for a gate-waiting run.
@@ -12,7 +48,9 @@ import { loadProjectExtensions } from '../extensions/load-project-extensions.js'
  * @param options       `gate` is the gate_id; `choice` is the selected option.
  * @param runStore      Store holding run records.
  * @param workflowStore Registrar for workflow definitions.
- * @returns The choice submitted and the new run state after the gate advances.
+ * @returns The choice submitted, the new run state after the gate advances, and the lines the
+ *          command prints (issue #625). A refused answer THROWS; its message is every line the
+ *          command prints on stderr, one per line.
  */
 export async function respondToGate(
   runId: string,
@@ -20,7 +58,7 @@ export async function respondToGate(
   runStore: RunStore,
   workflowStore: WorkflowRegistrar,
   registry?: ExtensionRegistry,
-): Promise<{ choice: string; newState: string }> {
+): Promise<RespondOutcome> {
   const run = await runStore.get(runId);
   // issue #456: code-keyed one-time-register remedy, shared with every other run-context site.
   const workflow = await getWorkflowForRun(workflowStore, run, {
@@ -53,7 +91,21 @@ export async function respondToGate(
   });
 
   if (result.status !== 'ok') {
-    throw new WorkflowError(result.errors[0] ?? 'Gate response failed', {
+    // issue #625: a refusal says everything the refused answer's own call did. A late answer on a
+    // gate whose expiry settled a choice enacts that expiry itself, and the expiry's write may
+    // have settled guards — passed, or ended the run. A person who wanted the other choice must
+    // learn what the run is doing now: refusal → guard lines → `Not recorded:`. Every other
+    // refusal prints exactly what it printed before (plus the ending, should the reply carry one).
+    const refusal = result.errors[0] ?? 'Gate response failed';
+    let lines = [refusal, ...describeEndedBy(result)];
+    if (result.answer_recorded === false) {
+      const lateRun = await runStore.get(runId);
+      const late = lateAnswerOutcome(result, lateRun);
+      if (late !== undefined) {
+        lines = [...describeAnswerEnding(result, lateRun), notRecordedLine(runId, late)];
+      }
+    }
+    throw new WorkflowError(lines.join('\n'), {
       code: 'STATE_BLOCKED',
       category: 'STATE',
       agentAction: 'report_to_user',
@@ -62,7 +114,27 @@ export async function respondToGate(
   }
 
   const updatedRun = await runStore.get(runId);
-  return { choice: options.choice, newState: updatedRun.run_phase };
+  const lines = describeAnswerEnding(result, updatedRun);
+  // issue #625: an `ok` reply is not always a recorded answer — when the gate's expiry had
+  // already settled it with the same choice, the call succeeds and the answer was NOT recorded.
+  // The typed fact decides the last line; the reply's prose is never matched.
+  const late = lateAnswerOutcome(result, updatedRun);
+  if (late !== undefined) {
+    return {
+      choice: options.choice,
+      newState: late.phase,
+      recorded: false,
+      lines,
+      lastLine: notRecordedLine(runId, late),
+    };
+  }
+  return {
+    choice: options.choice,
+    newState: updatedRun.run_phase,
+    recorded: true,
+    lines,
+    lastLine: `Responded: ${runId} | choice '${options.choice}' | new state '${updatedRun.run_phase}'`,
+  };
 }
 
 export const respondCommand = new Command('respond')
@@ -113,14 +185,12 @@ export const respondCommand = new Command('respond')
           process.exit(1);
           return;
         }
-        const { choice, newState } = await respondToGate(
-          runId,
-          opts,
-          runStore,
-          workflowStore,
-          registry,
-        );
-        console.log(`Responded: ${runId} | choice '${choice}' | new state '${newState}'`);
+        const outcome = await respondToGate(runId, opts, runStore, workflowStore, registry);
+        // issue #625: what the answer's write settled is said FIRST — the guard that ended the
+        // run (with its reason and each finalizer's outcome), or each guard that passed — then
+        // the one line that says whether the answer was recorded. Exit 0: the call succeeded.
+        for (const line of outcome.lines) console.log(line);
+        console.log(outcome.lastLine);
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exit(1);

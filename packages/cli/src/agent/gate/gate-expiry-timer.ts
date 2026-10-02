@@ -6,7 +6,7 @@
 // warns against ("avoids circular dependency with run-agent.ts"). Shared by all THREE wait-sites:
 // slack-gate-notifier.ts's `handleBidirectionalGate`, run-agent.ts's non-Slack poll loop, and
 // run.ts's interactive prompt.
-import { applySettlement, drainFinalizers } from '@sensigo/realm';
+import { applySettlement, describeGuardLines, drainFinalizers } from '@sensigo/realm';
 import type {
   RunStore,
   WorkflowDefinition,
@@ -70,8 +70,15 @@ export function scheduleGateExpiryTimer(
         outcome = pure.applied ? { ...pure, run: await deps.store.update(pure.run) } : pure;
       }
       if (outcome.applied) {
+        // issue #625: on a store that declares `settleStep` the expiry's write also settled the
+        // guards its default made eligible. This timer logs ONE line, so what they did is
+        // appended to it: the ending sentence and its `Reason:` when a guard ended the run,
+        // otherwise a passed line per guard. (The legacy branch above never sets the option, so
+        // it reports none.)
+        const guardLines = describeGuardLines(outcome);
         console.log(
-          `⏰ gate '${gate.gate_id}' on run '${runId}' expired — enacted via the attending-process timer (enacted_via: timer).`,
+          `⏰ gate '${gate.gate_id}' on run '${runId}' expired — enacted via the attending-process timer (enacted_via: timer).` +
+            (guardLines.length > 0 ? ` ${guardLines.join(' ')}` : ''),
         );
         if (outcome.transitioned) {
           const drainOutcome = await drainFinalizers(
