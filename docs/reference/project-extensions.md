@@ -1,232 +1,302 @@
-# Project Extensions
+# Project extensions
 
-First-class support for project-specific adapters, step handlers, and processors. A workflow
-declares its extension modules in `workflow.yaml`; every step-executing or config-validating
-entry point (CLI and MCP) loads them identically. No bespoke MCP wrapper servers, no
-per-command wiring.
+A project gives Realm its own code in files that a workflow names with `extensions`. A file can provide 3 kinds of thing: adapters, handlers and processors. This page gives what a file must export, what each kind must have, every refusal, which commands load the code and when, and what a run records about the code that ran it. Every message shown came from a run of `realm` against a project at `/srv/shop`.
+
+The same 3 kinds can also be built from settings in `realm.yaml`. See [Deployment manifest](deployment-manifest.md).
+
+## Naming the files
 
 ```yaml
-# workflow.yaml
-extensions: ../../dist/registry.js # string | string[]; RELATIVE paths only
+extensions: ../ext/a.mjs
 ```
 
-```js
-// registry.js — declarative default export, instances keyed by REGISTRATION NAME
-import { GorgiasAdapter } from '@sensigo/realm';
-import { myHandler } from './handlers.js';
-import { myProcessor } from './processors.js';
+```yaml
+extensions:
+  - ../ext/a.mjs
+  - ../ext/b.mjs
+```
 
+`extensions` is one path or a list of paths. Each path is taken from the workflow's folder, and each file must be inside the workflow's project. The field is described in [Workflow file: top-level fields](workflow/top-level-fields.md).
+
+## What a file exports
+
+The file's default export is an object with up to 3 keys. Each is a map from a name to a thing:
+
+```js
 export default {
-  adapters: { gorgias: new GorgiasAdapter('gorgias', { ... }) },
-  handlers: { check_offer_phrase_handler: myHandler },
-  processors: { normalize_offer: myProcessor },
+  adapters: { crm: crmAdapter },
+  handlers: { order_total: orderTotal },
+  processors: {},
 };
 ```
 
----
+| Key          | Each thing must have                          | Type exported by `@sensigo/realm` | A workflow uses it with              |
+| ------------ | --------------------------------------------- | --------------------------------- | ------------------------------------ |
+| `adapters`   | The functions `fetch`, `create` and `update`. | `ServiceAdapter`                  | `adapter: <name>` in `services`.     |
+| `handlers`   | The function `execute`.                       | `StepHandler`                     | `handler: <name>` on a step.         |
+| `processors` | The function `process`.                       | `Processor`                       | Nothing. No workflow field uses one. |
 
-## Code vs config (v0.14)
+Realm checks that those functions are there, and checks nothing else about the thing. It does not have to be made from a class.
 
-`extensions:` in workflow.yaml declares **CODE** — modules whose exports are ready
-instances (no secrets, no per-deployment values). ALL deployment **CONFIG** — adapter
-construction, secret bindings, handler/processor construction config, notifiers — lives in
-the [deployment manifest](deployment-manifest.md) (`realm.yaml` at the deployment root),
-where module exports can also be consumed as **factories** (`use: ./dist/registry.js#name`)
-receiving secret-resolved config. Code-trust is workflow-declared + containment-checked;
-config-trust is project-scoped at the stored trust root.
+`realm workflow validate` counts what the files gave:
 
----
-
-## Module contract
-
-The module's **default export** is a plain declarative object with up to three optional maps:
-
-| Key          | Value                            | Interface (from `@sensigo/realm`)                    |
-| ------------ | -------------------------------- | ---------------------------------------------------- |
-| `adapters`   | `Record<string, ServiceAdapter>` | callable `fetch` / `create` / `update` (+ `delete?`) |
-| `handlers`   | `Record<string, StepHandler>`    | callable `execute`                                   |
-| `processors` | `Record<string, Processor>`      | callable `process`                                   |
-
-Rules:
-
-- **The map key is the registration name.** If the instance exposes a differing `id`, the loader
-  warns and uses the map key. Workflow YAML references (`services.<name>.adapter`,
-  `steps.<name>.handler`) must match the map keys.
-- The export must be a **declarative object, not an `ExtensionRegistry` instance** — registry-like
-  exports (callable `register`/`getAdapter`) are rejected. Unknown top-level keys (e.g. a typo'd
-  `handler:`) are rejected.
-- Loading is fail-fast and happens **before any run is created or claimed**. A broken module never
-  produces a half-configured run.
-
-### Duck typing and version skew
-
-Validation is structural (**duck-typed**, never `instanceof`): the loader probes the minimal
-distinguishing members of each interface. This is deliberate — npm dedupe can put your project's
-`@sensigo/realm` and the CLI's on different copies, and `instanceof` across copies is false.
-Consequences for module authors:
-
-- Declare `@sensigo/realm` as a **peer dependency** of your extensions package so your instances
-  are built against the same engine version that executes them.
-- After upgrading Realm across a minor/major boundary, rebuild your compiled registry and
-  re-register your workflows.
-
-### Module formats
-
-Both module systems work. ESM projects (`"type": "module"`) export the manifest directly.
-tsc-CommonJS builds (`module: commonjs`, no `"type": "module"`) work too — the loader unwraps
-Node's CJS-ESM interop (`__esModule` + `default`) automatically, so `export default {...}`
-compiles and loads correctly under either configuration.
-
-### TypeScript modules
-
-Compiled JS is the documented default. A declared `.ts` / `.mts` path is loaded through
-[`jiti`](https://github.com/unjs/jiti), resolved **from the extension module's own directory**
-(your project's `node_modules`) — never from the Realm CLI install. If jiti is absent you get an
-actionable error: install jiti in your project, or compile to JS and declare the compiled path.
-
----
-
-## Collision policy and precedence
-
-| Situation                                                   | Result                  |
-| ----------------------------------------------------------- | ----------------------- |
-| Extension name overrides a **built-in** name (e.g. `slack`) | **WARN** and allow      |
-| The same name claimed by **two declared modules**           | **ERROR** (load fails)  |
-| Instance `id` differs from its map key                      | **WARN** (map key wins) |
-
-Precedence (later wins):
-
-```
-built-in defaults  <  legacy env-gated built-ins (realm agent: GITHUB_TOKEN / SLACK_WEBHOOK_URL)
-                   <  declared `extensions:` modules
-                   <  --extensions-module override
+```text
+Valid: flow v1 (1 step)
+Extensions: ../ext/a.mjs, ../ext/b.mjs (adapters: 0, handlers: 2, processors: 0)
 ```
 
-The env-gated github/slack block in `realm agent` is a **legacy tier** retained for
-back-compatibility — the migration path is a project extensions module that constructs those
-adapters explicitly.
+### Names
 
----
+The name of a thing is its key in the map.
 
-## Trust model
+| Case                                            | What happens                                                                                                                                                           |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The thing has an `id` that differs from its key | The key is used. `[realm] extension handler registered as 'hello' (map key) but its instance id is 'x' (module '../ext/a.mjs'). The registration name is the map key.` |
+| An adapter is named `filesystem`                | It replaces the built-in one. `[realm] extension adapter 'filesystem' from '../ext/a.mjs' overrides the built-in adapter 'filesystem'.`                                |
+| Two files give the same name                    | Refused. `Extension handler 'hello' is declared by both '../ext/a.mjs' and '../ext/b.mjs' — extension names must be unique across declared modules.`                   |
+| A file and `realm.yaml` give the same name      | Refused. See [Deployment manifest](deployment-manifest.md#refusals).                                                                                                   |
 
-Extension module paths originate **only** from operator-registered workflow definitions or the
-operator-typed `--extensions-module` flag — never from request or webhook data. There is no
-directory-walking discovery at execution time. Registering a workflow **is** the trust decision:
+Adapters, handlers and processors are named apart: an adapter and a handler may have the same name.
 
-1. The definition stores the **authored relative paths**, the absolutized workflow directory
-   (`source_dir`), and the **trust root** — the nearest ancestor of the workflow directory
-   containing `package.json` or `.git` (fallback: the workflow directory itself). All derived
-   once, at registration, from an operator-given path.
-2. At load time each declared path resolves against `source_dir`; both the resolution and the
-   trust root are **realpath-resolved** (symlinks cannot escape), and any resolution outside the
-   trust root is refused. Absolute declared paths are rejected by the schema.
-3. Definitions created by agents (`origin: 'agent'`, e.g. via the MCP `create_workflow` tool)
-   are refused if they carry `extensions`; `create_workflow` itself rejects the key
-   (register-time, operator-only), and string-based loading rejects it structurally.
+### File formats
 
-**Consequence, stated plainly: write access to `~/.realm/workflows/` is
-code-execution-equivalent; never derive filesystem-write paths from request data in triggered
-workflows.**
+| File                                     | Loaded as                                                        | Recorded as |
+| ---------------------------------------- | ---------------------------------------------------------------- | ----------- |
+| `.mjs`, or `.js` in an ES-module project | An ES module.                                                    | `esm`       |
+| `.cjs`                                   | A CommonJS module. `module.exports` is the object.               | `cjs`       |
+| `.ts`, `.mts`, `.cts`                    | TypeScript, through the `jiti` package installed in the project. | `ts-jiti`   |
 
-### Secret redaction limits
+Without `jiti` in the project, a TypeScript file is refused:
 
-Redaction is **literal-value masking** (the GitHub-Actions add-mask class): resolved secret
-values are masked in provider-loop tool results, tool errors, and loader construction
-errors — but encoded or derived forms (base64, URL-encoded, embedded in other structures)
-are NOT caught, so traces are best-effort scrubbed, not a secret-safe channel. Step outputs
-returned by handlers are recorded VERBATIM in run evidence — never return secret values
-from handler outputs.
+```text
+Error loading extensions: Module '../ext/e.ts' (/srv/shop/ext/e.ts) is TypeScript, but 'jiti' is not installed in your project. Install jiti in your project (npm install --save-dev jiti), or compile the module to JS and declare the compiled path.
+```
 
-### realm-cloud / cross-host note
+### Refusals
 
-`source_dir` / `trust_root` are **host-specific absolute paths**. A definition registered on one
-machine cannot resolve its extensions on another — re-register the workflow **on the executing
-host** (the existing norm for workflow_context paths applies here too).
+Each message follows `Error loading extensions:`.
 
-### Downgrade skew
+| The file                                                    | Message                                                                                                                                                                                                 |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Is not there                                                | `Cannot resolve extension module '../ext/a.mjs' of workflow 'flow' (resolved: /srv/shop/ext/a.mjs): ENOENT: no such file or directory, lstat '/srv/shop/ext/a.mjs'`                                     |
+| Is outside the project, or is a link to a file outside it   | `Extension module '../../outside.mjs' resolves to '/srv/outside.mjs', which is OUTSIDE the workflow's trust root '/srv/shop'. Extension modules must live within the project containing the workflow …` |
+| Throws when it is loaded                                    | `Failed to import module '../ext/a.mjs' (/srv/shop/ext/a.mjs): DATABASE_URL is not set`                                                                                                                 |
+| Has a syntax error                                          | `Failed to import module '../ext/a.mjs' (/srv/shop/ext/a.mjs): Unexpected end of input`                                                                                                                 |
+| Imports a package that is not installed                     | `Failed to import module '../ext/a.mjs' (/srv/shop/ext/a.mjs): Cannot find package 'not-installed-pkg' imported from /srv/shop/ext/a.mjs`                                                               |
+| Has no default export                                       | `Extension module '../ext/a.mjs' has no default export — export a declarative object: export default { adapters: { name: instance }, handlers: { ... }, processors: { ... } }`                          |
+| Exports a list or a function                                | `Extension module '../ext/a.mjs': default export must be a plain object ({ adapters?, handlers?, processors? }), got array.`                                                                            |
+| Exports an object with `register` or `getAdapter` functions | `Extension module '../ext/a.mjs': default export looks like an ExtensionRegistry instance. Export a declarative object instead: …`                                                                      |
+| Has a key other than the 3                                  | `Extension module '../ext/a.mjs': unknown key 'helpers' in default export — allowed keys are 'adapters', 'handlers', 'processors'.`                                                                     |
+| Has a list where a map belongs                              | `Extension module '../ext/a.mjs': 'handlers' must be an object map of name → instance, got array.`                                                                                                      |
+| Has an entry that is not an object                          | `Extension handler 'hello' in '../ext/a.mjs': expected an object instance, got null.`                                                                                                                   |
+| Has a handler without `execute`                             | `Extension handler 'hello' in '../ext/a.mjs': missing callable 'execute' — handlers must implement 'execute' per the @sensigo/realm StepHandler interface.`                                             |
+| Has an adapter without one of its 3 functions               | `Extension adapter 'crm' in '../ext/a.mjs': missing callable 'create' — adapters must implement 'fetch'/'create'/'update' per the @sensigo/realm ServiceAdapter interface.`                             |
+| Has a processor without `process`                           | `Extension processor 'clean' in '../ext/a.mjs': missing callable 'process' — processors must implement 'process' per the @sensigo/realm Processor interface.`                                           |
 
-A v0.12 (or older) CLI reading a v0.13 definition silently drops the `extensions` key
-(`schema_version` stays 1 — the addition is optional). Custom adapters then fail with
-adapter-not-registered at execution time rather than at load. Upgrade the CLI on every host that
-executes extension-declaring workflows.
+A value of `extensions` that is not a path or a list of paths is refused by the workflow loader:
 
----
+```text
+Invalid workflow: 'extensions' must be a non-empty module path or a non-empty array of module paths (e.g. extensions: ./dist/registry.js)
+```
 
-## Runtime behavior per entry point
+## Handlers
 
-See the [CLI reference](cli-commands.md) for full per-command detail. Summary:
+See [Handlers](handlers.md).
 
-- **`run` / `agent` (fresh)** — extensions load before the run is created (fail-before-create).
-- **`agent --run-id`** — extensions load before the run is claimed. If loading fails on a run
-  that has **not** started executing, the run is marked terminal with
-  `terminal_reason: 'extensions_load_failed'`; re-running `realm agent --run-id <id>` after
-  fixing the module **clears exactly that marker and retries**. A run that has already begun
-  executing is never mutated by a failed attach.
-- **`listen`** — loads every routed workflow's extensions at startup (fail-fast; module
-  top-level side effects run in the listen parent). Children re-resolve at spawn.
-- **`serve` / `mcp`** — a per-definition registry provider backed by a **process-lifetime
-  cache**: module content changes require a process restart (no cache-busting re-imports).
-- **`register` / `watch`** — mint the trust decision: full module load + duck validation +
-  `config_schema` two-pass **before** persisting.
-- **`test`** — extension handlers/processors run **real**; extension adapters the fixture does
-  not mock trip a fail-if-unmocked guard (never silently hit a real service).
-- **`validate`** — two-pass `config_schema` validation for declaring workflows;
-  extension-free workflows keep the historical from-string strictness surface.
-- **Read-only commands** (`replay`, `inspect`, `list`, `diff`) never load extension code.
+## Adapters
 
-### `--extensions-module <path>` (repair/override)
+```ts
+interface ServiceAdapter {
+  readonly id: string;
+  readonly config_schema?: Record<string, unknown>;
+  readonly defaultRetryAfterSeconds?: number;
+  fetch(operation, params, config, signal?): Promise<ServiceResponse>;
+  create(operation, params, config, signal?): Promise<ServiceResponse>;
+  update(operation, params, config, signal?): Promise<ServiceResponse>;
+  delete?(operation, params, config, signal?): Promise<ServiceResponse>;
+}
 
-Available on `agent`, `run`, `serve`, `mcp`, `validate`, `test`. **Replaces** the declared
-modules for that invocation and logs loudly. It is an operator-typed path, so trust-root
-containment does not apply. Use it for moved files, drift experiments, and repairs — not as the
-primary mechanism.
+interface ServiceResponse {
+  status: number;
+  data: unknown;
+}
+```
 
----
+A step chooses the function with `service_method`: `fetch`, `create`, `update` or `delete`. Without it, `fetch` is called.
 
-## Drift evidence
+### What a function receives
 
-Every run records the identity of the extension code that actually executed it — captured
-at module-**LOAD** time (what is in memory, not what is on disk at some later moment),
-recorded as an **append-on-change history** on the run, compared and **WARNed — never
-gated** — at attach time and in `realm run inspect`.
+| Argument    | Holds                                                                               |
+| ----------- | ----------------------------------------------------------------------------------- |
+| `operation` | The step's `operation`. The step's name if it has none.                             |
+| `params`    | The values the step's `input_map` resolved to. `{}` without one.                    |
+| `config`    | `adapter` and `trust` from the service, then the keys of the step's `config` block. |
+| `signal`    | An `AbortSignal` that fires when the step's time limit passes.                      |
 
-**What is recorded** (`RunRecord.extension_identity[]`, one entry per identity change):
+This step:
 
-- per module: the declared and resolved paths, a sha256 `entry_hash` of the entry file,
-  and the load format (`esm` / `cjs` / `ts-jiti`);
-- a versioned deterministic directory-tree fingerprint (`dir_tree_v1`) over the deduped
-  parent directories of the resolved entries: included extensions
-  `.js,.mjs,.cjs,.ts,.mts,.cts,.json`; directories named `node_modules` and `.git`
-  excluded at any depth; symlinks skipped; sorted by relative path; caps 2000 files /
-  50 MB (over-cap sweeps hash a deterministic prefix and set `truncated: true`);
-- labeled advisory `signals` (never compared): `package_version` from the trust root's
-  package.json and `git_head` from `.git/HEAD` (one ref-file dereference, no child
-  processes) — each independently fail-soft;
-- `override_active: true` when `--extensions-module` replaced the declared modules;
-- `error` when the capture (or the extension load itself) failed — the failure is itself
-  a record.
+```yaml
+only:
+  description: Call the adapter.
+  execution: auto
+  uses_service: crm
+  operation: get_customer
+  config: { region: eu }
+  input_map:
+    id: run.params.id
+```
 
-**Coverage, stated verbatim in `inspect`:** covers files under the recorded roots matching
-the recorded rules; imports outside these roots, node_modules, and runtime dynamic imports
-are NOT covered.
+in a run started with `{"id":"C-9"}`, called `fetch` with:
 
-**When entries are written** (append-on-change): the execution loop appends an entry at
-step execution when the run has no history or the last entry denotes different code — so
-idempotent creates, batch children, and multi-process resumes never duplicate entries,
-and a mid-run code change (fix-registry-then-resume) lands as a second entry with an
-advisory envelope warning. `realm agent --run-id` WARNs on stderr when the freshly loaded
-identity differs from the run's last recorded one (nothing is written pre-claim); a
-pre-execution `extensions_load_failed` write carries an `error` identity entry, giving
-the repair loop its before/after pair. Comparison always recomputes under the **recorded**
-rule string — an unknown rules version yields an explicit "cannot compare", never a guess.
+```json
+{
+  "operation": "get_customer",
+  "params": { "id": "C-9" },
+  "config": { "adapter": "crm", "trust": "engine_delivered", "region": "eu" }
+}
+```
 
-**`realm run inspect <run-id> --check-drift`** recomputes the last recorded entry against
-current disk state with pure hashing (the fingerprint module is structurally incapable of
-loading code — no dynamic import, no createRequire) and prints same/DIFFERS/MISSING per
-module and for the tree, plus the recorded-vs-current signals.
+### What a function returns
 
-**Store support:** drift evidence is **JSON-file-store-only for now** — external stores
-must round-trip unknown optional RunRecord fields through `update()`; realm-cloud's
-columnar store does not yet (its migration spec now includes `extension_identity` and
-`workflow_context_snapshots`).
+| The function                                        | The step                                                                            |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Returns `{ status, data }` with an object as `data` | Completes. Its output is `data`.                                                    |
+| Returns `{ status: 200, data: 42 }`                 | Completes. Its output is `{"data":42,"status":200}`.                                |
+| Throws an `Error`                                   | Fails: `Step 'only' failed: Adapter 'crm' threw: the CRM is down`                   |
+| Throws a `WorkflowError`                            | Fails with that error. See [Handlers](handlers.md#what-a-thrown-error-does).        |
+| Is `delete`, and the adapter has none               | Fails: `Step 'only' failed: Adapter 'crm' does not support service_method 'delete'` |
+
+Realm does not read `status`. An adapter reports a failure by throwing.
+
+### `config_schema`
+
+A step may have a `config` block only if its adapter has a `config_schema`, a JSON Schema for that block. `realm workflow validate` and `realm workflow register` check the block against it:
+
+| The step                                               | Message                                                                                                                                               |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Has a `config` the schema refuses                      | `Invalid workflow: Step 'only': config validation failed against adapter config_schema: must be equal to one of the allowed values (step at line 10)` |
+| Has a `config`, and the adapter has no `config_schema` | `Invalid workflow: Step 'only': 'config' declared but adapter 'plain' does not declare 'config_schema' (step at line 10)`                             |
+
+`realm agent --workflow` does not make this check. It ran both workflows above, and the adapter received the refused `config`.
+
+## When each command loads the code
+
+| Command                                                             | Loads the code                                    | If loading fails         |
+| ------------------------------------------------------------------- | ------------------------------------------------- | ------------------------ |
+| `realm workflow validate`, `register`, `watch`                      | Before it accepts the workflow.                   | The workflow is refused. |
+| `realm workflow test`                                               | Before the fixtures run.                          | The command fails.       |
+| `realm agent --workflow`, `realm workflow run`                      | Before the run is created.                        | No run is created.       |
+| `realm agent --run-id`                                              | Before it continues the run.                      | See below.               |
+| `realm listen`                                                      | When it starts, for every workflow it mounts.     | It does not start.       |
+| `realm mcp`, `realm serve`                                          | The first time a tool call needs the workflow.    | The tool call fails.     |
+| `realm run respond`, `realm run drain`                              | When it runs.                                     | The command fails.       |
+| `realm-mcp`, from the package `@sensigo/realm-mcp`                  | Never. A step that needs project code is blocked. |                          |
+| `realm run list`, `inspect`, `attempts`, `diff`, `replay`, `export` | Never.                                            |                          |
+
+With a code file that throws when loaded, `realm run inspect`, `list`, `replay` and `diff` gave their usual output.
+
+`realm mcp` and `realm serve` keep the code they loaded until the process ends. After a code file changes, restart the process. `realm listen` loads again in each `realm agent` it starts.
+
+### `realm agent --run-id` and code that does not load
+
+| The run                   | After the failed command                                                |
+| ------------------------- | ----------------------------------------------------------------------- |
+| Has run no step yet       | It is ended as `failed`, with the cause `extensions_load_failed`.       |
+| Has run at least one step | It is as it was. A run waiting at a gate was still waiting at the gate. |
+
+```text
+Error: Failed to import module '../ext/a.mjs' (/srv/shop/ext/a.mjs): boom at import
+```
+
+```text
+Phase: failed
+Sealed by: extensions_load_failure
+Cause: extensions_load_failed
+```
+
+After the file was fixed, the same `realm agent --run-id` command opened the run again and ran it.
+
+### `--extensions-module <path>`
+
+`realm agent`, `realm workflow run`, `realm workflow validate`, `realm workflow test`, `realm mcp`, `realm serve`, `realm run respond` and `realm run drain` take `--extensions-module <path>`. The file is loaded in place of every file the workflow names. It does not have to be inside the project.
+
+```text
+[realm] --extensions-module override active: loading '/srv/repair.mjs' (resolved: /srv/repair.mjs). Declared workflow extensions are IGNORED.
+```
+
+The flag does not replace `realm.yaml`.
+
+## What a run records
+
+When a step runs, Realm records which code the process had loaded. `realm run inspect` prints it:
+
+```text
+Extension Identity (1 entry):
+  1. captured 2026-10-02T00:21:08.513Z (pid 3318070)
+     module: ../ext/a.mjs -> /srv/shop/ext/a.mjs (esm)
+             entry_hash 35391d53865df6a1acba50fbda535cd9de562acbc927ce3d10340fbdc0ab4c9a
+     tree: 5 files, 637 bytes
+           tree_hash a2b2f92cfc3d679cfeae27ac52d4343972aaaed81ab143d6dbff914c50d706f1
+     signals: package_version 1.4.0
+     coverage (dir_tree_v1): covers files under /srv/shop/ext matching dir_tree_v1: include .js,.mjs,.cjs,.ts,.mts,.cts,.json; exclude dirs node_modules,.git; skip symlinks; sort by relpath; sha256(relpath\0filehash); caps 2000 files/50MB; imports outside these roots, node_modules, and runtime dynamic imports are NOT covered.
+```
+
+| Part         | Holds                                                                                                                 |
+| ------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `captured`   | When the code was loaded, and the ID of the process that loaded it.                                                   |
+| `[override]` | Printed after the process ID if `--extensions-module` was used.                                                       |
+| `module`     | For each file: the path as written, the path it resolved to, the format, and a SHA-256 hash of the file.              |
+| `tree`       | One hash over the code files in the folders that hold the named files, with the number of files and their size.       |
+| `signals`    | The `version` in the project's `package.json`, and the commit that `.git/HEAD` points to. Recorded, and not compared. |
+| `coverage`   | Which files the tree hash covers.                                                                                     |
+
+The tree hash covers files ending in `.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts` or `.json`, at any depth under the folder of each named file. It leaves out `node_modules`, `.git` and links. It stops at 2000 files or 50 MB. A file that the code imports from another folder is not covered.
+
+For a project with a `realm.yaml`, the record also holds that file's path and hash, and the names of the secrets it refers to. See [Deployment manifest](deployment-manifest.md#what-a-run-records).
+
+### When the code changes during a run
+
+Realm adds an entry when a step runs and the loaded code differs from the last entry. A run was paused at a gate, a code file was edited, and a new `realm agent --run-id` continued the run:
+
+```text
+[realm] WARN: extension code identity differs from this run's last recorded identity — recorded tree_hash a2b2f92c… (captured 2026-10-02T00:21:08.513Z), current tree_hash b71e8739… (captured 2026-10-02T00:21:25.606Z). Advisory only — the run proceeds; …
+```
+
+```text
+Extension Identity (2 entries):
+  1. captured 2026-10-02T00:21:08.513Z (pid 3318070)
+     …
+  2. captured 2026-10-02T00:21:25.606Z (pid 3333013)
+     …
+```
+
+The run goes on. The warning does not stop it.
+
+### `--check-drift`
+
+`realm run inspect <run-id> --check-drift` hashes the files on disk again and compares them with the last entry:
+
+```text
+Drift check (pure recompute of the last entry under its recorded rules):
+  module /srv/shop/ext/a.mjs: same
+  tree: same
+```
+
+A file that differs is shown with both hashes:
+
+```text
+  module /srv/shop/handlers.mjs: DIFFERS (recorded 1bce8906e68a…, current 7c022774ac3b…)
+```
+
+The check compares files on disk with what the run recorded. A running `realm mcp` or `realm serve` may still hold older code than the disk.
+
+## Workflows made by an assistant
+
+A workflow made with the `create_workflow` tool has agent steps only, and the tool takes no `extensions`. Realm also refuses to load code for a stored workflow that is marked as made by an assistant and has `extensions`.
+
+## See also
+
+- [Write a step handler](../guides/step-handlers.md)
+- [Handlers](handlers.md), [Adapters](adapters.md), [Deployment manifest](deployment-manifest.md)
+- [Deploy a project](../guides/deploy.md)
+- [`realm run`: commands that read](cli/realm-run-reading.md) covers `inspect --check-drift`.
