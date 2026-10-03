@@ -229,6 +229,54 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
     ]);
   }, 30_000);
 
+  // Issue #625, PR-H review correction C3: one rule for a name, whatever door it comes through.
+  it('C3: `realm run respond --by "  alice  "` records `alice`', async () => {
+    const definition = await registerFinalizerWorkflow();
+    const { store, runId, gateId } = await openGate(definition);
+    await respondCommand.parseAsync(
+      [runId, '--gate', gateId, '--choice', 'approve', '--by', '  alice  ', '--project', proj],
+      { from: 'user' },
+    );
+    const answer = (await store.get(runId)).evidence.find((e) => e.kind === 'gate_response');
+    // (a) red when respond passes the raw option on instead of the checked name; (b) prints it.
+    expect(answer?.responded_by).toBe('alice');
+  }, 30_000);
+
+  it('C3: `REALM_OPERATOR=" ops-team "` records `ops-team`', async () => {
+    process.env['REALM_OPERATOR'] = ' ops-team ';
+    const definition = await registerFinalizerWorkflow();
+    const { store, runId, gateId } = await openGate(definition);
+    await submitHumanResponse(store, definition, {
+      runId,
+      gateId,
+      choice: 'approve',
+      registry: new ExtensionRegistry(),
+    });
+    await drainCommand.parseAsync([runId, '--force', '--project', proj], { from: 'user' });
+    // (a) red when the variable is stored with its padding; (b) prints the entries.
+    expect(
+      (await store.get(runId)).evidence.filter((e) => e.step_id === 'fin').map((e) => e.driven_by),
+    ).toEqual([{ by: 'ops-team', by_source: 'ambient', channel: 'drain' }]);
+  }, 30_000);
+
+  it('C3: `REALM_OPERATOR="  "` counts as unset — the OS user and host name are recorded', async () => {
+    process.env['REALM_OPERATOR'] = '  ';
+    const definition = await registerFinalizerWorkflow();
+    const { store, runId, gateId } = await openGate(definition);
+    await submitHumanResponse(store, definition, {
+      runId,
+      gateId,
+      choice: 'approve',
+      registry: new ExtensionRegistry(),
+    });
+    await drainCommand.parseAsync([runId, '--force', '--project', proj], { from: 'user' });
+    const { userInfo, hostname } = await import('node:os');
+    // (a) red when a blank REALM_OPERATOR is refused or stored blank; (b) prints the entries.
+    expect(
+      (await store.get(runId)).evidence.filter((e) => e.step_id === 'fin').map((e) => e.driven_by),
+    ).toEqual([{ by: `${userInfo().username}@${hostname()}`, by_source: 'derived', channel: 'drain' }]);
+  }, 30_000);
+
   it('(control) the same drain with no REALM_OPERATOR names the OS user and host as `derived`', async () => {
     delete process.env['REALM_OPERATOR'];
     const definition = await registerFinalizerWorkflow();

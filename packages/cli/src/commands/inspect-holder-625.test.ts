@@ -432,3 +432,159 @@ describe('CLAIM_TOKEN_ONE_DOOR — `realm run list` never prints the token eithe
     );
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Issue #625, PR-H review correction (C1, C2, C7)
+// ---------------------------------------------------------------------------------------------
+
+describe('review correction C1 — each answer is printed ONCE, whatever the layout', () => {
+  /** Every `Answer:` line of the output, whole lines. */
+  const answerLines = (out: string): string[] =>
+    out.split('\n').filter((l) => /^\s*Answer: /.test(l));
+  const LINE = '     Answer: approve · answered by (not stated) · proof: none recorded';
+  const LINE_BOB = '     Answer: approve · answered by bob (as stated, not verified) · proof: none recorded';
+  const layout = (evidence: Record<string, unknown>[]): RunRecord =>
+    baseRun({ completed_steps: ['confirm'], evidence });
+
+  it.each<[string, Record<string, unknown>[], string[]]>([
+    ['execution then answer', [exec('confirm'), answer('confirm')], [LINE]],
+    ['answer only', [answer('confirm')], [LINE]],
+    ['answer then execution', [answer('confirm'), exec('confirm')], [LINE]],
+    [
+      'two attempts then an answer',
+      [exec('confirm', { status: 'error' }), exec('confirm'), answer('confirm')],
+      [LINE],
+    ],
+    [
+      'two answers (execution first)',
+      [exec('confirm'), answer('confirm'), answer('confirm', { responded_by: 'bob' })],
+      [LINE, LINE_BOB],
+    ],
+    [
+      'two answers (answer first)',
+      [answer('confirm'), answer('confirm', { responded_by: 'bob' })],
+      [LINE, LINE_BOB],
+    ],
+  ])('%s', async (_label, evidence, expected) => {
+    // (a) red when a layout prints an answer twice (the trailing loop runs for an answer-first
+    //     step) or drops one; (b) prints the Answer lines found.
+    expect(answerLines(await render(layout(evidence)))).toEqual(expected);
+  });
+});
+
+describe('review correction C2 — an answer the gate’s expiry wrote reads as no one answering', () => {
+  const answerLine = (out: string): string =>
+    out.split('\n').find((l) => l.trim().startsWith('Answer: ')) ?? `<no Answer line:\n${out}>`;
+  const expiryRun = (extra: Record<string, unknown>): RunRecord =>
+    baseRun({ completed_steps: ['confirm'], evidence: [exec('confirm'), answer('confirm', extra)] });
+
+  it("expired_default: `Answer: hold · settled by the gate's expiry (no one answered)` — no answerer, no proof", async () => {
+    const out = await render(
+      expiryRun({
+        responded_by: 'timeout',
+        resolution: 'expired_default',
+        input_summary: { choice: 'hold' },
+        output_summary: { choice: 'hold' },
+      }),
+    );
+    // (a) red when the expiry's literal `timeout` is read as a stated name again, or the line gains
+    //     an answerer or proof part; (b) prints the line.
+    expect(answerLine(out)).toBe("     Answer: hold · settled by the gate's expiry (no one answered)");
+    expect(out).not.toContain('answered by timeout');
+  });
+
+  it("expired_abort: the abort writes no choice — `Answer: (no choice recorded) · settled by the gate's expiry (no one answered)`", async () => {
+    const out = await render(
+      expiryRun({
+        responded_by: 'timeout',
+        resolution: 'expired_abort',
+        input_summary: {},
+        output_summary: { gate_expired: true, disposition: 'abort' },
+      }),
+    );
+    expect(answerLine(out)).toBe(
+      "     Answer: (no choice recorded) · settled by the gate's expiry (no one answered)",
+    );
+  });
+
+  it('(control) a caller who STATES `timeout` as its own name, with no resolution, is still a stated name', async () => {
+    const out = await render(expiryRun({ responded_by: 'timeout' }));
+    // (a) red when the reading keys on the literal `timeout` instead of `resolution`; (b) prints it.
+    expect(answerLine(out)).toBe(
+      '     Answer: approve · answered by timeout (as stated, not verified) · proof: none recorded',
+    );
+  });
+});
+
+describe('review correction C7 — "Question opened through" only under the attempt that opened the question', () => {
+  it('a REAL run: an auto gate step with retry whose handler fails once ⇒ `Taken by:` under attempt 1, `Question opened through:` under attempt 2', async () => {
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { JsonFileStore, ExtensionRegistry, executeStep, WorkflowError } =
+      await import('@sensigo/realm');
+    const dir = await mkdtemp(join(tmpdir(), 'realm-c7-'));
+    try {
+      const store = new JsonFileStore(dir);
+      let calls = 0;
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'flaky', {
+        id: 'flaky',
+        execute: async () => {
+          calls += 1;
+          if (calls === 1) {
+            throw new WorkflowError('the service was busy', {
+              code: 'SERVICE_RATE_LIMITED',
+              category: 'SERVICE',
+              agentAction: 'wait_and_proceed',
+              retryable: true,
+            });
+          }
+          return { data: { ok: true } };
+        },
+      });
+      const definition = {
+        id: 'c7-wf',
+        name: 'c7',
+        version: 1,
+        steps: {
+          confirm: {
+            description: 'Confirm',
+            execution: 'auto' as const,
+            trust: 'human_confirmed' as const,
+            depends_on: [],
+            handler: 'flaky',
+            retry: { max_attempts: 2 },
+            gate: { choices: ['approve', 'reject'] },
+          },
+        },
+      };
+      const { run } = await store.create({ workflowId: 'c7-wf', workflowVersion: 1, params: {} });
+      const reply = await executeStep(store, definition, {
+        runId: run.id,
+        command: 'confirm',
+        input: {},
+        dispatcher: async () => {
+          throw new Error('fixture: the handler runs, never the dispatcher');
+        },
+        registry,
+        driver: { by: 'prog@host', by_source: 'derived', channel: 'agent' },
+      });
+      // The run really retried, and the question really opened on the second attempt.
+      expect(calls).toBe(2);
+      expect(reply.status).toBe('confirm_required');
+      const out = await inspectRun(run.id, store, workflowStore);
+      const lines = out.split('\n');
+      const a1 = lines.findIndex((l) => l.includes('(attempt 1/2)'));
+      const a2 = lines.findIndex((l) => l.includes('(attempt 2/2)'));
+      // (a) red when every attempt of a question step is labelled "Question opened through";
+      //     (b) prints the two lines under the attempts.
+      expect([lines[a1 + 1], lines[a2 + 1]]).toEqual([
+        '       Taken by: prog@host (from the OS user, via agent)',
+        '       Question opened through: prog@host (from the OS user, via agent)',
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

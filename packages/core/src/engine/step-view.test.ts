@@ -440,4 +440,36 @@ describe('composeStepViews — issue #625: answers', () => {
       composeStepViews(makeRun([{ kind: 'gate_response' }, { step_id: 5, kind: 'gate_response' }])),
     ).toEqual({});
   });
+  // Issue #625, PR-H review correction C2: the settlement writes `responded_by: 'timeout'` on the
+  // entry its expiry makes; no one answered. Keyed on `resolution`, never on the literal.
+  it.each([
+    ['expired_default', { choice: 'hold' }, { choice: 'hold' }, 'hold'],
+    ['expired_abort', {}, { gate_expired: true, disposition: 'abort' }, undefined],
+  ] as const)(
+    'C2: an entry the gate’s expiry wrote (%s) reads no answerer: settled_by_expiry, whatever responded_by holds',
+    (resolution, input_summary, output_summary, choice) => {
+      const run = makeRun([
+        { step_id: 'gate_step', kind: 'execution', status: 'success' },
+        answer({ responded_by: 'timeout', resolution, input_summary, output_summary }),
+      ]);
+      // (a) red when the expiry's literal is read as a caller-stated name, or the reading keys on
+      //     something other than `resolution`; (b) prints the view.
+      expect(composeStepViews(run)['gate_step']!.answers).toEqual([
+        {
+          ...(choice !== undefined ? { choice } : {}),
+          answered_by: { by: null, absent_cause: 'settled_by_expiry' },
+          claim_proof_absent: 'settled_by_expiry',
+        },
+      ]);
+    },
+  );
+
+  it('C2 (control): a caller who STATES `timeout` as its name (no resolution) is a stated name', () => {
+    const run = makeRun([answer({ responded_by: 'timeout' })]);
+    // (a) red when the reading keys on `responded_by === 'timeout'`; (b) prints the view.
+    expect(composeStepViews(run)['gate_step']!.answers![0]!.answered_by).toEqual({
+      by: 'timeout',
+      by_source: 'stated',
+    });
+  });
 });

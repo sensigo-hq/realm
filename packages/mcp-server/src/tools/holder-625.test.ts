@@ -295,6 +295,70 @@ describe('responded_by is bounded exactly as `realm run respond --by` is — ref
   });
 });
 
+// Issue #625, PR-H review correction C3: one rule for a name, whatever door it comes through.
+describe('C3 — responded_by: spaces at either end are removed before it is stored', () => {
+  it('`  alice  ` is recorded as `alice`', async () => {
+    const o = await openGate();
+    await handleSubmitHumanResponse(
+      { run_id: o.runId, gate_id: o.gateId, choice: 'approve', responded_by: '  alice  ' },
+      { runStore, workflowStore },
+    );
+    const entry = (await runStore.get(o.runId)).evidence.find((e) => e.kind === 'gate_response');
+    // (a) red when the tool passes the raw argument on instead of the checked name; (b) prints it.
+    expect(entry?.responded_by).toBe('alice');
+  });
+});
+
+// Issue #625, PR-H review correction C2: an answer the gate's expiry wrote names no one.
+describe('C2 — get_run_state on a run whose gate expired to its default (a real settlement)', () => {
+  it('steps.<step>.answers[0].answered_by is the absent shape `settled_by_expiry`, never a stated `timeout`', async () => {
+    const expiring: WorkflowDefinition = {
+      ...definition,
+      id: 'holder-mcp-expiry-wf',
+      steps: {
+        ...definition.steps,
+        'step-one': {
+          ...definition.steps['step-one']!,
+          gate: {
+            choices: ['approve', 'reject'],
+            timeout_seconds: 1,
+            on_expiry: 'settle_default',
+            default_choice: 'approve',
+          },
+        },
+      },
+    };
+    await workflowStore.register(expiring);
+    const started = await handleStartRun(
+      { workflow_id: expiring.id },
+      { runStore, workflowStore, driver: DRIVER },
+    );
+    const gate = (await runStore.get(started.run_id)).pending_gate!;
+    const enacted = await runStore.settleStep!(
+      started.run_id,
+      { kind: 'expire_gate', gateId: gate.gate_id },
+      expiring,
+      { now: new Date(new Date(gate.expires_at!).getTime() + 60_000) },
+    );
+    expect(enacted.applied).toBe(true);
+    const summary = await handleGetRunState(
+      { run_id: started.run_id, include_steps: true },
+      { runStore, workflowStore },
+    );
+    // (a) red when the expiry's literal `timeout` reaches a model as a caller-stated name; (b)
+    //     prints the answers.
+    expect(summary.steps?.['step-one']?.answers).toEqual([
+      {
+        choice: 'approve',
+        answered_by: { by: null, absent_cause: 'settled_by_expiry' },
+        claim_proof_absent: 'settled_by_expiry',
+      },
+    ]);
+    // The run went on: the step after the gate is what is owed now.
+    expect(summary.run_phase).toBe('running');
+  });
+});
+
 describe('get_run_state — who took each step; the token has one door and this is not it', () => {
   it('step_claims names the driver and the time, and no byte of the token appears anywhere', async () => {
     const o = await openGate();

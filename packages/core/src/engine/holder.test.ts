@@ -110,6 +110,16 @@ describe('boundStated — ONE bound for a stated name', () => {
     expect(thrown(() => boundStatedName('  \t ', '--by')).details['reason']).toBe('empty');
     expect(boundStatedName('alice', '--by')).toBe('alice');
   });
+
+  // Issue #625, PR-H review correction C3: one rule for a name, whatever door it comes through.
+  it('C3: boundStatedName removes spaces at either end, bounds the TRIMMED text, and returns it', () => {
+    // (a) red when the trim is dropped (the padded name comes back) or the bound is applied to the
+    //     raw text (a 200-character name with a space at each end is refused); (b) prints it.
+    expect(boundStatedName('  alice  ', '--by')).toBe('alice');
+    expect(boundStatedName(` ${'a'.repeat(NAME_MAX_LENGTH)} `, '--by')).toBe(
+      'a'.repeat(NAME_MAX_LENGTH),
+    );
+  });
 });
 
 describe('identityRefusalLine — ONE mint for the refusal every host prints', () => {
@@ -150,9 +160,16 @@ describe('validateDriver — the five exact texts', () => {
   it.each([
     ['not an object', 'x', 'Invalid driver: not an object.'],
     [
-      'not a non-empty string',
-      { by: '', by_source: 'derived', channel: 'agent' },
+      'not a string',
+      { by: 5, by_source: 'derived', channel: 'agent' },
       'Invalid driver.by: not a non-empty string.',
+    ],
+    // Issue #625, PR-H review correction C3: blank after trimming is `empty`, as for `--by`.
+    ['an empty by', { by: '', by_source: 'derived', channel: 'agent' }, 'Invalid driver.by: empty.'],
+    [
+      'a blank by',
+      { by: '   ', by_source: 'stated', channel: 'x' },
+      'Invalid driver.by: empty.',
     ],
     [
       'longer than 200 characters',
@@ -222,6 +239,13 @@ describe('composeProgramIdentity — precedence, refusals, and what cannot be de
     });
     expect(composeProgramIdentity({ ambient: '', osUser: 'u', osHost: 'h' }, 'agent')).toEqual({
       driver: { by: 'u@h', by_source: 'derived', channel: 'agent' },
+    });
+  });
+
+  it('C3: an ambient name is stored without the spaces at either end', () => {
+    // (a) red when REALM_OPERATOR is stored with its padding; (b) prints the driver.
+    expect(composeProgramIdentity({ ambient: ' ops-team ', osUser: 'u', osHost: 'h' }, 'agent')).toEqual({
+      driver: { by: 'ops-team', by_source: 'ambient', channel: 'agent' },
     });
   });
 
@@ -313,6 +337,21 @@ describe('readStoredName / readAttributed — the one reader for a stored name',
       by_source: 'ambient',
       channel: `${'c'.repeat(200)}${NAME_CAP_MARKER}`,
     });
+  });
+
+  it('C3: readAttributed reads a stored BLANK by as name_unreadable — no byte of it is shown', () => {
+    // (a) red when a blank by is returned (it would print `taken by     (…)`); (b) prints the read.
+    expect(readAttributed({ by: '   ', by_source: 'stated', channel: 'x' })).toEqual({
+      by: null,
+      absent_cause: 'name_unreadable',
+    });
+    expect(readAttributed({ by: '', by_source: 'stated', channel: 'x' })).toEqual({
+      by: null,
+      absent_cause: 'name_unreadable',
+    });
+    expect(
+      describeClaimHolder({ holder: { by: '   ', by_source: 'stated', channel: 'x' } } as never, true),
+    ).toEqual({ by: null, absent_cause: 'name_unreadable' });
   });
 
   it('readDrivenBy: absent ⇒ driver_not_recorded; present ⇒ the same reader', () => {
@@ -464,8 +503,6 @@ describe('judgeGateProof — rows 0–5 in order (never tokensEqual)', () => {
 
 describe('composeGateClaimSentence — ONE string per verdict, joined to the consequence clause', () => {
   const RECORDED = 'the answer was recorded.';
-  const NOT_RECORDED =
-    "this answer was not recorded: the question's deadline had passed and its expiry was carried out in this call.";
 
   it('matched ⇒ none, in either consequence', () => {
     expect(composeGateClaimSentence({ proof: 'matched' }, true, true)).toBeUndefined();
@@ -476,8 +513,9 @@ describe('composeGateClaimSentence — ONE string per verdict, joined to the con
     expect(composeGateClaimSentence({ proof: 'absent' }, true, false)).toBe(
       `No claim_token was passed; ${RECORDED} Only the conversation that opened the question has one to pass.`,
     );
+    // Issue #625, PR-H review correction C6: not recorded ⇒ the token fact alone.
     expect(composeGateClaimSentence({ proof: 'absent' }, false, false)).toBe(
-      `No claim_token was passed; ${NOT_RECORDED} Only the conversation that opened the question has one to pass.`,
+      'No claim_token was passed.',
     );
   });
 
@@ -486,7 +524,7 @@ describe('composeGateClaimSentence — ONE string per verdict, joined to the con
       `The claim_token passed is not this question's; ${RECORDED}`,
     );
     expect(composeGateClaimSentence({ proof: 'mismatch' }, false, true)).toBe(
-      `The claim_token passed is not this question's; ${NOT_RECORDED}`,
+      "The claim_token passed is not this question's.",
     );
   });
 
@@ -494,18 +532,21 @@ describe('composeGateClaimSentence — ONE string per verdict, joined to the con
     [
       { proof: 'unverifiable', cause: 'no_claim' } as GateClaimVerdict,
       'There is no claim to check a claim_token against — the gate step has no claim on this record; ',
+      'There is no claim to check a claim_token against — the gate step has no claim on this record.',
     ],
     [
       { proof: 'unverifiable', cause: 'claim_has_no_token' } as GateClaimVerdict,
       "This question's claim carries no token, so the claim_token could not be checked; ",
+      "This question's claim carries no token, so the claim_token could not be checked.",
     ],
     [
       { proof: 'unverifiable', cause: 'store_keeps_no_claims' } as GateClaimVerdict,
       'This store keeps no claims, so a claim_token cannot be checked; ',
+      'This store keeps no claims, so a claim_token cannot be checked.',
     ],
-  ])('unverifiable %j', (verdict, lead) => {
+  ])('unverifiable %j', (verdict, lead, notRecorded) => {
     expect(composeGateClaimSentence(verdict, true, false)).toBe(`${lead}${RECORDED}`);
-    expect(composeGateClaimSentence(verdict, false, false)).toBe(`${lead}${NOT_RECORDED}`);
+    expect(composeGateClaimSentence(verdict, false, false)).toBe(notRecorded);
   });
 
   it('spent: a sentence only when a token was presented; none otherwise', () => {

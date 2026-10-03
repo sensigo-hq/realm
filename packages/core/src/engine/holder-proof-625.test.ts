@@ -661,15 +661,35 @@ describe("a late answer — the verdict stands when the call's own expiry write 
     // (a) red when the refusal's verdict is dropped on the late path, or the consequence clause
     //     says "recorded"; (b) prints both.
     expect(reply.gate_claim).toEqual({ proof: 'mismatch', opened_by: PROGRAM });
-    expect(reply.warnings).toContain(
-      "The claim_token passed is not this question's; this answer was not recorded: the question's deadline had passed and its expiry was carried out in this call.",
-    );
+    // Issue #625, PR-H review correction C6: the answer was not recorded ⇒ the token fact alone
+    // (the expiry's own sentence and `answer_recorded` already say "not recorded").
+    expect(reply.warnings).toContain("The claim_token passed is not this question's.");
     // The expiry's own entry is the one on the record; it carries NO claim_proof (the late
     // answer's verdict is on the reply only — #598).
     const entries = entryOf(await store.get(o.runId));
     expect(entries).toHaveLength(1);
     expect(entries[0]!.claim_proof).toBeUndefined();
     expect(entries[0]!.responded_by).toBe('timeout');
+  });
+
+  it('C6: a late answer with NO token: the expiry sentence and `No claim_token was passed.`, nothing that reads as if a token would have helped', async () => {
+    const def = gateWorkflow(EXPIRING);
+    const o = await open(store, def);
+    const reply = await submitHumanResponse(store, def, {
+      runId: o.runId,
+      gateId: o.gateId,
+      choice: 'approve',
+      now: o.afterExpiry,
+    });
+    expect(reply.status).toBe('ok');
+    expect(reply.answer_recorded).toBe(false);
+    // (a) red when the gate-claim sentence repeats "not recorded" or keeps "Only the conversation
+    //     that opened the question has one to pass."; (b) prints the warnings.
+    expect(reply.warnings).toEqual([
+      `gate '${o.gateId}' expired 1m ago and was enacted (settle_default: 'approve') before this response arrived — enacted_via: submit.`,
+      'No claim_token was passed.',
+    ]);
+    expect(reply.warnings.some((w) => w.includes('Only the conversation'))).toBe(false);
   });
 
   it('a late answer that matches carries gate_claim matched and no sentence', async () => {
