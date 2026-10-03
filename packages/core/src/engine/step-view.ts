@@ -14,6 +14,15 @@
 // absence or an `'unknown'` field, never an exception that takes the whole render down with it.
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import {
+  readDrivenBy,
+  readGateClaimVerdict,
+  readStoredName,
+  type ActorAbsent,
+  type Attributed,
+  type ClaimProofAbsentCause,
+  type GateClaimVerdict,
+} from './holder.js';
 
 /**
  * One figure and the scope it was summed over. Never a guess, never a default — `value` is the sum
@@ -74,10 +83,33 @@ export interface AttemptView {
   cost_unrecorded?: CostUnrecordedCause;
   /** The entry carried a `cache` whose `requests` is not an array — present, not readable. */
   cost_unreadable?: true;
+  /**
+   * Issue #625 (the holder slice): the host PROGRAM whose code and credentials did this attempt's
+   * work — read by the one reader every stored `Attributed` goes through. `driver_not_recorded`
+   * when the entry carries none (it predates the field, or no host passed a name);
+   * `name_unreadable` when what it carries is not a readable name with its source.
+   */
+  driven_by: Attributed | ActorAbsent;
+}
+
+/**
+ * Issue #625 (the holder slice): one human answer to a step's question — read off a
+ * `gate_response` entry. `answered_by` is the caller-STATED, unverified name (`stated` is true by
+ * construction: the field's only producer is a caller-declared string), or why there is none.
+ * `claim_proof` is the verdict recorded on the entry; when there is none, `claim_proof_absent`
+ * says why — never a blank.
+ */
+export interface AnswerView {
+  choice?: string;
+  answered_by: { by: string; by_source: 'stated' } | ActorAbsent;
+  claim_proof?: GateClaimVerdict;
+  claim_proof_absent?: ClaimProofAbsentCause;
 }
 
 export interface StepView {
   attempts: AttemptView[];
+  /** One per `gate_response` entry, in entry order. Absent when the step has no answer. */
+  answers?: AnswerView[];
 }
 
 /** Reads a numeric field off an unknown entry, returning `undefined` for anything but a real number
@@ -146,6 +178,50 @@ export function composeCostView(
   return view;
 }
 
+/** A stored `responded_by` as an answer view shows it. Total. */
+function readAnswerer(raw: unknown): AnswerView['answered_by'] {
+  if (raw === undefined || raw === null) return { by: null, absent_cause: 'not_stated' };
+  if (typeof raw !== 'string') return { by: null, absent_cause: 'name_unreadable' };
+  // A value the tool accepted before the name bound existed can be empty: it reads as no name.
+  if (raw.trim().length === 0) return { by: null, absent_cause: 'not_stated' };
+  const name = readStoredName(raw);
+  if (name === undefined) return { by: null, absent_cause: 'name_unreadable' };
+  return { by: name, by_source: 'stated' };
+}
+
+/** One `gate_response` entry as an answer. Total. */
+function composeAnswerView(entry: Record<string, unknown>): AnswerView {
+  const input = entry['input_summary'];
+  const output = entry['output_summary'];
+  const inputChoice =
+    typeof input === 'object' && input !== null
+      ? (input as Record<string, unknown>)['choice']
+      : undefined;
+  const outputChoice =
+    typeof output === 'object' && output !== null
+      ? (output as Record<string, unknown>)['choice']
+      : undefined;
+  const choice =
+    typeof inputChoice === 'string'
+      ? inputChoice
+      : typeof outputChoice === 'string'
+        ? outputChoice
+        : undefined;
+  const answer: AnswerView = { answered_by: readAnswerer(entry['responded_by']) };
+  if (choice !== undefined) answer.choice = choice;
+  const proof = readGateClaimVerdict(entry['claim_proof']);
+  if (proof !== undefined) {
+    answer.claim_proof = proof;
+  } else if (entry['claim_proof'] !== undefined) {
+    answer.claim_proof_absent = 'proof_unreadable';
+  } else if (entry['resolution'] !== undefined) {
+    answer.claim_proof_absent = 'settled_by_expiry';
+  } else {
+    answer.claim_proof_absent = 'proof_not_recorded';
+  }
+  return answer;
+}
+
 /** True when a definition resolves and names `stepId` an `execution: 'agent'` step. */
 function definitionSaysAgent(
   stepId: string,
@@ -158,9 +234,10 @@ function definitionSaysAgent(
 }
 
 /**
- * One `StepView` per `step_id` that has at least one EXECUTION entry (rule 3). `gate_response`
- * entries are never attempts and never on their own create an entry here; an entry that is not an
- * object, or has no string `step_id`, is skipped entirely (rule 1's totality).
+ * One `StepView` per `step_id` that has at least one EXECUTION entry (rule 3) — or at least one
+ * ANSWER (issue #625): a `gate_response` entry is never an attempt, but it is a fact the step's view
+ * must carry, so it creates the step's view with `attempts: []` when no execution entry exists. An
+ * entry that is not an object, or has no string `step_id`, is skipped entirely (rule 1's totality).
  *
  * Cost comes from `cache` alone, never from classification (rule 4) — this holds whatever the
  * definition says, and whether or not one exists at all: an `execution: 'auto'` step whose entry
@@ -180,13 +257,23 @@ export function composeStepViews(
     const stepId = entry['step_id'];
     if (typeof stepId !== 'string') continue;
     const kind = entry['kind'];
+    if (kind === 'gate_response') {
+      // Never an attempt; an answer. It creates the step's view when there is no execution entry.
+      const answerStep = (result[stepId] ??= { attempts: [] });
+      (answerStep.answers ??= []).push(composeAnswerView(entry));
+      continue;
+    }
     const isExecution = kind === undefined || kind === 'execution';
-    if (!isExecution) continue; // gate_response, or any other kind — never an attempt.
+    if (!isExecution) continue; // any other kind — never an attempt.
 
     const view = (result[stepId] ??= { attempts: [] });
     const statusRaw = entry['status'];
     const status = typeof statusRaw === 'string' ? statusRaw : 'unknown';
-    const attempt: AttemptView = { attempt: view.attempts.length + 1, status };
+    const attempt: AttemptView = {
+      attempt: view.attempts.length + 1,
+      status,
+      driven_by: readDrivenBy(entry),
+    };
 
     const diagnostics = entry['diagnostics'];
     const diag = typeof diagnostics === 'object' && diagnostics !== null ? diagnostics : undefined;

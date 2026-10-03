@@ -19,17 +19,20 @@ import { createHash, randomUUID } from 'node:crypto';
 import { JsonFileStore } from '@sensigo/realm';
 import {
   perRunArtifactStoreContract,
+  ARTIFACT_STORE_LAWS,
+  type ArtifactStoreLaw,
   type PerRunArtifactStoreContractAdapter,
 } from '@sensigo/realm-testing';
 
-const LAWS = [
-  'L1_ABSENCE_RESOLVES',
-  'L2_IDEMPOTENT',
-  'L3_FAILURE_REJECTS',
-  'L4_TYPED_REJECTION',
-  'L5_REPORT_SHAPE',
-  'L6_PREVIEW_EQUALS_RECEIPT',
-] as const;
+/**
+ * The laws of this contract that THIS file deliberately does not run, each with its reason
+ * (issue #625). Empty: JsonFileStore owns per-run artifacts, so every law of this contract applies.
+ */
+const NOT_RUN: Partial<Record<ArtifactStoreLaw, string>> = {};
+
+/** The laws this file runs: every exported law, minus the ones named in NOT_RUN above. A law added
+ *  to the contract therefore runs here without this file being touched. */
+const LAWS: readonly ArtifactStoreLaw[] = ARTIFACT_STORE_LAWS.filter((law) => !(law in NOT_RUN));
 
 /**
  * Fresh adapter per law: deleteAllForRun is destructive (L2 deletes the seeded artifact) and
@@ -135,4 +138,16 @@ describe('JsonFileStore — PerRunArtifactStore TCK conformance (issue #183)', (
       }
     });
   }
+});
+
+describe('JsonFileStore artifact wiring — the run list is derived from the contract', () => {
+  // (a) red when a law is dropped from the run list WITHOUT being named in NOT_RUN, or NOT_RUN
+  //     names a law the contract no longer exports; (b) prints the unaccounted / unknown laws.
+  it('every exported law is either run or named in NOT_RUN, and NOT_RUN names only exported laws (issue #625)', () => {
+    const exported: readonly string[] = ARTIFACT_STORE_LAWS;
+    const named = Object.keys(NOT_RUN);
+    expect(named.filter((law) => !exported.includes(law))).toEqual([]);
+    expect([...LAWS, ...named].sort()).toEqual([...exported].sort());
+    for (const reason of Object.values(NOT_RUN)) expect(reason).not.toBe('');
+  });
 });

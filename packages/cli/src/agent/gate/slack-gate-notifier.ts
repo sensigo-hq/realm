@@ -10,6 +10,7 @@ import {
   type WorkflowDefinition,
   type PendingGate,
   type ExtensionRegistry,
+  type Attributed,
 } from '@sensigo/realm';
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { startSlackGateServer } from './slack-gate-server.js';
@@ -299,6 +300,12 @@ export interface BidirectionalGateParams {
    * falls back to the engine's default (filesystem-only) registry.
    */
   registry?: ExtensionRegistry;
+  /**
+   * Issue #625 (holder slice): the program this attendant runs in — named on the cleanup steps an
+   * answer drains (`driven_by`). The answerer is named by nothing here: a Slack reply carries no
+   * `responded_by` (#603) and no `claim_token` (the CLI never passes one).
+   */
+  driver?: Attributed;
 }
 
 /**
@@ -335,6 +342,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     gateEscalationThresholdMs,
     pollIntervalMs,
     registry,
+    driver,
   } = params;
 
   let clarificationCount = 0;
@@ -385,6 +393,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           gateId: gate.gate_id,
           choice: exactMatch,
           ...(registry !== undefined ? { registry } : {}),
+          ...(driver !== undefined ? { driver } : {}),
         });
         if (result.status === 'error') {
           await postSubmitError(result.errors[0] ?? result.context_hint ?? 'unknown error');
@@ -515,6 +524,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     store,
     definition,
     ...(registry !== undefined ? { registry } : {}),
+    ...(driver !== undefined ? { driver } : {}),
   });
 
   try {
@@ -592,6 +602,8 @@ export interface SlackGateHandlerConfig {
   pollIntervalMs?: number;
   /** Resolved project registry for the run — forwarded so gate-completed runs fire finalizers. */
   registry?: ExtensionRegistry;
+  /** Issue #625: the program this handler runs in — forwarded to the attendant. */
+  driver?: Attributed;
 }
 
 /**
@@ -621,6 +633,7 @@ export function createSlackGateHandler(
         gateEscalationThresholdMs: config.escalationThresholdMs ?? 1_800_000,
         pollIntervalMs: config.pollIntervalMs ?? 3000,
         ...(config.registry !== undefined ? { registry: config.registry } : {}),
+        ...(config.driver !== undefined ? { driver: config.driver } : {}),
       });
     } else if (config.webhookUrl !== undefined) {
       // One-way webhook + inline poll loop (avoids circular dependency with run-agent.ts).

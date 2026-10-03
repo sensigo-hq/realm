@@ -21,6 +21,7 @@ import {
   type TraceBufferStore,
   type FailedAttemptStore,
   ExtensionRegistry,
+  type Attributed,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 
@@ -59,6 +60,13 @@ export interface HandleRunStores {
   traceBufferStore?: TraceBufferStore;
   /** Durable per-run sidecar for failed agent-attempt telemetry (observability P3). */
   failedAttemptStore?: FailedAttemptStoreLike;
+  /**
+   * Issue #625 (holder slice): the host PROGRAM this server runs as — its name, how that name is
+   * known, and its channel. Written as `holder` on the claim of every step a tool call takes and
+   * as `driven_by` on that call's evidence, and on the cleanup steps an answer drains. A label,
+   * never compared, never a reason to refuse. Absent ⇒ none recorded.
+   */
+  driver?: Attributed;
 }
 
 // Fallback dispatcher for agent steps and auto steps without a registry entry.
@@ -161,6 +169,7 @@ export async function handleStartRun(
       input: params,
       dispatcher: passthroughDispatcher,
       ...(registry !== undefined ? { registry } : {}),
+      ...(stores?.driver !== undefined ? { driver: stores.driver } : {}),
     });
     // Source run_phase from the final run so the spread can't drop it.
     const finalRun = await runStore.get(run.id).catch(() => run);

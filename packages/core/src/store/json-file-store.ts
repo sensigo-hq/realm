@@ -10,6 +10,7 @@ import lockfile from 'proper-lockfile';
 import type { RunRecord, SealedBy } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
+import type { Attributed } from '../engine/holder.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type {
   RunStore,
@@ -482,6 +483,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     runId: string,
     stepName: string,
     definition: WorkflowDefinition,
+    claimant?: Attributed,
   ): Promise<RunRecord> {
     await this.ensureDir();
     const path = this.filePath(runId);
@@ -554,10 +556,21 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       // issue #279 (increment 1, PR-A): mint an acquirer-minted fencing token alongside the
       // deadline, in the SAME write — dormant until PR-B's settleStep migration reads it.
       const token = uuidv4();
+      const claimedAt = new Date().toISOString();
       const claimed: RunRecord = {
         ...run,
         in_progress_steps: [...run.in_progress_steps, stepName],
-        claims: { ...run.claims, [stepName]: { deadline, token } },
+        claims: {
+          ...run.claims,
+          // issue #625 (holder slice): `since` is the store's own act, on EVERY claim; `holder` is
+          // the program that took the step, when the caller passed one.
+          [stepName]: {
+            deadline,
+            token,
+            since: claimedAt,
+            ...(claimant !== undefined ? { holder: claimant } : {}),
+          },
+        },
         run_phase: deriveRunPhase(run),
         version: run.version + 1,
         updated_at: new Date().toISOString(),
@@ -618,6 +631,9 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       const outcome = applySettlement(fresh, delta, definition, {
         ...options,
         cascadeGuards: true,
+        // issue #625 (holder slice): the transform mints the proof verdict's
+        // `store_keeps_no_claims` cause itself, from this one input.
+        storeKeepsClaims: this.persistsClaims === true,
       });
       if (!outcome.applied) {
         return outcome; // refusal/noop — fresh state, NO write (version unchanged)

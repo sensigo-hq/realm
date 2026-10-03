@@ -2,6 +2,7 @@
 import type { RunRecord, SealedBy } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
+import type { Attributed } from '../engine/holder.js';
 
 /**
  * The load-bearing `RunRecord` fields the engine treats specially enough that a store must
@@ -157,8 +158,19 @@ export interface RunStore {
    * implementer; a store's own conformance suite must verify it holds across its actual
    * concurrency model (the in-repo TCK's `claimStep` test only verifies the same-host case —
    * see its own doc for why cross-host cannot be verified generically).
+   *
+   * **Who took the step (issue #625, the holder slice).** `claimant` is the host PROGRAM taking the
+   * step — a name for people to read, never compared and never a reason to refuse. A store that
+   * keeps claims writes it as `claims[stepName].holder` when it is passed, and stamps
+   * `claims[stepName].since` (ISO) on EVERY claim, inside the one write that creates the claim.
+   * `since` is the store's own act, so a claim read back says when it was taken whoever took it.
    */
-  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<RunRecord>;
+  claimStep(
+    runId: string,
+    stepName: string,
+    definition: WorkflowDefinition,
+    claimant?: Attributed,
+  ): Promise<RunRecord>;
 
   /**
    * Atomically applies one {@link SettlementDelta} to this run's FRESH state, under the store's

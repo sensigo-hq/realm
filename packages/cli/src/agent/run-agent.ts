@@ -26,7 +26,7 @@ import {
   type TraceBufferStore,
   type StructuredOutputMeta,
 } from '@sensigo/realm';
-import type { RunRecord, WorkflowRegistrar, UsageRecord } from '@sensigo/realm';
+import type { RunRecord, WorkflowRegistrar, UsageRecord, Attributed } from '@sensigo/realm';
 import type { LlmProvider } from './providers/llm-provider.js';
 import {
   sanitizeError,
@@ -83,6 +83,13 @@ export interface AgentDeps {
    * an existing caller that omits it keeps today's behavior exactly (no trace adoption at all).
    */
   traceBufferStore?: TraceBufferStore;
+  /**
+   * Issue #625 (the holder slice): the program this driver runs in — its name, how that name is
+   * known, and its channel (`agent`). Written as `holder` on the claim of every step the driver
+   * takes, as `driven_by` on those steps' evidence, and on the cleanup steps its timer drains. A
+   * label for people and replies; never compared. Absent ⇒ none recorded.
+   */
+  driver?: Attributed;
   /**
    * Mint a FRESH `writer_nonce` (UUIDv4) per step-attempt (issue #197 PR-2) — resolved once in
    * `agent.ts` from `--mint-writer-nonce` OR'd with the `REALM_REQUIRE_WRITER_NONCE` strict-flip
@@ -468,6 +475,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               store: deps.store,
               definition,
               registry: deps.registry,
+              ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
             });
             try {
               await pollUntilGateResolved(
@@ -1207,6 +1215,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             ...(deps.traceBufferStore !== undefined
               ? { traceBufferStore: deps.traceBufferStore }
               : {}),
+            // issue #625 (holder slice): the program this driver runs in — the claim's `holder`,
+            // the evidence's `driven_by`. After `traceBufferStore`, as at every host call site.
+            ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
             // issue #236: stepMeta now ALSO passes when structuredOutput exists (previously only
             // passed when toolCalls existed) — the two are independent, either alone must thread.
             // issue #600 PR 1a: `usage` is the THIRD independent member. A cs1-shaped step (no

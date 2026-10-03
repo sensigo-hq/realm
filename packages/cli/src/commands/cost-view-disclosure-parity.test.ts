@@ -8,6 +8,11 @@
 // `satisfies Record<keyof X, DisclosureRoute>` below is the trigger for each of the five
 // vocabularies this PR mints.
 //
+// Issue #625 (the holder slice, PR-H) adds three more registries and two more rows — the claim's
+// `ClaimRecord`, the name's `Attributed`, the answer's `AnswerView`, `AttemptView.driven_by` and
+// `StepView.answers` — probed against the real `inspect` output, so a field added to any of them
+// fails to COMPILE here until it is routed to a screen or waived with a reason.
+//
 // Waivers are allowed only here and on the mcp `drive_failure_costs` twin (context 4), for
 // `basis`/`state` (a drive failure's usage carries no classification — `composeDriveFailureCosts`
 // never sets either) and, on THIS context only, `CostFigure.only_request_index` (the failure line
@@ -24,6 +29,9 @@ import type {
   AttemptView,
   StepView,
   CostUnrecordedCause,
+  ClaimRecord,
+  Attributed,
+  AnswerView,
 } from '@sensigo/realm';
 
 type DisclosureRoute =
@@ -63,6 +71,9 @@ const moneyStepEarly = {
   step_id: 'money_step',
   kind: 'execution' as const,
   status: 'error' as const,
+  // PR-H: the program whose code did this attempt — read by the one reader every stored name goes
+  // through; `derived` renders as "from the OS user".
+  driven_by: { by: 'prog@host', by_source: 'derived' as const, channel: 'agent' },
   started_at: '2026-01-01T00:00:00.000Z',
   completed_at: '2026-01-01T00:00:01.000Z',
   duration_ms: 500,
@@ -188,18 +199,89 @@ const corruptStep = {
   },
 };
 
+// PR-H: `gate_step` — the common gate step: ONE execution entry (the program that opened the
+// question, named through REALM_OPERATOR) then ONE answer (a stated name, no claim_token passed).
+const gateStepExecution = {
+  step_id: 'gate_step',
+  kind: 'execution' as const,
+  status: 'success' as const,
+  started_at: '2026-01-01T00:00:00.000Z',
+  completed_at: '2026-01-01T00:00:01.000Z',
+  duration_ms: 20,
+  input_summary: {},
+  output_summary: {},
+  evidence_hash: 'g1',
+  driven_by: { by: 'asker@host', by_source: 'ambient' as const, channel: 'run' },
+};
+const gateStepAnswer = {
+  step_id: 'gate_step',
+  kind: 'gate_response' as const,
+  status: 'success' as const,
+  started_at: '2026-01-01T00:00:02.000Z',
+  completed_at: '2026-01-01T00:00:02.000Z',
+  duration_ms: 1,
+  input_summary: { choice: 'approve' },
+  output_summary: { choice: 'approve' },
+  evidence_hash: 'g2',
+  responded_by: 'alice',
+  claim_proof: { proof: 'absent' as const },
+};
+// An answer written before the proof existed, naming nobody: both absence words print.
+const oldGateExecution = {
+  step_id: 'old_gate_step',
+  kind: 'execution' as const,
+  status: 'success' as const,
+  started_at: '2026-01-01T00:00:00.000Z',
+  completed_at: '2026-01-01T00:00:01.000Z',
+  duration_ms: 20,
+  input_summary: {},
+  output_summary: {},
+  evidence_hash: 'g3',
+};
+const oldGateAnswer = {
+  step_id: 'old_gate_step',
+  kind: 'gate_response' as const,
+  status: 'success' as const,
+  started_at: '2026-01-01T00:00:02.000Z',
+  completed_at: '2026-01-01T00:00:02.000Z',
+  duration_ms: 1,
+  input_summary: { choice: 'reject' },
+  output_summary: { choice: 'reject' },
+  evidence_hash: 'g4',
+};
+
 const contextOneRun = {
   id: 'run_ctx1',
   workflow_id: 'wf',
   workflow_version: 1,
   completed_steps: [],
-  in_progress_steps: [],
+  // PR-H: a step taken by a program that stated its own name — the claim line.
+  in_progress_steps: ['claimed_step'],
+  claims: {
+    claimed_step: {
+      deadline: null,
+      token: 'claim-token-that-must-never-print',
+      holder: { by: 'claimer@host', by_source: 'stated', channel: 'mcp-http' },
+      since: '2026-01-01T00:00:00.000Z',
+    },
+  },
   failed_steps: [],
   skipped_steps: [],
   run_phase: 'completed',
   version: 1,
   params: {},
-  evidence: [moneyStepEarly, moneyStepLast, uncachedStep, toolsStep, externalStep, corruptStep],
+  evidence: [
+    moneyStepEarly,
+    moneyStepLast,
+    uncachedStep,
+    toolsStep,
+    externalStep,
+    corruptStep,
+    gateStepExecution,
+    gateStepAnswer,
+    oldGateExecution,
+    oldGateAnswer,
+  ],
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:00:01.000Z',
   terminal_state: true,
@@ -281,6 +363,11 @@ const STEP_LINE_ATTEMPT_VIEW = {
     surface: 'rendered',
     probe: (out) => expect(out).toContain('cost: unreadable — the recorded usage is not a list'),
   },
+  driven_by: {
+    surface: 'rendered',
+    // The PROGRAM, how its name is known (words, not the class token), the door.
+    probe: (out) => expect(out).toContain('Taken by: prog@host (from the OS user, via agent)'),
+  },
 } satisfies Record<keyof AttemptView, DisclosureRoute>;
 
 const STEP_LINE_STEP_VIEW = {
@@ -291,6 +378,11 @@ const STEP_LINE_STEP_VIEW = {
       expect(out).toContain('(attempt 1/2)');
       expect(out).toContain('(attempt 2/2)');
     },
+  },
+  answers: {
+    surface: 'rendered',
+    // The common gate step has ONE execution entry then ONE answer — its answer used to be dropped.
+    probe: (out) => expect(out).toContain('Answer: approve · answered by alice'),
   },
 } satisfies Record<keyof StepView, DisclosureRoute>;
 
@@ -339,6 +431,125 @@ describe('#600 PR 1b (D4) — context 1, the step line', () => {
         else throw new Error(`unexpected waiver for '${field}'`);
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// CONTEXT 1b — the holder slice (issue #625, PR-H): the claim line, the program's name, the answer.
+// ---------------------------------------------------------------------------------------------
+
+const CLAIM_LINE = 'claimed_step: taken by claimer@host (as stated, via mcp-http)';
+
+const HOLDER_CLAIM_RECORD = {
+  deadline: {
+    surface: 'waived',
+    reason:
+      'not a holder-slice field and not printed on the claim line: a stale or unknown-age claim ' +
+      'reaches an operator as a run-health finding (stale_claim / claim_unknown_age) computed from it',
+  },
+  token: {
+    surface: 'waived',
+    reason:
+      "the claim's token leaves the engine on the opening reply only (CLAIM_TOKEN_ONE_DOOR) — " +
+      'inspect, list and get_run_state never print it',
+  },
+  holder: { surface: 'rendered', probe: (out) => expect(out).toContain(CLAIM_LINE) },
+  since: {
+    surface: 'rendered',
+    // How long ago — the age is the claim's own `since`, never a guess.
+    probe: (out) =>
+      expect(out).toMatch(/claimed_step: taken by claimer@host \([^)]*\), \d+[dhm][^\n]* ago/),
+  },
+} satisfies Record<keyof ClaimRecord, DisclosureRoute>;
+
+const HOLDER_ATTRIBUTED = {
+  by: { surface: 'rendered', probe: (out) => expect(out).toContain('taken by claimer@host') },
+  by_source: { surface: 'rendered', probe: (out) => expect(out).toContain('(as stated, via') },
+  channel: { surface: 'rendered', probe: (out) => expect(out).toContain('via mcp-http)') },
+} satisfies Record<keyof Attributed, DisclosureRoute>;
+
+const HOLDER_ANSWER_VIEW = {
+  choice: { surface: 'rendered', probe: (out) => expect(out).toContain('Answer: approve ·') },
+  answered_by: {
+    surface: 'rendered',
+    probe: (out) => expect(out).toContain('answered by alice (as stated, not verified)'),
+  },
+  claim_proof: {
+    surface: 'rendered',
+    probe: (out) =>
+      expect(out).toContain(
+        'proof: no claim_token passed (the CLI never passes one; over MCP, only the conversation ' +
+          'that opened the question has one to pass)',
+      ),
+  },
+  claim_proof_absent: {
+    surface: 'rendered',
+    // `proof_not_recorded` — an answer with neither a verdict nor an expiry.
+    probe: (out) =>
+      expect(out).toContain('Answer: reject · answered by (not stated) · proof: none recorded'),
+  },
+} satisfies Record<keyof AnswerView, DisclosureRoute>;
+
+describe('#625 PR-H — context 1b, the holder slice', () => {
+  it('only the two waivers the header names: the deadline (not printed) and the token (one door)', () => {
+    for (const registry of [HOLDER_CLAIM_RECORD, HOLDER_ATTRIBUTED, HOLDER_ANSWER_VIEW]) {
+      for (const [field, route] of Object.entries(registry as Record<string, DisclosureRoute>)) {
+        if (route.surface === 'waived') {
+          expect(
+            route.reason.trim().length,
+            `waiver for '${field}' has an empty reason`,
+          ).toBeGreaterThan(0);
+        }
+      }
+    }
+    const waived = Object.entries(HOLDER_CLAIM_RECORD)
+      .filter(([, r]) => r.surface === 'waived')
+      .map(([f]) => f)
+      .sort();
+    expect(waived).toEqual(['deadline', 'token']);
+    expect(
+      [HOLDER_ATTRIBUTED, HOLDER_ANSWER_VIEW].flatMap((r) =>
+        Object.values(r as Record<string, DisclosureRoute>).filter((x) => x.surface === 'waived'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('runs every registry against the real rendered output', async () => {
+    const out = await inspectRun('run_ctx1', makeStore(contextOneRun), workflowStore);
+    for (const registry of [HOLDER_CLAIM_RECORD, HOLDER_ATTRIBUTED, HOLDER_ANSWER_VIEW]) {
+      for (const route of Object.values(registry as Record<string, DisclosureRoute>)) {
+        if (route.surface === 'rendered') route.probe(out);
+      }
+    }
+  });
+
+  it('the claim token is withheld (one door) — no byte of it prints', async () => {
+    const out = await inspectRun('run_ctx1', makeStore(contextOneRun), workflowStore);
+    // (a) red when a render starts printing the claim's token; (b) prints the fixture's token.
+    expect(out).not.toContain('claim-token-that-must-never-print');
+  });
+
+  it('the three classes read as WORDS, never as the class token', async () => {
+    const out = await inspectRun('run_ctx1', makeStore(contextOneRun), workflowStore);
+    expect(out).toContain('Taken by: prog@host (from the OS user, via agent)'); // derived
+    expect(out).toContain('Question opened through: asker@host (from REALM_OPERATOR, via run)'); // ambient
+    expect(out).toContain(CLAIM_LINE); // stated
+    expect(out).not.toMatch(/\b(derived|ambient)\b/);
+  });
+
+  it("a gate step's attempt line says the question was OPENED through the program; every other step says TAKEN by", async () => {
+    const out = await inspectRun('run_ctx1', makeStore(contextOneRun), workflowStore);
+    // The gate step has an answer, so its verb is the design's other one; money_step is a control.
+    expect(out).toContain('Question opened through: asker@host');
+    expect(out).not.toContain('Taken by: asker@host');
+    expect(out).not.toContain('Question opened through: prog@host');
+  });
+
+  it("an attempt's absence word is WITHHELD on this surface (the MCP carriers keep it as data)", async () => {
+    const out = await inspectRun('run_ctx1', makeStore(contextOneRun), workflowStore);
+    // `old_gate_step` and several money-step siblings carry no `driven_by`: their absence word
+    // would be a line of noise under every attempt.
+    expect(out).not.toContain('no program name was recorded on this step');
   });
 });
 

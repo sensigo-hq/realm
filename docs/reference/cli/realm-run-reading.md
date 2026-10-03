@@ -143,6 +143,16 @@ Evidence (3 steps):
 | `Created`, `Updated`                            | Always                                   | When the run was started and when it last changed, in UTC.                                              |
 | `Gate`, `Choices`                               | When the run is in `gate_waiting`        | The step, the gate's ID, how long it has been open, and the choices it accepts.                         |
 
+Under `In Progress`, one line for each step in progress says who took it, how long ago, and how Realm knows the name. Added after version 0.45.0:
+
+```text
+In Progress: classify, review
+  classify: taken by ops@server-1 (from the OS user, via agent), 4m ago
+  review: question opened through ops@server-1 (from the OS user, via mcp-stdio), 1h 2m ago
+```
+
+The name is the program's, not a person's: `from the OS user` is the OS user and host name, `from REALM_OPERATOR` is that variable, `as stated` is a name an embedding program gave. `via` names the door the program came through: `agent`, `run`, `mcp-stdio`, `mcp-http`. A step whose question is open reads `question opened through`, and says nothing about anyone working on it now. When a claim has no name, the line says why instead: `no program name was recorded on this claim`, `claimed before program names were recorded`, `no claim is recorded for this step`, `this run store keeps no claims`, or `a recorded name that cannot be printed (control characters, or not a name with its source)`.
+
 A skipped step's reason looks like this:
 
 ```text
@@ -206,16 +216,18 @@ The check reads the files and computes their hashes. It does not load or run the
 
 `Evidence` has one entry for each step that ran, in the order they first ran.
 
-| Line          | Printed when                         | Holds                                                                                                                                                                                      |
-| ------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| First line    | Always                               | The step's name, `[profile: <name>]` if it has an agent profile, `success` or `error`, how long it took, and the first 8 characters of its hash.                                           |
-| `Input`       | Always                               | What the step was given. Text longer than 120 characters is cut, and ends in `…`.                                                                                                          |
-| `Resolved`    | The step called a service            | The parameters after `input_map` was applied.                                                                                                                                              |
-| `Output`      | Always                               | What the step produced, cut in the same way.                                                                                                                                               |
-| `Trace`       | The step recorded trace entries      | How many.                                                                                                                                                                                  |
-| `Tool calls`  | An agent step called tools           | One line for each call: the server, the tool and the time taken. `Tools declared, none called` if it had tools and used none.                                                              |
-| `Diagnostics` | The step is an agent or an auto step | An estimate of the input's size, the measured prompt and output tokens if `realm agent` drove the step, each precondition with its result, and what the provider reported about its cache. |
-| `cost`        | No token counts were recorded        | The reason there are none.                                                                                                                                                                 |
+| Line                                  | Printed when                                            | Holds                                                                                                                                                                                                                                                                    |
+| ------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| First line                            | Always                                                  | The step's name, `[profile: <name>]` if it has an agent profile, `success` or `error`, how long it took, and the first 8 characters of its hash.                                                                                                                         |
+| `Input`                               | Always                                                  | What the step was given. Text longer than 120 characters is cut, and ends in `…`.                                                                                                                                                                                        |
+| `Resolved`                            | The step called a service                               | The parameters after `input_map` was applied.                                                                                                                                                                                                                            |
+| `Output`                              | Always                                                  | What the step produced, cut in the same way.                                                                                                                                                                                                                             |
+| `Taken by`, `Question opened through` | The attempt's entry names the program whose code ran it | The program, how its name is known, and the door, as in `In Progress`. On a step whose gate is open or has been answered, the line reads `Question opened through:`: the program through which the question was opened, not who answered it. Added after version 0.45.0. |
+| `Trace`                               | The step recorded trace entries                         | How many.                                                                                                                                                                                                                                                                |
+| `Answer`                              | The step's gate was answered                            | One line for each answer: the choice, who answered, and the proof of the `claim_token`. See below. Added after version 0.45.0.                                                                                                                                           |
+| `Tool calls`                          | An agent step called tools                              | One line for each call: the server, the tool and the time taken. `Tools declared, none called` if it had tools and used none.                                                                                                                                            |
+| `Diagnostics`                         | The step is an agent or an auto step                    | An estimate of the input's size, the measured prompt and output tokens if `realm agent` drove the step, each precondition with its result, and what the provider reported about its cache.                                                                               |
+| `cost`                                | No token counts were recorded                           | The reason there are none.                                                                                                                                                                                                                                               |
 
 A step that `realm agent` drove has measured numbers:
 
@@ -248,7 +260,26 @@ A step that ran more than once has one line for each attempt. `Input`, `Output` 
      Diagnostics (attempt 2/2): ~9 tokens (estimate, step input) | no preconditions
 ```
 
-The choice made at a gate is not among these lines. It is in the run's record, which [`export`](#export) writes out.
+A step with a gate prints its answer on one line:
+
+```text
+     Answer: approve · answered by alice (as stated, not verified) · proof: no claim_token passed (the CLI never passes one; over MCP, only the conversation that opened the question has one to pass)
+```
+
+The answerer is the name the caller gave with `realm run respond --by` or `responded_by`, which Realm does not check. Without one it reads `(not stated)`. A recorded name that cannot be printed reads `a recorded name that cannot be printed (control characters, or not a name with its source)`. The proof part is one of these:
+
+| It reads                                                                                                                     | When                                                   |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `matched the claim_token of the reply that opened this question`                                                             | The caller passed back the question's token.           |
+| `no claim_token passed (the CLI never passes one; over MCP, only the conversation that opened the question has one to pass)` | No token was passed, over either door.                 |
+| `the claim_token passed is not this question's`                                                                              | A token was passed and it is not this question's.      |
+| `could not be checked — no claim on this record` / `— the claim has no token` / `— this store keeps no claims`               | There was nothing to check it against.                 |
+| `could not be checked — already settled by an earlier answer` / `— already settled by its expiry`                            | The question was settled before this call.             |
+| `none recorded — settled by the gate's expiry`                                                                               | The gate's time ran out and its default was taken.     |
+| `none recorded`                                                                                                              | The answer was written before the proof was recorded.  |
+| `the recorded proof cannot be read`                                                                                          | The record holds a proof that is not one of the above. |
+
+The proof never decides whether the answer was recorded. See [The claim token](../mcp/tools.md#the-claim-token).
 
 **Exit code:** 0, or 1 if the run is not in the store.
 

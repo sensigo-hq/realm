@@ -17,6 +17,7 @@ import {
   persistsField,
   deriveDefaultedSteps,
   deriveRunPhase,
+  describeClaimHolder,
   composeStepViews,
   composeDriveFailureCosts,
   type RunPhase,
@@ -28,6 +29,8 @@ import {
   type RunHealthFinding,
   type StepView,
   type DriveFailureCost,
+  type Attributed,
+  type ActorAbsent,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 
@@ -196,6 +199,15 @@ export interface RunStateSummary {
    * The `pending_gate` step is never included (it is legitimately pinned while its gate is open).
    */
   stuck_claims?: Array<{ step: string; state: ClaimState }>;
+  /**
+   * Issue #625 (the holder slice): who took each in-progress step — the host PROGRAM, how its name
+   * is known, and the channel — or why there is no name (`holder_not_recorded`, `pre_lease_claim`,
+   * `store_keeps_no_claims`, `name_unreadable`). `since` is when the claim was taken. Present on
+   * any non-terminal run with an in-progress step. A step waiting on a person's answer names the
+   * program through which the question was OPENED, and says nothing about anyone working on it now
+   * (liveness is #592's). Never carries the claim's token.
+   */
+  step_claims?: Array<{ step: string; holder: Attributed | ActorAbsent; since?: string }>;
   /**
    * Advisory (issue #134): steps parked by a not-registered handler/adapter that are still eligible —
    * present on any non-terminal run whenever such markers exist. Definition-free (via
@@ -386,6 +398,22 @@ export async function handleGetRunState(
         .filter((c) => c.state !== 'healthy' && c.step !== run.pending_gate?.step_name)
         .map((c) => ({ step: c.step, state: c.state }));
 
+  // issue #625 (holder slice): who took each in-progress step, read off the claim by the one reader.
+  // Terminal guard as stuck_claims: a sealed run surfaces nothing to do. Never the claim's token.
+  const stepClaims: Array<{ step: string; holder: Attributed | ActorAbsent; since?: string }> =
+    run.terminal_state
+      ? []
+      : run.in_progress_steps.map((step) => {
+          const described = describeClaimHolder(
+            run.claims?.[step],
+            runStore.persistsClaims === true,
+          );
+          const since = described.since !== undefined ? { since: described.since } : {};
+          return 'holder' in described
+            ? { step, holder: described.holder, ...since }
+            : { step, holder: { by: null, absent_cause: described.absent_cause }, ...since };
+        });
+
   // issue #600 PR 1b: the definition for the per-step cost view, resolved INDEPENDENTLY of the
   // status path above. A `definitionError` there must never suppress the view (the status path's
   // failure and the view's are different questions), and a view-resolution failure must never
@@ -490,6 +518,7 @@ export async function handleGetRunState(
     next_actions: nextActions,
     next_actions_status: nextActionsStatus,
     ...(stuckClaims.length > 0 ? { stuck_claims: stuckClaims } : {}),
+    ...(stepClaims.length > 0 ? { step_claims: stepClaims } : {}),
     ...(capabilityBlocks.length > 0
       ? {
           capability_blocks: capabilityBlocks.map((b) => ({

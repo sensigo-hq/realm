@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // realm-mcp — MCP server exposing the Realm workflow engine to AI agents.
 import { realpathSync } from 'node:fs';
+import { hostname, userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -12,6 +13,9 @@ import {
   WorkflowError,
   createDefaultRegistry,
   validateTraceCapabilities,
+  composeProgramIdentity,
+  identityRefusalLine,
+  type Attributed,
   type RunStore,
   type TraceBufferStore,
 } from '@sensigo/realm';
@@ -80,6 +84,15 @@ export interface RealmMcpServerOptions {
    * co-location contract on `runStore` above.
    */
   failedAttemptStore?: FailedAttemptStoreLike;
+  /**
+   * Issue #625 (holder slice): the host PROGRAM this server runs as — its name, how that name is
+   * known, and its channel (a short word the host chooses). Written as `holder` on the claim of
+   * every step a tool call takes, as `driven_by` on that call's evidence, and on the cleanup steps
+   * an answer drains; the answer's own entry names its person by `responded_by`, never by this. A
+   * label for people and replies: never compared, never a reason to refuse. A malformed value is
+   * refused by the engine (`VALIDATION_ACTOR_INVALID`) on the first call. Absent ⇒ none recorded.
+   */
+  driver?: Attributed;
 }
 
 /**
@@ -212,8 +225,52 @@ function isRunDirectly(): boolean {
   }
 }
 
+/**
+ * The `realm-mcp` bin's own identity (issue #625): `REALM_OPERATOR` if set, else the OS user and
+ * host name, on the channel `mcp-stdio`. One of the two production places that read the OS user
+ * (the other is the CLI's helper); core reads none. A name that cannot be used prints ONE line to
+ * stderr and exits 1 before the transport opens — never a stack, never a half-started server. A name
+ * that merely cannot be derived prints one notice and the server runs without one.
+ */
+function composeBinIdentity(): Attributed | undefined {
+  let osUser: string | undefined;
+  try {
+    osUser = userInfo().username;
+  } catch {
+    osUser = undefined;
+  }
+  let osHost: string | undefined;
+  try {
+    osHost = hostname();
+  } catch {
+    osHost = undefined;
+  }
+  try {
+    const composed = composeProgramIdentity(
+      {
+        ...(process.env['REALM_OPERATOR'] !== undefined
+          ? { ambient: process.env['REALM_OPERATOR'] }
+          : {}),
+        ...(osUser !== undefined ? { osUser } : {}),
+        ...(osHost !== undefined ? { osHost } : {}),
+      },
+      'mcp-stdio',
+    );
+    if (composed.driver === undefined && composed.reason !== undefined) {
+      process.stderr.write(
+        `this program's name cannot be recorded on the steps it takes: ${composed.reason}\n`,
+      );
+    }
+    return composed.driver;
+  } catch (err) {
+    process.stderr.write(`${identityRefusalLine('REALM_OPERATOR', err, 'nothing was started')}\n`);
+    process.exit(1);
+  }
+}
+
 if (isRunDirectly()) {
-  const server = createRealmMcpServer();
+  const driver = composeBinIdentity();
+  const server = createRealmMcpServer(driver !== undefined ? { driver } : undefined);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

@@ -14,6 +14,7 @@ import type {
   EvidenceSnapshot,
   CaptureEvidenceParams,
   SettlementResult,
+  Attributed,
 } from '@sensigo/realm';
 import {
   WorkflowError,
@@ -24,6 +25,7 @@ import {
   guardEndingOf,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+import { resolveProgramIdentity } from '../lib/program-identity.js';
 
 /**
  * issue #558 PR-C: ONE mint, rendered by BOTH surfaces that can find nothing to drain — the
@@ -413,6 +415,8 @@ export interface DrainRuntimeDeps {
     definition: WorkflowDefinition,
     registry: ExtensionRegistry,
     runId: string,
+    // issue #625: the program making this call, named on the cleanup steps the pass leases.
+    driver?: Attributed,
     // issue #558 PR-C: `leftPending` names the finalizers the pass could not run (ONE source with
     // the warning text), so this surface can print the per-finalizer void command; `attempted`
     // names every finalizer it leased, so this surface can tell "drained nothing because there was
@@ -425,6 +429,11 @@ export interface DrainRuntimeDeps {
   }>;
   captureEvidence: (params: CaptureEvidenceParams) => EvidenceSnapshot;
   drainLeaseMax: number;
+  /**
+   * Issue #625 (the holder slice): the program this `realm run drain` runs as (channel `drain`) —
+   * named as `driven_by` on every cleanup step this command runs. Made once, in the action.
+   */
+  driver?: Attributed;
   /** Test-only injection point — when absent (the real CLI path), `resolveRegistry` below (the
    *  project-extensions loader) is used. Lets tests supply a hand-built `ExtensionRegistry` with a
    *  real handler registered, without needing an on-disk extensions-module fixture. */
@@ -588,7 +597,7 @@ export async function runDrainAction(
           );
           continue;
         }
-        const outcome = await deps.drainFinalizers(runStore, workflow, registry, r.id);
+        const outcome = await deps.drainFinalizers(runStore, workflow, registry, r.id, deps.driver);
         drained += 1;
         for (const w of outcome.warnings) console.log(`  ⚠ ${r.id}: ${w}`);
         console.log(`  ✓ ${r.id}: drained`);
@@ -635,7 +644,13 @@ export async function runDrainAction(
             );
             continue;
           }
-          const outcome = await deps.drainFinalizers(runStore, workflow, registry, r.id);
+          const outcome = await deps.drainFinalizers(
+            runStore,
+            workflow,
+            registry,
+            r.id,
+            deps.driver,
+          );
           for (const w of outcome.warnings) console.log(`  ⚠ ${r.id}: ${w}`);
         }
       } catch (err) {
@@ -768,7 +783,7 @@ export async function runDrainAction(
       process.exit(1);
       return;
     }
-    const outcome = await deps.drainFinalizers(runStore, workflow, registry, runId);
+    const outcome = await deps.drainFinalizers(runStore, workflow, registry, runId, deps.driver);
     for (const w of outcome.warnings) console.log(`  ⚠ ${w}`);
     // issue #558 PR-C: a pass that left a finalizer pending is not a completed drain. Saying
     // `Drained run` and exiting 0 made `realm run list --stuck` re-offer this very command
@@ -829,6 +844,9 @@ export const drainCommand = new Command('drain')
     "CODE override: module that REPLACES the workflow's declared 'extensions' modules (repair tool)",
   )
   .action(async (runId: string | undefined, opts: DrainCommandOptions) => {
+    // issue #625 (holder slice): this program's name, made once, before any other output. A name
+    // that cannot be used prints one line and exits 1 here; nothing has been started.
+    const driver = resolveProgramIdentity('drain');
     const { JsonFileStore, JsonWorkflowStore, drainFinalizers, captureEvidence, DRAIN_LEASE_MAX } =
       await import('@sensigo/realm');
     const runStore = new JsonFileStore();
@@ -837,5 +855,6 @@ export const drainCommand = new Command('drain')
       drainFinalizers,
       captureEvidence,
       drainLeaseMax: DRAIN_LEASE_MAX,
+      ...(driver !== undefined ? { driver } : {}),
     });
   });

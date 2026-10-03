@@ -17,6 +17,7 @@ import {
   type LoadBearingRunRecordField,
   type SettlementDelta,
   type SettlementResult,
+  type Attributed,
 } from '@sensigo/realm';
 
 /** In-memory implementation of RunStore. Uses a Map keyed by run ID. No I/O, no locking. */
@@ -149,6 +150,7 @@ export class InMemoryStore implements RunStore {
     runId: string,
     stepName: string,
     definition: WorkflowDefinition,
+    claimant?: Attributed,
   ): Promise<RunRecord> {
     // issue #188: read the record SYNCHRONOUSLY (a direct Map.get, not `await this.get(...)`) so
     // the read → eligibility-check → write below is one indivisible synchronous stretch. This is
@@ -202,7 +204,17 @@ export class InMemoryStore implements RunStore {
     const updated: RunRecord = {
       ...run,
       in_progress_steps: [...run.in_progress_steps, stepName],
-      claims: { ...run.claims, [stepName]: { deadline, token } },
+      claims: {
+        ...run.claims,
+        // issue #625 (holder slice): `since` on every claim (the store's own act); `holder` when
+        // the caller passed one.
+        [stepName]: {
+          deadline,
+          token,
+          since: new Date().toISOString(),
+          ...(claimant !== undefined ? { holder: claimant } : {}),
+        },
+      },
       run_phase: deriveRunPhase(run),
       version: run.version + 1,
       updated_at: new Date().toISOString(),
@@ -239,7 +251,13 @@ export class InMemoryStore implements RunStore {
     }
     // issue #625: a store's own `settleStep` settles, in this SAME write, every guard the delta
     // makes eligible (the published law GUARD_CASCADE_ONE_WRITE).
-    const outcome = applySettlement(fresh, delta, definition, { ...options, cascadeGuards: true });
+    const outcome = applySettlement(fresh, delta, definition, {
+      ...options,
+      cascadeGuards: true,
+      // issue #625 (holder slice): the transform mints the proof verdict's `store_keeps_no_claims`
+      // cause itself, from this one input.
+      storeKeepsClaims: this.persistsClaims === true,
+    });
     if (!outcome.applied) {
       return outcome; // refusal/noop — fresh state, NO write (version unchanged)
     }
