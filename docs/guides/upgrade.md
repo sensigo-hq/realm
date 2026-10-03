@@ -28,7 +28,7 @@ For the command installed for the whole machine:
 npm install -g @sensigo/realm-cli@latest
 ```
 
-In a project that lists Realm packages in its `package.json`, give every one of them the same exact version, the one `realm --version` now prints (0.45.0 in this example):
+In a project that lists Realm packages in its `package.json`, give every one of them the same exact version, the version of the `realm` command you just installed (0.45.0 in this example):
 
 ```bash
 npm install --save-exact @sensigo/realm@0.45.0 @sensigo/realm-cli@0.45.0
@@ -40,7 +40,7 @@ Then check that only one version is installed:
 npm ls @sensigo/realm
 ```
 
-It prints one version, with the other entries marked `deduped`:
+It prints one version, with the other entries marked `deduped`. That version must be the one `realm --version` prints: a `realm` command installed for the whole machine does not appear in `npm ls`.
 
 ```text
 ├─┬ @sensigo/realm-cli@0.45.0

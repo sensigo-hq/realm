@@ -132,7 +132,7 @@ Drive failures:
 
 ## Your own provider
 
-`--provider-module` takes a code file whose default export is an object of a class that extends `LlmProvider`. The `LlmProvider` must come from the same realm version as the `realm` command (on version 0.45.0, from the same copy as the command): see [Which realm your code imports](../project-extensions.md#which-realm-your-code-imports). The class has one method to write, `callStep`, which is given the step's prompt, its schema and its profile's text, and returns the answer as an object:
+`--provider-module` takes a code file whose default export is an object of a class that extends `LlmProvider`. The `LlmProvider` must come from the same realm version as the `realm` command (on version 0.45.0, from the same copy as the command): see [Which realm your code imports](../project-extensions.md#which-realm-your-code-imports). The import below needs `@sensigo/realm-cli` installed in the project. The class has one method to write, `callStep`, which is given the step's prompt, its schema and its profile's text, and returns the answer as an object:
 
 ```js
 import { LlmProvider } from '@sensigo/realm-cli/agent';

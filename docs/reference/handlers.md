@@ -232,6 +232,8 @@ The same handler and workflow, with a retryable error on the first 2 attempts, r
 | The project's `@sensigo/realm` and the `realm` command's own copy, two copies of one version | 3 attempts, then `Run complete`                                             |
 | One copy of `@sensigo/realm`, shared by the project and the `realm` command                  | 3 attempts, then `Run complete`                                             |
 
+`realm workflow test` on the same project gives the same three results, with no provider module.
+
 ## When the time limit passes
 
 Realm passes `execute` a signal on every call. When the step's [`timeout_seconds`](workflow/retry-and-timeouts.md#timeout_seconds) passes, Realm fires the signal, stops waiting, and fails the step:
