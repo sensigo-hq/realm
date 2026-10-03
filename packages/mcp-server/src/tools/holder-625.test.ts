@@ -29,6 +29,7 @@ import {
   unknownKeyWarnings,
 } from './submit-human-response.js';
 import { handleGetRunState } from './get-run-state.js';
+import { handleAbandonRun } from './abandon-run.js';
 import { generateProtocol } from '../protocol/generator.js';
 import { createRealmMcpServer } from '../server.js';
 
@@ -390,5 +391,75 @@ describe('the protocol text tells the model to copy the call', () => {
       ),
     ).toBe(true);
     expect(text).toContain('by copying the call in `next_actions[0].instruction.call_with`');
+  });
+});
+
+describe('CLAIM_TOKEN_ONE_DOOR — on the MCP surface the token is where the opening reply puts it, and nowhere else', () => {
+  it('start_run’s opening reply carries it in EXACTLY three places; chained_auto_steps and every other field carry none', async () => {
+    const o = await openGate();
+    // (a) red when a fourth place (chained_auto_steps, context_hint, a finding) starts carrying it;
+    //     (b) prints the count.
+    expect(JSON.stringify(o.reply).split(o.token).length - 1).toBe(3);
+    expect(JSON.stringify(o.reply.chained_auto_steps ?? [])).not.toContain(o.token);
+  });
+
+  it('abandon_run’s refusal (the run waits at a gate) names no token', async () => {
+    const o = await openGate();
+    const outcome = await handleAbandonRun({ run_id: o.runId }, { runStore }).then(
+      () => 'resolved',
+      (err: unknown) => err,
+    );
+    expect(outcome).not.toBe('resolved');
+    const err = outcome as Error & { details?: unknown };
+    expect(JSON.stringify({ message: err.message, details: err.details })).not.toContain(o.token);
+  });
+});
+
+describe('the answer as data — an answer-only step, a planted name, a long name', () => {
+  async function planted(extra: Record<string, unknown>, withExecution = true) {
+    const o = await openGate();
+    await handleSubmitHumanResponse(
+      { run_id: o.runId, gate_id: o.gateId, choice: 'approve' },
+      { runStore, workflowStore },
+    );
+    const run = await runStore.get(o.runId);
+    await runStore.update({
+      ...run,
+      evidence: run.evidence
+        .filter((e) => withExecution || e.kind === 'gate_response')
+        .map((e) => (e.kind === 'gate_response' ? { ...e, ...extra } : e)),
+    });
+    return handleGetRunState({ run_id: o.runId, include_steps: true }, { runStore, workflowStore });
+  }
+
+  it('a step with an answer and NO execution entry still has a view: attempts [] and the answer', async () => {
+    const summary = await planted({ responded_by: 'alice' }, false);
+    expect(summary.steps?.['step-one']).toEqual({
+      attempts: [],
+      answers: [
+        {
+          choice: 'approve',
+          answered_by: { by: 'alice', by_source: 'stated' },
+          claim_proof: { proof: 'absent' },
+        },
+      ],
+    });
+  });
+
+  it('a HAND-PLANTED responded_by with an escape sequence is withheld: name_unreadable, never the string', async () => {
+    const summary = await planted({ responded_by: '\u001b[2Jevil' });
+    expect(summary.steps?.['step-one']?.answers?.[0]?.answered_by).toEqual({
+      by: null,
+      absent_cause: 'name_unreadable',
+    });
+    expect(JSON.stringify(summary)).not.toContain('evil');
+  });
+
+  it('a HAND-PLANTED 300-character name is shown capped with the house marker, not withheld', async () => {
+    const summary = await planted({ responded_by: 'n'.repeat(300) });
+    expect(summary.steps?.['step-one']?.answers?.[0]?.answered_by).toEqual({
+      by: `${'n'.repeat(200)}…[truncated]`,
+      by_source: 'stated',
+    });
   });
 });

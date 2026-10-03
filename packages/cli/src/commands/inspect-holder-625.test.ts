@@ -11,6 +11,7 @@
 // prints on failure: synthetic names only.
 import { describe, it, expect } from 'vitest';
 import { inspectRun } from './inspect.js';
+import { listRuns } from './list.js';
 import type { RunRecord, RunStore, WorkflowRegistrar } from '@sensigo/realm';
 
 const workflowStore: WorkflowRegistrar = {
@@ -399,5 +400,35 @@ describe('the answer line — the choice, the answerer, the proof in words', () 
     );
     expect(answerOnly).toContain('Choice:   approve');
     expect(answerOnly).toContain('Answer: approve');
+  });
+});
+
+describe('CLAIM_TOKEN_ONE_DOOR — `realm run list` never prints the token either', () => {
+  it('plain and --stuck, for a run waiting at a gate whose claim holds a token', async () => {
+    const run = baseRun({
+      run_phase: 'gate_waiting',
+      in_progress_steps: ['confirm'],
+      claims: {
+        confirm: {
+          deadline: null,
+          token: 't-never-printed',
+          since: ago(60_000),
+          holder: { by: 'prog@host', by_source: 'derived', channel: 'agent' },
+        },
+      },
+      pending_gate: {
+        gate_id: 'g-1',
+        step_name: 'confirm',
+        choices: ['approve', 'reject'],
+        opened_at: ago(60_000),
+      },
+    });
+    const plain = await listRuns(undefined, makeStore(run));
+    // (a) red when a listing starts printing the claim; (b) prints the listing.
+    expect(plain).toContain(run.id);
+    expect(plain).not.toContain('t-never-printed');
+    expect(await listRuns(undefined, makeStore(run), undefined, true)).not.toContain(
+      't-never-printed',
+    );
   });
 });

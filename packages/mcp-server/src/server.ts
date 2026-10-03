@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // realm-mcp — MCP server exposing the Realm workflow engine to AI agents.
 import { realpathSync } from 'node:fs';
-import { hostname, userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -13,8 +12,6 @@ import {
   WorkflowError,
   createDefaultRegistry,
   validateTraceCapabilities,
-  composeProgramIdentity,
-  identityRefusalLine,
   type Attributed,
   type RunStore,
   type TraceBufferStore,
@@ -22,6 +19,7 @@ import {
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import { VERSION } from './version.js';
+import { composeBinIdentity } from './bin-identity.js';
 import { registerListWorkflows } from './tools/list-workflows.js';
 import { registerGetWorkflowProtocol } from './tools/get-workflow-protocol.js';
 import { registerStartRun } from './tools/start-run.js';
@@ -222,49 +220,6 @@ function isRunDirectly(): boolean {
     return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
   } catch {
     return false;
-  }
-}
-
-/**
- * The `realm-mcp` bin's own identity (issue #625): `REALM_OPERATOR` if set, else the OS user and
- * host name, on the channel `mcp-stdio`. One of the two production places that read the OS user
- * (the other is the CLI's helper); core reads none. A name that cannot be used prints ONE line to
- * stderr and exits 1 before the transport opens — never a stack, never a half-started server. A name
- * that merely cannot be derived prints one notice and the server runs without one.
- */
-function composeBinIdentity(): Attributed | undefined {
-  let osUser: string | undefined;
-  try {
-    osUser = userInfo().username;
-  } catch {
-    osUser = undefined;
-  }
-  let osHost: string | undefined;
-  try {
-    osHost = hostname();
-  } catch {
-    osHost = undefined;
-  }
-  try {
-    const composed = composeProgramIdentity(
-      {
-        ...(process.env['REALM_OPERATOR'] !== undefined
-          ? { ambient: process.env['REALM_OPERATOR'] }
-          : {}),
-        ...(osUser !== undefined ? { osUser } : {}),
-        ...(osHost !== undefined ? { osHost } : {}),
-      },
-      'mcp-stdio',
-    );
-    if (composed.driver === undefined && composed.reason !== undefined) {
-      process.stderr.write(
-        `this program's name cannot be recorded on the steps it takes: ${composed.reason}\n`,
-      );
-    }
-    return composed.driver;
-  } catch (err) {
-    process.stderr.write(`${identityRefusalLine('REALM_OPERATOR', err, 'nothing was started')}\n`);
-    process.exit(1);
   }
 }
 

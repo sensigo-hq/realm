@@ -146,7 +146,7 @@ describe('the OS user is read at exactly two production sites', () => {
       .map(rel)
       .sort();
     // (a) red when core, or a third host, starts reading the OS user; (b) prints the files.
-    expect(sites).toEqual(['cli/src/lib/program-identity.ts', 'mcp-server/src/server.ts']);
+    expect(sites).toEqual(['cli/src/lib/program-identity.ts', 'mcp-server/src/bin-identity.ts']);
   });
 
   it("core reads no environment variable and no OS fact for a program's name (holder.ts imports nothing from node)", () => {
