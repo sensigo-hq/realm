@@ -13,6 +13,8 @@ import {
   createDefaultRegistry,
   validateTraceCapabilities,
   type Attributed,
+  assertReleaseLine,
+  assertRegistryLine,
   type RunStore,
   type TraceBufferStore,
 } from '@sensigo/realm';
@@ -122,6 +124,37 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
     name: 'realm',
     version: VERSION,
   });
+
+  // issue #620 PR-C: every store a host hands realm must carry this realm's release line — checked
+  // on the raw options, before any defaulting or derivation (the trace buffer derived below is this
+  // package's own and needs no check).
+  if (options !== undefined) {
+    if (options.workflowStore !== undefined) {
+      assertReleaseLine(options.workflowStore, 'the workflow store handed to createRealmMcpServer');
+    }
+    if (options.runStore !== undefined) {
+      assertReleaseLine(options.runStore, 'the run store handed to createRealmMcpServer');
+    }
+    if (options.traceBufferStore !== undefined) {
+      assertReleaseLine(
+        options.traceBufferStore,
+        'the trace buffer handed to createRealmMcpServer',
+      );
+    }
+    if (options.failedAttemptStore !== undefined) {
+      assertReleaseLine(
+        options.failedAttemptStore,
+        'the failed-attempt store handed to createRealmMcpServer',
+      );
+    }
+    // A static registry is checked here too, like the stores — refused only on proof. A
+    // registryProvider's result is checked per tool call, where it is resolved.
+    assertRegistryLine(
+      options.registry,
+      'the registry handed to createRealmMcpServer',
+      ExtensionRegistry,
+    );
+  }
 
   // When no registry is provided, use the default registry that pre-registers built-in
   // adapters. When a registry is provided, the caller is responsible for its contents.

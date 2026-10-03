@@ -3,6 +3,7 @@
 // style: each test targets exactly one deliverable — the activation-gate floor law, the
 // enforce-gate/adoption congruence, the three-way honest split, and the settle-time seal decision
 // table (ordering, each outcome branch, detection-counts-only attestation).
+import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -85,6 +86,10 @@ function trioOnlyStore(runReader: FenceRunReader): {
  * dormancy-suite-279 precedent, narrowed to what these cells need).
  */
 class LegacySettleStore implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   readonly persistsClaims: boolean;
 
   constructor(private readonly inner: JsonFileStore) {

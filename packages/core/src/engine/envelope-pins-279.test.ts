@@ -6,6 +6,7 @@
 // tests (where the scenario is genuinely reachable) and forced-result store doubles (where D-1/N1's
 // own defensive arms are documented as in-contract UNREACHABLE — the ENVELOPE TEXT LOGIC is still
 // unit-testable this way, per the same technique used by guard-chain-consumption-279.test.ts).
+import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -212,6 +213,10 @@ describe('gate_choice_conflict envelope (issue #279, increment 2, PR-D)', () => 
  *  cannot honestly reach the scenario, but the ENVELOPE TEXT LOGIC built around it is still real,
  *  shipped code this repo must pin. */
 class ForcesResultStore implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   readonly persistsClaims: boolean;
   private forced = false;
   constructor(

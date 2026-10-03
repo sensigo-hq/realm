@@ -596,8 +596,15 @@ describe('defaultDedupBase (issue #332 item 3 — call-time, never module-scope,
 // default and nothing could change it.
 // =================================================================================================
 describe('--llm-timeout on listen (issue #409)', () => {
-  it('buildAgentArgv without the flag is byte-identical to what listen spawned before', () => {
-    expect(buildAgentArgv('run-1')).toEqual(['agent', '--run-id', 'run-1']);
+  // issue #620 PR-C: every child also carries the hidden --no-release-line-advisory (listen tells
+  // the operator once at startup; a child per webhook must not repeat it).
+  it('buildAgentArgv without the flag: the run id and the advisory silencer only', () => {
+    expect(buildAgentArgv('run-1')).toEqual([
+      'agent',
+      '--run-id',
+      'run-1',
+      '--no-release-line-advisory',
+    ]);
   });
 
   it('buildAgentArgv with the flag appends it as a string pair', () => {
@@ -607,6 +614,7 @@ describe('--llm-timeout on listen (issue #409)', () => {
       'run-1',
       '--llm-timeout',
       '45',
+      '--no-release-line-advisory',
     ]);
   });
 
@@ -624,7 +632,14 @@ describe('--llm-timeout on listen (issue #409)', () => {
     expect(cmd).toBe(process.execPath);
     // Never pin this literal — under vitest it is the worker entry, not the realm binary.
     expect(argv[0]).toBe(process.argv[1] ?? '');
-    expect(argv.slice(1)).toEqual(['agent', '--run-id', 'run-42', '--llm-timeout', '45']);
+    expect(argv.slice(1)).toEqual([
+      'agent',
+      '--run-id',
+      'run-42',
+      '--llm-timeout',
+      '45',
+      '--no-release-line-advisory',
+    ]);
   });
 
   it('WIRED — the spawn is unchanged when the operator set none', () => {
@@ -633,7 +648,7 @@ describe('--llm-timeout on listen (issue #409)', () => {
     expect(result).toEqual({ pid: 4242 });
 
     const [, argv] = spawnMock.mock.calls[0]! as unknown as [string, string[]];
-    expect(argv.slice(1)).toEqual(['agent', '--run-id', 'run-43']);
+    expect(argv.slice(1)).toEqual(['agent', '--run-id', 'run-43', '--no-release-line-advisory']);
     expect(argv).not.toContain('--llm-timeout');
   });
 

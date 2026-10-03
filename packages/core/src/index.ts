@@ -235,6 +235,27 @@ export type { StepDiagnostics } from './types/run-record.js';
 // are already re-exported here via the top-of-file `export * from './types/run-record.js'` — the
 // wildcard is the export; this comment exists so a reader checking D4's requirement finds it.
 export { VERSION } from './version.js';
+// The release mark (issue #620 PR-B): every class a realm package exports carries one, so copies of
+// the same release recognise each other's objects.
+export { RELEASE_LINE_KEY, createRealmBrand, brandClass, REALM_BRAND } from './brand.js';
+export type { RealmBrand } from './brand.js';
+// Which copy an object came from (issue #620 PR-C): the descriptions and refusals realm prints when
+// an object crosses realm versions, and the release-line check on every store a host hands realm.
+export {
+  releaseLineOf,
+  declareReleaseLine,
+  describeUnrecognised,
+  assertReleaseLine,
+  assertRegistryLine,
+  releaseLineError,
+  describeThrown,
+  describeForeignProvider,
+  unbrandedClause,
+  describeUnrecognisedForContract,
+  engineReleaseLine,
+  releaseLineAdvisoryMessage,
+} from './release-line.js';
+export type { Unrecognised, RealmClass, ReleaseLineFacts } from './release-line.js';
 export type { ToolCallRecord, McpServerConfig } from './types/mcp-types.js';
 
 // Extensions

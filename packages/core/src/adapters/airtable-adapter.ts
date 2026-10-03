@@ -2,6 +2,7 @@
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
 import { parseRetryAfterHeader, takeParam } from './adapter-utils.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 const AIRTABLE_DEFAULT_BASE_URL = 'https://api.airtable.com';
 
@@ -946,3 +947,5 @@ export class AirtableAdapter implements ServiceAdapter {
     });
   }
 }
+
+brandClass(AirtableAdapter, Symbol.for('@sensigo/realm/AirtableAdapter'), REALM_BRAND);

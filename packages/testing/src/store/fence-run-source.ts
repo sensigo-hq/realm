@@ -17,6 +17,7 @@
 // `fenceForm: 'injected-reader'` adapter) to the contract.
 import {
   WorkflowError,
+  declareReleaseLine,
   runNotFoundError,
   type FenceRunReader,
   type RunRecord,
@@ -102,6 +103,10 @@ export function createFenceRunSource(): FenceRunSource {
       return snapshot;
     },
   };
+
+  // issue #620 PR-C: every store realm runs against carries its release line; this reader is a
+  // plain object, so it declares this copy's line itself.
+  declareReleaseLine(reader);
 
   return {
     reader,

@@ -10,6 +10,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { declareReleaseLine } from '../release-line.js';
 import {
   buildNextActions,
   executeChain,
@@ -112,6 +113,10 @@ const occurrences = (haystack: unknown, needle: string): number =>
 
 /** A store that does NOT declare `settleStep` — the legacy two-write shape. */
 class LegacyStore implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   readonly persistsClaims: boolean;
   readonly persistedRunRecordFields: JsonFileStore['persistedRunRecordFields'];
   constructor(

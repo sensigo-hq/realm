@@ -1,6 +1,7 @@
 // issue #558 PR-T — the MCP half of the terminal conjunct. `execute_step`, `append_trace` and
 // `submit_human_response` read the run's definition BEFORE their own terminal check, so on a
 // terminal run their remedy ("retry") is a falsity. They do NOT pass `terminalOk`.
+import { declared } from '../test-support/declared.js';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -27,18 +28,19 @@ function makeRun(over: Partial<RunRecord> = {}): RunRecord {
   } as RunRecord;
 }
 
-const notFound = (): WorkflowRegistrar => ({
-  register: async () => {},
-  list: async () => [],
-  get: async () => {
-    throw new WorkflowError('Workflow not found: wf', {
-      code: 'STATE_WORKFLOW_NOT_FOUND',
-      category: 'STATE',
-      agentAction: 'report_to_user',
-      retryable: false,
-    });
-  },
-});
+const notFound = (): WorkflowRegistrar =>
+  declared({
+    register: async () => {},
+    list: async () => [],
+    get: async () => {
+      throw new WorkflowError('Workflow not found: wf', {
+        code: 'STATE_WORKFLOW_NOT_FOUND',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+      });
+    },
+  });
 
 describe('the MCP tools’ (retryVerb, verb) pair (issue #558 PR-T)', () => {
   it('M1 on a TERMINAL run the agent is told there is nothing to RETRY — whole message, the one MCP site pinned byte-for-byte', async () => {

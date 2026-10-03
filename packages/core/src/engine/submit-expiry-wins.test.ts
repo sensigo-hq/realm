@@ -2,6 +2,7 @@
 // submitHumanResponse call against an expired-unresolved gate is honestly composed against
 // whatever the enforce clock actually enacted — on BOTH the migrated (settleStep-declaring) and
 // legacy (CAS-only) store paths.
+import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -20,6 +21,10 @@ import type { StepDispatcher } from './execution-loop.js';
 /** Non-declaring store double — settleStep genuinely absent (own-property masking), forcing
  *  submitHumanResponse's LEGACY CAS path. Mirrors dormancy-suite-279.test.ts's own precedent. */
 class NonDeclaringStoreDouble implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   readonly persistsClaims: boolean;
   readonly persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>;
   constructor(private readonly inner: JsonFileStore) {
@@ -280,6 +285,10 @@ describe('submitHumanResponse — composeExpiredGateEnvelope gate_id discriminat
    *  settleStep, which re-reads fresh and sees the injected state. Simulates the race without
    *  real concurrency: a single sequential call, one injected write at the one point that matters. */
   class InjectUnrelatedTerminalRace implements RunStore {
+    // issue #620 PR-C: a test double declares this realm's release line.
+    static {
+      declareReleaseLine(this);
+    }
     readonly persistsClaims: boolean;
     readonly persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>;
     constructor(private readonly inner: JsonFileStore) {

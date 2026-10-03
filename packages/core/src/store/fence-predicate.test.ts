@@ -9,6 +9,7 @@
 // message, flag or detail fails here: the published contract's FENCE_DATA cells compare a store's
 // refusal with `evaluateFence`'s own, and the stores' construction cells compare with
 // `fenceReaderMissingError`'s, so neither can see such a change.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import type { RunRecord } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
@@ -570,11 +571,11 @@ describe('readRunForFence — the reader’s own "run not found" (FENCE_REQUIRES
     retryable: false,
     details: { store: 'other' },
   });
-  const goneReader: FenceRunReader = {
+  const goneReader: FenceRunReader = declared({
     get: async () => {
       throw readerNotFound;
     },
-  };
+  });
 
   it('the two members that require the run let the reader’s own error through, unchanged', async () => {
     for (const fence of [
@@ -599,11 +600,11 @@ describe('readRunForFence — the reader’s own "run not found" (FENCE_REQUIRES
 
   it('any other read failure propagates unchanged, for every member', async () => {
     const readFailure = new Error('EACCES reading run-1');
-    const failingReader: FenceRunReader = {
+    const failingReader: FenceRunReader = declared({
       get: async () => {
         throw readFailure;
       },
-    };
+    });
     for (const fence of [
       { kind: 'step_open_for_trace', run_version: 1 },
       { kind: 'run_absent' },
@@ -621,12 +622,12 @@ describe('readRunForFence — the reader’s own "run not found" (FENCE_REQUIRES
 describe('checkFenceWithReader — a malformed fence never costs a read', () => {
   it('refuses before the reader is called', async () => {
     let reads = 0;
-    const countingReader: FenceRunReader = {
+    const countingReader: FenceRunReader = declared({
       get: async () => {
         reads += 1;
         return run();
       },
-    };
+    });
     for (const [label, fence, stepId] of [
       ['a function', () => undefined, STEP_ID],
       ['null', null, STEP_ID],

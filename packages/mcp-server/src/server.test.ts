@@ -1,5 +1,7 @@
 // Tests for createRealmMcpServer's construction seam (issue #188, PR-1): the RunStore injection
 // widen + the co-located artifact-store injection contract.
+import { declared } from './test-support/declared.js';
+import { declareReleaseLine } from '@sensigo/realm';
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -34,6 +36,10 @@ import type { FailedAttemptStoreLike } from './tools/start-run.js';
  * Used to exercise the "run store without runsDirPath" branches of the co-location seam.
  */
 class MinimalRunStore implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   private readonly runs = new Map<string, RunRecord>();
   readonly persistsClaims = true;
 
@@ -149,7 +155,7 @@ function makeFailedAttemptStoreDouble(): FailedAttemptStoreLike & {
   appended: Array<{ runId: string; line: string }>;
 } {
   const appended: Array<{ runId: string; line: string }> = [];
-  return {
+  return declared({
     appended,
     async append(runId: string, line: string): Promise<void> {
       appended.push({ runId, line });
@@ -163,7 +169,7 @@ function makeFailedAttemptStoreDouble(): FailedAttemptStoreLike & {
     async listOrphans() {
       return [];
     },
-  };
+  });
 }
 
 const agentWorkflowDef = (id: string): WorkflowDefinition => ({
@@ -229,11 +235,11 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
         expect(execEnvelope['status']).toBe('ok');
         // issue #616 PR-0, D2 — `read()` is unfenced; a throwing reader makes an unexpected fence
         // call fail loudly rather than silently.
-        const neverRead: FenceRunReader = {
+        const neverRead: FenceRunReader = declared({
           get: async () => {
             throw new Error('fence unexpectedly evaluated');
           },
-        };
+        });
         const verifyTraceBufferStore = new JsonTraceBufferStore(runDir, neverRead);
         const remaining = await verifyTraceBufferStore.read(runId, 'step-agent');
         expect(remaining).toHaveLength(0);

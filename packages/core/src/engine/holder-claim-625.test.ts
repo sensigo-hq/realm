@@ -8,6 +8,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { declareReleaseLine } from '../release-line.js';
 import {
   advanceRun,
   drainFinalizers,
@@ -308,6 +309,10 @@ describe('cleanup steps — the program whose code and credentials run them is n
 
 /** A store whose claimStep forwards THREE arguments only — the claimant is dropped on the floor. */
 class ThreeArgForwarderStore implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   readonly persistedRunRecordFields: JsonFileStore['persistedRunRecordFields'];
   constructor(
     private readonly inner: JsonFileStore,
@@ -393,6 +398,8 @@ describe('VALIDATION_ACTOR_INVALID — a malformed driver is refused at every ex
       claimStep: trap('claimStep'),
       settleStep: trap('settleStep'),
     } as unknown as RunStore;
+    // issue #620 PR-C: declared, so the host-wiring check passes and the driver is what is refused.
+    declareReleaseLine(s);
     return { s, calls };
   }
 

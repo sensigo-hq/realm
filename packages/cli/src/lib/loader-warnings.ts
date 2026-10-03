@@ -97,6 +97,19 @@ export function wrapSentinelWarnings(sentinelWarnings: string[] | undefined): Lo
 }
 
 /**
+ * Re-surfaces loadProjectExtensions' `REALM_RELEASE_LINE_MISMATCH` advisories (issue #620 PR-C), the
+ * sibling of `wrapSentinelWarnings`: the collecting surfaces (validate in both modes, register,
+ * watch, test) report them with their other warnings, so `--strict` fails on them and
+ * `validate --json` carries their `release_line` facts. They are already LoaderWarnings, minted in
+ * the loader from core's text.
+ */
+export function wrapReleaseLineWarnings(
+  releaseLineWarnings: readonly LoaderWarning[] | undefined,
+): LoaderWarning[] {
+  return [...(releaseLineWarnings ?? [])];
+}
+
+/**
  * Renders a load failure without saying "invalid" twice (issue #417).
  *
  * The loader's own message already begins `Invalid workflow: …`, so wrapping it in `Invalid: `

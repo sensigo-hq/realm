@@ -1,3 +1,4 @@
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   InMemoryTraceBufferStore,
@@ -12,11 +13,11 @@ import { fenceReaderMissingError, type FenceRunReader } from './fence-predicate.
 /** The run reader for the tests below, none of which makes a fenced call — so no test here ever
  *  touches the reader, and an unexpected fence call fails loudly instead of silently reading
  *  nothing. The constructor's required argument, never called. */
-const NEVER_READ: FenceRunReader = {
+const NEVER_READ: FenceRunReader = declared({
   get: async () => {
     throw new Error('fence unexpectedly evaluated against NEVER_READ');
   },
-};
+});
 
 describe('InMemoryTraceBufferStore', () => {
   let store: InMemoryTraceBufferStore;

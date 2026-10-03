@@ -39,6 +39,7 @@ import {
   toArtifactDeleteFailedError,
 } from './fs-io.js';
 import type { ArtifactDeletionReport } from './per-run-artifact-store.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 /**
  * Shared `proper-lockfile` retry policy for EVERY lock this store takes — the 4 run-file
@@ -1177,3 +1178,5 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     }
   }
 }
+
+brandClass(JsonFileStore, Symbol.for('@sensigo/realm/JsonFileStore'), REALM_BRAND);

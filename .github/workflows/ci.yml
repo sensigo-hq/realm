@@ -53,6 +53,8 @@ jobs:
       - run: npm run lint
       - run: npm run test
       - run: npm run build
+      # issue #620 PR-B — every class a package exports carries the release mark. Needs the built packages.
+      - run: npm run check:brands
       # issue #337 — type-check the test files. `tsconfig.eslint.json` is the only project that
       # includes `*.test.ts` (the per-package build tsconfigs exclude them), so until now tsc never
       # saw them and 351 type errors had accumulated unseen — including assertions that could not

@@ -38,6 +38,7 @@ import {
   checkFenceWithReader,
   fenceReaderMissingError,
   isFenceRunReader,
+  assertReleaseLine,
 } from '@sensigo/realm';
 import type {
   AgentTraceEntry,
@@ -45,7 +46,8 @@ import type {
   FenceRunReader,
   RunScopedFencePredicate,
 } from '@sensigo/realm';
-import { WorkflowError } from '@sensigo/realm';
+import { WorkflowError, brandClass } from '@sensigo/realm';
+import { REALM_MCP_BRAND } from './brand.js';
 
 /** Line format stored in the JSONL WAL file — literally `SealedWalLine` (issue #197 PR-1: a
  *  sealed artifact is exactly "the WAL, moved", so both the live and sealed representations share
@@ -216,6 +218,7 @@ export class JsonTraceBufferStore
     if (!isFenceRunReader(runReader)) {
       throw fenceReaderMissingError('JsonTraceBufferStore');
     }
+    assertReleaseLine(runReader, 'the run reader handed to JsonTraceBufferStore');
     this.runsDir = runsDir;
     this.lockProfile = { ...DEFAULT_LOCK_PROFILE, ...lockProfile };
     this.runReader = runReader;
@@ -981,3 +984,9 @@ export class JsonTraceBufferStore
     return orphans;
   }
 }
+
+brandClass(
+  JsonTraceBufferStore,
+  Symbol.for('@sensigo/realm-mcp/JsonTraceBufferStore'),
+  REALM_MCP_BRAND,
+);

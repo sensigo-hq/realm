@@ -33,6 +33,7 @@ import {
   type ActorAbsent,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
+import { assertToolStores, isReleaseLineRefusal } from './assert-tool-stores.js';
 
 /** issue #558 PR-T — the store's own classification, passed through to classifyRunHealth. */
 function toDefinitionError(err: unknown): { code: string; message: string; class?: string } {
@@ -285,6 +286,7 @@ export async function handleGetRunState(
   args: { run_id: string; include_steps?: boolean | undefined },
   stores?: HandleRunStateStores,
 ): Promise<RunStateSummary> {
+  assertToolStores(stores, 'handleGetRunState');
   const runStore = stores?.runStore ?? new JsonFileStore();
   const run = await runStore.get(args.run_id);
 
@@ -342,6 +344,8 @@ export async function handleGetRunState(
             retryVerb: 'retry',
             verb: 'retry',
           }).catch((err: unknown) => {
+            // issue #620 PR-C: a release-line refusal is a hand-off fault, not a definition fault.
+            if (isReleaseLineRefusal(err)) throw err;
             // issue #558 PR-T — KEEP the failure: it feeds the `definition_unresolvable` finding
             // below instead of being discarded. Live runs only: the terminal guard at the
             // classify call is the pre-existing frozen R3 guard (#331), untouched here.
@@ -434,7 +438,11 @@ export async function handleGetRunState(
       retryVerb: 'retry',
       verb: 'retry',
       terminalOk: true,
-    }).catch(() => undefined);
+    }).catch((err: unknown) => {
+      // issue #620 PR-C: never discard a release-line refusal.
+      if (isReleaseLineRefusal(err)) throw err;
+      return undefined;
+    });
   }
 
   // issue #221: the SAME shared classifyRunHealth predicate the three READ surfaces (get_run_state,

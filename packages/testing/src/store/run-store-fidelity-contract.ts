@@ -12,6 +12,8 @@
 // back, so a store that DECLARES `persistedRunRecordFields` dishonestly (claims a field, drops it
 // on write) fails conformance here, before it ever ships. A store that declares NOTHING passes
 // this law vacuously (zero cases generated) — see `runStoreFidelityContract`'s own doc.
+import { crossCopyNote } from './cross-copy-note.js';
+import { storeReleaseLineLaw } from './store-release-line-law.js';
 import {
   WorkflowError,
   type Attributed,
@@ -28,9 +30,10 @@ import {
  * contract is wired, or is named, with a reason, in that file's `NOT_RUN` list. The members, in
  * order: `FIDELITY_HONESTY` and `CLAIM_SINGLE_OWNER` (issue #188), `SEALED_BY_ROUNDTRIP` (issue
  * #367 — the seal arm survives a proper terminal write byte-for-byte), `CLAIM_NAMES_HOLDER` (issue
- * #625 — a claim reads back with the program that took the step and when) and
+ * #625 — a claim reads back with the program that took the step and when),
  * `EVIDENCE_KEEPS_DRIVER_AND_PROOF` (issue #625 — the program that did a step's work and the proof
- * on an answer's entry survive a round trip).
+ * on an answer's entry survive a round trip) and `STORE_RELEASE_LINE_TRUE` (issue #620 PR-C — the
+ * store's declared release line is its errors' line).
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -38,6 +41,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'SEALED_BY_ROUNDTRIP',
   'CLAIM_NAMES_HOLDER',
   'EVIDENCE_KEEPS_DRIVER_AND_PROOF',
+  'STORE_RELEASE_LINE_TRUE',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -425,11 +429,20 @@ export function runStoreFidelityContract(
           const described = err instanceof WorkflowError ? err.code : String(err);
           throw new Error(
             `expected the losing claimStep call to reject with a WorkflowError carrying code ` +
-              `STATE_STEP_ALREADY_CLAIMED, got: ${described}`,
+              `STATE_STEP_ALREADY_CLAIMED, got: ${described}${crossCopyNote(err, WorkflowError)}`,
           );
         }
       }
     },
+  });
+
+  cases.push({
+    law: 'STORE_RELEASE_LINE_TRUE',
+    name: "the store's declared release line is the line of its own refusal (get of a missing run)",
+    run: () =>
+      storeReleaseLineLaw(adapter.store, () =>
+        adapter.store.get('store-release-line-true-missing-run'),
+      ),
   });
 
   return cases;

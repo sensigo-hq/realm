@@ -10,6 +10,7 @@
 // an exact seed count) and stop the moment `warnings` first appears — this is fully deterministic
 // (no randomness, no timing dependence: the same entry-generator always crosses at the same
 // iteration) while avoiding brittle hand-arithmetic over JSON.stringify's exact byte overhead.
+import { declareReleaseLine } from '@sensigo/realm';
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -63,6 +64,10 @@ function bigDataEntry(seed: number): AgentTraceEntry {
  *  capability-absent branch, mirroring append-trace-fenced-adoption.test.ts's own local stub
  *  (each test file keeps its own, per this repo's established per-file-stub convention). */
 class LegacyOnlyTraceBufferStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   private buffers = new Map<string, BufferedEntry[]>();
 
   async append(runId: string, stepId: string, entries: AgentTraceEntry[]): Promise<AppendResult> {

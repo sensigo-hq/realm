@@ -1,6 +1,7 @@
 // Tests for issue #220 PR-1 — bounded validation-rejection exhaustion (countRejection +
 // VALIDATION_EXHAUSTED terminalization). Letter labels match the implementation prompt's pin
 // set / design record §5 letter map exactly, for mechanical diffing against mutation probes.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -158,7 +159,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     let getIdx = 0;
     let updateIdx = 0;
     const records = [staleSnapshot, midSnapshot];
-    const loserStore = {
+    const loserStore = declared({
       get: async () => records[Math.min(getIdx++, records.length - 1)]!,
       update: async (rec: RunRecord) => {
         const idx = updateIdx++;
@@ -181,7 +182,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
           details: { runId, stepName },
         });
       },
-    } as unknown as RunStore;
+    } as unknown as RunStore);
 
     const loserEnvelope = await executeStep(loserStore, def, {
       runId: 'loser-run',

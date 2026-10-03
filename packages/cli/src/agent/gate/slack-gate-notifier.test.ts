@@ -1,5 +1,6 @@
 // slack-gate-notifier.test.ts — Tests for formatGatePreviewForSlack, owner Slack notification,
 // startGateReminderTimers, postSlackReply, postGateViaApi, and bidirectional gate handling.
+import { declared } from '../../test-support/declared.js';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   formatGatePreviewForSlack,
@@ -408,9 +409,9 @@ describe('postSlackReply', () => {
 // ---------------------------------------------------------------------------
 
 function makeMinimalStore(): RunStore {
-  return {
+  return declared({
     get: vi.fn().mockResolvedValue({ terminal_state: 'completed', pending_gate: undefined }),
-  } as unknown as RunStore;
+  } as unknown as RunStore);
 }
 
 /**
@@ -442,7 +443,7 @@ function makeGateStore(gate: PendingGate): RunStore {
   };
   const get = vi.fn().mockResolvedValueOnce(openRun).mockResolvedValue(completedRun);
   const update = vi.fn().mockResolvedValue(completedRun);
-  return { get, update } as unknown as RunStore;
+  return declared({ get, update } as unknown as RunStore);
 }
 
 function makeMinimalDefinition(): WorkflowDefinition {
@@ -827,13 +828,13 @@ describe('handleBidirectionalGate', () => {
       pending_gate: undefined,
       run_phase: 'failed',
     };
-    const store = {
+    const store = declared({
       get: vi.fn(async () => (updateAttempted ? terminalRun : openRun)),
       update: vi.fn(async () => {
         updateAttempted = true;
         throw new Error('persist failed');
       }),
-    } as unknown as RunStore;
+    } as unknown as RunStore);
 
     let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
     vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {

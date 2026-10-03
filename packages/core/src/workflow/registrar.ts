@@ -8,6 +8,8 @@ import { WorkflowError } from '../types/workflow-error.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
 import { deriveRunPhase } from '../engine/eligibility.js';
 import { atomicWriteFile } from '../store/atomic-write.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
+import { assertReleaseLine } from '../release-line.js';
 
 /** issue #558 PR-T — what a registry read can fail as, before any bytes are parsed. */
 export type ProbeFailureClass =
@@ -494,6 +496,8 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
   }
 }
 
+brandClass(JsonWorkflowStore, Symbol.for('@sensigo/realm/JsonWorkflowStore'), REALM_BRAND);
+
 /**
  * Fetches the workflow definition a run-context resolution needs, wrapping a
  * `STATE_WORKFLOW_NOT_FOUND` throw with the one-time-register remedy (issue #456) — the ONE
@@ -537,6 +541,7 @@ export async function getWorkflowForRun(
   run: RunRecord,
   opts: { retryVerb: string; verb: string; terminalOk?: boolean },
 ): Promise<WorkflowDefinition> {
+  assertReleaseLine(store, 'the workflow store handed to getWorkflowForRun');
   try {
     return await store.get(run.workflow_id);
   } catch (err) {

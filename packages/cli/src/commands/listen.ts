@@ -25,6 +25,7 @@ import {
   validateRunParams,
   WorkflowError,
   sealRunLevel,
+  renderLoaderWarning,
 } from '@sensigo/realm';
 import type {
   WorkflowDefinition,
@@ -43,7 +44,10 @@ import {
 } from '../lib/webhook-verifiers.js';
 import { extractParams, extractDedupId, resolveDotPath } from '../lib/webhook-params.js';
 import { FileDedupStore, InMemoryDedupStore, type DedupStore } from '../lib/dedup-store.js';
-import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+import {
+  loadProjectExtensions,
+  onceReleaseLineSink,
+} from '../extensions/load-project-extensions.js';
 
 const DEFAULT_TTL_MINUTES = 60;
 // Fixed signature-header names for the body-signature presets.
@@ -559,9 +563,12 @@ export async function prepareListenWorkflows(
   deps: Pick<ListenDeps, 'workflowStore' | 'logger'>,
   loadExtensions: typeof loadProjectExtensions = loadProjectExtensions,
 ): Promise<void> {
+  // issue #620 PR-C: a project realm of another version is told once per distinct copy, through
+  // listen's own logger (its children are silenced with --no-release-line-advisory).
+  const onReleaseLineWarning = onceReleaseLineSink((w) => deps.logger.warn(renderLoaderWarning(w)));
   for (const entry of routes.values()) {
     await deps.workflowStore.register(entry.definition);
-    const { manifest } = await loadExtensions(entry.definition);
+    const { manifest } = await loadExtensions(entry.definition, { onReleaseLineWarning });
     if (manifest.modules.length > 0) {
       deps.logger.info('listen: extensions loaded', {
         workflow: entry.definition.id,
@@ -769,6 +776,8 @@ export function startListen(
 export function buildAgentArgv(runId: string, llmTimeoutSeconds?: number): string[] {
   const argv = ['agent', '--run-id', runId];
   if (llmTimeoutSeconds !== undefined) argv.push('--llm-timeout', String(llmTimeoutSeconds));
+  // issue #620 PR-C: listen tells the operator once at startup; a child per webhook would repeat it.
+  argv.push('--no-release-line-advisory');
   return argv;
 }
 

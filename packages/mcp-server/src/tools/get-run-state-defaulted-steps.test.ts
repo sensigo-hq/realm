@@ -4,6 +4,7 @@
 // A minimal hand-rolled RunStore double — handleGetRunState only ever calls `.get()`, so the
 // double only needs to implement that faithfully (mirrors get-run-state-run-health.test.ts's own
 // double, minus the fidelity-gate concerns that are out of scope here).
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import type { RunRecord, RunStore, EvidenceSnapshot } from '@sensigo/realm';
 import { deriveDefaultedSteps } from '@sensigo/realm';
@@ -50,7 +51,7 @@ function makeRun(over: Partial<RunRecord> = {}): RunRecord {
 }
 
 function makeStore(run: RunRecord): RunStore {
-  return {
+  return declared({
     persistsClaims: true,
     async get() {
       return run;
@@ -67,7 +68,7 @@ function makeStore(run: RunRecord): RunStore {
     async claimStep() {
       throw new Error('not exercised by get_run_state');
     },
-  };
+  });
 }
 
 describe('get_run_state — defaulted_steps (issue #232)', () => {

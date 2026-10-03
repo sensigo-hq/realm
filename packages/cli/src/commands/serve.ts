@@ -9,6 +9,7 @@ import { createRealmMcpServer } from '@sensigo/realm-mcp';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { makeRegistryProvider } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
+import { hostRefusalLine } from '../lib/host-refusal-line.js';
 
 const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MiB
 
@@ -53,6 +54,11 @@ export interface StartServerOptions {
  * Each HTTP request gets a fresh MCP server + stateless transport. The MCP SDK's
  * Protocol.connect() does not allow reconnecting a server to a new transport, so
  * per-request isolation is the correct pattern for stateless HTTP mode.
+ *
+ * issue #620 PR-C: one server is built with the same options BEFORE anything listens, so a
+ * construction refusal (a store or registry from another realm) rejects the returned promise and
+ * nothing listens — it would otherwise fail every request behind a `listening` line. That server
+ * is discarded, never connected.
  */
 export async function startHttpMcpServer(options: StartServerOptions): Promise<Server> {
   const { port, host, devMode, token, workflowStore, registryProvider, driver } = options;
@@ -62,6 +68,13 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
   // requests introduces zero staleness — re-registered workflows are picked up on the
   // next read.
   const store = workflowStore ?? new JsonWorkflowStore();
+  const serverOptions = {
+    workflowStore: store,
+    ...(registryProvider !== undefined ? { registryProvider } : {}),
+    ...(driver !== undefined ? { driver } : {}),
+  };
+  // The startup construction: a throw here rejects this async function's promise.
+  createRealmMcpServer(serverOptions);
 
   const httpServer = createServer(async (req, res) => {
     // Auth gate — evaluated before any MCP logic.
@@ -105,12 +118,9 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
 
       // The per-request MCP server shares the process-lifetime workflow store and
       // registryProvider — extension registries (and their rate-limiter buckets) stay
-      // stable across requests.
-      const mcpServer = createRealmMcpServer({
-        workflowStore: store,
-        ...(registryProvider !== undefined ? { registryProvider } : {}),
-        ...(driver !== undefined ? { driver } : {}),
-      });
+      // stable across requests. An error while a request is handled is logged below (a registry
+      // a tool resolves per call is checked inside that tool, which answers with the refusal).
+      const mcpServer = createRealmMcpServer(serverOptions);
       // Omitting sessionIdGenerator enables stateless mode (SDK default when absent).
       const transport = new StreamableHTTPServerTransport({});
       // @ts-expect-error — SDK type mismatch under exactOptionalPropertyTypes:
@@ -119,6 +129,9 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
       await mcpServer.connect(transport);
       await transport.handleRequest(req, res, parsedBody);
     } catch (err) {
+      // issue #620 PR-C: the reason a request failed is logged — a store or registry refused at
+      // the hand-off would otherwise be a bare 500 with the cause nowhere.
+      console.error(hostRefusalLine('serve', err));
       if (!res.headersSent && !res.destroyed) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Internal server error' }));
@@ -145,6 +158,15 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
       resolve(httpServer);
     });
   });
+}
+
+/** A Node `listen` failure (`EADDRINUSE`, `EACCES`): read inside a `try`, so it is total. */
+function isListenFailure(err: unknown): boolean {
+  try {
+    return (err as { syscall?: unknown } | null)?.syscall === 'listen';
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -195,14 +217,25 @@ export const serveCommand = new Command('serve')
       );
     }
 
-    const httpServer = await startHttpMcpServer({
-      port,
-      host,
-      devMode,
-      token,
-      registryProvider,
-      ...(driver !== undefined ? { driver } : {}),
-    });
+    // issue #620 PR-C: a server that cannot be built is one line on stderr and exit 1 — never a
+    // `listening` line over a server that fails every request (a release-line refusal there means
+    // this command's own install is split: `hostRefusalLine` says so). A failure to listen (the
+    // port in use) is not a construction refusal and propagates as before.
+    let httpServer: Server;
+    try {
+      httpServer = await startHttpMcpServer({
+        port,
+        host,
+        devMode,
+        token,
+        registryProvider,
+        ...(driver !== undefined ? { driver } : {}),
+      });
+    } catch (err) {
+      if (isListenFailure(err)) throw err;
+      console.error(hostRefusalLine('serve', err));
+      process.exit(1);
+    }
     console.log(`Realm MCP server listening on http://${host}:${port}/`);
     if (!devMode) {
       console.log('Authentication: Bearer token (REALM_SERVE_TOKEN)');

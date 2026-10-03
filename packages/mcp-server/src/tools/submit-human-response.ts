@@ -14,6 +14,8 @@ import {
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
+import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
+import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
 
 /** The arguments this tool takes. Anything else is named in the reply's `warnings`, not dropped. */
 const KNOWN_ARGS = ['run_id', 'gate_id', 'choice', 'responded_by', 'claim_token'] as const;
@@ -86,6 +88,9 @@ export async function handleSubmitHumanResponse(
   },
   stores?: HandleRunStores,
 ): Promise<ResponseEnvelope> {
+  // issue #620 PR-C + the admission order (framework v1.27 §4): what the host handed in is checked
+  // first, then what this caller sent.
+  assertToolStores(stores, 'handleSubmitHumanResponse');
   // Issue #625: `responded_by` is bounded exactly as `realm run respond --by` is — refused before
   // anything is read or written, so nothing is recorded (#604's `responded_by` member: one helper
   // guards both doors).
@@ -119,6 +124,13 @@ export async function handleSubmitHumanResponse(
     stores?.registryProvider !== undefined
       ? await stores.registryProvider(definition)
       : stores?.registry;
+  // issue #620 PR-C: the registry rule — refused only on proof (another realm version), before any
+  // write. Covers the provider's result and the construction-time registry alike.
+  assertRegistryLine(
+    registry,
+    registryRole(stores, 'submit_human_response', 'handleSubmitHumanResponse'),
+    RealmExtensionRegistry,
+  );
 
   return submitHumanResponse(runStore, definition, {
     runId: args.run_id,
@@ -136,6 +148,7 @@ export async function handleSubmitHumanResponse(
 
 /** Registers the submit_human_response MCP tool on the server. */
 export function registerSubmitHumanResponse(server: McpServer, opts?: HandleRunStores): void {
+  markServedByTool(opts);
   // issue #625: `registerTool` with a pass-through schema — `server.tool` strips unknown keys before
   // the handler sees them (see `create-workflow.ts`), so a misnamed `claimToken` would vanish
   // without a word.

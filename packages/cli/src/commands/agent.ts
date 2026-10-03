@@ -5,7 +5,7 @@
 // adapters are constructed from the deployment manifest (realm.yaml); the loader registry
 // (with its drift identity attached) flows directly into the run. Gate-notifier config is
 // sourced from `manifest.notifiers.slack_gate` (the nine SLACK_* env reads are deleted).
-import { Command, InvalidArgumentError } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
@@ -14,6 +14,9 @@ import {
   JsonFileStore,
   JsonWorkflowStore,
   WorkflowError,
+  describeUnrecognised,
+  describeForeignProvider,
+  unbrandedClause,
 } from '@sensigo/realm';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -24,6 +27,7 @@ import { runAgent } from '../agent/run-agent.js';
 import { resolveRunAttach } from '../agent/run-attach.js';
 import {
   loadProjectExtensions,
+  collectReleaseLineWarnings,
   type LoadedProjectExtensions,
 } from '../extensions/load-project-extensions.js';
 import { createSlackGateHandler } from '../agent/gate/slack-gate-notifier.js';
@@ -157,6 +161,10 @@ export const agentCommand = new Command('agent')
     // `declared_per_attempt_ms: 600000` for a value nobody chose. Unset means unset, which is
     // what lets the recorded provenance tell a declaration from a fallback.
   )
+  // issue #620 PR-C: the repo's first hidden option. `realm listen` appends it to every child it
+  // spawns (buildAgentArgv): listen tells the operator once at startup, so a child per webhook
+  // must not repeat the release-line advisory. Hidden because it is listen's, not an operator's.
+  .addOption(new Option('--no-release-line-advisory').hideHelp())
   .action(
     async (opts: {
       workflow?: string;
@@ -173,6 +181,7 @@ export const agentCommand = new Command('agent')
       mintWriterNonce?: boolean;
       schemaRetries: number;
       llmTimeout: number;
+      releaseLineAdvisory: boolean;
     }) => {
       // issue #625 (holder slice): this program's name, made once, before any other output. A name
       // that cannot be used prints one line and exits 1 here; nothing has been started.
@@ -230,8 +239,20 @@ export const agentCommand = new Command('agent')
             process.exit(1);
           }
           if (!(mod.default instanceof LlmProvider)) {
+            // issue #620 PR-C: say which copy the provider's LlmProvider came from. Core composes
+            // the text; this command prints it.
+            const unrecognised = describeUnrecognised(mod.default, LlmProvider);
+            if (unrecognised.kind === 'foreign_line') {
+              for (const line of describeForeignProvider(unrecognised)) console.error(line);
+              process.exit(1);
+            }
+            // The hedged clause ends the first line in place of its period.
+            const ending =
+              unrecognised.kind === 'unbranded_copy'
+                ? unbrandedClause(unrecognised.className)
+                : '.';
             console.error(
-              `Error: provider module default export must be an instance extending LlmProvider.\n` +
+              `Error: provider module default export must be an instance extending LlmProvider${ending}\n` +
                 `Import LlmProvider from '@sensigo/realm-cli/agent' and export 'export default new MyProvider()'.`,
             );
             process.exit(1);
@@ -260,6 +281,9 @@ export const agentCommand = new Command('agent')
         const extensionOpts = {
           ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
           projectDir,
+          ...(opts.releaseLineAdvisory === false
+            ? { onReleaseLineWarning: collectReleaseLineWarnings }
+            : {}),
         };
 
         let result: import('../agent/run-agent.js').AgentRunResult;

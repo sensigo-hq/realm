@@ -2,7 +2,7 @@
 
 `@sensigo/realm` is the engine as a library. A program of your own can use it to run workflows without the `realm` command, and to keep runs somewhere other than files on disk. This page covers the functions that run a workflow, the stores Realm ships, the store interfaces, what a store of your own must do, and how to check that it does. Every output shown came from a program run against the built packages.
 
-The package exports 213 values. This page covers the ones named above. Most of the rest are the parts the `realm` command is built from.
+The package exports more than 200 values. This page covers the ones named above. Most of the rest are the parts the `realm` command is built from.
 
 | Package                  | Holds                                                            |
 | ------------------------ | ---------------------------------------------------------------- |
@@ -249,6 +249,8 @@ Without it, two steps that complete at the same moment can each write an ending 
 | `applySettlement`         | `settleStep` | Applies a change to a record and returns the new record, or the reason it is refused. |
 | `assertSealIntegrity`     | Every write  | Refuses a write that would lose or alter the record of how a run ended.               |
 | `deriveRunPhase`          | Every write  | Works out the phase to store with the record.                                         |
+
+Declare the store's release line once, from the `@sensigo/realm` the store imports its errors from: `declareReleaseLine(MyStore)` for a class, `declareReleaseLine(store)` for a plain object. Realm refuses a store that declares none with `ENGINE_RELEASE_LINE_UNDECLARED`, and a store of another realm version with `ENGINE_RELEASE_LINE_MISMATCH`, before any work. `releaseLineOf(store)` reads what a store declares. The store contracts' `STORE_RELEASE_LINE_TRUE` law checks the declaration against the store's own errors (see [Testing package](testing-package.md#store-contracts)). This was added after version 0.45.0.
 
 ## The other store interfaces
 
