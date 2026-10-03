@@ -392,8 +392,13 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
 - **`realm run inspect` prints every answer of a step.** A step with a gate and one execution entry
   — the common shape — showed no answer at all; the choice was only in the run's record. It now
   prints one `Answer:` line for each answer: the choice, who answered (the name the caller gave,
-  labelled as not verified, or `(not stated)`; an answer the gate's expiry wrote with its default choice reads `settled by the gate's expiry (no one answered)`; an `on_expiry: abort` expiry is not an answer and prints none), and the proof in words. In the two layouts that
-  showed a `Choice:` line, the `Answer:` line takes its place, so the choice prints once.
+  labelled as not verified, or `(not stated)`; an answer the gate's expiry wrote with its default choice reads `settled by the gate's expiry (no one answered)`; an `on_expiry: abort` expiry is not an answer and prints none), and the proof in words. On every
+  layout an answer prints as the question its person read (`Message:`, when the gate has one)
+  and then its `Answer:` line, so the choice prints once: the `Choice:` line and the gate entry's
+  own `Output:` line (the step's output plus the choice) are gone. The question is printed as a
+  quoted string, so a newline or control character in it stays on one line. An
+  `on_expiry: abort` expiry's entry prints no lines at all (the run's `Cause:` line and the step's
+  `Skipped:` line say what it did).
 - **The protocol text tells a model to copy the answer call.** Rule 2 and the per-step gate text of
   `get_workflow_protocol` now say to copy the call in `next_actions[0].instruction.call_with` and
   fill in the choice, instead of naming the tool and its arguments. `call_with` carries the

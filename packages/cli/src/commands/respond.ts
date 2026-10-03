@@ -198,13 +198,13 @@ export const respondCommand = new Command('respond')
           return;
         }
       }
-      // `REALM_OPERATOR` here names the PROGRAM for the cleanup steps this answer drains — never
-      // the person who answered.
-      // The answer itself never carries this name; REALM_OPERATOR labels the cleanup steps the
-      // answer lets run — the refusal says so, so a person is not left wondering why.
+      // `REALM_OPERATOR` here names the PROGRAM on the cleanup steps this answer drains — never
+      // the person who answered; the answer itself never carries it. It is checked before the run
+      // is read, so it refuses on a workflow with no cleanup steps too — the refusal says both, so
+      // its sentence is true for every workflow.
       const driver = resolveProgramIdentity(
         'respond',
-        'it names the cleanup steps this answer lets run, so nothing was recorded',
+        "it is written as the program's name on any cleanup steps the answer lets run, and respond checks it before reading the run, so nothing was recorded",
       );
       const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
       const runStore = new JsonFileStore();

@@ -180,8 +180,15 @@ Each number is an object: `value` is the sum over the requests that reported it,
 For an agent step whose output a caller passed in over MCP, the attempt has no cost:
 
 ```json
-{ "attempt": 1, "status": "success", "cost_unrecorded": "not_driven_by_realm" }
+{
+  "attempt": 1,
+  "status": "success",
+  "driven_by": { "by": "ana@build-01", "by_source": "derived", "channel": "mcp-stdio" },
+  "cost_unrecorded": "not_driven_by_realm"
+}
 ```
+
+`driven_by` names the program that recorded the attempt, here Realm's MCP server. `not_driven_by_realm` says that the model call which produced the output was not made by Realm, so Realm has no cost for it.
 
 ## Health findings
 

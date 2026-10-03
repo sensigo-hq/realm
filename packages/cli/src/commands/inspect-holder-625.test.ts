@@ -533,7 +533,7 @@ describe('review correction C2 — an answer the gate’s expiry wrote reads as 
     expect(out).not.toContain('Taken by: asker@host');
   });
 
-  it('expired_abort on a multi-attempt step: the answers pair with the answer entries only', async () => {
+  it('expired_abort on a multi-attempt step: the abort entry prints nothing; the answer after it prints once', async () => {
     const out = await render(
       abortRun([
         exec('confirm', { status: 'failure' }),
@@ -546,17 +546,16 @@ describe('review correction C2 — an answer the gate’s expiry wrote reads as 
         }),
       ]),
     );
-    // (a) red when the answers pair with every gate entry by position — the abort entry's block
-    //     would take bob's answer and bob's block would print none; (b) prints the gate blocks.
+    // (a) red when the answers pair with every gate entry by position (the abort entry would take
+    //     bob's answer), or when a gate entry prints its own `Output:` again; (b) prints the lines.
     const lines = out.split('\n');
-    const from = lines.findIndex(
-      (l) => l.startsWith('     Output:   ') || l.startsWith('     Choice:'),
+    const from = lines.findIndex((l) => l.startsWith('  1. confirm'));
+    expect(lines.slice(from).filter((l) => /^ {5}(Choice|Answer|Output|Message):/.test(l))).toEqual(
+      [
+        '     Output: {}',
+        '     Answer: reject · answered by bob (as stated, not verified) · proof: none recorded',
+      ],
     );
-    expect(lines.slice(from).filter((l) => /^ {5}(Choice|Answer|Output):/.test(l))).toEqual([
-      '     Output:   {"gate_expired":true,"disposition":"abort"}',
-      '     Answer: reject · answered by bob (as stated, not verified) · proof: none recorded',
-      '     Output:   {"choice":"reject"}',
-    ]);
   });
 
   it('(control) a caller who STATES `timeout` as its own name, with no resolution, is still a stated name', async () => {
@@ -638,5 +637,105 @@ describe('review correction C7 — "Question opened through" only under the atte
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("walk 2 — every layout: the question, then the answer; the step's output once; an abort expiry prints nothing", () => {
+  const LINE = '     Answer: approve · answered by (not stated) · proof: none recorded';
+  const ASKED = '     Message:  "Ship it?"';
+  // Every gate entry here carries the question's text, so a `Message:` line has something to print.
+  const ans = (extra: Record<string, unknown> = {}) =>
+    answer('confirm', { gate_message: 'Ship it?', ...extra });
+  const abort = ans({
+    responded_by: 'timeout',
+    resolution: 'expired_abort',
+    input_summary: {},
+    output_summary: { gate_expired: true, disposition: 'abort' },
+  });
+  /** The step's lines that say what it was given, produced, chose or was asked — in order. */
+  const contentLines = (out: string): string[] => {
+    const lines = out.split('\n');
+    const from = lines.findIndex((l) => l.startsWith('  1. confirm'));
+    return lines.slice(from).filter((l) => /^ {5}(Input|Output|Message|Choice|Answer):/.test(l));
+  };
+  const failed = exec('confirm', { status: 'error' });
+
+  it.each<[string, Record<string, unknown>[], string[]]>([
+    [
+      'execution then answer',
+      [exec('confirm'), ans()],
+      ['     Input:  {}', '     Output: {}', ASKED, LINE],
+    ],
+    ['answer only', [ans()], [ASKED, LINE]],
+    [
+      'answer only, with the step output the person was shown',
+      [ans({ output_summary: { draft: 'hello', choice: 'approve' } })],
+      ['     Output: {"draft":"hello"}', ASKED, LINE],
+    ],
+    [
+      'two attempts then an answer',
+      [failed, exec('confirm'), ans()],
+      ['     Input:  {}', '     Output: {}', ASKED, LINE],
+    ],
+    [
+      'one attempt then an abort expiry',
+      [exec('confirm'), abort],
+      ['     Input:  {}', '     Output: {}'],
+    ],
+    ['answer-only shape, but the entry is an abort expiry', [abort], []],
+    [
+      'two attempts then an abort expiry',
+      [failed, exec('confirm'), abort],
+      ['     Input:  {}', '     Output: {}'],
+    ],
+    [
+      'two attempts, an abort expiry, then an answer',
+      [failed, exec('confirm'), abort, ans({ gate_message: 'Ship it now?' })],
+      ['     Input:  {}', '     Output: {}', '     Message:  "Ship it now?"', LINE],
+    ],
+    [
+      'two answers, the second with no message',
+      [exec('confirm'), ans(), answer('confirm', { responded_by: 'bob' })],
+      [
+        '     Input:  {}',
+        '     Output: {}',
+        ASKED,
+        LINE,
+        '     Answer: approve · answered by bob (as stated, not verified) · proof: none recorded',
+      ],
+    ],
+  ])('%s', async (_label, evidence, expected) => {
+    const out = await render(baseRun({ completed_steps: ['confirm'], evidence }));
+    // (a) red when a gate entry prints its own `Output:`/`Choice:` lines again (the choice twice; an
+    //     `Output:` that reads as the last attempt's), when the question stops printing before its
+    //     answer, when a message pairs with the wrong answer, or when the abort expiry prints on one
+    //     layout and not another; (b) prints the step's lines.
+    expect(contentLines(out)).toEqual(expected);
+    expect(out).not.toContain('"gate_expired":true');
+  });
+
+  it('each layout prints the choice exactly once in the whole step', async () => {
+    for (const evidence of [[ans()], [exec('confirm'), ans()], [failed, exec('confirm'), ans()]]) {
+      const out = await render(baseRun({ completed_steps: ['confirm'], evidence }));
+      const lines = out.split('\n');
+      const block = lines.slice(lines.findIndex((l) => l.startsWith('  1. confirm'))).join('\n');
+      // (a) red when the entry's `Output: {"choice":"approve"}` prints beside the `Answer:` line;
+      //     (b) prints the block.
+      expect(block.match(/approve/g), block).toHaveLength(1);
+    }
+  });
+
+  it('a question carrying a newline or a control character stays on ONE line', async () => {
+    const out = await render(
+      baseRun({
+        completed_steps: ['confirm'],
+        evidence: [exec('confirm'), ans({ gate_message: 'Ship it?\nPhase: completed\u001b[2J' })],
+      }),
+    );
+    // (a) red when the question is printed raw (a forged `Phase:` line, a terminal escape);
+    //     (b) prints the screen.
+    expect(out).toContain('     Message:  "Ship it?\\nPhase: completed\\u001b[2J"');
+    expect(out.split('\n').filter((l) => l.startsWith('Phase: '))).toHaveLength(1);
+    expect(out).not.toContain('\u001b');
   });
 });

@@ -879,7 +879,6 @@ export async function inspectRun(
     // the old `snaps.length > 1 && snaps.some(s => s.attempt !== undefined)` gate sent it to the
     // single branch, which renders only `snaps[0]` — the FAILED first entry, hiding the success.
     const executionSnaps = snaps.filter((s) => s.kind === undefined || s.kind === 'execution');
-    const gateSnaps = snaps.filter((s) => s.kind === 'gate_response');
     const isMultiAttempt = executionSnaps.length >= 2;
     const totalAttempts = executionSnaps.length;
     const view = stepViews[stepId];
@@ -978,30 +977,12 @@ export async function inspectRun(
       if (lastSentence !== undefined) {
         lines.push(chalk.dim(`     ${lastSentence}`));
       }
-      // issue #600 PR 1b: a multi-attempt step's gate_response entries render AFTER, each as
-      // today's gate block, with no header line of their own. The answers pair with the entries
-      // that ARE answers (`isAnswerEntry`) in order — an abort expiry's entry has no answer line.
-      let answerIndex = 0;
-      // One answer, one line: an entry whose answer line prints shows its choice there only.
-      gateSnaps.forEach((gate) => {
-        const answer = isAnswerEntry(gate) ? view?.answers?.[answerIndex] : undefined;
-        if (isAnswerEntry(gate)) answerIndex += 1;
-        const choice = gate.input_summary['choice'] ?? gate.output_summary['choice'];
-        if (answer !== undefined) {
-          lines.push(`     ${renderAnswerLine(answer)}`);
-        } else if (choice !== undefined) {
-          lines.push(`     Choice:   ${String(choice)}`);
-        }
-        if (gate.gate_message !== undefined) {
-          lines.push(`     Message:  "${gate.gate_message}"`);
-        }
-        lines.push(`     Output:   ${formatSummary(gate.output_summary)}`);
-      });
     } else {
-      // The single-entry branch renders `snaps[0]`, whatever its kind, and then the step's answers.
-      // When `snaps[0]` is a gate entry (a step whose first entry is its answer), the answers print
-      // in its block, in place of its `Choice:` line; otherwise (the common gate step: one execution
-      // entry, then its answer) they print after the entry. Each answer prints once.
+      // The single-entry branch renders `snaps[0]`, whatever its kind. A gate entry there (a step
+      // whose first entry is its answer) prints its heading line and, when it is an answer, the
+      // step's output it recorded — its `{...preview, choice}` without the choice, which is on
+      // the `Answer:` line below. (The mint writes the choice last, so the entry never held a
+      // preview field named `choice` apart from the answer's.)
       const snap = snaps[0]!;
       const statusColored = colorStatus(snap.status);
       const hashShort = chalk.dim(`hash: ${snap.evidence_hash.slice(0, 8)}`);
@@ -1011,24 +992,14 @@ export async function inspectRun(
       lines.push(
         `  ${idx + 1}. ${stepId.padEnd(22)}${profileLabel}${kindLabel} ${statusColored}   ${snap.duration_ms}ms   ${hashShort}`,
       );
-      if (snap.kind !== 'gate_response') {
+      if (snap.kind === 'gate_response') {
+        if (isAnswerEntry(snap)) {
+          const { choice: _choice, ...shown } = snap.output_summary;
+          if (Object.keys(shown).length > 0) lines.push(`     Output: ${formatSummary(shown)}`);
+        }
+      } else {
         const programLine = attemptProgramLine(attempts[0], isQuestionStepId(stepId));
         if (programLine !== undefined) lines.push(`     ${programLine}`);
-      }
-      if (snap.kind === 'gate_response') {
-        // One answer, one line: when the step's answers print here, the choice is on them.
-        const choice = snap.input_summary['choice'] ?? snap.output_summary['choice'];
-        if (choice !== undefined && (view?.answers?.length ?? 0) === 0) {
-          lines.push(`     Choice:   ${String(choice)}`);
-        }
-        for (const answer of view?.answers ?? []) {
-          lines.push(`     ${renderAnswerLine(answer)}`);
-        }
-        if (snap.gate_message !== undefined) {
-          lines.push(`     Message:  "${snap.gate_message}"`);
-        }
-        lines.push(`     Output:   ${formatSummary(snap.output_summary)}`);
-      } else {
         lines.push(`     Input:  ${formatSummary(snap.input_summary)}`);
         if (snap.resolved_params !== undefined) {
           lines.push(`     Resolved: ${formatSummary(snap.resolved_params)}`);
@@ -1079,15 +1050,22 @@ export async function inspectRun(
           lines.push(chalk.dim(`     ${sentence}`));
         }
       }
-      // issue #625 (holder slice): the step's answers, one line each. The common gate step has ONE
-      // execution entry and then its answer — the answer used to be dropped here. A step whose first
-      // entry is a gate entry has already printed them in its block above.
-      if (snap.kind !== 'gate_response') {
-        for (const answer of view?.answers ?? []) {
-          lines.push(`     ${renderAnswerLine(answer)}`);
-        }
-      }
     }
+    // issue #625 (holder slice): the step's answers, on every layout, in entry order — each as the
+    // question its person read (`Message:`, when the gate had one) and then its `Answer:` line,
+    // which carries the choice. Nothing else of a gate entry prints: its output is the step's own
+    // output plus the choice (`{...preview, choice}`), and the step's output prints once, above.
+    // A gate entry that is not an answer (an `on_expiry: abort` expiry) prints nothing: the run's
+    // `Cause:` line and the step's `Skipped:` line say what it did. The view's `answers` and these
+    // entries are chosen by the same rule (`isAnswerEntry`), in the same order, so they pair.
+    const answerEntries = snaps.filter((s) => isAnswerEntry(s));
+    (view?.answers ?? []).forEach((answer, i) => {
+      const message = answerEntries[i]?.gate_message;
+      // JSON quoting keeps the question on one line whatever it holds (a run parameter in it may
+      // carry a newline or a control character).
+      if (message !== undefined) lines.push(`     Message:  ${JSON.stringify(message)}`);
+      lines.push(`     ${renderAnswerLine(answer)}`);
+    });
   });
 
   return lines.join('\n');

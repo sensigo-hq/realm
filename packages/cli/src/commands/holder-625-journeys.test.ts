@@ -497,10 +497,13 @@ describe('A NAME THAT CANNOT BE USED — one line on stderr and exit 1 before an
     );
     expect(refused.code).toBe(1);
     // (a) red when the run is read first (a "Run not found" would print instead); (b) prints stderr.
-    // The consequence says why an answer depends on REALM_OPERATOR at all (it labels the cleanup
-    // steps the answer lets run — never the person who answered).
+    // The consequence says why an answer depends on REALM_OPERATOR at all (it names the program on
+    // the cleanup steps the answer lets run — never the person who answered) and why it refuses on
+    // a workflow with no cleanup steps (it is checked before the run is read).
     expect(refused.stderr.trim()).toBe(
-      LINE('it names the cleanup steps this answer lets run, so nothing was recorded'),
+      LINE(
+        "it is written as the program's name on any cleanup steps the answer lets run, and respond checks it before reading the run, so nothing was recorded",
+      ),
     );
   }, 30_000);
 

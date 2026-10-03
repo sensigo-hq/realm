@@ -224,6 +224,7 @@ The check reads the files and computes their hashes. It does not load or run the
 | `Output`                              | Always                                                  | What the step produced, cut in the same way.                                                                                                                                                                                                                                                                                                     |
 | `Taken by`, `Question opened through` | The attempt's entry names the program whose code ran it | The program, how its name is known, and the door, as in `In Progress`. On a step whose gate is open, has been answered or has expired, the line under its last attempt reads `Question opened through:` — the program through which the question was opened, not who answered it; earlier attempts read `Taken by:`. Added after version 0.45.0. |
 | `Trace`                               | The step recorded trace entries                         | How many.                                                                                                                                                                                                                                                                                                                                        |
+| `Message`                             | The answered gate had a message                         | The question as the person read it, in quotes, printed before its answer.                                                                                                                                                                                                                                                                        |
 | `Answer`                              | The step's gate was answered                            | One line for each answer: the choice, who answered, and the proof of the `claim_token`. See below. Added after version 0.45.0.                                                                                                                                                                                                                   |
 | `Tool calls`                          | An agent step called tools                              | One line for each call: the server, the tool and the time taken. `Tools declared, none called` if it had tools and used none.                                                                                                                                                                                                                    |
 | `Diagnostics`                         | The step is an agent or an auto step                    | An estimate of the input's size, the measured prompt and output tokens if `realm agent` drove the step, each precondition with its result, and what the provider reported about its cache.                                                                                                                                                       |
@@ -260,9 +261,10 @@ A step that ran more than once has one line for each attempt. `Input`, `Output` 
      Diagnostics (attempt 2/2): ~9 tokens (estimate, step input) | no preconditions
 ```
 
-A step with a gate prints its answer on one line:
+A step with a gate prints, for each answer, the question as the person read it (when the gate has a message) and then the answer on one line. Nothing else from the answer's entry is printed: the choice is on the `Answer:` line, and the step's output, when there is one, is the `Output:` line above it.
 
 ```text
+     Message:  "Approve the refund?"
      Answer: approve · answered by alice (as stated, not verified) · proof: no claim_token passed (the CLI never passes one; over MCP, only the conversation that opened the question has one to pass)
 ```
 
@@ -280,7 +282,7 @@ The answerer is the name the caller gave with `realm run respond --by` or `respo
 
 The proof never decides whether the answer was recorded. See [The claim token](../mcp/tools.md#the-claim-token).
 
-An answer the gate's expiry wrote with its default choice reads `Answer: hold · settled by the gate's expiry (no one answered)`, with no answerer and no proof part. An `on_expiry: abort` expiry answers nothing: the step has no `Answer:` line and is listed under `Skipped:` as `gate_expired`.
+An answer the gate's expiry wrote with its default choice reads `Answer: hold · settled by the gate's expiry (no one answered)`, with no answerer and no proof part. An `on_expiry: abort` expiry answers nothing: the step has no `Answer:` line, the expiry's entry prints no lines, and the step is listed under `Skipped:` as `gate_expired`. The run's `Cause:` line says the gate expired and the run aborted.
 
 **Exit code:** 0, or 1 if the run is not in the store.
 
