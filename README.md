@@ -235,3 +235,16 @@ npm audit signatures
 ## License
 
 Apache 2.0
+
+## Trademarks
+
+Realm and the Realm logo are trademarks of Sensigo Software. The Apache-2.0 license covers the source
+code in this repository; it does not grant permission to use the Realm name or logo (see section 6 of
+the license).
+
+You may use them to refer to Realm, to say that your project works with Realm, or in an article or
+talk. Please do not use them in a way that suggests your product is made or endorsed by Sensigo
+Software, and do not use them as the name or logo of a fork or derivative product. If you are not sure
+whether a use is allowed, open an issue.
+
+The logo files and the rules for using them are in [`brand-kit/`](brand-kit/).
