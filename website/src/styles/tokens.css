@@ -1,0 +1,103 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+@import './palette.css';
+
+/* Realm identity: the shared site palette (src/styles/palette.css), aliased to the names below. */
+:root {
+  --rm-bg: var(--c-bg);
+  --rm-bg2: var(--c-bg);
+  --rm-panel: var(--c-panel);
+  --rm-panel2: var(--c-panel2);
+  --rm-edge: var(--c-line);
+  --rm-edge-soft: var(--c-line-soft);
+  --rm-ink: var(--c-ink);
+  --rm-body: var(--c-body);
+  --rm-dim: var(--c-muted);
+  --rm-cy: var(--c-accent);
+  --rm-cy-dim: var(--c-accent);
+  --rm-warn: var(--c-warn);
+  /* the site's type scale: 16px body, 34px h1, 24px h2 */
+  --sl-text-body: 1rem;
+  --sl-text-h1: 2.125rem;
+  --sl-text-h2: 1.5rem;
+  --sl-text-h3: 1.1875rem;
+  --sl-text-h4: 1.0625rem;
+  --sl-text-h5: 1rem;
+}
+
+/* Map onto Starlight. */
+:root {
+  --sl-font: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --sl-font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sl-color-accent: var(--rm-cy);
+  --sl-color-accent-low: var(--rm-panel2);
+  --sl-color-accent-high: var(--rm-cy);
+  --sl-color-text: var(--rm-body);
+  --sl-color-text-accent: var(--rm-cy);
+  --sl-color-white: var(--rm-ink);
+  --sl-color-black: var(--rm-bg);
+  --sl-color-gray-1: var(--rm-ink);
+  --sl-color-gray-2: var(--rm-body);
+  --sl-color-gray-3: var(--rm-dim);
+  --sl-color-gray-4: var(--rm-edge);
+  --sl-color-gray-5: var(--rm-edge-soft);
+  --sl-color-gray-6: var(--rm-panel);
+  --sl-color-gray-7: var(--rm-panel2);
+  --sl-color-bg: var(--rm-bg);
+  --sl-color-bg-nav: var(--rm-bg2);
+  --sl-color-bg-sidebar: var(--rm-bg);
+  --sl-color-bg-inline-code: var(--rm-panel);
+  --sl-color-hairline: var(--rm-edge-soft);
+  --sl-color-hairline-light: var(--rm-edge-soft);
+  --sl-color-hairline-shade: var(--rm-edge-soft);
+}
+
+/* Headings: the site's sans, semibold. */
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4,
+.content-panel h1,
+h1#_top {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+/* Callouts: left rule + mono label. No icon, no box, no rounded corners. */
+.starlight-aside {
+  border: 0;
+  border-left: 2px solid var(--rm-cy);
+  border-radius: 0;
+  background: none;
+  padding: 2px 0 2px 20px;
+}
+.starlight-aside__icon {
+  display: none;
+}
+.starlight-aside__title {
+  font:
+    500 11px/1.4 'IBM Plex Mono',
+    monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--rm-cy);
+}
+.starlight-aside--caution {
+  border-left-color: var(--rm-warn);
+}
+.starlight-aside--caution .starlight-aside__title {
+  color: var(--rm-warn);
+}
+.starlight-aside--danger {
+  border-left-color: var(--c-danger);
+}
+.starlight-aside--danger .starlight-aside__title {
+  color: var(--c-danger);
+}
+
+.sl-markdown-content :not(a):not(strong) > code,
+.expressive-code .frame pre {
+  border-radius: 3px;
+}

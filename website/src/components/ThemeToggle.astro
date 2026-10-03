@@ -1,0 +1,53 @@
+---
+// The light/dark switch in the menu of the home and how-it-works pages.
+// It shows the icon of the theme in use, as the docs' switch does, and saves the choice under the
+// same key (src/lib/theme-init.mjs), so a choice made on any page holds on every page.
+import { THEME_KEY } from '../lib/theme-init.mjs';
+---
+
+<button class="theme-btn" type="button" data-theme-toggle>
+  <svg class="moon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"
+    ><path fill="currentColor" d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"></path></svg
+  >
+  <svg class="sun" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"
+    ><circle cx="12" cy="12" r="4.2" fill="currentColor"></circle><path
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.5 1.5M17.2 17.2l1.5 1.5M5.3 18.7l1.5-1.5M17.2 6.8l1.5-1.5"
+    ></path></svg
+  >
+</button>
+<script is:inline define:vars={{ THEME_KEY }}>
+  (function () {
+    var d = document.documentElement;
+    var btn = document.querySelector('[data-theme-toggle]');
+    if (!btn) return;
+    function label() {
+      var next = d.dataset.theme === 'light' ? 'dark' : 'light';
+      btn.setAttribute('aria-label', 'Switch to the ' + next + ' theme');
+      btn.setAttribute('title', 'Switch to the ' + next + ' theme');
+    }
+    btn.addEventListener('click', function () {
+      var next = d.dataset.theme === 'light' ? 'dark' : 'light';
+      d.dataset.theme = next;
+      try {
+        localStorage.setItem(THEME_KEY, next);
+      } catch (e) {}
+      label();
+    });
+    // The theme can change without a click here: another tab, or coming back with the Back button.
+    new MutationObserver(label).observe(d, { attributes: true, attributeFilter: ['data-theme'] });
+    window.addEventListener('storage', function (e) {
+      if (e.key !== THEME_KEY) return;
+      var v = e.newValue;
+      d.dataset.theme =
+        v === 'light' || v === 'dark'
+          ? v
+          : matchMedia('(prefers-color-scheme: light)').matches
+            ? 'light'
+            : 'dark';
+    });
+    label();
+  })();
+</script>
