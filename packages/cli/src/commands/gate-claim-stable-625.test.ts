@@ -11,7 +11,7 @@
 // afterwards — token, holder, since, deadline — AND the question is still open. Each carries the
 // change that turns it red and what it prints on failure: synthetic ids only.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -148,13 +148,18 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — the commands', () => {
   });
 
   it('gc --heal --force: rewrites a stale PHASE only — never the claim', async () => {
-    // Make the persisted phase stale (the case heal exists for), then heal for real.
-    const open = await store.get(runId);
-    await store.update({ ...open, run_phase: 'running' });
+    // The store re-derives the phase on every write, so a stale persisted phase cannot be planted
+    // through it: write the file directly — the case heal exists for.
+    const file = join(dir, `${runId}.json`);
+    const planted = JSON.parse(await readFile(file, 'utf8')) as RunRecord;
+    await writeFile(file, JSON.stringify({ ...planted, run_phase: 'running' }), 'utf8');
+    expect((JSON.parse(await readFile(file, 'utf8')) as RunRecord).run_phase).toBe('running');
     const result = await sweepStalePhases(store, { force: true, deriveRunPhase });
+    // (a) red when the heal fails or skips the record (the cell then proves nothing); (b) prints it.
     expect(result.failed).toEqual([]);
+    expect(result.healed).toHaveLength(1);
     const after = await expectStable();
-    expect(after.run_phase).toBe(deriveRunPhase(after));
+    expect(after.run_phase).toBe('gate_waiting');
   });
 
   it('migrate --stamp-seals --force: only terminal records are offered, so a live run is never rewritten', async () => {
