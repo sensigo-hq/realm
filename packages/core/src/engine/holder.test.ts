@@ -54,6 +54,7 @@ describe('the vocabularies — one const each, exactly these members', () => {
       'driver_not_recorded',
       'name_unreadable',
       'not_stated',
+      'settled_by_expiry',
     ]);
   });
   it('GATE_PROOFS and GATE_PROOF_CAUSES', () => {
@@ -165,12 +166,12 @@ describe('validateDriver — the five exact texts', () => {
       'Invalid driver.by: not a non-empty string.',
     ],
     // Issue #625, PR-H review correction C3: blank after trimming is `empty`, as for `--by`.
-    ['an empty by', { by: '', by_source: 'derived', channel: 'agent' }, 'Invalid driver.by: empty.'],
     [
-      'a blank by',
-      { by: '   ', by_source: 'stated', channel: 'x' },
+      'an empty by',
+      { by: '', by_source: 'derived', channel: 'agent' },
       'Invalid driver.by: empty.',
     ],
+    ['a blank by', { by: '   ', by_source: 'stated', channel: 'x' }, 'Invalid driver.by: empty.'],
     [
       'longer than 200 characters',
       { by: 'a'.repeat(201), by_source: 'derived', channel: 'agent' },
@@ -244,7 +245,9 @@ describe('composeProgramIdentity — precedence, refusals, and what cannot be de
 
   it('C3: an ambient name is stored without the spaces at either end', () => {
     // (a) red when REALM_OPERATOR is stored with its padding; (b) prints the driver.
-    expect(composeProgramIdentity({ ambient: ' ops-team ', osUser: 'u', osHost: 'h' }, 'agent')).toEqual({
+    expect(
+      composeProgramIdentity({ ambient: ' ops-team ', osUser: 'u', osHost: 'h' }, 'agent'),
+    ).toEqual({
       driver: { by: 'ops-team', by_source: 'ambient', channel: 'agent' },
     });
   });
@@ -350,7 +353,10 @@ describe('readStoredName / readAttributed — the one reader for a stored name',
       absent_cause: 'name_unreadable',
     });
     expect(
-      describeClaimHolder({ holder: { by: '   ', by_source: 'stated', channel: 'x' } } as never, true),
+      describeClaimHolder(
+        { holder: { by: '   ', by_source: 'stated', channel: 'x' } } as never,
+        true,
+      ),
     ).toEqual({ by: null, absent_cause: 'name_unreadable' });
   });
 

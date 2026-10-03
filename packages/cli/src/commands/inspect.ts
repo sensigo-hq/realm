@@ -42,8 +42,8 @@ import type {
 } from '@sensigo/realm';
 import { recomputeIdentity } from '../extensions/extension-identity.js';
 import {
+  ABSENCE_WORDS,
   UNSHOWABLE_NAME,
-  describeAbsence,
   describeProgram,
   renderAnswerLine,
 } from '../lib/holder-render.js';
@@ -452,9 +452,10 @@ function formatDiagnostics(
   return `${tokens}${prompt}${output} | preconditions: ${traceStr}${cache}`;
 }
 /**
- * issue #625 (holder slice): the line naming the program whose code did an attempt's work. A step
- * whose question is open or answered reads "Question opened through" (the program that OPENED it —
- * never who answered, never who is working on it); every other step reads "Taken by". An attempt
+ * issue #625 (holder slice): the line naming the program whose code did an attempt's work. The
+ * attempt that opened a step's question — the last attempt of a step whose question is open or
+ * answered — reads "Question opened through" (the program that OPENED it — never who answered,
+ * never who is working on it); every other attempt reads "Taken by". An attempt
  * with no recorded name prints nothing — its absence is withheld on this surface; a stored name
  * that cannot be shown prints the one unshowable phrase and no byte of the value.
  */
@@ -679,7 +680,7 @@ export async function inspectRun(
     const body =
       'holder' in described
         ? `${verb} ${describeProgram(described.holder)}`
-        : describeAbsence({ by: null, absent_cause: described.absent_cause });
+        : ABSENCE_WORDS[described.absent_cause];
     lines.push(`  ${step}: ${body}${age}`);
   }
   lines.push(`Failed: ${run.failed_steps.join(', ') || '(none)'}`);
@@ -885,7 +886,12 @@ export async function inspectRun(
         lines.push(
           `     (attempt ${ai + 1}/${totalAttempts})  ${statusColored}   ${snap.duration_ms}ms   ${hashShort}`,
         );
-        const programLine = attemptProgramLine(attempts[ai], isQuestionStepId(stepId));
+        // Only the last attempt opened the step's question; an earlier attempt that failed opened
+        // nothing and reads "Taken by".
+        const programLine = attemptProgramLine(
+          attempts[ai],
+          isQuestionStepId(stepId) && ai === executionSnaps.length - 1,
+        );
         if (programLine !== undefined) lines.push(`       ${programLine}`);
       });
       // Show Input/Output/Trace/Tool calls for the last attempt.
@@ -972,10 +978,10 @@ export async function inspectRun(
         lines.push(`     Output:   ${formatSummary(gate.output_summary)}`);
       });
     } else {
-      // The single-entry branch is otherwise UNCHANGED: it still renders `snaps[0]` alone,
-      // whatever its kind. A step with one execution entry and a gate_response renders exactly as
-      // today — a known, separately homed issue (the gate answer hidden when the gate step ran
-      // first → P4).
+      // The single-entry branch renders `snaps[0]`, whatever its kind, and then the step's answers.
+      // When `snaps[0]` is an answer (a step whose first entry is its answer), the answers print
+      // beside its `Choice:` line; otherwise (the common gate step: one execution entry, then its
+      // answer) they print after the entry. Each answer prints once.
       const snap = snaps[0]!;
       const statusColored = colorStatus(snap.status);
       const hashShort = chalk.dim(`hash: ${snap.evidence_hash.slice(0, 8)}`);
@@ -1053,9 +1059,12 @@ export async function inspectRun(
         }
       }
       // issue #625 (holder slice): the step's answers, one line each. The common gate step has ONE
-      // execution entry and then its answer — the answer used to be dropped here.
-      for (const answer of view?.answers ?? []) {
-        lines.push(`     ${renderAnswerLine(answer)}`);
+      // execution entry and then its answer — the answer used to be dropped here. A step whose first
+      // entry is an answer has already printed them beside `Choice:` above.
+      if (snap.kind !== 'gate_response') {
+        for (const answer of view?.answers ?? []) {
+          lines.push(`     ${renderAnswerLine(answer)}`);
+        }
       }
     }
   });

@@ -62,6 +62,7 @@ export type {
   Attributed,
   ActorAbsentCause,
   ActorAbsent,
+  ClaimHolderAbsentCause,
   GateProof,
   GateProofCause,
   GateClaimVerdict,

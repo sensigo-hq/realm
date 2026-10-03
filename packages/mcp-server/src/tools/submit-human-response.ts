@@ -94,9 +94,11 @@ export async function handleSubmitHumanResponse(
   // Issue #625: `responded_by` is bounded exactly as `realm run respond --by` is — refused before
   // anything is read or written, so nothing is recorded (#604's `responded_by` member: one helper
   // guards both doors).
+  // The checked name (spaces at either end removed) is what is passed on and stored.
+  let respondedBy: string | undefined;
   if (args.responded_by !== undefined) {
     try {
-      boundStatedName(args.responded_by, 'responded_by');
+      respondedBy = boundStatedName(args.responded_by, 'responded_by');
     } catch (err) {
       throw new WorkflowError(identityRefusalLine('responded_by', err, 'nothing was recorded'), {
         code: 'VALIDATION_ACTOR_INVALID',
@@ -137,9 +139,9 @@ export async function handleSubmitHumanResponse(
     gateId: args.gate_id,
     choice: args.choice,
     ...(registry !== undefined ? { registry } : {}),
-    // issue #279 (increment 2, PR-D; design record D-5): stored as given once it passes the bound
-    // above; never verified.
-    ...(args.responded_by !== undefined ? { respondedBy: args.responded_by } : {}),
+    // issue #279 (increment 2, PR-D; design record D-5): stored as checked above (spaces at either
+    // end removed); never verified.
+    ...(respondedBy !== undefined ? { respondedBy } : {}),
     // issue #625: judged inside the answer's write, never a reason to refuse it.
     ...(args.claim_token !== undefined ? { claimToken: args.claim_token } : {}),
     ...(stores?.driver !== undefined ? { driver: stores.driver } : {}),

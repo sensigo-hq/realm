@@ -274,7 +274,9 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
     // (a) red when a blank REALM_OPERATOR is refused or stored blank; (b) prints the entries.
     expect(
       (await store.get(runId)).evidence.filter((e) => e.step_id === 'fin').map((e) => e.driven_by),
-    ).toEqual([{ by: `${userInfo().username}@${hostname()}`, by_source: 'derived', channel: 'drain' }]);
+    ).toEqual([
+      { by: `${userInfo().username}@${hostname()}`, by_source: 'derived', channel: 'drain' },
+    ]);
   }, 30_000);
 
   it('(control) the same drain with no REALM_OPERATOR names the OS user and host as `derived`', async () => {

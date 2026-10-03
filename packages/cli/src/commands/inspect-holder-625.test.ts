@@ -337,11 +337,7 @@ describe('the answer line — the choice, the answerer, the proof in words', () 
       'could not be checked — already settled by its expiry',
     ],
     ['no verdict recorded', {}, 'none recorded'],
-    [
-      'settled by the gate’s expiry (a resolution, no verdict)',
-      { resolution: 'expired_default' },
-      "none recorded — settled by the gate's expiry",
-    ],
+    // (The expiry's answer line has no proof part since the review correction C2 — see below.)
     [
       'an unreadable verdict',
       { claim_proof: { proof: 'not-a-verdict' } },
@@ -442,7 +438,8 @@ describe('review correction C1 — each answer is printed ONCE, whatever the lay
   const answerLines = (out: string): string[] =>
     out.split('\n').filter((l) => /^\s*Answer: /.test(l));
   const LINE = '     Answer: approve · answered by (not stated) · proof: none recorded';
-  const LINE_BOB = '     Answer: approve · answered by bob (as stated, not verified) · proof: none recorded';
+  const LINE_BOB =
+    '     Answer: approve · answered by bob (as stated, not verified) · proof: none recorded';
   const layout = (evidence: Record<string, unknown>[]): RunRecord =>
     baseRun({ completed_steps: ['confirm'], evidence });
 
@@ -476,7 +473,10 @@ describe('review correction C2 — an answer the gate’s expiry wrote reads as 
   const answerLine = (out: string): string =>
     out.split('\n').find((l) => l.trim().startsWith('Answer: ')) ?? `<no Answer line:\n${out}>`;
   const expiryRun = (extra: Record<string, unknown>): RunRecord =>
-    baseRun({ completed_steps: ['confirm'], evidence: [exec('confirm'), answer('confirm', extra)] });
+    baseRun({
+      completed_steps: ['confirm'],
+      evidence: [exec('confirm'), answer('confirm', extra)],
+    });
 
   it("expired_default: `Answer: hold · settled by the gate's expiry (no one answered)` — no answerer, no proof", async () => {
     const out = await render(
@@ -489,7 +489,9 @@ describe('review correction C2 — an answer the gate’s expiry wrote reads as 
     );
     // (a) red when the expiry's literal `timeout` is read as a stated name again, or the line gains
     //     an answerer or proof part; (b) prints the line.
-    expect(answerLine(out)).toBe("     Answer: hold · settled by the gate's expiry (no one answered)");
+    expect(answerLine(out)).toBe(
+      "     Answer: hold · settled by the gate's expiry (no one answered)",
+    );
     expect(out).not.toContain('answered by timeout');
   });
 

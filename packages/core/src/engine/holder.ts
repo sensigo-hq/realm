@@ -46,6 +46,8 @@ export const ACTOR_ABSENT_CAUSES = [
   'name_unreadable',
   // An answer whose caller stated no name (produced by the step view).
   'not_stated',
+  // An answer the gate's expiry wrote: no one answered (produced by the step view).
+  'settled_by_expiry',
 ] as const;
 export type ActorAbsentCause = (typeof ACTOR_ABSENT_CAUSES)[number];
 
@@ -53,6 +55,16 @@ export interface ActorAbsent {
   by: null;
   absent_cause: ActorAbsentCause;
 }
+
+/** The causes a claim's holder can be absent for — exactly what {@link describeClaimHolder} returns. */
+export type ClaimHolderAbsentCause = Extract<
+  ActorAbsentCause,
+  | 'holder_not_recorded'
+  | 'pre_lease_claim'
+  | 'no_claim'
+  | 'store_keeps_no_claims'
+  | 'name_unreadable'
+>;
 
 /** What the answer's caller showed about the question's claim. Never a reason to refuse. */
 export const GATE_PROOFS = ['matched', 'absent', 'mismatch', 'unverifiable', 'spent'] as const;
@@ -127,12 +139,14 @@ export function boundStated(kind: 'by', text: string, field: string = kind): str
 }
 
 /**
- * A name a person or caller TYPED: refused when empty after trimming whitespace, then bounded.
- * `field` is what the refusal names (`--by`, `responded_by`, …). Returns the text unchanged.
+ * A name a person or caller TYPED: spaces at either end are removed first; the result is refused
+ * when empty, then bounded. `field` is what the refusal names (`--by`, `responded_by`, …). Returns
+ * the TRIMMED text — the caller stores that, never its raw input.
  */
 export function boundStatedName(text: string, field: string): string {
-  if (text.trim().length === 0) throw actorInvalid(field, NAME_REFUSAL_REASONS.empty);
-  return boundStated('by', text, field);
+  const trimmed = text.trim();
+  if (trimmed.length === 0) throw actorInvalid(field, NAME_REFUSAL_REASONS.empty);
+  return boundStated('by', trimmed, field);
 }
 
 /**
@@ -165,9 +179,12 @@ export function validateDriver(driver: unknown, field: string = 'driver'): void 
   if (driver === undefined) return;
   if (typeof driver !== 'object' || driver === null) throw actorInvalid(field, 'not an object');
   const d = driver as Record<string, unknown>;
-  if (typeof d['by'] !== 'string' || d['by'].length === 0) {
+  if (typeof d['by'] !== 'string') {
     throw actorInvalid(`${field}.by`, 'not a non-empty string');
   }
+  // Blank after trimming is `empty`, as for every stated name. The driver is not rewritten: an
+  // embedding program composes its name with `composeProgramIdentity`, which trims.
+  if (d['by'].trim().length === 0) throw actorInvalid(`${field}.by`, NAME_REFUSAL_REASONS.empty);
   boundStated('by', d['by'], `${field}.by`);
   if (!(BY_SOURCE_CLASSES as readonly unknown[]).includes(d['by_source'])) {
     throw actorInvalid(`${field}.by_source`, `not one of ${BY_SOURCE_CLASSES.join(', ')}`);
@@ -216,10 +233,12 @@ export function composeProgramIdentity(
       },
     };
   }
+  // An empty or blank REALM_OPERATOR counts as unset; a set one is stored without the spaces at
+  // either end.
   if (facts.ambient !== undefined && facts.ambient.trim().length > 0) {
     return {
       driver: {
-        by: boundStated('by', facts.ambient, 'REALM_OPERATOR'),
+        by: boundStated('by', facts.ambient.trim(), 'REALM_OPERATOR'),
         by_source: 'ambient',
         channel,
       },
@@ -282,6 +301,8 @@ export function readAttributed(value: unknown): Attributed | ActorAbsent {
   if (typeof by !== 'string' || typeof channel !== 'string') return unreadable;
   if (!(BY_SOURCE_CLASSES as readonly unknown[]).includes(source)) return unreadable;
   if (CONTROL_CHAR.test(by) || CONTROL_CHAR.test(channel)) return unreadable;
+  // A blank stored `by` is not a name: no byte of it is shown.
+  if (by.trim().length === 0) return unreadable;
   return { by: capName(by), by_source: source as BySourceClass, channel: capName(channel) };
 }
 
@@ -314,7 +335,9 @@ export function readDrivenBy(entry: { driven_by?: unknown } | undefined): Attrib
 export function describeClaimHolder(
   claim: Pick<ClaimRecord, 'holder' | 'since'> | undefined,
   storeKeepsClaims: boolean,
-): { holder: Attributed; since?: string } | (ActorAbsent & { since?: string }) {
+):
+  | { holder: Attributed; since?: string }
+  | (ActorAbsent & { absent_cause: ClaimHolderAbsentCause; since?: string }) {
   if (claim === undefined || claim === null) {
     return {
       by: null,
@@ -324,7 +347,7 @@ export function describeClaimHolder(
   const since = typeof claim.since === 'string' ? { since: claim.since } : {};
   if (claim.holder !== undefined) {
     const read = readAttributed(claim.holder);
-    if (read.by === null) return { ...read, ...since };
+    if (read.by === null) return { by: null, absent_cause: 'name_unreadable', ...since };
     return { holder: read as Attributed, ...since };
   }
   if (typeof claim.since === 'string')
@@ -404,24 +427,33 @@ export function composeGateClaimSentence(
   answerRecorded: boolean,
   tokenPresented: boolean,
 ): string | undefined {
-  const consequence = answerRecorded
-    ? 'the answer was recorded.'
-    : "this answer was not recorded: the question's deadline had passed and its expiry was carried out in this call.";
+  // When the answer was not recorded, the sentence is the token fact alone: the expiry's own
+  // sentence and `answer_recorded` already say it was not recorded.
   switch (verdict.proof) {
     case 'matched':
       return undefined;
     case 'absent':
-      return `No claim_token was passed; ${consequence} Only the conversation that opened the question has one to pass.`;
+      return answerRecorded
+        ? 'No claim_token was passed; the answer was recorded. Only the conversation that opened the question has one to pass.'
+        : 'No claim_token was passed.';
     case 'mismatch':
-      return `The claim_token passed is not this question's; ${consequence}`;
+      return answerRecorded
+        ? "The claim_token passed is not this question's; the answer was recorded."
+        : "The claim_token passed is not this question's.";
     case 'unverifiable':
       switch (verdict.cause) {
         case 'no_claim':
-          return `There is no claim to check a claim_token against — the gate step has no claim on this record; ${consequence}`;
+          return answerRecorded
+            ? 'There is no claim to check a claim_token against — the gate step has no claim on this record; the answer was recorded.'
+            : 'There is no claim to check a claim_token against — the gate step has no claim on this record.';
         case 'claim_has_no_token':
-          return `This question's claim carries no token, so the claim_token could not be checked; ${consequence}`;
+          return answerRecorded
+            ? "This question's claim carries no token, so the claim_token could not be checked; the answer was recorded."
+            : "This question's claim carries no token, so the claim_token could not be checked.";
         case 'store_keeps_no_claims':
-          return `This store keeps no claims, so a claim_token cannot be checked; ${consequence}`;
+          return answerRecorded
+            ? 'This store keeps no claims, so a claim_token cannot be checked; the answer was recorded.'
+            : 'This store keeps no claims, so a claim_token cannot be checked.';
       }
       return undefined;
     case 'spent':

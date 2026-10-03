@@ -256,13 +256,13 @@ export interface ExecuteChainOptions {
   driver?: Attributed;
 }
 
+/** issue #625: the one line added to a reply when a store keeping claims dropped the claimant. */
+const DROPPED_CLAIMANT_WARNING = 'this run store did not record who took the step';
+
 /**
  * Issue #625: the refusal for a malformed `driver`, or `undefined` when it is well formed (or
  * absent). Every exported entry that takes a driver calls this before it reads or writes anything.
  */
-/** issue #625: the one line added to a reply when a store keeping claims dropped the claimant. */
-const DROPPED_CLAIMANT_WARNING = 'this run store did not record who took the step';
-
 function driverRefusal(driver: Attributed | undefined): WorkflowError | undefined {
   try {
     validateDriver(driver);

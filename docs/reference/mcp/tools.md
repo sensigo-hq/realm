@@ -427,7 +427,7 @@ The reply that opens a gate carries `gate.claim_token`: the token of the claim t
 
 Pass it back as `claim_token` when you answer. It shows that the answer comes from the conversation that opened the question. It is not a secret: anyone who can read the run store can read it, and Realm cannot tell callers apart. It guards against mistakes and races, not against a caller who means harm. It is never required, and it never decides whether the answer is recorded. The answer is decided by the gate ID alone. An empty `claim_token` is accepted, and counts as a wrong one.
 
-Every `ok` reply to `submit_human_response` has `gate_claim`, including a reply with `answer_recorded: false`. A refused answer has none.
+Every `ok` reply to `submit_human_response` has `gate_claim`, including a reply with `answer_recorded: false`. A refused answer has none. `gate_claim` says only what the token showed; whether the answer was recorded is `answer_recorded`.
 
 ```json
 "gate_claim": {
@@ -448,7 +448,7 @@ The same word is stored on the answer's entry in the run's record as `claim_proo
 
 `opened_by` names the program through which the question was opened, not anyone who is working on it now. It holds `by` (the name), `by_source` (how the name is known: `stated`, `ambient` for the `REALM_OPERATOR` variable, or `derived` for the OS user and host name) and `channel` (the door: `mcp-stdio`, `mcp-http`, `agent`, `run`). When there is no name it is `{ "by": null, "absent_cause": … }`, with the word saying why: `holder_not_recorded` (the claim has no name), `pre_lease_claim` (the claim has no `since`: it was made before that field existed), `no_claim`, `store_keeps_no_claims`, `driver_not_recorded` (the step's entry has no name) or `name_unreadable` (a name is stored, and it is not one that can be shown).
 
-Unless the proof is `matched`, or is `spent` with no token passed, the reply also has one sentence in `warnings` about it. For `absent`: `No claim_token was passed; the answer was recorded. Only the conversation that opened the question has one to pass.` The sentence ends the clause about the token with `the answer was recorded.` or, for an answer that came after the gate's time was up, `this answer was not recorded: the question's deadline had passed and its expiry was carried out in this call.`
+Unless the proof is `matched`, or is `spent` with no token passed, the reply also has one sentence in `warnings` about it. For `absent`: `No claim_token was passed; the answer was recorded. Only the conversation that opened the question has one to pass.` On a reply with `answer_recorded: false` the sentence is the token fact alone (for `absent`: `No claim_token was passed.`): the expiry's own sentence and `answer_recorded` already say that the answer was not recorded.
 
 ## `get_run_state`
 

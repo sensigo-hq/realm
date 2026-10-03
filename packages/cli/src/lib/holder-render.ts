@@ -5,11 +5,10 @@
 // the MCP carriers. The wording rule on every surface: a PROGRAM, past tense ("taken by", "question
 // opened through"), with how its name is known. Never "is running", "is driving", "attended by".
 import type {
-  ActorAbsent,
-  ActorAbsentCause,
   AnswerView,
   Attributed,
   BySourceClass,
+  ClaimHolderAbsentCause,
   ClaimProofAbsentCause,
   GateClaimVerdict,
 } from '@sensigo/realm';
@@ -30,26 +29,20 @@ export const BY_SOURCE_WORDS: Record<BySourceClass, string> = {
 };
 
 /**
- * The absence words a CLAIM line or an ATTEMPT line can show — typed over exactly the causes those
- * lines can reach (`not_stated` belongs to an answer line, which has its own text).
+ * The absence words a CLAIM line can show — typed over exactly the causes `describeClaimHolder`
+ * returns. (An attempt line with no recorded name prints nothing; an answer line has its own text.)
  */
-export const ABSENCE_WORDS: Record<Exclude<ActorAbsentCause, 'not_stated'>, string> = {
+export const ABSENCE_WORDS: Record<ClaimHolderAbsentCause, string> = {
   holder_not_recorded: 'no program name was recorded on this claim',
   pre_lease_claim: 'claimed before program names were recorded',
   no_claim: 'no claim is recorded for this step',
   store_keeps_no_claims: 'this run store keeps no claims',
-  driver_not_recorded: 'no program name was recorded on this step',
   name_unreadable: UNSHOWABLE_NAME,
 };
 
 /** `mihai@host (from the OS user, via mcp-stdio)` — the program, how its name is known, the door. */
 export function describeProgram(a: Attributed): string {
   return `${a.by} (${BY_SOURCE_WORDS[a.by_source]}, via ${a.channel})`;
-}
-
-/** The absence word for a name that is not there. */
-export function describeAbsence(a: ActorAbsent): string {
-  return a.absent_cause === 'not_stated' ? '(not stated)' : ABSENCE_WORDS[a.absent_cause];
 }
 
 /** The proof part of an answer line, in words — never a code. */
@@ -69,16 +62,27 @@ export const PROOF_WORDS = {
   },
 } as const;
 
-export const PROOF_ABSENT_WORDS: Record<ClaimProofAbsentCause, string> = {
-  settled_by_expiry: "none recorded — settled by the gate's expiry",
+/**
+ * Why an answer line shows no proof — typed over the causes a proof part can show. An answer the
+ * gate's expiry wrote (`settled_by_expiry`) has no proof part at all (see {@link renderAnswerLine}).
+ */
+export const PROOF_ABSENT_WORDS: Record<
+  Exclude<ClaimProofAbsentCause, 'settled_by_expiry'>,
+  string
+> = {
   proof_not_recorded: 'none recorded',
   proof_unreadable: 'the recorded proof cannot be read',
 };
 
-function describeProof(answer: AnswerView): string {
-  const proof: GateClaimVerdict | undefined = answer.claim_proof;
+/** The line an answer the gate's expiry wrote reads after its choice: no answerer, no proof. */
+const SETTLED_BY_EXPIRY_WORDS = "settled by the gate's expiry (no one answered)";
+
+function describeProof(
+  proof: GateClaimVerdict | undefined,
+  absent: Exclude<ClaimProofAbsentCause, 'settled_by_expiry'> | undefined,
+): string {
   if (proof === undefined) {
-    return PROOF_ABSENT_WORDS[answer.claim_proof_absent ?? 'proof_not_recorded'];
+    return PROOF_ABSENT_WORDS[absent ?? 'proof_not_recorded'];
   }
   switch (proof.proof) {
     case 'matched':
@@ -97,10 +101,20 @@ function describeProof(answer: AnswerView): string {
 /**
  * One answer, one line: `Answer: <choice> · answered by <name> (as stated, not verified) ·
  * proof: <words>`. The answerer is the caller-STATED, unverified name — or `(not stated)` — or,
- * with no parentheses around it so nothing nests, the one unshowable phrase.
+ * with no parentheses around it so nothing nests, the one unshowable phrase. An answer the gate's
+ * expiry wrote reads `Answer: <choice> · settled by the gate's expiry (no one answered)`: no
+ * answerer part and no proof part, since both would repeat the same fact.
  */
 export function renderAnswerLine(answer: AnswerView): string {
   const by = answer.answered_by;
+  const choice = answer.choice ?? '(no choice recorded)';
+  const absent = answer.claim_proof_absent;
+  if (
+    (by.by === null && by.absent_cause === 'settled_by_expiry') ||
+    absent === 'settled_by_expiry'
+  ) {
+    return `Answer: ${choice} · ${SETTLED_BY_EXPIRY_WORDS}`;
+  }
   let answerer: string;
   if (by.by !== null) {
     answerer = `${by.by} (as stated, not verified)`;
@@ -109,6 +123,5 @@ export function renderAnswerLine(answer: AnswerView): string {
   } else {
     answerer = '(not stated)';
   }
-  const choice = answer.choice ?? '(no choice recorded)';
-  return `Answer: ${choice} · answered by ${answerer} · proof: ${describeProof(answer)}`;
+  return `Answer: ${choice} · answered by ${answerer} · proof: ${describeProof(answer.claim_proof, absent)}`;
 }

@@ -196,7 +196,7 @@ and `realm run list --stuck` says what would be done:
 Drained 2/2 run(s).
 ```
 
-After `settle_default`, the record says that the answer came from the time limit: it holds `"choice": "hold", "resolved_by": "timeout"` for the step. `realm run inspect` shows `Sealed by: gate_expiry_default (approve)` only when the expiry itself completed the run, with nothing left to run after the gate. When the run goes on, or a guard after the gate ends it, `inspect` prints the choice on an `Answer:` line whose answerer reads `timeout (as stated, not verified)` and whose proof reads `none recorded — settled by the gate's expiry`. The word `timeout` there is the time limit, not a person; the "as stated" label is wrong for it.
+After `settle_default`, the record says that the answer came from the time limit: it holds `"choice": "hold", "resolved_by": "timeout"` for the step. `realm run inspect` shows `Sealed by: gate_expiry_default (approve)` only when the expiry itself completed the run, with nothing left to run after the gate. When the run goes on, or a guard after the gate ends it, `inspect` prints `Answer: hold · settled by the gate's expiry (no one answered)`, and `get_run_state` gives that answer `answered_by: { "by": null, "absent_cause": "settled_by_expiry" }`.
 
 After `abort`, the run reads:
 

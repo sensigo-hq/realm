@@ -187,9 +187,11 @@ export const respondCommand = new Command('respond')
     ) => {
       // issue #625 (holder slice): both names are checked at the START, before the run is read, and
       // a name that cannot be used prints ONE line and exits 1 with nothing recorded.
+      // The checked name (spaces at either end removed) is what is passed on and stored.
+      let by: string | undefined;
       if (opts.by !== undefined) {
         try {
-          boundStatedName(opts.by, '--by');
+          by = boundStatedName(opts.by, '--by');
         } catch (err) {
           console.error(identityRefusalLine('--by', err, 'nothing was recorded'));
           process.exit(1);
@@ -229,7 +231,15 @@ export const respondCommand = new Command('respond')
           process.exit(1);
           return;
         }
-        const outcome = await respondToGate(runId, opts, runStore, workflowStore, registry, driver);
+        const { by: _rawBy, ...rest } = opts;
+        const outcome = await respondToGate(
+          runId,
+          { ...rest, ...(by !== undefined ? { by } : {}) },
+          runStore,
+          workflowStore,
+          registry,
+          driver,
+        );
         // issue #625: what the answer's write settled is said FIRST — the guard that ended the
         // run (with its reason and each finalizer's outcome), or each guard that passed — then
         // the one line that says whether the answer was recorded. Exit 0: the call succeeded.

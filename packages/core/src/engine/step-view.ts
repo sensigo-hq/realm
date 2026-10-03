@@ -93,11 +93,11 @@ export interface AttemptView {
 }
 
 /**
- * Issue #625 (the holder slice): one human answer to a step's question — read off a
- * `gate_response` entry. `answered_by` is the caller-STATED, unverified name (`stated` is true by
- * construction: the field's only producer is a caller-declared string), or why there is none.
- * `claim_proof` is the verdict recorded on the entry; when there is none, `claim_proof_absent`
- * says why — never a blank.
+ * Issue #625 (the holder slice): one answer to a step's question — read off a `gate_response`
+ * entry. `answered_by` is the caller-STATED, unverified name, or why there is none: an entry the
+ * gate's expiry wrote (it carries `resolution`) reads `settled_by_expiry` — no one answered — whatever
+ * its `responded_by` holds. `claim_proof` is the verdict recorded on the entry; when there is none,
+ * `claim_proof_absent` says why — never a blank.
  */
 export interface AnswerView {
   choice?: string;
@@ -207,14 +207,22 @@ function composeAnswerView(entry: Record<string, unknown>): AnswerView {
       : typeof outputChoice === 'string'
         ? outputChoice
         : undefined;
-  const answer: AnswerView = { answered_by: readAnswerer(entry['responded_by']) };
+  // An entry the gate's expiry wrote carries `resolution` (and the settlement's literal
+  // `responded_by: 'timeout'`, never migrated): no one answered. Keyed on `resolution`, never on the
+  // literal — a caller may state `timeout` as its own name.
+  const settledByExpiry = entry['resolution'] !== undefined;
+  const answer: AnswerView = {
+    answered_by: settledByExpiry
+      ? { by: null, absent_cause: 'settled_by_expiry' }
+      : readAnswerer(entry['responded_by']),
+  };
   if (choice !== undefined) answer.choice = choice;
   const proof = readGateClaimVerdict(entry['claim_proof']);
   if (proof !== undefined) {
     answer.claim_proof = proof;
   } else if (entry['claim_proof'] !== undefined) {
     answer.claim_proof_absent = 'proof_unreadable';
-  } else if (entry['resolution'] !== undefined) {
+  } else if (settledByExpiry) {
     answer.claim_proof_absent = 'settled_by_expiry';
   } else {
     answer.claim_proof_absent = 'proof_not_recorded';

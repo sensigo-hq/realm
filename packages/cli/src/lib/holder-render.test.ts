@@ -1,35 +1,30 @@
 // holder-render.test.ts — issue #625 (the holder slice, PR-H): the words a name's absence is printed
-// with. Every cause is pinned at the function — including the two that `realm run inspect` cannot
-// reach today (an attempt with no recorded name prints NO line; the answer line has its own
-// `(not stated)` text), so the map cannot lose a word without a cell turning red.
+// with on a CLAIM line. Every cause `describeClaimHolder` can return is pinned at the map, so the map
+// cannot lose a word without a cell turning red — and, typed over exactly those causes, it cannot
+// carry a word nothing shows (a stray key is a compile error).
 //
 // Each assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
-import { ACTOR_ABSENT_CAUSES } from '@sensigo/realm';
-import type { ActorAbsentCause, AnswerView } from '@sensigo/realm';
-import { UNSHOWABLE_NAME, describeAbsence, renderAnswerLine } from './holder-render.js';
+import type { AnswerView, ClaimHolderAbsentCause } from '@sensigo/realm';
+import { ABSENCE_WORDS, UNSHOWABLE_NAME, renderAnswerLine } from './holder-render.js';
 
-const WORDS: Record<ActorAbsentCause, string> = {
+const WORDS: Record<ClaimHolderAbsentCause, string> = {
   holder_not_recorded: 'no program name was recorded on this claim',
   pre_lease_claim: 'claimed before program names were recorded',
   no_claim: 'no claim is recorded for this step',
   store_keeps_no_claims: 'this run store keeps no claims',
-  driver_not_recorded: 'no program name was recorded on this step',
   name_unreadable: UNSHOWABLE_NAME,
-  not_stated: '(not stated)',
 };
 
-describe('describeAbsence — one word per cause', () => {
-  it.each(ACTOR_ABSENT_CAUSES.map((cause) => [cause, WORDS[cause]] as const))(
-    '%s ⇒ %s',
-    (cause, word) => {
-      // (a) red when a word changes or a cause is added without one; (b) prints the cause.
-      expect(describeAbsence({ by: null, absent_cause: cause })).toBe(word);
-    },
-  );
+describe('ABSENCE_WORDS — one word per cause a claim line can show', () => {
+  it.each(Object.entries(WORDS))('%s ⇒ %s', (cause, word) => {
+    // (a) red when a word changes; (b) prints the cause.
+    expect(ABSENCE_WORDS[cause as ClaimHolderAbsentCause]).toBe(word);
+  });
 
-  it('the table above covers every cause the vocabulary has (a new cause fails here first)', () => {
-    expect(Object.keys(WORDS).sort()).toEqual([...ACTOR_ABSENT_CAUSES].sort());
+  it('the map has exactly the causes a claim line can show — no word nothing can reach', () => {
+    // (a) red when a cause is added to or dropped from the map; (b) prints the keys.
+    expect(Object.keys(ABSENCE_WORDS).sort()).toEqual(Object.keys(WORDS).sort());
   });
 });
 

@@ -437,8 +437,10 @@ export interface EvidenceSnapshot {
    * Issue #279 (increment 2, PR-D; design record D-5): unenforced attribution passthrough for a
    * gate resolution — the caller-supplied identity of whoever made this gate choice, when
    * supplied. RECORDED, not enforced (D-5: the bearer-gateId-as-sole-credential model stays the
-   * authority; no arm reads this field). Present only on `gate_response` evidence entries whose
-   * caller supplied `respondedBy`/`responded_by`.
+   * authority; no arm reads this field). Present on `gate_response` evidence entries whose caller
+   * supplied `respondedBy`/`responded_by` — and on the entry the gate's EXPIRY writes, as the literal
+   * `'timeout'` beside `resolution` (no one answered; never migrated — the step view reads such an
+   * entry as `settled_by_expiry`, keyed on `resolution`).
    */
   responded_by?: string;
   /**
