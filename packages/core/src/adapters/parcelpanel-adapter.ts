@@ -2,6 +2,7 @@
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
 import { parseRetryAfterHeader } from './adapter-utils.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 const PARCELPANEL_DEFAULT_BASE_URL = 'https://open.parcelwill.com';
 // Previous domain https://open.parcelpanel.com deprecated as of 2026-02-11.
@@ -444,3 +445,5 @@ export class ParcelPanelAdapter implements ServiceAdapter {
     });
   }
 }
+
+brandClass(ParcelPanelAdapter, Symbol.for('@sensigo/realm/ParcelPanelAdapter'), REALM_BRAND);

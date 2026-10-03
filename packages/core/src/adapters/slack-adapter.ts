@@ -2,6 +2,7 @@
 import { WorkflowError } from '../types/workflow-error.js';
 import { takeParam } from './adapter-utils.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 export interface SlackAdapterConfig {
   webhook_url: string;
@@ -121,3 +122,5 @@ export class SlackAdapter implements ServiceAdapter {
     });
   }
 }
+
+brandClass(SlackAdapter, Symbol.for('@sensigo/realm/SlackAdapter'), REALM_BRAND);

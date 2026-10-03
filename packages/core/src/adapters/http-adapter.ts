@@ -1,6 +1,7 @@
 // GenericHttpAdapter — makes HTTP requests to any REST API using Node 24 native fetch.
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 export interface HttpAdapterConfig {
   base_url: string;
@@ -135,3 +136,5 @@ export class GenericHttpAdapter implements ServiceAdapter {
     return this.request('PATCH', operation, params, config, signal);
   }
 }
+
+brandClass(GenericHttpAdapter, Symbol.for('@sensigo/realm/GenericHttpAdapter'), REALM_BRAND);

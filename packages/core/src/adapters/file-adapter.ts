@@ -2,6 +2,7 @@
 import { readFile } from 'node:fs/promises';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 /**
  * FileSystemAdapter reads files from disk and returns their content as structured data.
@@ -114,3 +115,5 @@ export class FileSystemAdapter implements ServiceAdapter {
     });
   }
 }
+
+brandClass(FileSystemAdapter, Symbol.for('@sensigo/realm/FileSystemAdapter'), REALM_BRAND);

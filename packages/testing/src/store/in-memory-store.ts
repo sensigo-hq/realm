@@ -8,6 +8,7 @@ import {
   isStepSettledOrInFlight,
   applySettlement,
   assertSealIntegrity,
+  brandClass,
   type RunStore,
   type SealedBy,
   type StampSealResult,
@@ -18,6 +19,7 @@ import {
   type SettlementDelta,
   type SettlementResult,
 } from '@sensigo/realm';
+import { REALM_TESTING_BRAND } from '../brand.js';
 
 /** In-memory implementation of RunStore. Uses a Map keyed by run ID. No I/O, no locking. */
 export class InMemoryStore implements RunStore {
@@ -310,3 +312,5 @@ export class InMemoryStore implements RunStore {
     return all;
   }
 }
+
+brandClass(InMemoryStore, Symbol.for('@sensigo/realm-testing/InMemoryStore'), REALM_TESTING_BRAND);

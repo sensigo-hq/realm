@@ -196,6 +196,10 @@ export type { StepDiagnostics } from './types/run-record.js';
 // are already re-exported here via the top-of-file `export * from './types/run-record.js'` — the
 // wildcard is the export; this comment exists so a reader checking D4's requirement finds it.
 export { VERSION } from './version.js';
+// The release mark (issue #620 PR-B): every class a realm package exports carries one, so copies of
+// the same release recognise each other's objects.
+export { RELEASE_LINE_KEY, createRealmBrand, brandClass, REALM_BRAND } from './brand.js';
+export type { RealmBrand } from './brand.js';
 export type { ToolCallRecord, McpServerConfig } from './types/mcp-types.js';
 
 // Extensions

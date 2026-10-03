@@ -8,6 +8,11 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **The release mark: `brandClass`, `createRealmBrand`, `RELEASE_LINE_KEY`, `REALM_BRAND` and the
+  type `RealmBrand`, exported from `@sensigo/realm`.** Realm's own packages mark every class they
+  export with them, so that copies of one realm version recognise each other's objects. (Issue
+  #620.)
+
 - **`StepDiagnostics.cache`** — what a provider reported about prompt caching for an agent step's
   model calls, one entry per WIRE REQUEST, never per step: `UsageRecord[]` with the measured prompt
   size, the cache tokens read and written, and output tokens, each field present only when the
@@ -122,6 +127,17 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
 
 ### Changed
 
+- **BREAKING —** **`instanceof` on every class a realm package exports also answers true for an
+  object made by another copy of the same realm version** (the same `VERSION` string), user
+  subclasses included. Objects from any other version, even one patch apart, are not recognised.
+  With two copies of one version in a project, a handler's retryable `WorkflowError` is now tried
+  again instead of being replaced by `ENGINE_HANDLER_FAILED`, and a provider module extending the
+  other copy's `LlmProvider` is accepted by `realm agent --provider-module`. Act only if your code
+  relied on `instanceof` answering false for an object from another copy of the same version.
+  (Issue #620.)
+- **`atomicWriteFile`'s temp file is now `<path>.<pid>.<8 random hex>.tmp`, created exclusively.**
+  Nothing to do unless you match temp files by the old `<pid>.<n>.tmp` form. (Issue #620.)
+
 - **BREAKING —** **Every fenced trace-buffer operation takes its check as DATA, not a callback.**
   `TraceBufferStore.appendFenced` / `deleteFenced` / `deleteAllForRunFenced` / `sealFenced` take a
   `FencePredicate` — evaluated by the store itself, with the new `evaluateFence`, against the run it
@@ -155,8 +171,8 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   `FencedTraceBufferLaw` gains `'FENCE_DATA'`. Behaviour on realm's own stores is UNCHANGED for a
   store built with its run reader, in a process that loads one copy of `@sensigo/realm`: every
   refusal keeps the exact code, message, details, `retryable` and `agentAction` its old guard threw.
-  (With two copies — a project whose own `@sensigo/realm` falls outside `realm-cli`'s range — gc,
-  purge and reclaim classify a fence refusal in the wrong copy and fail closed; tracked in #620.)
+  Two copies of one version classify these refusals correctly; with copies of different versions,
+  gc, purge and reclaim still classify a fence refusal in the wrong copy and fail closed.
   New `@sensigo/realm` exports: `FencePredicate`, `FencePredicateKind`, `StepScopedFencePredicate`,
   `RunScopedFencePredicate`, `FenceRunReader`, `StepEligibilityState`, `StepMembershipState`,
   `FENCE_PREDICATE_KINDS`, `FENCE_REQUIRES_RUN`, `FENCE_TARGETS_STEP`, `isStepScopedFence`,
@@ -282,6 +298,19 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
     `add --force to carry it out.` Scripts that match the old line must be updated.
 
 ### Fixed
+
+- **With two copies of one realm version in a process, `realm run gc`, `purge` and `reclaim`
+  classify the other copy's refusals correctly.** Before: gc reaped no orphaned trace file
+  (`Run not found`), purge filed a resumed run under `failed` instead of `blocked`, and reclaim
+  stopped instead of skipping the step. Three more cases of the same kind now work: `realm workflow
+test` tries a project handler's retryable `WorkflowError` again instead of failing the fixture
+  after one attempt; the store checks of `@sensigo/realm-testing` pass against a store built with
+  the project's copy of `@sensigo/realm`; and an engine given a store built with another copy tries
+  a cleanup step's write again when the store answers that the run is busy, instead of leaving the
+  cleanup step pending. (Issue #620.)
+- **Two copies of realm writing one file at the same time no longer collide, whatever their
+  versions.** The two writers picked one temp file name, so a write was rejected (`ENOENT`) or the
+  file was left torn. (Issue #620.)
 
 - **An auto step that `realm agent` runs straight after an agent step no longer records that agent
   step's tool calls as its own.** `executeChain` handed the driven step's call metadata to every

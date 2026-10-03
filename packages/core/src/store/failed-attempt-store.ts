@@ -23,6 +23,7 @@ import {
   toArtifactDeleteFailedError,
 } from './fs-io.js';
 import type { ArtifactDeletionReport } from './per-run-artifact-store.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 /** The sidecar filename suffix — everything before it (the runId) is derived ONLY from the
  *  server-generated UUIDv4 runId, so stripping it back off is unambiguous (no delimiter
@@ -183,3 +184,5 @@ export class FailedAttemptStore implements PerRunArtifactStore, OrphanSweepableS
     return orphans;
   }
 }
+
+brandClass(FailedAttemptStore, Symbol.for('@sensigo/realm/FailedAttemptStore'), REALM_BRAND);

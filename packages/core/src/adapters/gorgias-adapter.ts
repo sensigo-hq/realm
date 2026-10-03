@@ -2,6 +2,7 @@
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
 import { parseRetryAfterHeader, redactErrorBody, takeParam } from './adapter-utils.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 /**
  * Configuration for GorgiasAdapter.
@@ -630,3 +631,5 @@ export class GorgiasAdapter implements ServiceAdapter {
     });
   }
 }
+
+brandClass(GorgiasAdapter, Symbol.for('@sensigo/realm/GorgiasAdapter'), REALM_BRAND);

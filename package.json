@@ -14,6 +14,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:versions": "node scripts/check-versions.mjs",
+    "check:brands": "node scripts/check-brands.mjs",
     "audit:ci": "audit-ci --config ./audit-ci.jsonc",
     "audit:full": "audit-ci --config ./audit-ci.tier2.jsonc",
     "deps:audit": "knip --dependencies --treat-config-hints-as-errors",

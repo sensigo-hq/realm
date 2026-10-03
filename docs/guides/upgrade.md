@@ -28,7 +28,7 @@ For the command installed for the whole machine:
 npm install -g @sensigo/realm-cli@latest
 ```
 
-In a project that lists Realm packages in its `package.json`, give every one of them the same exact version:
+In a project that lists Realm packages in its `package.json`, give every one of them the same exact version, the version of the `realm` command you just installed (0.45.0 in this example):
 
 ```bash
 npm install --save-exact @sensigo/realm@0.45.0 @sensigo/realm-cli@0.45.0
@@ -40,7 +40,7 @@ Then check that only one version is installed:
 npm ls @sensigo/realm
 ```
 
-It prints one version, with the other entries marked `deduped`:
+It prints one version, with the other entries marked `deduped`. That version must be the one `realm --version` prints: a `realm` command installed for the whole machine does not appear in `npm ls`.
 
 ```text
 ├─┬ @sensigo/realm-cli@0.45.0
@@ -52,7 +52,7 @@ It prints one version, with the other entries marked `deduped`:
 └── @sensigo/realm@0.45.0
 ```
 
-If you see two versions here, your code and the `realm` command are using two separate copies of Realm:
+If you see two versions here, your code and the project's `@sensigo/realm-cli` are using two different versions of Realm:
 
 ```text
 ├─┬ @sensigo/realm-cli@0.45.0
@@ -67,6 +67,8 @@ ENGINE_HANDLER_FAILED: Handler 'fetch_record' threw: upstream returned 503
 ```
 
 With both packages at 0.45.0, the same handler was retried and the run completed.
+
+Two copies of the same version work together: an error or a provider made with one copy is recognised by the other. This was added after version 0.45.0. On 0.45.0, your code and the command must share one copy: run the project's own command with `npx realm`. A `realm` command installed for the whole machine is a second copy, and fails as above even at the same version.
 
 ## 3. Check the workflows you have registered
 

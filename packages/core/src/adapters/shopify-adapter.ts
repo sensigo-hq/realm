@@ -2,6 +2,7 @@
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
 import { parseRetryAfterHeader } from './adapter-utils.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 
 const SHOPIFY_DEFAULT_API_VERSION = '2024-04';
 
@@ -325,3 +326,5 @@ export class ShopifyAdapter implements ServiceAdapter {
     });
   }
 }
+
+brandClass(ShopifyAdapter, Symbol.for('@sensigo/realm/ShopifyAdapter'), REALM_BRAND);
