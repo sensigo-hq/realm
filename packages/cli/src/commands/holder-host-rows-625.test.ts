@@ -71,6 +71,20 @@ const FINALIZER_YAML = [
   '',
 ].join('\n');
 
+describe('`realm run respond --by` — the option the operator reads in --help', () => {
+  it('is declared, optional, and says it is a stated name that is never verified', () => {
+    const option = respondCommand.options.find((o) => o.long === '--by');
+    // (a) red when the option goes, becomes required, or loses its description; (b) prints it.
+    expect(option).toBeDefined();
+    expect(option?.required).toBe(true); // takes a value (<name>) …
+    expect(option?.mandatory).toBe(false); // … but the flag itself is optional
+    expect(option?.description).toBe(
+      'Who made the choice, as you state it — recorded with the answer, not verified. At most 200 ' +
+        'characters, no control characters. Optional: the answer names its answerer only when this is given.',
+    );
+  });
+});
+
 describe('issue #625 PR-H — the host rows that run in-process', () => {
   let home: string;
   let proj: string;
