@@ -182,8 +182,9 @@ export function validateDriver(driver: unknown, field: string = 'driver'): void 
   if (typeof d['by'] !== 'string') {
     throw actorInvalid(`${field}.by`, 'not a non-empty string');
   }
-  // Blank after trimming is `empty`, as for every stated name. The driver is not rewritten: an
-  // embedding program composes its name with `composeProgramIdentity`, which trims.
+  // Blank after trimming is `empty`, as for every stated name. The driver is stored as given (an
+  // embedding program composes its name with `composeProgramIdentity`, which trims); every reader
+  // removes spaces at either end before it shows the name (`readAttributed`).
   if (d['by'].trim().length === 0) throw actorInvalid(`${field}.by`, NAME_REFUSAL_REASONS.empty);
   boundStated('by', d['by'], `${field}.by`);
   if (!(BY_SOURCE_CLASSES as readonly unknown[]).includes(d['by_source'])) {
@@ -276,22 +277,28 @@ function capName(text: string): string {
 }
 
 /**
- * Reads a name a person typed and a store kept (`responded_by`): the string itself, cut at 200
- * characters with the house marker when over-long; `undefined` when it is not a string, is empty or
- * whitespace-only, or carries a control character (nothing of it may reach any surface).
+ * Reads a name a person typed and a store kept (`responded_by`) by the writer's own rule: spaces at
+ * either end are removed first, then the name is cut at 200 characters with the house marker when
+ * over-long. `undefined` when it is not a string, is empty or whitespace-only, or carries a control
+ * character inside it (nothing of it may reach any surface). A name an embedding program stored with
+ * spaces at either end (its own `submitHumanResponse` call bounds nothing — #604) reads the same as
+ * the name the CLI and the MCP tool store.
  */
 export function readStoredName(value: unknown): string | undefined {
-  if (typeof value !== 'string' || value.trim().length === 0 || CONTROL_CHAR.test(value)) {
-    return undefined;
-  }
-  return capName(value);
+  if (typeof value !== 'string') return undefined;
+  const name = value.trim();
+  if (name.length === 0 || CONTROL_CHAR.test(name)) return undefined;
+  return capName(name);
 }
 
 /**
  * Reads a stored `Attributed` (a claim's `holder`, an entry's `driven_by`). Total: never throws.
  * A value that is not an object, whose `by` or `channel` is not a string, whose `by_source` is not a
- * member, or whose `by` or `channel` carries a control character is `name_unreadable` — no byte of it
- * is returned. An over-long `by` or `channel` is SHOWN, cut to 200 characters with the marker.
+ * member, whose `by` is blank, or whose `by` (after spaces at either end are removed) or `channel`
+ * carries a control character is `name_unreadable` — no byte of it is returned. The `by` it returns
+ * has no spaces at either end (the writer's rule: a `driver` an embedding program passes is stored
+ * as given, so the reader removes them). An over-long `by` or `channel` is SHOWN, cut to 200
+ * characters with the marker.
  */
 export function readAttributed(value: unknown): Attributed | ActorAbsent {
   const unreadable: ActorAbsent = { by: null, absent_cause: 'name_unreadable' };
@@ -300,10 +307,11 @@ export function readAttributed(value: unknown): Attributed | ActorAbsent {
   const { by, by_source: source, channel } = v;
   if (typeof by !== 'string' || typeof channel !== 'string') return unreadable;
   if (!(BY_SOURCE_CLASSES as readonly unknown[]).includes(source)) return unreadable;
-  if (CONTROL_CHAR.test(by) || CONTROL_CHAR.test(channel)) return unreadable;
-  // A blank stored `by` is not a name: no byte of it is shown.
-  if (by.trim().length === 0) return unreadable;
-  return { by: capName(by), by_source: source as BySourceClass, channel: capName(channel) };
+  // The writer's rule: spaces at either end are removed first; a blank `by` is not a name.
+  const name = by.trim();
+  if (name.length === 0) return unreadable;
+  if (CONTROL_CHAR.test(name) || CONTROL_CHAR.test(channel)) return unreadable;
+  return { by: capName(name), by_source: source as BySourceClass, channel: capName(channel) };
 }
 
 /**
@@ -419,8 +427,10 @@ export function readGateClaimVerdict(value: unknown): GateClaimVerdict | undefin
 
 /**
  * The ONE sentence a verdict adds to a reply's `warnings` (or `undefined` when it adds none). One
- * function, one string per verdict — never a fact split over two warnings, and no carrier composes a
- * sentence from `gate_claim`. `tokenPresented` is the engine's input, not a reply key.
+ * function, one string per verdict and outcome — never a fact split over two warnings, and no
+ * carrier composes a sentence from `gate_claim`. When the answer was not recorded the sentence is
+ * the token fact alone: the expiry's own sentence and `answer_recorded` already say so.
+ * `tokenPresented` is the engine's input, not a reply key.
  */
 export function composeGateClaimSentence(
   verdict: GateClaimVerdict,

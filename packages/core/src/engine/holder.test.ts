@@ -360,6 +360,27 @@ describe('readStoredName / readAttributed — the one reader for a stored name',
     ).toEqual({ by: null, absent_cause: 'name_unreadable' });
   });
 
+  it("F6: a stored name with spaces at either end reads WITHOUT them — the writer's rule, on read (both readers)", () => {
+    // (a) red when readAttributed / readStoredName return the stored value untrimmed (a driver an
+    //     embedding program passes is stored as given; inspect would print `taken by   ops   (…)`);
+    // (b) prints the value read.
+    expect(readAttributed({ by: '  ops  ', by_source: 'stated', channel: 'embed' })).toEqual({
+      by: 'ops',
+      by_source: 'stated',
+      channel: 'embed',
+    });
+    expect(readStoredName('  alice  ')).toBe('alice');
+    // Whitespace at the ends is removed BEFORE the control-character check, as the writer does
+    // (`boundStatedName`): a trailing tab is not inside the name.
+    expect(readStoredName('alice\t')).toBe('alice');
+    // CONTROL: a control character INSIDE the name still withholds it.
+    expect(readStoredName(' a\u0007b ')).toBeUndefined();
+    expect(readAttributed({ by: ' a\u0007b ', by_source: 'stated', channel: 'x' })).toEqual({
+      by: null,
+      absent_cause: 'name_unreadable',
+    });
+  });
+
   it('readDrivenBy: absent ⇒ driver_not_recorded; present ⇒ the same reader', () => {
     expect(readDrivenBy(undefined)).toEqual({ by: null, absent_cause: 'driver_not_recorded' });
     expect(readDrivenBy({})).toEqual({ by: null, absent_cause: 'driver_not_recorded' });

@@ -188,7 +188,8 @@ export interface ExecuteStepOptions {
    * known, and the host's channel. Written on the step's claim as `holder` (beside the `since` the
    * store stamps) and on the evidence of every attempt this call runs as `driven_by`. A label for
    * people and replies: never compared, never a reason to refuse. A malformed value is refused
-   * (`VALIDATION_ACTOR_INVALID`) before anything is read or written; absent ⇒ none recorded.
+   * (`VALIDATION_ACTOR_INVALID`) before anything is read or written; absent ⇒ none recorded. Stored
+   * as given; every reader shows `by` without spaces at either end.
    */
   driver?: Attributed;
 }

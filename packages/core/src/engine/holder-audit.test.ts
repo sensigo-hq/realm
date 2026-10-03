@@ -254,8 +254,10 @@ describe('every call of drainFinalizers and buildFinalizedSeal passes a driver e
 
 describe('the sentences of the proof are composed in one core file and written in no carrier', () => {
   const SENTENCES = [
-    'No claim_token was passed;',
-    "The claim_token passed is not this question's;",
+    // Stems, with no trailing punctuation: a sentence's end changes with the outcome (`;` when the
+    // answer was recorded, `.` when it was not); a carrier writing either form reds this cell.
+    'No claim_token was passed',
+    "The claim_token passed is not this question's",
     'There is no claim to check a claim_token against',
     "This question's claim carries no token",
     'This store keeps no claims, so a claim_token cannot be checked',

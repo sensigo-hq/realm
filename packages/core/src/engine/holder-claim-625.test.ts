@@ -20,6 +20,7 @@ import {
 import type { StepDispatcher } from './execution-loop.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { StepHandler } from '../extensions/step-handler.js';
+import { describeClaimHolder } from './holder.js';
 import type { Attributed } from './holder.js';
 import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -91,6 +92,19 @@ describe("the claim names its holder — in the claim's own write", () => {
     expect(sinceMs).toBeGreaterThanOrEqual(before);
     expect(sinceMs).toBeLessThanOrEqual(after);
     expect(typeof c?.token).toBe('string');
+  });
+
+  it('F6: a driver an embedding program passes with spaces is accepted, stored AS GIVEN, and read back without them', async () => {
+    const PADDED: Attributed = { by: '  embed-host  ', by_source: 'stated', channel: 'embed' };
+    const { claim, reply } = await claimWhileInProgress(oneAgentStep(), PADDED);
+    // (a) red when validateDriver refuses edge spaces, or the reader returns them; (b) prints the
+    //     reply status, the stored holder and the read.
+    expect(reply.status).toBe('ok');
+    expect(claim?.['work']?.holder).toEqual(PADDED);
+    expect(describeClaimHolder(claim!['work']!, true)).toEqual({
+      holder: { by: 'embed-host', by_source: 'stated', channel: 'embed' },
+      since: claim!['work']!.since,
+    });
   });
 
   it('a step taken WITHOUT a driver still carries since — and no holder key at all', async () => {

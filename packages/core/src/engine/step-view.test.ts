@@ -386,6 +386,15 @@ describe('composeStepViews — issue #625: answers', () => {
     expect(JSON.stringify(view)).not.toContain('mallory');
   });
 
+  it("F6: a responded_by stored with spaces at either end (an embedding program's own call) reads without them", () => {
+    const run = makeRun([answer({ responded_by: '  bob  ' })]);
+    // (a) red when readAnswerer hands the stored value through untrimmed; (b) prints the view.
+    expect(composeStepViews(run)['gate_step']!.answers![0]!.answered_by).toEqual({
+      by: 'bob',
+      by_source: 'stated',
+    });
+  });
+
   it('a non-string responded_by ⇒ name_unreadable', () => {
     const run = makeRun([answer({ responded_by: 42 })]);
     expect(composeStepViews(run)['gate_step']!.answers![0]!.answered_by).toEqual({

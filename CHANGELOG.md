@@ -155,8 +155,8 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   lines and one `Answer:` line for each answer; `realm run respond` gains `--by <name>`, the
   answerer's own stated name; and `VALIDATION_ACTOR_INVALID` refuses a stated name that is empty and
   any name longer than 200 characters or with a control character, before anything starts or is
-  recorded (spaces at either end of a name are removed; an empty or blank `REALM_OPERATOR` counts as
-  unset). New exports from `@sensigo/realm`: `composeProgramIdentity`, `boundStated`,
+  recorded (no name is shown with spaces at either end, and realm's own commands and tools store it
+  without them; an empty or blank `REALM_OPERATOR` counts as unset). New exports from `@sensigo/realm`: `composeProgramIdentity`, `boundStated`,
   `boundStatedName`, `identityRefusalLine`, `describeClaimHolder`, `judgeGateProof`,
   `composeGateClaimSentence`, the vocabularies `BY_SOURCE_CLASSES`, `ACTOR_ABSENT_CAUSES`,
   `GATE_PROOFS`, `GATE_PROOF_CAUSES` and `CLAIM_PROOF_ABSENT_CAUSES`, and the types `Attributed`,
