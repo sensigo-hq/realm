@@ -16,6 +16,8 @@ import {
 } from '@sensigo/realm';
 import type { HandleRunStores, FailedAttemptStoreLike } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
+import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
+import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
 
 /** Maximum `writer_nonce` length (issue #197 PR-2, design §6). */
 const WRITER_NONCE_MAX_LENGTH = 128;
@@ -195,6 +197,7 @@ export async function handleExecuteStep(
   },
   stores?: HandleRunStores,
 ): Promise<ResponseEnvelope> {
+  assertToolStores(stores, 'handleExecuteStep');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
   const run = await runStore.get(args.run_id);
@@ -248,6 +251,13 @@ export async function handleExecuteStep(
     stores?.registryProvider !== undefined
       ? await stores.registryProvider(definition)
       : stores?.registry;
+  // issue #620 PR-C: the registry rule — refused only on proof (another realm version), before any
+  // write. Covers the provider's result and the construction-time registry alike.
+  assertRegistryLine(
+    registry,
+    registryRole(stores, 'execute_step', 'handleExecuteStep'),
+    RealmExtensionRegistry,
+  );
 
   const result = await executeChain(runStore, definition, {
     runId: args.run_id,
@@ -287,6 +297,7 @@ export async function handleExecuteStepTool(
   },
   stores?: HandleRunStores,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  assertToolStores(stores, 'handleExecuteStepTool');
   try {
     const result = await handleExecuteStep(args, stores);
     return {
@@ -333,6 +344,7 @@ export async function handleExecuteStepTool(
 
 /** Registers the execute_step MCP tool on the server. */
 export function registerExecuteStep(server: McpServer, opts?: HandleRunStores): void {
+  markServedByTool(opts);
   server.tool(
     'execute_step',
     [

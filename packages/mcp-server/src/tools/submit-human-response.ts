@@ -12,6 +12,8 @@ import {
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
+import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
+import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
 
 /**
  * Business logic for the submit_human_response tool.
@@ -21,6 +23,7 @@ export async function handleSubmitHumanResponse(
   args: { run_id: string; gate_id: string; choice: string; responded_by?: string | undefined },
   stores?: HandleRunStores,
 ): Promise<ResponseEnvelope> {
+  assertToolStores(stores, 'handleSubmitHumanResponse');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
   const run = await runStore.get(args.run_id);
@@ -38,6 +41,13 @@ export async function handleSubmitHumanResponse(
     stores?.registryProvider !== undefined
       ? await stores.registryProvider(definition)
       : stores?.registry;
+  // issue #620 PR-C: the registry rule — refused only on proof (another realm version), before any
+  // write. Covers the provider's result and the construction-time registry alike.
+  assertRegistryLine(
+    registry,
+    registryRole(stores, 'submit_human_response', 'handleSubmitHumanResponse'),
+    RealmExtensionRegistry,
+  );
 
   return submitHumanResponse(runStore, definition, {
     runId: args.run_id,
@@ -51,6 +61,7 @@ export async function handleSubmitHumanResponse(
 
 /** Registers the submit_human_response MCP tool on the server. */
 export function registerSubmitHumanResponse(server: McpServer, opts?: HandleRunStores): void {
+  markServedByTool(opts);
   server.tool(
     'submit_human_response',
     "Advance a gate-waiting run by submitting the human's choice.",

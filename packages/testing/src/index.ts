@@ -9,6 +9,8 @@ export type {
   PerRunArtifactStoreContractAdapter,
 } from './store/per-run-artifact-store-contract.js';
 export { runStoreFidelityContract } from './store/run-store-fidelity-contract.js';
+// issue #620 PR-C: keeping a store's release-line declaration true.
+export { storeReleaseLineLaw } from './store/store-release-line-law.js';
 export type {
   RunStoreFidelityLaw,
   RunStoreFidelityContractCase,

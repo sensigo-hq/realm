@@ -3,6 +3,7 @@
 // A minimal hand-rolled RunStore double — handleGetRunState only ever calls `.get()`, so the
 // double only needs to implement that faithfully; every other method throws if reached, proving
 // it never is (mirrors get-run-state-fidelity-gate.test.ts's own double).
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -38,7 +39,7 @@ function makeRun(over: Partial<RunRecord> = {}): RunRecord {
 /** A fully-declaring store (no fidelity gate ever fires) — isolates run_health behavior from the
  *  store-fidelity caveats already covered by get-run-state-fidelity-gate.test.ts. */
 function makeFullFidelityStore(run: RunRecord): RunStore {
-  return {
+  return declared({
     persistsClaims: true,
     persistedRunRecordFields: new Set([
       'capability_blocks',
@@ -60,7 +61,7 @@ function makeFullFidelityStore(run: RunRecord): RunStore {
     async claimStep() {
       throw new Error('not exercised by get_run_state');
     },
-  };
+  });
 }
 
 const basicDef: WorkflowDefinition = {
@@ -214,7 +215,7 @@ describe('get_run_state — run_health (issue #221)', () => {
 
   it('the claims-field fidelity caveat fires when the store declares persistsClaims: false', async () => {
     const run = makeRun({ updated_at: new Date().toISOString() }); // recent — isolate from run_health
-    const store: RunStore = {
+    const store: RunStore = declared({
       persistsClaims: false,
       persistedRunRecordFields: new Set([
         'capability_blocks',
@@ -236,7 +237,7 @@ describe('get_run_state — run_health (issue #221)', () => {
       async claimStep() {
         throw new Error('not exercised');
       },
-    };
+    });
     const summary = await handleGetRunState({ run_id: 'r1' }, { runStore: store });
     expect(summary.warnings).toBeDefined();
     expect(summary.warnings!.some((w) => w.includes("'claims'"))).toBe(true);

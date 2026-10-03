@@ -370,12 +370,14 @@ Build a new adapter and store for each case, as above. Several cases delete or d
 
 | Contract                      | For a store that implements                  | Laws | Cases with Realm's own store        |
 | ----------------------------- | -------------------------------------------- | ---- | ----------------------------------- |
-| `runStoreFidelityContract`    | `RunStore`                                   | 3    | 9, with `InMemoryStore`             |
-| `settlementContract`          | `RunStore` with `settleStep`                 | 54   | 134, with `InMemoryStore`           |
-| `perRunArtifactStoreContract` | `PerRunArtifactStore`                        | 6    | 6, with `FailedAttemptStore`        |
-| `fencedTraceBufferContract`   | `TraceBufferStore` with the fenced functions | 11   | 73, with `InMemoryTraceBufferStore` |
+| `runStoreFidelityContract`    | `RunStore`                                   | 4    | 10, with `InMemoryStore`            |
+| `settlementContract`          | `RunStore` with `settleStep`                 | 55   | 135, with `InMemoryStore`           |
+| `perRunArtifactStoreContract` | `PerRunArtifactStore`                        | 7    | 7, with `FailedAttemptStore`        |
+| `fencedTraceBufferContract`   | `TraceBufferStore` with the fenced functions | 12   | 74, with `InMemoryTraceBufferStore` |
 
 Every case in the last column passed. The store interfaces are in [Core library](core-library.md).
+
+Each contract has the law `STORE_RELEASE_LINE_TRUE`: the release line your store declares must be the line of the errors it throws. The case makes your store refuse something (a run that does not exist, an injected failure, a fence that refuses) and compares the two. `storeReleaseLineLaw(store, provokeRefusal)` runs the same check for any store kind: `provokeRefusal` must make the store throw one of its own errors. A test runner that lists the laws it runs must list this one, or the case is never run. The law and `storeReleaseLineLaw` were added after version 0.45.0; the counts above include them.
 
 ### `runStoreFidelityContract(adapter)`
 
@@ -385,11 +387,12 @@ Every case in the last column passed. The store interfaces are in [Core library]
 | `definition`  | A workflow with one step that can run at once. |
 | `stepName`    | That step's name.                              |
 
-| Law                   | A store passes when                                                                                                                          |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FIDELITY_HONESTY`    | Each record field it lists in `persistedRunRecordFields` comes back unchanged after a create, an update and a read. One case for each field. |
-| `SEALED_BY_ROUNDTRIP` | The record of how a run ended comes back unchanged.                                                                                          |
-| `CLAIM_SINGLE_OWNER`  | Of 2 claims of one step made at the same time, exactly 1 succeeds.                                                                           |
+| Law                       | A store passes when                                                                                                                          |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FIDELITY_HONESTY`        | Each record field it lists in `persistedRunRecordFields` comes back unchanged after a create, an update and a read. One case for each field. |
+| `SEALED_BY_ROUNDTRIP`     | The record of how a run ended comes back unchanged.                                                                                          |
+| `CLAIM_SINGLE_OWNER`      | Of 2 claims of one step made at the same time, exactly 1 succeeds.                                                                           |
+| `STORE_RELEASE_LINE_TRUE` | The release line the store declares is the line of the error it throws for a run that does not exist.                                        |
 
 A store that lists no fields gets no `FIDELITY_HONESTY` cases. `CLAIM_SINGLE_OWNER` races 2 calls in one process. It does not show that a store is safe across machines.
 
@@ -416,7 +419,7 @@ The failing case says what to do:
 [Mine] settlementContract: adapter.store declares settleStep, but adapter.settlementFixture is undefined — this is a WIRING GAP in the calling test file, not a store defect. Pass 'defaultSettlementFixture' from this module …
 ```
 
-The 54 laws:
+The 55 laws:
 
 ```text
 FRESH_APPLICATION, CONDITIONAL_NOOP, CONDITIONAL_NOOP_GRANDFATHERED, OWNERSHIP_REFUSAL,
@@ -432,10 +435,11 @@ SEAL_FRESH_WRITE_REFUSED, SEAL_ORPHAN_REFUSED, SEAL_ERASE_REFUSED, SEAL_UNKNOWN_
 STAMP_PRESERVES_UPDATED_AT, STAMP_BUMPS_VERSION_ONCE, STAMP_REFUSES_ON_VERSION_MOVE,
 STAMP_RETURNS_NOT_THROWS_PREDICATES, STAMP_IDEMPOTENT, STAMP_CLASSIFIED_ROUNDTRIP,
 SEAL_REWRITE_REFUSED, CWFS_SECOND_EPOCH, CWFS_ARRAY_ONCE, CURRENT_BEHAVIOR_PINNED,
-EXPIRE_ARM_MATRIX, EXPIRE_ABORT_CASCADE, EXPIRE_DEFAULT_RESOLVE, ADAPTER_WIRING
+EXPIRE_ARM_MATRIX, EXPIRE_ABORT_CASCADE, EXPIRE_DEFAULT_RESOLVE, ADAPTER_WIRING,
+STORE_RELEASE_LINE_TRUE
 ```
 
-Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, 53 of the laws have cases. `ADAPTER_WIRING` has one only when the adapter is incomplete.
+Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, 54 of the laws have cases. `ADAPTER_WIRING` has one only when the adapter is incomplete.
 
 `defaultSettlementFixture` has 3 functions: `minimalDefinition(stepNames)`, `withFinalizer(definition, name, onOutcome)` and `withGuard(definition, name, abortUnless, options?)`.
 
@@ -459,6 +463,7 @@ Types: `SettlementContractAdapter`, `SettlementContractCase`, `SettlementFixture
 | `L4_TYPED_REJECTION`        | the L3 rejection is a WorkflowError carrying a code and details.failures                   |
 | `L5_REPORT_SHAPE`           | both methods report zero for an absent run, and a positive figure for a seeded one         |
 | `L6_PREVIEW_EQUALS_RECEIPT` | on an unchanged run, statAllForRun equals the bytes a subsequent delete reports            |
+| `STORE_RELEASE_LINE_TRUE`   | the store's declared release line is the line of its own refusal (the L4 injected failure) |
 
 Types: `PerRunArtifactStoreContractAdapter`, `ArtifactStoreContractCase`, `ArtifactStoreLaw`.
 
@@ -473,7 +478,7 @@ Types: `PerRunArtifactStoreContractAdapter`, `ArtifactStoreContractCase`, `Artif
 | `fenceRunPark`                                 | With `'injected-reader'` | The run source's `park`. The cases use it to hold or fail the store's next read of a run.                                                            |
 | `lockProfile`, `bytesOracle`, raw byte readers | No                       | Optional extras. Without one, the checks that need it are skipped, and the case says so.                                                             |
 
-The 11 laws: `STRUCTURAL`, `FENCE_REFUSES`, `FENCE_DATA`, `CS_OCCUPANCY`, `PER_KEY_INDEPENDENCE`, `NO_SILENT_LOSS`, `CARRIAGE_ROUND_TRIP`, `SEAL`, `SEAL_BUDGET`, `PER_WRITER_BUDGET`, `VERBATIM`.
+The 12 laws: `STRUCTURAL`, `FENCE_REFUSES`, `FENCE_DATA`, `CS_OCCUPANCY`, `PER_KEY_INDEPENDENCE`, `NO_SILENT_LOSS`, `CARRIAGE_ROUND_TRIP`, `SEAL`, `SEAL_BUDGET`, `PER_WRITER_BUDGET`, `VERBATIM`, `STORE_RELEASE_LINE_TRUE`.
 
 Types: `FencedTraceBufferContractAdapter`, `FencedTraceBufferContractCase`, `FencedTraceBufferLaw`.
 

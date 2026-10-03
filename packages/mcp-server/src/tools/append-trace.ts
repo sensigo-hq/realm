@@ -25,6 +25,7 @@ import {
   writerNonceRequiredError,
 } from './execute-step.js';
 import { sseJsonStringify } from '../sse-json.js';
+import { assertToolStores } from './assert-tool-stores.js';
 
 export interface HandleAppendTraceStores {
   /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
@@ -194,6 +195,7 @@ export async function handleAppendTrace(
   },
   stores?: HandleAppendTraceStores,
 ): Promise<AppendTraceOkResult> {
+  assertToolStores(stores, 'handleAppendTrace');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
   const traceBufferStore = stores?.traceBufferStore;

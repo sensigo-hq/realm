@@ -16,6 +16,7 @@
 //     late-answer line reads from the record (`lateAnswerOutcome`).
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
+import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -181,6 +182,10 @@ const guardEntries = (run: RunRecord, step = 'check') =>
  * (wraps a real JsonFileStore; a core test cannot import realm-testing's in-memory store).
  */
 class NoSettleStepStore implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   readonly persistsClaims: boolean;
   readonly persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>;
   constructor(private readonly inner: JsonFileStore) {

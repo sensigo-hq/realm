@@ -13,6 +13,7 @@ import type { TraceBufferStore } from '../store/trace-buffer-store.js';
 import { storeDeclaresSeal } from '../store/trace-buffer-store.js';
 import { ReclaimVersionChanged, type FencePredicate } from '../store/fence-predicate.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import { assertReleaseLine } from '../release-line.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { classifyClaim, omitClaim, type ClaimState } from './claim-liveness.js';
 
@@ -366,6 +367,7 @@ export async function reclaimStep(
   stepName: string,
   options?: ReclaimStepOptions,
 ): Promise<ReclaimResult> {
+  assertReleaseLine(store, 'the run store handed to reclaimStep');
   const now = options?.now ?? new Date();
 
   // Guard — store capability: a store that drops `claims` cannot detect or recover a wedge.

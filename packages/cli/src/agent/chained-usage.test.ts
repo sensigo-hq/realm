@@ -5,6 +5,7 @@
 //
 // Driven through the real `runAgent`, so the whole path (driver → executeChain → save → both
 // surfaces) is under test, not only the engine's recursion.
+import { declared } from '../test-support/declared.js';
 import { it, expect, vi } from 'vitest';
 import type { RunRecord, RunStore, WorkflowDefinition } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
@@ -32,11 +33,11 @@ const def = {
   },
 } as WorkflowDefinition;
 
-const workflowStore = {
+const workflowStore = declared({
   register: async () => {},
   get: async () => def,
   list: async () => [def],
-} as never;
+} as never);
 
 it('one model call is counted once: on the agent step, on both inspect and get_run_state', async () => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -146,11 +147,11 @@ it("a chained step's REJECTED input does not re-attach the agent step's calls (c
       },
     },
   } as WorkflowDefinition;
-  const wf = {
+  const wf = declared({
     register: async () => {},
     get: async () => rejectDef,
     list: async () => [rejectDef],
-  } as never;
+  } as never);
   const registry = createDefaultRegistry();
   registry.register('handler', 'finish_handler', {
     id: 'finish_handler',
@@ -251,11 +252,11 @@ const contextDef = {
   id: 'chained-context',
   workflow_context: { doc: { source: { path: '/nonexistent/realm-chained-usage-context.md' } } },
 } as WorkflowDefinition;
-const contextWf = {
+const contextWf = declared({
   register: async () => {},
   get: async () => contextDef,
   list: async () => [contextDef],
-} as never;
+} as never);
 
 async function driveContext(store: RunStore) {
   const registry = createDefaultRegistry();

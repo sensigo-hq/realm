@@ -5,6 +5,7 @@ import { JsonWorkflowStore, WorkflowError } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 import { generateProtocol, type WorkflowProtocol } from '../protocol/generator.js';
 import type { HandleStores } from './list-workflows.js';
+import { assertToolStores } from './assert-tool-stores.js';
 
 /**
  * Issue #197 PR-2 (design §6): one brief affordance line teaching cooperating agents to mint
@@ -40,6 +41,7 @@ export async function handleGetWorkflowProtocol(
   args: { workflow_id: string },
   stores?: HandleStores,
 ): Promise<WorkflowProtocol> {
+  assertToolStores(stores, 'handleGetWorkflowProtocol');
   const store = stores?.workflowStore ?? new JsonWorkflowStore();
   const definition = await store.get(args.workflow_id);
   const protocol = generateProtocol(definition);

@@ -18,6 +18,8 @@ const LAWS: RunStoreFidelityLaw[] = [
   'FIDELITY_HONESTY',
   'CLAIM_SINGLE_OWNER',
   'SEALED_BY_ROUNDTRIP',
+  // issue #620 PR-C
+  'STORE_RELEASE_LINE_TRUE',
 ];
 
 const agentWf: WorkflowDefinition = {

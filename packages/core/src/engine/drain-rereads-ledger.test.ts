@@ -16,6 +16,7 @@
 // pass: fresh re-derivation sees the resolution immediately (via the SAME store's latest state) and
 // never attempts to lease it; a pass-start snapshot still tries — a wasted (harmless, but real)
 // round-trip a snapshot implementation would make that a re-reading one would not.
+import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -33,6 +34,10 @@ import type { StepHandler } from '../extensions/step-handler.js';
  *  (lease + mark both count) — the observable proxy for "did drainFinalizers even ATTEMPT this
  *  entry", independent of its outcome. */
 class CountingStore implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   readonly settleStepCallsByFinalizer = new Map<string, number>();
   readonly persistsClaims: boolean;
 

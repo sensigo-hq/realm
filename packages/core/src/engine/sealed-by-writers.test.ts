@@ -6,6 +6,7 @@
 // Each cell asserts the PERSISTED arm (read back through the store, not the in-memory return) AND
 // the finalizer-handler call count, because the guard classifier that reads the arm is what feeds
 // the finalizer drain: a wrong answer there silently runs the wrong cleanup.
+import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -22,6 +23,10 @@ import type { StepHandler } from '../extensions/step-handler.js';
 
 /** Forces the LEGACY (non-declaring) seal path — `settleStep` is never implemented. */
 class LegacyOnlyStore implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   readonly persistsClaims: boolean;
   constructor(private readonly inner: JsonFileStore) {
     this.persistsClaims = inner.persistsClaims;

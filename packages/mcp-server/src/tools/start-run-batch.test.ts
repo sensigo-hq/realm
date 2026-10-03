@@ -1,4 +1,5 @@
 // Integration tests for the start_run_batch tool business logic.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,7 @@ function mockWorkflow(id: string, paramsSchema?: Record<string, unknown>) {
 }
 
 function mockWorkflowStore(workflows: Record<string, ReturnType<typeof mockWorkflow>>) {
-  return {
+  return declared({
     get: async (id: string) => {
       const wf = workflows[id];
       if (!wf)
@@ -28,7 +29,7 @@ function mockWorkflowStore(workflows: Record<string, ReturnType<typeof mockWorkf
         });
       return wf;
     },
-  };
+  });
 }
 
 describe('handleStartRunBatch', () => {

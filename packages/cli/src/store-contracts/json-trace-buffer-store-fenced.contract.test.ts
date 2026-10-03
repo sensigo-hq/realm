@@ -36,6 +36,8 @@ const LAWS: FencedTraceBufferLaw[] = [
   'SEAL_BUDGET',
   'PER_WRITER_BUDGET',
   'VERBATIM',
+  // issue #620 PR-C
+  'STORE_RELEASE_LINE_TRUE',
 ];
 
 /** Recomputes the exact on-disk WAL filename `JsonTraceBufferStore`'s private `walPath` uses —

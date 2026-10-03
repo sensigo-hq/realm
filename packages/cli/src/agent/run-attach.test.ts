@@ -1,6 +1,7 @@
 // Tests for resolveRunAttach — the `realm agent --run-id` pre-attach semantics (v4):
 // extensions_load_failed written ONLY pre-execution, re-attach clears exactly that reason,
 // every other terminal reason keeps today's refusal.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import {
@@ -22,7 +23,7 @@ const DEFINITION: WorkflowDefinition = {
 };
 
 function makeWorkflowStore(): { get: (id: string) => Promise<WorkflowDefinition> } {
-  return { get: async () => DEFINITION };
+  return declared({ get: async () => DEFINITION });
 }
 
 function okLoader(): typeof loadProjectExtensions {
@@ -347,16 +348,17 @@ describe('resolveRunAttach — drift evidence (issue #119)', () => {
 // operator is told to do the one thing that cannot work, and the message does not say why.
 // =================================================================================================
 describe('resolveRunAttach — a not-found workflow says what to do about it', () => {
-  const notFoundStore = (): { get: (id: string) => Promise<WorkflowDefinition> } => ({
-    get: async (id: string) => {
-      throw new WorkflowError(`Workflow not found: ${id}`, {
-        code: 'STATE_WORKFLOW_NOT_FOUND',
-        category: 'STATE',
-        agentAction: 'report_to_user',
-        retryable: false,
-      });
-    },
-  });
+  const notFoundStore = (): { get: (id: string) => Promise<WorkflowDefinition> } =>
+    declared({
+      get: async (id: string) => {
+        throw new WorkflowError(`Workflow not found: ${id}`, {
+          code: 'STATE_WORKFLOW_NOT_FOUND',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: false,
+        });
+      },
+    });
 
   it('carries the remediation, HEDGED — this site cannot know the cause', async () => {
     // "most often", not "because": a wiped store, a different $HOME and an unregistered file all
@@ -396,11 +398,11 @@ describe('resolveRunAttach — a not-found workflow says what to do about it', (
     });
     const err = await resolveRunAttach(runId, {
       store,
-      workflowStore: {
+      workflowStore: declared({
         get: async () => {
           throw impostor;
         },
-      },
+      }),
       loadExtensions: okLoader(),
     }).catch((e: unknown) => e);
 
@@ -446,11 +448,11 @@ describe('resolveRunAttach — a not-found workflow says what to do about it', (
     });
     const err = await resolveRunAttach(runId, {
       store,
-      workflowStore: {
+      workflowStore: declared({
         get: async () => {
           throw legacy;
         },
-      },
+      }),
       loadExtensions: okLoader(),
     }).catch((e: unknown) => e);
 

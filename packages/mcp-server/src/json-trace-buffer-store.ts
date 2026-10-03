@@ -38,6 +38,7 @@ import {
   checkFenceWithReader,
   fenceReaderMissingError,
   isFenceRunReader,
+  assertReleaseLine,
 } from '@sensigo/realm';
 import type {
   AgentTraceEntry,
@@ -217,6 +218,7 @@ export class JsonTraceBufferStore
     if (!isFenceRunReader(runReader)) {
       throw fenceReaderMissingError('JsonTraceBufferStore');
     }
+    assertReleaseLine(runReader, 'the run reader handed to JsonTraceBufferStore');
     this.runsDir = runsDir;
     this.lockProfile = { ...DEFAULT_LOCK_PROFILE, ...lockProfile };
     this.runReader = runReader;

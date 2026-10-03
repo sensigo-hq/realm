@@ -1,6 +1,7 @@
 // get-run-state-steps.test.ts — issue #600 PR 1b (D7): `include_steps`'s own behaviour on
 // `get_run_state` — the opt-in gate, the isolation from the status path, and the two populations
 // (a live run, a terminal run) that reach the view through different definition sources.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import { WorkflowError } from '@sensigo/realm';
 import type {
@@ -13,7 +14,7 @@ import type {
 import { handleGetRunState } from './get-run-state.js';
 
 function makeStore(run: RunRecord): RunStore {
-  return {
+  return declared({
     persistsClaims: true,
     get: async () => run,
     create: async () => {
@@ -28,7 +29,7 @@ function makeStore(run: RunRecord): RunStore {
     claimStep: async () => {
       throw new Error('not exercised');
     },
-  } as unknown as RunStore;
+  } as unknown as RunStore);
 }
 
 function makeBase(overrides: Partial<RunRecord> = {}): RunRecord {
@@ -55,7 +56,7 @@ function makeBase(overrides: Partial<RunRecord> = {}): RunRecord {
 // (via private fields) is nominal — a structural fake needs the cast every other call site in this
 // file also uses, matching the house convention for a `WorkflowRegistrar`-shaped double.
 const notFound = (): JsonWorkflowStore =>
-  ({
+  declared({
     register: async () => {},
     list: async () => [],
     get: async () => {
@@ -66,11 +67,11 @@ const notFound = (): JsonWorkflowStore =>
         retryable: false,
       });
     },
-  }) as unknown as JsonWorkflowStore;
+  } as unknown as JsonWorkflowStore);
 
 function makeCountingWorkflowStore(): { store: JsonWorkflowStore; calls: () => number } {
   let n = 0;
-  const store: WorkflowRegistrar = {
+  const store: WorkflowRegistrar = declared({
     register: async () => {},
     list: async () => [],
     get: async () => {
@@ -82,7 +83,7 @@ function makeCountingWorkflowStore(): { store: JsonWorkflowStore; calls: () => n
         retryable: false,
       });
     },
-  };
+  });
   return { store: store as unknown as JsonWorkflowStore, calls: () => n };
 }
 
@@ -166,11 +167,11 @@ describe('#600 PR 1b (D7) — get_run_state include_steps', () => {
       version: 1,
       steps: { auto_step: { description: 'x', execution: 'auto' } },
     } as WorkflowDefinition;
-    const workflowStore = {
+    const workflowStore = declared({
       register: async () => {},
       list: async () => [definition],
       get: async () => definition,
-    } as unknown as JsonWorkflowStore;
+    } as unknown as JsonWorkflowStore);
     const run = makeBase({
       evidence: [
         {
@@ -208,11 +209,11 @@ describe('#600 PR 1b (D7) — get_run_state include_steps', () => {
       version: 1,
       steps: { agent_step: { description: 'x', execution: 'agent' } },
     } as WorkflowDefinition;
-    const workflowStore = {
+    const workflowStore = declared({
       register: async () => {},
       list: async () => [definition],
       get: async () => definition,
-    } as unknown as JsonWorkflowStore;
+    } as unknown as JsonWorkflowStore);
     const run = makeBase({
       terminal_state: true,
       run_phase: 'completed',

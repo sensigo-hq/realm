@@ -9,6 +9,7 @@
 //
 // A minimal hand-rolled RunStore double (the sibling files' precedent) — handleGetRunState only
 // ever calls `.get()`.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import type { RunRecord, RunStore, SealedBy } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
@@ -44,7 +45,7 @@ function makeRun(sealedBy: SealedBy | undefined, over: Partial<RunRecord> = {}):
 }
 
 function makeStore(run: RunRecord): RunStore {
-  return {
+  return declared({
     persistsClaims: true,
     async get() {
       return run;
@@ -61,7 +62,7 @@ function makeStore(run: RunRecord): RunStore {
     async claimStep() {
       throw new Error('not exercised by get_run_state');
     },
-  };
+  });
 }
 
 const state = (run: RunRecord) => handleGetRunState({ run_id: 'r1' }, { runStore: makeStore(run) });

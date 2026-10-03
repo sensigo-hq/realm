@@ -1,3 +1,5 @@
+import { declared } from '../test-support/declared.js';
+import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -4096,7 +4098,7 @@ describe('retry_after on ResponseEnvelope', () => {
   it('errorEnvelope includes retry_after when WorkflowError.retry_after is set (pre-execution path)', async () => {
     // Use a mock store whose get() throws a WorkflowError with retry_after set.
     // This exercises the makeErrorEnvelope(options, null, err) path in step 1.
-    const mockStore: import('../store/store-interface.js').RunStore = {
+    const mockStore: import('../store/store-interface.js').RunStore = declared({
       persistsClaims: store.persistsClaims,
       create: store.create.bind(store),
       get: async () => {
@@ -4111,7 +4113,7 @@ describe('retry_after on ResponseEnvelope', () => {
       update: store.update.bind(store),
       list: store.list.bind(store),
       claimStep: store.claimStep.bind(store),
-    };
+    });
 
     const envelope = await executeStep(mockStore, twoStepDef, {
       runId: 'any-run-id',
@@ -5656,6 +5658,10 @@ describe('#373 — the legacy fail seal names every failure', () => {
   /** A real JsonFileStore with `settleStep` never implemented — own-property masking, so
    *  `store.settleStep === undefined` holds and only the legacy path is reachable. */
   class LegacyOnlyStore implements RunStore {
+    // issue #620 PR-C: a test double declares this realm's release line.
+    static {
+      declareReleaseLine(this);
+    }
     readonly persistsClaims: boolean;
     constructor(private readonly inner: JsonFileStore) {
       this.persistsClaims = inner.persistsClaims;

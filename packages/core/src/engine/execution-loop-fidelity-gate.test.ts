@@ -1,5 +1,6 @@
 // execution-loop's workflow_context_snapshots / extension_identity field-fidelity gates (issue
 // #188, PR-2). Also proves the #119 WARN-never-gate flow is unaffected.
+import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -23,6 +24,10 @@ import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
  * the latter is the TCK's FIDELITY_HONESTY job (run-store-fidelity-contract.ts), not this test's.
  */
 class DeclaredFieldsOverrideStore implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   readonly persistsClaims: boolean;
   readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField>;
 
