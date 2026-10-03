@@ -87,6 +87,10 @@ export type ErrorCode =
   // to VALIDATION_TELEMETRY_CODES (execute-step.ts) — that set is for agent-repairable
   // submission defects; a bad `trust` is an authoring defect no agent can repair.
   | 'VALIDATION_TRUST_VALUE'
+  // issue #625 / holder slice (PR-H): a program's name (a `driver`, a stated `responded_by`, an
+  // environment-supplied name) is malformed — empty, over 200 characters, carrying a control
+  // character, or not a well-formed `Attributed`. Refused before anything is read or written.
+  | 'VALIDATION_ACTOR_INVALID'
   | 'STEP_HANDLER_ERROR'
   // ENGINE
   | 'ENGINE_INTERNAL'

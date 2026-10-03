@@ -53,19 +53,26 @@ import {
  * (never a silent omission) for a store that does not declare the relevant rung, mirroring the
  * `fenceForm: 'in-transaction'` skip precedent already established for the latch-based trio
  * laws below.
+ *
+ * EXPORTED as a const (issue #625) so a wiring file derives the list it runs from it: a law added
+ * here then runs everywhere the contract is wired, or is named, with a reason, in that file's
+ * `NOT_RUN` list.
  */
-export type FencedTraceBufferLaw =
-  | 'STRUCTURAL'
-  | 'FENCE_REFUSES'
-  | 'FENCE_DATA'
-  | 'CS_OCCUPANCY'
-  | 'PER_KEY_INDEPENDENCE'
-  | 'NO_SILENT_LOSS'
-  | 'CARRIAGE_ROUND_TRIP'
-  | 'SEAL'
-  | 'SEAL_BUDGET'
-  | 'PER_WRITER_BUDGET'
-  | 'VERBATIM';
+export const FENCED_TRACE_BUFFER_LAWS = [
+  'STRUCTURAL',
+  'FENCE_REFUSES',
+  'FENCE_DATA',
+  'CS_OCCUPANCY',
+  'PER_KEY_INDEPENDENCE',
+  'NO_SILENT_LOSS',
+  'CARRIAGE_ROUND_TRIP',
+  'SEAL',
+  'SEAL_BUDGET',
+  'PER_WRITER_BUDGET',
+  'VERBATIM',
+] as const;
+
+export type FencedTraceBufferLaw = (typeof FENCED_TRACE_BUFFER_LAWS)[number];
 
 /**
  * A single, framework-agnostic contract case. `run()` throws (rejects) on failure — any test

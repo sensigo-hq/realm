@@ -2,6 +2,7 @@
 import type { EvidenceSnapshot, RunPhase, SealArm } from './run-record.js';
 import type { AgentAction, ErrorCode } from './workflow-error.js';
 import type { LoaderWarning } from '../workflow/diagnostics.js';
+import type { ActorAbsent, Attributed, GateClaimVerdict } from '../engine/holder.js';
 
 export interface NextAction {
   instruction: {
@@ -58,6 +59,16 @@ export interface GateInfo {
    * same `computeGateDueState` derivation, which may differ from this snapshot).
    */
   first_reminder_due_at?: string;
+  /**
+   * Holder slice (PR-H): the claim token of the call that opened this question — the proof a caller
+   * of its answer may pass back (as `claim_token`) to show that the answer comes from the
+   * conversation that opened it. Present only on the two replies whose own call minted the claim,
+   * and only when the store minted a token. It is the ONE surface that carries a claim's token
+   * (also inside the answer instruction, both renderings). Not a secret: it guards against
+   * accidents and races, not malice — anyone who can read the store can read it, and realm has no
+   * authentication. Passing it back changes nothing about whether the answer is recorded.
+   */
+  claim_token?: string;
 }
 
 export interface ResponseEnvelope {
@@ -189,4 +200,17 @@ export interface ResponseEnvelope {
    * field, not the reply's prose, to tell a late answer from a recorded one.
    */
   answer_recorded?: false;
+  /**
+   * Holder slice (PR-H): present on the `ok` reply of every answer to a gate. `proof` says whether
+   * the caller passed back the `claim_token` of the reply that opened the question
+   * (`matched` · `absent` · `mismatch`), could not be checked (`unverifiable`, with its `cause`) or
+   * arrived after the question was settled (`spent`); `opened_by` names the PROGRAM through which
+   * the question was opened, in the past tense, with how its name is known. It changes nothing
+   * about the answer: the answer is decided by the gate id alone. A refused reply carries none.
+   */
+  gate_claim?: {
+    proof: GateClaimVerdict['proof'];
+    cause?: 'no_claim' | 'claim_has_no_token' | 'store_keeps_no_claims' | 'answered' | 'expired';
+    opened_by: Attributed | ActorAbsent;
+  };
 }

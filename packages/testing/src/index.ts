@@ -2,19 +2,28 @@
 
 // Store
 export { InMemoryStore } from './store/in-memory-store.js';
-export { perRunArtifactStoreContract } from './store/per-run-artifact-store-contract.js';
+export {
+  perRunArtifactStoreContract,
+  ARTIFACT_STORE_LAWS,
+} from './store/per-run-artifact-store-contract.js';
 export type {
   ArtifactStoreLaw,
   ArtifactStoreContractCase,
   PerRunArtifactStoreContractAdapter,
 } from './store/per-run-artifact-store-contract.js';
-export { runStoreFidelityContract } from './store/run-store-fidelity-contract.js';
+export {
+  runStoreFidelityContract,
+  RUN_STORE_FIDELITY_LAWS,
+} from './store/run-store-fidelity-contract.js';
 export type {
   RunStoreFidelityLaw,
   RunStoreFidelityContractCase,
   RunStoreFidelityContractAdapter,
 } from './store/run-store-fidelity-contract.js';
-export { fencedTraceBufferContract } from './store/fenced-trace-buffer-contract.js';
+export {
+  fencedTraceBufferContract,
+  FENCED_TRACE_BUFFER_LAWS,
+} from './store/fenced-trace-buffer-contract.js';
 export { createFenceRunSource, fenceTestRun } from './store/fence-run-source.js';
 export type {
   FenceRunSource,
@@ -27,7 +36,11 @@ export type {
   FencedTraceBufferContractCase,
   FencedTraceBufferContractAdapter,
 } from './store/fenced-trace-buffer-contract.js';
-export { settlementContract, defaultSettlementFixture } from './store/settlement-contract.js';
+export {
+  settlementContract,
+  defaultSettlementFixture,
+  SETTLEMENT_LAWS,
+} from './store/settlement-contract.js';
 export type {
   SettlementLaw,
   SettlementContractCase,

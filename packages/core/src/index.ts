@@ -31,6 +31,44 @@ export { decideIdempotencyPolicy } from './store/idempotency-policy.js';
 export type { IdempotencyDecision } from './store/idempotency-policy.js';
 export { executeStep } from './engine/execution-loop.js';
 /**
+ * Issue #625 holder slice (PR-H): the vocabulary and the pure functions for who took a step and how a
+ * caller proves it was handed the reply that opened a question. Core reads no environment and no OS
+ * fact; hosts read theirs and call `composeProgramIdentity`.
+ */
+export {
+  BY_SOURCE_CLASSES,
+  ACTOR_ABSENT_CAUSES,
+  GATE_PROOFS,
+  GATE_PROOF_CAUSES,
+  CLAIM_PROOF_ABSENT_CAUSES,
+  NAME_MAX_LENGTH,
+  NAME_CAP_MARKER,
+  NAME_REFUSAL_REASONS,
+  boundStated,
+  boundStatedName,
+  identityRefusalLine,
+  validateDriver,
+  composeProgramIdentity,
+  readStoredName,
+  readAttributed,
+  readDrivenBy,
+  readGateClaimVerdict,
+  describeClaimHolder,
+  judgeGateProof,
+  composeGateClaimSentence,
+} from './engine/holder.js';
+export type {
+  BySourceClass,
+  Attributed,
+  ActorAbsentCause,
+  ActorAbsent,
+  GateProof,
+  GateProofCause,
+  GateClaimVerdict,
+  ClaimProofAbsentCause,
+  ProgramIdentityFacts,
+} from './engine/holder.js';
+/**
  * Issue #600 PR 1a — exported so a RENDERER can pin the sentence it prints against the classifier
  * that produces the state, instead of hard-coding a state word beside a sentence. Without it the
  * cli's render table and this function can drift apart and the render cells then describe
@@ -174,6 +212,7 @@ export type {
   CostView,
   CostUnrecordedCause,
   AttemptView,
+  AnswerView,
   StepView,
   DriveFailureCost,
 } from './engine/step-view.js';

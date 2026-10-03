@@ -6,6 +6,11 @@
 // never one shared deep-equal probe (which every row would satisfy identically and nothing would
 // notice a dropped field).
 //
+// Issue #625 (the holder slice, PR-H) adds the claim's `ClaimRecord`, the name's `Attributed`, the
+// answer's `AnswerView`, `AttemptView.driven_by` and `StepView.answers`: `step_claims` and
+// `steps[].answers` carry them as data, and a field added to any of them stops BOTH surface
+// packages compiling until it is routed or waived with a reason.
+//
 // Waivers are allowed only for `basis`/`state` on context 4 (`drive_failure_costs`) — a drive
 // failure's usage carries no classification, `composeDriveFailureCosts` never sets either. Every
 // other row here renders; `only_request_index` is NOT waived on this context (unlike the CLI's
@@ -21,6 +26,9 @@ import type {
   StepView,
   CostUnrecordedCause,
   DriveFailureCost,
+  ClaimRecord,
+  Attributed,
+  AnswerView,
 } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
 
@@ -54,6 +62,8 @@ const moneyStepEarly = {
   step_id: 'money_step',
   kind: 'execution' as const,
   status: 'error' as const,
+  // PR-H: the program whose code did this attempt.
+  driven_by: { by: 'prog@host', by_source: 'derived' as const, channel: 'agent' },
   started_at: '2026-01-01T00:00:00.000Z',
   completed_at: '2026-01-01T00:00:01.000Z',
   duration_ms: 1,
@@ -144,6 +154,56 @@ const corruptStep = {
   },
 };
 
+// PR-H: the common gate step — ONE execution entry, then ONE answer (a stated name, no token).
+const gateStepExecution = {
+  step_id: 'gate_step',
+  kind: 'execution' as const,
+  status: 'success' as const,
+  started_at: '2026-01-01T00:00:00.000Z',
+  completed_at: '2026-01-01T00:00:01.000Z',
+  duration_ms: 1,
+  input_summary: {},
+  output_summary: {},
+  evidence_hash: 'g1',
+  driven_by: { by: 'asker@host', by_source: 'ambient' as const, channel: 'run' },
+};
+const gateStepAnswer = {
+  step_id: 'gate_step',
+  kind: 'gate_response' as const,
+  status: 'success' as const,
+  started_at: '2026-01-01T00:00:02.000Z',
+  completed_at: '2026-01-01T00:00:02.000Z',
+  duration_ms: 1,
+  input_summary: { choice: 'approve' },
+  output_summary: { choice: 'approve' },
+  evidence_hash: 'g2',
+  responded_by: 'alice',
+  claim_proof: { proof: 'absent' as const },
+};
+// An answer written before the proof existed, naming nobody.
+const oldGateExecution = {
+  step_id: 'old_gate_step',
+  kind: 'execution' as const,
+  status: 'success' as const,
+  started_at: '2026-01-01T00:00:00.000Z',
+  completed_at: '2026-01-01T00:00:01.000Z',
+  duration_ms: 1,
+  input_summary: {},
+  output_summary: {},
+  evidence_hash: 'g3',
+};
+const oldGateAnswer = {
+  step_id: 'old_gate_step',
+  kind: 'gate_response' as const,
+  status: 'success' as const,
+  started_at: '2026-01-01T00:00:02.000Z',
+  completed_at: '2026-01-01T00:00:02.000Z',
+  duration_ms: 1,
+  input_summary: { choice: 'reject' },
+  output_summary: { choice: 'reject' },
+  evidence_hash: 'g4',
+};
+
 const contextThreeRun = {
   id: 'r3',
   workflow_id: 'wf',
@@ -155,7 +215,17 @@ const contextThreeRun = {
   run_phase: 'completed',
   version: 1,
   params: {},
-  evidence: [moneyStepEarly, moneyStepLast, toolsStep, externalStep, corruptStep],
+  evidence: [
+    moneyStepEarly,
+    moneyStepLast,
+    toolsStep,
+    externalStep,
+    corruptStep,
+    gateStepExecution,
+    gateStepAnswer,
+    oldGateExecution,
+    oldGateAnswer,
+  ],
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:00:01.000Z',
   terminal_state: true,
@@ -245,10 +315,31 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
         probe: () =>
           expect(summary.steps!['corrupt_step']!.attempts[0]!.cost_unreadable).toBe(true),
       },
+      driven_by: {
+        surface: 'rendered',
+        // Data, so the CLASS stays a token here (the screen words it).
+        probe: () =>
+          expect(money.attempts[0]!.driven_by).toEqual({
+            by: 'prog@host',
+            by_source: 'derived',
+            channel: 'agent',
+          }),
+      },
     } satisfies Record<keyof AttemptView, DisclosureRoute>;
 
     const STEP_VIEW = {
       attempts: { surface: 'rendered', probe: () => expect(money.attempts).toHaveLength(2) },
+      answers: {
+        surface: 'rendered',
+        probe: () =>
+          expect(summary.steps!['gate_step']!.answers).toEqual([
+            {
+              choice: 'approve',
+              answered_by: { by: 'alice', by_source: 'stated' },
+              claim_proof: { proof: 'absent' },
+            },
+          ]),
+      },
     } satisfies Record<keyof StepView, DisclosureRoute>;
 
     const UNRECORDED_CAUSE = {
@@ -282,6 +373,140 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
       { runStore: makeStore(contextThreeRun) },
     );
     expect('steps' in summary).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// CONTEXT 3b — the holder slice (issue #625, PR-H): `step_claims` and `steps[].answers`.
+// ---------------------------------------------------------------------------------------------
+
+// A LIVE run: `step_claims` is withheld on a sealed one (the R3 terminal guard).
+const contextHolderRun = {
+  ...contextThreeRun,
+  id: 'r3b',
+  run_phase: 'running',
+  terminal_state: false,
+  in_progress_steps: ['claimed_step'],
+  claims: {
+    claimed_step: {
+      deadline: null,
+      token: 'claim-token-that-must-never-leave',
+      holder: { by: 'claimer@host', by_source: 'stated', channel: 'mcp-http' },
+      since: '2026-01-01T00:00:00.000Z',
+    },
+  },
+} as unknown as RunRecord;
+
+describe('#625 PR-H — context 3b, get_run_state.step_claims and the answer', () => {
+  it('runs every registry against the real JSON-round-tripped response', async () => {
+    const summary = await handleGetRunState(
+      { run_id: 'r3b', include_steps: true },
+      { runStore: makeStore(contextHolderRun) },
+    );
+    const claim = summary.step_claims![0]!;
+    const answer = summary.steps!['gate_step']!.answers![0]!;
+    const oldAnswer = summary.steps!['old_gate_step']!.answers![0]!;
+
+    const CLAIM_RECORD = {
+      deadline: {
+        surface: 'waived',
+        reason:
+          'not a holder-slice field: a stale or unknown-age claim reaches a runner as stuck_claims ' +
+          '(its state), never as the deadline itself',
+      },
+      token: {
+        surface: 'waived',
+        reason:
+          "the claim's token leaves the engine on the opening reply only (CLAIM_TOKEN_ONE_DOOR) — " +
+          'get_run_state never carries it',
+      },
+      holder: {
+        surface: 'rendered',
+        probe: () =>
+          expect(claim.holder).toEqual({
+            by: 'claimer@host',
+            by_source: 'stated',
+            channel: 'mcp-http',
+          }),
+      },
+      since: {
+        surface: 'rendered',
+        probe: () => expect(claim.since).toBe('2026-01-01T00:00:00.000Z'),
+      },
+    } satisfies Record<keyof ClaimRecord, DisclosureRoute>;
+
+    const ATTRIBUTED = {
+      by: {
+        surface: 'rendered',
+        probe: () => expect((claim.holder as Attributed).by).toBe('claimer@host'),
+      },
+      by_source: {
+        surface: 'rendered',
+        probe: () => expect((claim.holder as Attributed).by_source).toBe('stated'),
+      },
+      channel: {
+        surface: 'rendered',
+        probe: () => expect((claim.holder as Attributed).channel).toBe('mcp-http'),
+      },
+    } satisfies Record<keyof Attributed, DisclosureRoute>;
+
+    const ANSWER_VIEW = {
+      choice: { surface: 'rendered', probe: () => expect(answer.choice).toBe('approve') },
+      answered_by: {
+        surface: 'rendered',
+        probe: () => expect(answer.answered_by).toEqual({ by: 'alice', by_source: 'stated' }),
+      },
+      claim_proof: {
+        surface: 'rendered',
+        probe: () => expect(answer.claim_proof).toEqual({ proof: 'absent' }),
+      },
+      claim_proof_absent: {
+        surface: 'rendered',
+        // Data: the WORD (`proof_not_recorded`), not a phrase — the CLI words it.
+        probe: () => expect(oldAnswer.claim_proof_absent).toBe('proof_not_recorded'),
+      },
+    } satisfies Record<keyof AnswerView, DisclosureRoute>;
+
+    for (const registry of [CLAIM_RECORD, ATTRIBUTED, ANSWER_VIEW] as Array<
+      Record<string, DisclosureRoute>
+    >) {
+      for (const [field, route] of Object.entries(registry)) {
+        if (route.surface === 'rendered') route.probe();
+        else
+          expect(
+            route.reason.trim().length,
+            `waiver for '${field}' has an empty reason`,
+          ).toBeGreaterThan(0);
+      }
+    }
+    expect(
+      Object.entries(CLAIM_RECORD)
+        .filter(([, r]) => r.surface === 'waived')
+        .map(([f]) => f)
+        .sort(),
+    ).toEqual(['deadline', 'token']);
+    for (const registry of [ATTRIBUTED, ANSWER_VIEW] as Array<Record<string, DisclosureRoute>>) {
+      expect(Object.values(registry).filter((r) => r.surface === 'waived')).toEqual([]);
+    }
+  });
+
+  it('the claim token never appears anywhere in the response (one door)', async () => {
+    const summary = await handleGetRunState(
+      { run_id: 'r3b', include_steps: true },
+      { runStore: makeStore(contextHolderRun) },
+    );
+    // (a) red when step_claims (or any field) starts carrying the token; (b) prints the response.
+    expect(JSON.stringify(summary)).not.toContain('claim-token-that-must-never-leave');
+  });
+
+  it('step_claims is withheld on a sealed run (the R3 terminal guard is untouched)', async () => {
+    const sealed = {
+      ...contextHolderRun,
+      run_phase: 'completed',
+      terminal_state: true,
+    } as unknown as RunRecord;
+    const summary = await handleGetRunState({ run_id: 'r3b' }, { runStore: makeStore(sealed) });
+    expect('step_claims' in summary).toBe(false);
   });
 });
 

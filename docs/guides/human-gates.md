@@ -135,6 +135,16 @@ It prints:
 Responded: 64993bb2-6f65-47d9-801c-d008e9291a00 | choice 'send' | new state 'running'
 ```
 
+The answer names its answerer only if you say who with `--by`:
+
+```bash
+realm run respond 64993bb2-6f65-47d9-801c-d008e9291a00 --gate 39792a3a-f9c3-470a-b94c-c314fb254234 --choice send --by alice
+```
+
+Realm records the name as you give it and does not check it. It takes at most 200 characters, with no control characters, and `realm run inspect` shows it as `answered by alice (as stated, not verified)`. Without `--by` it shows `(not stated)`. `--by` names a person. It is never filled in from the operating system or from `REALM_OPERATOR`, which name a program.
+
+An AI assistant connected over MCP answers by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. That call carries the `claim_token` from the reply that opened the gate. See [The claim token](../reference/mcp/tools.md#the-claim-token).
+
 A choice that is not on the list is refused, and the gate stays open:
 
 ```text

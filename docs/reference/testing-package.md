@@ -370,12 +370,27 @@ Build a new adapter and store for each case, as above. Several cases delete or d
 
 | Contract                      | For a store that implements                  | Laws | Cases with Realm's own store        |
 | ----------------------------- | -------------------------------------------- | ---- | ----------------------------------- |
-| `runStoreFidelityContract`    | `RunStore`                                   | 3    | 9, with `InMemoryStore`             |
-| `settlementContract`          | `RunStore` with `settleStep`                 | 54   | 134, with `InMemoryStore`           |
+| `runStoreFidelityContract`    | `RunStore`                                   | 5    | 12, with `InMemoryStore`            |
+| `settlementContract`          | `RunStore` with `settleStep`                 | 55   | 145, with `InMemoryStore`           |
 | `perRunArtifactStoreContract` | `PerRunArtifactStore`                        | 6    | 6, with `FailedAttemptStore`        |
 | `fencedTraceBufferContract`   | `TraceBufferStore` with the fenced functions | 11   | 73, with `InMemoryTraceBufferStore` |
 
 Every case in the last column passed. The store interfaces are in [Core library](core-library.md).
+
+#### Running every law
+
+Each of four contracts exports the names of its laws as a list, so that a test file does not keep its own copy of them: `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`. They were added after version 0.45.0. Run the list, minus the laws that the file names in a `NOT_RUN` object with a reason for each:
+
+```js
+import { SETTLEMENT_LAWS } from '@sensigo/realm-testing';
+
+const NOT_RUN = {
+  ADAPTER_WIRING: 'has a case only when the adapter is mis-wired, and this file wires it',
+};
+const LAWS = SETTLEMENT_LAWS.filter((law) => !(law in NOT_RUN));
+```
+
+A law added to the contract then runs in the file with no edit, and a law the file leaves out is named in the file, with its reason.
 
 ### `runStoreFidelityContract(adapter)`
 
@@ -385,13 +400,15 @@ Every case in the last column passed. The store interfaces are in [Core library]
 | `definition`  | A workflow with one step that can run at once. |
 | `stepName`    | That step's name.                              |
 
-| Law                   | A store passes when                                                                                                                          |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FIDELITY_HONESTY`    | Each record field it lists in `persistedRunRecordFields` comes back unchanged after a create, an update and a read. One case for each field. |
-| `SEALED_BY_ROUNDTRIP` | The record of how a run ended comes back unchanged.                                                                                          |
-| `CLAIM_SINGLE_OWNER`  | Of 2 claims of one step made at the same time, exactly 1 succeeds.                                                                           |
+| Law                               | A store passes when                                                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FIDELITY_HONESTY`                | Each record field it lists in `persistedRunRecordFields` comes back unchanged after a create, an update and a read. One case for each field.                                                                                                                                                                                                                                                              |
+| `SEALED_BY_ROUNDTRIP`             | The record of how a run ended comes back unchanged.                                                                                                                                                                                                                                                                                                                                                       |
+| `CLAIM_SINGLE_OWNER`              | Of 2 claims of one step made at the same time, exactly 1 succeeds.                                                                                                                                                                                                                                                                                                                                        |
+| `CLAIM_NAMES_HOLDER`              | A claim made with a program's name reads back with that name as `holder`, and with a `since` between the moment before the call and the moment after it. A claim made without one reads back with `since` and no `holder`. Needs `persistsClaims`; a store that does not declare it gets one case, named `SKIPPED — store does not declare 'persistsClaims': claim holder round-trip`, that does nothing. |
+| `EVIDENCE_KEEPS_DRIVER_AND_PROOF` | An evidence entry written with `driven_by`, and a gate answer written with `claim_proof`, come back with both.                                                                                                                                                                                                                                                                                            |
 
-A store that lists no fields gets no `FIDELITY_HONESTY` cases. `CLAIM_SINGLE_OWNER` races 2 calls in one process. It does not show that a store is safe across machines.
+`claimStep` takes the program's name as an optional fourth argument, `claimant`; a store writes it as the claim's `holder`, and stamps `since` on every claim it makes. The two new laws were added after version 0.45.0. A store that lists no fields gets no `FIDELITY_HONESTY` cases. `CLAIM_SINGLE_OWNER` races 2 calls in one process. It does not show that a store is safe across machines.
 
 Types: `RunStoreFidelityContractAdapter`, `RunStoreFidelityContractCase`, `RunStoreFidelityLaw`.
 
@@ -416,7 +433,7 @@ The failing case says what to do:
 [Mine] settlementContract: adapter.store declares settleStep, but adapter.settlementFixture is undefined — this is a WIRING GAP in the calling test file, not a store defect. Pass 'defaultSettlementFixture' from this module …
 ```
 
-The 54 laws:
+The 55 laws:
 
 ```text
 FRESH_APPLICATION, CONDITIONAL_NOOP, CONDITIONAL_NOOP_GRANDFATHERED, OWNERSHIP_REFUSAL,
@@ -432,10 +449,13 @@ SEAL_FRESH_WRITE_REFUSED, SEAL_ORPHAN_REFUSED, SEAL_ERASE_REFUSED, SEAL_UNKNOWN_
 STAMP_PRESERVES_UPDATED_AT, STAMP_BUMPS_VERSION_ONCE, STAMP_REFUSES_ON_VERSION_MOVE,
 STAMP_RETURNS_NOT_THROWS_PREDICATES, STAMP_IDEMPOTENT, STAMP_CLASSIFIED_ROUNDTRIP,
 SEAL_REWRITE_REFUSED, CWFS_SECOND_EPOCH, CWFS_ARRAY_ONCE, CURRENT_BEHAVIOR_PINNED,
-EXPIRE_ARM_MATRIX, EXPIRE_ABORT_CASCADE, EXPIRE_DEFAULT_RESOLVE, ADAPTER_WIRING
+EXPIRE_ARM_MATRIX, EXPIRE_ABORT_CASCADE, EXPIRE_DEFAULT_RESOLVE, GATE_PROOF_NEVER_GATES_THE_ANSWER,
+ADAPTER_WIRING
 ```
 
-Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, 53 of the laws have cases. `ADAPTER_WIRING` has one only when the adapter is incomplete.
+Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, 54 of the laws have cases. `ADAPTER_WIRING` has one only when the adapter is incomplete.
+
+`GATE_PROOF_NEVER_GATES_THE_ANSWER` was added after version 0.45.0. It answers one question: does a token passed with a gate answer change anything but the `claim_proof` on the answer's entry? For each way a token can relate to the claim (`matched`, `absent`, `mismatch`, and each cause of `unverifiable` and `spent`), the record after the answer must equal the record after the same answer with no token, except for that field. It also checks that the verdict survives a guard settled in the same write, that `gateClaim.claim` carries `holder` and `since` and never the token, and that a store declaring `persistsClaims: false` gets `store_keeps_no_claims`. A store's `settleStep` must return the `gateClaim` that `applySettlement` computed, and must pass `storeKeepsClaims: store.persistsClaims === true` to it.
 
 `defaultSettlementFixture` has 3 functions: `minimalDefinition(stepNames)`, `withFinalizer(definition, name, onOutcome)` and `withGuard(definition, name, abortUnless, options?)`.
 

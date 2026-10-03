@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryStore } from './in-memory-store.js';
 import {
   runStoreFidelityContract,
+  RUN_STORE_FIDELITY_LAWS,
   type RunStoreFidelityLaw,
 } from './run-store-fidelity-contract.js';
 import { WorkflowError } from '@sensigo/realm';
@@ -75,6 +76,17 @@ const ALL_FIELDS: LoadBearingRunRecordField[] = [
   'finalizer_ledger',
 ];
 
+/**
+ * The laws of this contract that THIS file deliberately does not run, each with its reason
+ * (issue #625). Empty: InMemoryStore keeps claims, so every law of this contract applies to it.
+ */
+const NOT_RUN: Partial<Record<RunStoreFidelityLaw, string>> = {};
+
+/** The laws this file runs: every exported law, minus the ones named in NOT_RUN above. */
+const LAWS: readonly RunStoreFidelityLaw[] = RUN_STORE_FIDELITY_LAWS.filter(
+  (law) => !(law in NOT_RUN),
+);
+
 describe('InMemoryStore — RunStore fidelity TCK conformance (issue #188)', () => {
   it('declares the full LoadBearingRunRecordField set (parity with JsonFileStore)', () => {
     const store = new InMemoryStore();
@@ -83,12 +95,7 @@ describe('InMemoryStore — RunStore fidelity TCK conformance (issue #188)', () 
     }
   });
 
-  const laws: RunStoreFidelityLaw[] = [
-    'FIDELITY_HONESTY',
-    'CLAIM_SINGLE_OWNER',
-    'SEALED_BY_ROUNDTRIP',
-  ];
-  for (const law of laws) {
+  for (const law of LAWS) {
     it(`conforms to ${law}`, async () => {
       const store = new InMemoryStore();
       const cases = runStoreFidelityContract({ store, definition: agentWf, stepName: 'work' });
@@ -99,6 +106,18 @@ describe('InMemoryStore — RunStore fidelity TCK conformance (issue #188)', () 
       }
     });
   }
+});
+
+describe('InMemoryStore RunStore fidelity wiring — the run list is derived from the contract', () => {
+  // (a) red when a law is dropped from the run list WITHOUT being named in NOT_RUN, or NOT_RUN
+  //     names a law the contract no longer exports; (b) prints the unaccounted / unknown laws.
+  it('every exported law is either run or named in NOT_RUN, and NOT_RUN names only exported laws (issue #625)', () => {
+    const exported: readonly string[] = RUN_STORE_FIDELITY_LAWS;
+    const named = Object.keys(NOT_RUN);
+    expect(named.filter((law) => !exported.includes(law))).toEqual([]);
+    expect([...LAWS, ...named].sort()).toEqual([...exported].sort());
+    for (const reason of Object.values(NOT_RUN)) expect(reason).not.toBe('');
+  });
 });
 
 /**

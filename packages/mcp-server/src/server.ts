@@ -12,12 +12,14 @@ import {
   WorkflowError,
   createDefaultRegistry,
   validateTraceCapabilities,
+  type Attributed,
   type RunStore,
   type TraceBufferStore,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import { VERSION } from './version.js';
+import { composeBinIdentity } from './bin-identity.js';
 import { registerListWorkflows } from './tools/list-workflows.js';
 import { registerGetWorkflowProtocol } from './tools/get-workflow-protocol.js';
 import { registerStartRun } from './tools/start-run.js';
@@ -80,6 +82,15 @@ export interface RealmMcpServerOptions {
    * co-location contract on `runStore` above.
    */
   failedAttemptStore?: FailedAttemptStoreLike;
+  /**
+   * Issue #625 (holder slice): the host PROGRAM this server runs as — its name, how that name is
+   * known, and its channel (a short word the host chooses). Written as `holder` on the claim of
+   * every step a tool call takes, as `driven_by` on that call's evidence, and on the cleanup steps
+   * an answer drains; the answer's own entry names its person by `responded_by`, never by this. A
+   * label for people and replies: never compared, never a reason to refuse. A malformed value is
+   * refused by the engine (`VALIDATION_ACTOR_INVALID`) on the first call. Absent ⇒ none recorded.
+   */
+  driver?: Attributed;
 }
 
 /**
@@ -213,7 +224,8 @@ function isRunDirectly(): boolean {
 }
 
 if (isRunDirectly()) {
-  const server = createRealmMcpServer();
+  const driver = composeBinIdentity();
+  const server = createRealmMcpServer(driver !== undefined ? { driver } : undefined);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

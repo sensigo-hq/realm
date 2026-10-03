@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import type { EvidenceSnapshot, StepDiagnostics, AgentTraceEntry } from '../types/run-record.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
+import type { Attributed } from '../engine/holder.js';
 import { normalizeTrace } from '../engine/trace-normalizer.js';
 import type { NormalizeTraceResult } from '../engine/trace-normalizer.js';
 
@@ -51,6 +52,12 @@ export interface CaptureEvidenceParams {
    * EvidenceSnapshot.clipped_to_ms.
    */
   clippedToMs?: number;
+  /**
+   * Issue #625 (the holder slice): the host PROGRAM whose code and credentials did this work —
+   * stamped as `driven_by`. Passed only where a program's code ran (a step's own attempt, a cleanup
+   * step); never on an entry the engine makes itself. Not hashed.
+   */
+  drivenBy?: Attributed;
 }
 
 /** Builds an EvidenceSnapshot from step execution parameters, including a SHA-256 content hash.
@@ -104,6 +111,7 @@ export function captureEvidence(params: CaptureEvidenceParams): EvidenceSnapshot
       ? { effective_timeout_seconds: params.effectiveTimeoutSeconds }
       : {}),
     ...(params.clippedToMs !== undefined ? { clipped_to_ms: params.clippedToMs } : {}),
+    ...(params.drivenBy !== undefined ? { driven_by: params.drivenBy } : {}),
     ...traceEntry,
   };
 }

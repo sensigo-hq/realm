@@ -18,6 +18,7 @@ import {
   getWorkflowForRun,
   composeStepViews,
   composeDriveFailureCosts,
+  describeClaimHolder,
 } from '@sensigo/realm';
 // issue #221 correction: the CLI's first command→command import (sanctioned — harmless
 // module-level Command construction; `listCommand` is a standalone Commander object never
@@ -37,8 +38,15 @@ import type {
   CostView,
   CostFigure,
   CostUnrecordedCause,
+  AttemptView,
 } from '@sensigo/realm';
 import { recomputeIdentity } from '../extensions/extension-identity.js';
+import {
+  UNSHOWABLE_NAME,
+  describeAbsence,
+  describeProgram,
+  renderAnswerLine,
+} from '../lib/holder-render.js';
 
 /**
  * Renders one skipped step's reason inline (issue #111) — kind plus the salient detail.
@@ -443,6 +451,25 @@ function formatDiagnostics(
     .join(', ');
   return `${tokens}${prompt}${output} | preconditions: ${traceStr}${cache}`;
 }
+/**
+ * issue #625 (holder slice): the line naming the program whose code did an attempt's work. A step
+ * whose question is open or answered reads "Question opened through" (the program that OPENED it —
+ * never who answered, never who is working on it); every other step reads "Taken by". An attempt
+ * with no recorded name prints nothing — its absence is withheld on this surface; a stored name
+ * that cannot be shown prints the one unshowable phrase and no byte of the value.
+ */
+function attemptProgramLine(
+  attempt: AttemptView | undefined,
+  isQuestionStep: boolean,
+): string | undefined {
+  const driven = attempt?.driven_by;
+  if (driven === undefined) return undefined;
+  const label = isQuestionStep ? 'Question opened through' : 'Taken by';
+  if (driven.by !== null) return `${label}: ${describeProgram(driven)}`;
+  if (driven.absent_cause === 'name_unreadable') return `${label}: ${UNSHOWABLE_NAME}`;
+  return undefined;
+}
+
 /** Applies chalk color to a step status string. */
 function colorStatus(status: string): string {
   if (status === 'success') return chalk.green(status);
@@ -508,6 +535,10 @@ export async function inspectRun(
   // issue #600 PR 1b: the one composed cost view, derived ONCE from `run` \u2014 every render below
   // reads it rather than re-summing `StepDiagnostics.cache` at each call site.
   const stepViews = composeStepViews(run, definition !== undefined ? { definition } : {});
+  // issue #625 (holder slice): a step is a QUESTION step while its question is open and once it has
+  // been answered — the word on its claim and attempt lines changes with it.
+  const isQuestionStepId = (stepId: string): boolean =>
+    run.pending_gate?.step_name === stepId || (stepViews[stepId]?.answers?.length ?? 0) > 0;
 
   // Color the phase label \u2014 derived, never the persisted run_phase (issue #279, increment 2,
   // PR-C \u2014 D-3 leg vi: render sweep). A grandfathered terminal-with-stale-gate record (the #282
@@ -636,6 +667,21 @@ export async function inspectRun(
   }
   lines.push(`Completed: ${run.completed_steps.join(', ') || '(none)'}`);
   lines.push(`In Progress: ${run.in_progress_steps.join(', ') || '(none)'}`);
+  // issue #625 (holder slice): one line per in-progress step — the program that took it, how its
+  // name is known, the door it came through, how long ago; or why there is no name. A step whose
+  // question is open or answered reads "question opened through": that claim names the program
+  // through which the question was OPENED, never who is working on it now.
+  for (const step of run.in_progress_steps) {
+    const described = describeClaimHolder(run.claims?.[step], store.persistsClaims === true);
+    const verb = isQuestionStepId(step) ? 'question opened through' : 'taken by';
+    const sinceMs = described.since !== undefined ? Date.parse(described.since) : Number.NaN;
+    const age = Number.isFinite(sinceMs) ? `, ${formatGateAge(described.since!)} ago` : '';
+    const body =
+      'holder' in described
+        ? `${verb} ${describeProgram(described.holder)}`
+        : describeAbsence({ by: null, absent_cause: described.absent_cause });
+    lines.push(`  ${step}: ${body}${age}`);
+  }
   lines.push(`Failed: ${run.failed_steps.join(', ') || '(none)'}`);
   lines.push(`Skipped: ${run.skipped_steps.join(', ') || '(none)'}`);
   for (const stepName of run.skipped_steps) {
@@ -839,6 +885,8 @@ export async function inspectRun(
         lines.push(
           `     (attempt ${ai + 1}/${totalAttempts})  ${statusColored}   ${snap.duration_ms}ms   ${hashShort}`,
         );
+        const programLine = attemptProgramLine(attempts[ai], isQuestionStepId(stepId));
+        if (programLine !== undefined) lines.push(`       ${programLine}`);
       });
       // Show Input/Output/Trace/Tool calls for the last attempt.
       lines.push(`     Input:  ${formatSummary(lastSnap.input_summary)}`);
@@ -911,16 +959,18 @@ export async function inspectRun(
       }
       // issue #600 PR 1b: a multi-attempt step's gate_response entries render AFTER, each as
       // today's gate block, with no header line of their own.
-      for (const gate of gateSnaps) {
+      gateSnaps.forEach((gate, gi) => {
         const choice = gate.input_summary['choice'] ?? gate.output_summary['choice'];
         if (choice !== undefined) {
           lines.push(`     Choice:   ${String(choice)}`);
         }
+        const answer = view?.answers?.[gi];
+        if (answer !== undefined) lines.push(`     ${renderAnswerLine(answer)}`);
         if (gate.gate_message !== undefined) {
           lines.push(`     Message:  "${gate.gate_message}"`);
         }
         lines.push(`     Output:   ${formatSummary(gate.output_summary)}`);
-      }
+      });
     } else {
       // The single-entry branch is otherwise UNCHANGED: it still renders `snaps[0]` alone,
       // whatever its kind. A step with one execution entry and a gate_response renders exactly as
@@ -935,10 +985,17 @@ export async function inspectRun(
       lines.push(
         `  ${idx + 1}. ${stepId.padEnd(22)}${profileLabel}${kindLabel} ${statusColored}   ${snap.duration_ms}ms   ${hashShort}`,
       );
+      if (snap.kind !== 'gate_response') {
+        const programLine = attemptProgramLine(attempts[0], isQuestionStepId(stepId));
+        if (programLine !== undefined) lines.push(`     ${programLine}`);
+      }
       if (snap.kind === 'gate_response') {
         const choice = snap.input_summary['choice'] ?? snap.output_summary['choice'];
         if (choice !== undefined) {
           lines.push(`     Choice:   ${String(choice)}`);
+        }
+        for (const answer of view?.answers ?? []) {
+          lines.push(`     ${renderAnswerLine(answer)}`);
         }
         if (snap.gate_message !== undefined) {
           lines.push(`     Message:  "${snap.gate_message}"`);
@@ -994,6 +1051,11 @@ export async function inspectRun(
         if (sentence !== undefined) {
           lines.push(chalk.dim(`     ${sentence}`));
         }
+      }
+      // issue #625 (holder slice): the step's answers, one line each. The common gate step has ONE
+      // execution entry and then its answer — the answer used to be dropped here.
+      for (const answer of view?.answers ?? []) {
+        lines.push(`     ${renderAnswerLine(answer)}`);
       }
     }
   });

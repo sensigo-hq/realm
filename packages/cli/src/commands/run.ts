@@ -17,6 +17,7 @@ import {
   deriveRunPhase,
 } from '@sensigo/realm';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
+import { resolveProgramIdentity } from '../lib/program-identity.js';
 import type {
   WorkflowDefinition,
   StepDefinition,
@@ -167,6 +168,9 @@ export const runCommand = new Command('run')
         mintWriterNonce?: boolean;
       },
     ) => {
+      // issue #625 (holder slice): this program's name, made once, before any other output. A name
+      // that cannot be used prints one line and exits 1 here; nothing has been started.
+      const driver = resolveProgramIdentity('run');
       // issue #197 PR-2 (design §8): the strict-flip force-enables minting even without the flag.
       const mintWriterNonce = options.mintWriterNonce === true || isWriterNonceRequired();
       const filePath =
@@ -329,6 +333,7 @@ export const runCommand = new Command('run')
               store,
               definition,
               registry,
+              ...(driver !== undefined ? { driver } : {}),
             });
             promptStep = g.step_name;
             const raw = await rl.question(`  Choice [${g.choices.join('/')}]: `).finally(() => {
@@ -342,6 +347,9 @@ export const runCommand = new Command('run')
               // Thread the resolved project registry so a gate-completed run fires its
               // finalizers with project handlers (same registry passed to executeChain below).
               registry,
+              // issue #625: this program, named on the cleanup steps the answer drains. Never a
+              // `claim_token`: a dev-mode prompt shows the gate on this terminal, not a reply.
+              ...(driver !== undefined ? { driver } : {}),
             });
             if (respondResult.status === 'ok') {
               run = await store.get(runId);
@@ -433,6 +441,9 @@ export const runCommand = new Command('run')
             dispatcher,
             registry,
             traceBufferStore,
+            // issue #625 (holder slice): after `traceBufferStore` — the #207 source-text cell reads
+            // this call with a lazy `\}\)` and a spread ending in `{})` ahead of it ends the match.
+            ...(driver !== undefined ? { driver } : {}),
             // issue #197 PR-2: a FRESH nonce per step-attempt (never a caller-fixed value —
             // reusing one across attempts converts the honest caveat into false self-attribution).
             ...(mintWriterNonce ? { writerNonce: crypto.randomUUID() } : {}),

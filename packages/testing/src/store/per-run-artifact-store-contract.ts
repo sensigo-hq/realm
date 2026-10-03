@@ -31,14 +31,21 @@
 //   }
 import { WorkflowError, type PerRunArtifactStore } from '@sensigo/realm';
 
-/** One of the laws every `PerRunArtifactStore` implementation must satisfy (issues #183, #189). */
-export type ArtifactStoreLaw =
-  | 'L1_ABSENCE_RESOLVES'
-  | 'L2_IDEMPOTENT'
-  | 'L3_FAILURE_REJECTS'
-  | 'L4_TYPED_REJECTION'
-  | 'L5_REPORT_SHAPE'
-  | 'L6_PREVIEW_EQUALS_RECEIPT';
+/**
+ * The laws every `PerRunArtifactStore` implementation must satisfy (issues #183, #189) — EXPORTED
+ * as a const (issue #625) so a wiring file derives the list it runs from it, and a law added here
+ * runs everywhere the contract is wired or is named, with a reason, in that file's `NOT_RUN` list.
+ */
+export const ARTIFACT_STORE_LAWS = [
+  'L1_ABSENCE_RESOLVES',
+  'L2_IDEMPOTENT',
+  'L3_FAILURE_REJECTS',
+  'L4_TYPED_REJECTION',
+  'L5_REPORT_SHAPE',
+  'L6_PREVIEW_EQUALS_RECEIPT',
+] as const;
+
+export type ArtifactStoreLaw = (typeof ARTIFACT_STORE_LAWS)[number];
 
 /**
  * A single, framework-agnostic contract case. `run()` throws (rejects) on failure — any test

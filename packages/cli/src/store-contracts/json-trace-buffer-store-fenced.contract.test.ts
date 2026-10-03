@@ -14,29 +14,21 @@ import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
 import {
   fencedTraceBufferContract,
   createFenceRunSource,
+  FENCED_TRACE_BUFFER_LAWS,
   type FencedTraceBufferLaw,
 } from '@sensigo/realm-testing';
 
-const LAWS: FencedTraceBufferLaw[] = [
-  'STRUCTURAL',
-  'FENCE_REFUSES',
-  // issue #616 PR-0: each of the five FencePredicate members — true, false, and a racer, through
-  // every method that carries it — plus the malformed fences.
-  'FENCE_DATA',
-  'CS_OCCUPANCY',
-  'PER_KEY_INDEPENDENCE',
-  'NO_SILENT_LOSS',
-  // issue #197 PR-1: JsonTraceBufferStore declares both capability-ladder rungs — every one of
-  // these five laws runs real (non-skip) cases here, INCLUDING the byte-exactness (bytesOracle)
-  // and raw-byte (rawWalAccess) sub-cases the in-memory store's wiring test above leaves skipped
-  // (a physical file's on-disk bytes ARE an independent ground truth to check against, unlike an
-  // in-memory structure's own accounting).
-  'CARRIAGE_ROUND_TRIP',
-  'SEAL',
-  'SEAL_BUDGET',
-  'PER_WRITER_BUDGET',
-  'VERBATIM',
-];
+/**
+ * The laws of this contract that THIS file deliberately does not run, each with its reason
+ * (issue #625). Empty: JsonTraceBufferStore declares the fenced trio and both capability-ladder rungs, so every law applies.
+ */
+const NOT_RUN: Partial<Record<FencedTraceBufferLaw, string>> = {};
+
+/** The laws this file runs: every exported law, minus the ones named in NOT_RUN above. A law added
+ *  to the contract therefore runs here without this file being touched. */
+const LAWS: readonly FencedTraceBufferLaw[] = FENCED_TRACE_BUFFER_LAWS.filter(
+  (law) => !(law in NOT_RUN),
+);
 
 /** Recomputes the exact on-disk WAL filename `JsonTraceBufferStore`'s private `walPath` uses —
  *  test-side only, mirroring the same helper in json-trace-buffer-store.test.ts. */
@@ -210,5 +202,17 @@ describe('JsonTraceBufferStore — fenced-trio TCK conformance (issue #207)', ()
     } finally {
       await cleanup();
     }
+  });
+});
+
+describe('JsonTraceBufferStore fenced wiring — the run list is derived from the contract', () => {
+  // (a) red when a law is dropped from the run list WITHOUT being named in NOT_RUN, or NOT_RUN
+  //     names a law the contract no longer exports; (b) prints the unaccounted / unknown laws.
+  it('every exported law is either run or named in NOT_RUN, and NOT_RUN names only exported laws (issue #625)', () => {
+    const exported: readonly string[] = FENCED_TRACE_BUFFER_LAWS;
+    const named = Object.keys(NOT_RUN);
+    expect(named.filter((law) => !exported.includes(law))).toEqual([]);
+    expect([...LAWS, ...named].sort()).toEqual([...exported].sort());
+    for (const reason of Object.values(NOT_RUN)) expect(reason).not.toBe('');
   });
 });

@@ -2,6 +2,7 @@
 import type { ToolCallRecord } from './mcp-types.js';
 import type { ExtensionIdentityEntry } from './extension-identity.js';
 import type { TriggerRule } from './workflow-definition.js';
+import type { Attributed, GateClaimVerdict } from '../engine/holder.js';
 
 /**
  * A single trace entry submitted by the agent. Submitted as-is; the engine
@@ -441,6 +442,24 @@ export interface EvidenceSnapshot {
    */
   responded_by?: string;
   /**
+   * Holder slice (PR-H): which PROGRAM's code and credentials did this work — the name the host
+   * that ran the step gave itself (`REALM_OPERATOR`, or the OS user and host name), how that name is
+   * known, and the host's channel. Written on the entries where a program's code ran (a step's own
+   * entries and the cleanup steps a drain runs); absent on every entry the engine builds without
+   * running anyone's code (guards, expiries, the answer's own entry, the reclaim audit line) and on
+   * records written before this field. A label for people and replies — never compared, never
+   * enforced; it is not a person and not a process.
+   */
+  driven_by?: Attributed;
+  /**
+   * Holder slice (PR-H): present only on a `gate_response` entry the ANSWER wrote, and only when the
+   * answer was recorded (verdict rows 1–5; a settled question has no entry to carry `spent`).
+   * Whether the caller passed back the `claim_token` of the reply that opened the question, judged
+   * inside the answer's own write. It decides nothing: the answer is recorded the same with any
+   * token or none.
+   */
+  claim_proof?: GateClaimVerdict;
+  /**
    * Issue #291 (D1 §5 / [F12]): present only on a `gate_response` snapshot minted by
    * `applyExpireGate` — discriminates WHICH enforce-clock disposition produced this snapshot,
    * for the late-response envelope strings to read. `responded_by` on the SAME snapshot is
@@ -624,8 +643,30 @@ export interface ClaimRecord {
    * `tokensEqual` predicate treats absent as `null` (absent≡absent — the #197 grandfathered-claims
    * precedent), so a token-less claim is never spuriously fenced out. Dormant in this PR: nothing
    * reads or compares it until PR-B migrates the seal sites to `settleStep`.
+   *
+   * Holder slice (PR-H): the claim's token is also the PROOF a caller of the step's gate answer may
+   * pass back (`claim_token`) to show it comes from the conversation that opened the question. It is
+   * not a secret — it guards against accidents and races, not malice; anyone who can read the store
+   * can read it, and realm has no authentication. It leaves the engine on ONE reply only: the reply
+   * of the call whose `claimStep` minted it.
    */
   token?: string;
+  /**
+   * Holder slice (PR-H): the PROGRAM that TOOK this step — the name the host gave itself, how that
+   * name is known, and the host's channel — written in the claim's own write when the host passed a
+   * claimant. The claim of a step waiting on a person's answer says who ASKED the question, and
+   * nothing about anyone working on it now. Two limits: on a shared server every caller's claims
+   * carry the server's name, and two programs of one user on one machine are indistinguishable;
+   * no process id is recorded (it would read as "running now", which a record cannot know).
+   * Absent when the host passed none, or when the store dropped it.
+   */
+  holder?: Attributed;
+  /**
+   * Holder slice (PR-H): ISO time the claim was made. The store's own act, stamped on EVERY claim
+   * (with or without a holder) inside the one write that creates it. Absent on claims written
+   * before this field.
+   */
+  since?: string;
 }
 
 /**

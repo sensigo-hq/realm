@@ -7,70 +7,22 @@ import { InMemoryStore } from './in-memory-store.js';
 import {
   settlementContract,
   defaultSettlementFixture,
+  SETTLEMENT_LAWS,
   type SettlementLaw,
 } from './settlement-contract.js';
 
-const LAWS: SettlementLaw[] = [
-  'FRESH_APPLICATION',
-  'CONDITIONAL_NOOP',
-  'CONDITIONAL_NOOP_GRANDFATHERED',
-  'OWNERSHIP_REFUSAL',
-  'LEDGER_MINT_ATOMICITY',
-  'DRAIN_MARK_DEDUP',
-  'TERMINAL_REFUSAL',
-  'TERMINAL_STATE_ONLY',
-  'CS_PURITY',
-  'NEVER_DOWNGRADE',
-  'SETTLE_OUTCOME_INTEGRITY',
-  'SETTLED_ORPHAN_OVERWRITE',
-  'TRANSFORM_FIDELITY',
-  'RESULT_AS_APPLIED',
-  'MARK_MEMBERSHIP',
-  'REFUSAL_SWEEP',
-  'MINT_FRESH',
-  'SELF_IMAGE_IDEMPOTENCE',
-  'TERMINAL_GATE_EXCLUSION',
-  'COMPLETE_SEAL_PHASE',
-  'WHEN_ROUTED_TERMINALIZATION',
-  'G1_GATE_COEXISTENCE',
-  // issue #279, increment 2 (PR-C).
-  'GATE_OPEN_IDEMPOTENT',
-  'GATE_RESOLUTION_CONFLICT',
-  'GATE_MISMATCH',
-  'GUARD_OUTCOME_DIVERGENCE',
-  'GUARD_WAITS_ON_OPEN_GATE',
-  'GUARD_PASS_COMPLETE_OUTCOME',
-  'GUARD_ABORT_CASCADE',
-  'GUARD_NO_ENTRY',
-  'RELEASE_IDEMPOTENT',
-  'PHASE_IS_GENERATED',
-  // issue #302 (finalizer outcome×trigger matrix).
-  'CWFS_FIRES_PER_ARM',
-  'CWFS_NEGATIVES',
-  'CWFS_SECOND_EPOCH',
-  'CWFS_ARRAY_ONCE',
-  'CURRENT_BEHAVIOR_PINNED',
-  // issue #291 (gate-timeout-291-correction, Leg 2).
-  'EXPIRE_ARM_MATRIX',
-  'EXPIRE_ABORT_CASCADE',
-  'EXPIRE_DEFAULT_RESOLVE',
-  // issue #367 (the seal-integrity boundary).
-  'SEAL_FRESH_WRITE_REFUSED',
-  'SEAL_ORPHAN_REFUSED',
-  'SEAL_ERASE_REFUSED',
-  'SEAL_UNKNOWN_ARM_REFUSED',
-  // issue #367 (part 3) — the stampSeal verb.
-  'STAMP_PRESERVES_UPDATED_AT',
-  'STAMP_BUMPS_VERSION_ONCE',
-  'STAMP_REFUSES_ON_VERSION_MOVE',
-  'STAMP_RETURNS_NOT_THROWS_PREDICATES',
-  'STAMP_IDEMPOTENT',
-  'STAMP_CLASSIFIED_ROUNDTRIP',
-  'SEAL_REWRITE_REFUSED',
-  // issue #625 — a store that declares settleStep settles guards in the same write.
-  'GUARD_CASCADE_ONE_WRITE',
-  'GUARD_CASCADE_TOTAL',
-];
+/**
+ * The laws of this contract that THIS file deliberately does not run, each with its reason
+ * (issue #625). Before this list existed, this file kept its own hand-written array of laws and a
+ * law added to the contract ran here only if somebody remembered to add it.
+ */
+const NOT_RUN: Partial<Record<SettlementLaw, string>> = {
+  ADAPTER_WIRING:
+    'a wiring-gap sentinel: it has a case ONLY when the adapter is mis-wired (no settlementFixture), and this file supplies one — so it has no case here by design',
+};
+
+/** The laws this file runs: every exported law, minus the ones named in NOT_RUN above. */
+const LAWS: readonly SettlementLaw[] = SETTLEMENT_LAWS.filter((law) => !(law in NOT_RUN));
 
 describe('InMemoryStore — settlement TCK conformance (issue #279, increment 1 + 2)', () => {
   it('declares settleStep and the two new LoadBearingRunRecordFields (settled/finalizer_ledger)', () => {
@@ -160,5 +112,17 @@ describe('InMemoryStore — no-await single-owner discipline for settleStep (iss
     expect(final.completed_steps).toContain('a');
     expect(final.completed_steps).toContain('b');
     expect(final.terminal_state).toBe(true);
+  });
+});
+
+describe('InMemoryStore settlement wiring — the run list is derived from the contract', () => {
+  // (a) red when a law is dropped from the run list WITHOUT being named in NOT_RUN, or NOT_RUN
+  //     names a law the contract no longer exports; (b) prints the unaccounted / unknown laws.
+  it('every exported law is either run or named in NOT_RUN, and NOT_RUN names only exported laws (issue #625)', () => {
+    const exported: readonly string[] = SETTLEMENT_LAWS;
+    const named = Object.keys(NOT_RUN);
+    expect(named.filter((law) => !exported.includes(law))).toEqual([]);
+    expect([...LAWS, ...named].sort()).toEqual([...exported].sort());
+    for (const reason of Object.values(NOT_RUN)) expect(reason).not.toBe('');
   });
 });
