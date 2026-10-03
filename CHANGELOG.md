@@ -13,6 +13,17 @@ All notable changes to this project are documented here.
   export with them, so that copies of one realm version recognise each other's objects. (Issue
   #620.)
 
+- **Which copy an object came from: `releaseLineOf`, `declareReleaseLine`, `describeUnrecognised`,
+  `assertReleaseLine`, `assertRegistryLine`, `releaseLineError`, `describeThrown`,
+  `describeForeignProvider`, the text helpers they compose with, and the types `Unrecognised`,
+  `RealmClass` and `ReleaseLineFacts`, exported from `@sensigo/realm`**; the error codes
+  `ENGINE_RELEASE_LINE_MISMATCH` and `ENGINE_RELEASE_LINE_UNDECLARED`; the warning code
+  `REALM_RELEASE_LINE_MISMATCH` and the optional field `LoaderWarning.release_line` (the project's
+  and the engine's version and folder, as data); in `@sensigo/realm-testing`, the
+  `STORE_RELEASE_LINE_TRUE` law in each store contract and the standalone `storeReleaseLineLaw`.
+  `realm agent --no-release-line-advisory` is hidden and not listed: `realm listen` passes it to the
+  children it spawns. (Issue #620.) Added after version 0.45.0.
+
 - **`StepDiagnostics.cache`** — what a provider reported about prompt caching for an agent step's
   model calls, one entry per WIRE REQUEST, never per step: `UsageRecord[]` with the measured prompt
   size, the cache tokens read and written, and output tokens, each field present only when the
@@ -126,6 +137,37 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   #600 PR 1b.)
 
 ### Changed
+
+- **BREAKING —** **Every store realm runs against must carry its release line (issue #620).**
+  `createRealmMcpServer`, every published tool handler (`@sensigo/realm-mcp/dist/tools/*.js`), the
+  exported engine functions that take a store (`abandonRun`, `reclaimStep`, `executeStep`,
+  `submitHumanResponse`, `drainFinalizers`, `advanceRun`, `executeChain`, `getWorkflowForRun`,
+  `readRunForFence` and so `checkFenceWithReader`) and the two reader-backed trace-buffer
+  constructors refuse a store that declares no line (`ENGINE_RELEASE_LINE_UNDECLARED`) or another
+  version's (`ENGINE_RELEASE_LINE_MISMATCH`), before any work. A host's own store class calls
+  `declareReleaseLine(MyStore)` once, from the `@sensigo/realm` it imports its errors from; a
+  plain-object store calls `declareReleaseLine(store)`. `createRealmMcpServer` refuses a
+  static registry from another version at construction; the engine and the tool handlers refuse one
+  where they resolve it. `validate --strict` and `register --strict` fail when the
+  project's `@sensigo/realm` is another version. Who must act: a program that hands realm a store of
+  its own (realm-cloud's four store classes); nobody whose stores are realm's own.
+
+- **Realm objects do not cross versions, and realm now says so.** A `WorkflowError` your handlers or
+  adapters throw is not recognised — its step fails after one attempt, without that error's own code
+  and retry setting: from a copy that carries the release mark as `ENGINE_RELEASE_LINE_MISMATCH`,
+  whose message names both versions and both folders; from an older copy with no mark as
+  `ENGINE_HANDLER_FAILED` or `ENGINE_ADAPTER_FAILED` with a note saying so. The
+  `ENGINE_RELEASE_LINE_MISMATCH` message replaces `ENGINE_HANDLER_FAILED`, `ENGINE_ADAPTER_FAILED`
+  and `ENGINE_INTERNAL` "Dispatcher failed" for an error from a marked copy of another version. A
+  handler, adapter or dispatcher that throws a value that cannot be printed no longer breaks the
+  step's catch. The provider gate's message for a provider from another version names both
+  realm-cli copies. Where project code loads, realm warns (`REALM_RELEASE_LINE_MISMATCH`) when the
+  project's `@sensigo/realm` is not the running one. `realm serve` and `realm mcp` print a
+  construction refusal on one line and exit 1, before `serve` listens; when the refusal is about a
+  store from another realm version, the line says the command's own packages disagree and how to
+  reinstall it. `serve` also logs a request's error to stderr. A registry from another version
+  that a server's registry provider returned is refused in the reply of the tool that resolved it,
+  naming that tool. `realm listen` passes a hidden flag to the children it spawns. (Issue #620.)
 
 - **BREAKING —** **`instanceof` on every class a realm package exports also answers true for an
   object made by another copy of the same realm version** (the same `VERSION` string), user

@@ -30,6 +30,8 @@
 //     });
 //   }
 import { WorkflowError, type PerRunArtifactStore } from '@sensigo/realm';
+import { crossCopyNote } from './cross-copy-note.js';
+import { storeReleaseLineLaw } from './store-release-line-law.js';
 
 /** One of the laws every `PerRunArtifactStore` implementation must satisfy (issues #183, #189). */
 export type ArtifactStoreLaw =
@@ -38,7 +40,9 @@ export type ArtifactStoreLaw =
   | 'L3_FAILURE_REJECTS'
   | 'L4_TYPED_REJECTION'
   | 'L5_REPORT_SHAPE'
-  | 'L6_PREVIEW_EQUALS_RECEIPT';
+  | 'L6_PREVIEW_EQUALS_RECEIPT'
+  /** issue #620 PR-C — the store's declared release line is its errors' line. */
+  | 'STORE_RELEASE_LINE_TRUE';
 
 /**
  * A single, framework-agnostic contract case. `run()` throws (rejects) on failure — any test
@@ -191,7 +195,9 @@ export function perRunArtifactStoreContract(
         }
         if (!(caught instanceof WorkflowError)) {
           const kind = caught instanceof Error ? caught.constructor.name : typeof caught;
-          throw new Error(`expected a WorkflowError rejection, got: ${kind}`);
+          throw new Error(
+            `expected a WorkflowError rejection, got: ${kind}${crossCopyNote(caught, WorkflowError)}`,
+          );
         }
         if (typeof caught.code !== 'string' || caught.code.length === 0) {
           throw new Error('WorkflowError.code is missing or empty');
@@ -200,6 +206,16 @@ export function perRunArtifactStoreContract(
         if (!Array.isArray(failures) || failures.length === 0) {
           throw new Error('WorkflowError.details.failures is missing, empty, or not an array');
         }
+      },
+    },
+    {
+      law: 'STORE_RELEASE_LINE_TRUE',
+      name: "the store's declared release line is the line of its own refusal (the L4 injected failure)",
+      run: async () => {
+        await adapter.injectFailure(adapter.runIdWithArtifact);
+        await storeReleaseLineLaw(adapter.store, () =>
+          adapter.store.deleteAllForRun(adapter.runIdWithArtifact),
+        );
       },
     },
   ];

@@ -36,6 +36,7 @@ import {
   rejectOnErrorSeverity,
   failsStrict,
   wrapSentinelWarnings,
+  wrapReleaseLineWarnings,
   extensionKeysOf,
   renderExtensionKeysClause,
 } from '../lib/loader-warnings.js';
@@ -718,6 +719,7 @@ async function validateRegistered(
   if (!json && notRun.length > 0) console.log(renderChecksNotRunLine(notRun));
 
   let sentinelWarnings: string[] | undefined;
+  let releaseLineWarnings: LoaderWarning[] | undefined;
   for (const check of applicable) {
     if (notRun.some((n) => n.id === check.id)) continue;
     if (check.id === 'agent_profile_resolution') {
@@ -766,6 +768,7 @@ async function validateRegistered(
         process.exit(1);
       }
       sentinelWarnings = loaded.sentinelWarnings;
+      releaseLineWarnings = loaded.releaseLineWarnings;
       try {
         loadWorkflowFromStringWithDiagnostics(stripped, loaded.registry);
       } catch (err) {
@@ -777,6 +780,8 @@ async function validateRegistered(
   // The file arm's tail, minus the adoption nudge (a stored copy is not where you edit;
   // `--explain` is therefore inert in this mode, deliberately — no machinery for it).
   const accumulated = [
+    // issue #620 PR-C: the release-line advisory first, as in file mode; nothing else moves.
+    ...wrapReleaseLineWarnings(releaseLineWarnings),
     ...loaderWarnings,
     ...findRetryWithoutExplicitTimeout(definition),
     ...wrapSentinelWarnings(sentinelWarnings),
@@ -844,7 +849,7 @@ export const validateCommand = new Command('validate')
   )
   .option(
     '--strict',
-    'Exit non-zero if any loader warning is present (unknown keys, retry-without-timeout, sentinel credentials — issue #169)',
+    'Exit non-zero if any loader warning is present (unknown keys, retry-without-timeout, sentinel credentials, a project realm of another version — issue #169)',
   )
   .option(
     '--explain',

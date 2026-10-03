@@ -77,6 +77,13 @@ import {
   evaluateGuardConditions,
 } from './precondition.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
+import {
+  assertRegistryLine,
+  assertReleaseLine,
+  describeThrown,
+  describeUnrecognised,
+  releaseLineError,
+} from '../release-line.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
 import { renderTemplate, resolvePath, UnknownFilterError } from './render-template.js';
@@ -534,8 +541,19 @@ async function callAdapter(
       }
       throw err;
     }
-    const message = err instanceof Error ? err.message : String(err);
-    throw new WorkflowError(`Adapter '${serviceDef.adapter}' threw: ${message}`, {
+    // issue #620 PR-C: say which copy the error came from before wrapping it.
+    const unrecognised = describeUnrecognised(err, WorkflowError);
+    const message = `Adapter '${serviceDef.adapter}' threw: ${describeThrown(err)}`;
+    if (unrecognised.kind !== 'not_realm') {
+      throw releaseLineError(unrecognised, {
+        role: `Adapter '${serviceDef.adapter}'`,
+        message,
+        code: 'ENGINE_ADAPTER_FAILED',
+        stepId: options.command,
+        foreignCode: readForeignCode(err),
+      });
+    }
+    throw new WorkflowError(message, {
       code: 'ENGINE_ADAPTER_FAILED',
       category: 'ENGINE',
       agentAction: 'stop',
@@ -552,6 +570,18 @@ async function callAdapter(
     output,
     resolvedParams: stepDef.input_map !== undefined ? adapterParams : undefined,
   };
+}
+
+/**
+ * A thrown value's `code`, read inside a `try` (issue #620 PR-C): the value came from project code,
+ * so its `code` may be a throwing getter.
+ */
+function readForeignCode(err: unknown): unknown {
+  try {
+    return (err as { code?: unknown }).code;
+  } catch {
+    return undefined;
+  }
 }
 
 type HandlerCallResult =
@@ -608,8 +638,19 @@ async function callHandler(
     );
   } catch (err) {
     if (err instanceof WorkflowError) throw err;
-    const message = err instanceof Error ? err.message : String(err);
-    throw new WorkflowError(`Handler '${handlerName}' threw: ${message}`, {
+    // issue #620 PR-C: say which copy the error came from before wrapping it.
+    const unrecognised = describeUnrecognised(err, WorkflowError);
+    const message = `Handler '${handlerName}' threw: ${describeThrown(err)}`;
+    if (unrecognised.kind !== 'not_realm') {
+      throw releaseLineError(unrecognised, {
+        role: `Handler '${handlerName}'`,
+        message,
+        code: 'ENGINE_HANDLER_FAILED',
+        stepId: options.command,
+        foreignCode: readForeignCode(err),
+      });
+    }
+    throw new WorkflowError(message, {
       code: 'ENGINE_HANDLER_FAILED',
       category: 'ENGINE',
       agentAction: 'stop',
@@ -1462,6 +1503,10 @@ export async function executeStep(
   definition: WorkflowDefinition,
   options: ExecuteStepOptions,
 ): Promise<ResponseEnvelope> {
+  // issue #620 PR-C: the hand-off check, before the first read — a store with no release line
+  // throws here instead of becoming the ENGINE_STORE_FAILED envelope below.
+  assertReleaseLine(store, 'the run store handed to executeStep');
+  assertRegistryLine(options.registry, 'the registry handed to executeStep', ExtensionRegistry);
   // Step 1: Load run.
   let run: RunRecord;
   try {
@@ -2665,14 +2710,26 @@ export async function executeStep(
         if (err instanceof WorkflowError) {
           attemptError = err;
         } else {
-          const message = err instanceof Error ? err.message : String(err);
-          attemptError = new WorkflowError(`Dispatcher failed: ${message}`, {
-            code: 'ENGINE_INTERNAL',
-            category: 'ENGINE',
-            agentAction: 'stop',
-            retryable: false,
-            stepId: options.command,
-          });
+          // issue #620 PR-C: a host's dispatcher (realm-testing's createAgentDispatcher among them)
+          // can hand back a project's error from another realm copy — say which.
+          const unrecognised = describeUnrecognised(err, WorkflowError);
+          const message = `Dispatcher failed: ${describeThrown(err)}`;
+          attemptError =
+            unrecognised.kind !== 'not_realm'
+              ? releaseLineError(unrecognised, {
+                  role: `The dispatcher for step '${options.command}'`,
+                  message,
+                  code: 'ENGINE_INTERNAL',
+                  stepId: options.command,
+                  foreignCode: readForeignCode(err),
+                })
+              : new WorkflowError(message, {
+                  code: 'ENGINE_INTERNAL',
+                  category: 'ENGINE',
+                  agentAction: 'stop',
+                  retryable: false,
+                  stepId: options.command,
+                });
         }
       }
 
@@ -4682,6 +4739,12 @@ export async function submitHumanResponse(
   definition: WorkflowDefinition,
   options: SubmitGateOptions,
 ): Promise<ResponseEnvelope> {
+  assertReleaseLine(store, 'the run store handed to submitHumanResponse');
+  assertRegistryLine(
+    options.registry,
+    'the registry handed to submitHumanResponse',
+    ExtensionRegistry,
+  );
   // 1. Load run.
   let run: RunRecord;
   try {
@@ -5691,6 +5754,8 @@ export async function drainFinalizers(
   registry: ExtensionRegistry | undefined,
   runId: string,
 ): Promise<{ run: RunRecord; warnings: string[]; leftPending: string[]; attempted: string[] }> {
+  assertReleaseLine(store, 'the run store handed to drainFinalizers');
+  assertRegistryLine(registry, 'the registry handed to drainFinalizers', ExtensionRegistry);
   // .bind(store): a bare `store.settleStep` reference loses its `this` binding — the store's own
   // method body (e.g. JsonFileStore's `this.ensureDir()`/`this.filePath()`) would throw on
   // `this === undefined` once called through the detached reference below.
@@ -6015,6 +6080,8 @@ export async function advanceRun(
   options: ExecuteChainOptions,
   state?: AdvanceRunState,
 ): Promise<ResponseEnvelope> {
+  assertReleaseLine(store, 'the run store handed to advanceRun');
+  assertRegistryLine(options.registry, 'the registry handed to advanceRun', ExtensionRegistry);
   if (state === undefined) {
     const stored = await store.get(options.runId);
     const chained: ChainedStepEntry[] = [];
@@ -6525,6 +6592,8 @@ export async function executeChain(
   definition: WorkflowDefinition,
   options: ExecuteChainOptions,
 ): Promise<ResponseEnvelope> {
+  assertReleaseLine(store, 'the run store handed to executeChain');
+  assertRegistryLine(options.registry, 'the registry handed to executeChain', ExtensionRegistry);
   // Defense-in-depth: never drive a run that is already terminal. The eligibility guard
   // (findEligibleSteps) makes this unreachable in normal operation, but guarding the chain
   // boundary protects every executeChain caller regardless of how it reached here. Placed in the

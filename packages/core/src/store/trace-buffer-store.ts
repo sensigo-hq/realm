@@ -12,6 +12,7 @@ import {
   type RunScopedFencePredicate,
 } from './fence-predicate.js';
 import { brandClass, REALM_BRAND } from '../brand.js';
+import { assertReleaseLine } from '../release-line.js';
 
 /**
  * The store-layer capability ladder (issue #197 PR-1, design record `plans/issue-197-design.md`
@@ -660,6 +661,7 @@ export class InMemoryTraceBufferStore implements TraceBufferStore {
     if (!isFenceRunReader(runReader)) {
       throw fenceReaderMissingError('InMemoryTraceBufferStore');
     }
+    assertReleaseLine(runReader, 'the run reader handed to InMemoryTraceBufferStore');
     this.runReader = runReader;
   }
 

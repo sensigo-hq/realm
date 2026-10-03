@@ -7,6 +7,7 @@
 // `selectFinalizers` string-form/set-form API-compat pin, and a second-epoch witness through the
 // REAL `applyResume` (the TCK's own CWFS_SECOND_EPOCH case hand-shapes the post-resume state via
 // `update()`, deliberately — this test drives the actual production function instead).
+import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -29,6 +30,10 @@ import type { StepHandler } from '../extensions/step-handler.js';
  * `NonDeclaringStoreDouble` precedent, narrowed to this file's one concern.
  */
 class NonDeclaringStoreDouble implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   readonly persistsClaims: boolean;
 
   constructor(private readonly inner: JsonFileStore) {

@@ -8,11 +8,12 @@ import {
   type LoaderWarning,
 } from '@sensigo/realm';
 import {
+  collectReleaseLineWarnings,
   loadProjectExtensions,
   type LoadedProjectExtensions,
 } from '../extensions/load-project-extensions.js';
 import { ManifestSecretsError } from '../extensions/manifest-secrets.js';
-import { wrapSentinelWarnings } from './loader-warnings.js';
+import { wrapReleaseLineWarnings, wrapSentinelWarnings } from './loader-warnings.js';
 
 /**
  * Tags a failure thrown by the extensions load inside `loadWorkflowForAdmission` so the
@@ -83,7 +84,12 @@ export async function admitProjectExtensions(
   definition: WorkflowDefinition,
   opts: { surface: 'register' | 'watch' | 'validate'; overrideModule?: string },
 ): Promise<LoadedProjectExtensions> {
-  const override = opts.overrideModule !== undefined ? { overrideModule: opts.overrideModule } : {};
+  // issue #620 PR-C: the admission surfaces collect the release-line advisory from the result
+  // (`wrapReleaseLineWarnings`), so the loader's default stderr sink stays silent here.
+  const override = {
+    ...(opts.overrideModule !== undefined ? { overrideModule: opts.overrideModule } : {}),
+    onReleaseLineWarning: collectReleaseLineWarnings,
+  };
   // Full module load + duck validation + manifest construction BEFORE persisting. Secret sources
   // may be unavailable at provisioning time: degrade to SENTINEL construction with a loud WARN
   // (never silent, never a registration blocker); execution paths still require real resolution.
@@ -146,7 +152,13 @@ export async function loadWorkflowForAdmission(
 
   return {
     definition,
-    warnings: [...pass1Warnings, ...wrapSentinelWarnings(loaded.sentinelWarnings)],
+    // issue #620 PR-C: the release-line advisory first — it says which realm the project's code
+    // runs against, which bears on reading every other warning; nothing else moves.
+    warnings: [
+      ...wrapReleaseLineWarnings(loaded.releaseLineWarnings),
+      ...pass1Warnings,
+      ...wrapSentinelWarnings(loaded.sentinelWarnings),
+    ],
     manifest: loaded.manifest,
   };
 }

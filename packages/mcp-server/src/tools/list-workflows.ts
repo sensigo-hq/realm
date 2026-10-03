@@ -5,6 +5,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { JsonWorkflowStore } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
+import { assertToolStores } from './assert-tool-stores.js';
 
 export interface HandleStores {
   workflowStore?: JsonWorkflowStore;
@@ -58,6 +59,7 @@ const HEALTHY_HINT =
  * tell which until an operator looks — so the steer is withdrawn rather than guessed.
  */
 export async function handleListWorkflows(stores?: HandleStores): Promise<ListWorkflowsResult> {
+  assertToolStores(stores, 'handleListWorkflows');
   const store = stores?.workflowStore ?? new JsonWorkflowStore();
   const { workflows, unreadable } = await store.listWithDiagnostics();
   const broken = unreadable.find((u) => u.class === 'registry_broken');

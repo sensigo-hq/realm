@@ -4,6 +4,7 @@
 // verbatim echo of `RunRecord.rerun_of`, present only when the record carries it. There is no
 // `keyof RunRecord` disclosure registry to join for this surface, so these cells ARE the parity
 // guard — the field is on ONE explicit route and nothing else would notice it going missing.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import type { RunRecord, RunStore } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
@@ -29,7 +30,7 @@ function makeRun(over: Partial<RunRecord> = {}): RunRecord {
 }
 
 function makeStore(run: RunRecord): RunStore {
-  return {
+  return declared({
     persistsClaims: true,
     async get() {
       return run;
@@ -46,7 +47,7 @@ function makeStore(run: RunRecord): RunStore {
     async claimStep() {
       throw new Error('not exercised by get_run_state');
     },
-  };
+  });
 }
 
 describe('get_run_state — rerun_of (issue #558 PR-C)', () => {

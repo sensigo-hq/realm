@@ -200,6 +200,23 @@ export { VERSION } from './version.js';
 // the same release recognise each other's objects.
 export { RELEASE_LINE_KEY, createRealmBrand, brandClass, REALM_BRAND } from './brand.js';
 export type { RealmBrand } from './brand.js';
+// Which copy an object came from (issue #620 PR-C): the descriptions and refusals realm prints when
+// an object crosses realm versions, and the release-line check on every store a host hands realm.
+export {
+  releaseLineOf,
+  declareReleaseLine,
+  describeUnrecognised,
+  assertReleaseLine,
+  assertRegistryLine,
+  releaseLineError,
+  describeThrown,
+  describeForeignProvider,
+  unbrandedClause,
+  describeUnrecognisedForContract,
+  engineReleaseLine,
+  releaseLineAdvisoryMessage,
+} from './release-line.js';
+export type { Unrecognised, RealmClass, ReleaseLineFacts } from './release-line.js';
 export type { ToolCallRecord, McpServerConfig } from './types/mcp-types.js';
 
 // Extensions

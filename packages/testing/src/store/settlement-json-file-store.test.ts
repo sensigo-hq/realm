@@ -80,6 +80,8 @@ const LAWS: SettlementLaw[] = [
   // issue #625 — a store that declares settleStep settles guards in the same write.
   'GUARD_CASCADE_ONE_WRITE',
   'GUARD_CASCADE_TOTAL',
+  // issue #620 PR-C
+  'STORE_RELEASE_LINE_TRUE',
 ];
 
 describe('JsonFileStore — settlement TCK conformance (issue #279, increment 1 + 2)', () => {

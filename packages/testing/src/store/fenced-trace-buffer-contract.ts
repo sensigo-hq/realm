@@ -18,6 +18,8 @@
 // PARKED RUN READ (`FenceRunPark.parkNextRead`) — the read sits exactly where the guard call sat,
 // so every latch-based law keeps its instrument — and the new FENCE_DATA law runs each of the five
 // members true, false, and against a racer that flips the predicate mid-evaluation.
+import { crossCopyNote } from './cross-copy-note.js';
+import { storeReleaseLineLaw } from './store-release-line-law.js';
 import {
   WorkflowError,
   FsIoError,
@@ -65,7 +67,9 @@ export type FencedTraceBufferLaw =
   | 'SEAL'
   | 'SEAL_BUDGET'
   | 'PER_WRITER_BUDGET'
-  | 'VERBATIM';
+  | 'VERBATIM'
+  /** issue #620 PR-C — the store's declared release line is its own fence refusal's line. */
+  | 'STORE_RELEASE_LINE_TRUE';
 
 /**
  * A single, framework-agnostic contract case. `run()` throws (rejects) on failure — any test
@@ -737,7 +741,9 @@ function buildSealCases(
         caught = err;
       }
       if (!(caught instanceof WorkflowError) || caught.code !== REFUSAL_CODE) {
-        throw new Error(`expected a typed WorkflowError(${REFUSAL_CODE}), got: ${caught}`);
+        throw new Error(
+          `expected a typed WorkflowError(${REFUSAL_CODE}), got: ${caught}${crossCopyNote(caught, WorkflowError)}`,
+        );
       }
 
       const afterLive = await store.read(runId, stepId);
@@ -872,7 +878,7 @@ function buildPerWriterBudgetCases(
       }
       if (!(caught instanceof WorkflowError) || caught.code !== 'BUFFER_FULL') {
         throw new Error(
-          `expected a BUFFER_FULL WorkflowError once the combined file exceeds the backstop, got: ${caught}`,
+          `expected a BUFFER_FULL WorkflowError once the combined file exceeds the backstop, got: ${caught}${crossCopyNote(caught, WorkflowError)}`,
         );
       }
       const details = caught.details as { scope?: string };
@@ -1219,8 +1225,13 @@ function describeError(err: unknown): string {
       details: err.details,
     });
   }
+  const note = crossCopyNote(err, WorkflowError);
   if (err instanceof Error) {
-    return JSON.stringify({ class: err.constructor.name, message: err.message });
+    return JSON.stringify({
+      class: err.constructor.name,
+      message: err.message,
+      ...(note !== '' ? { unrecognised: note.slice(3) } : {}),
+    });
   }
   return JSON.stringify({ thrown: String(err) });
 }
@@ -1652,7 +1663,7 @@ export function fencedTraceBufferContract(
       }
       if (!(caught instanceof WorkflowError) || caught.code !== REFUSAL_CODE || !caught.category) {
         throw new Error(
-          `expected a typed WorkflowError(${REFUSAL_CODE}) with a populated category, got: ${caught}`,
+          `expected a typed WorkflowError(${REFUSAL_CODE}) with a populated category, got: ${caught}${crossCopyNote(caught, WorkflowError)}`,
         );
       }
       const after = await store.read(runId, stepId);
@@ -1678,7 +1689,7 @@ export function fencedTraceBufferContract(
       }
       if (!(caught instanceof WorkflowError) || caught.code !== REFUSAL_CODE || !caught.category) {
         throw new Error(
-          `expected a typed WorkflowError(${REFUSAL_CODE}) with a populated category, got: ${caught}`,
+          `expected a typed WorkflowError(${REFUSAL_CODE}) with a populated category, got: ${caught}${crossCopyNote(caught, WorkflowError)}`,
         );
       }
       const after = await store.read(runId, stepId);
@@ -1743,7 +1754,7 @@ export function fencedTraceBufferContract(
       if (!(caught instanceof WorkflowError) || caught.code !== REFUSAL_CODE) {
         throw new Error(
           `expected deleteAllForRunFenced to reject with the fence's own typed error ` +
-            `(WorkflowError, code=${REFUSAL_CODE}) — never wrapped — got: ${caught}`,
+            `(WorkflowError, code=${REFUSAL_CODE}) — never wrapped — got: ${caught}${crossCopyNote(caught, WorkflowError)}`,
         );
       }
       const a = await store.read(runId, stepA);
@@ -1772,7 +1783,7 @@ export function fencedTraceBufferContract(
       if (!(caught instanceof WorkflowError) || caught.code !== REFUSAL_CODE) {
         throw new Error(
           `expected a zero-match sweep with a refusing fence to reject with the fence's own typed ` +
-            `error (WorkflowError, code=${REFUSAL_CODE}) — never wrapped — got: ${caught}`,
+            `error (WorkflowError, code=${REFUSAL_CODE}) — never wrapped — got: ${caught}${crossCopyNote(caught, WorkflowError)}`,
         );
       }
       if (adapter.fenceRuns.readCount(runId) < 1) {
@@ -1823,7 +1834,7 @@ export function fencedTraceBufferContract(
         if (!(caught instanceof FsIoError)) {
           throw new Error(
             `expected the run read's own FsIoError to propagate exactly (not wrapped as ` +
-              `ENGINE_ARTIFACT_DELETE_FAILED via toArtifactDeleteFailedError), got: ${caught}`,
+              `ENGINE_ARTIFACT_DELETE_FAILED via toArtifactDeleteFailedError), got: ${caught}${crossCopyNote(caught, FsIoError)}`,
           );
         }
         const after = await store.read(runId, stepA);
@@ -1899,6 +1910,19 @@ export function fencedTraceBufferContract(
   cases.push(...buildSealCases(adapter));
   cases.push(...buildPerWriterBudgetCases(adapter));
   cases.push(...buildVerbatimCases(adapter));
+
+  // issue #620 PR-C: the store's own evaluateFence refusal (a run the fence refuses), never the
+  // reader's not-found.
+  cases.push({
+    law: 'STORE_RELEASE_LINE_TRUE',
+    name: "the store's declared release line is the line of its own fence refusal",
+    run: async () => {
+      const { runId, stepId } = adapter.makeKey();
+      await storeReleaseLineLaw(store, () =>
+        store.appendFenced!(runId, stepId, [{ event: 'x' }], refusingFence(adapter, runId)),
+      );
+    },
+  });
 
   return cases;
 }

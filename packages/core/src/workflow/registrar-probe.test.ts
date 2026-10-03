@@ -6,6 +6,7 @@
 // the registry DIRECTORY. On `main` the first crashed with the #456 hedge on a file that exists,
 // the third/fourth/fifth crashed `workflow list` with a stack trace, and the second escaped as a
 // bare V8 `EACCES: permission denied` with no code and no remedy.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir, chmod } from 'node:fs/promises';
 import { readFileSync, chmodSync } from 'node:fs';
@@ -386,7 +387,7 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
   });
 
   it('C-k (review fold C9) a TERMINAL run through a terminalOk site never gets "To end the run" — abandon refuses a finished run — while the repair survives, whole-message', async () => {
-    const unreadable = {
+    const unreadable = declared({
       get: async () => {
         throw new WorkflowError(
           "the registered copy of 'gate-558' could not be read (EACCES: /x)",
@@ -399,7 +400,7 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
           },
         );
       },
-    };
+    });
     const err = (await getWorkflowForRun(unreadable, TERMINAL, {
       retryVerb: 'drain again',
       verb: 'drain',

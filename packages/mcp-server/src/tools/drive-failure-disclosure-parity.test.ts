@@ -6,6 +6,7 @@
 // rather than out of prose — which is the point of routing it verbatim for an agent consumer.
 //
 // v1 waives NOTHING.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import type { DriveFailureRecord, RunRecord, RunStore, UsageRecord } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
@@ -69,7 +70,7 @@ const DRIVE_FAILURE_DISCLOSURE = {
 } satisfies Record<keyof DriveFailureRecord, DisclosureRoute>;
 
 function makeStore(run: RunRecord): RunStore {
-  return {
+  return declared({
     persistsClaims: true,
     get: async () => run,
     create: async () => {
@@ -84,7 +85,7 @@ function makeStore(run: RunRecord): RunStore {
     claimStep: async () => {
       throw new Error('not exercised');
     },
-  } as unknown as RunStore;
+  } as unknown as RunStore);
 }
 
 const run = {

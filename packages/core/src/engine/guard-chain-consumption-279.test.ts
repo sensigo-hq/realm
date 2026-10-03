@@ -44,6 +44,7 @@
 // an eligible one. Each leg therefore (1) leaves such a record with `store.update` — one completed
 // step and its evidence entry — (2) calls `advanceRun` directly, and (3) asserts the interposition
 // FIRED, so no leg can pass without entering the arm it names.
+import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -65,6 +66,10 @@ import type { StepHandler } from '../extensions/step-handler.js';
  * sibling writer that got there first. Every subsequent call passes straight through.
  */
 class InjectBeforeSettleStore implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   readonly persistsClaims: boolean;
   private injected = false;
 

@@ -4,6 +4,7 @@
 // appendFenced (never raw append) for non-empty entries, with no advisory; capability-absent
 // routes through raw append with the envelope advisory present; empty entries always use the raw
 // unlocked path regardless of capability (D3 §2: unchanged, no advisory either way).
+import { declareReleaseLine } from '@sensigo/realm';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -41,6 +42,10 @@ function makeWorkflowDef(): WorkflowDefinition {
  *  false and append_trace's capability-absent branch is exercised. Call-counted for the spy
  *  assertions below (deliberately simple — not a conformance-grade store). */
 class LegacyOnlyTraceBufferStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   appendCalls = 0;
   private buffers = new Map<string, BufferedEntry[]>();
 

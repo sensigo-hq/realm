@@ -11,6 +11,7 @@ import {
   type RunStore,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
+import { assertToolStores } from './assert-tool-stores.js';
 
 export interface HandleAbandonRunStores {
   /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
@@ -49,6 +50,7 @@ export async function handleAbandonRun(
   args: { run_id: string; reason?: string | undefined },
   stores?: HandleAbandonRunStores,
 ): Promise<AbandonRunSummary> {
+  assertToolStores(stores, 'handleAbandonRun');
   const runStore = stores?.runStore ?? new JsonFileStore();
   // issue #367: read first, so the response can say whether THIS call changed anything. Core's
   // `abandonRun` is idempotent — a second abandon returns the stored record untouched — and the

@@ -58,6 +58,8 @@ Checks a workflow and prints the result. It stores nothing. With a path it check
 | `--json`                     | Prints the result as one JSON object and nothing else.                                         |
 | `--extensions-module <path>` | Loads this code file in place of the files named by the workflow's `extensions`.               |
 
+The warning that the `@sensigo/realm` your code imports is another version than the command's ([`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes)) counts as a warning for `--strict`. This was added after version 0.45.0.
+
 ```bash
 realm workflow validate invoice-check
 ```
@@ -85,6 +87,8 @@ Checks the file as `validate` does and, if it is accepted, stores a copy as `~/.
 | Flag       | What it does                                             |
 | ---------- | -------------------------------------------------------- |
 | `--strict` | Stores nothing and exits with 1 if there is any warning. |
+
+A project realm of another version ([`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes)) is a warning: without `--strict` the workflow is registered and the warning printed; with it, nothing is stored. This was added after version 0.45.0.
 
 ```bash
 realm workflow register invoice-check

@@ -3,6 +3,7 @@
 //
 // A minimal hand-rolled RunStore double (get-run-state-defaulted-steps.test.ts's own precedent) —
 // handleGetRunState only ever calls `.get()`.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import type { RunRecord, RunStore } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
@@ -28,7 +29,7 @@ function makeRun(over: Partial<RunRecord> = {}): RunRecord {
 }
 
 function makeStore(run: RunRecord): RunStore {
-  return {
+  return declared({
     persistsClaims: true,
     async get() {
       return run;
@@ -45,7 +46,7 @@ function makeStore(run: RunRecord): RunStore {
     async claimStep() {
       throw new Error('not exercised by get_run_state');
     },
-  };
+  });
 }
 
 describe('get_run_state — terminal_reason (issue #302)', () => {

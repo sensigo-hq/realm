@@ -157,6 +157,8 @@ async function purgeResumedRun(
       deleteAllForRun: (runId: string, dirEntries?: readonly string[]) =>
         runStore.deleteAllForRun(runId, dirEntries),
     };
+  // issue #620 PR-C: a plain-object reader declares this release's line (the store rule).
+  cliCore.declareReleaseLine(anchorStub);
   const trace = await makeTrace(dir, anchorStub);
   const result = await purge.purgeRuns({ runId: id, dryRun: false }, anchorStub, [trace]);
   return { blocked: result.blocked, failed: result.failed, purged: result.purged };
@@ -199,6 +201,8 @@ async function reclaimWith(
   // The trace buffer reads the run through a reader that sees it ALREADY CHANGED (version 8): the
   // reclaim decision was taken at version 1.
   const reader = { get: async (runId: string) => ({ ...(await store.get(runId)), version: 8 }) };
+  // issue #620 PR-C: a plain-object reader declares this release's line (the store rule).
+  cliCore.declareReleaseLine(reader);
   const real = new mcp.JsonTraceBufferStore(dir, reader);
   await real.append(id, 'work', [{ event: 'e' }]);
 
@@ -760,13 +764,13 @@ describe('9 — the drain retries a `STATE_RUN_BUSY` that a store of another cop
 
 // --- Row 10: the control. The same crossing with a copy of ANOTHER release — not recognised. ---
 
-describe('10 — control: a copy of another release is not recognised (the outcome is today’s)', () => {
+describe('10 — control: a copy of another release is not recognised (issue #620 PR-C: and realm says so)', () => {
   it(
-    '1: the orphaned trace file is not reaped; the failure carries the message',
+    '1: a run store of another release handed to the trace buffer is refused at construction',
     async () => {
-      const result = await reapOrphanWith(layout.other.core);
-      expect(result.reaped).toBe(0);
-      expect(result.failed.join('\n')).toContain('Run not found');
+      await expect(reapOrphanWith(layout.other.core)).rejects.toMatchObject({
+        code: 'ENGINE_RELEASE_LINE_MISMATCH',
+      });
     },
     TEST_TIMEOUT,
   );
@@ -809,11 +813,11 @@ describe('10 — control: a copy of another release is not recognised (the outco
   );
 
   it(
-    '4: a handler importing another release’s copy runs once and fails as ENGINE_HANDLER_FAILED',
+    '4: a handler importing another release’s copy runs once and fails as ENGINE_RELEASE_LINE_MISMATCH',
     async () => {
       const result = await runRetryingStep({ dir: await codeDir(layout.otherDir, 'handler') });
       expect(result.attempts).toBe(1);
-      expect(result.errorCode).toBe('ENGINE_HANDLER_FAILED');
+      expect(result.errorCode).toBe('ENGINE_RELEASE_LINE_MISMATCH');
     },
     TEST_TIMEOUT,
   );
@@ -826,8 +830,10 @@ describe('10 — control: a copy of another release is not recognised (the outco
       );
       const run = await runAgentWithProvider(layout.cli.cli, plain);
       expect(run.status).toBe(1);
-      expect(run.text).toContain(
-        'provider module default export must be an instance extending LlmProvider',
+      // The whole message (issue #620 PR-C, amendment 19): versions and folders from the layout.
+      const line = run.text.split('\n').find((l) => l.startsWith('Error: the provider module'));
+      expect(line).toBe(
+        `Error: the provider module's LlmProvider comes from @sensigo/realm-cli ${layout.otherVersion} (${layout.other.cli.dir}); this realm command is @sensigo/realm-cli ${layout.version} (${layout.cli.cli.dir}). Realm objects do not cross versions. Run realm ${layout.otherVersion} in the project: npm install --save-dev @sensigo/realm-cli@${layout.otherVersion}, then npx realm; or install @sensigo/realm-cli@${layout.version} and @sensigo/realm@${layout.version} in the project.`,
       );
       const llm = await layout.load<LlmProviderModule>(
         layout.cli.cli,
@@ -855,7 +861,7 @@ describe('10 — control: a copy of another release is not recognised (the outco
       const run = await runWorkflowTest(await codeDir(layout.otherDir, 'flaky'));
       expect(run.status).toBe(1);
       expect(run.output).toContain(
-        "FAIL flaky handler retries: Handler 'flaky' threw: rate limited",
+        "FAIL flaky handler retries: Handler 'flaky' threw a WorkflowError from realm 0.45.1",
       );
       expect(run.calls).toBe(1);
     },
@@ -863,10 +869,11 @@ describe('10 — control: a copy of another release is not recognised (the outco
   );
 
   it(
-    '9: a store built with another release’s core stops the drain at the first refusal',
+    '9: a store built with another release’s core is refused before the chain runs',
     async () => {
       const result = await drainWithBusyStore(layout.other.core);
-      expect(result.status).toBe('pending');
+      expect(result.thrown).toContain('belongs to realm 0.45.1');
+      expect(result.status).toBeUndefined();
     },
     TEST_TIMEOUT,
   );
@@ -924,6 +931,199 @@ describe('11 — the layout is what it claims to be', () => {
         expect(resolved, entry).toContain(pathToFileURL(entry).href);
         expect(pathToFileURL(entry).href.startsWith(inside)).toBe(true);
       }
+    },
+    TEST_TIMEOUT,
+  );
+});
+
+// --- Row 12 (issue #620 PR-C): the advisory where project code loads. -------------------------
+
+describe('12 — the advisory: the project’s @sensigo/realm is another version', () => {
+  const ADVISORY = "Your project's @sensigo/realm is 0.45.1";
+  async function cli(args: string[], cwd: string): Promise<ReturnType<typeof runNode>> {
+    const home = await tempDir('home');
+    return runNode([layout.file(layout.cli.cli, 'dist/index.js'), ...args], { cwd, home });
+  }
+
+  it(
+    'validate --json carries the warning with release_line as data; --strict fails',
+    async () => {
+      const root = await codeDir(layout.otherDir, 'adv');
+      const { workflowDir } = await writeFlakyProject(root);
+      const json = await cli(['workflow', 'validate', workflowDir, '--json'], root);
+      const out = JSON.parse(json.stdout) as {
+        diagnostics: Array<{ code: string; release_line?: Record<string, Record<string, string>> }>;
+      };
+      const d = out.diagnostics.find((x) => x.code === 'REALM_RELEASE_LINE_MISMATCH');
+      expect(d?.release_line?.['project']?.['version']).toBe('0.45.1');
+      expect(d?.release_line?.['project']?.['installed_by']).toBe('project');
+      expect(d?.release_line?.['engine']?.['version']).toBe('0.45.0');
+      expect(json.stderr).not.toContain(ADVISORY);
+      const strict = await cli(['workflow', 'validate', workflowDir, '--strict'], root);
+      expect(strict.status).toBe(1);
+      expect(strict.stderr + strict.stdout).toContain(ADVISORY);
+      // The whole message (amendment 19): the project's copy and the running core, from the layout.
+      const line = (strict.stderr + strict.stdout)
+        .split('\n')
+        .find((l) => l.startsWith("⚠ Your project's @sensigo/realm"));
+      expect(line).toBe(
+        `⚠ Your project's @sensigo/realm is ${layout.otherVersion} (${layout.other.core.dir}, installed by the project); this realm command runs @sensigo/realm ${layout.version}. Realm objects do not cross versions: a WorkflowError your handlers or adapters throw is not recognised — its step fails after one attempt, without that error's own code and retry setting. Install @sensigo/realm@${layout.version} (and every other @sensigo package the project has, at ${layout.version}) in the project your code imports it from, or, when you run the realm command, run version ${layout.otherVersion} there: npm install --save-dev @sensigo/realm-cli@${layout.otherVersion}, then npx realm.`,
+      );
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    'register still registers (policy warn) and prints the warning once; --strict refuses',
+    async () => {
+      const root = await codeDir(layout.otherDir, 'adv');
+      const { workflowDir } = await writeFlakyProject(root);
+      const reg = await cli(['workflow', 'register', workflowDir], root);
+      expect(reg.status).toBe(0);
+      expect((reg.stderr + reg.stdout).split(ADVISORY).length - 1).toBe(1);
+      const strict = await cli(['workflow', 'register', workflowDir, '--strict'], root);
+      expect(strict.status).toBe(1);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    'validate --registered prints the warning (its own composer) and --json carries release_line',
+    async () => {
+      const root = await codeDir(layout.otherDir, 'adv');
+      const { workflowDir } = await writeFlakyProject(root);
+      const home = await tempDir('home');
+      const run = (args: string[]): ReturnType<typeof runNode> =>
+        runNode([layout.file(layout.cli.cli, 'dist/index.js'), ...args], { cwd: root, home });
+      expect(run(['workflow', 'register', workflowDir]).status).toBe(0);
+      const plain = run(['workflow', 'validate', '--registered', 'flaky-flow']);
+      expect((plain.stderr + plain.stdout).split(ADVISORY).length - 1).toBe(1);
+      const json = run(['workflow', 'validate', '--registered', 'flaky-flow', '--json']);
+      const out = JSON.parse(json.stdout) as {
+        diagnostics: Array<{ code: string; release_line?: { project: { version: string } } }>;
+      };
+      expect(
+        out.diagnostics.find((d) => d.code === 'REALM_RELEASE_LINE_MISMATCH')?.release_line?.project
+          .version,
+      ).toBe(layout.otherVersion);
+      expect(json.stderr).not.toContain(ADVISORY);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    'the advisory comes first in both validate modes and in --json; one path form in text and data',
+    async () => {
+      const root = await codeDir(layout.otherDir, 'adv');
+      const { workflowDir } = await writeFlakyProject(root);
+      const home = await tempDir('home');
+      const run = (args: string[]): ReturnType<typeof runNode> =>
+        runNode([layout.file(layout.cli.cli, 'dist/index.js'), ...args], { cwd: root, home });
+      expect(run(['workflow', 'register', workflowDir]).status).toBe(0);
+      for (const mode of [[workflowDir], ['--registered', 'flaky-flow']]) {
+        const plain = run(['workflow', 'validate', ...mode]);
+        const warnings = (plain.stderr + plain.stdout)
+          .split('\n')
+          .filter((l) => l.startsWith('⚠ '));
+        expect(warnings.length, mode.join(' ')).toBeGreaterThan(1);
+        expect(warnings[0]!.startsWith(`⚠ ${ADVISORY}`), mode.join(' ')).toBe(true);
+        const json = JSON.parse(run(['workflow', 'validate', ...mode, '--json']).stdout) as {
+          diagnostics: Array<{
+            code: string;
+            message: string;
+            release_line?: { project: { path: string }; engine: { path: string } };
+          }>;
+        };
+        expect(json.diagnostics.length, mode.join(' ')).toBeGreaterThan(1);
+        const first = json.diagnostics[0]!;
+        expect(first.code).toBe('REALM_RELEASE_LINE_MISMATCH');
+        expect(first.release_line?.project.path).toBe(layout.other.core.dir);
+        expect(first.release_line?.engine.path).toBe(layout.cli.cliCore.dir);
+        expect(first.message).toContain(`(${first.release_line?.project.path}, installed by`);
+        expect(first.message).not.toContain(`${layout.cli.cliCore.dir}`);
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    'listen’s children: `agent --run-id … --no-release-line-advisory` prints nothing; without the flag, once',
+    async () => {
+      const root = await codeDir(layout.otherDir, 'adv');
+      const { workflowDir } = await writeFlakyProject(root);
+      const { plain } = await writeProviders(await codeDir(layout.projectDir, 'providers'));
+      const home = await tempDir('home');
+      const cliCore = await core(layout.cli.cliCore);
+      const node = (args: string[]): ReturnType<typeof runNode> =>
+        runNode([layout.file(layout.cli.cli, 'dist/index.js'), ...args], { cwd: root, home });
+      expect(node(['workflow', 'register', workflowDir]).status).toBe(0);
+      const store = new cliCore.JsonFileStore(join(home, '.realm', 'runs'));
+      const attach = async (flag: string[]): Promise<string> => {
+        const { run } = await store.create({
+          workflowId: 'flaky-flow',
+          workflowVersion: 1,
+          params: {},
+        });
+        const r = node(['agent', '--run-id', run.id, '--provider-module', plain, ...flag]);
+        return r.stderr + r.stdout;
+      };
+      expect((await attach(['--no-release-line-advisory'])).split(ADVISORY).length - 1).toBe(0);
+      expect((await attach([])).split(ADVISORY).length - 1).toBe(1);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    'workflow test prints the warning once',
+    async () => {
+      const run = await runWorkflowTest(await codeDir(layout.otherDir, 'adv'));
+      expect(run.output.split(ADVISORY).length - 1).toBe(1);
+      expect(run.output).not.toMatch(/⚠ ⚠/);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    'a module with no realm above it prints nothing',
+    async () => {
+      const root = await tempDir('norealm');
+      const { workflowDir } = await writeFlakyProject(root);
+      const json = await cli(['workflow', 'validate', workflowDir, '--json'], root);
+      expect(json.stdout + json.stderr).not.toContain('REALM_RELEASE_LINE_MISMATCH');
+    },
+    TEST_TIMEOUT,
+  );
+});
+
+// --- Row 13 (issue #620 PR-C): the regression guard for realm's own hosts. ---------------------
+describe('13 — realm mcp / serve hand realm-mcp’s engine a registry built by realm-cli’s copy', () => {
+  it(
+    'the CLI copy’s registry is accepted by the realm-mcp copy’s engine (same release, two copies)',
+    async () => {
+      const cliCore = await core(layout.cli.cliCore);
+      const mcpCore = await core(layout.cli.mcpCore);
+      const dir = await tempDir('reg');
+      const store = new mcpCore.JsonFileStore(dir);
+      const { run } = await store.create({ workflowId: 'w', workflowVersion: 1, params: {} });
+      const def = {
+        id: 'w',
+        name: 'w',
+        version: 1,
+        steps: { a: { description: 'a', execution: 'agent', depends_on: [] } },
+      } as unknown as WorkflowDefinition;
+      let code: string | undefined;
+      try {
+        await mcpCore.executeChain(store, def, {
+          runId: run.id,
+          command: 'a',
+          input: {},
+          dispatcher: async () => ({}),
+          registry: cliCore.createDefaultRegistry() as never,
+        });
+      } catch (err) {
+        code = (err as { code?: string }).code;
+      }
+      expect(code ?? 'accepted').not.toMatch(/^ENGINE_RELEASE_LINE_/);
     },
     TEST_TIMEOUT,
   );
