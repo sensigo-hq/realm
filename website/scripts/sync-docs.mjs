@@ -21,8 +21,6 @@ async function walk(dir) {
   return out;
 }
 
-const esc = (s) => s.replace(/"/g, '\\"');
-
 // Links between docs pages are written as relative `.md` paths so they work on GitHub.
 // On the site each page lives at /docs/<path>/, so rewrite them here. Fenced code is left alone.
 function rewriteLinks(body, relFile) {
@@ -69,7 +67,9 @@ for (const file of files) {
     basename(rel).toLowerCase() === 'readme.md' ? join(dirname(rel), 'index.md') : rel,
   );
   await mkdir(dirname(dest), { recursive: true });
-  await writeFile(dest, `---\ntitle: "${esc(title)}"\n---\n\n${rewriteLinks(body, rel)}`);
+  // JSON.stringify gives a valid YAML double-quoted string: it escapes backslashes, quotes and control
+  // characters (a hand-written quote-only replace broke on a title with a backslash).
+  await writeFile(dest, `---\ntitle: ${JSON.stringify(title)}\n---\n\n${rewriteLinks(body, rel)}`);
 }
 
 console.log(`sync-docs: ${files.length} files -> src/content/docs/docs/`);
