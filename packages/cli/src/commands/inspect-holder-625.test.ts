@@ -729,13 +729,24 @@ describe("walk 2 — every layout: the question, then the answer; the step's out
     const out = await render(
       baseRun({
         completed_steps: ['confirm'],
-        evidence: [exec('confirm'), ans({ gate_message: 'Ship it?\nPhase: completed\u001b[2J' })],
+        evidence: [
+          exec('confirm'),
+          ans({ gate_message: 'Ship it?\nPhase: completed\u001b[2J\u009b31m\u007f' }),
+        ],
       }),
     );
-    // (a) red when the question is printed raw (a forged `Phase:` line, a terminal escape);
-    //     (b) prints the screen.
-    expect(out).toContain('     Message:  "Ship it?\\nPhase: completed\\u001b[2J"');
+    // (a) red when the question is printed raw (a forged `Phase:` line, a terminal escape) or when
+    //     a character of the house's control set U+007F–U+009F (which JSON quoting leaves raw)
+    //     reaches the screen; (b) prints the screen.
+    expect(out).toContain(
+      '     Message:  "Ship it?\\nPhase: completed\\u001b[2J\\u009b31m\\u007f"',
+    );
     expect(out.split('\n').filter((l) => l.startsWith('Phase: '))).toHaveLength(1);
-    expect(out).not.toContain('\u001b');
+    // No byte of the control set on the screen, other than the newlines between lines.
+    const controls = [...out].filter((ch) => {
+      const c = ch.charCodeAt(0);
+      return (c < 0x20 && c !== 0x0a) || (c >= 0x7f && c <= 0x9f);
+    });
+    expect(controls).toEqual([]);
   });
 });

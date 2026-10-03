@@ -1061,9 +1061,17 @@ export async function inspectRun(
     const answerEntries = snaps.filter((s) => isAnswerEntry(s));
     (view?.answers ?? []).forEach((answer, i) => {
       const message = answerEntries[i]?.gate_message;
-      // JSON quoting keeps the question on one line whatever it holds (a run parameter in it may
-      // carry a newline or a control character).
-      if (message !== undefined) lines.push(`     Message:  ${JSON.stringify(message)}`);
+      // The question is printed quoted, on one line, with every control character written as an
+      // escape: a run parameter in it may carry a newline or a terminal sequence. JSON quoting
+      // escapes U+0000–U+001F; the house's control set (`holder.ts`) also holds U+007F–U+009F
+      // (U+009B starts a terminal sequence), which JSON leaves raw, so those are escaped too.
+      if (message !== undefined) {
+        const quoted = JSON.stringify(message).replace(
+          /[\u007f-\u009f]/g,
+          (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+        );
+        lines.push(`     Message:  ${quoted}`);
+      }
       lines.push(`     ${renderAnswerLine(answer)}`);
     });
   });
