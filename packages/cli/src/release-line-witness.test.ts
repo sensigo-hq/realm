@@ -58,14 +58,11 @@ describe('release-line witnesses', () => {
       'packages/testing/src/store/cross-copy-note.ts': 1,
     });
   });
-  it('assertReleaseLine: H1 (4), the tool entries (one helper), H2 (10 across five files), H3 (2)', () => {
+  it('assertReleaseLine: H1 (4), the tool entries (one helper), H2 (the admission step: one call for all eight engine entries, framework v1.27 §4), H3 (2), the fence reader (1)', () => {
     expect(callSites('assertReleaseLine')).toEqual({
       'packages/mcp-server/src/server.ts': 4,
       'packages/mcp-server/src/tools/assert-tool-stores.ts': 1,
-      'packages/core/src/engine/execution-loop.ts': 5,
-      'packages/core/src/engine/abandon-run.ts': 1,
-      'packages/core/src/engine/reclaim-step.ts': 1,
-      'packages/core/src/workflow/registrar.ts': 1,
+      'packages/core/src/admission.ts': 1,
       'packages/core/src/store/fence-predicate.ts': 1,
       'packages/core/src/store/trace-buffer-store.ts': 1,
       'packages/mcp-server/src/json-trace-buffer-store.ts': 1,

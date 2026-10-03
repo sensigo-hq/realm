@@ -459,21 +459,22 @@ describe('VALIDATION_ACTOR_INVALID — a malformed driver is refused at every ex
         submitHumanResponse(s, def, { runId: 'r', gateId: 'g', choice: 'approve', driver: BAD }),
     ],
   ])(
-    '%s returns the error envelope with the code and the field — and the store is never touched',
+    '%s THROWS the code with the field — and the store is never touched (the admission step, framework v1.27 §4)',
     async (_n, call) => {
       const { s, calls } = untouchedStore();
-      const reply = await call(s);
-      // (a) red when the validator moves below the first store read, or is dropped; (b) prints the
-      //     envelope's code/status and the store calls made.
-      expect(reply.status).toBe('error');
-      expect(reply.error_code).toBe('VALIDATION_ACTOR_INVALID');
-      expect(reply.errors).toEqual(['Invalid driver.by: contains a control character.']);
-      expect(reply.agent_action).toBe('report_to_user');
+      // (a) red when the validator moves below the first store read, is dropped, or answers with
+      //     an error reply instead of throwing (a host-wiring defect throws at every entry);
+      //     (b) prints what was thrown and the store calls made.
+      await expect(call(s)).rejects.toMatchObject({
+        code: 'VALIDATION_ACTOR_INVALID',
+        message: 'Invalid driver.by: contains a control character.',
+        agentAction: 'report_to_user',
+      });
       expect(calls).toEqual([]);
     },
   );
 
-  it('drainFinalizers (which returns no envelope) THROWS the same code — mutant (n) — and reads nothing', async () => {
+  it('drainFinalizers THROWS the same code — mutant (n) — and reads nothing', async () => {
     const { s, calls } = untouchedStore();
     // (a) red when drainFinalizers skips the validator; (b) prints what (if anything) was thrown.
     await expect(drainFinalizers(s, def, undefined, 'r', BAD)).rejects.toMatchObject({

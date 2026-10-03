@@ -36,7 +36,6 @@ import { partitionBufferedEntries, type BufferedEntryPartition } from './trace-a
 import { deriveDefaultedSteps } from './defaulted-steps.js';
 import { computeGateDueState } from './gate-timing.js';
 import {
-  validateDriver,
   describeClaimHolder,
   readDrivenBy,
   composeGateClaimSentence,
@@ -87,13 +86,8 @@ import {
   evaluateGuardConditions,
 } from './precondition.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
-import {
-  assertRegistryLine,
-  assertReleaseLine,
-  describeThrown,
-  describeUnrecognised,
-  releaseLineError,
-} from '../release-line.js';
+import { admitEntry } from '../admission.js';
+import { describeThrown, describeUnrecognised, releaseLineError } from '../release-line.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
 import { renderTemplate, resolvePath, UnknownFilterError } from './render-template.js';
@@ -259,20 +253,6 @@ export interface ExecuteChainOptions {
 
 /** issue #625: the one line added to a reply when a store keeping claims dropped the claimant. */
 const DROPPED_CLAIMANT_WARNING = 'this run store did not record who took the step';
-
-/**
- * Issue #625: the refusal for a malformed `driver`, or `undefined` when it is well formed (or
- * absent). Every exported entry that takes a driver calls this before it reads or writes anything.
- */
-function driverRefusal(driver: Attributed | undefined): WorkflowError | undefined {
-  try {
-    validateDriver(driver);
-    return undefined;
-  } catch (err) {
-    if (err instanceof WorkflowError) return err;
-    throw err;
-  }
-}
 
 function delayMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -1562,13 +1542,14 @@ export async function executeStep(
   definition: WorkflowDefinition,
   options: ExecuteStepOptions,
 ): Promise<ResponseEnvelope> {
-  // issue #620 PR-C: the hand-off check, before the first read — a store with no release line
-  // throws here instead of becoming the ENGINE_STORE_FAILED envelope below.
-  assertReleaseLine(store, 'the run store handed to executeStep');
-  assertRegistryLine(options.registry, 'the registry handed to executeStep', ExtensionRegistry);
-  // issue #625 (holder slice): a malformed driver is refused before anything is read or written.
-  const driverError = driverRefusal(options.driver);
-  if (driverError !== undefined) return makeErrorEnvelope(options, null, driverError);
+  // The admission step (framework v1.27 §4): what the host handed in, checked before the first
+  // read — a defect throws here instead of becoming the ENGINE_STORE_FAILED envelope below.
+  admitEntry('executeStep', {
+    store,
+    storeKind: 'run store',
+    registry: options.registry,
+    driver: options.driver,
+  });
 
   // Step 1: Load run.
   let run: RunRecord;
@@ -4915,15 +4896,12 @@ export async function submitHumanResponse(
   definition: WorkflowDefinition,
   options: SubmitGateOptions,
 ): Promise<ResponseEnvelope> {
-  assertReleaseLine(store, 'the run store handed to submitHumanResponse');
-  assertRegistryLine(
-    options.registry,
-    'the registry handed to submitHumanResponse',
-    ExtensionRegistry,
-  );
-  // issue #625 (holder slice): a malformed driver is refused before anything is read or written.
-  const driverError = driverRefusal(options.driver);
-  if (driverError !== undefined) return errorEnvelope('submit_gate', options.runId, 0, driverError);
+  admitEntry('submitHumanResponse', {
+    store,
+    storeKind: 'run store',
+    registry: options.registry,
+    driver: options.driver,
+  });
 
   // 1. Load run.
   let run: RunRecord;
@@ -5996,14 +5974,11 @@ export async function drainFinalizers(
   registry: ExtensionRegistry | undefined,
   runId: string,
   // issue #625 (holder slice): the program whose code and credentials run the cleanup steps this
-  // pass leases — stamped as `driven_by` on their entries. A malformed value THROWS (this entry
-  // returns no envelope), before the store is read.
+  // pass leases — stamped as `driven_by` on their entries. A malformed value THROWS, before the
+  // store is read (the admission step's host tier).
   driver?: Attributed,
 ): Promise<{ run: RunRecord; warnings: string[]; leftPending: string[]; attempted: string[] }> {
-  assertReleaseLine(store, 'the run store handed to drainFinalizers');
-  assertRegistryLine(registry, 'the registry handed to drainFinalizers', ExtensionRegistry);
-  const driverError = driverRefusal(driver);
-  if (driverError !== undefined) throw driverError;
+  admitEntry('drainFinalizers', { store, storeKind: 'run store', registry, driver });
   // .bind(store): a bare `store.settleStep` reference loses its `this` binding — the store's own
   // method body (e.g. JsonFileStore's `this.ensureDir()`/`this.filePath()`) would throw on
   // `this === undefined` once called through the detached reference below.
@@ -6331,12 +6306,12 @@ export async function advanceRun(
   options: ExecuteChainOptions,
   state?: AdvanceRunState,
 ): Promise<ResponseEnvelope> {
-  assertReleaseLine(store, 'the run store handed to advanceRun');
-  assertRegistryLine(options.registry, 'the registry handed to advanceRun', ExtensionRegistry);
-  // issue #625 (holder slice): a malformed driver is refused before anything is read or written.
-  const driverError = driverRefusal(options.driver);
-  if (driverError !== undefined)
-    return errorEnvelope(options.command, options.runId, 0, driverError);
+  admitEntry('advanceRun', {
+    store,
+    storeKind: 'run store',
+    registry: options.registry,
+    driver: options.driver,
+  });
 
   if (state === undefined) {
     const stored = await store.get(options.runId);
@@ -6862,12 +6837,12 @@ export async function executeChain(
   definition: WorkflowDefinition,
   options: ExecuteChainOptions,
 ): Promise<ResponseEnvelope> {
-  assertReleaseLine(store, 'the run store handed to executeChain');
-  assertRegistryLine(options.registry, 'the registry handed to executeChain', ExtensionRegistry);
-  // issue #625 (holder slice): a malformed driver is refused before anything is read or written.
-  const driverError = driverRefusal(options.driver);
-  if (driverError !== undefined)
-    return errorEnvelope(options.command, options.runId, 0, driverError);
+  admitEntry('executeChain', {
+    store,
+    storeKind: 'run store',
+    registry: options.registry,
+    driver: options.driver,
+  });
 
   // Defense-in-depth: never drive a run that is already terminal. The eligibility guard
   // (findEligibleSteps) makes this unreachable in normal operation, but guarding the chain
