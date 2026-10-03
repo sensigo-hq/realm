@@ -41,8 +41,13 @@ import {
   ParcelPanelAdapter,
   FileSystemAdapter,
   MockAdapter,
+  engineReleaseLine,
+  releaseLineAdvisoryMessage,
+  renderLoaderWarning,
+  resolveSeverity,
 } from '@sensigo/realm';
 import type {
+  LoaderWarning,
   DeploymentManifest,
   ExtensionFactory,
   ExtensionManifest,
@@ -77,6 +82,14 @@ export interface LoadProjectExtensionsOptions {
    * resolve to `<sentinel:NAME>` labels and construction failures downgrade to warnings.
    */
   secretMode?: SecretMode;
+  /**
+   * issue #620 PR-C: where a `REALM_RELEASE_LINE_MISMATCH` advisory goes. Fired at the two return
+   * points (a cache hit and a fresh load) — never inside an attempt that throws, so the sentinel
+   * retry (a second load under another cache key) does not fire twice. Absent → the default sink:
+   * the rendered warning on stderr, once per distinct copy per process. A surface that collects
+   * the warnings from `releaseLineWarnings` passes a sink that does nothing.
+   */
+  onReleaseLineWarning?: (warning: LoaderWarning) => void;
 }
 
 export interface LoadedProjectExtensions {
@@ -86,6 +99,12 @@ export interface LoadedProjectExtensions {
   notifiers?: { slack_gate?: SlackGateNotifierConfig['config'] };
   /** Sentinel-mode construction warnings (entries skipped, listed — never silent). */
   sentinelWarnings?: string[];
+  /**
+   * issue #620 PR-C: one `REALM_RELEASE_LINE_MISMATCH` per distinct `@sensigo/realm` copy the
+   * loaded modules import that is not the running one. Stored on the cached result, so a cache hit
+   * returns it too.
+   */
+  releaseLineWarnings?: LoaderWarning[];
   /**
    * REAL resolved manifest-secret VALUES (values only, frozen, never names→values;
    * sentinel-mode values excluded; values < 4 chars excluded). Consumed by the agent
@@ -372,7 +391,10 @@ export async function loadProjectExtensions(
       : undefined;
 
   const cached = cache.get(cacheKey);
-  if (cached !== undefined && cached.freshness === freshness) return cached.result;
+  if (cached !== undefined && cached.freshness === freshness) {
+    emitReleaseLineWarnings(cached.result, opts);
+    return cached.result;
+  }
   // freshness mismatch → rebuild-and-REPLACE (dotenv rotation / manifest edit reaches
   // the next run without restart; rate-limiter buckets reset with the new registry).
 
@@ -445,6 +467,10 @@ export async function loadProjectExtensions(
   // manifest contributes its content hash (never a sweep root); `use:`-resolved module
   // FILES contribute sweep roots exactly like extension-list modules; secret NAMES are
   // recorded, never compared; the freshness hash is NEVER recorded.
+  // issue #620 PR-C: which @sensigo/realm each loaded module imports — every module realpath of
+  // both kinds, before the identity is computed.
+  const releaseLineWarnings = releaseLineWarningsFor(identityModules.map((m) => m.resolved));
+
   const overrideActive = opts?.overrideModule !== undefined;
   try {
     registry.setIdentity(
@@ -474,9 +500,11 @@ export async function loadProjectExtensions(
     manifest,
     ...(notifiers !== undefined ? { notifiers } : {}),
     ...(sentinelWarnings.length > 0 ? { sentinelWarnings } : {}),
+    ...(releaseLineWarnings.length > 0 ? { releaseLineWarnings } : {}),
     ...(secretValues !== undefined && secretValues.length > 0 ? { secretValues } : {}),
   };
   cache.set(cacheKey, { result, ...(freshness !== undefined ? { freshness } : {}) });
+  emitReleaseLineWarnings(result, opts);
   return result;
 }
 
@@ -1040,12 +1068,132 @@ function warnOnIdMismatch(impl: object, type: string, name: string, ref: Extensi
 export function makeRegistryProvider(
   overrideModule?: string,
   projectDir?: string,
+  onReleaseLineWarning?: (warning: LoaderWarning) => void,
 ): (definition: WorkflowDefinition) => Promise<ExtensionRegistry> {
   return async (definition: WorkflowDefinition): Promise<ExtensionRegistry> =>
     (
       await loadProjectExtensions(definition, {
         ...(overrideModule !== undefined ? { overrideModule } : {}),
         ...(projectDir !== undefined ? { projectDir } : {}),
+        ...(onReleaseLineWarning !== undefined ? { onReleaseLineWarning } : {}),
       })
     ).registry;
+}
+
+// --- issue #620 PR-C: which @sensigo/realm the project's code imports ---------------------------
+
+/**
+ * The nearest `node_modules/@sensigo/realm/package.json` above `modulePath`, read by path — the
+ * copy that module's `import '@sensigo/realm'` resolves to under Node's rules. Module resolution is
+ * not used: `@sensigo/realm`'s `exports` do not expose `package.json`
+ * (`createRequire(...).resolve` throws `ERR_PACKAGE_PATH_NOT_EXPORTED`), and `module.findPackageJSON`
+ * is newer than the engines floor. Any filesystem error counts as not found at that level.
+ */
+function findRealmCopyAbove(
+  modulePath: string,
+): { packageJson: string; version: string } | undefined {
+  let dir = dirname(modulePath);
+  for (;;) {
+    const candidate = join(dir, 'node_modules', '@sensigo', 'realm', 'package.json');
+    try {
+      const pkg: unknown = JSON.parse(readFileSync(candidate, 'utf8'));
+      const version = (pkg as { version?: unknown } | null)?.version;
+      if (typeof version === 'string') return { packageJson: candidate, version };
+    } catch {
+      // not found (or unreadable) at this level — keep walking up
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+/**
+ * Who installed the copy, as data: the package between the last two `node_modules` of
+ * `packageJson` (`@sensigo/realm-cli`), else `'project'` (the project's own copy).
+ */
+function installedBy(packageJson: string): string {
+  const parts = packageJson.split(sep);
+  const nm: number[] = [];
+  parts.forEach((p, i) => {
+    if (p === 'node_modules') nm.push(i);
+  });
+  // Nothing between two `node_modules` (one level, or two in a row) is the project's own copy.
+  const between = nm.length < 2 ? [] : parts.slice(nm[nm.length - 2]! + 1, nm[nm.length - 1]);
+  return between.length > 0 ? between.join('/') : 'project';
+}
+
+/** One `REALM_RELEASE_LINE_MISMATCH` per distinct copy (package.json path, version) not the running one. */
+function releaseLineWarningsFor(modulePaths: readonly string[]): LoaderWarning[] {
+  const engine = engineReleaseLine();
+  const seen = new Set<string>();
+  const out: LoaderWarning[] = [];
+  for (const modulePath of modulePaths) {
+    const found = findRealmCopyAbove(modulePath);
+    if (found === undefined || found.version === engine.version) continue;
+    const id = `${found.packageJson}\u0000${found.version}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const facts = {
+      project: {
+        version: found.version,
+        path: dirname(found.packageJson),
+        installed_by: installedBy(found.packageJson),
+      },
+      engine,
+    };
+    out.push({
+      code: 'REALM_RELEASE_LINE_MISMATCH',
+      severity: resolveSeverity('REALM_RELEASE_LINE_MISMATCH'),
+      scope: 'workflow',
+      message: releaseLineAdvisoryMessage(facts),
+      release_line: facts,
+    });
+  }
+  return out;
+}
+
+/** The (path, version) pairs the default sink has printed in this process. */
+const printedReleaseLines = new Set<string>();
+
+/** The default sink: the rendered warning on stderr, once per distinct copy per process. */
+export function defaultReleaseLineSink(warning: LoaderWarning): void {
+  const key = releaseLineKeyOf(warning);
+  if (printedReleaseLines.has(key)) return;
+  printedReleaseLines.add(key);
+  console.error(renderLoaderWarning(warning));
+}
+
+/** A sink that passes each distinct copy to `sink` once (listen's logger). */
+export function onceReleaseLineSink(
+  sink: (warning: LoaderWarning) => void,
+): (warning: LoaderWarning) => void {
+  const seen = new Set<string>();
+  return (warning) => {
+    const key = releaseLineKeyOf(warning);
+    if (seen.has(key)) return;
+    seen.add(key);
+    sink(warning);
+  };
+}
+
+function releaseLineKeyOf(warning: LoaderWarning): string {
+  const p = warning.release_line?.project;
+  return p !== undefined ? `${p.path}\u0000${p.version}` : warning.message;
+}
+
+/** A sink that drops every advisory: for surfaces that collect them from the result. */
+export const collectReleaseLineWarnings = (_warning: LoaderWarning): void => {};
+
+function emitReleaseLineWarnings(
+  result: LoadedProjectExtensions,
+  opts: LoadProjectExtensionsOptions | undefined,
+): void {
+  const sink = opts?.onReleaseLineWarning ?? defaultReleaseLineSink;
+  for (const warning of result.releaseLineWarnings ?? []) sink(warning);
+}
+
+/** @internal Test-only: forgets which copies the default sink has printed. */
+export function clearReleaseLineSinkMemory(): void {
+  printedReleaseLines.clear();
 }

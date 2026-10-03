@@ -3,6 +3,7 @@
 // (FLAG_GATING), the applied-nonce marker, the dormant REALM_REQUIRE_WRITER_NONCE strict posture,
 // non-disclosure pins (get_run_state / append_trace never leak buffered-line content or nonce
 // values), and the #208 capacityWarning re-home onto the whole-file scope.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -179,14 +180,14 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
       });
       // A store with the fenced trio but NO traceCapabilities at all (no carriage).
       const inner = new InMemoryTraceBufferStore(runStore);
-      const nonCarryingStore: TraceBufferStore = {
+      const nonCarryingStore: TraceBufferStore = declared({
         append: (runId, stepId, entries) => inner.append(runId, stepId, entries),
         read: (runId, stepId) => inner.read(runId, stepId),
         delete: (runId, stepId) => inner.delete(runId, stepId),
         deleteAllForRun: (runId, dirEntries) => inner.deleteAllForRun(runId, dirEntries),
         statAllForRun: (runId, dirEntries) => inner.statAllForRun(runId, dirEntries),
         readAllForRun: (runId) => inner.readAllForRun(runId),
-      };
+      });
       const appendSpy = vi.spyOn(nonCarryingStore, 'append');
 
       const result = await handleAppendTrace(

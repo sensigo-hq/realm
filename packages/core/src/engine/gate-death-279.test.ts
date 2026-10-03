@@ -2,6 +2,7 @@
 // integration case (issue #279, increment 2, PR-D, Deliverable 5). Companion to
 // symptom-death-279.test.ts (R3/R5 for the three PR-B seal sites) — this file proves the SAME two
 // symptoms are dead on the FIVE newly migrated sites' own gate/guard surfaces.
+import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -239,6 +240,10 @@ describe('R5-death (issue #279, increment 2, PR-D) — gate/guard terminal seals
  * `lease_finalizer` call, post-recovery) passes straight through.
  */
 class RefusesFirstLeaseStore implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   readonly persistsClaims: boolean;
   private refused = false;
   constructor(private readonly inner: JsonFileStore) {

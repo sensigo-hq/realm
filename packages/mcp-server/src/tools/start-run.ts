@@ -23,6 +23,8 @@ import {
   ExtensionRegistry,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
+import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
+import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
 
 /** Lightweight structured telemetry. stderr is safe under the MCP stdio/SSE transport. */
 function logDedup(fields: Record<string, unknown>): void {
@@ -78,6 +80,7 @@ export async function handleStartRun(
   },
   stores?: HandleRunStores,
 ): Promise<ResponseEnvelope & { deduped: boolean; rerun_of?: string }> {
+  assertToolStores(stores, 'handleStartRun');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
   const definition = await workflowStore.get(args.workflow_id);
@@ -96,6 +99,13 @@ export async function handleStartRun(
     stores?.registryProvider !== undefined
       ? await stores.registryProvider(definition)
       : stores?.registry;
+  // issue #620 PR-C: the registry rule — refused only on proof (another realm version), before any
+  // write. Covers the provider's result and the construction-time registry alike.
+  assertRegistryLine(
+    registry,
+    registryRole(stores, 'start_run', 'handleStartRun'),
+    RealmExtensionRegistry,
+  );
 
   const { run, created } = await runStore.create({
     workflowId: definition.id,
@@ -209,6 +219,7 @@ export async function handleStartRun(
 
 /** Registers the start_run MCP tool on the server. */
 export function registerStartRun(server: McpServer, opts?: HandleRunStores): void {
+  markServedByTool(opts);
   server.tool(
     'start_run',
     'Create a new workflow run and chain through initial auto steps.',

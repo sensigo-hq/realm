@@ -1,4 +1,5 @@
 // Tests for inspectRun business logic.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -57,7 +58,7 @@ function makeRun(evidence: EvidenceSnapshot[] = [], overrides: Partial<RunRecord
 }
 
 function makeRunStore(run: RunRecord): RunStore {
-  return {
+  return declared({
     persistsClaims: true,
     get: async () => run,
     create: async () => ({ run, created: true }),
@@ -68,24 +69,24 @@ function makeRunStore(run: RunRecord): RunStore {
     claimStep: async () => {
       throw new Error('claimStep is not used by inspect');
     },
-  };
+  });
 }
 
 function makeWorkflowStore(def?: WorkflowDefinition): WorkflowRegistrar {
   if (def !== undefined) {
-    return {
+    return declared({
       register: async () => {},
       get: async () => def,
       list: async () => [def],
-    };
+    });
   }
-  return {
+  return declared({
     register: async () => {},
     get: async () => {
       throw new Error('Workflow not found');
     },
     list: async () => [],
-  };
+  });
 }
 
 const basicDef: WorkflowDefinition = {
@@ -903,13 +904,13 @@ describe('run_health rendering (issue #221)', () => {
   // printed for every failure, including a copy that EXISTS but cannot be read, a corrupt copy
   // and a legacy record (executed). The fork reads the store's own code, never the message text.
   function throwingStore(err: unknown): WorkflowRegistrar {
-    return {
+    return declared({
       register: async () => {},
       get: async () => {
         throw err;
       },
       list: async () => [],
-    };
+    });
   }
 
   it('D5-1 an UNREADABLE copy says "could not be read" and carries the store sentence', async () => {

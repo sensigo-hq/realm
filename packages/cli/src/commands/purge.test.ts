@@ -3,6 +3,7 @@
 // Mirrors cleanup.test.ts's style: the exported LOGIC (isPurgeEligible, purgeRuns) is tested
 // directly against real stores over a real tmp directory — no console/exit-code assertions (that
 // thin formatting layer isn't unit-tested here either, consistent with cleanup.ts/reclaim.ts).
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, readdir, writeFile, readFile, stat, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -584,13 +585,13 @@ describe('purgeRuns — batch mode (--older-than)', () => {
       // success, issue #184, so a genuine failure in an earlier store aborts before the anchor
       // ever runs, and the run file survives — exactly what makes the run re-purgeable/
       // re-enumerable on the next attempt).
-      const poisoned: PerRunArtifactStore = {
+      const poisoned: PerRunArtifactStore = declared({
         deleteAllForRun: async (id: string) => {
           if (id === 'broken') throw new Error('simulated disk failure');
           return { bytes_deleted: 0 };
         },
         statAllForRun: async () => ({ bytes: 0 }),
-      };
+      });
 
       const result = await purgeRuns({ olderThan: '1d', dryRun: false }, wrappedRunStore, [
         poisoned,
@@ -701,7 +702,7 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
       await injectRun(dir, run);
 
       const anchorWithResurrectRace: Pick<RunStore, 'get' | 'list'> &
-        PerRunArtifactStore & { runsDirPath: string } = {
+        PerRunArtifactStore & { runsDirPath: string } = declared({
         runsDirPath: runStore.runsDirPath,
         get: (id: string) => runStore.get(id),
         list: (wf?: string) => runStore.list(wf),
@@ -719,7 +720,7 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
           }
           return runStore.deleteAllForRun(id, dirEntries);
         },
-      };
+      });
 
       const result = await purgeRuns(
         { runId: 'resumed-under-lock', dryRun: false },
@@ -745,7 +746,7 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
       await injectRun(dir, run);
 
       const anchorWithElocked: Pick<RunStore, 'get' | 'list'> &
-        PerRunArtifactStore & { runsDirPath: string } = {
+        PerRunArtifactStore & { runsDirPath: string } = declared({
         runsDirPath: runStore.runsDirPath,
         get: (id: string) => runStore.get(id),
         list: (wf?: string) => runStore.list(wf),
@@ -763,7 +764,7 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
           }
           return runStore.deleteAllForRun(id, dirEntries);
         },
-      };
+      });
 
       const result = await purgeRuns(
         { runId: 'held-by-writer', dryRun: false },
@@ -787,7 +788,7 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
 
       let anchorCalls = 0;
       const spyingAnchor: Pick<RunStore, 'get' | 'list'> &
-        PerRunArtifactStore & { runsDirPath: string } = {
+        PerRunArtifactStore & { runsDirPath: string } = declared({
         runsDirPath: runStore.runsDirPath,
         get: (id: string) => runStore.get(id),
         list: (wf?: string) => runStore.list(wf),
@@ -797,13 +798,13 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
         },
         statAllForRun: (id: string, dirEntries?: readonly string[]) =>
           runStore.statAllForRun(id, dirEntries),
-      };
-      const throwingArtifactStore: PerRunArtifactStore = {
+      });
+      const throwingArtifactStore: PerRunArtifactStore = declared({
         deleteAllForRun: async () => {
           throw new Error('trace-buffer store exploded');
         },
         statAllForRun: async () => ({ bytes: 0 }),
-      };
+      });
 
       const result = await purgeRuns(
         { runId: 'r1', dryRun: false },
@@ -902,7 +903,7 @@ describe('purgeRuns — fenced WAL delete (issue #207 PR-2)', () => {
       let getCalls = 0;
       let anchorDeleteCalls = 0;
       const anchorStub: Pick<RunStore, 'get' | 'list'> &
-        PerRunArtifactStore & { runsDirPath: string } = {
+        PerRunArtifactStore & { runsDirPath: string } = declared({
         runsDirPath: runStore.runsDirPath,
         get: async (id: string) => {
           getCalls++;
@@ -921,7 +922,7 @@ describe('purgeRuns — fenced WAL delete (issue #207 PR-2)', () => {
           anchorDeleteCalls++;
           return runStore.deleteAllForRun(id, dirEntries);
         },
-      };
+      });
       // issue #616 PR-0: the trace buffer evaluates the fence against ITS run reader — here the
       // anchor stub, so the simulated resume on the third read is what the fence sees.
       const traceBufferStore = new JsonTraceBufferStore(dir, anchorStub);

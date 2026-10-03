@@ -3,6 +3,7 @@
 // A minimal hand-rolled RunStore double — handleGetRunState only ever calls `.get()`, so the
 // double only needs to implement that faithfully; every other method throws if reached (proving
 // it never is).
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import { JsonFileStore } from '@sensigo/realm';
 import type { RunRecord, RunStore, LoadBearingRunRecordField } from '@sensigo/realm';
@@ -37,7 +38,7 @@ function makeGetOnlyStore(
   run: RunRecord,
   persistedFields: LoadBearingRunRecordField[] | undefined,
 ): RunStore {
-  return {
+  return declared({
     persistsClaims: true,
     ...(persistedFields !== undefined
       ? { persistedRunRecordFields: new Set(persistedFields) }
@@ -57,7 +58,7 @@ function makeGetOnlyStore(
     async claimStep() {
       throw new Error('not exercised by get_run_state');
     },
-  };
+  });
 }
 
 describe('get_run_state — capability_blocks field-fidelity gate (issue #188)', () => {

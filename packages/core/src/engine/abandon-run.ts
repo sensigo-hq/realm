@@ -4,6 +4,7 @@
 import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import { assertReleaseLine } from '../release-line.js';
 import { deriveRunPhase, sealRunLevel } from './eligibility.js';
 
 /**
@@ -50,6 +51,7 @@ export async function abandonRun(
   runId: string,
   reason?: string,
 ): Promise<RunRecord> {
+  assertReleaseLine(store, 'the run store handed to abandonRun');
   const run = await store.get(runId);
 
   // Already abandoned → idempotent no-op.

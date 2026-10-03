@@ -82,6 +82,8 @@ realm listen on 127.0.0.1:4971 — 2 workflow(s) mounted
 
 Workflows are read once. After you change a workflow file, restart `realm listen`.
 
+When a workflow's code imports a `@sensigo/realm` of another version than the command's, `realm listen` prints the [`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes) warning once per copy on stderr at startup (it is not a `listen: <event>` line); the `realm agent` it starts for each request does not repeat it. This was added after version 0.45.0.
+
 ## What it does for a request
 
 For a request that passes every check, `realm listen` creates the run, starts `realm agent --run-id <run-id>` as a separate process in the workflow's folder, and replies `202`. It does not wait for the run.

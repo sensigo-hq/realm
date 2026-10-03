@@ -102,6 +102,12 @@ export type ErrorCode =
   | 'ENGINE_HANDLER_NOT_REGISTERED'
   | 'ENGINE_STEP_FAILED'
   | 'ENGINE_GATE_OPEN_FAILED'
+  // issue #620 PR-C: an object from another realm version (proof: it carries realm's identity key
+  // with another generation) — a store, a registry, or a WorkflowError a handler/adapter/dispatcher
+  // threw. Minted only in release-line.ts.
+  | 'ENGINE_RELEASE_LINE_MISMATCH'
+  // issue #620 PR-C: a store a host handed realm declares no release line (a fact, not a guess).
+  | 'ENGINE_RELEASE_LINE_UNDECLARED'
   | 'GATE_MESSAGE_UNRESOLVABLE'
   | 'FILTER_UNKNOWN'
   | 'ADAPTER_OP_UNSUPPORTED'

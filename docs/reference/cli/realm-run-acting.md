@@ -17,6 +17,8 @@
 
 A duration is a whole number followed by `d`, `h` or `m`: `30d`, `6h`, `10m`. A run ID that is not in the store gets `Run not found: <id>` and exit code 1.
 
+When the `@sensigo/realm` the workflow's code imports is not the version the command runs, the command prints [`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes) to stderr once per copy and goes on. This was added after version 0.45.0.
+
 ## `respond`
 
 ```text

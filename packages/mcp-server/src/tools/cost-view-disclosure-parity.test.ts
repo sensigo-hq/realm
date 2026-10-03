@@ -11,6 +11,7 @@
 // other row here renders; `only_request_index` is NOT waived on this context (unlike the CLI's
 // context 2) — the failure line always sums so the field has no place there, but a machine
 // consumer of `drive_failure_costs` gets the raw figure and can decide for itself.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import type {
   RunRecord,
@@ -28,7 +29,7 @@ type DisclosureRoute =
   { surface: 'rendered'; probe: () => void } | { surface: 'waived'; reason: string };
 
 function makeStore(run: RunRecord): RunStore {
-  return {
+  return declared({
     persistsClaims: true,
     get: async () => run,
     create: async () => {
@@ -43,7 +44,7 @@ function makeStore(run: RunRecord): RunStore {
     claimStep: async () => {
       throw new Error('not exercised');
     },
-  } as unknown as RunStore;
+  } as unknown as RunStore);
 }
 
 // ---------------------------------------------------------------------------------------------

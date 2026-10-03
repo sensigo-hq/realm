@@ -9,6 +9,7 @@
 // Nothing pinned ANY of this before now. The measurement is on record: maximal mutants at all six
 // mint sites left the whole 3791-test suite green. So every cell here is new ground, and each was
 // written VERIFY-FIRST — run against the real engine, then pinned to what it actually does.
+import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -31,6 +32,10 @@ import type { StepHandler } from '../extensions/step-handler.js';
  * `finalizer-matrix-302.test.ts`, narrowed to this file's one concern.
  */
 class NonDeclaringStoreDouble implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   readonly persistsClaims: boolean;
   constructor(private readonly inner: JsonFileStore) {
     this.persistsClaims = inner.persistsClaims;

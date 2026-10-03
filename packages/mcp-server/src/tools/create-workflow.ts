@@ -24,6 +24,7 @@ import {
 } from '@sensigo/realm';
 import { handleStartRun, type HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
+import { assertToolStores } from './assert-tool-stores.js';
 
 /**
  * The step-shape allow-list (issue #169): `Object.keys(stepSchema.shape)` is the single source
@@ -395,6 +396,7 @@ export async function handleCreateWorkflow(
   args: CreateWorkflowArgs,
   stores?: { workflowStore?: JsonWorkflowStore; runStore?: RunStore },
 ): Promise<ResponseEnvelope> {
+  assertToolStores(stores, 'handleCreateWorkflow');
   const { errors, caveats: structuredOutputCaveats } = validateArgs(args);
   if (errors.length > 0) {
     return makeErrorEnvelope(errors);

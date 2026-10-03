@@ -6,6 +6,7 @@
 // merely set to undefined, matching the RunStore.settleStep OPTIONAL contract). Each site is
 // proven byte-identical-SHAPED to legacy behavior (same membership/terminal outcomes the migrated
 // path also produces) PLUS the ONE dormancy advisory (I16) every legacy-path envelope now carries.
+import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -32,6 +33,10 @@ import type { ArtifactDeletionReport } from '../store/per-run-artifact-store.js'
  * `DeclaredFieldsOverrideStore` precedent (issue #188), narrowed to this PR's one concern.
  */
 class NonDeclaringStoreDouble implements RunStore {
+  // issue #620 PR-C: a test double declares this realm's release line.
+  static {
+    declareReleaseLine(this);
+  }
   readonly persistsClaims: boolean;
   readonly persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>;
 

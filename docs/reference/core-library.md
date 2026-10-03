@@ -250,6 +250,8 @@ Without it, two steps that complete at the same moment can each write an ending 
 | `assertSealIntegrity`     | Every write  | Refuses a write that would lose or alter the record of how a run ended.               |
 | `deriveRunPhase`          | Every write  | Works out the phase to store with the record.                                         |
 
+Declare the store's release line once, from the `@sensigo/realm` the store imports its errors from: `declareReleaseLine(MyStore)` for a class, `declareReleaseLine(store)` for a plain object. Realm refuses a store that declares none with `ENGINE_RELEASE_LINE_UNDECLARED`, and a store of another realm version with `ENGINE_RELEASE_LINE_MISMATCH`, before any work. `releaseLineOf(store)` reads what a store declares. The store contracts' `STORE_RELEASE_LINE_TRUE` law checks the declaration against the store's own errors (see [Testing package](testing-package.md#store-contracts)). This was added after version 0.45.0.
+
 ## The other store interfaces
 
 | Interface              | Functions                                                                                                                                                                                                                   | Implemented by                                                |

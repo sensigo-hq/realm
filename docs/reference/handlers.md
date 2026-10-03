@@ -220,17 +220,22 @@ After the last of 3 attempts, the reply carries the last error's message in its 
 
 ### The handler and `realm` must use the same realm version
 
-Realm recognises a `WorkflowError` made by any copy of `@sensigo/realm` at the version the `realm` command uses. An error from another version is treated as an ordinary `Error`: it is not tried again, and its code and details are lost. See [Which realm your code imports](project-extensions.md#which-realm-your-code-imports).
+Realm recognises a `WorkflowError` made by any copy of `@sensigo/realm` at the version the `realm` command uses. Realm objects do not cross versions: a `WorkflowError` your handlers or adapters throw is not recognised — its step fails after one attempt, without that error's own code and retry setting. What the failure says depends on the copy the error came from:
+
+- From a copy that carries the release mark, the message names both versions and both folders, and the reply of the call that ran the step (`start_run` or `execute_step` over MCP) carries the code `ENGINE_RELEASE_LINE_MISMATCH`.
+- From an older copy with no mark (0.45.0 and earlier), the step fails with the ordinary failure message plus a note — the class carries no release mark, what was not used if it is realm's, and the way out — and the reply carries `ENGINE_HANDLER_FAILED` (`ENGINE_ADAPTER_FAILED` for an adapter).
+
+Either way the run record keeps the message only. This was added after version 0.45.0, where the error is treated as an ordinary `Error` and its code and details are lost. See [Which realm your code imports](project-extensions.md#which-realm-your-code-imports).
 
 Recognising another copy of the same version was added after version 0.45.0. On 0.45.0 the second row below gives the first row's result; [Which realm your code imports](project-extensions.md#which-realm-your-code-imports) says what to do there.
 
 The same handler and workflow, with a retryable error on the first 2 attempts, run with `realm agent` and a provider module the command accepts (see [Your own provider](cli/realm-agent.md#your-own-provider)):
 
-| How Realm was installed                                                                      | Result                                                                      |
-| -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| The project's `@sensigo/realm` at another version than the `realm` command's                 | 1 attempt, then `✗ Step 'only' failed: Handler 'flaky' threw: rate limited` |
-| The project's `@sensigo/realm` and the `realm` command's own copy, two copies of one version | 3 attempts, then `Run complete`                                             |
-| One copy of `@sensigo/realm`, shared by the project and the `realm` command                  | 3 attempts, then `Run complete`                                             |
+| How Realm was installed                                                                      | Result                                                                                                                                                                                                                                                 |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The project's `@sensigo/realm` at another version than the `realm` command's                 | 1 attempt, then `✗ Step 'only' failed: Handler 'flaky' threw a WorkflowError from realm 0.45.1 (…); this engine runs realm 0.45.0 (…). Realm objects do not cross versions, so its code 'SERVICE_RATE_LIMITED' and its retry setting were not used. …` |
+| The project's `@sensigo/realm` and the `realm` command's own copy, two copies of one version | 3 attempts, then `Run complete`                                                                                                                                                                                                                        |
+| One copy of `@sensigo/realm`, shared by the project and the `realm` command                  | 3 attempts, then `Run complete`                                                                                                                                                                                                                        |
 
 `realm workflow test` on the same project gives the same three results, with no provider module.
 
