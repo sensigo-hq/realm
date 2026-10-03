@@ -29,6 +29,8 @@ const LAWS = [
   'L4_TYPED_REJECTION',
   'L5_REPORT_SHAPE',
   'L6_PREVIEW_EQUALS_RECEIPT',
+  // issue #620 PR-C
+  'STORE_RELEASE_LINE_TRUE',
 ] as const;
 
 /**

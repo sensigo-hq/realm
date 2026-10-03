@@ -2,6 +2,7 @@
 // #279, increment 2, PR-C — design record §8, "MCP"). Hand-rolled RunStore doubles per the
 // get-run-state-run-health.test.ts precedent — only `.get()` (and, for the fenced case, a
 // call-counted variant) is ever exercised.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -89,7 +90,7 @@ function makeGrandfathered(
 }
 
 function makeStaticStore(run: RunRecord): RunStore {
-  return {
+  return declared({
     persistsClaims: true,
     async get() {
       return run;
@@ -106,7 +107,7 @@ function makeStaticStore(run: RunRecord): RunStore {
     async claimStep() {
       return run;
     },
-  };
+  });
 }
 
 describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
@@ -149,7 +150,7 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
     });
     const grandfathered = makeGrandfathered();
     let getCallCount = 0;
-    const runStore: RunStore = {
+    const runStore: RunStore = declared({
       persistsClaims: true,
       async get(runId: string) {
         getCallCount += 1;
@@ -177,7 +178,7 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
       async claimStep() {
         return live;
       },
-    };
+    });
     const traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     // step 'c' is virgin on BOTH `live` and `grandfathered` (neither's completed/failed/skipped/
@@ -222,7 +223,7 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
       version: 4,
     });
     let getCallCount = 0;
-    const runStore: RunStore = {
+    const runStore: RunStore = declared({
       persistsClaims: true,
       async get() {
         getCallCount += 1;
@@ -248,7 +249,7 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
       async claimStep() {
         return live;
       },
-    };
+    });
     const traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     await expect(
@@ -280,7 +281,7 @@ describe('start_run / start_run_batch — reuse-envelope pins (issue #279, incre
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
     const workflowStore = new JsonWorkflowStore(workflowDir);
     const g = makeGrandfathered();
-    const runStore: RunStore = {
+    const runStore: RunStore = declared({
       persistsClaims: true,
       async get() {
         return g;
@@ -297,7 +298,7 @@ describe('start_run / start_run_batch — reuse-envelope pins (issue #279, incre
       async claimStep() {
         return g;
       },
-    };
+    });
 
     const result = await handleStartRun(
       { workflow_id: def.id, idempotency_key: 'k1' },
@@ -313,7 +314,7 @@ describe('start_run / start_run_batch — reuse-envelope pins (issue #279, incre
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
     const workflowStore = new JsonWorkflowStore(workflowDir);
     const g = makeGrandfathered();
-    const runStore: RunStore = {
+    const runStore: RunStore = declared({
       persistsClaims: true,
       async get() {
         return g;
@@ -330,7 +331,7 @@ describe('start_run / start_run_batch — reuse-envelope pins (issue #279, incre
       async claimStep() {
         return g;
       },
-    };
+    });
 
     const result = await handleStartRunBatch(
       { workflow_id: def.id, items: [{ params: {}, idempotency_key: 'k1' }] },

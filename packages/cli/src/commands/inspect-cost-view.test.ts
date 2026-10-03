@@ -2,6 +2,7 @@
 // the figure-form table on both contexts, #611's two new segments, every failure entry, the
 // multi-attempt reshape keyed on execution-entry count, the absence sentences, `included in the
 // prompt`'s truth rule, and the ONE composed view rendered identically on both surfaces.
+import { declared } from '../test-support/declared.js';
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { inspectRun } from './inspect.js';
@@ -53,7 +54,7 @@ function makeRun(evidence: EvidenceSnapshot[] = [], overrides: Partial<RunRecord
 }
 
 function makeRunStore(run: RunRecord): RunStore {
-  return {
+  return declared({
     persistsClaims: true,
     get: async () => run,
     create: async () => ({ run, created: true }),
@@ -62,20 +63,20 @@ function makeRunStore(run: RunRecord): RunStore {
     claimStep: async () => {
       throw new Error('claimStep is not used by inspect');
     },
-  };
+  });
 }
 
 function makeWorkflowStore(def?: WorkflowDefinition): WorkflowRegistrar {
   if (def !== undefined) {
-    return { register: async () => {}, get: async () => def, list: async () => [def] };
+    return declared({ register: async () => {}, get: async () => def, list: async () => [def] });
   }
-  return {
+  return declared({
     register: async () => {},
     get: async () => {
       throw new Error('Workflow not found');
     },
     list: async () => [],
-  };
+  });
 }
 
 const basicDef: WorkflowDefinition = {

@@ -11,7 +11,12 @@
 //    begun executing, propagate the error with NO run mutation — a failed bystander attach
 //    can never kill a healthy in-flight run.
 import { sealRunLevel, getWorkflowForRun } from '@sensigo/realm';
-import type { RunStore, WorkflowRegistrar, WorkflowDefinition } from '@sensigo/realm';
+import type {
+  LoaderWarning,
+  RunStore,
+  WorkflowRegistrar,
+  WorkflowDefinition,
+} from '@sensigo/realm';
 import {
   loadProjectExtensions,
   type LoadedProjectExtensions,
@@ -38,7 +43,11 @@ export type ResolveRunAttachResult = { definition: WorkflowDefinition } & Loaded
 export async function resolveRunAttach(
   runId: string,
   deps: ResolveRunAttachDeps,
-  opts?: { overrideModule?: string; projectDir?: string },
+  opts?: {
+    overrideModule?: string;
+    projectDir?: string;
+    onReleaseLineWarning?: (warning: LoaderWarning) => void;
+  },
 ): Promise<ResolveRunAttachResult> {
   let run = await deps.store.get(runId);
 
@@ -95,6 +104,10 @@ export async function resolveRunAttach(
     const loaded = await loadExtensions(definition, {
       ...(opts?.overrideModule !== undefined ? { overrideModule: opts.overrideModule } : {}),
       ...(opts?.projectDir !== undefined ? { projectDir: opts.projectDir } : {}),
+      // issue #620 PR-C: listen's children pass a silent sink; it must travel (the #353 class).
+      ...(opts?.onReleaseLineWarning !== undefined
+        ? { onReleaseLineWarning: opts.onReleaseLineWarning }
+        : {}),
     });
     const { registry } = loaded;
 

@@ -487,7 +487,10 @@ export const runCommand = new Command('run')
         // Keyed on the CODE alone, never the message, which names the trigger and varies.
         //
         // The classification is precise TODAY and the precision is not free: a handler that
-        // out-throws is re-coded ENGINE_HANDLER_FAILED (execution-loop.ts), every engine throw
+        // out-throws something that is not this realm's WorkflowError is re-coded
+        // (execution-loop.ts): ENGINE_RELEASE_LINE_MISMATCH for another realm version's
+        // WorkflowError, ENGINE_HANDLER_FAILED otherwise (a same-named class with no release
+        // mark keeps that code and gains a clause) — never its own code. Every engine throw
         // is WorkflowError-coded and none uses ABORT_ERR, and the gate-expiry timer contains
         // its own errors. So ABORT_ERR reaching here means the prompt, and only the prompt.
         // ADDING ANY AbortSignal-CONSUMING AWAIT TO THIS LOOP REQUIRES RE-ESTABLISHING THAT.

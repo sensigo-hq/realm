@@ -18,6 +18,7 @@ import { WorkflowError } from '../types/workflow-error.js';
 import { deriveRunPhase } from '../engine/eligibility.js';
 import { TERMINAL_PHASES } from '../engine/lifecycle.js';
 import { brandClass, REALM_BRAND } from '../brand.js';
+import { assertReleaseLine } from '../release-line.js';
 
 /**
  * The five facts a fenced trace-buffer operation can be conditioned on (issue #616 PR-0). Derived
@@ -473,6 +474,7 @@ export async function readRunForFence(
   runId: string,
   fence: FencePredicate,
 ): Promise<RunRecord | null> {
+  assertReleaseLine(reader, 'the run reader handed to readRunForFence');
   try {
     return await reader.get(runId);
   } catch (err) {

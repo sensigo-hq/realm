@@ -43,6 +43,8 @@ const LAWS: FencedTraceBufferLaw[] = [
   'SEAL_BUDGET',
   'PER_WRITER_BUDGET',
   'VERBATIM',
+  // issue #620 PR-C
+  'STORE_RELEASE_LINE_TRUE',
 ];
 
 /** A store whose `appendFenced` checks the fence's shape but never reads the run — so it can never

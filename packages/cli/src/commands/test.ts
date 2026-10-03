@@ -8,10 +8,13 @@ import {
   renderLoaderWarning,
   WorkflowError,
 } from '@sensigo/realm';
-import { renderLoadFailure } from '../lib/loader-warnings.js';
+import { renderLoadFailure, wrapReleaseLineWarnings } from '../lib/loader-warnings.js';
 import { runFixtureTests } from '@sensigo/realm-testing';
 import type { TestResult, RunFixtureTestsOptions } from '@sensigo/realm-testing';
-import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+import {
+  collectReleaseLineWarnings,
+  loadProjectExtensions,
+} from '../extensions/load-project-extensions.js';
 
 /**
  * Formats fixture test results for display.
@@ -91,6 +94,8 @@ export const testCommand = new Command('test')
         loaded = await loadProjectExtensions(definition, {
           ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
           secretMode: 'sentinel',
+          // issue #620 PR-C: printed below with the sentinel echo, so the default sink stays quiet.
+          onReleaseLineWarning: collectReleaseLineWarnings,
         });
       } catch (err) {
         // issue #466 — the sentence run/validate/register/watch/agent already print for this
@@ -104,6 +109,9 @@ export const testCommand = new Command('test')
         return;
       }
       for (const warning of loaded.sentinelWarnings ?? []) console.warn(`⚠ ${warning}`);
+      for (const warning of wrapReleaseLineWarnings(loaded.releaseLineWarnings)) {
+        console.warn(renderLoaderWarning(warning));
+      }
       const hasExtensionContent =
         loaded.manifest.modules.length > 0 ||
         loaded.manifest.adapters.length > 0 ||

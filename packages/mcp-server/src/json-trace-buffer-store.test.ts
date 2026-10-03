@@ -1,6 +1,7 @@
 // Tests for JsonTraceBufferStore — focused on deleteAllForRun and its dirEntries wiring (issue
 // #107). append/read/delete are exercised indirectly elsewhere (execution-loop finalization); this
 // file did not previously have dedicated coverage, so a handful of sanity tests are included too.
+import { declared } from './test-support/declared.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, readdir, writeFile, appendFile, readFile, chmod } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -35,11 +36,11 @@ const PASS: FencePredicate = { kind: 'run_absent' };
  *  method these throwaway stores exercise (`deleteAllForRun`/`readAllForRun`/`listOrphans`) never
  *  touches the reader, so an unexpected fence call fails loudly instead of silently reading
  *  nothing. The constructor's required second argument, never called. */
-const NEVER_READ: FenceRunReader = {
+const NEVER_READ: FenceRunReader = declared({
   get: async () => {
     throw new Error('fence unexpectedly evaluated against NEVER_READ');
   },
-};
+});
 
 describe('JsonTraceBufferStore', () => {
   let dir: string;
@@ -52,14 +53,14 @@ describe('JsonTraceBufferStore', () => {
     dir = await mkdtemp(join(tmpdir(), 'jtbs-'));
     runs = new Map();
     reads = [];
-    const reader: FenceRunReader = {
+    const reader: FenceRunReader = declared({
       get: async (runId) => {
         reads.push(runId);
         const run = runs.get(runId);
         if (run === undefined) throw runNotFoundError(runId);
         return run;
       },
-    };
+    });
     store = new JsonTraceBufferStore(dir, reader);
   });
 

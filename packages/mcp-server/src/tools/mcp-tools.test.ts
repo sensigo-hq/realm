@@ -1,4 +1,5 @@
 // Integration tests for MCP tool business logic — tests handle* functions directly.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -312,7 +313,7 @@ describe('mcp tool handlers', () => {
     // Pass a runStore that throws a plain Error (not WorkflowError) so it bypasses
     // executeStep's internal error handling and propagates to handleExecuteStepTool's catch.
     const throwingOpts = {
-      runStore: {
+      runStore: declared({
         get: async () => {
           throw new Error('unexpected failure');
         },
@@ -323,7 +324,7 @@ describe('mcp tool handlers', () => {
           throw new Error('unexpected failure');
         },
         list: async () => [],
-      } as unknown as JsonFileStore,
+      } as unknown as JsonFileStore),
     };
 
     const result = await handleExecuteStepTool(
@@ -346,7 +347,7 @@ describe('mcp tool handlers', () => {
     const { WorkflowError } = await import('@sensigo/realm');
 
     const throwingOpts = {
-      runStore: {
+      runStore: declared({
         get: async () => {
           throw new WorkflowError('Run not found: unknown-run', {
             code: 'STATE_RUN_NOT_FOUND',
@@ -362,7 +363,7 @@ describe('mcp tool handlers', () => {
           throw new Error('should not be called');
         },
         list: async () => [],
-      } as unknown as JsonFileStore,
+      } as unknown as JsonFileStore),
     };
 
     const result = await handleExecuteStepTool(

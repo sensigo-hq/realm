@@ -40,7 +40,10 @@ export type WarningCode =
   // issue #586 (an authored JSON-Schema block that COMPILES but trips Ajv's strict mode — the
   // block is legal and the run time honours it, so this is advice, never a refusal: refusing
   // would put the loader BELOW the run time's own verdict):
-  | 'SCHEMA_STRICT_ADVISORY';
+  | 'SCHEMA_STRICT_ADVISORY'
+  // issue #620 PR-C: the project's `@sensigo/realm` (the copy its handlers and adapters import) is
+  // not the running one. Advice: true whether or not a crossing happens, so it never refuses.
+  | 'REALM_RELEASE_LINE_MISMATCH';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text, minted once at the
@@ -82,6 +85,15 @@ export interface LoaderWarning {
   column?: number;
   endLine?: number;
   endColumn?: number;
+  /**
+   * issue #620 PR-C — `REALM_RELEASE_LINE_MISMATCH` only: the two copies, as data, so a machine
+   * reader (`validate --json`) does not have to parse the prose. `installed_by` is the package that
+   * installed the project's copy, or `the project`.
+   */
+  release_line?: {
+    project: { version: string; path: string; installed_by: string };
+    engine: { version: string; path: string };
+  };
 }
 
 /**
@@ -116,6 +128,8 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   DEAD_VALIDATION_EXHAUSTION_CONFIG: 'warn',
   UNKNOWN_GATE_KEY: 'warn',
   DEAD_GATE_CONFIG: 'warn',
+  // issue #620 PR-C — advice: register and watch keep registering; `--strict` fails.
+  REALM_RELEASE_LINE_MISMATCH: 'warn',
 };
 
 /**

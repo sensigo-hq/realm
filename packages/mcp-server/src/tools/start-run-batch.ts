@@ -17,6 +17,8 @@ import {
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
+import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
+import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
 
 /** Lightweight structured telemetry. stderr is safe under the MCP stdio/SSE transport. */
 function logBatchDedup(fields: Record<string, unknown>): void {
@@ -62,6 +64,7 @@ export async function handleStartRunBatch(
   },
   stores?: HandleRunStores,
 ): Promise<StartRunBatchResult> {
+  assertToolStores(stores, 'handleStartRunBatch');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
 
@@ -88,6 +91,13 @@ export async function handleStartRunBatch(
     stores?.registryProvider !== undefined
       ? await stores.registryProvider(definition)
       : stores?.registry;
+  // issue #620 PR-C: the registry rule — refused only on proof (another realm version), before any
+  // write. Covers the provider's result and the construction-time registry alike.
+  assertRegistryLine(
+    registry,
+    registryRole(stores, 'start_run_batch', 'handleStartRunBatch'),
+    RealmExtensionRegistry,
+  );
 
   // #134 pre-flight (WARN-only, never refuse): capability gaps are workflow-invariant, so compute ONCE
   // and attach to every item. Caveated — a batch item may ultimately be driven by a DIFFERENT runner
@@ -205,6 +215,7 @@ export async function handleStartRunBatch(
 }
 
 export function registerStartRunBatch(server: McpServer, opts?: HandleRunStores): void {
+  markServedByTool(opts);
   server.tool(
     'start_run_batch',
     'Atomically enqueue multiple runs of the same workflow. All items are validated before any run is created. If idempotency keys are provided, duplicate runs are returned instead of created.',

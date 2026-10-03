@@ -1,3 +1,4 @@
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -179,11 +180,11 @@ describe('getWorkflowForRun (issue #456)', () => {
       agentAction: 'report_to_user',
       retryable: false,
     });
-    const mockStore: Pick<WorkflowRegistrar, 'get'> = {
+    const mockStore: Pick<WorkflowRegistrar, 'get'> = declared({
       get: async () => {
         throw legacy;
       },
-    };
+    });
     const err = (await getWorkflowForRun(mockStore, makeRun(), {
       retryVerb: 're-attach',
       verb: 're-attach',
@@ -203,11 +204,11 @@ describe('getWorkflowForRun (issue #456)', () => {
     // The kept identity pin. A message-only check would pass under a rewrap-preserving-message
     // mutant; identity requires HOLDING the exact thrown instance.
     const raw = new Error('EACCES: permission denied, open ...');
-    const mockStore: Pick<WorkflowRegistrar, 'get'> = {
+    const mockStore: Pick<WorkflowRegistrar, 'get'> = declared({
       get: async () => {
         throw raw;
       },
-    };
+    });
     const err = await getWorkflowForRun(mockStore, makeRun(), {
       retryVerb: 're-attach',
       verb: 're-attach',

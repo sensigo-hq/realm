@@ -3,6 +3,7 @@
 // default_choice/reminder_seconds/reminder_max) flow through the existing `pending_gate`
 // passthrough verbatim, and the `gate_expired_awaiting_drive` run-health finding surfaces
 // automatically through the existing `classifyRunHealth` call already wired into `run_health`.
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import type { RunRecord, RunStore, PendingGate } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
@@ -40,7 +41,7 @@ function makeRun(over: Partial<RunRecord> = {}): RunRecord {
 }
 
 function makeStore(run: RunRecord): RunStore {
-  return {
+  return declared({
     persistsClaims: true,
     async get() {
       return run;
@@ -57,7 +58,7 @@ function makeStore(run: RunRecord): RunStore {
     async claimStep() {
       throw new Error('not exercised');
     },
-  };
+  });
 }
 
 describe('get_run_state — gate expiry (issue #291)', () => {

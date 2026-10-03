@@ -12,6 +12,8 @@
 // back, so a store that DECLARES `persistedRunRecordFields` dishonestly (claims a field, drops it
 // on write) fails conformance here, before it ever ships. A store that declares NOTHING passes
 // this law vacuously (zero cases generated) — see `runStoreFidelityContract`'s own doc.
+import { crossCopyNote } from './cross-copy-note.js';
+import { storeReleaseLineLaw } from './store-release-line-law.js';
 import {
   WorkflowError,
   type RunStore,
@@ -25,7 +27,9 @@ export type RunStoreFidelityLaw =
   | 'FIDELITY_HONESTY'
   | 'CLAIM_SINGLE_OWNER'
   /** issue #367 — the seal arm survives a proper terminal write byte-for-byte. */
-  | 'SEALED_BY_ROUNDTRIP';
+  | 'SEALED_BY_ROUNDTRIP'
+  /** issue #620 PR-C — the store's declared release line is its errors' line. */
+  | 'STORE_RELEASE_LINE_TRUE';
 
 /**
  * A single, framework-agnostic contract case. `run()` throws (rejects) on failure — any test
@@ -233,11 +237,20 @@ export function runStoreFidelityContract(
           const described = err instanceof WorkflowError ? err.code : String(err);
           throw new Error(
             `expected the losing claimStep call to reject with a WorkflowError carrying code ` +
-              `STATE_STEP_ALREADY_CLAIMED, got: ${described}`,
+              `STATE_STEP_ALREADY_CLAIMED, got: ${described}${crossCopyNote(err, WorkflowError)}`,
           );
         }
       }
     },
+  });
+
+  cases.push({
+    law: 'STORE_RELEASE_LINE_TRUE',
+    name: "the store's declared release line is the line of its own refusal (get of a missing run)",
+    run: () =>
+      storeReleaseLineLaw(adapter.store, () =>
+        adapter.store.get('store-release-line-true-missing-run'),
+      ),
   });
 
   return cases;

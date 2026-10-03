@@ -18,6 +18,7 @@
 // @sensigo/realm-testing already depends on @sensigo/realm — so BOTH stores' settlement
 // conformance can live in NEW test files right here in packages/testing/src/store/, with no
 // circular-package hazard. See this module's own calling test files for the actual wiring.
+import { storeReleaseLineLaw } from './store-release-line-law.js';
 import {
   applySettlement,
   deriveRunPhase,
@@ -158,7 +159,9 @@ export type SettlementLaw =
   /** Not a real settlement law — a wiring-gap sentinel (see `settlementContract`'s own doc: a
    *  store declaring `settleStep` with no `settlementFixture` supplied gets ONE failing case
    *  tagged with this, never a silent zero-cases pass). */
-  | 'ADAPTER_WIRING';
+  | 'ADAPTER_WIRING'
+  /** issue #620 PR-C — the store's declared release line is the line of its own refusal. */
+  | 'STORE_RELEASE_LINE_TRUE';
 
 /**
  * A single, framework-agnostic contract case. `run()` throws (rejects) on failure — any test
@@ -5719,6 +5722,15 @@ export function settlementContract(adapter: SettlementContractAdapter): Settleme
     ];
   }
   return [
+    // issue #620 PR-C — keeping a store's release-line declaration true.
+    {
+      law: 'STORE_RELEASE_LINE_TRUE',
+      name: `[${adapter.storeName}] the store's declared release line is the line of its own refusal (get of a missing run)`,
+      run: () =>
+        storeReleaseLineLaw(adapter.store, () =>
+          adapter.store.get('store-release-line-true-missing-run'),
+        ),
+    },
     ...freshApplicationCases(adapter),
     ...conditionalNoopCases(adapter),
     ...ownershipRefusalCases(adapter),

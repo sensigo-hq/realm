@@ -1,4 +1,5 @@
 // Tests for abandonRun — the shared run-abandonment primitive (#92 follow-up / 0.10.0).
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -281,7 +282,7 @@ describe('abandonRun — CAS concurrency branch (deterministic stub store)', () 
       run_phase: 'abandoned',
     });
     let getCalls = 0;
-    const stub: Partial<RunStore> = {
+    const stub: Partial<RunStore> = declared({
       get: async () => {
         getCalls++;
         return getCalls === 1 ? runningRecord() : reloaded; // 1st: running; reload: abandoned
@@ -289,7 +290,7 @@ describe('abandonRun — CAS concurrency branch (deterministic stub store)', () 
       update: async () => {
         throw snapshotMismatch(); // a competing writer bumped the version
       },
-    };
+    });
     const result = await abandonRun(stub as RunStore, 'r1');
     expect(result.abandoned_at).toBe('2026-06-26T00:00:00.000Z');
     expect(getCalls).toBe(2); // read once + reload once, no further retry
@@ -297,7 +298,7 @@ describe('abandonRun — CAS concurrency branch (deterministic stub store)', () 
 
   it('update mismatch then reload shows a non-abandoned (live) run → propagates STATE_SNAPSHOT_MISMATCH', async () => {
     let getCalls = 0;
-    const stub: Partial<RunStore> = {
+    const stub: Partial<RunStore> = declared({
       get: async () => {
         getCalls++;
         // 1st: running; reload: still running but advanced by a live writer (version bumped).
@@ -308,7 +309,7 @@ describe('abandonRun — CAS concurrency branch (deterministic stub store)', () 
       update: async () => {
         throw snapshotMismatch();
       },
-    };
+    });
     await expect(abandonRun(stub as RunStore, 'r1')).rejects.toMatchObject({
       code: 'STATE_SNAPSHOT_MISMATCH',
     });

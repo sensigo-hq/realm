@@ -1,4 +1,5 @@
 // Tests for reclaimStep — deliberate per-claim wedge recovery (issue #101, Phase 1).
+import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -264,12 +265,12 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
   });
 
   it('loud-fails when the store does not persist claims', async () => {
-    const fake = {
+    const fake = declared({
       persistsClaims: false,
       get: async () => {
         throw new Error('should not be called');
       },
-    } as unknown as RunStore;
+    } as unknown as RunStore);
     await expect(reclaimStep(fake, 'r1', 'work')).rejects.toThrow(/does not persist claims/i);
   });
 });
@@ -307,7 +308,7 @@ function scriptedStore(
   let getIdx = 0;
   let updateCall = 0;
   const updateCalls: RunRecord[] = [];
-  const store = {
+  const store = declared({
     persistsClaims: true,
     get: async () => records[Math.min(getIdx++, records.length - 1)]!,
     update: async (rec: RunRecord) => {
@@ -323,7 +324,7 @@ function scriptedStore(
       updateCalls.push(rec);
       return { ...rec, version: rec.version + 1 };
     },
-  } as unknown as RunStore;
+  } as unknown as RunStore);
   return { store, updateCalls };
 }
 
@@ -556,7 +557,7 @@ describe('reclaimStep — clearing the stale trace buffer (issue #198)', () => {
     const claimed = await store.claimStep(run.id, 'work', autoWf);
     await store.update({ ...claimed, claims: { work: { deadline: pastIso() } } });
 
-    const failingTraceBufferStore: TraceBufferStore = {
+    const failingTraceBufferStore: TraceBufferStore = declared({
       append: async () => {
         throw new Error('should not be called');
       },
@@ -567,7 +568,7 @@ describe('reclaimStep — clearing the stale trace buffer (issue #198)', () => {
       deleteAllForRun: async () => ({ bytes_deleted: 0 }),
       statAllForRun: async () => ({ bytes: 0 }),
       readAllForRun: async () => ({}),
-    };
+    });
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
@@ -698,7 +699,7 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
     const buffers = new Map<string, { event: string }[]>();
     const key = `${run.id}:step-agent`;
     buffers.set(key, [{ event: 'dead_attempt_line' }]);
-    const traceBufferStore: TraceBufferStore = {
+    const traceBufferStore: TraceBufferStore = declared({
       append: async () => {
         throw new Error('not used');
       },
@@ -715,7 +716,7 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
         buffers.delete(key);
         return existing.length;
       },
-    };
+    });
 
     const calls: string[] = [];
     const originalDeleteFenced = traceBufferStore.deleteFenced!.bind(traceBufferStore);
@@ -775,7 +776,7 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
     const updateCalls: RunRecord[] = [];
     let updateCallNum = 0;
     const deleteFencedCalls: string[] = [];
-    const traceBufferStore: TraceBufferStore = {
+    const traceBufferStore: TraceBufferStore = declared({
       append: async () => {
         throw new Error('not used');
       },
@@ -793,8 +794,8 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
         deleteFencedCalls.push('cleared');
         return 4;
       },
-    };
-    const scriptedRunStore = {
+    });
+    const scriptedRunStore = declared({
       persistsClaims: true,
       get: async () => records[Math.min(getIdx++, records.length - 1)]!,
       update: async (rec: RunRecord) => {
@@ -810,7 +811,7 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
         updateCalls.push(rec);
         return { ...rec, version: rec.version + 1 };
       },
-    } as unknown as RunStore;
+    } as unknown as RunStore);
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {

@@ -8,6 +8,7 @@ import { JsonWorkflowStore } from '@sensigo/realm';
 import { createRealmMcpServer } from '@sensigo/realm-mcp';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { makeRegistryProvider } from '../extensions/load-project-extensions.js';
+import { hostRefusalLine } from '../lib/host-refusal-line.js';
 
 /**
  * Starts the Realm MCP server using the global workflow store (~/.realm/workflows/).
@@ -30,10 +31,19 @@ export const mcpCommand = new Command('mcp')
     // SECURITY (recorded decision): unlike serve/agent/run there is NO cwd default here —
     // an MCP client opening a cloned repo must not cause its realm.yaml to resolve secrets
     // and import code. Do not "improve" this.
-    const server = createRealmMcpServer({
-      workflowStore,
-      registryProvider: makeRegistryProvider(options.extensionsModule, options.project),
-    });
+    // issue #620 PR-C: a construction refusal (a store or registry from another realm) is printed
+    // as one line and the command exits 1 — never Node's uncaught-exception stack. A release-line
+    // refusal here means this command's own install is split: `hostRefusalLine` says so.
+    let server: ReturnType<typeof createRealmMcpServer>;
+    try {
+      server = createRealmMcpServer({
+        workflowStore,
+        registryProvider: makeRegistryProvider(options.extensionsModule, options.project),
+      });
+    } catch (err) {
+      console.error(hostRefusalLine('mcp', err));
+      process.exit(1);
+    }
     const transport = new StdioServerTransport();
     await server.connect(transport);
   });
