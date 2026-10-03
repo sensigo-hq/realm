@@ -276,7 +276,9 @@ describe('inspectRun', () => {
     const run = makeRun([snap]);
     const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
     expect(result).toContain('Message:  "Confirm update"');
-    expect(result).toContain('Choice:   send');
+    // issue #625: the answer-only layout prints its choice on the `Answer:` line, once.
+    expect(result).toContain('Answer: send');
+    expect(result).not.toContain('Choice:');
     expect(result).toContain('gate_response');
   });
 
@@ -289,7 +291,7 @@ describe('inspectRun', () => {
     const run = makeRun([snap]);
     const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
     expect(result).not.toContain('Message:');
-    expect(result).toContain('Choice:   reject');
+    expect(result).toContain('Answer: reject');
     expect(result).toContain('gate_response');
   });
 

@@ -207,6 +207,7 @@ export {
   composeStepViews,
   composeDriveFailureCosts,
   COST_UNRECORDED_CAUSES,
+  isAnswerEntry,
 } from './engine/step-view.js';
 export type {
   CostFigure,

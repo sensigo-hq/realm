@@ -51,6 +51,12 @@ Responded: 3ebc1158-1d29-41b5-9ca5-df054a681b58 | choice 'approve' | new state '
 --by: empty; nothing was recorded. Give a name of at most 200 characters with no control characters, or leave it out.
 ```
 
+A `REALM_OPERATOR` that cannot be used refuses the answer too, because `respond` would write it on those cleanup steps:
+
+```text
+REALM_OPERATOR: contains a control character; it names the cleanup steps this answer lets run, so nothing was recorded. Unset it or give it a name of at most 200 characters with no control characters.
+```
+
 The middle word is `empty`, `longer than 200 characters` or `contains a control character`. `respond` never passes a `claim_token`; the answer's proof reads `no claim_token passed` on `inspect`.
 
 A guard step that the answer makes ready is decided in the same write, and what it did is printed before the `Responded:` line. No other step runs: the steps that follow run when a driver next calls the run.

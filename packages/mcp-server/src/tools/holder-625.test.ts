@@ -207,9 +207,14 @@ describe('the REGISTERED tool — the SDK’s argument handling, never a reason 
     );
     expect(reply.status).toBe('ok');
     expect(reply.gate_claim?.proof).toBe('absent');
-    expect(reply.warnings).toContain(
+    // (a) red when the did-you-mean comes after the reply's own "No claim_token was passed …
+    //     Only the conversation that opened the question has one to pass." — a caller that DID pass
+    //     the token under the wrong name reads that as "you are not that conversation"; (b) prints
+    //     the warnings in order.
+    expect(reply.warnings[0]).toBe(
       "submit_human_response: unknown argument 'claimToken' was ignored — did you mean 'claim_token'?",
     );
+    expect(reply.warnings.slice(1).join(' ')).toContain('No claim_token was passed');
   });
 
   it('an unrelated unknown key is named, with no near miss', async () => {
@@ -356,6 +361,45 @@ describe('C2 — get_run_state on a run whose gate expired to its default (a rea
     ]);
     // The run went on: the step after the gate is what is owed now.
     expect(summary.run_phase).toBe('running');
+  });
+
+  it('an `on_expiry: abort` expiry is NOT an answer: no `answers` on the step; `skip_details` says gate_expired', async () => {
+    const aborting: WorkflowDefinition = {
+      ...definition,
+      id: 'holder-mcp-expiry-abort-wf',
+      steps: {
+        ...definition.steps,
+        'step-one': {
+          ...definition.steps['step-one']!,
+          gate: { choices: ['approve', 'reject'], timeout_seconds: 1, on_expiry: 'abort' },
+        },
+      },
+    };
+    await workflowStore.register(aborting);
+    const started = await handleStartRun(
+      { workflow_id: aborting.id },
+      { runStore, workflowStore, driver: DRIVER },
+    );
+    const gate = (await runStore.get(started.run_id)).pending_gate!;
+    const enacted = await runStore.settleStep!(
+      started.run_id,
+      { kind: 'expire_gate', gateId: gate.gate_id },
+      aborting,
+      { now: new Date(new Date(gate.expires_at!).getTime() + 60_000) },
+    );
+    expect(enacted.applied).toBe(true);
+    const summary = await handleGetRunState(
+      { run_id: started.run_id, include_steps: true },
+      { runStore, workflowStore },
+    );
+    // (a) red when the abort expiry's entry reaches a model as an answer "settled by the gate's
+    //     expiry" (the walk's RED); (b) prints the step view and the skip detail.
+    expect(summary.steps?.['step-one']?.answers).toBeUndefined();
+    expect(summary.skip_details?.['step-one']).toEqual({
+      kind: 'gate_expired',
+      gate_id: gate.gate_id,
+    });
+    expect(summary.run_phase).toBe('aborted');
   });
 });
 

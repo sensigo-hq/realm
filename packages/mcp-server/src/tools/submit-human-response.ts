@@ -173,7 +173,9 @@ export function registerSubmitHumanResponse(server: McpServer, opts?: HandleRunS
                 ...result,
                 data: {},
                 evidence: [],
-                ...(unknown.length > 0 ? { warnings: [...result.warnings, ...unknown] } : {}),
+                // An unknown argument is named FIRST: a caller that sent `claimToken` reads the
+                // did-you-mean before the reply's own "No claim_token was passed" sentence.
+                ...(unknown.length > 0 ? { warnings: [...unknown, ...result.warnings] } : {}),
               }),
             },
           ],

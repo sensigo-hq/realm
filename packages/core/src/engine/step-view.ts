@@ -95,8 +95,9 @@ export interface AttemptView {
 /**
  * Issue #625 (the holder slice): one answer to a step's question — read off a `gate_response`
  * entry. `answered_by` is the caller-STATED, unverified name, or why there is none: an entry the
- * gate's expiry wrote (it carries `resolution`) reads `settled_by_expiry` — no one answered — whatever
- * its `responded_by` holds. `claim_proof` is the verdict recorded on the entry; when there is none,
+ * gate's expiry wrote with its default choice (it carries `resolution`) reads `settled_by_expiry` — no
+ * one answered — whatever its `responded_by` holds. The entry an `on_expiry: abort` expiry writes is
+ * not an answer and has no view (`isAnswerEntry`). `claim_proof` is the verdict recorded on the entry; when there is none,
  * `claim_proof_absent` says why — never a blank.
  */
 export interface AnswerView {
@@ -108,7 +109,7 @@ export interface AnswerView {
 
 export interface StepView {
   attempts: AttemptView[];
-  /** One per `gate_response` entry, in entry order. Absent when the step has no answer. */
+  /** One per answer entry (`isAnswerEntry`), in entry order. Absent when the step has no answer. */
   answers?: AnswerView[];
 }
 
@@ -189,6 +190,18 @@ function readAnswerer(raw: unknown): AnswerView['answered_by'] {
   return { by: name, by_source: 'stated' };
 }
 
+/**
+ * True when an evidence entry is an ANSWER to a step's question: a `gate_response` entry, except the
+ * one an `on_expiry: abort` expiry writes (`resolution: 'expired_abort'`). That entry answers nothing
+ * and settles nothing — the run ends and the step is skipped (`skip_details[step].kind:
+ * 'gate_expired'` says so) — so it is never shown as an answer. One rule for every reader.
+ */
+export function isAnswerEntry(entry: unknown): boolean {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  return e['kind'] === 'gate_response' && e['resolution'] !== 'expired_abort';
+}
+
 /** One `gate_response` entry as an answer. Total. */
 function composeAnswerView(entry: Record<string, unknown>): AnswerView {
   const input = entry['input_summary'];
@@ -208,8 +221,9 @@ function composeAnswerView(entry: Record<string, unknown>): AnswerView {
         ? outputChoice
         : undefined;
   // An entry the gate's expiry wrote carries `resolution` (and the settlement's literal
-  // `responded_by: 'timeout'`, never migrated): no one answered. Keyed on `resolution`, never on the
-  // literal — a caller may state `timeout` as its own name.
+  // `responded_by: 'timeout'`, never migrated): no one answered — the expiry wrote the default
+  // choice. Keyed on `resolution`, never on the literal — a caller may state `timeout` as its own
+  // name. (The abort expiry's entry never reaches here: `isAnswerEntry` leaves it out.)
   const settledByExpiry = entry['resolution'] !== undefined;
   const answer: AnswerView = {
     answered_by: settledByExpiry
@@ -266,7 +280,9 @@ export function composeStepViews(
     if (typeof stepId !== 'string') continue;
     const kind = entry['kind'];
     if (kind === 'gate_response') {
-      // Never an attempt; an answer. It creates the step's view when there is no execution entry.
+      // Never an attempt. An answer (see `isAnswerEntry`) creates the step's view when there is no
+      // execution entry; the abort expiry's entry is not an answer and adds nothing.
+      if (!isAnswerEntry(entry)) continue;
       const answerStep = (result[stepId] ??= { attempts: [] });
       (answerStep.answers ??= []).push(composeAnswerView(entry));
       continue;

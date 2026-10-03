@@ -189,7 +189,8 @@ describe('the claim line of an in-progress step', () => {
       }),
     );
     // (a) red when the reader stops applying the writer's bound; (b) prints the line.
-    expect(claimLine(out, 'work')).toBe(`  work: ${PHRASE_UNSHOWABLE}, 5m ago`);
+    // The verb stays: "work: a recorded name …" read as if the step were a name.
+    expect(claimLine(out, 'work')).toBe(`  work: taken by ${PHRASE_UNSHOWABLE}, 5m ago`);
     expect(out).not.toContain(ESC);
     expect(out).not.toContain('evil');
   });
@@ -382,19 +383,21 @@ describe('the answer line — the choice, the answerer, the proof in words', () 
     expect(out.split('\n').filter((l) => l.trim().startsWith('Answer: '))).toHaveLength(1);
   });
 
-  it('the multi-attempt and the answer-only branches KEEP the `Choice:` line and gain the `Answer:` line beside it', async () => {
+  it('one answer, one line — the multi-attempt and the answer-only layouts print the choice on the `Answer:` line only', async () => {
     const multi = await render(
       baseRun({
         completed_steps: ['confirm'],
         evidence: [exec('confirm', { status: 'error' }), exec('confirm'), answer('confirm')],
       }),
     );
-    expect(multi).toContain('Choice:   approve');
+    // (a) red when a `Choice:` line prints beside the `Answer:` line that carries the same choice
+    //     (the walk's "said twice"); (b) prints the screen.
+    expect(multi).not.toContain('Choice:');
     expect(multi).toContain('Answer: approve');
     const answerOnly = await render(
       baseRun({ completed_steps: ['confirm'], evidence: [answer('confirm')] }),
     );
-    expect(answerOnly).toContain('Choice:   approve');
+    expect(answerOnly).not.toContain('Choice:');
     expect(answerOnly).toContain('Answer: approve');
   });
 });
@@ -495,18 +498,65 @@ describe('review correction C2 — an answer the gate’s expiry wrote reads as 
     expect(out).not.toContain('answered by timeout');
   });
 
-  it("expired_abort: the abort writes no choice — `Answer: (no choice recorded) · settled by the gate's expiry (no one answered)`", async () => {
+  // An `on_expiry: abort` expiry answers nothing and settles nothing: the run ends and the step is
+  // skipped (`gate_expired`). Its entry is not an answer, so no `Answer:` line — but the step still
+  // opened a question, so its attempt keeps the question verb.
+  const abortEntry = {
+    responded_by: 'timeout',
+    resolution: 'expired_abort',
+    input_summary: {},
+    output_summary: { gate_expired: true, disposition: 'abort' },
+  };
+  const abortRun = (evidence: Record<string, unknown>[]): RunRecord =>
+    baseRun({
+      run_phase: 'aborted',
+      terminal_state: true,
+      skipped_steps: ['confirm'],
+      skip_details: { confirm: { kind: 'gate_expired', gate_id: 'g-1' } },
+      evidence,
+    });
+
+  it('expired_abort: no `Answer:` line at all; the attempt still reads `Question opened through:`', async () => {
     const out = await render(
-      expiryRun({
-        responded_by: 'timeout',
-        resolution: 'expired_abort',
-        input_summary: {},
-        output_summary: { gate_expired: true, disposition: 'abort' },
-      }),
+      abortRun([
+        exec('confirm', {
+          driven_by: { by: 'asker@host', by_source: 'derived', channel: 'agent' },
+        }),
+        answer('confirm', abortEntry),
+      ]),
     );
-    expect(answerLine(out)).toBe(
-      "     Answer: (no choice recorded) · settled by the gate's expiry (no one answered)",
+    // (a) red when the abort expiry's entry is composed as an answer again, or when the question
+    //     verb is keyed on answers instead of the step's gate entries; (b) prints the screen.
+    expect(out.split('\n').filter((l) => l.trim().startsWith('Answer: '))).toEqual([]);
+    expect(out).not.toContain('settled by the gate');
+    expect(out).toContain('Question opened through: asker@host (from the OS user, via agent)');
+    expect(out).not.toContain('Taken by: asker@host');
+  });
+
+  it('expired_abort on a multi-attempt step: the answers pair with the answer entries only', async () => {
+    const out = await render(
+      abortRun([
+        exec('confirm', { status: 'failure' }),
+        exec('confirm'),
+        answer('confirm', abortEntry),
+        answer('confirm', {
+          input_summary: { choice: 'reject' },
+          output_summary: { choice: 'reject' },
+          responded_by: 'bob',
+        }),
+      ]),
     );
+    // (a) red when the answers pair with every gate entry by position — the abort entry's block
+    //     would take bob's answer and bob's block would print none; (b) prints the gate blocks.
+    const lines = out.split('\n');
+    const from = lines.findIndex(
+      (l) => l.startsWith('     Output:   ') || l.startsWith('     Choice:'),
+    );
+    expect(lines.slice(from).filter((l) => /^ {5}(Choice|Answer|Output):/.test(l))).toEqual([
+      '     Output:   {"gate_expired":true,"disposition":"abort"}',
+      '     Answer: reject · answered by bob (as stated, not verified) · proof: none recorded',
+      '     Output:   {"choice":"reject"}',
+    ]);
   });
 
   it('(control) a caller who STATES `timeout` as its own name, with no resolution, is still a stated name', async () => {

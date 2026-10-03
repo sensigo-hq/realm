@@ -1,7 +1,12 @@
 // step-view.test.ts — issue #600 PR 1b (D7): the one place "how do you sum a per-request counter
 // honestly" lives, and the one place a step's cost is classified when there is none to sum.
 import { describe, it, expect } from 'vitest';
-import { composeCostView, composeStepViews, composeDriveFailureCosts } from './step-view.js';
+import {
+  composeCostView,
+  composeStepViews,
+  composeDriveFailureCosts,
+  isAnswerEntry,
+} from './step-view.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
@@ -423,7 +428,6 @@ describe('composeStepViews — issue #625: answers', () => {
       ],
       [{ claim_proof: 'nope' }, { claim_proof_absent: 'proof_unreadable' }],
       [{ resolution: 'expired_default' }, { claim_proof_absent: 'settled_by_expiry' }],
-      [{ resolution: 'expired_abort' }, { claim_proof_absent: 'settled_by_expiry' }],
       [{}, { claim_proof_absent: 'proof_not_recorded' }],
     ];
     for (const [entryExtra, expected] of cases) {
@@ -451,10 +455,7 @@ describe('composeStepViews — issue #625: answers', () => {
   });
   // Issue #625, PR-H review correction C2: the settlement writes `responded_by: 'timeout'` on the
   // entry its expiry makes; no one answered. Keyed on `resolution`, never on the literal.
-  it.each([
-    ['expired_default', { choice: 'hold' }, { choice: 'hold' }, 'hold'],
-    ['expired_abort', {}, { gate_expired: true, disposition: 'abort' }, undefined],
-  ] as const)(
+  it.each([['expired_default', { choice: 'hold' }, { choice: 'hold' }, 'hold']] as const)(
     'C2: an entry the gate’s expiry wrote (%s) reads no answerer: settled_by_expiry, whatever responded_by holds',
     (resolution, input_summary, output_summary, choice) => {
       const run = makeRun([
@@ -472,6 +473,38 @@ describe('composeStepViews — issue #625: answers', () => {
       ]);
     },
   );
+
+  // An `on_expiry: abort` expiry writes a `gate_response` entry (`resolution: 'expired_abort'`, no
+  // choice) but answers nothing and settles nothing — the run ends, the step is skipped. Not an answer.
+  const abortEntry = {
+    responded_by: 'timeout',
+    resolution: 'expired_abort',
+    input_summary: {},
+    output_summary: { gate_expired: true, disposition: 'abort' },
+  };
+  it('an abort expiry’s entry is not an answer: the step keeps its attempts and has no `answers` key', () => {
+    const run = makeRun([
+      { step_id: 'gate_step', kind: 'execution', status: 'success' },
+      answer(abortEntry),
+    ]);
+    const view = composeStepViews(run)['gate_step']!;
+    // (a) red when the abort expiry is composed as an answer (the walk's RED: "settled by the gate's
+    //     expiry" for a gate nothing settled); (b) prints the view.
+    expect(view.attempts).toHaveLength(1);
+    expect('answers' in view).toBe(false);
+  });
+  it('an abort expiry’s entry alone creates no step view', () => {
+    expect(composeStepViews(makeRun([answer(abortEntry)]))).toEqual({});
+  });
+  it('isAnswerEntry, per member', () => {
+    expect(isAnswerEntry({ kind: 'gate_response' })).toBe(true);
+    expect(isAnswerEntry({ kind: 'gate_response', resolution: 'expired_default' })).toBe(true);
+    expect(isAnswerEntry({ kind: 'gate_response', resolution: 'expired_abort' })).toBe(false);
+    expect(isAnswerEntry({ kind: 'execution' })).toBe(false);
+    expect(isAnswerEntry({})).toBe(false);
+    expect(isAnswerEntry(null)).toBe(false);
+    expect(isAnswerEntry('gate_response')).toBe(false);
+  });
 
   it('C2 (control): a caller who STATES `timeout` as its name (no resolution) is a stated name', () => {
     const run = makeRun([answer({ responded_by: 'timeout' })]);

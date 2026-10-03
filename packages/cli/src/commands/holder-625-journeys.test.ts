@@ -497,7 +497,11 @@ describe('A NAME THAT CANNOT BE USED — one line on stderr and exit 1 before an
     );
     expect(refused.code).toBe(1);
     // (a) red when the run is read first (a "Run not found" would print instead); (b) prints stderr.
-    expect(refused.stderr.trim()).toBe(LINE('nothing was recorded'));
+    // The consequence says why an answer depends on REALM_OPERATOR at all (it labels the cleanup
+    // steps the answer lets run — never the person who answered).
+    expect(refused.stderr.trim()).toBe(
+      LINE('it names the cleanup steps this answer lets run, so nothing was recorded'),
+    );
   }, 30_000);
 
   it('`realm agent`, `realm serve` and `realm run drain` refuse the same way with their own consequence', async () => {

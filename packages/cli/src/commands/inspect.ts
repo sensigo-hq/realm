@@ -19,6 +19,7 @@ import {
   composeStepViews,
   composeDriveFailureCosts,
   describeClaimHolder,
+  isAnswerEntry,
 } from '@sensigo/realm';
 // issue #221 correction: the CLI's first command→command import (sanctioned — harmless
 // module-level Command construction; `listCommand` is a standalone Commander object never
@@ -537,9 +538,19 @@ export async function inspectRun(
   // reads it rather than re-summing `StepDiagnostics.cache` at each call site.
   const stepViews = composeStepViews(run, definition !== undefined ? { definition } : {});
   // issue #625 (holder slice): a step is a QUESTION step while its question is open and once it has
-  // been answered — the word on its claim and attempt lines changes with it.
+  // been answered or has expired — the word on its claim and attempt lines changes with it. Keyed on
+  // the step's `gate_response` entries, not on its answers: an `on_expiry: abort` expiry leaves an
+  // entry that is not an answer, and the step still opened a question.
+  const evidenceList: readonly unknown[] = Array.isArray(run.evidence) ? run.evidence : [];
   const isQuestionStepId = (stepId: string): boolean =>
-    run.pending_gate?.step_name === stepId || (stepViews[stepId]?.answers?.length ?? 0) > 0;
+    run.pending_gate?.step_name === stepId ||
+    evidenceList.some(
+      (e) =>
+        typeof e === 'object' &&
+        e !== null &&
+        (e as Record<string, unknown>)['step_id'] === stepId &&
+        (e as Record<string, unknown>)['kind'] === 'gate_response',
+    );
 
   // Color the phase label \u2014 derived, never the persisted run_phase (issue #279, increment 2,
   // PR-C \u2014 D-3 leg vi: render sweep). A grandfathered terminal-with-stale-gate record (the #282
@@ -677,10 +688,14 @@ export async function inspectRun(
     const verb = isQuestionStepId(step) ? 'question opened through' : 'taken by';
     const sinceMs = described.since !== undefined ? Date.parse(described.since) : Number.NaN;
     const age = Number.isFinite(sinceMs) ? `, ${formatGateAge(described.since!)} ago` : '';
+    // An unreadable name keeps the verb ("taken by a recorded name that cannot be printed …"); the
+    // other absences are whole sentences of their own.
     const body =
       'holder' in described
         ? `${verb} ${describeProgram(described.holder)}`
-        : ABSENCE_WORDS[described.absent_cause];
+        : described.absent_cause === 'name_unreadable'
+          ? `${verb} ${ABSENCE_WORDS.name_unreadable}`
+          : ABSENCE_WORDS[described.absent_cause];
     lines.push(`  ${step}: ${body}${age}`);
   }
   lines.push(`Failed: ${run.failed_steps.join(', ') || '(none)'}`);
@@ -964,14 +979,19 @@ export async function inspectRun(
         lines.push(chalk.dim(`     ${lastSentence}`));
       }
       // issue #600 PR 1b: a multi-attempt step's gate_response entries render AFTER, each as
-      // today's gate block, with no header line of their own.
-      gateSnaps.forEach((gate, gi) => {
+      // today's gate block, with no header line of their own. The answers pair with the entries
+      // that ARE answers (`isAnswerEntry`) in order — an abort expiry's entry has no answer line.
+      let answerIndex = 0;
+      // One answer, one line: an entry whose answer line prints shows its choice there only.
+      gateSnaps.forEach((gate) => {
+        const answer = isAnswerEntry(gate) ? view?.answers?.[answerIndex] : undefined;
+        if (isAnswerEntry(gate)) answerIndex += 1;
         const choice = gate.input_summary['choice'] ?? gate.output_summary['choice'];
-        if (choice !== undefined) {
+        if (answer !== undefined) {
+          lines.push(`     ${renderAnswerLine(answer)}`);
+        } else if (choice !== undefined) {
           lines.push(`     Choice:   ${String(choice)}`);
         }
-        const answer = view?.answers?.[gi];
-        if (answer !== undefined) lines.push(`     ${renderAnswerLine(answer)}`);
         if (gate.gate_message !== undefined) {
           lines.push(`     Message:  "${gate.gate_message}"`);
         }
@@ -979,9 +999,9 @@ export async function inspectRun(
       });
     } else {
       // The single-entry branch renders `snaps[0]`, whatever its kind, and then the step's answers.
-      // When `snaps[0]` is an answer (a step whose first entry is its answer), the answers print
-      // beside its `Choice:` line; otherwise (the common gate step: one execution entry, then its
-      // answer) they print after the entry. Each answer prints once.
+      // When `snaps[0]` is a gate entry (a step whose first entry is its answer), the answers print
+      // in its block, in place of its `Choice:` line; otherwise (the common gate step: one execution
+      // entry, then its answer) they print after the entry. Each answer prints once.
       const snap = snaps[0]!;
       const statusColored = colorStatus(snap.status);
       const hashShort = chalk.dim(`hash: ${snap.evidence_hash.slice(0, 8)}`);
@@ -996,8 +1016,9 @@ export async function inspectRun(
         if (programLine !== undefined) lines.push(`     ${programLine}`);
       }
       if (snap.kind === 'gate_response') {
+        // One answer, one line: when the step's answers print here, the choice is on them.
         const choice = snap.input_summary['choice'] ?? snap.output_summary['choice'];
-        if (choice !== undefined) {
+        if (choice !== undefined && (view?.answers?.length ?? 0) === 0) {
           lines.push(`     Choice:   ${String(choice)}`);
         }
         for (const answer of view?.answers ?? []) {
@@ -1060,7 +1081,7 @@ export async function inspectRun(
       }
       // issue #625 (holder slice): the step's answers, one line each. The common gate step has ONE
       // execution entry and then its answer — the answer used to be dropped here. A step whose first
-      // entry is an answer has already printed them beside `Choice:` above.
+      // entry is a gate entry has already printed them in its block above.
       if (snap.kind !== 'gate_response') {
         for (const answer of view?.answers ?? []) {
           lines.push(`     ${renderAnswerLine(answer)}`);

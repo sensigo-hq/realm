@@ -200,7 +200,12 @@ export const respondCommand = new Command('respond')
       }
       // `REALM_OPERATOR` here names the PROGRAM for the cleanup steps this answer drains — never
       // the person who answered.
-      const driver = resolveProgramIdentity('respond', 'nothing was recorded');
+      // The answer itself never carries this name; REALM_OPERATOR labels the cleanup steps the
+      // answer lets run — the refusal says so, so a person is not left wondering why.
+      const driver = resolveProgramIdentity(
+        'respond',
+        'it names the cleanup steps this answer lets run, so nothing was recorded',
+      );
       const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
       const runStore = new JsonFileStore();
       const workflowStore = new JsonWorkflowStore();

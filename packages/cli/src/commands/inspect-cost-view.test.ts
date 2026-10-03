@@ -679,7 +679,9 @@ describe('#600 PR 1b — gate_response rendering', () => {
     const run = makeRun([gate, execution]);
     const out = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
     const plain = out;
-    expect(plain).toContain('Choice:   approve');
+    // issue #625: the choice prints once, on the `Answer:` line.
+    expect(plain).toContain('Answer: approve');
+    expect(plain).not.toContain('Choice:');
     expect(plain).toContain('Message:  "Proceed?"');
     // The execution entry's own Diagnostics line never appears — this is the KNOWN, unchanged P4
     // defect (a separately homed issue), pinned rather than fixed here.
@@ -708,7 +710,9 @@ describe('#600 PR 1b — gate_response rendering', () => {
     const plain = out;
     expect(plain).toContain('(attempt 1/2)');
     expect(plain).toContain('(attempt 2/2)');
-    expect(plain).toContain('Choice:   approve');
+    // issue #625: the choice prints once, on the `Answer:` line.
+    expect(plain).toContain('Answer: approve');
+    expect(plain).not.toContain('Choice:');
     expect(plain).toContain('Message:  "Proceed?"');
     // No SECOND numbered header line ("  N. gated_step") for the gate block.
     const headerCount = (plain.match(/\d+\. gated_step/g) ?? []).length;

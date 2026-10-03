@@ -196,7 +196,7 @@ and `realm run list --stuck` says what would be done:
 Drained 2/2 run(s).
 ```
 
-After `settle_default`, the record says that the answer came from the time limit: it holds `"choice": "hold", "resolved_by": "timeout"` for the step. `realm run inspect` shows `Sealed by: gate_expiry_default (approve)` only when the expiry itself completed the run, with nothing left to run after the gate. When the run goes on, or a guard after the gate ends it, `inspect` prints `Answer: hold · settled by the gate's expiry (no one answered)`, and `get_run_state` gives that answer `answered_by: { "by": null, "absent_cause": "settled_by_expiry" }`.
+After `settle_default`, the record says that the answer came from the time limit: it holds `"choice": "hold", "resolved_by": "timeout"` for the step. On the gate's step, `realm run inspect` prints `Answer: hold · settled by the gate's expiry (no one answered)`, and `get_run_state` gives that answer `answered_by: { "by": null, "absent_cause": "settled_by_expiry" }`. When the expiry itself completed the run, with nothing left to run after the gate, `inspect` also shows `Sealed by: gate_expiry_default (approve)`.
 
 After `abort`, the run reads:
 
@@ -205,6 +205,8 @@ Phase: aborted
 Sealed by: gate_expiry_abort (approve)
 Cause: Gate 'approve' expired and the run aborted per the workflow's declared on_expiry.
 ```
+
+Nothing was answered: `inspect` prints no `Answer:` line for the step, it lists the step under `Skipped:` as `gate_expired`, and `get_run_state` gives the step no `answers` entry.
 
 Over MCP, the call that carries out an expiry says so in its `warnings`, with how late it was. `realm run drain` and the process waiting at the gate print a line of their own. Afterwards, `realm run inspect` and `get_run_state` do not show which call carried it out.
 
