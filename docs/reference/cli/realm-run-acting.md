@@ -111,22 +111,30 @@ This program: tester (from REALM_OPERATOR) · project code: neither side records
 Last recorded driver: none recorded.
 Owed to the engine: 'after'.
 → after
-Stopped: agent steps are ready: 'finish' — drive them with realm agent --run-id <id>
+Stopped: agent steps are ready: 'finish' — drive it with realm agent --run-id <id>
 Run <id>: phase 'running'
 ```
 
 The preview's `project code` words compare the code this program loaded with what the run last recorded:
 
-| Words                                       | Means                                                                                                                                                                        |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `same as the run's last record`             | The same files with the same hashes.                                                                                                                                         |
-| `differs from the run's last record`        | Comparable, and different: a code file, an entry module, the `realm.yaml` or the `--extensions-module` override changed.                                                     |
-| `not comparable with the run's last record` | One side records project code and the other does not, the two fingerprints were taken under different rules, one was cut short at its size limit, or one side's load failed. |
-| `neither side records project code`         | Neither the run nor this program loaded project code.                                                                                                                        |
+| Words                                                       | Means                                                                                                                                                                             |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `same as the run's last record`                             | The same files with the same hashes.                                                                                                                                              |
+| `differs from the run's last record`                        | Comparable, and different: a code file, an entry module, the `realm.yaml` or the `--extensions-module` override changed.                                                          |
+| `not comparable with the run's last record`                 | The run records project code and this program loaded none, the two fingerprints were taken under different rules, one was cut short at its size limit, or one side's load failed. |
+| `not comparable — the run has recorded no project code yet` | This program loaded project code, and the run has recorded none: no program with project code has run a step of it yet, as on a run just created. It is not a mismatch.           |
+| `neither side records project code`                         | Neither the run nor this program loaded project code.                                                                                                                             |
 
 When another program holds an owed step, the preview says so before anything runs, once, with the program and the time: `In flight: '<step>' is in flight, taken by <program> since <time>.`
 
-`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`), the run ended (`the run has ended (<phase>)`), a question opened (with the `realm run respond` command), each step that cannot run (`'<step>' cannot run (<check>): <why>`, or `cannot run here (capability)` for a handler or adapter this program lacks), agent steps ready (with the `realm agent --run-id` command), each step another program holds (`'<step>' is in flight in another program — wait for it, or see realm run inspect <id>`), and otherwise `nothing is ready to run now`. A run the command completes gets no `Stopped:` line: the phase line says it. A step another process took while this one was about to run it is said as a fact, `• Step '<step>' was taken by <program> at <time>; not run here.`, and the command goes on with what is left. When the engine can run nothing, the last preview line says why and nothing runs. It opens `Nothing is owed to the engine: <reasons>.` when nothing is owed (the run ended, a question is open, only agent steps are ready), and `The engine can run nothing now: <reasons>.` when steps are still owed to the engine but none can run here now (a step that cannot run, or a step in flight in another program). When the run stops on a step refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready, the last line gives the one way out — correcting the workflow and registering it again is the fix, since the run picks up the corrected definition:
+`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`), the run ended (`the run has ended (<phase>)`), a question opened (with the `realm run respond` command), each step that cannot run (`'<step>' cannot run (<check>): <why>`, or `cannot run here (capability)` for a handler or adapter this program lacks, ending with its way out: `— load the missing extension, or run the step on a runner that has it`), agent steps ready (with the `realm agent --run-id` command), each step another program holds (`'<step>' is in flight in another program — wait for it, or see realm run inspect <id>`), and otherwise `nothing is ready to run now`. A run the command completes gets no `Stopped:` line: the phase line says it. A step another process took while this one was about to run it is said as a fact, and the command goes on with what is left. The command prints `→ <step>` as it starts a step, before it claims it, so the losing program prints both lines, in this order — the second says the claim found the step taken, and the step did not run here:
+
+```text
+→ process
+• Step 'process' was taken by racer-b (from REALM_OPERATOR, via advance) at 2026-10-04T23:25:01.112Z; not run here.
+```
+
+When the engine can run nothing, the last preview line says why and nothing runs. It opens `Nothing is owed to the engine: <reasons>.` when nothing is owed (the run ended, a question is open, only agent steps are ready), and `The engine can run nothing now: <reasons>.` when steps are still owed to the engine but none can run here now (a step that cannot run, or a step in flight in another program). When the run stops on a step refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready, the last line gives the one way out — correcting the workflow and registering it again is the fix, since the run picks up the corrected definition:
 
 ```text
 The engine can run nothing now: 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.

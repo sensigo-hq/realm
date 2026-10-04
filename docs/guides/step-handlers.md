@@ -150,7 +150,7 @@ The run ends as `aborted`, not `failed`, and every later step is skipped.
 
 ## If you see something else
 
-- **`Step 'total' is blocked: its handler 'order_totl' is not registered in this runner.`** (the MCP reply's `context_hint`; `realm agent` prints `⚠ Step 'total' is blocked: handler 'order_totl' is not registered in this runner. The run is NOT failed — add handler 'order_totl' and re-attach (…)`). The `handler` name on the step does not match a key in your `handlers` map. `realm workflow validate` does not catch this; it shows up when the step runs. The run is not ended: correct the name, register again, and the step can run.
+- **`Step 'total' is blocked: its handler 'order_totl' is not registered in this runner.`** (on the MCP reply of the call that attempted the step: its `context_hint` for `advance_run` and `execute_step`, its `warnings` for `start_run`; `realm agent` prints `⚠ Step 'total' is blocked: handler 'order_totl' is not registered in this runner. The run is NOT failed — add handler 'order_totl' and re-attach (…)`). The `handler` name on the step does not match a key in your `handlers` map. `realm workflow validate` does not catch this; it shows up when the step runs. The run is not ended: correct the name, register again, and the step can run.
 - **`Handler step 'total' aborted the run: undefined`** Your handler returned `abort` without a `message`. Use `{ abort: { message: '…' } }`.
 
 ## See also

@@ -163,12 +163,12 @@ Skipped: total, confirm
   confirm: trigger_rule_unsatisfiable: all_success, dep total skipped
 ```
 
-What the engine owes, and steps that cannot run, from three runs. `inspect` loads no extensions, so a missing handler or adapter is judged by the run's record of the last attempt and said in the past tense (`Could not run`):
+What the engine owes, and steps that cannot run, from three runs. `inspect` loads no extensions, so a missing handler or adapter is judged by the run's record of the last attempt and said in the past tense (`Could not run`), with the way out — a program that has it runs the step:
 
 ```text
 Owed to the engine: 'process', 'notify' — realm run advance b178179a-998d-457e-85e6-6d38439d0585
 Cannot run 'compute' (input_schema): Invalid input for step 'compute': the input must have required property 'n'
-Could not run 'process' (capability): handler 'stamp' was not registered in the runner that last attempted it
+Could not run 'process' (capability): handler 'stamp' was not registered in the runner that last attempted it — from a program that has it: realm run advance 3d1c7a40-60e4-4a8e-9b1a-1f0a6e2c9d55
 ```
 
 A waiting gate looks like this:
