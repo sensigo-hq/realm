@@ -215,7 +215,7 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       });
       const entry = batch.started![0]!;
       expect(entry.next_actions?.map((a) => a?.instruction?.tool)).toEqual(['advance_run']);
-      await follow(client, { status: 'ok', next_actions: entry.next_actions });
+      await follow(client, { status: 'ok', next_actions: entry.next_actions ?? [] });
       expect(await phaseOf(home, entry.run_id)).toBe('completed');
     });
   }, 30000);

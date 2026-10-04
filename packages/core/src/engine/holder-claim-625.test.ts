@@ -448,8 +448,6 @@ describe('VALIDATION_ACTOR_INVALID — a malformed driver is refused at every ex
         advanceRun(s, def, {
           runId: 'r',
           command: 'work',
-          input: {},
-          dispatcher: echo,
           driver: BAD,
         }),
     ],

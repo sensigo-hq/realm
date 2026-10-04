@@ -94,8 +94,6 @@ const CALLS: Record<
     advanceRun(s, def, {
       runId: 'r',
       command: 'work',
-      input: {},
-      dispatcher,
       ...opt(registry, driver),
     }),
   submitHumanResponse: (s, registry, driver) =>

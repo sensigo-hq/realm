@@ -1183,8 +1183,6 @@ describe("issue #625 — advanceRun (the chain's tail) called without the chain'
       const reply = await advanceRun(store, def, {
         runId: run.id,
         command: 'work',
-        input: {},
-        dispatcher: echo,
       });
 
       // (a) red when the tail's guard loop is not reached from a direct call, or the wrapper
@@ -1204,8 +1202,6 @@ describe("issue #625 — advanceRun (the chain's tail) called without the chain'
       const reply = await advanceRun(store, def, {
         runId: run.id,
         command: 'work',
-        input: {},
-        dispatcher: echo,
       });
 
       // (a) red when a direct call runs or claims the agent step, or invents a list;

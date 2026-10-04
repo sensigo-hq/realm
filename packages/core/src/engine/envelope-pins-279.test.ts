@@ -640,8 +640,6 @@ describe("evaluatedAtVersion — the chain's own evaluation snapshot (issue #279
       await advanceRun(store, def, {
         runId: run.id,
         command: 'step_a',
-        input: {},
-        dispatcher: async () => ({ status: 'open' }),
       });
 
       // (a) red when `advanceRun`'s guard loop stops issuing a settle_guard for an eligible guard

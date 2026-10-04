@@ -89,7 +89,7 @@ const CALLS: Array<[string, (store: never) => Promise<unknown>, string]> = [
   ],
   [
     'advanceRun',
-    (s) => advanceRun(s, def, { runId: 'r', command: 'a', input: {}, dispatcher: noop }),
+    (s) => advanceRun(s, def, { runId: 'r', command: 'a' }),
     'The run store handed to advanceRun',
   ],
   [
@@ -208,8 +208,6 @@ const REGISTRY_CALLS: Array<[string, (registry: never) => Promise<unknown>, stri
       advanceRun(new JsonFileStore(dir), def, {
         runId: 'r',
         command: 'a',
-        input: {},
-        dispatcher: noop,
         registry: r,
       }),
     'The registry handed to advanceRun',
