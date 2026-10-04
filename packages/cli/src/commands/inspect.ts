@@ -7,6 +7,8 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import {
+  describePending,
+  owedList,
   CACHE_BASES,
   CACHE_STATES,
   SEAL_ARMS,
@@ -616,6 +618,19 @@ export async function inspectRun(
   // finding that the operator's primary surface shows the failed SET but not why the run ended.
   if (run.terminal_reason !== undefined) {
     lines.push(`Cause: ${run.terminal_reason}`);
+  }
+  // issue #625 PR-2a (D7.3): what the engine owes on a live run with no open question, and each
+  // engine step this record shows cannot run (no registry here, so a capability need is unknown).
+  if (definition !== undefined && !run.terminal_state && run.pending_gate === undefined) {
+    const pending = describePending(definition, run);
+    if (pending.act !== undefined) {
+      lines.push(`Owed to the engine: ${owedList(pending)} — realm run advance ${run.id}`);
+    }
+    for (const e of pending.engine_runnable) {
+      if (e.runnable_here === false) {
+        lines.push(`Cannot run '${e.step}' (${e.refused_by}): ${e.refusal}`);
+      }
+    }
   }
   // issue #401: failed drive attempts. Before this, a run whose drive kept dying showed nothing
   // here at all — the console said so once, at the time, to whoever happened to be watching.

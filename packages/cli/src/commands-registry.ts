@@ -15,6 +15,7 @@ import { reconcileCommand } from './commands/reconcile.js';
 import { attemptsCommand } from './commands/attempts.js';
 import { drainCommand } from './commands/drain.js';
 import { respondCommand } from './commands/respond.js';
+import { runAdvanceCommand } from './commands/run-advance.js';
 import { inspectCommand } from './commands/inspect.js';
 import { replayCommand } from './commands/replay.js';
 import { diffCommand } from './commands/diff.js';
@@ -55,6 +56,7 @@ export const runCommands = [
   abandonCommand,
   reclaimCommand,
   respondCommand,
+  runAdvanceCommand,
   cleanupCommand,
   purgeCommand,
   gcCommand,

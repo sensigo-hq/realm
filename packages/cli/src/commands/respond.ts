@@ -12,6 +12,9 @@ import {
   describeAnswerEnding,
   describeEndedBy,
   lateAnswerOutcome,
+  deriveRunPhase,
+  describePending,
+  owedList,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -147,12 +150,21 @@ export async function respondToGate(
       lastLine: notRecordedLine(runId, late),
     };
   }
+  // issue #625 PR-2a (decision C11): the recorded answerer when `--by` was given, the DERIVED
+  // phase, and — when the answer left engine work owed — the one command that runs it from here.
+  const phase = deriveRunPhase(updatedRun);
+  const answeredBy = options.by !== undefined ? ` | answered by ${options.by} (as stated)` : '';
+  const pending = describePending(workflow, updatedRun, effectiveRegistry);
   return {
     choice: options.choice,
-    newState: updatedRun.run_phase,
+    newState: phase,
     recorded: true,
     lines,
-    lastLine: `Responded: ${runId} | choice '${options.choice}' | new state '${updatedRun.run_phase}'`,
+    lastLine:
+      `Responded: ${runId} | choice '${options.choice}'${answeredBy} | new state '${phase}'` +
+      (pending.act !== undefined
+        ? `\nOwed to the engine: ${owedList(pending)} — realm run advance ${runId} runs them from this shell.`
+        : ''),
   };
 }
 

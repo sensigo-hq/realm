@@ -17,6 +17,9 @@ import type {
   Attributed,
 } from '@sensigo/realm';
 import {
+  describePending,
+  owedList,
+  type PendingView,
   WorkflowError,
   applySettlement,
   deriveRunPhase,
@@ -52,9 +55,15 @@ const nothingToDrain = (runId: string): string =>
  *   behind the gate, any of which can end the run; `abandon` then refuses ("already terminal").
  *   The sentence therefore names `abandon` only for a run that is still open after the answer.
  */
-const wayOutOf = (runId: string, run: RunRecord, now: Date): string => {
+const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: PendingView): string => {
   const gate = run.pending_gate;
-  if (gate === undefined) return `To end the run: realm run abandon ${runId}.`;
+  if (gate === undefined) {
+    // issue #625 PR-2a (decision C7): with engine work owed, the way on is `advance` — `abandon`
+    // stays the alternative, never the only way out named.
+    return pending?.act !== undefined
+      ? `To run the steps the engine owes (${owedList(pending)}): realm run advance ${runId}. To end the run instead: realm run abandon ${runId}.`
+      : `To end the run: realm run abandon ${runId}.`;
+  }
   const expiry = classifyGateExpiry(run, now);
   if (expiry.kind === 'enactable') {
     return (
@@ -324,13 +333,14 @@ function renderDryRun(
   expiredFlag = false,
   declared?: ReadonlySet<string>,
   predictedGuards: readonly string[] = [],
+  pending?: PendingView,
 ): void {
   const gateReported = renderGateExpiryDryRun(runId, run, now, expiredFlag, predictedGuards);
   if (!run.terminal_state) {
     if (!gateReported) {
       console.log(
         `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ` +
-          wayOutOf(runId, run, now),
+          wayOutOf(runId, run, now, pending),
       );
     }
     return;
@@ -669,6 +679,21 @@ export async function runDrainAction(
 
   try {
     const run = await runStore.get(runId);
+    // issue #625 PR-2a: what the engine owes on a live run with no open question — a JSON read of
+    // the registered copy; when it cannot be read, nothing is added to the line.
+    const ownedWork = async (r: RunRecord): Promise<PendingView | undefined> => {
+      if (r.terminal_state || r.pending_gate !== undefined) return undefined;
+      try {
+        const wf = await getWorkflowForRun(workflowStore, r, {
+          retryVerb: 'drain again',
+          verb: 'drain',
+        });
+        return describePending(wf, r);
+      } catch (err) {
+        if (!(err instanceof WorkflowError)) throw err;
+        return undefined;
+      }
+    };
     const gateClass = classifyGateExpiry(run, now);
     const hasEnactableGate = opts.expired === true && gateClass.kind === 'enactable';
 
@@ -709,14 +734,22 @@ export async function runDrainAction(
           if (!(err instanceof WorkflowError)) throw err;
         }
       }
-      renderDryRun(runId, run, now, opts.expired === true, declared, predictedGuards);
+      renderDryRun(
+        runId,
+        run,
+        now,
+        opts.expired === true,
+        declared,
+        predictedGuards,
+        await ownedWork(run),
+      );
       return;
     }
 
     if (!run.terminal_state && !hasEnactableGate) {
       console.error(
         `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ` +
-          wayOutOf(runId, run, now),
+          wayOutOf(runId, run, now, await ownedWork(run)),
       );
       process.exit(1);
     }
@@ -760,6 +793,13 @@ export async function runDrainAction(
       console.log(
         `Run '${runId}' is not terminal (phase: '${deriveRunPhase(workingRun)}') — nothing further to drain.`,
       );
+      // issue #625 PR-2a (decision C7): the expiry left steps owed to the engine — name the call.
+      const owed = await ownedWork(workingRun);
+      if (owed?.act !== undefined) {
+        console.log(
+          `To run the steps the engine owes (${owedList(owed)}): realm run advance ${runId}.`,
+        );
+      }
       return;
     }
 
