@@ -8,6 +8,7 @@ import {
   classifyInProgressClaims,
   executeChain,
   advanceRun,
+  executeEngineStep,
   describePending,
   describeClaimHolder,
   buildNextActions,
@@ -456,8 +457,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     }
 
     try {
-      // issue #625 PR-2a (C17): an engine step refused before its claim is named once per drive.
+      // issue #625 PR-2a (decisions C17, C23): an engine step that cannot run HERE — refused before
+      // its claim, or capability-blocked — is named once per drive.
       const reportedRefusals = new Set<string>();
+      // decision C23: a capability block's reply from the loop-top `advanceRun`, held per step — it is
+      // this drive's exit only when nothing else can run.
+      const heldCapabilityReplies = new Map<string, Awaited<ReturnType<typeof advanceRun>>>();
       const keepsClaims = deps.store.persistsClaims === true;
 
       while (!currentRun.terminal_state) {
@@ -553,13 +558,26 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             console.error(`\n✗ ${advanced.errors.join(', ') || advanced.context_hint}`);
             return 'failed';
           }
-          engineReply = advanced;
-        } else {
+          if (
+            advanced.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
+            advanced.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED'
+          ) {
+            // decision C23: a capability block is an engine step that cannot run HERE, the same class
+            // as a refusal before the claim. Held, not sent to the dispositions at once: the attempt
+            // wrote its marker, so the view below names the step, and the loop goes on with the
+            // ready agent steps.
+            heldCapabilityReplies.set(engineStep, advanced);
+          } else {
+            engineReply = advanced;
+          }
+        }
+        if (engineReply === undefined) {
           currentRun = await deps.store.get(runId);
           if (currentRun.terminal_state) break;
           if (currentRun.pending_gate !== undefined) continue;
-          // C17: an engine step refused before its claim (nothing changed; the act is withdrawn)
-          // is named once per drive, and the loop goes on with the ready agent steps.
+          // decisions C17, C23: an engine step that cannot run here (refused before its claim, or
+          // capability-blocked; nothing changed and the act is withdrawn) is named once per drive,
+          // and the loop goes on with the ready agent steps.
           for (const e of describePending(definition, currentRun, deps.registry).engine_runnable) {
             if (e.runnable_here === false && !reportedRefusals.has(e.step)) {
               reportedRefusals.add(e.step);
@@ -575,6 +593,54 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             : findEligibleSteps(definition, currentRun).filter(
                 (name) => definition.steps[name]?.execution === 'agent',
               );
+        if (engineReply === undefined && eligible.length === 0) {
+          // decision C23: no agent step is ready, no engine step can run, and an owed engine step
+          // cannot run here — the drive's exit is today's. The first such step (definition order)
+          // takes the dispositions below with the engine's own reply: the capability block this
+          // drive holds for it, otherwise one attempt (write-free for the three checks before the
+          // claim; for capability, today's attempt after it). So the exit line, #401's chokepoint-4
+          // record and the `drive_failing` finding are what they were before #625.
+          const view = describePending(definition, currentRun, deps.registry);
+          const cannotRun = view.engine_runnable.filter((e) => e.runnable_here === false);
+          if (cannotRun.length > 0 && view.act === undefined) {
+            const first = cannotRun[0]!.step;
+            let exitReply = heldCapabilityReplies.get(first);
+            if (exitReply === undefined) {
+              console.log(`→ [auto] ${first}`);
+              currentStepName = first;
+              attemptStartedAt = Date.now();
+              exitReply = await executeEngineStep(deps.store, definition, {
+                runId,
+                step: first,
+                run: currentRun,
+                registry: deps.registry,
+                ...(deps.traceBufferStore !== undefined
+                  ? { traceBufferStore: deps.traceBufferStore }
+                  : {}),
+                ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
+              });
+            }
+            if (exitReply.status === 'error') {
+              engineReply = exitReply;
+              engineStep = first;
+            } else if (exitReply.status !== 'blocked') {
+              // The step became runnable between the view and the attempt, and ran: go on.
+              currentRun = await deps.store.get(runId);
+              continue;
+            } else if (exitReply.error_code === 'STATE_STEP_ALREADY_CLAIMED') {
+              currentRun = await deps.store.get(runId);
+              console.log(
+                takenLine(first, describeClaimHolder(currentRun.claims?.[first], keepsClaims)),
+              );
+              continue;
+            } else {
+              // A precondition refusal replies `blocked`, which the dispositions below pass over (a
+              // `blocked` reply prints `✓ → <phase>` and loops — before #625 this drive re-ran the
+              // step forever). The step is already named above; the drive ends here.
+              break;
+            }
+          }
+        }
         if (engineReply === undefined && eligible.length === 0) {
           // issue #625 PR-2a (D6.2): a step in flight elsewhere (the open gate's own step is not "in
           // flight" — it holds a claim while it waits) — watch the record and re-enter on any change.
@@ -605,7 +671,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               const since = described.since ?? 'an unrecorded time';
               const stale = states.get(step) === 'claim_stale';
               console.log(
-                `• Step '${step}' has been in flight since ${since} (${takenPhrase(described)}); the record has not changed for ${Math.round(watchMs / 1000)}s.` +
+                `• Step '${step}' has been in flight since ${since}, ${takenPhrase(described)}; the record has not changed for ${Math.round(watchMs / 1000)}s.` +
                   (stale ? ' Its claim is past its deadline (its runner likely died).' : '') +
                   ` If the program that took it is gone: realm run reclaim ${runId} --step ${step} --force`,
               );

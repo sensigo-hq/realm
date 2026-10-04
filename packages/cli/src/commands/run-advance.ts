@@ -12,6 +12,7 @@ import {
   describeEndedBy,
   describeClaimHolder,
   guardPassedLine,
+  guardEndingOfRun,
   type PendingView,
   type ProgramFit,
 } from '@sensigo/realm';
@@ -121,7 +122,12 @@ export async function advanceRunFromShell(
   print(`Last recorded driver: ${driverWords(run, workflow)}.`);
   if (pending.act === undefined) {
     print(`Nothing is owed to the engine: ${stoppedReasons(runId, run, pending).join('; ')}.`);
-    return 0;
+    // decision C23 with D4.4: a step that cannot run here (refused before its claim, or
+    // capability-blocked) exits 1 whether or not anything else was owed — the same code as after a
+    // call that ran other steps.
+    return !run.terminal_state && pending.engine_runnable.some((e) => e.runnable_here === false)
+      ? 1
+      : 0;
   }
   print(`Owed to the engine: ${owedList(pending)}.`);
 
@@ -146,8 +152,11 @@ export async function advanceRunFromShell(
     },
   });
 
-  // PR-1's lines for the guards this call settled: the ending (and its reason) when one ended the
-  // run, otherwise one passed line per guard.
+  // decision C28: PR-1's lines for the guards this call settled. A reply carrying `ended_by` (a
+  // guard a step's own write settled) gives the ending and its reason. Otherwise one passed line
+  // per guard the loop settled — and, for a guard that ended the run, the reply's sentence, then
+  // PR-1's `Reason:` line read off the record the call left (the loop's own guard replies carry no
+  // `ended_by`).
   const endingLines = describeEndedBy(result);
   const chainedGuards = (result.chained_auto_steps ?? [])
     .map((c) => c.step)
@@ -158,7 +167,13 @@ export async function advanceRunFromShell(
   } else {
     chainedGuards.forEach((guard, index) => {
       const endedTheRun = index === chainedGuards.length - 1 && after.terminal_state;
-      print(endedTheRun ? result.context_hint : guardPassedLine(guard));
+      if (!endedTheRun) {
+        print(guardPassedLine(guard));
+        return;
+      }
+      print(result.context_hint);
+      const ending = guardEndingOfRun(after);
+      if (ending?.step === guard && ending.reason !== undefined) print(`Reason: ${ending.reason}`);
     });
   }
 

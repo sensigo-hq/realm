@@ -166,9 +166,10 @@ it("a chained step's REJECTED input does not re-attach the agent step's calls (c
   expect(result).toBe('failed');
   const run = (await store.list())[0]!;
   expect(run.completed_steps).toEqual(['draft']);
-  // issue #625 PR-2a (C16/C17): `check` is refused before its claim by the run's view (its `{}`
-  // engine input fails its schema) — never submitted, so no drive failure and no calls re-attached.
-  expect(run.drive_failures?.entries ?? []).toHaveLength(0);
+  // The wedge is still recorded — it just does not carry calls that are already on draft's record.
+  const entry = run.drive_failures!.entries[0]!;
+  expect(entry.error_class).toBe('validation_rejected');
+  expect(entry.usage).toBeUndefined();
 
   const screen = await inspectRun(run.id, store, wf);
   expect(screen.match(/1234 prompt tokens/g)).toHaveLength(1);
@@ -176,7 +177,7 @@ it("a chained step's REJECTED input does not re-attach the agent step's calls (c
     { run_id: run.id, include_steps: true },
     { runStore: store, workflowStore: wf },
   );
-  expect(summary.drive_failure_costs ?? []).toHaveLength(0);
+  expect(summary.drive_failure_costs![0]!.cost).toBeUndefined();
 });
 
 /**

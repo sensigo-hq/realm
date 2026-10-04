@@ -170,6 +170,32 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     }
   });
 
+  it("C25: advance_run's reply ends with one clause per step another process claimed", async () => {
+    const { run } = await runStore.create({
+      workflowId: headDef.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const realClaim = runStore.claimStep.bind(runStore);
+    let first = true;
+    runStore.claimStep = async (...args: Parameters<JsonFileStore['claimStep']>) => {
+      if (first) {
+        first = false;
+        await realClaim(args[0], args[1], args[2], {
+          by: 'other@host',
+          by_source: 'derived',
+          channel: 'agent',
+        });
+      }
+      return realClaim(...args);
+    };
+    const reply = await handleAdvanceRun({ run_id: run.id }, { runStore, workflowStore });
+    expect(reply.chained_auto_steps).toBeUndefined();
+    expect(reply.context_hint).toBe(
+      `Run '${run.id}': nothing ran. No step is ready. 'head' was claimed by another process, so it did not run here.`,
+    );
+  });
+
   it('advance_run: continued_by is the absent form when the host passed no driver', async () => {
     const { run } = await runStore.create({
       workflowId: headDef.id,

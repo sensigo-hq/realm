@@ -11,6 +11,7 @@ import {
   ExtensionRegistry,
   describePending,
   executeStep,
+  submitHumanResponse,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type RunRecord,
   type WorkflowDefinition,
@@ -145,6 +146,144 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         "Stopped: 'x' failed: Handler 'boom' threw: handler blew up",
         `Stopped: agent steps are ready: 'y' — drive them with realm agent --run-id ${run.id}`,
         `Run ${run.id}: phase 'running'`,
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('C23: a capability block is a step that cannot run here (capability), never "failed"; exit 1 (nothing owed)', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = wf('cap-advance-wf', {
+        x: { description: 'X', execution: 'auto', depends_on: [], handler: 'missing_h' },
+        y: { description: 'Y', execution: 'agent', depends_on: [] },
+      });
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const lines: string[] = [];
+      const code = await advanceRunFromShell(
+        run.id,
+        { project: home },
+        runs,
+        workflows,
+        undefined,
+        (l) => lines.push(l),
+        new ExtensionRegistry(),
+      );
+      // The view, judged with this shell's registry, refuses `x` before any attempt: nothing is owed,
+      // and the refusal is a reason the run cannot move here — exit 1, as after a call that ran.
+      expect(code).toBe(1);
+      expect(lines.slice(3)).toEqual([
+        `Nothing is owed to the engine: 'x' cannot run here (capability): handler 'missing_h' is not registered here; agent steps are ready: 'y' — drive them with realm agent --run-id ${run.id}.`,
+      ]);
+      expect(lines.join('\n')).not.toContain('failed');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('C25: a step another process claimed during advance is said with the D6.1 line, never "cannot run here"', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = wf('taken-wf', {
+        x: { description: 'X', execution: 'auto', depends_on: [] },
+        y: { description: 'Y', execution: 'agent', depends_on: ['x'] },
+      });
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const realClaim = runs.claimStep.bind(runs);
+      let first = true;
+      runs.claimStep = async (...args: Parameters<JsonFileStore['claimStep']>) => {
+        if (first) {
+          first = false;
+          await realClaim(args[0], args[1], args[2], {
+            by: 'other@host',
+            by_source: 'derived',
+            channel: 'agent',
+          });
+        }
+        return realClaim(...args);
+      };
+      const lines: string[] = [];
+      const code = await advanceRunFromShell(
+        run.id,
+        { project: home },
+        runs,
+        workflows,
+        undefined,
+        (l) => lines.push(l),
+        new ExtensionRegistry(),
+      );
+      const since = (await runs.get(run.id)).claims?.['x']?.since;
+      expect(code).toBe(0);
+      expect(lines.slice(4)).toEqual([
+        '→ x',
+        `• Step 'x' was taken by other@host (from the OS user, via agent) at ${since}; not run here.`,
+        'Stopped: nothing is ready to run now',
+        `Run ${run.id}: phase 'running'`,
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('C28: a guard the advance loop settled that ended the run — its sentence, then PR-1’s Reason line', async () => {
+    const { home, runs: json, workflows } = stores();
+    try {
+      const d = wf('guard-end-wf', {
+        confirm: {
+          description: 'Confirm',
+          execution: 'auto',
+          trust: 'human_confirmed',
+          depends_on: [],
+          gate: { choices: ['approve', 'reject'] },
+        },
+        check: {
+          description: 'Check',
+          execution: 'guard',
+          depends_on: ['confirm'],
+          abort_unless: ["confirm.choice == 'approve'"],
+          abort_message: 'Not approved by the reviewer.',
+        },
+        finish: { description: 'Finish', execution: 'agent', depends_on: ['check'] },
+      });
+      await workflows.register(d);
+      // The same store with `settleStep` hidden — the legacy two-write shape, where the answer
+      // leaves the guard pending and the advance loop settles it (its replies carry no `ended_by`).
+      const runs = new Proxy(json, {
+        get(target, prop, receiver) {
+          if (prop === 'settleStep') return undefined;
+          const v = Reflect.get(target, prop, receiver) as unknown;
+          return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+        },
+      }) as unknown as JsonFileStore;
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      await executeStep(runs, d, {
+        runId: run.id,
+        command: 'confirm',
+        input: {},
+        dispatcher: async () => ({}),
+      });
+      const gate = (await runs.get(run.id)).pending_gate!;
+      await submitHumanResponse(runs, d, { runId: run.id, gateId: gate.gate_id, choice: 'reject' });
+      const lines: string[] = [];
+      const code = await advanceRunFromShell(
+        run.id,
+        { project: home },
+        runs,
+        workflows,
+        undefined,
+        (l) => lines.push(l),
+        new ExtensionRegistry(),
+      );
+      expect(code).toBe(0);
+      const ending = lines.slice(4);
+      expect(ending.slice(1, 2)).toEqual(['Reason: Not approved by the reviewer.']);
+      expect(ending[0]).toContain("'check'");
+      expect(ending.slice(2)).toEqual([
+        'Stopped: the run has ended (aborted)',
+        `Run ${run.id}: phase 'aborted'`,
       ]);
     } finally {
       rmSync(home, { recursive: true, force: true });

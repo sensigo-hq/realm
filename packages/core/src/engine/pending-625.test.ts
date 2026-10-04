@@ -595,7 +595,58 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       const reply = await advanceRun(store, d, { runId: run.id });
       expect(reply.chained_auto_steps).toBeUndefined();
       expect(reply.next_actions).toEqual([]);
-      expect(reply.context_hint).toBe(`Run '${run.id}': nothing ran. No step is ready.`);
+      // decision C25: the reply ends with one clause per step another process held.
+      expect(reply.context_hint).toBe(
+        `Run '${run.id}': nothing ran. No step is ready. 'x' was claimed by another process, so it did not run here.`,
+      );
+    });
+  });
+
+  it("C25: a reply that ran a step still ends with the taken step's clause", async () => {
+    const d = def({
+      x: { description: 'X', execution: 'auto', depends_on: [] },
+      y: { description: 'Y', execution: 'auto', depends_on: [] },
+      z: { description: 'Z', execution: 'agent', depends_on: ['x', 'y'] },
+    });
+    await withStore(async (store) => {
+      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const realClaim = store.claimStep.bind(store);
+      let first = true;
+      store.claimStep = async (...args: Parameters<RunStore['claimStep']>) => {
+        if (first && args[1] === 'x') {
+          first = false;
+          await realClaim(args[0], args[1], args[2], {
+            by: 'other@host',
+            by_source: 'derived',
+            channel: 'agent',
+          });
+        }
+        return realClaim(...args);
+      };
+      const reply = await advanceRun(store, d, { runId: run.id });
+      expect(reply.chained_auto_steps?.map((c) => c.step)).toEqual(['y']);
+      expect(
+        reply.context_hint.endsWith(" 'x' was claimed by another process, so it did not run here."),
+      ).toBe(true);
+      expect(reply.context_hint.split('was claimed by another process')).toHaveLength(2);
+    });
+  });
+
+  it('C24: the capability attempt’s reply is rebuilt with the call’s registry — no advance_run act for the step that just failed to dispatch', async () => {
+    const d = def({
+      x: { description: 'X', execution: 'auto', depends_on: [], handler: 'missing_h' },
+      y: { description: 'Y', execution: 'agent', depends_on: [] },
+    });
+    await withStore(async (store) => {
+      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const reply = await advanceRun(store, d, {
+        runId: run.id,
+        registry: new ExtensionRegistry(),
+      });
+      expect(reply.status).toBe('error');
+      expect(reply.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED');
+      expect(reply.next_actions.map((a) => a.instruction?.tool)).toEqual(['execute_step']);
+      expect(reply.next_actions.some((a) => a.instruction?.tool === 'advance_run')).toBe(false);
     });
   });
 });

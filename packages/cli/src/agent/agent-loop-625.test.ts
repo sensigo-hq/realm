@@ -122,7 +122,9 @@ describe('#625 PR-2a — the realm agent loop', () => {
     vi.restoreAllMocks();
     expect(result).toBe('failed');
     expect(out).toContain("• Step 'review' has been in flight since ");
-    expect(out).toContain('(taken by other@host (from the OS user, via agent))');
+    expect(out).toContain(
+      ', taken by other@host (from the OS user, via agent); the record has not changed',
+    );
     expect(out).toContain(
       `If the program that took it is gone: realm run reclaim ${run.id} --step review --force`,
     );

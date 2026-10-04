@@ -4445,17 +4445,48 @@ export function guardEndingOf(result: SettlementResult): GuardEnding | undefined
   if (result.run.terminal_state !== true || seal === undefined || seal.step !== last.step) {
     return undefined;
   }
-  const reason =
-    last.outcome === 'abort'
-      ? result.run.aborted_at?.abort_message
-      : last.outcome === 'resolution_error'
-        ? result.run.evidence.filter((e) => e.step_id === last.step).slice(-1)[0]?.error
-        : undefined;
+  const reason = guardEndingReason(result.run, last.step, last.outcome);
   return {
     step: last.step,
     outcome: last.outcome,
     arm: seal.arm,
     sentence: guardEndingSentence(last.step, last.outcome),
+    ...(reason !== undefined ? { reason } : {}),
+  };
+}
+
+/** A guard ending's reason, read off the record: the authored `abort_message` on an abort, the
+ *  guard's own recorded evidence `error` on a resolution error, nothing on a completing pass. */
+function guardEndingReason(
+  run: RunRecord,
+  step: string,
+  outcome: GuardOutcome,
+): string | undefined {
+  return outcome === 'abort'
+    ? run.aborted_at?.abort_message
+    : outcome === 'resolution_error'
+      ? run.evidence.filter((e) => e.step_id === step).slice(-1)[0]?.error
+      : undefined;
+}
+
+/**
+ * issue #625 PR-2a (decision C28): the guard that ended a run, read off the RECORD alone — for a
+ * surface that holds neither a settlement result nor a reply carrying `ended_by` (`realm run
+ * advance` reads the record the advance call left). `undefined` unless the run is terminal and
+ * sealed by a guard arm.
+ */
+export function guardEndingOfRun(run: RunRecord): GuardEnding | undefined {
+  const seal = run.sealed_by;
+  if (run.terminal_state !== true || seal === undefined || seal.step === undefined)
+    return undefined;
+  const outcome = GUARD_ARM_OUTCOME[seal.arm];
+  if (outcome === undefined) return undefined;
+  const reason = guardEndingReason(run, seal.step, outcome);
+  return {
+    step: seal.step,
+    outcome,
+    arm: seal.arm,
+    sentence: guardEndingSentence(seal.step, outcome),
     ...(reason !== undefined ? { reason } : {}),
   };
 }
@@ -6242,6 +6273,49 @@ export function bareStepOutput(
   return { source: 'none', output: {} };
 }
 
+/** The options of {@link executeEngineStep} (issue #625 PR-2a). */
+export interface ExecuteEngineStepOptions {
+  runId: string;
+  /** The `auto` step the engine runs. */
+  step: string;
+  /** The record the step's input is read from (decisions C2, C3). */
+  run: RunRecord;
+  registry?: ExtensionRegistry;
+  traceBufferStore?: TraceBufferStore;
+  driver?: Attributed;
+  now?: Date;
+}
+
+/**
+ * issue #625 PR-2a: the ONE way the engine runs an `auto` step it owns — `executeStep` with the
+ * engine's own input (`engineStepInput`, decision C2) and, for a bare step, the core bare-step rule
+ * (decision C3). The advance loop runs every step it picks through this; `realm agent`'s exit for
+ * an engine step that cannot run here (decision C23) makes its one attempt through it too, so no
+ * host composes an engine step's input itself.
+ */
+export async function executeEngineStep(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  options: ExecuteEngineStepOptions,
+): Promise<ResponseEnvelope> {
+  const { step, run } = options;
+  return executeStep(store, definition, {
+    runId: options.runId,
+    command: step,
+    input: engineStepInput(definition, run, step),
+    // decision C3: a bare step the engine runs records its dependency's output (or the run's
+    // params, or nothing) — never a copy of what some caller's dispatcher returned.
+    dispatcher: async (_step, _input, current) => bareStepOutput(definition, current, step).output,
+    outputSource: bareStepOutput(definition, run, step).source,
+    registry: options.registry ?? createDefaultRegistry(),
+    ...(options.traceBufferStore !== undefined
+      ? { traceBufferStore: options.traceBufferStore }
+      : {}),
+    ...(options.driver !== undefined ? { driver: options.driver } : {}),
+    ...(options.now !== undefined ? { now: options.now } : {}),
+  });
+}
+
 /**
  * The ONE pick of the next step the engine runs (issue #625 PR-2a, law L8; decision C13): the first
  * entry of the run's view (`describePending(definition, run, registry).engine_runnable`, definition
@@ -6297,9 +6371,11 @@ async function advanceLoop(
     result: ResponseEnvelope;
     chainedSteps: ChainedStepEntry[];
     depth0Warnings: string[];
+    /** Steps another process held when this call tried to claim them (decision C25). */
+    takenSteps: string[];
   },
 ): Promise<ResponseEnvelope> {
-  const { chainedSteps, depth0Warnings } = state;
+  const { chainedSteps, depth0Warnings, takenSteps } = state;
   let { run, result } = state;
   const budget = Object.keys(definition.steps).length;
   let executions = 0;
@@ -6760,15 +6836,10 @@ async function advanceLoop(
 
     options.onStep?.(nextAutoStep);
     executions += 1;
-    const stepResult = await executeStep(store, definition, {
+    const stepResult = await executeEngineStep(store, definition, {
       runId: options.runId,
-      command: nextAutoStep,
-      input: engineStepInput(definition, run, nextAutoStep),
-      // decision C3: a bare step the engine runs records its dependency's output (or the run's
-      // params, or nothing) — never a copy of what some caller's dispatcher returned.
-      dispatcher: async (_step, _input, current) =>
-        bareStepOutput(definition, current, nextAutoStep).output,
-      outputSource: bareStepOutput(definition, run, nextAutoStep).source,
+      step: nextAutoStep,
+      run,
       registry: options.registry,
       ...(options.traceBufferStore !== undefined
         ? { traceBufferStore: options.traceBufferStore }
@@ -6778,17 +6849,34 @@ async function advanceLoop(
     });
     if (stepResult.status === 'blocked' && stepResult.error_code === 'STATE_STEP_ALREADY_CLAIMED') {
       // Another process holds the step (decision C14's code): it is not run here and not counted
-      // as run. Re-read the record and continue — the step is in flight, so it is not picked again.
+      // as run (it does count toward the defensive bound — decision C30.14). Re-read the record and
+      // continue — the step is in flight, so it is not picked again. The reply says so at return
+      // (decision C25).
       try {
         run = await store.get(options.runId);
       } catch {
         return stepResult;
       }
+      takenSteps.push(nextAutoStep);
       options.onTaken?.(nextAutoStep, run);
       continue;
     }
     if (stepResult.status !== 'ok') {
-      return stepResult;
+      // decision C24: the step's own reply built its next actions with no registry (the capability
+      // check reports 'unknown', so the act stayed offered for the step that just failed to
+      // dispatch). Rebuild them from the record as it is now, with this call's registry.
+      let after: RunRecord;
+      try {
+        after = await store.get(options.runId);
+      } catch {
+        return stepResult;
+      }
+      return {
+        ...stepResult,
+        next_actions: after.terminal_state
+          ? []
+          : buildNextActions(definition, after, options.registry),
+      };
     }
     try {
       run = await store.get(options.runId);
@@ -6811,6 +6899,20 @@ async function advanceLoop(
     });
     result = stepResult;
   }
+}
+
+/**
+ * issue #625 PR-2a (decision C25): a reply from the advance loop ends with one clause per step
+ * another process held when this call tried to claim it — whatever else ran — so a caller that
+ * reads only the reply (an MCP client) learns why a step it was told was owed did not run here.
+ */
+function withTakenClauses(hint: string, takenSteps: readonly string[]): string {
+  return (
+    hint +
+    takenSteps
+      .map((s) => ` '${s}' was claimed by another process, so it did not run here.`)
+      .join('')
+  );
 }
 
 /** The options of {@link advanceRun} (issue #625 PR-2a). No dispatcher: the engine runs only its own steps. */
@@ -6859,6 +6961,7 @@ export async function advanceRun(
   const pending = describePending(definition, stored, registry);
   const chained: ChainedStepEntry[] = [];
   const depth0Warnings: string[] = [];
+  const takenSteps: string[] = [];
   const advanced = await advanceLoop(
     store,
     definition,
@@ -6893,6 +6996,7 @@ export async function advanceRun(
       },
       chainedSteps: chained,
       depth0Warnings,
+      takenSteps,
     },
   );
   // When nothing ran (no step, no guard), the hint is composed from the record the loop ends on:
@@ -6908,7 +7012,7 @@ export async function advanceRun(
   const chainWarnings = [...depth0Warnings, ...chained.flatMap((c) => c.warnings ?? [])];
   const envelope = {
     ...advanced,
-    ...(nothingRanHint !== undefined ? { context_hint: nothingRanHint } : {}),
+    context_hint: withTakenClauses(nothingRanHint ?? advanced.context_hint, takenSteps),
     command,
     ...(chainWarnings.length > 0
       ? { warnings: [...(advanced.warnings ?? []), ...chainWarnings] }
@@ -6988,6 +7092,7 @@ export async function executeChain(
   // `chained_auto_steps` list) — whose own reply is replaced by a later step's would otherwise
   // silently lose its OWN warnings; this accumulator carries them forward.
   const depth0Warnings: string[] = [];
+  const takenSteps: string[] = [];
 
   // The named step, through the caller's dispatcher (a bare named step records `driven_step`).
   const named = await executeStep(store, definition, effectiveOptions);
@@ -7033,13 +7138,14 @@ export async function executeChain(
           ...(options.now !== undefined ? { now: options.now } : {}),
           namedStep: options.command,
         },
-        { run, result: named, chainedSteps: chained, depth0Warnings },
+        { run, result: named, chainedSteps: chained, depth0Warnings, takenSteps },
       );
     }
   }
   const chainWarnings = [...depth0Warnings, ...chained.flatMap((s) => s.warnings ?? [])];
   const envelope = {
     ...result,
+    context_hint: withTakenClauses(result.context_hint, takenSteps),
     command: options.command,
     ...(chainWarnings.length > 0
       ? { warnings: [...(result.warnings ?? []), ...chainWarnings] }

@@ -492,7 +492,7 @@ describe('runAgent — wedge detection on attach (#101, detect-only)', () => {
 
     // An unknown-age claim: never "its runner likely died" (that is said only past a deadline).
     expect(out).toContain(
-      "• Step 'review' has been in flight since an unrecorded time (taken before program names were recorded); the record has not changed for 0s.",
+      "• Step 'review' has been in flight since an unrecorded time, taken before program names were recorded; the record has not changed for 0s.",
     );
     expect(out).not.toContain('likely died');
     expect(out).toContain(`realm run reclaim ${run.id} --step review --force`);
@@ -1168,15 +1168,8 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     const autoLines = logSpy.mock.calls
       .flat()
       .filter((l) => typeof l === 'string' && l.includes('→ [auto] finalize'));
-    // issue #625 PR-2a: the run's view refuses the step before any attempt (its input schema
-    // refuses the run's params), so it is never submitted — and it is named, as a validation wedge.
-    expect(autoLines).toHaveLength(0);
+    expect(autoLines).toHaveLength(1);
     const printed = errorSpy.mock.calls.flat().join('\n');
-    // C17: refused before its claim, it is named once (not failed), and nothing else can run.
-    expect(logSpy.mock.calls.flat().join('\n')).toContain(
-      "• Step 'finalize' cannot run here (input_schema): Invalid input for step 'finalize'",
-    );
-    expect(printed).not.toContain("✗ Step 'finalize' failed");
     expect(printed).not.toContain('repairing');
     expect(printed).not.toContain('schema-repair');
 

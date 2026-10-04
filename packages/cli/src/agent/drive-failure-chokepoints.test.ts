@@ -326,16 +326,28 @@ describe('#401 chokepoint (3) — the mid-loop throw carries the current step', 
       params: {},
     });
 
-    // Throws once, on the per-attempt version read — which only happens after a step has been
-    // selected. Counted rather than armed by name because the reads before it (attach, then
-    // eligibility) are what make the step name exist at all. The fence's OWN re-read must still
-    // succeed, or the entry degrades to the console lostLine and there is nothing to assert.
-    let reads = 0;
+    // Throws once, on the first store read AFTER the drive has selected `classify` — keyed on the
+    // selection itself, never on a count of reads (issue #625 PR-2a: the loop top reads more than it
+    // did, and the next added read must not move this cell). The drive reads a step's own model
+    // clock (`llm_timeout_seconds`) only once that step is selected, after `currentStepName` is set
+    // and before its per-attempt version read; nothing at the loop top, and nothing in core, reads
+    // it. A non-enumerable getter observes that read without changing the definition anything
+    // serializes. The fence's OWN re-read must still succeed (the throw is one-shot), or the entry
+    // degrades to the console lostLine and there is nothing to assert.
+    let selected = false;
+    let thrown = false;
+    Object.defineProperty(wf.steps['classify']!, 'llm_timeout_seconds', {
+      enumerable: false,
+      get() {
+        selected = true;
+        return undefined;
+      },
+    });
     store.get = async (id: string) => {
-      reads++;
-      // issue #625 PR-2a: the loop top now reads twice more before selecting (advanceRun's own
-      // read, then the loop's re-read of what it left) — the per-attempt read is the 4th.
-      if (reads === 4) throw new Error('store read exploded mid-loop');
+      if (selected && !thrown) {
+        thrown = true;
+        throw new Error('store read exploded mid-loop');
+      }
       return original(id);
     };
 
@@ -650,18 +662,12 @@ describe('#401 chokepoint (4) — validation rejections DO mint', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const logSpy = vi.mocked(console.log);
     await runAgent(deps, { definition: wf, params: {} });
 
-    // issue #625 PR-2a (C16/C17): the run's view refuses the step before its claim (its input
-    // schema refuses the run's params), so it is never submitted. It is named on the screen and in
-    // the view (`engine_runnable`, `inspect`'s `Cannot run` line) — and, being nothing the drive
-    // tried, it mints no drive failure.
     const run = await onlyRun(store);
-    expect(logSpy.mock.calls.flat().join('\n')).toContain(
-      "• Step 'enrich' cannot run here (input_schema): Invalid input for step 'enrich'",
-    );
-    expect(run.drive_failures?.entries ?? []).toHaveLength(0);
+    expect(run.drive_failures?.entries).toHaveLength(1);
+    expect(run.drive_failures!.entries[0]!.error_class).toBe('validation_rejected');
+    expect(run.drive_failures!.entries[0]!.step).toBe('enrich');
     vi.restoreAllMocks();
   });
 

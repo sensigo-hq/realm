@@ -61,7 +61,7 @@ describe('#625 PR-2a — realm agent loop words', () => {
     const out = logSpy.mock.calls.flat().join('\n');
     vi.restoreAllMocks();
     expect(out).toContain(
-      `• Step 'review' has been in flight since 1999-12-31T23:59:00.000Z (taken by a program whose name was not recorded); the record has not changed for 0s. Its claim is past its deadline (its runner likely died). If the program that took it is gone: realm run reclaim ${run.id} --step review --force`,
+      `• Step 'review' has been in flight since 1999-12-31T23:59:00.000Z, taken by a program whose name was not recorded; the record has not changed for 0s. Its claim is past its deadline (its runner likely died). If the program that took it is gone: realm run reclaim ${run.id} --step review --force`,
     );
   });
 

@@ -117,8 +117,13 @@ export {
   describeAnswerEnding,
   lateAnswerOutcome,
 } from './engine/execution-loop.js';
-export type { AdvanceRunOptions, OutputSource, GuardEnding } from './engine/execution-loop.js';
-export { bareStepOutput } from './engine/execution-loop.js';
+export type {
+  AdvanceRunOptions,
+  ExecuteEngineStepOptions,
+  OutputSource,
+  GuardEnding,
+} from './engine/execution-loop.js';
+export { bareStepOutput, executeEngineStep, guardEndingOfRun } from './engine/execution-loop.js';
 // Issue #625 (PR-2a): what a run owes, read from its record, and the one act that runs it.
 export {
   PRE_CLAIM_REFUSALS,
